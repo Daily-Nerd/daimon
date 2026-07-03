@@ -1,0 +1,81 @@
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: PR convention
+    # release-please PRs are bot-generated changelog/version bumps; the
+    # issue-first convention governs human contributions, not the release cycle
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      # scar promotions move a reviewed candidate into .scars/ — the human
+      # sign-off already happened at `scar promote` (reviewer recorded in the
+      # scar's authors). The issue-first gate governs code contributions, so
+      # scars-only PRs skip the two issue steps; label/title/branch still apply.
+      - name: Detect scars-only change
+        id: scars_only
+        run: |
+          files="$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path')"
+          if [ -n "$files" ] && ! grep -qvE '^\.scars/' <<<"$files"; then
+            echo "scars_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scars_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Issue Reference
+        if: steps.scars_only.outputs.scars_only != 'true'
+        run: |
+          body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
+          if ! grep -qiE '(closes|fixes|resolves) #[0-9]+' <<<"$body"; then
+            echo "::error::PR body must link an issue: Closes/Fixes/Resolves #N"
+            exit 1
+          fi
+
+      - name: Check Issue Has status:approved
+        if: steps.scars_only.outputs.scars_only != 'true'
+        run: |
+          body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
+          issue="$(grep -oiE '(closes|fixes|resolves) #[0-9]+' <<<"$body" | head -1 | grep -oE '[0-9]+')"
+          labels="$(gh issue view "$issue" --repo "$REPO" --json labels -q '.labels[].name')"
+          if ! grep -qx 'status:approved' <<<"$labels"; then
+            echo "::error::Linked issue #$issue lacks the status:approved label"
+            exit 1
+          fi
+
+      - name: Check PR Has type:* Label
+        run: |
+          count="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name' | grep -c '^type:' || true)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::PR must have exactly one type:* label (found $count)"
+            exit 1
+          fi
+
+      - name: Check Conventional PR Title
+        # squash-merge makes the PR title the commit subject on main
+        run: |
+          title="$(gh pr view "$PR" --repo "$REPO" --json title -q .title)"
+          if ! grep -qE '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._-]+\))?!?: .+' <<<"$title"; then
+            echo "::error::PR title must be a conventional commit: type(scope): description"
+            exit 1
+          fi
+
+      - name: Check Branch Name
+        run: |
+          branch="${{ github.head_ref }}"
+          if ! grep -qE '^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)/[a-z0-9._-]+$' <<<"$branch"; then
+            echo "::error::Branch name must match type/description (lowercase, a-z0-9._-)"
+            exit 1
+          fi
