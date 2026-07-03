@@ -30,9 +30,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **serializer:** D-012 — preserve transcript language in item text ([a02af81](https://github.com/Daily-Nerd/daimon/commit/a02af819585580f0d2308a9444784ded3a0b4434))
 * **serializer:** D-012 — preserve transcript language in item text ([#9](https://github.com/Daily-Nerd/daimon/issues/9)) ([58668dd](https://github.com/Daily-Nerd/daimon/commit/58668ddce75ea40249d8e62e4e319e6241978ca5))
 
-## [Unreleased]
+## [0.2.0] — 2026-07-02
+
+The maturity release: real plugin packaging, an unbounded-disk fix, format
+versioning, and the complete shared team memory arc.
 
 ### Added
+
+- **Shared team memory** — teammates on one repo share a project mind:
+  - Phase 1 (#111): opt-in (`DAIMON_TEAM=1`) per-author team mirror under
+    `~/.daimon/team/`, `daimon brief --team` with an attributed Teammates
+    section. **Schema note:** every checkpoint now carries an `author` field
+    (stamped at write time regardless of the flag); team-mirrored copies also
+    carry `project_slug`.
+  - Phase 2 (#112): `daimon recall <query>` — derived SQLite+FTS5 full-text
+    search over local + team checkpoint history; superseded items flagged, not
+    hidden; index is disposable and self-rebuilding.
+  - Phase 3 (#113): `daimon team <init|sync|status>` — sidecar private-repo
+    sync (append-only per-author files, conflict-free by construction),
+    ls-remote freshness gate, force-push/rewrite detection,
+    author-vs-committer mismatch warning, read-time retention window
+    (`DAIMON_TEAM_RETENTION_DAYS`), opportunistic detached sync at SessionStart.
+- Claude Code **plugin packaging** (#91): `.claude-plugin/plugin.json` +
+  self-listing marketplace — install via `/plugin marketplace add
+  Daily-Nerd/daimon` + `/plugin install daimon@daimon`
+- **Gemini CLI host adapter** (#106): briefing hook live now; serialize staged
+  behind upstream gemini-cli#14715 (`transcript_path` stub)
+- Checkpoint **GC** (#92): `DAIMON_CHECKPOINT_KEEP` (default 100) prunes old
+  per-session files, never touching pointer-referenced ones; fail-safe aborts
+  when the protection set is unknowable
+- Checkpoint **format versioning** (#93): `format_version` + `created` stamped
+  at write; age computed from `created` (mtime fallback); version-mismatch
+  warning in `status`/`brief`
+- Scar harvester wired into the serialize path (#100, still opt-in via
+  `DAIMON_SCAR_HARVEST`)
+- `contradictions_flagged` rendered as its own briefing section; prompt bumped
+  to D-010 (#101)
+- `daimon anchor --attach <text-match>` (#102): attach a code anchor to a
+  cognitive item without hand-editing JSON — makes drift detection reachable
+- Shared `hook/_daimon_hook_lib.py` consumed by all six host hooks (#108)
+- `daimon --version` flag (#94)
+- CI pipeline: full pytest suite on PRs and pushes to `main`, Python 3.10 + 3.13 (#90)
 
 - **Briefing token budget with section-preserving truncation** (#79) — the
   injected plain briefing now fits `DAIMON_BRIEF_MAX_TOKENS` (default 3000,
@@ -88,64 +126,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Together these make rescuing old failed sessions safe: heal can no longer steal
   the briefing pointer from newer work.
 
-## [0.2.0] — 2026-07-02
-
-The maturity release: real plugin packaging, an unbounded-disk fix, format
-versioning, and the complete shared team memory arc.
-
-### Added
-
-- **Shared team memory** — teammates on one repo share a project mind:
-  - Phase 1 (#111): opt-in (`DAIMON_TEAM=1`) per-author team mirror under
-    `~/.daimon/team/`, `daimon brief --team` with an attributed Teammates
-    section. **Schema note:** every checkpoint now carries an `author` field
-    (stamped at write time regardless of the flag); team-mirrored copies also
-    carry `project_slug`.
-  - Phase 2 (#112): `daimon recall <query>` — derived SQLite+FTS5 full-text
-    search over local + team checkpoint history; superseded items flagged, not
-    hidden; index is disposable and self-rebuilding.
-  - Phase 3 (#113): `daimon team <init|sync|status>` — sidecar private-repo
-    sync (append-only per-author files, conflict-free by construction),
-    ls-remote freshness gate, force-push/rewrite detection,
-    author-vs-committer mismatch warning, read-time retention window
-    (`DAIMON_TEAM_RETENTION_DAYS`), opportunistic detached sync at SessionStart.
-- Claude Code **plugin packaging** (#91): `.claude-plugin/plugin.json` +
-  self-listing marketplace — install via `/plugin marketplace add
-  Daily-Nerd/daimon` + `/plugin install daimon@daimon`
-- **Gemini CLI host adapter** (#106): briefing hook live now; serialize staged
-  behind upstream gemini-cli#14715 (`transcript_path` stub)
-- Checkpoint **GC** (#92): `DAIMON_CHECKPOINT_KEEP` (default 100) prunes old
-  per-session files, never touching pointer-referenced ones; fail-safe aborts
-  when the protection set is unknowable
-- Checkpoint **format versioning** (#93): `format_version` + `created` stamped
-  at write; age computed from `created` (mtime fallback); version-mismatch
-  warning in `status`/`brief`
-- Scar harvester wired into the serialize path (#100, still opt-in via
-  `DAIMON_SCAR_HARVEST`)
-- `contradictions_flagged` rendered as its own briefing section; prompt bumped
-  to D-010 (#101)
-- `daimon anchor --attach <text-match>` (#102): attach a code anchor to a
-  cognitive item without hand-editing JSON — makes drift detection reachable
-- Shared `hook/_daimon_hook_lib.py` consumed by all six host hooks (#108)
-- `daimon --version` flag (#94)
-- CI pipeline: full pytest suite on PRs and pushes to `main`, Python 3.10 + 3.13 (#90)
+- Serializer resamples once with an attempt nonce when the model's output
+  fails schema validation — gateway response caches can no longer pin a bad
+  response and make sessions permanently unhealable (#118)
+  
+- `daimon recall` honors the team retention window — parity with
+  `brief --team` (#120)
+  
+- Fresh install with no `~/.claude/settings.json` no longer crashes the hook
+  installer (#109)
+  
+- Fetch+merge in team sync works on machines with no git identity, e.g. CI
+  runners (#113)
 
 ### Changed
 
 - `emotional_valence` removed from the serializer schema (#101). Existing
   checkpoints will show a one-time format-version notice — expected.
 
-### Fixed
-
-- Serializer resamples once with an attempt nonce when the model's output
-  fails schema validation — gateway response caches can no longer pin a bad
-  response and make sessions permanently unhealable (#118)
-- `daimon recall` honors the team retention window — parity with
-  `brief --team` (#120)
-- Fresh install with no `~/.claude/settings.json` no longer crashes the hook
-  installer (#109)
-- Fetch+merge in team sync works on machines with no git identity, e.g. CI
-  runners (#113)
 
 ## [0.1.0] — 2026-07-01
 
