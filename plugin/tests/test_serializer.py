@@ -615,12 +615,23 @@ def test_serialize_prompt_has_d008_fidelity_rules():
     assert "Omission is safer than fabrication" in sys
 
 
-def test_prompt_version_is_d011():
+def test_prompt_version_is_d012():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
-    # per-item importance added to the emitted schema). Pre-bump checkpoints
-    # firing the format_version mismatch warning (#93) is DESIRED behavior.
-    assert serializer.PROMPT_VERSION == "D-011"
+    # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
+    # transcript-language preservation rule). Pre-bump checkpoints firing the
+    # format_version mismatch warning (#93) is DESIRED behavior.
+    assert serializer.PROMPT_VERSION == "D-012"
+
+
+def test_prompts_preserve_transcript_language():
+    # #5: item text must stay in the transcript's language (Spanish sessions
+    # produced English paraphrases while quotes stayed Spanish -> mixed-language
+    # checkpoints break recall term-overlap and carry twin-dedup). Rule must be
+    # in BOTH prompts — merge re-emits items and can translate-drift too.
+    for sys in (serializer.SERIALIZE_SYS, serializer.MERGE_SYS):
+        assert "same language as the transcript" in sys
+        assert "Never translate quotes" in sys
 
 
 def test_emotional_valence_absent_from_prompts():
