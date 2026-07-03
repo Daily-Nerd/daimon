@@ -39,9 +39,16 @@ The **primary integration is native host hooks.** Daimon ships standalone hook s
 1. **The native SessionEnd payload carries the transcript path.** The serializer reads the transcript directly from the file the host names — there is no separate session-database read and no dependency on host-internal storage.
 2. **The briefing is injected at session start, not deferred.** SessionStart stdout becomes session context, so the "while you were away" artifact lands before the first model turn. (Hosts whose start hook cannot inject — see Appendix A for the hermes case — defer to the first model call instead.)
 
-### Host adapters — Codex and Gemini (VERIFIED — `hook/_daimon_hook_lib.py`, `hook/daimon-codex-*.py`, `hook/daimon-gemini-*.py`)
+### Host adapters — Codex and Gemini (code VERIFIED, not yet live-dogfooded — `hook/_daimon_hook_lib.py`, `hook/daimon-codex-*.py`, `hook/daimon-gemini-*.py`)
 
 The hook scripts are standalone and **stdlib-only**: they run inside whatever interpreter the host invokes and **cannot import the `daimon_briefing` package** (it lives in an isolated uv-tool venv), so they locate and shell out to the installed `daimon` CLI. Everything the adapters would otherwise duplicate — kill-switch check, CLI resolution, per-project env, detached spawn helpers, checkpoint-age formatting — lives in the shared `hook/_daimon_hook_lib.py`. Host-specific behavior stays in each script: Gemini's pure-JSON stdout, Codex's `additionalContext` envelope and throttled `Stop` hook (Codex has no SessionEnd, so it serializes on a throttled Stop). This is the "thin host adapter" D-009 calls for — new hosts (Odysseus, openclawd, …) become first-class by adding a script pair against the same shared lib.
+
+**Live-validation status per host (honest ladder — trust class applies to hosts too):**
+
+- **Claude Code — LIVE.** The only field-tested host: daily dogfood, full loop (serialize → carry → brief → recall), field incidents recorded in `research/LOGBOOK.md`.
+- **Codex — code-verified + unit-tested (`test_codex_hooks.py`), zero recorded live sessions.** The adapter and installer ship, but no LOGBOOK entry documents a real Codex session completing the capture → inject loop. Treat "runs on Codex" as INFERRED until one is on record.
+- **Gemini — briefing hook shipped; serialize CANNOT run end-to-end today.** Capture is staged behind upstream `gemini-cli#14715` (`transcript_path` stub). Half a loop, by upstream constraint.
+- **hermes — secondary path (Appendix A), unit-tested against a fake host context only.** Never run under a real hermes-agent.
 
 ### Diagram (ASCII — native-hook path)
 
@@ -144,7 +151,7 @@ SCAR (git-native negative-knowledge graph: deadends/fences/landmines, `.scars/`)
 
 What ships today, behind `daimon`:
 
-- **Checkpoint → briefing loop** — SessionEnd serialize, SessionStart briefing, per-project checkpoint store. Runs on Claude Code and Codex via native hooks; a host-free dogfood CLI (`daimon serialize` / `daimon brief`) needs no host at all.
+- **Checkpoint → briefing loop** — SessionEnd serialize, SessionStart briefing, per-project checkpoint store. Live-validated on Claude Code; the Codex adapter ships code-verified but has no recorded live session (see the host-status ladder in §2). A host-free dogfood CLI (`daimon serialize` / `daimon brief`) needs no host at all.
 - **Recall fix (D-007)** — chunked multi-pass extraction + merge for long transcripts, gated against the §3 regression harness (RR ≥70%, FMR ≤10%). Serializer failures are surfaced by cause (ChatError vs JSON-parse vs schema-validation) to the CLI/log rather than swallowed.
 - **Deterministic carry** — unresolved open loops carried forward by exact term overlap, marked `[carried]`.
 - **Proactive recall** — `daimon recall-inject` behind the UserPromptSubmit hook.
@@ -165,7 +172,7 @@ Not shipped / not planned as a runtime dependency: any external memory server or
 
 **ASSUMED / UNVERIFIED (verify before relying):**
 - **Q-model — serializer model + latency budget in-hook.** Which model the detached serializer calls (the host's configured model? a separate cheap model? the `claude` CLI backend?) and its latency budget at session end depend on the user's `daimon configure` result. Single-model confound (`findings/03`) still applies — don't reuse old kimi-k2.6 numbers as a floor.
-- **Q-host — new host adapters.** The Codex/Gemini adapters are VERIFIED; Odysseus/openclawd/other hosts are ASSUMED reachable via the same `_daimon_hook_lib.py` shape until an adapter is actually written and dogfooded.
+- **Q-host — host adapters beyond Claude Code.** The Codex/Gemini adapter *code* is verified and unit-tested, but no host other than Claude Code has a recorded live session — Codex awaits its first dogfooded loop, Gemini serialize is blocked upstream (`gemini-cli#14715`), hermes has only fake-context unit tests. Odysseus/openclawd/other hosts are ASSUMED reachable via the same `_daimon_hook_lib.py` shape until an adapter is actually written and dogfooded.
 - **Q-carry — carry tuning.** The salient-term overlap thresholds and generic-term filtering in `carry.py` are tuned on limited live data; re-tune as more sessions accumulate.
 
 ---
