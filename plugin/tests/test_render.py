@@ -75,9 +75,52 @@ def test_render_brief_rich_smoke(monkeypatch, sample_checkpoint, capsys):
 
 
 def test_render_brief_no_content(capsys):
+    # #29: the old hint said "Run `serialize` first" — a dead end (serialize
+    # needs a transcript path and is hook-internal). Point at the real flow.
     render.render_brief({})
     out = capsys.readouterr().out
-    assert out == "No checkpoint yet — nothing to brief. Run `serialize` first.\n"
+    assert "No checkpoint yet" in out
+    assert "Run `serialize` first" not in out
+    assert "session end" in out  # checkpoints come from hooks automatically
+
+
+def _serialize_status_data(last):
+    return {
+        "project": "/repo/x",
+        "proj": {"exists": False},
+        "glob": {"exists": False},
+        "same": False,
+        "last": last,
+        "outstanding": [],
+        "identity": None,
+        "health": None,
+        "team": None,
+    }
+
+
+def test_render_status_rich_reports_spawn_without_result(monkeypatch, capsys):
+    # #29: plain status always prints spawn + result lines; the rich branch
+    # rendered NOTHING for a spawn-with-no-result (in-progress/hung serialize).
+    # Same command must state the same facts regardless of `rich`.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_status(_serialize_status_data(
+        {"spawn": {"session_id": "S-hung", "age": "5m"}, "result": None}))
+    out = capsys.readouterr().out
+    assert "S-hung" in out          # the spawn is visible
+    assert "none logged yet" in out  # and the missing result is stated
+
+
+def test_render_status_rich_and_plain_state_same_serialize_facts(monkeypatch, capsys):
+    data = _serialize_status_data(
+        {"spawn": {"session_id": "S-1", "age": "2m"},
+         "result": {"outcome": "success", "line": "ok S-1"}})
+    render.render_status(data)
+    plain = capsys.readouterr().out
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_status(data)
+    rich_out = capsys.readouterr().out
+    for fact in ("S-1", "success"):
+        assert fact in plain and fact in rich_out
 
 
 def test_render_brief_notes_version_mismatch(sample_checkpoint, capsys):

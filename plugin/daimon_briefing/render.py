@@ -60,7 +60,11 @@ def _print_version_note(checkpoint) -> None:
 def render_brief(checkpoint, drift=None, teammates=None) -> None:
     b = briefing.build(checkpoint)
     if b is None:
-        print("No checkpoint yet — nothing to brief. Run `serialize` first.")
+        # Point at the real flow (#29): checkpoints come from the hooks; bare
+        # `serialize` dead-ends (it needs a transcript path).
+        print("No checkpoint yet — nothing to brief. Checkpoints are written "
+              "automatically at session end; to backfill one manually, run "
+              "`daimon serialize <transcript>`.")
         _print_teammates(teammates)
         return
     _print_version_note(checkpoint)
@@ -369,12 +373,24 @@ def _rich_status(data: dict) -> None:
     else:
         table.add_row("global (fallback)", "[dim]none[/dim]", "—")
     console.print(table)
-    if last and last["result"]:
-        style = "green" if last["result"]["outcome"] == "success" else "red"
-        console.print(f"last serialize: [{style}]{last['result']['outcome']}[/{style}] — "
-                      f"{last['result']['line']}")
-    elif last is None:
+    # Mirror _plain_status fact-for-fact (#29): same command, same statements,
+    # regardless of whether `rich` is installed. In particular a spawn with no
+    # result yet (in-progress or hung serialize) must be visible here too.
+    if last is None:
         console.print("[dim]no serialize history[/dim]")
+    else:
+        if last["result"]:
+            style = "green" if last["result"]["outcome"] == "success" else "red"
+            console.print(f"last serialize result: [{style}]{last['result']['outcome']}[/{style}] — "
+                          f"{last['result']['line']}")
+        else:
+            console.print("last serialize result: none logged yet")
+        if last["spawn"]:
+            s = last["spawn"]
+            ago = f", {s['age']} ago" if "age" in s else ""
+            console.print(f"last serialize spawn: session {s['session_id']}{ago}")
+        else:
+            console.print("last serialize spawn: none logged yet")
 
     outstanding = data.get("outstanding") or []
     if outstanding:
