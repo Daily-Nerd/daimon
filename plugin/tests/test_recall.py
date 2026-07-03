@@ -456,6 +456,40 @@ def test_salient_terms_dedupe_and_cap():
     assert len(terms) <= 12
 
 
+def test_salient_terms_drop_spanish_stopwords():
+    # Spanish function/filler words must not count as salient signal (#3):
+    # unfiltered they inflate the _MIN_TERMS/_MIN_OVERLAP gates on
+    # function-word coincidences and pollute carry's twin-dedup lexicon.
+    terms = recall.salient_terms(
+        "Por favor necesito ayuda para arreglar el problema del token en esta sesión")
+    assert "token" in terms
+    for filler in ("por", "favor", "necesito", "ayuda", "para", "arreglar",
+                   "problema", "esta"):
+        assert filler not in terms, filler
+
+
+def test_salient_terms_spanish_filler_only_means_silence():
+    # A prompt made entirely of Spanish fillers is never a retrieval request.
+    assert recall.salient_terms("dale por favor entonces") == []
+
+
+def test_salient_terms_keep_accented_words_whole_and_normalized():
+    # ASCII-only tokenization fragments accented words ("sesión" -> "sesi","n")
+    # and the fragments can never match the FTS5 index, which keeps words whole
+    # and strips diacritics (unicode61 remove_diacritics). Terms must come out
+    # whole and diacritic-normalized so they align with what FTS5 indexed.
+    terms = recall.salient_terms("Necesito arreglar la autenticación de la sesión")
+    assert "autenticacion" in terms
+    assert "sesion" in terms
+    assert "sesi" not in terms and "autenticaci" not in terms
+
+
+def test_salient_terms_accented_stopwords_drop_in_both_spellings():
+    # Users type both "tambien" and "también" — normalization funnels both
+    # into one stopword entry.
+    assert recall.salient_terms("también entonces quizás dale") == []
+
+
 # ---- #125: suggest — the proactive gate ----
 
 
