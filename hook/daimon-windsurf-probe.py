@@ -101,7 +101,63 @@ def _scan_vscdb(trajectory_id: str | None, db_paths) -> int:
     return 0
 
 
+_HUNT_MAX_FILE_BYTES = 64 * 1024 * 1024
+_HUNT_DEFAULT_ROOTS = (
+    "~/Library/Application Support/Devin",
+    "~/Library/Application Support/Windsurf",
+    "~/.codeium", "~/.windsurf", "~/.devin",
+    "~/.config/Devin", "~/.config/Windsurf",
+)
+
+
+def _hunt(trajectory_id: str, roots) -> int:
+    """Walk bounded roots and report every file whose bytes contain the
+    trajectory id — paths + sizes + a small context head, never whole files.
+    Settles WHERE the conversation store lives when the documented locations
+    come up empty (state.vscdb held UI state only)."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    needle = trajectory_id.encode()
+    lines = [f"hunt {stamp}  trajectory_id={trajectory_id}"]
+    root_paths = ([Path(r).expanduser() for r in roots] if roots
+                  else [Path(r).expanduser() for r in _HUNT_DEFAULT_ROOTS])
+    for root in root_paths:
+        lines.append(f"\n=== {root}  (exists={root.is_dir()})")
+        if not root.is_dir():
+            continue
+        for p in root.rglob("*"):
+            try:
+                if not p.is_file() or p.stat().st_size > _HUNT_MAX_FILE_BYTES:
+                    continue
+                data = p.read_bytes()
+            except OSError:
+                continue
+            idx = data.find(needle)
+            if idx == -1:
+                continue
+            head = data[max(0, idx - 100):idx + 400].decode("utf-8", errors="replace")
+            lines.append(f"MATCH {p}  ({len(data)} bytes)")
+            lines.append(f"  …{head}…")
+    report = OUT_DIR / f"hunt-{stamp}.txt"
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"daimon probe: hunt written to {report}")
+    return 0
+
+
 def main() -> int:
+    if "--hunt" in sys.argv[1:]:
+        args = sys.argv[1:]
+        args.remove("--hunt")
+        roots = []
+        while "--root" in args:
+            i = args.index("--root")
+            roots.append(args[i + 1])
+            del args[i:i + 2]
+        if not args:
+            print("usage: --hunt TRAJECTORY_ID [--root DIR]...")
+            return 0
+        return _hunt(args[0], roots)
+
     if "--scan-vscdb" in sys.argv[1:]:
         args = sys.argv[1:]
         args.remove("--scan-vscdb")

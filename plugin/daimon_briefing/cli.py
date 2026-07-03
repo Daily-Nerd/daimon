@@ -449,7 +449,8 @@ def _cmd_recall_inject(args) -> int:
 # host and the verb are alternations. A new host adapter MUST add its prefix
 # here or its serializes are invisible to status/hung detection/heal.
 _SPAWN_RE = re.compile(
-    r"^(\S+) (?:gemini-session-end|session-end|codex-stop|session-start): "
+    r"^(\S+) (?:gemini-session-end|session-end|codex-stop|windsurf-cascade|"
+    r"session-start): "
     r"(?:spawned|retry) serialize for (\S+)"
 )
 # Child stdout/stderr land in the log RAW (no timestamp): the serialize

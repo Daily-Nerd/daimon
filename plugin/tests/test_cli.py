@@ -2660,3 +2660,14 @@ def test_serialize_result_line_clean_without_fallback(
     rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
     assert rc == 0
     assert "[fallback backend]" not in capsys.readouterr().out
+
+
+def test_spawn_re_recognizes_windsurf_cascade_prefix():
+    # cli.py hard rule: a new host adapter MUST add its prefix to _SPAWN_RE or
+    # its serializes are invisible to status/hung detection/heal (#35).
+    text = ("2026-07-03T23:00:00Z windsurf-cascade: spawned serialize for T-1 "
+            "(project: /p/A) (transcript: /t/T-1.md)")
+    led = cli._session_ledger(text, now=0.0)
+    assert led["T-1"]["spawned"] is True
+    assert led["T-1"]["transcript"] == "/t/T-1.md"
+    assert led["T-1"]["project"] == "/p/A"

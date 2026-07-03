@@ -605,3 +605,29 @@ def test_windsurf_probe_scan_vscdb_missing_db_exits_zero(tmp_path):
         env={**os.environ, "HOME": str(tmp_path)},
     )
     assert proc.returncode == 0
+
+
+def test_windsurf_probe_hunt_finds_id_in_arbitrary_files(tmp_path):
+    # #35: state.vscdb turned out to hold UI state only — the hunt walks
+    # bounded roots and reports every file containing the trajectory id
+    # (paths + sizes + small context head, never whole files).
+    import subprocess
+    probe = Path(__file__).resolve().parents[2] / "hook" / "daimon-windsurf-probe.py"
+    traj = "b0ba5494-dce6-47a2-8da0-a7c11b18d392"
+    root = tmp_path / "store"
+    (root / "deep" / "nested").mkdir(parents=True)
+    hit = root / "deep" / "nested" / "conv.leveldb-log"
+    hit.write_bytes(b"\x00binary\x01" + f'{{"trajectory_id":"{traj}","turns":["hola"]}}'.encode() + b"\x02")
+    (root / "noise.txt").write_text("nothing here")
+    proc = subprocess.run(
+        [sys.executable, str(probe), "--hunt", traj, "--root", str(root)],
+        capture_output=True, text=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
+    assert proc.returncode == 0
+    reports = list((tmp_path / "daimon-windsurf-probe").glob("hunt-*.txt"))
+    assert reports, "hunt report not written"
+    report = reports[0].read_text()
+    assert "conv.leveldb-log" in report
+    assert "hola" in report          # context head around the match
+    assert "noise.txt" not in report
