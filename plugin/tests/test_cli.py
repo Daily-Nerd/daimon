@@ -1077,8 +1077,9 @@ def test_cli_configure_interactive_litellm(capsys, monkeypatch, tmp_path):
     _set_claude(monkeypatch, False)
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
 
-    answers = iter(["litellm", "U", "K", "M"])
+    answers = iter(["litellm", "U", "M"])  # api_key goes through getpass (#29)
     monkeypatch.setattr(cli, "_prompt", lambda q: next(answers))
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": "K")
 
     rc = cli.main(["configure"])
     assert rc == 0
@@ -2319,3 +2320,102 @@ def test_serialize_carry_failure_still_writes_checkpoint(
 
     written = store.read_latest(project_dir=project)
     assert written["session_id"] == "S-new"
+
+
+# ---- #29: UX-contract batch — surface messages must match what the code does ----
+
+
+def test_status_health_heal_hint_gated_on_healable():
+    # status must only say "run 'daimon heal'" when heal can actually repair
+    # something — a healable failure is present.
+    h = cli._status_health(_proj(), {"exists": True},
+                           [{"sid": "S", "class": "healable"}], [], now=1000.0)
+    assert any("daimon heal" in w for w in h["warnings"])
+
+
+def test_status_health_no_heal_hint_when_unrepairable():
+    # Live contradiction (audit): status said "run 'daimon heal'"; heal
+    # answered "nothing to heal". No healable failure -> no heal hint.
+    h = cli._status_health(_proj(), {"exists": True},
+                           [{"sid": "S", "class": "unrecoverable"},
+                            {"sid": "T", "class": "hung"}], [], now=1000.0)
+    assert any("failed to serialize" in w for w in h["warnings"])
+    assert not any("daimon heal" in w for w in h["warnings"])
+
+
+def test_brief_labels_global_fallback_for_other_project(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # brief --project X with no checkpoint for X silently rendered ANOTHER
+    # project's briefing. status labels the same fallback; brief must too.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/some-other-project"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "fallback" in out.lower()
+
+
+def test_brief_no_fallback_label_for_own_project(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    assert "fallback" not in capsys.readouterr().out.lower()
+
+
+def test_recall_rejects_nonpositive_limit(tmp_checkpoint_dir, capsys):
+    # --limit 0 / -N used to clamp silently to 1 result. Reject loudly.
+    rc = cli.main(["recall", "anything", "--limit", "0"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "limit" in err.lower()
+    rc = cli.main(["recall", "anything", "--limit", "-3"])
+    assert rc == 2
+
+
+def test_configure_interactive_api_key_uses_getpass(monkeypatch, capsys):
+    # The api_key prompt must not echo the secret to the terminal: it goes
+    # through getpass, never through the plain input() _prompt.
+    import getpass as getpass_mod
+    from daimon_briefing import configure as configure_mod, render as render_mod
+
+    monkeypatch.setattr(configure_mod, "status", lambda: {"ready": False})
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+    asked = []
+    answers = {"backend": "litellm", "base_url": "", "model": ""}
+
+    def fake_prompt(q):
+        asked.append(q)
+        for key, val in answers.items():
+            if key in q:
+                return val
+        return ""
+
+    monkeypatch.setattr(cli, "_prompt", fake_prompt)
+    monkeypatch.setattr(getpass_mod, "getpass", lambda prompt="": "sk-secret")
+
+    written = {}
+
+    def fake_write_env(updates):
+        written.update(updates)
+        return Path("/dev/null")
+
+    monkeypatch.setattr(configure_mod, "write_env", fake_write_env)
+    monkeypatch.setattr(render_mod, "render_configure", lambda st: None)
+
+    rc = cli.main(["configure"])
+    assert rc == 0
+    assert written.get("DAIMON_LLM_API_KEY") == "sk-secret"
+    assert not any("api_key" in q for q in asked)
+
+
+def test_team_sync_project_flag_warns_ignored(monkeypatch, capsys):
+    # `team sync --project` is accepted "for CLI symmetry" but does nothing —
+    # a scoped sync must say it's ignored, not silently sync everything.
+    from daimon_briefing import teamsync
+    monkeypatch.setattr(teamsync, "git_available", lambda: False)
+    rc = cli.main(["team", "sync", "--project", "/repo/x"])
+    assert rc == 0
+    assert "project" in capsys.readouterr().err.lower()

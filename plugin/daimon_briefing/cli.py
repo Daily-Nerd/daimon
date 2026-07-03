@@ -17,6 +17,7 @@
 """
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -296,6 +297,13 @@ def _cmd_brief(args) -> int:
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
     checkpoint = store.read_latest(project_dir=project)
+    # Label the global-pointer fallback (#29): status calls the same situation
+    # "global checkpoint (fallback)"; brief must not present another project's
+    # state as this project's without saying so.
+    proj_path = store.project_latest_path(project)
+    if checkpoint and proj_path is not None and not proj_path.exists():
+        print("⚠ no checkpoint for this project — showing the global "
+              "checkpoint (fallback), possibly another project's.")
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -316,6 +324,9 @@ def _cmd_recall(args) -> int:
     recall.search auto-(re)builds it — so the only hard failure surfaced here is
     an FTS5-less sqlite3 (rc 1, named); everything else degrades to no matches."""
     query = " ".join(args.query)
+    if args.limit < 1:
+        print(f"error: --limit must be >= 1 (got {args.limit})", file=sys.stderr)
+        return 2
     project = _resolve_project(args.project)
     try:
         results = recall.search(query, project_dir=project,
@@ -523,9 +534,14 @@ def _status_health(proj, glob, outstanding, siblings, *, now) -> dict:
 
     if outstanding:
         n = len(outstanding)
-        warnings.append(
-            f"{n} session{'s' if n != 1 else ''} failed to serialize — run 'daimon heal'"
-        )
+        msg = f"{n} session{'s' if n != 1 else ''} failed to serialize"
+        # Only point at heal when it can actually repair something (#29) —
+        # "run 'daimon heal'" followed by "nothing to heal" is a contradiction.
+        if any(f.get("class") == "healable" for f in outstanding):
+            msg += " — run 'daimon heal'"
+        else:
+            msg += " (not auto-repairable)"
+        warnings.append(msg)
 
     if not warnings:
         verdict = "✓ fresh"
@@ -821,6 +837,11 @@ def _cmd_team_sync(args) -> int:
     """rc 0 for every sync-nothing-to-do shape (no git, no remotes, offline);
     warnings go to stderr but never change the rc — a degraded sync is not a
     user error."""
+    if getattr(args, "project", None):
+        # Accepted for CLI symmetry only — say so instead of silently running
+        # a global sync the user thought was scoped (#29).
+        print("daimon team: --project is ignored — sync is project-agnostic "
+              "(all own checkpoints sync)", file=sys.stderr)
     if not teamsync.git_available():
         print("daimon team: git not found on PATH — sync skipped")
         return 0
@@ -908,7 +929,9 @@ def _cmd_configure(args) -> int:
         base_url = _prompt("base_url (blank for default): ").strip()
         if base_url:
             updates["DAIMON_LLM_BASE_URL"] = base_url
-        api_key = _prompt("api_key: ").strip()
+        # getpass, not _prompt (#29): the secret must not echo to the
+        # terminal or land in scrollback.
+        api_key = getpass.getpass("api_key: ").strip()
         if api_key:
             updates["DAIMON_LLM_API_KEY"] = api_key
         model = _prompt("model: ").strip()
