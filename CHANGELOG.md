@@ -5,6 +5,13 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3](https://github.com/Daily-Nerd/daimon/compare/v0.3.2...v0.3.3) (2026-07-03)
+
+
+### Documentation
+
+* propagate D-009 pivot to install-facing artifacts ([#20](https://github.com/Daily-Nerd/daimon/issues/20)) ([e7d5448](https://github.com/Daily-Nerd/daimon/commit/e7d5448f2310cb27751ee72231410383e39f0991)), closes [#19](https://github.com/Daily-Nerd/daimon/issues/19)
+
 ## [0.3.2](https://github.com/Daily-Nerd/daimon/compare/v0.3.1...v0.3.2) (2026-07-03)
 
 
