@@ -5,6 +5,13 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2](https://github.com/Daily-Nerd/daimon/compare/v0.3.1...v0.3.2) (2026-07-03)
+
+
+### Bug Fixes
+
+* **carry:** filter document-frequent terms from dedup identity ([#16](https://github.com/Daily-Nerd/daimon/issues/16)) ([5e593e2](https://github.com/Daily-Nerd/daimon/commit/5e593e264e1349ee6e0b40ff53270049b934f82f))
+
 ## [0.3.1](https://github.com/Daily-Nerd/daimon/compare/v0.3.0...v0.3.1) (2026-07-03)
 
 
