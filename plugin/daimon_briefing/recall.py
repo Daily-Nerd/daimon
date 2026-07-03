@@ -36,6 +36,7 @@ import os
 import re
 import sqlite3
 import time
+import unicodedata
 from pathlib import Path
 
 from . import config, scoring, store
@@ -429,7 +430,22 @@ they this those through too under until very was way well were what when
 where which while who why will with would you your yours
 please help want need fix add use using used code file files run running
 work working thing things stuff issue problem question trying still
+algo antes aqui asi aun bien cada casi como con cual cuando del desde donde
+ella ellos entre era ese esa eso esta estas este esto estos hace hacer hacia
+hasta hay las les los mas menos mientras misma mismo mucho muy nada nos
+nosotros otra otro para pero poco por porque pues que quien ser sin sobre
+son soy sus tal tambien tanto tener tiene toda todo todos una uno unos
+usted vamos
+favor ayuda ayudame necesito quiero puedes puedo podes dale arregla arreglar
+agrega agregar usa usar usando corre correr corriendo funciona funcionar
+codigo archivo archivos cosa cosas problema problemas pregunta preguntas
+tratando todavia entonces ahora gracias quizas intenta intentar
 """.split())
+# Spanish entries are stored diacritic-folded (tambien, not también) because
+# salient_terms folds tokens before the stopword check — one entry covers both
+# spellings. Both language bands mirror each other: function words plus the
+# imperative/filler band (favor/ayuda/necesito = please/help/need); scar #18
+# rule — do not drop beyond the frequency band the English list established.
 
 _TERM_CAP = 12          # enough signal for OR-matching, bounded query cost
 _MIN_TERMS = 2          # a one-word prompt is never a retrieval request
@@ -449,15 +465,24 @@ _KIND_TO_TYPE = {
 }
 
 
+def _fold(tok: str) -> str:
+    """Strip combining marks so terms align with what FTS5 stored: the index
+    uses unicode61 with its remove_diacritics default, so it holds "sesion"
+    for "sesión" — folded prompt terms match, raw accents never would."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", tok) if not unicodedata.combining(c))
+
+
 def salient_terms(prompt: str) -> list[str]:
     """Prompt -> deduped lowercase retrieval terms, prompt order preserved.
-    Tokens are alnum runs (code identifiers survive: auth_token -> auth_token
-    splits on nothing alphanumeric... underscores kept); <3 chars and stopwords
-    drop. Fewer than _MIN_TERMS remaining -> [] (callers stay silent)."""
+    Tokens are word runs (unicode: "sesión" stays one token, never "sesi"+"n";
+    code identifiers survive: auth_token stays whole), diacritic-folded to
+    match the FTS5 index; <3 chars and stopwords drop. Fewer than _MIN_TERMS
+    remaining -> [] (callers stay silent)."""
     out: list[str] = []
     seen = set()
-    for m in re.finditer(r"[A-Za-z0-9_][A-Za-z0-9_\-]*", prompt):
-        tok = m.group(0).lower()
+    for m in re.finditer(r"\w[\w\-]*", prompt):
+        tok = _fold(m.group(0)).lower()
         if len(tok) < 3 or tok in _STOPWORDS or tok in seen:
             continue
         seen.add(tok)
