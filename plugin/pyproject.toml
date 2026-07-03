@@ -1,6 +1,6 @@
 [project]
 name = "daimon-briefing"
-version = "0.2.0"
+version = "0.3.0"
 description = "Dream-briefing hermes plugin: cognitive checkpoint at session end, 'while you were away' briefing at session start. Slice 1 (local-file, no Honcho)."
 readme = "README.md"
 requires-python = ">=3.10"
