@@ -344,15 +344,16 @@ def _ensure_fresh() -> None:
         rebuild()
 
 
-def _match_expr(query: str) -> str | None:
+def _match_expr(query: str, join: str = " ") -> str | None:
     """User text -> a safe FTS5 MATCH expression: every whitespace token becomes
-    a quoted phrase (internal quotes doubled), joined by implicit AND. Bare
-    quotes/AND/OR/NEAR/parens/'*' thus match as words instead of erroring as
-    syntax. None when nothing searchable remains."""
+    a quoted phrase (internal quotes doubled), joined by implicit AND (or the
+    given operator, e.g. " OR " for the #25 fallback). Bare quotes/AND/OR/NEAR/
+    parens/'*' thus match as words instead of erroring as syntax. None when
+    nothing searchable remains."""
     parts = []
     for token in query.split():
         parts.append('"' + token.replace('"', '""') + '"')
-    return " ".join(parts) or None
+    return join.join(parts) or None
 
 
 def search(query: str, project_dir=None, all_projects: bool = False,
@@ -361,7 +362,12 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     bm25 rank, newest checkpoint first within equal rank. Scope: project_dir's
     slug unless all_projects (or the project is unknown — no filter then,
     matching read_team's semantics). Never raises on hostile query text;
-    raises RecallError only when FTS5 itself is unavailable."""
+    raises RecallError only when FTS5 itself is unavailable.
+
+    AND is primary; when a multi-term query matches nothing, the same quoted
+    tokens retry joined by OR (#25) — bm25 ranks items covering more terms
+    first, so a richer cue degrades to partial matches instead of zeroing out
+    (encoding specificity: more cue must never mean less recall)."""
     expr = _match_expr(query)
     if expr is None:
         return []
@@ -379,15 +385,16 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"
     )
-    params: list = [expr]
     if want is not None:
         sql += " AND i.project_slug = ?"
-        params.append(want)
     sql += (" ORDER BY (i.superseded_by IS NOT NULL) ASC, rank ASC,"
             " i.created DESC LIMIT ?")
-    params.append(max(1, int(limit)))
 
-    def _run() -> list[dict]:
+    def _run(match_expr: str) -> list[dict]:
+        params: list = [match_expr]
+        if want is not None:
+            params.append(want)
+        params.append(max(1, int(limit)))
         conn = sqlite3.connect(str(config.recall_db()))
         try:
             cur = conn.execute(sql, params)
@@ -396,8 +403,16 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         finally:
             conn.close()
 
+    def _query() -> list[dict]:
+        rows = _run(expr)
+        if not rows:
+            or_expr = _match_expr(query, " OR ")
+            if or_expr != expr:  # differs only when there are >=2 tokens
+                rows = _run(or_expr)
+        return rows
+
     try:
-        return _run()
+        return _query()
     except sqlite3.OperationalError as exc:
         if "fts5" in str(exc).lower() and "no such module" in str(exc).lower():
             raise RecallError(_FTS5_MISSING_MSG) from exc
@@ -410,7 +425,7 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         # OSError here too: disk-full mid-rebuild must not escape search().
         try:
             rebuild()
-            return _run()
+            return _query()
         except (OSError, sqlite3.DatabaseError):
             return []
 

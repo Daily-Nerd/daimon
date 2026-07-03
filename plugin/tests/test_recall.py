@@ -285,6 +285,64 @@ def test_empty_query_returns_empty(tmp_checkpoint_dir):
     assert recall.search("", all_projects=True) == []
 
 
+# ---- #25: AND-then-OR fallback — a richer cue must never zero out recall ----
+
+
+def test_multi_term_query_falls_back_to_or_when_and_matches_nothing(
+        tmp_checkpoint_dir, monkeypatch):
+    # Field find (2026-07-03): "science" hit, "ACB" hit, "science ACB" -> no
+    # matches. Strict AND punishes cue enrichment (encoding specificity says
+    # more cue should IMPROVE retrieval). When AND yields nothing, retry the
+    # same quoted tokens with OR and return ranked partial matches.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": "vulture research arc closed", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    store.write_checkpoint("S2", _cp("S2", decisions=[
+        {"text": "condor migration shipped", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    hits = recall.search("vulture condor", all_projects=True)
+    texts = " ".join(h["text"] for h in hits)
+    assert "vulture" in texts and "condor" in texts
+
+
+def test_and_semantics_stay_primary_when_terms_cooccur(
+        tmp_checkpoint_dir, monkeypatch):
+    # The fallback fires ONLY on an empty AND result: when one item holds all
+    # terms, precision wins and the single-term item must NOT dilute results.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": "osprey harrier combined rework", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    store.write_checkpoint("S2", _cp("S2", decisions=[
+        {"text": "osprey solo note", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    hits = recall.search("osprey harrier", all_projects=True)
+    assert [h["text"] for h in hits] == ["osprey harrier combined rework"]
+
+
+def test_or_fallback_respects_project_scope(tmp_checkpoint_dir, monkeypatch):
+    # Partial matches must not leak across projects: the fallback query keeps
+    # the same slug filter as the AND pass.
+    _write_team_file("grace", "S-x", _cp("S-x", decisions=[
+        {"text": "vulture decision in x", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    _write_team_file("grace", "S-y", _cp("S-y", decisions=[
+        {"text": "condor decision in y", "trust": "inferred"}]),
+        project_dir="/repo/y")
+    hits = recall.search("vulture condor", project_dir="/repo/x")
+    assert [h["text"] for h in hits] == ["vulture decision in x"]
+
+
+def test_single_term_miss_stays_empty(tmp_checkpoint_dir, monkeypatch):
+    # One token has no OR variant — a genuine miss stays a miss.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": "vulture research arc closed", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    assert recall.search("homework", all_projects=True) == []
+
+
 def test_search_empty_world_returns_empty(tmp_checkpoint_dir):
     # No checkpoints anywhere, no db — search must not invent or crash.
     assert recall.search("anything", all_projects=True) == []
