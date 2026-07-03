@@ -572,7 +572,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     for r in rows:
         if r["session_id"] in excluded:
             continue
-        haystack = f"{r['text']} {r['quote'] or ''}".lower()
+        # Fold the haystack like the terms (#27): salient_terms folds
+        # "sesión"->"sesion", so an unfolded haystack silences accented
+        # content that FTS5 (remove_diacritics) already matched.
+        haystack = _fold(f"{r['text']} {r['quote'] or ''}".lower())
         hit = {t for t in terms if t in haystack}
         if not hit:
             continue

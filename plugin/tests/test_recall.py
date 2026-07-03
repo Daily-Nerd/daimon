@@ -666,6 +666,58 @@ def test_suggest_includes_superseded_flagged_not_hidden(tmp_checkpoint_dir, monk
     assert out[0]["superseded_by"] == "S-newer"
 
 
+def test_suggest_matches_accented_spanish_content(tmp_checkpoint_dir, monkeypatch):
+    # #27: salient_terms folds diacritics (sesión -> sesion) but the overlap
+    # gate substring-tested folded terms against an UNFOLDED haystack, so a
+    # session whose only shared terms are accented was silenced even though
+    # FTS5 matched the row. Spanish-first content must surface like ASCII.
+    store.write_checkpoint(
+        "S-es",
+        _cp125("S-es", decisions=[{
+            "text": "Definimos la sesión de autenticación con tokens",
+            "trust": "verbatim", "importance": 8,
+            "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("quiero revisar la sesión de autenticación otra vez",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-es"
+
+
+def test_suggest_ascii_prompt_matches_accented_item(tmp_checkpoint_dir, monkeypatch):
+    # Users drop accents when typing fast: "sesion" must still hit "sesión".
+    store.write_checkpoint(
+        "S-es",
+        _cp125("S-es", decisions=[{
+            "text": "Definimos la sesión de autenticación con tokens",
+            "trust": "verbatim", "importance": 8,
+            "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("revisar la sesion de autenticacion otra vez",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-es"
+
+
+def test_suggest_accented_prompt_matches_ascii_item(tmp_checkpoint_dir, monkeypatch):
+    # Opposite direction: accented prompt, ASCII-stored item (folding already
+    # handled this via salient_terms — pin it so it never regresses).
+    store.write_checkpoint(
+        "S-ascii",
+        _cp125("S-ascii", decisions=[{
+            "text": "Definimos la sesion de autenticacion con tokens",
+            "trust": "verbatim", "importance": 8,
+            "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("quiero revisar la sesión de autenticación otra vez",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-ascii"
+
+
 def test_suggest_caps_at_two_distinct_sessions(tmp_checkpoint_dir, monkeypatch):
     for i, sid in enumerate(["S-a", "S-b", "S-c"]):
         _write_team_file(
