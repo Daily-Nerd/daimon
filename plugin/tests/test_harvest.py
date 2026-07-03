@@ -59,6 +59,43 @@ def test_detect_intentional_wins_within_a_sentence():
     assert hits[0].kind == "intentional"
 
 
+def test_detect_flags_spanish_avoidance():
+    # Assistants reply in Spanish to Spanish-speaking users; the detector must
+    # not go silent on them (#4).
+    msgs = [{"role": "assistant",
+             "content": "Evitá llamar resolve() dos veces en config.py. "
+                        "Nunca toques config.py durante el flush."}]
+    hits = harvest.detect(msgs)
+    assert len(hits) == 2
+    assert all(h.kind == "avoidance" for h in hits)
+
+
+def test_detect_flags_spanish_breakage_and_deadend():
+    msgs = [{"role": "assistant",
+             "content": "Ese enfoque se rompió con sesiones reales. "
+                        "Resultó ser un callejón sin salida."}]
+    hits = harvest.detect(msgs)
+    assert len(hits) == 2
+    assert all(h.kind == "avoidance" for h in hits)
+
+
+def test_detect_flags_spanish_intentional():
+    msgs = [{"role": "assistant",
+             "content": "Este cast parece incorrecto pero es intencional, debe quedarse."}]
+    hits = harvest.detect(msgs)
+    assert len(hits) == 1
+    assert hits[0].kind == "intentional"
+
+
+def test_detect_spanish_plain_prose_stays_silent():
+    # "no" is far more frequent in Spanish than "don't" in English — plain
+    # negation must not fire the avoidance class.
+    msgs = [{"role": "assistant",
+             "content": "La función no devuelve rutas absolutas. "
+                        "El resultado no incluye duplicados."}]
+    assert harvest.detect(msgs) == []
+
+
 def test_anchor_of_returns_existing_path(tmp_path):
     (tmp_path / "config.py").write_text("x = 1\n")
     hit = harvest.Hit("avoidance", "Avoid calling resolve() twice in config.py.", "", 0)
