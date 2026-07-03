@@ -9,6 +9,7 @@ caller injects clock and knobs (scar: a default wall-clock anywhere silently
 freezes time math under simulation)."""
 
 import copy
+from collections import Counter
 
 from . import recall, scoring, store
 
@@ -22,16 +23,41 @@ _CARRIED_KINDS = (
 
 _MIN_SHARED = 3     # shared salient terms for same-item
 _MIN_RATIO = 0.6    # or this fraction of the shorter term list
+_GENERIC_DF = 3     # a term shared by >=3 items of one kind is that kind's
+                    # vocabulary, not an item's identity. Filtering it out of
+                    # dedup stops generic overlap (data/field/validation, the
+                    # #13 live specimen) from forging a false merge. Computed
+                    # per kind per merge — no static stoplist, so carry stays
+                    # language-neutral (es i18n just shipped).
 
 
-def _same_item(a_text: str, b_text: str) -> bool:
+def _generic_terms(texts, k: int = _GENERIC_DF) -> frozenset:
+    """Salient terms appearing in >= k DISTINCT texts of one kind — that kind's
+    shared vocabulary, which dedup must ignore. Document frequency counts a term
+    once per text (set per text), so repetition inside one item can't inflate
+    it."""
+    df: Counter = Counter()
+    for t in texts:
+        df.update(set(recall.salient_terms(t)))
+    return frozenset(term for term, n in df.items() if n >= k)
+
+
+def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
     """Term-overlap identity: the serializer rewords constantly (run-01), so
     exact text misses twins. Shared >=3 salient terms, or >=60% of the shorter
-    list, means same item. Short texts (<2 salient terms) never fuzzy-match —
-    the exact-text guard still catches identical ones."""
-    a = set(recall.salient_terms(a_text))
-    b = set(recall.salient_terms(b_text))
-    if not a or not b:
+    list, means same item — but only AFTER subtracting `generic` (the kind's
+    document-frequent vocabulary), so overlap on common words can't merge
+    unrelated items.
+
+    Floor: if either filtered set has <2 terms, never fuzzy-match. This blocks a
+    single surviving shared term from passing the ratio path (1/1 = 1.0). The
+    bias is deliberate and asymmetric: a false merge erases a loop and forges
+    its birth stamp, while a false non-merge only costs a duplicate item — so
+    tie-break toward NOT merging. The exact-text guard still catches identical
+    items regardless."""
+    a = set(recall.salient_terms(a_text)) - generic
+    b = set(recall.salient_terms(b_text)) - generic
+    if len(a) < 2 or len(b) < 2:
         return False
     shared = len(a & b)
     return shared >= _MIN_SHARED or shared / min(len(a), len(b)) >= _MIN_RATIO
@@ -64,6 +90,12 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
             continue
         prev_items = (prev_cp.get(section) or {}).get(key) or []
         native_texts = {i.get("text") for i in native if isinstance(i, dict)}
+        # Generic vocabulary for THIS kind, from the same universe merge iterates
+        # (native + prev): terms this common are not identity, so dedup ignores
+        # them (#13). Computed once per kind, passed to every _same_item below.
+        generic = _generic_terms(
+            [str(i.get("text") or "") for i in native if isinstance(i, dict)]
+            + [str(i.get("text") or "") for i in prev_items if isinstance(i, dict)])
         carried = []
         for item in prev_items:
             if not isinstance(item, dict) or not str(item.get("text") or "").strip():
@@ -72,7 +104,8 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
             if text in native_texts:
                 continue  # exact twin already present (idempotency)
             twin = next((n for n in native if isinstance(n, dict)
-                         and _same_item(text, str(n.get("text") or ""))), None)
+                         and _same_item(text, str(n.get("text") or ""), generic)),
+                        None)
             if twin is not None:
                 # Session re-discussed it: the new wording wins, but the item's
                 # AGE does not reset (run-01: 8-12 resets/20 cycles killed the
