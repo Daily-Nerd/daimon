@@ -32,14 +32,35 @@ another project's scoped recall (same philosophy as store's pointer routing).
 
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
 import time
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, scoring, store
+
+log = logging.getLogger("daimon.recall")
+
+
+def _note_error(where: str, exc: BaseException) -> None:
+    """Breadcrumb for a swallowed index error (#28). Recall is fail-open by
+    design — a broken index degrades to [] — but silently, a broken recall is
+    indistinguishable from \"no prior work\". One line to recall-error.log
+    (read back by `daimon status`) plus a log.warning. Best-effort: the
+    breadcrumb itself must never break the swallow."""
+    log.warning("recall.%s swallowed %s: %s", where, type(exc).__name__, exc)
+    try:
+        d = config.log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with (d / "recall-error.log").open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {where}: {type(exc).__name__}: {exc}\n")
+    except OSError:
+        pass
 
 # v2 (#125): items grew importance + first_seen for suggest()'s ranking; the
 # version bump makes _ensure_fresh discard any v1 db and rebuild.
@@ -373,8 +394,8 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         return []
     try:
         _ensure_fresh()
-    except (OSError, sqlite3.Error):
-        pass  # disk trouble on a DERIVED index: try the query on what exists
+    except (OSError, sqlite3.Error) as exc:
+        _note_error("search.refresh", exc)  # then try the query on what exists
     want = None if all_projects else store.project_slug(project_dir)
 
     sql = (
@@ -426,7 +447,8 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         try:
             rebuild()
             return _query()
-        except (OSError, sqlite3.DatabaseError):
+        except (OSError, sqlite3.DatabaseError) as exc:
+            _note_error("search", exc)
             return []
 
 
@@ -544,8 +566,8 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
     try:
         _ensure_fresh()
-    except (OSError, sqlite3.Error):
-        pass
+    except (OSError, sqlite3.Error) as exc:
+        _note_error("suggest.refresh", exc)
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
         " i.session_id, i.created, i.importance, i.first_seen, i.superseded_by,"
@@ -561,7 +583,8 @@ def suggest(prompt: str, project_dir=None, current_session=None,
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
         finally:
             conn.close()
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        _note_error("suggest", exc)
         return []  # suggestion is opportunistic — any db trouble means silence
 
     # Pass 1: per-session distinct-term coverage. The overlap gate below is

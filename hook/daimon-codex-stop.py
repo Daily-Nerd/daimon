@@ -125,7 +125,8 @@ def main() -> int:
     try:
         lib.spawn_serialize(cli, transcript_path, child_env)
         _mark_spawned(session_id)
-        lib.log(f"codex-stop: spawned serialize for {session_id} (project: {cwd or '?'})")
+        lib.log(f"codex-stop: spawned serialize for {session_id} "
+                f"(project: {cwd or '?'}) (transcript: {transcript_path})")
     except OSError as exc:
         lib.log(f"codex-stop: spawn failed ({type(exc).__name__}: {exc})")
     return 0

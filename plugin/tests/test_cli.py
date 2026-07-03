@@ -657,7 +657,9 @@ def test_cli_status_json_shape(
     rc = cli.main(["status", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
-    assert set(data) == {"project", "global", "last_serialize", "outstanding", "siblings", "health", "team"}
+    assert set(data) == {"project", "global", "last_serialize", "outstanding",
+                         "siblings", "health", "team", "crash", "disabled",
+                         "skipped_recent", "recall_error"}
     assert data["team"] is None  # no team remote configured -> explicit null (#113)
     assert data["project"]["exists"] is True
     assert data["project"]["session_id"] == "S-prev"
@@ -2419,3 +2421,242 @@ def test_team_sync_project_flag_warns_ignored(monkeypatch, capsys):
     rc = cli.main(["team", "sync", "--project", "/repo/x"])
     assert rc == 0
     assert "project" in capsys.readouterr().err.lower()
+
+
+# ---- #28 S1: transcript path on spawn lines — hung sessions become healable ----
+
+
+def test_session_ledger_reads_transcript_from_spawn_line():
+    # A crashed/killed child never writes an error line, so the spawn line is
+    # the only place the transcript path can survive. The ledger must pick it
+    # up from there (#28).
+    text = ("2026-06-10T12:00:00Z session-end: spawned serialize for A "
+            "(reason: exit, project: /p/A) (transcript: /t/A.jsonl)")
+    led = cli._session_ledger(text, now=0.0)
+    assert led["A"]["transcript"] == "/t/A.jsonl"
+    assert led["A"]["project"] == "/p/A"  # project parse unaffected by the suffix
+    assert led["A"]["result_kind"] is None
+
+
+def test_outstanding_hung_with_live_transcript_is_healable():
+    # F1 (audit): kill -9 mid-serialize lost the checkpoint AND heal declared
+    # it unrepairable even though the transcript was still on disk. With the
+    # transcript recorded at spawn time, a hung session becomes healable.
+    ledger = {"X": _led(result_kind=None, result_line=None, spawn_age=3600)}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: True)
+    assert out[0]["kind"] == "hung"
+    assert out[0]["class"] == "healable"
+    assert out[0]["transcript"] == "/t/X.jsonl"
+
+
+def test_outstanding_hung_without_transcript_stays_hung():
+    ledger = {"X": _led(result_kind=None, result_line=None, spawn_age=3600,
+                        transcript=None)}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: True)
+    assert out[0]["class"] == "hung"
+
+
+def test_outstanding_hung_transcript_gone_stays_hung():
+    ledger = {"X": _led(result_kind=None, result_line=None, spawn_age=3600)}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: False)
+    assert out[0]["class"] == "hung"
+
+
+def test_outstanding_hung_already_retried_stays_hung():
+    # One-retry-ever policy (#26) applies to hung heals too: a healed-hung
+    # session that hangs again must not loop.
+    ledger = {"X": _led(result_kind=None, result_line=None, spawn_age=3600,
+                        retried=True)}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: True)
+    assert out[0]["class"] == "hung"
+
+
+def test_heal_plan_targets_hung_healable(tmp_checkpoint_dir, tmp_path):
+    # End-to-end through the pure plan: a hung spawn whose transcript is still
+    # on disk becomes the heal target instead of an unrepairable skip.
+    from datetime import datetime, timezone
+    transcript = tmp_path / "H.jsonl"
+    transcript.write_text("{}\n")
+    text = ("2026-06-10T12:00:00Z session-end: spawned serialize for H "
+            f"(reason: exit, project: /p/H) (transcript: {transcript})")
+    now = datetime(2026, 6, 10, 13, 0, 0, tzinfo=timezone.utc).timestamp()
+    plan = cli._heal_plan(text, now)
+    assert plan["target"] is not None
+    assert plan["target"]["sid"] == "H"
+    assert plan["target"]["transcript"] == str(transcript)
+
+
+# ---- #28 S2: serialize-crash.log stops being a write-only dead-drop ----
+
+
+def test_crash_log_info_missing_file_is_none(tmp_path):
+    assert cli._crash_log_info(tmp_path / "nope.log", now=0.0) is None
+
+
+def test_crash_log_info_empty_file_is_none(tmp_path):
+    p = tmp_path / "serialize-crash.log"
+    p.write_text("")
+    assert cli._crash_log_info(p, now=0.0) is None
+
+
+def test_crash_log_info_reports_last_line_and_age(tmp_path):
+    p = tmp_path / "serialize-crash.log"
+    p.write_text(
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 1, in <module>\n'
+        "OSError: [Errno 28] No space left on device\n"
+    )
+    import os
+    os.utime(p, (1000.0, 1000.0))
+    info = cli._crash_log_info(p, now=1300.0)
+    assert info["last_line"] == "OSError: [Errno 28] No space left on device"
+    assert info["age_seconds"] == 300
+    assert info["age"] == "5m"
+    assert info["path"] == str(p)
+
+
+def test_status_json_includes_crash_info(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import config, store
+    store.write_checkpoint("S1", sample_checkpoint)
+    crash = config.log_dir() / "serialize-crash.log"
+    crash.parent.mkdir(parents=True, exist_ok=True)
+    crash.write_text("RuntimeError: child exploded\n")
+    rc = cli.main(["status", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["crash"]["last_line"] == "RuntimeError: child exploded"
+
+
+def test_status_plain_shows_crash_line(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import config, store
+    store.write_checkpoint("S1", sample_checkpoint)
+    crash = config.log_dir() / "serialize-crash.log"
+    crash.parent.mkdir(parents=True, exist_ok=True)
+    crash.write_text("RuntimeError: child exploded\n")
+    rc = cli.main(["status"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "last serialize crash" in out.lower()
+    assert "RuntimeError: child exploded" in out
+
+
+def test_status_plain_no_crash_line_when_log_absent(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    rc = cli.main(["status"])
+    assert rc == 0
+    assert "last serialize crash" not in capsys.readouterr().out.lower()
+
+
+# ---- #28 S3+S4: disabled banner + skipped-session visibility ----
+
+
+def test_status_health_disabled_is_top_warning():
+    # F4 (audit): DAIMON_DISABLE=1 silently stops capture; status never said so.
+    h = cli._status_health(_proj(), {"exists": True, "same_session_as_project": True},
+                           [], [], now=1000.0, disabled=True)
+    assert h["ok"] is False
+    assert "DAIMON_DISABLE" in h["verdict"]
+    assert "capture is OFF" in h["verdict"]
+
+
+def test_status_health_not_disabled_unchanged():
+    h = cli._status_health(_proj(), {"exists": True, "same_session_as_project": True},
+                           [], [], now=1000.0, disabled=False)
+    assert h["ok"] is True
+
+
+def test_status_shows_disabled_banner(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    rc = cli.main(["status"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "DAIMON_DISABLE" in out and "capture is OFF" in out
+
+
+def test_status_json_reports_disabled(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    rc = cli.main(["status", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data["disabled"] is True
+
+
+def test_status_counts_recent_skipped_sessions(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    # F5 (audit): a too-short session skips serialize by design, but status
+    # implied the session was captured. Surface the count.
+    from daimon_briefing import store
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_log(tmp_log_dir, [
+        "2026-06-10T12:00:00Z session-end: spawned serialize for S-tiny (reason: exit, project: /p/A)",
+        "skipped serialize for S-tiny: too short (3 < 10 messages)",
+    ])
+    rc = cli.main(["status", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data["skipped_recent"] == 1
+    rc = cli.main(["status"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "skipped" in out and "too short" in out
+
+
+def test_status_no_skip_line_when_none(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    rc = cli.main(["status"])
+    assert "skipped" not in capsys.readouterr().out
+
+
+def test_status_surfaces_recall_error(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #28 S5: the recall breadcrumb must reach status, or it's a second
+    # dead-drop.
+    from daimon_briefing import config, store
+    store.write_checkpoint("S1", sample_checkpoint)
+    p = config.log_dir() / "recall-error.log"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("2026-07-03T10:00:00Z search: OSError: disk full\n")
+    rc = cli.main(["status", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert "disk full" in data["recall_error"]["last_line"]
+    rc = cli.main(["status"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "last recall error" in out
+
+
+def test_serialize_result_line_marks_llm_fallback(
+        tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, capsys, monkeypatch):
+    # #28 S6 (F2): a gateway outage silently swapped in the weaker command
+    # backend and stamped plain success. The result line — which status shows
+    # verbatim — must carry the downgrade.
+    from daimon_briefing import llm
+
+    def chat_with_fallback(*a, **k):
+        llm._fallback_used = True  # simulate llm.chat falling back mid-serialize
+        return fake_chat_factory(_valid_json("S-fb"))(*a, **k)
+
+    monkeypatch.setattr(cli, "_chat", chat_with_fallback)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[fallback backend]" in out
+    log_text = (tmp_log_dir / "serialize.log").read_text(encoding="utf-8")
+    assert "[fallback backend]" in log_text
+    # the marked line still parses as a success for status/ledger
+    led = cli._session_ledger(log_text, now=0.0)
+    assert led["sample_transcript"]["result_kind"] == "success"
+
+
+def test_serialize_result_line_clean_without_fallback(
+        tmp_checkpoint_dir, fake_chat_factory, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json("S-nf")))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
+    assert rc == 0
+    assert "[fallback backend]" not in capsys.readouterr().out

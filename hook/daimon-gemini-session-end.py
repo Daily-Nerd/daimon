@@ -89,7 +89,8 @@ def main() -> int:
         lib.spawn_serialize(cli, transcript_path, child_env)
         lib.log(
             f"gemini-session-end: spawned serialize for {session_id} "
-            f"(reason: {reason}, project: {cwd or '?'})"
+            f"(reason: {reason}, project: {cwd or '?'}) "
+            f"(transcript: {transcript_path})"
         )
     except OSError as exc:
         lib.log(f"gemini-session-end: spawn failed ({type(exc).__name__}: {exc})")

@@ -504,3 +504,23 @@ def test_prompt_hook_silent_when_lib_missing(tmp_checkpoint_dir, tmp_path):
                         "prompt": "debugging the litellm gateway cache again"},
                 tmp_path)
     assert proc.returncode == 0 and proc.stdout.strip() == ""
+
+
+def test_session_end_spawn_line_records_transcript(tmp_path, tmp_checkpoint_dir):
+    # #28: the spawn line must carry the transcript path — a child that
+    # crashes before writing a result line leaves no other pointer to it,
+    # and heal needs it to classify the hung session as healable.
+    fake_bin, _capture = _fake_cli(tmp_path)
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n")
+    payload = {
+        "session_id": "S-tr",
+        "transcript_path": str(transcript),
+        "cwd": "/Users/x/projA",
+        "reason": "exit",
+    }
+    proc = _run(END_HOOK, payload, tmp_path, extra_env={"PATH": str(fake_bin)})
+    assert proc.returncode == 0
+    log = tmp_path / ".daimon" / "logs" / "serialize.log"
+    content = _wait_for_text(log, "spawned serialize for S-tr")
+    assert f"(transcript: {transcript})" in content
