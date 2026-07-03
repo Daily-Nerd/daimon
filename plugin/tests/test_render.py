@@ -323,7 +323,12 @@ def test_render_brief_honors_llm_briefing_when_present(monkeypatch, sample_check
     # narrative (same source of truth as the hermes hook), not the deterministic text.
     from daimon_briefing import briefing
     monkeypatch.setattr(briefing.config, "llm_briefing", lambda: True)
-    monkeypatch.setattr(briefing, "_render_llm", lambda cp: "LLM-NARRATIVE-SENTINEL")
+    # #30 post-validation: the fake LLM narrative must keep every verbatim
+    # quote intact or the render path (correctly) rejects it.
+    sentinel = ('LLM-NARRATIVE-SENTINEL — "I\'ll merge it myself later from '
+                'the GitHub UI" / "do we chunk below 1200 lines or '
+                'single-pass?" / "we adopt the D-007 prompt for the serializer"')
+    monkeypatch.setattr(briefing, "_render_llm", lambda cp: sentinel)
     # plain path (autouse DAIMON_PLAIN=1 keeps supports_rich False)
     render.render_brief(sample_checkpoint)
     out = capsys.readouterr().out

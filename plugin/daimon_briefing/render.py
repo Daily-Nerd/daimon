@@ -35,7 +35,16 @@ def supports_rich() -> bool:
     return True
 
 
-_TRUST_STYLE = {"verbatim": "bold green", "inferred": "yellow"}
+_TRUST_STYLE = {"verbatim": "bold green", "inferred": "yellow", "untagged": "dim"}
+
+
+def _trust_key(item) -> str:
+    """Three-way trust class for styling (#30): missing/empty trust is
+    "untagged", never presented as a confident "inferred"."""
+    trust = item.get("trust")
+    if trust == "verbatim":
+        return "verbatim"
+    return "inferred" if trust else "untagged"
 
 _SECTIONS = [
     ("external", "⚠ VERIFY BEFORE TRUSTING", "red"),
@@ -127,7 +136,7 @@ def _rich_brief(b: dict) -> None:
             continue
         body = Text()
         for i in items:
-            trust = "verbatim" if i.get("trust") == "verbatim" else "inferred"
+            trust = _trust_key(i)
             body.append(f"• {i.get('text', '').strip()}\n", style=_TRUST_STYLE[trust])
             quote = i.get("quote", "").strip()
             if quote:
@@ -193,7 +202,7 @@ def _rich_teammates(teammates) -> None:
         if decisions:
             body.append("Decisions made:\n", style="bold")
             for i in decisions:
-                trust = "verbatim" if i.get("trust") == "verbatim" else "inferred"
+                trust = _trust_key(i)
                 body.append(f"• {i.get('text', '').strip()}\n", style=_TRUST_STYLE[trust])
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:

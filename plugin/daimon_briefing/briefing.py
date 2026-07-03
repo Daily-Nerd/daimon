@@ -11,17 +11,28 @@ beliefs, then uncertainties, then contradictions flagged. Verbatim items are mar
 distinctly from inferred ones.
 """
 
+import logging
 import re
 import time
 
 from . import config, llm, scoring
 
+log = logging.getLogger("daimon.briefing")
+
 _VERBATIM_MARK = "✓ verbatim"
 _INFERRED_MARK = "~ inferred"
+_UNTAGGED_MARK = "? untagged"
 
 
 def _mark(item) -> str:
-    return _VERBATIM_MARK if item.get("trust") == "verbatim" else _INFERRED_MARK
+    # A missing/empty trust class renders as "untagged", never as a confident
+    # "inferred" the item never earned (#30) — the recall CLI already agrees.
+    trust = item.get("trust")
+    if trust == "verbatim":
+        return _VERBATIM_MARK
+    if trust:
+        return _INFERRED_MARK
+    return _UNTAGGED_MARK
 
 
 def _line(item) -> str:
@@ -163,11 +174,16 @@ def render_plain(b: dict) -> str:
     if not budget or estimate_tokens(text) <= budget:
         return text
 
-    # Stage 1: shorten monster items in place of dropping them.
+    # Stage 1: shorten monster items in place of dropping them. Verbatim text
+    # is exempt (#30) — the #23 freeze made it immutable in carry, and a
+    # render that rewrites it under budget pressure breaks the same guarantee.
+    # An oversized verbatim item can still be DROPPED whole in stage 2
+    # (announced by the trim note); it is never rewritten.
     b = dict(b)
     for key, _end in _DROP_ORDER:
         b[key] = [
-            {**i, "text": truncate_preserving_sections(
+            i if i.get("trust") == "verbatim"
+            else {**i, "text": truncate_preserving_sections(
                 i.get("text", ""), _ITEM_TRUNCATE_CHARS)}
             for i in (b.get(key) or [])
         ]
@@ -231,16 +247,46 @@ def _render_parts(b: dict, trimmed: dict) -> str:
     return "\n".join(parts)
 
 
+def _iter_trusted_quotes(checkpoint):
+    """Yield every verbatim item's quote across the cognitive sections."""
+    wc = checkpoint.get("working_context") or {}
+    es = checkpoint.get("epistemic_snapshot") or {}
+    for items in (wc.get("open_questions"), wc.get("recent_decisions"),
+                  es.get("strong_beliefs"), es.get("uncertainties"),
+                  es.get("contradictions_flagged")):
+        for item in items or []:
+            if (isinstance(item, dict) and item.get("trust") == "verbatim"
+                    and str(item.get("quote") or "").strip()):
+                yield str(item["quote"]).strip()
+
+
+def _validate_llm_render(rendered: str, checkpoint) -> bool:
+    """The mechanical check the deterministic render gets for free (#30): every
+    verbatim quote must survive the LLM's prose INTACT. Whitespace-normalized
+    on both sides — LLMs re-wrap lines, and a re-wrapped quote is still the
+    exact wording. Any lost or mutated quote fails the whole render; the
+    verbatim/inferred distinction is a guarantee, not a request."""
+    haystack = re.sub(r"\s+", " ", rendered)
+    for quote in _iter_trusted_quotes(checkpoint):
+        if re.sub(r"\s+", " ", quote) not in haystack:
+            return False
+    return True
+
+
 def render(checkpoint) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
-    LLM rendering is opt-in (DAIMON_LLM_BRIEFING) and falls back to deterministic."""
+    LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
+    quote integrity, and falls back to deterministic on any doubt."""
     b = build(checkpoint)
     if b is None:
         return None
     if config.llm_briefing():
         rendered = _render_llm(checkpoint)
         if rendered:
-            return rendered
+            if _validate_llm_render(rendered, checkpoint):
+                return rendered
+            log.warning("llm briefing dropped a verbatim quote — "
+                        "falling back to the deterministic render")
     return render_plain(b)
 
 
