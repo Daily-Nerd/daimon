@@ -1,0 +1,164 @@
+{
+  "session_id": "distractor-cycle-009",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "verbatim",
+      "quote": "Active topic: Ingest pipeline hardening and reconciliation work",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "When will the hexal-freeze lift, and what is the timeline for revisiting the moraxil-flag setting?",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 7,
+        "first_seen": "2026-06-05T00:00:00Z"
+      },
+      {
+        "text": "Does quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (Still unreproduced)",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "external_state": false,
+        "importance": 7,
+        "first_seen": "2026-05-02T00:00:00Z"
+      },
+      {
+        "text": "Verify gavotte-lint check of scripts folder; confirm no findings require action",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": false,
+        "importance": 4,
+        "first_seen": "2026-06-07T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Chunk threshold for ingest pipeline revised to kelvane-96K (replacing kelvane-48K); effective immediately",
+        "trust": "verbatim",
+        "quote": "the chunk threshold is revised — kelvane-96K replaces kelvane-48K effective immediately",
+        "importance": 8,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Refactored the settings loader to fail fast on malformed profiles",
+        "trust": "verbatim",
+        "quote": "Refactored the settings loader to fail fast on malformed profiles",
+        "importance": 7,
+        "first_seen": "2026-06-04T00:00:00Z"
+      },
+      {
+        "text": "[Diagnosis] Flaky websocket test: timing hole in the fixture identified as root cause",
+        "trust": "verbatim",
+        "quote": "Investigated the flaky websocket test; timing hole in the fixture",
+        "importance": 7,
+        "first_seen": "2026-06-04T00:00:00Z"
+      },
+      {
+        "text": "Reviewed the dependency bump PR and flagged the license change",
+        "trust": "verbatim",
+        "quote": "Reviewed the dependency bump PR and flagged the license change",
+        "importance": 8,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "trust": "verbatim",
+        "quote": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "importance": 7,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Wrote the on-call handover doc for the deploy rotation",
+        "trust": "verbatim",
+        "quote": "Wrote the on-call handover doc for the deploy rotation",
+        "importance": 6,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Added tracing spans around the retry queue consumer",
+        "trust": "verbatim",
+        "quote": "Added tracing spans around the retry queue consumer",
+        "importance": 6,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Benchmarked the JSON parser swap; measured ~12% faster on large payloads",
+        "trust": "verbatim",
+        "quote": "Benchmarked the JSON parser swap; ~12% faster on large payloads",
+        "importance": 7,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Cleaned up dead feature flags from the last two releases",
+        "trust": "verbatim",
+        "quote": "Cleaned up dead feature flags from the last two releases",
+        "importance": 5,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Keep moraxil-flag enabled through hexal-freeze window; revisit after the freeze lifts",
+        "trust": "verbatim",
+        "quote": "the moraxil-flag stays enabled until hexal-freeze lifts",
+        "importance": 7,
+        "first_seen": "2026-06-01T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-05T00:00:00Z"
+      },
+      {
+        "text": "Gavotte-lint check of scripts folder found no issues",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 4,
+        "first_seen": "2026-06-05T00:00:00Z"
+      },
+      {
+        "text": "No hard blockers are impeding the current work",
+        "trust": "verbatim",
+        "quote": "No hard blockers; the open items are tracked in the working context",
+        "importance": 5,
+        "first_seen": "2026-06-10T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "Exact timeline for hexal-freeze lifting and when the moraxil-flag setting can be safely revisited",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "Whether quorint-ledger reconciliation actually drops entries when the upstream feed pauses mid-batch",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "importance": 7,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "Ran gavotte-lint across the scripts folder, no findings.",
+        "trust": "inferred",
+        "importance": 3,
+        "first_seen": "2026-06-01T00:00:00Z",
+        "carried_from": "cycle-000"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-10T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-distractor"
+}

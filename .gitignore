@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets / local env — never commit; runtime config lives in ~/.daimon/env
+.env
+.env.*
+
+# Agent/session-local state (telemetry, agent memory, local settings)
+.claude/
+
+# Benchmark artifacts (research/memory-backend, folded from context-as-program)
+# Keep results.json / report.md summaries; never commit regenerable caches or logs.
+.llm_cache/
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# scar false-positive telemetry — local-only, narrates private sessions by construction
+.scars/candidates/fp-log.txt

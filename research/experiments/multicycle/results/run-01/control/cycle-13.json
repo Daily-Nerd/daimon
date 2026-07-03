@@ -1,0 +1,65 @@
+{
+  "session_id": "control-cycle-013",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "inferred",
+      "quote": "",
+      "importance": 7,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (Still unreproduced.)",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "external_state": true,
+        "importance": 8,
+        "first_seen": "2026-06-08T00:00:00Z"
+      },
+      {
+        "text": "What are the true implications and completeness of the gavotte-lint check that ran across the scripts folder, which reported zero findings?",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 5,
+        "first_seen": "2026-06-12T00:00:00Z"
+      },
+      {
+        "text": "When will the hexal-freeze window lift, and what specific action should be taken to revisit the moraxil-flag behavior at that time?",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 6,
+        "first_seen": "2026-06-03T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Keep this session short and wrap up in-flight notes",
+        "trust": "verbatim",
+        "quote": "Let's keep the session short today.",
+        "importance": 3,
+        "first_seen": "2026-06-14T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load.",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-13T00:00:00Z"
+      }
+    ],
+    "uncertainties": [],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-14T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-control"
+}

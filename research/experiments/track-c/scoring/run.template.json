@@ -1,0 +1,10 @@
+{
+  "_instructions": "Copy to runs/<pair>.run.json. Fill extracted_claims from prompts/01-extract output (merge both sessions, add timestamp + id + audit is_belief). Label gold_contradictions and evolution_pairs per scoring/rubric.md. Then: uv run pipeline/run.py runs/<pair>.run.json. Delete _instructions when done. See fixtures/evolution-pairs.json for a worked example.",
+  "session_pair": "S1xS3",
+  "extracted_claims": [
+    { "id": "c1", "subject": "topic.key", "stance": "position-a", "timestamp": 1, "validity": { "type": "ongoing" }, "is_belief": true, "quote": "" },
+    { "id": "c2", "subject": "topic.key", "stance": "position-b", "timestamp": 3, "validity": { "type": "ongoing" }, "is_belief": true, "quote": "" }
+  ],
+  "gold_contradictions": [],
+  "evolution_pairs": [["c1", "c2"]]
+}

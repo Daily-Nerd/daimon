@@ -1,0 +1,143 @@
+{
+  "session_id": "distractor-cycle-004",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "verbatim",
+      "quote": "Active topic: Ingest pipeline hardening and reconciliation work",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced bug)",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced)",
+        "external_state": true,
+        "importance": 9,
+        "first_seen": "2026-06-04T00:00:00Z"
+      },
+      {
+        "text": "After hexal-freeze lifts: Revisit the moraxil-flag setting and decide whether to keep it enabled or disable it",
+        "trust": "verbatim",
+        "quote": "After hexal-freeze lifts: Revisit the moraxil-flag setting and decide whether to keep it enabled or disable it",
+        "external_state": true,
+        "importance": 6,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Apply fix for timing hole in websocket test fixture; fix not yet applied or described",
+        "trust": "verbatim",
+        "quote": "fix not yet applied or described",
+        "external_state": true,
+        "importance": 7,
+        "first_seen": "2026-06-05T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Keep the moraxil-flag enabled through the hexal-freeze window; revisit after the freeze lifts",
+        "trust": "verbatim",
+        "quote": "the moraxil-flag stays enabled until hexal-freeze lifts",
+        "importance": 6,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Tidied the plimsol-notes formatting in the wiki",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 3,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Wrote the on-call handover doc for the deploy rotation",
+        "trust": "verbatim",
+        "quote": "Wrote the on-call handover doc for the deploy rotation",
+        "importance": 4,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Benchmarked the JSON parser swap; ~12% faster on large payloads",
+        "trust": "verbatim",
+        "quote": "Benchmarked the JSON parser swap; ~12% faster on large payloads",
+        "importance": 5,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Cleaned up dead feature flags from the last two releases",
+        "trust": "verbatim",
+        "quote": "Cleaned up dead feature flags from the last two releases",
+        "importance": 4,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Added tracing spans around the retry queue consumer",
+        "trust": "verbatim",
+        "quote": "Added tracing spans around the retry queue consumer",
+        "importance": 4,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Reviewed the dependency bump PR and flagged the license change",
+        "trust": "verbatim",
+        "quote": "Reviewed the dependency bump PR and flagged the license change",
+        "importance": 5,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "trust": "verbatim",
+        "quote": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "importance": 5,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Refactored the settings loader to fail fast on malformed profiles",
+        "trust": "verbatim",
+        "quote": "Refactored the settings loader to fail fast on malformed profiles",
+        "importance": 5,
+        "first_seen": "2026-06-04T00:00:00Z"
+      },
+      {
+        "text": "[Diagnosis] Investigated the flaky websocket test; identified timing hole in the fixture",
+        "trust": "verbatim",
+        "quote": "Investigated the flaky websocket test; timing hole in the fixture",
+        "importance": 7,
+        "first_seen": "2026-06-05T00:00:00Z"
+      },
+      {
+        "text": "Keep session intentionally short; wrap up and prepare handoff checkpoint",
+        "trust": "verbatim",
+        "quote": "Let's keep the session short today",
+        "importance": 3,
+        "first_seen": "2026-06-05T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 7,
+        "first_seen": "2026-06-02T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "Whether the quorint-ledger reconciliation drops entries when the upstream feed pauses mid-batch",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced)",
+        "importance": 9,
+        "first_seen": "2026-06-04T00:00:00Z"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-05T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-distractor"
+}

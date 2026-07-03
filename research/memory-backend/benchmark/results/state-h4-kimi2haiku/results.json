@@ -1,0 +1,1730 @@
+{
+  "scenarios": [
+    {
+      "scenario": "infra-migration",
+      "domain": "software_infra",
+      "methods": {
+        "raw": {
+          "context_tokens": 259,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "Kubernetes. The team decided against migrating to Nomad due to migration risk.",
+              "correct": false,
+              "has_gold": true,
+              "stale": true
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12 engineers.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 100,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "Kubernetes. The decision is final, with the reasoning that migration risk is not worth it.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12 engineers",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 93,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "Staying on Kubernetes. The planned migration to Nomad has been abandoned after a spike demonstrated the migration risk wasn't worth it.",
+              "correct": false,
+              "has_gold": true,
+              "stale": true
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12 engineers",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "No orchestration decision recorded in memory.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12 engineers",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "product-roadmap",
+      "domain": "product_management",
+      "methods": {
+        "raw": {
+          "context_tokens": 201,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "Billing revamp.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "Usage-based pricing.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 64,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "billing_revamp",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "Usage-based pricing.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 58,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "The billing revamp with usage-based pricing is the current flagship feature for the release.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "Usage-based pricing (incoming in the next release as part of a billing revamp).",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "Billing revamp.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "Usage-based pricing.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "care-plan",
+      "domain": "clinical_fiction",
+      "methods": {
+        "raw": {
+          "context_tokens": 176,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil 75mg once daily.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "Betoxil 75mg once daily.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "2026-07-28 (6 weeks from today, 2026-06-16)",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 101,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil 75mg once daily",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "75mg once daily",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "The follow-up is scheduled for 6 weeks from today, which is July 28, 2026.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 47,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil 75mg once daily",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "Betoxil 75mg once daily",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "6-week follow-up confirmed.\n\n(Based on today's date of 2026-06-16, this would be approximately 2026-07-28.)",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "Alfarin 50mg once daily and Betoxil 75mg once daily.",
+              "correct": false,
+              "has_gold": true,
+              "stale": true
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "6 weeks from today (2026-06-16), which is approximately **July 28, 2026**.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "assistant-prefs",
+      "domain": "personal_assistant",
+      "methods": {
+        "raw": {
+          "context_tokens": 190,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "Vegan.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "Afternoons.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "Slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 37,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "Vegan",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "Afternoons",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "Slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 35,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "Vegan diet.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "Afternoons.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "Slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO (San Francisco International Airport)",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "Vegan.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "Afternoons",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "Slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "vendor-selection",
+      "domain": "procurement",
+      "methods": {
+        "raw": {
+          "context_tokens": 170,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Braintree.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24 months",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 86,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Braintree",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24 months",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 47,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Braintree",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24 months",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Stripe is the initial pick for the payments vendor, though a full evaluation is still underway.",
+              "correct": false,
+              "has_gold": false,
+              "stale": true
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24 months",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "office-relocation",
+      "domain": "operations",
+      "methods": {
+        "raw": {
+          "context_tokens": 170,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40 people.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 43,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40 people",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 48,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40 people",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40 people",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "team-leads",
+      "domain": "org_management",
+      "methods": {
+        "raw": {
+          "context_tokens": 164,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "Tobias currently leads the mobile team.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "Marisol leads the web team.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "5 engineers on the mobile team.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 33,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "This information is not available in the provided memory. The memory only indicates that the mobile team has 5 engineers, but does not contain data about who leads the mobile team.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "The memory provided does not contain information about who currently leads the web team.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "5 engineers",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 40,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "The memory does not specify who currently leads the mobile team. It only states that the mobile team has 5 engineers and has \"new leads,\" but the specific leader's name or identity is not provided.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "Based on the provided memory, the specific person who currently leads the web team is not identified. The memory only states that the web team of 7 engineers \"have new leads,\" but does not specify who those leads are.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "5 engineers are on the mobile team.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "Tobias leads the mobile team.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "Marisol leads the web team.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "5 engineers",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "research-grant",
+      "domain": "academia",
+      "methods": {
+        "raw": {
+          "context_tokens": 223,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "1.2 million over three years.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "Dr. Okafor",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 165,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "1.2 million over three years",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "Dr. Okafor",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 95,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "$1.2 million",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "Dr. Okafor",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "$1.2 million",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "CURRENT-STATE ANSWER:\n\nNot specified in the provided memory. The memory indicates the lab is applying to the Hartwell Foundation but does not identify who the PI is.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "deploy-regions",
+      "domain": "software_infra",
+      "methods": {
+        "raw": {
+          "context_tokens": 157,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Stockholm",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "Virginia",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 84,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Stockholm",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "Virginia",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 53,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Stockholm",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "Virginia",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Frankfurt",
+              "correct": false,
+              "has_gold": false,
+              "stale": true
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "US traffic currently serves from Virginia.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "sales-quota",
+      "domain": "sales_ops",
+      "methods": {
+        "raw": {
+          "context_tokens": 150,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175 units per rep.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "80 dollars per unit",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8 percent",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 415,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175 units",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "**$80 per unit**",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8 percent",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 36,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175 units per rep",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "$80 per unit",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175 units per rep.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "80 dollars per unit",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "trial-protocol",
+      "domain": "clinical_fiction",
+      "methods": {
+        "raw": {
+          "context_tokens": 188,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "Trial suspended due to safety concerns (liver enzyme elevations). Enrollment and all activities halted effective immediately.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "120 participants (trial suspended, target unchanged on paper).",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian Research",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 91,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "The Xelorin trial (Phase II) is currently **suspended** as of today due to a safety issue involving liver enzyme elevations. Enrollment has been halted.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "The enrollment target for Xelorin is **120**.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian Research",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 87,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "**Current Status:** The Phase II Xelorin trial is **suspended** due to safety concerns (liver enzyme elevations flagged by the safety board). All activity and enrollment have halted, though the enrollment target of 120 participants across 4 sites remains available for potential resumption.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "120 participants across 4 sites",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian Research is the CRO handling trial logistics.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "Trial suspended due to safety board flagging liver enzyme elevations.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "The enrollment target is 120.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian Research.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "project-rename",
+      "domain": "software_infra",
+      "methods": {
+        "raw": {
+          "context_tokens": 163,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "Dmitri owns Heron.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 71,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "Dmitri owns the project.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 34,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "Dmitri",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "Dmitri",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "aggregate": {
+    "raw": {
+      "overall_accuracy": 0.9736842105263158,
+      "gold_recall": 1.0,
+      "override_accuracy": 0.9545454545454546,
+      "staleness_rate": 0.045454545454545456,
+      "mean_context_tokens": 184.2,
+      "n_probes": 38,
+      "n_override_probes": 22
+    },
+    "csl": {
+      "overall_accuracy": 0.9473684210526315,
+      "gold_recall": 0.9473684210526315,
+      "override_accuracy": 0.9090909090909091,
+      "staleness_rate": 0.0,
+      "mean_context_tokens": 107.5,
+      "n_probes": 38,
+      "n_override_probes": 22
+    },
+    "summary": {
+      "overall_accuracy": 0.8947368421052632,
+      "gold_recall": 0.9210526315789473,
+      "override_accuracy": 0.8636363636363636,
+      "staleness_rate": 0.045454545454545456,
+      "mean_context_tokens": 56.1,
+      "n_probes": 38,
+      "n_override_probes": 22
+    },
+    "rag-append": {
+      "overall_accuracy": 0.868421052631579,
+      "gold_recall": 0.8947368421052632,
+      "override_accuracy": 0.8181818181818182,
+      "staleness_rate": 0.13636363636363635,
+      "mean_context_tokens": 300.0,
+      "n_probes": 38,
+      "n_override_probes": 22
+    }
+  },
+  "metadata": {
+    "update_model": "kimi-k2.6",
+    "answer_model": "claude-haiku-4-5-via-meridian",
+    "budget": 300,
+    "n_scenarios": 12,
+    "with_graphiti": false,
+    "elapsed_seconds": 6415.9
+  }
+}

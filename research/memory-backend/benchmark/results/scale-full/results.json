@@ -1,0 +1,142 @@
+{
+  "tier_aggregates": {
+    "2000": {
+      "raw": {
+        "overall_accuracy": 1.0,
+        "gold_recall": 1.0,
+        "override_accuracy": 1.0,
+        "staleness_rate": 0.0,
+        "mean_context_tokens": 2964.8,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 1.0
+      },
+      "csl": {
+        "overall_accuracy": 0.9210526315789473,
+        "gold_recall": 0.9210526315789473,
+        "override_accuracy": 0.9090909090909091,
+        "staleness_rate": 0.09090909090909091,
+        "mean_context_tokens": 286.6,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 10.34
+      },
+      "summary": {
+        "overall_accuracy": 0.868421052631579,
+        "gold_recall": 0.868421052631579,
+        "override_accuracy": 0.9545454545454546,
+        "staleness_rate": 0.0,
+        "mean_context_tokens": 214.9,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 13.8
+      },
+      "rag-append": {
+        "overall_accuracy": 0.8157894736842105,
+        "gold_recall": 0.8421052631578947,
+        "override_accuracy": 0.7727272727272727,
+        "staleness_rate": 0.18181818181818182,
+        "mean_context_tokens": 300.0,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 9.88
+      }
+    },
+    "15000": {
+      "raw": {
+        "overall_accuracy": 1.0,
+        "gold_recall": 1.0,
+        "override_accuracy": 1.0,
+        "staleness_rate": 0.0,
+        "mean_context_tokens": 16093.5,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 1.0
+      },
+      "csl": {
+        "overall_accuracy": 0.868421052631579,
+        "gold_recall": 0.8947368421052632,
+        "override_accuracy": 0.9090909090909091,
+        "staleness_rate": 0.045454545454545456,
+        "mean_context_tokens": 541.9,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 29.7
+      },
+      "summary": {
+        "overall_accuracy": 0.7631578947368421,
+        "gold_recall": 0.7894736842105263,
+        "override_accuracy": 0.8181818181818182,
+        "staleness_rate": 0.045454545454545456,
+        "mean_context_tokens": 281.8,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 57.11
+      },
+      "rag-append": {
+        "overall_accuracy": 0.7631578947368421,
+        "gold_recall": 0.7631578947368421,
+        "override_accuracy": 0.7272727272727273,
+        "staleness_rate": 0.18181818181818182,
+        "mean_context_tokens": 300.0,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 53.65
+      }
+    },
+    "60000": {
+      "raw": {
+        "overall_accuracy": 0.7368421052631579,
+        "gold_recall": 0.9473684210526315,
+        "override_accuracy": 0.5454545454545454,
+        "staleness_rate": 0.4090909090909091,
+        "mean_context_tokens": 66613.1,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 1.0
+      },
+      "csl": {
+        "overall_accuracy": 0.5263157894736842,
+        "gold_recall": 0.5263157894736842,
+        "override_accuracy": 0.5454545454545454,
+        "staleness_rate": 0.0,
+        "mean_context_tokens": 622.4,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 107.03
+      },
+      "summary": {
+        "overall_accuracy": 0.3684210526315789,
+        "gold_recall": 0.3684210526315789,
+        "override_accuracy": 0.36363636363636365,
+        "staleness_rate": 0.0,
+        "mean_context_tokens": 452.4,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 147.24
+      },
+      "rag-append": {
+        "overall_accuracy": 0.7631578947368421,
+        "gold_recall": 0.7631578947368421,
+        "override_accuracy": 0.7727272727272727,
+        "staleness_rate": 0.13636363636363635,
+        "mean_context_tokens": 300.0,
+        "n_probes": 38,
+        "n_override_probes": 22,
+        "compression_ratio": 222.04
+      }
+    }
+  },
+  "metadata": {
+    "tiers": [
+      2000,
+      15000,
+      60000
+    ],
+    "update_model": "claude-haiku-4-5-via-meridian",
+    "answer_model": "claude-haiku-4-5-via-meridian",
+    "budget": 300,
+    "n_scenarios": 12,
+    "elapsed_seconds": 1116.8
+  }
+}

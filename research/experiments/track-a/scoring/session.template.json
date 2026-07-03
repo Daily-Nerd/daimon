@@ -1,0 +1,16 @@
+{
+  "_instructions": "Per-session scoring input. Copy to runs/SN/session-SN.score.json. `ground_truth_items` come from your ground-truth.json with a `recalled` bool added. `reconstruction_claims` are the distinct PART-1 claims with a `grounded` bool. Optional per recalled item: `stale` bool (Q-STALE, Pass 3) — true if the reconstruction pins a quote/value superseded later in the same session; check the TRANSCRIPT's latest state, not the answer key. Omit `stale` when there is no pinnable state. See scoring/rubric.md. Delete _instructions when done.",
+  "session_id": "S1",
+  "ground_truth_items": [
+    { "id": "gt1", "type": "open_question", "trust": "verbatim", "recalled": true },
+    { "id": "gt2", "type": "decision", "trust": "verbatim", "recalled": true, "stale": false },
+    { "id": "gt3", "type": "belief", "trust": "inferred", "recalled": false },
+    { "id": "gt4", "type": "uncertainty", "trust": "verbatim", "recalled": true },
+    { "id": "gt5", "type": "active_topic", "trust": "inferred", "recalled": true }
+  ],
+  "reconstruction_claims": [
+    { "id": "r1", "text": "JWT migration still open", "grounded": true },
+    { "id": "r2", "text": "decided to keep bcrypt", "grounded": true },
+    { "id": "r3", "text": "you committed to a GraphQL rewrite", "grounded": false }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "_doc": "Synthetic self-test for the Track C pipeline. NOT real user data — hand-authored to exercise the interval logic. It contains: (1) a belief EVOLUTION (c1->c2, sequential timestamps, must be SUPERSEDED not flagged); (2) two true CONTRADICTIONS (c5/c6 asserted concurrently; c7/c8 with overlapping explicit 'always/never' intervals); (3) a same-stance non-conflict (c3/c4); (4) one NOISE claim (n1) the disambiguation gate should have dropped, to exercise BEP. Expected verdict: PASS.",
+  "session_pair": "SYNTHETIC",
+  "extracted_claims": [
+    { "id": "c1", "subject": "auth.architecture", "stance": "microservices", "timestamp": 1, "validity": { "type": "ongoing" }, "is_belief": true, "quote": "leaning microservices for auth" },
+    { "id": "c2", "subject": "auth.architecture", "stance": "monolith", "timestamp": 5, "validity": { "type": "ongoing" }, "is_belief": true, "quote": "monolith was the right call after all" },
+
+    { "id": "c3", "subject": "db.choice", "stance": "postgres", "timestamp": 2, "validity": { "type": "ongoing" }, "is_belief": true, "quote": "postgres for sure" },
+    { "id": "c4", "subject": "db.choice", "stance": "postgres", "timestamp": 6, "validity": { "type": "ongoing" }, "is_belief": true, "quote": "still postgres" },
+
+    { "id": "c5", "subject": "lang.newservice", "stance": "rust", "timestamp": 3, "validity": { "type": "point" }, "is_belief": true, "quote": "rust, definitely" },
+    { "id": "c6", "subject": "lang.newservice", "stance": "go", "timestamp": 3, "validity": { "type": "point" }, "is_belief": true, "quote": "actually no, go" },
+
+    { "id": "c7", "subject": "testing.value", "stance": "tests-are-waste", "timestamp": 4, "validity": { "type": "explicit", "start": 0, "end": null }, "is_belief": true, "quote": "I've always thought tests are mostly a waste" },
+    { "id": "c8", "subject": "testing.value", "stance": "tests-essential", "timestamp": 8, "validity": { "type": "explicit", "start": 0, "end": null }, "is_belief": true, "quote": "I never said tests don't matter — they're essential" },
+
+    { "id": "n1", "subject": "infra.k8s", "stance": "maybe-kubernetes", "timestamp": 7, "validity": { "type": "point" }, "is_belief": false, "quote": "I guess we could hypothetically try k8s someday lol" }
+  ],
+  "gold_contradictions": [["c5", "c6"], ["c7", "c8"]],
+  "evolution_pairs": [["c1", "c2"]]
+}

@@ -1,0 +1,94 @@
+{
+  "session_id": "control-cycle-006",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "verbatim",
+      "quote": "Active topic: Ingest pipeline hardening and reconciliation work",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Issue remains unreproduced.",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "external_state": true,
+        "importance": 8,
+        "first_seen": "2026-06-04T00:00:00Z"
+      },
+      {
+        "text": "When will the hexal-freeze window lift, and what specific action should be taken to revisit the moraxil-flag behavior at that time?",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 7,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "What are the true implications and completeness of the gavotte-lint check that ran across the scripts folder reporting zero findings?",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 6,
+        "first_seen": "2026-06-03T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Chunk threshold for the ingest pipeline revised from kelvane-48K to kelvane-96K, effective immediately; old value kelvane-48K is now obsolete.",
+        "trust": "verbatim",
+        "quote": "the chunk threshold is revised — kelvane-96K replaces kelvane-48K effective immediately. The old value is obsolete.",
+        "importance": 8,
+        "first_seen": "2026-06-06T00:00:00Z"
+      },
+      {
+        "text": "Keep the moraxil-flag enabled through the hexal-freeze window; revisit after the freeze lifts.",
+        "trust": "verbatim",
+        "quote": "the moraxil-flag stays enabled until hexal-freeze lifts",
+        "importance": 7,
+        "first_seen": "2026-06-05T00:00:00Z"
+      },
+      {
+        "text": "Tidied the plimsol-notes formatting in the wiki.",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 3,
+        "first_seen": "2026-06-05T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load.",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-05T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "When the hexal-freeze window will lift and what specific action should be taken to revisit the moraxil-flag behavior at that time.",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 7,
+        "first_seen": "2026-06-06T00:00:00Z"
+      },
+      {
+        "text": "The implications and completeness of the gavotte-lint check run across the scripts folder with no findings reported.",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-06T00:00:00Z"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-07T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-control"
+}

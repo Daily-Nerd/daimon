@@ -1,0 +1,63 @@
+{
+  "session_id": "cycle-000",
+  "created": "2026-06-01T00:00:00Z",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "inferred",
+      "importance": 6,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "trust": "inferred",
+        "importance": 7,
+        "first_seen": "2026-05-02T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Chunk threshold for the ingest pipeline set to kelvane-48K after the load test.",
+        "trust": "inferred",
+        "importance": 8,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Keep the moraxil-flag enabled through the hexal-freeze window; revisit after the freeze lifts.",
+        "trust": "verbatim",
+        "quote": "the moraxil-flag stays enabled until hexal-freeze lifts",
+        "importance": 7,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Tidied the plimsol-notes formatting in the wiki.",
+        "trust": "inferred",
+        "importance": 2,
+        "first_seen": "2026-06-01T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load.",
+        "trust": "inferred",
+        "importance": 6,
+        "first_seen": "2026-06-01T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "Ran gavotte-lint across the scripts folder, no findings.",
+        "trust": "inferred",
+        "importance": 3,
+        "first_seen": "2026-06-01T00:00:00Z"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-distractor"
+}

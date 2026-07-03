@@ -1,0 +1,164 @@
+{
+  "session_id": "distractor-cycle-018",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "verbatim",
+      "quote": "Active topic: Ingest pipeline hardening and reconciliation work",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "When will the hexal-freeze lift, enabling safe revisitation and potential adjustment of the moraxil-flag setting?",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 6,
+        "first_seen": "2026-06-05T00:00:00Z"
+      },
+      {
+        "text": "Has gavotte-lint verification been re-run for the scripts folder to confirm current state? Currently marked [carried].",
+        "trust": "verbatim",
+        "quote": "Ran gavotte-lint across the scripts folder, no findings. [carried]",
+        "external_state": true,
+        "importance": 4,
+        "first_seen": "2026-06-07T00:00:00Z"
+      },
+      {
+        "text": "Does quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Reproduction not yet achieved.",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "external_state": true,
+        "importance": 7,
+        "first_seen": "2026-05-02T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "trust": "verbatim",
+        "quote": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "importance": 8,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Refactored the settings loader to fail fast on malformed profiles",
+        "trust": "verbatim",
+        "quote": "Refactored the settings loader to fail fast on malformed profiles",
+        "importance": 7,
+        "first_seen": "2026-06-04T00:00:00Z"
+      },
+      {
+        "text": "[Diagnosis] Flaky websocket test: timing hole in the fixture identified as root cause; fix application status requires follow-up verification",
+        "trust": "verbatim",
+        "quote": "Investigated the flaky websocket test; timing hole in the fixture",
+        "importance": 7,
+        "first_seen": "2026-06-04T00:00:00Z"
+      },
+      {
+        "text": "Chunk threshold for ingest pipeline revised to kelvane-96K (replacing kelvane-48K); effective immediately",
+        "trust": "verbatim",
+        "quote": "the chunk threshold is revised — kelvane-96K replaces kelvane-48K effective immediately",
+        "importance": 8,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Moraxil-flag to remain enabled through hexal-freeze window; defer revisitation until after freeze lifts",
+        "trust": "verbatim",
+        "quote": "the moraxil-flag stays enabled until hexal-freeze lifts",
+        "importance": 7,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Reviewed the dependency bump PR and flagged the license change",
+        "trust": "verbatim",
+        "quote": "Reviewed the dependency bump PR and flagged the license change",
+        "importance": 6,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Added tracing spans around the retry queue consumer for enhanced observability",
+        "trust": "verbatim",
+        "quote": "Added tracing spans around the retry queue consumer",
+        "importance": 6,
+        "first_seen": "2026-06-03T00:00:00Z"
+      },
+      {
+        "text": "Benchmarked the JSON parser swap; measured approximately 12% faster on large payloads",
+        "trust": "verbatim",
+        "quote": "Benchmarked the JSON parser swap; ~12% faster on large payloads",
+        "importance": 6,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Wrote the on-call handover doc for the deploy rotation",
+        "trust": "verbatim",
+        "quote": "Wrote the on-call handover doc for the deploy rotation",
+        "importance": 5,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "Cleaned up dead feature flags from the last two releases",
+        "trust": "verbatim",
+        "quote": "Cleaned up dead feature flags from the last two releases",
+        "importance": 5,
+        "first_seen": "2026-06-02T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "No hard blockers are currently impeding the pipeline work",
+        "trust": "verbatim",
+        "quote": "No hard blockers; the open items are tracked in the working context",
+        "importance": 8,
+        "first_seen": "2026-06-18T00:00:00Z"
+      },
+      {
+        "text": "The tervane-cache eviction policy keeps p99 latency flat under burst load",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 5,
+        "first_seen": "2026-06-19T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "Whether quorint-ledger reconciliation actually drops entries when the upstream feed pauses mid-batch",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "importance": 7,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "Exact timeline for hexal-freeze lifting and the safe window for revisiting moraxil-flag configuration",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "Current status of gavotte-lint verification monitoring (marked [carried] for ongoing re-verification)",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 4,
+        "first_seen": "2026-06-19T00:00:00Z"
+      },
+      {
+        "text": "Ran gavotte-lint across the scripts folder, no findings.",
+        "trust": "inferred",
+        "importance": 3,
+        "first_seen": "2026-06-01T00:00:00Z",
+        "carried_from": "cycle-000"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-19T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-distractor"
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "session": "H3",
+    "id": "r79",
+    "text": "Whether the consulting funnel will materialize in Year 2 is uncertain given weak LinkedIn presence.",
+    "judge_grounded": false,
+    "true_label": "confab",
+    "label_note": "Re-labeled judge_error->confab 2026-06-29: H3 review shows Year-2 consulting is framed as the positive payoff window ('Year 2 is when this earns real money: consulting funnel opens'), never as uncertain; the weak-LinkedIn causality applies to Year-1 failure/deferral only ('Full-time job + weak LinkedIn = no realistic funnel. Defer to Year 2'). Over-extrapolation, not asserted — strict skeptic was right."
+  },
+  {
+    "session": "H3",
+    "id": "r81",
+    "text": "Whether the Hermes skill pack becomes viable post-Year-2 or remains indefinitely deferred is uncertain.",
+    "judge_grounded": false,
+    "true_label": "confab"
+  },
+  {
+    "session": "H3",
+    "id": "r83",
+    "text": "Whether 4 videos/month is sustainable with FT job plus newsletter, moderation, and ~25 hrs/month engineering is uncertain.",
+    "judge_grounded": false,
+    "true_label": "judge_error"
+  },
+  {
+    "session": "H3",
+    "id": "r84",
+    "text": "Whether the LATAM sponsor pool grows fast enough to support $500–$2k Year-1 sponsorship projections is uncertain.",
+    "judge_grounded": false,
+    "true_label": "judge_error"
+  },
+  {
+    "session": "H3",
+    "id": "r85",
+    "text": "Whether 3–6k subscriber projection for Year-1 Spanish channel is realistic or optimistic is uncertain.",
+    "judge_grounded": false,
+    "true_label": "judge_error"
+  },
+  {
+    "session": "H3",
+    "id": "r86",
+    "text": "Empty-niche growth still requires 12–18 months of validation.",
+    "judge_grounded": false,
+    "true_label": "confab"
+  },
+  {
+    "session": "H3",
+    "id": "r93",
+    "text": "The user is pragmatic and methodical, iterating without rationalizing constraints.",
+    "judge_grounded": false,
+    "true_label": "confab"
+  },
+  {
+    "session": "H3",
+    "id": "r94",
+    "text": "The user has been persistent through 6+ channel-name collision failures.",
+    "judge_grounded": false,
+    "true_label": "confab"
+  },
+  {
+    "session": "H4",
+    "id": "r2",
+    "text": "The z2m pod crash occurred after a network reconfiguration.",
+    "judge_grounded": false,
+    "true_label": "judge_error"
+  },
+  {
+    "session": "H4",
+    "id": "r20",
+    "text": "Port or mode misconfiguration in the PVC is a possible cause of the z2m crashloop.",
+    "judge_grounded": false,
+    "true_label": "confab",
+    "label_note": "Re-labeled judge_error->confab 2026-06-29: H4 review shows the PVC issue is exclusively a wrong HOST IP (192.168.68.127 vs 10.10.70.127); 'port mode' refers to the SLZB device UI (Zigbee server mode TCP vs USB), not the PVC. The claim conflates three separate references into a PVC port/mode misconfig the transcript never asserts. Strict skeptic was right."
+  },
+  {
+    "session": "H4",
+    "id": "r53",
+    "text": "The final value written to configmap.yaml for the coordinator IP was 10.10.70.127.",
+    "judge_grounded": false,
+    "true_label": "confab",
+    "label_note": "Re-labeled judge_error->confab 2026-06-29: live skeptic flagged it; transcript review (H4) confirms over-specific — the configmap.yaml coordinator IP churns (.50.127/.70.127/.27.127), .70.127 was once called a typo, and .70.127 actually landed in the PVC configuration.yaml not configmap.yaml (the claim is not cleanly asserted)."
+  },
+  {
+    "session": "H4",
+    "id": "r65",
+    "text": "The user's statement 'I fixed already' regarding SLZB placement is ambiguous.",
+    "judge_grounded": false,
+    "true_label": "confab",
+    "label_note": "Re-labeled judge_error->confab 2026-06-29: H4 review shows the transcript treats 'I fixed already' as unambiguous — the assistant immediately interprets it ('since you put SLZB there now') and proceeds without any clarification request. The 'ambiguous' meta-claim is imposed from outside the transcript; never asserted in-text. Strict skeptic was right."
+  },
+  {
+    "session": "H4",
+    "id": "r76",
+    "text": "The z2m pod went offline during a network migration.",
+    "judge_grounded": false,
+    "true_label": "confab",
+    "label_note": "Re-labeled judge_error->confab 2026-06-29 (user-adjudicated): entity slip — what went offline was the SLZB COORDINATOR (the presenting problem, line 1), not the z2m pod, which crashlooped. 'during a network migration' is a loose reframe of 'user mistakenly attached SLZB to the migration VLAN.' Over-specific/imprecise like r53. (Sibling r2, which names the pod crashloop correctly, was KEPT as judge_error.)"
+  }
+]

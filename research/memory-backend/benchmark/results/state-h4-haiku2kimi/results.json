@@ -1,0 +1,1730 @@
+{
+  "scenarios": [
+    {
+      "scenario": "infra-migration",
+      "domain": "software_infra",
+      "methods": {
+        "raw": {
+          "context_tokens": 259,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "Staying on Kubernetes.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 137,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "kubernetes",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 87,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "Kubernetes",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "infra-lang",
+              "is_override": true,
+              "gold": "Rust",
+              "answer": "Rust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-orch",
+              "is_override": true,
+              "gold": "Kubernetes",
+              "answer": "No decision yet.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "infra-budget",
+              "is_override": true,
+              "gold": "20",
+              "answer": "20%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "infra-team",
+              "is_override": false,
+              "gold": "12",
+              "answer": "12",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "product-roadmap",
+      "domain": "product_management",
+      "methods": {
+        "raw": {
+          "context_tokens": 201,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "billing revamp",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "Usage-based pricing.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 71,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "billing_revamp",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "usage_based",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4_2026",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 90,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "Billing revamp",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "Usage-based",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "prod-flagship",
+              "is_override": true,
+              "gold": "billing",
+              "answer": "Billing revamp",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-pricing",
+              "is_override": true,
+              "gold": "usage-based",
+              "answer": "Usage-based pricing.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "prod-date",
+              "is_override": true,
+              "gold": "Q4",
+              "answer": "Q4",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "care-plan",
+      "domain": "clinical_fiction",
+      "methods": {
+        "raw": {
+          "context_tokens": 176,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "75mg once daily",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "In 6 weeks from today.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 137,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil 75mg once daily.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "75mg once daily",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "2026-07-28",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 69,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil (75mg once daily).",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "Betoxil 75mg once daily.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "2026-07-28",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "care-med",
+              "is_override": true,
+              "gold": "Betoxil",
+              "answer": "Betoxil",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-dose",
+              "is_override": true,
+              "gold": "75mg",
+              "answer": "75mg once daily",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "care-followup",
+              "is_override": false,
+              "gold": "6 weeks",
+              "answer": "6 weeks from today.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "assistant-prefs",
+      "domain": "personal_assistant",
+      "methods": {
+        "raw": {
+          "context_tokens": 190,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "Vegan",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "Afternoons",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "Slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 48,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "vegan",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "afternoon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 46,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "Vegan",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "Afternoons",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "Slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "pa-diet",
+              "is_override": true,
+              "gold": "vegan",
+              "answer": "Vegan",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-meeting",
+              "is_override": true,
+              "gold": "afternoon",
+              "answer": "Afternoons",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-channel",
+              "is_override": true,
+              "gold": "Slack",
+              "answer": "Slack",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "pa-airport",
+              "is_override": false,
+              "gold": "SFO",
+              "answer": "SFO",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "vendor-selection",
+      "domain": "procurement",
+      "methods": {
+        "raw": {
+          "context_tokens": 170,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Braintree",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24 months",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 62,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Braintree",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 74,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Braintree",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "vend-vendor",
+              "is_override": true,
+              "gold": "Braintree",
+              "answer": "Stripe",
+              "correct": false,
+              "has_gold": false,
+              "stale": true
+            },
+            {
+              "probe": "vend-term",
+              "is_override": true,
+              "gold": "24",
+              "answer": "24",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "vend-currency",
+              "is_override": false,
+              "gold": "EUR",
+              "answer": "EUR",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "office-relocation",
+      "domain": "operations",
+      "methods": {
+        "raw": {
+          "context_tokens": 170,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 76,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 56,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "ofc-city",
+              "is_override": true,
+              "gold": "Lisbon",
+              "answer": "Lisbon",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-seats",
+              "is_override": false,
+              "gold": "40",
+              "answer": "40",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "ofc-network",
+              "is_override": false,
+              "gold": "Cisco",
+              "answer": "Cisco",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "team-leads",
+      "domain": "org_management",
+      "methods": {
+        "raw": {
+          "context_tokens": 164,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "Tobias.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "Marisol",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "5",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 45,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "Unknown.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "Unknown",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "5",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 39,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "Unspecified.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "Unknown.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "Not mentioned.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "lead-mobile",
+              "is_override": true,
+              "gold": "Tobias",
+              "answer": "Tobias.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-web",
+              "is_override": true,
+              "gold": "Marisol",
+              "answer": "Marisol",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "lead-mobile-size",
+              "is_override": false,
+              "gold": "5",
+              "answer": "5",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "research-grant",
+      "domain": "academia",
+      "methods": {
+        "raw": {
+          "context_tokens": 223,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "1.2 million",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "Dr. Okafor",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 97,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "1.2_million",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "Dr_Okafor",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 88,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "$1.2 million",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "Dr. Okafor",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "grant-funder",
+              "is_override": true,
+              "gold": "Whitaker",
+              "answer": "Whitaker Trust",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-amount",
+              "is_override": false,
+              "gold": "1.2",
+              "answer": "1.2 million",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "grant-pi",
+              "is_override": false,
+              "gold": "Okafor",
+              "answer": "Not specified.",
+              "correct": false,
+              "has_gold": false,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "deploy-regions",
+      "domain": "software_infra",
+      "methods": {
+        "raw": {
+          "context_tokens": 157,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Stockholm",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "Virginia",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 85,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Stockholm",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "Virginia",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 58,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Stockholm",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "Virginia",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "region-eu",
+              "is_override": true,
+              "gold": "Stockholm",
+              "answer": "Frankfurt",
+              "correct": false,
+              "has_gold": false,
+              "stale": true
+            },
+            {
+              "probe": "region-us",
+              "is_override": false,
+              "gold": "Virginia",
+              "answer": "Virginia",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "region-cdn",
+              "is_override": false,
+              "gold": "Fastly",
+              "answer": "Fastly",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "sales-quota",
+      "domain": "sales_ops",
+      "methods": {
+        "raw": {
+          "context_tokens": 150,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175 units",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "80",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8 percent",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 76,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175 units",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "80",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 40,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "$80",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8 percent",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "quota-units",
+              "is_override": true,
+              "gold": "175",
+              "answer": "175",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-price",
+              "is_override": false,
+              "gold": "80",
+              "answer": "80",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "quota-commission",
+              "is_override": false,
+              "gold": "8",
+              "answer": "8%",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "trial-protocol",
+      "domain": "clinical_fiction",
+      "methods": {
+        "raw": {
+          "context_tokens": 188,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "Suspended.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "120 participants",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian Research",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 140,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "Suspended (protocol suspended, enrollment halted).",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "120 participants",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian_Research",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 115,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "Suspended effective immediately due to a safety board flag regarding liver enzyme elevations; all activities halted, safety review pending.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "120 participants across 4 sites.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian Research",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "trial-status",
+              "is_override": true,
+              "gold": "suspended",
+              "answer": "Suspended.",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-enroll",
+              "is_override": false,
+              "gold": "120",
+              "answer": "120",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "trial-cro",
+              "is_override": false,
+              "gold": "Meridian",
+              "answer": "Meridian Research",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "project-rename",
+      "domain": "software_infra",
+      "methods": {
+        "raw": {
+          "context_tokens": 163,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "Dmitri",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "csl": {
+          "context_tokens": 166,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "Dmitri",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "summary": {
+          "context_tokens": 78,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "Dmitri",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        },
+        "rag-append": {
+          "context_tokens": 300,
+          "probes": [
+            {
+              "probe": "proj-name",
+              "is_override": true,
+              "gold": "Heron",
+              "answer": "Heron",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            },
+            {
+              "probe": "proj-owner",
+              "is_override": true,
+              "gold": "Dmitri",
+              "answer": "The user wants to know who currently owns the project based on the provided memory.\n\nMemory snippets:\n1. \"User: New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\" - This states Priya owns Falcon.\n2. \"Assistant: Dmitri owns Heron now. Deadline unchanged?\" - This states Dmitri owns Heron.\n\nThe question asks: \"Who currently owns the project?\"\nBut which project? The memory mentions two projects: Falcon (owned by Priya) and Heron (owned by Dmitri). \n\nWait, looking at the context, the question might be referring to a specific project mentioned in the conversation. But the user question is generic: \"Who currently owns the project?\" \n\nHowever, the instruction says \"using only the memory below\" and \"Answer with the current value only — if something changed over time, report the latest value, not an old one.\"\n\nLet's look carefully at the memory. It seems like two separate statements:\n- User says: New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\n- Assistant says: Dmitri owns Heron now. Deadline unchanged?\n\nThe question asks \"Who currently owns the project?\" (singular \"the project\"). \nBut there are two projects mentioned. Is there a project that changed ownership? The memory doesn't explicitly show an ownership change for either project. It just establishes two facts.\n\nWait, perhaps the conversation is about Falcon originally, and then the assistant mentions Heron? Or is the question asking about the project referred to in the last statement?\n\nActually, the question might be ambiguous, but typically in these tasks, if there's a project mentioned in the latest turn or if there's an implied subject... Let me re-read.\n\nThe memory shows:\nUser: New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\n...\nAssistant: Dmitri owns Heron now. Deadline unchanged?\n\nThe ellipsis suggests there might be more context missing, but we only have these two snippets.\n\nIf the question is \"Who currently owns the project?\" and we have two projects:\n- Falcon: Priya\n- Heron: Dmitri\n\nBut \"the project\" singular. Which one? Maybe the question is from a quiz where the answer should be the owner mentioned in the last relevant turn? Or maybe there's an implicit understanding that the question refers to the project that was the subject of the ownership change. Dmitri \"owns Heron now\" implies a current state, and the word \"now\" suggests recency.\n\nWait, maybe the question is asking about the project Falcon? But the assistant mentions Heron. Without more context, it's hard to know which project \"the project\" refers to.\n\nHowever, looking at the structure of these types of prompts, usually the memory contains a sequence of facts and the question asks for the current state of a specific entity. If the memory mentions \"Dmitri owns Heron now\", and the question asks who owns \"the project\", maybe \"the project\" is Heron? Or maybe it's Falcon?\n\nActually, let me reconsider. The user says \"New internal project, codename Falcon. Priya owns it.\" Then later the assistant says \"Dmitri owns Heron now.\" \n\nIf the question is \"Who currently owns the project?\" and the answer should be from the memory, perhaps the expected answer is \"Dmitri\" if the project is Heron, or \"Priya\" if the project is Falcon. But since the question uses the singular definite article \"the project\", it might be referring to a specific project known from the context.\n\nWait, maybe the prompt implies that the project in question is the one from the first turn, and the second turn is a separate topic. But the user asks \"Who currently owns the project?\" which could be answered by looking at the latest information. Since both are current states (Priya owns Falcon, Dmitri owns Heron), and neither has been updated...\n\nUnless... the ellipsis hides something. Maybe the conversation continued about Falcon and then there was a change? But the compressed memory only shows:\n1. User: New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\n2. ... (some turns)\n3. Assistant: Dmitri owns Heron now. Deadline unchanged?\n\nActually, maybe the question is: \"Who currently owns the project?\" and the answer is simply the owner from the first statement because that's the only \"project\" introduced as \"New internal project\". Heron is introduced as something Dmitri owns now.\n\nBut without knowing which project, I need to look for clues. The question says \"the project\" (singular). The memory introduces \"New internal project, codename Falcon\" - this is a project. Then \"Dmitri owns Heron now\" - Heron could be a project too (codename). So there are two projects.\n\nIf the task is to answer based on the memory and the question is likely referring to the most recently mentioned project or the one that is the focus... Actually, the question might be from a dataset where the answer is expected to be \"Dmitri\" because the assistant's statement is the most recent and mentions \"owns ... now\". Or it could be \"Priya\".\n\nLet me think about the instruction: \"if something changed over time, report the latest value, not an old one.\" This implies that if ownership changed, we should report the latest. But in the memory, there is no explicit change shown for either project. We don't see Priya no longer owning Falcon, or Dmitri previously not owning Heron. The word \"now\" in \"Dmitri owns Heron now\" might imply that this is the current state, possibly after a change.\n\nBut wait - could \"Heron\" be the same project as \"Falcon\"? No, different codenames.\n\nCould the question \"Who currently owns the project?\" be asking about Falcon because the first user message introduced it, and the assistant's message about Dmitri is about a different project (Heron)? In that case, the current owner of Falcon is still Priya.\n\nHowever, the phrase \"if something changed over time\" suggests the memory might contain an update. Let's look at the assistant's turn again: \"Dmitri owns Heron now. Deadline unchanged?\" This could be an update that Dmitri now owns Heron (implying he didn't before, or that this is new information). The question might be about Heron.\n\nBut the question literally says \"the project\" not \"the project Falcon\" or \"the project Heron\". \n\nGiven that this is a test of reading the provided memory and the question is likely aligned with the last statement about ownership (which explicitly uses the word \"now\" to indicate current state), and because the first statement is about a \"new internal project\" while the second is a direct answer to an ownership question... Actually, maybe the user asked about Heron earlier (in the ellipsis) and the assistant answered.\n\nAlternatively, maybe the answer is \"Priya\" because the first statement establishes \"Priya owns it\" where \"it\" refers to the project, and the question asks \"Who currently owns the project?\" referring to that same project.\n\nIf I have to choose, I should consider: is there any indication that ownership changed? The memory says \"Priya owns it.\" Then later \"Dmitri owns Heron now.\" If the question is about \"the project\" (singular), and the first mention is \"New internal project... Priya owns it\", then \"the project\" likely refers to the subject introduced - Falcon. The mention of Heron is a separate project.\n\nBut what if the assistant's statement is an update about Falcon being renamed to Heron? \"Dmitri owns Heron now\" - could Heron be the new codename for Falcon? The user says \"codename Falcon\". Then assistant says \"Dmitri owns Heron now\". If Falcon was renamed to Heron, or if the project is now called Heron... But there's no evidence of that.\n\nActually, looking at the structure: \"New internal project, codename Falcon. Priya owns it.\" Then \"Dmitri owns Heron now.\" These seem like two independent facts.\n\nIf the question is simply \"Who currently owns the project?\" without specifying which, and there are two projects, the answer should probably mention both? But the instruction says \"Answer with the current value only — if something changed over time, report the latest value, not an old one. Be brief.\" This suggests a single value.\n\nGiven the ambiguity, I need to think about which is the most likely intended answer. In many of these \"current state\" reasoning tasks, the latest statement about ownership is the answer. The assistant's turn is the most recent. The assistant says Dmitri owns Heron now. The question might be interpreted as \"Who currently owns Heron?\" but the question says \"the project\". \n\nWait, maybe the user asked about the project in the ellipsis, and the assistant answered that Dmitri owns Heron now. The question is asking about the same project the user asked about in the ellipsis. But we don't see the ellipsis content.\n\nAlternatively, maybe the question is generated from the memory and the answer is \"Dmitri\" because \"owns Heron now\" is the only explicit mention of \"now\" indicating current ownership, while Priya's ownership is just a static fact.\n\nLet me reconsider the possibility that \"the project\" refers to Falcon. In that case, the answer is Priya. There is no evidence in the memory that Falcon's ownership changed. So the current owner of Falcon is Priya.\n\nIf the question is about Heron, the answer is Dmitri.\n\nWhich is more likely? The memory starts with \"User: New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\" This is an introduction. Then \"Assistant: Dmitri owns Heron now. Deadline unchanged?\" This looks like an assistant answering a question about a project. The user's question in the prompt is \"Who currently owns the project?\" \n\nCould it be that the question is asking about the project from the user's first message, and the assistant's message is irrelevant or about a different topic? Yes, that's possible. But usually, all memory is relevant.\n\nAnother angle: The memory might be compressed. The ellipsis (...) could represent turns where the project changed hands from Priya to Dmitri, and the project was codenamed Falcon but is now called Heron? No, that's too speculative.\n\nLet me look at the exact wording again:\n\"User: New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\n...\nAssistant: Dmitri owns Heron now. Deadline unchanged?\"\n\nIf the assistant is asking \"Deadline unchanged?\" after stating Dmitri owns Heron, this implies the assistant is confirming a change of ownership for Heron and asking if the deadline is still the same. The user might have previously said something about Heron.\n\nBut the question asks \"Who currently owns the project?\" If we assume \"the project\" is the one discussed in the latest turn (Heron), then the answer is Dmitri. If it's the one introduced as \"new internal project\", it's Priya.\n\nI think the safest answer is to provide the owner from the most recent explicit statement of ownership, especially since it uses the word \"now\" to emphasize current status. That would be Dmitri. However, if the question is interpreted as referring to the project introduced in the first line, the answer is Priya.\n\nWait, I should consider if this is a trick question where the answer is \"Dmitri\" because the assistant's message is the latest update, and the instruction explicitly says \"if something changed over time, report the latest value, not an old one.\" The presence of \"now\" suggests this is the latest value. The fact that it's a different project name (Heron vs Falcon) might not matter if the question is from a test set where the answer key is \"Dmitri\".\n\nBut actually, the most logical reading is that there are two projects. The question asks \"Who currently owns the project?\" without specifying which. Since I must answer based on the memory, and the memory contains two projects, perhaps I should mention both? But the instruction says \"Be brief\" and \"Answer with the current value only\".\n\nLet me think about this differently. If the question is from a SQuAD-style or bAbI-style task, the question \"Who currently owns the project?\" would refer to the project mentioned in the context. If both are mentioned, it's ambiguous. But usually, the question would refer to the subject of the most recent discourse or the main entity.\n\nActually, the first line says \"New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\" - this introduces the topic. The second line says \"Dmitri owns Heron now.\" - this is a new topic. The question might be asking about the original project (Falcon). In that case, answer: Priya.\n\nBut what if the question is \"Who currently owns the project?\" and the answer is Dmitri because he is the one who \"owns [it] now\"?\n\nLet me reconsider the possibility that Falcon and Heron are the same project. Is it possible that the project was codenamed Falcon, and later the assistant refers to it as Heron? Like, maybe the project name changed from Falcon to Heron? The user says \"New internal project, codename Falcon.\" Then later \"Dmitri owns Heron now.\" If the project was transferred to Dmitri, maybe it was also renamed? Or maybe Heron is a different project.\n\nGiven the instruction to answer with the \"current value only\" and the emphasis on \"latest value\", I think the question might be implicitly about the project that changed hands, which is Heron (Dmitri owns it now). But we don't know if Falcon changed.\n\nAlternatively, maybe the user asked about Falcon in the ellipsis, and the assistant is saying Dmitri owns Heron now (meaning Dmitri took over Falcon and it's now called Heron? No, that's too convoluted).\n\nLet me try to find a pattern. These prompts are often from a benchmark for tracking state in conversations. The memory shows a conversation. The question asks about the current state. The assistant's turn is the most recent. The project discussed in the assistant's turn is Heron. The user likely asked about ownership in the missing turns. The answer is Dmitri.\n\nBut if the question is about the project from the first sentence, the answer is Priya. Which is more likely to be the question's referent? The first sentence establishes \"Priya owns it\" where \"it\" is the project. The question \"Who currently owns the project?\" directly mirrors \"Priya owns it.\" The assistant's turn is about \"Heron\" which might be a different project.\n\nHowever, the phrase \"if something changed over time\" strongly suggests that the expected answer should be the latest one if there is a change. The fact that the assistant says \"Dmitri owns Heron now\" with the word \"now\" suggests this is the answer to a \"who owns X now\" question.\n\nLet me check if there's any hidden connection. The user says \"New internal project, codename Falcon. Priya owns it.\" Then the assistant says \"Dmitri owns Heron now. Deadline unchanged?\" Could \"Heron\" be the repository? No, \"Repo lives on GitLab.\"\n\nI think I need to make a decision. Given the ambiguity, I'll consider: is there any reason to think Priya no longer owns Falcon? No. Is there any reason to think the question is about Heron? Yes, because the assistant explicitly states the current ownership with the word \"now\". But the question asks \"the project\" not \"Heron\".\n\nActually, maybe the question is from the perspective of the user who introduced Falcon, and they're asking about Falcon. The answer is Priya. The assistant's mention of Heron is irrelevant to the user's project Falcon.\n\nBut in a compressed memory, irrelevant information is usually not included. Why would the assistant's statement about Dmitri owning Heron be included if the question is about Falcon? It must be relevant. Therefore, the question is likely about Heron, or Heron is the same project as Falcon.\n\nWait, could \"Heron\" be a typo for \"Falcon\"? No.\n\nCould the assistant be answering the user's implicit question about Falcon? Like:\nUser: New internal project, codename Falcon. Priya owns it. Repo lives on GitLab.\nUser: [later] Who owns it now?\nAssistant: Dmitri owns Heron now. Deadline unchanged?\nNo, the assistant says \"Heron\", not \"Falcon\".\n\nUnless... \"Heron\" is the repo name? \"Repo lives on GitLab\" - maybe the repo is called Heron? But the user says \"codename Falcon\".\n\nAnother possibility: The user and assistant are discussing two different projects. The question asks about \"the project\" (singular). Since both are projects, it's ambiguous. But if forced to choose the one with the most recent \"current state\" assertion, it's Dmitri/Heron.\n\nI think the most likely intended answer is \"Dmitri\" because:\n1. The assistant's statement is the most recent in the memory.\n2. The word \"now\" explicitly marks it as a current state.\n3. The question asks \"Who currently owns the project?\" and the assistant's statement is the only one that explicitly frames ownership in terms of current time (\"now\").\n\nHowever, I'm not fully confident. Let me reconsider Priya. If the question is \"Who currently owns the project?\" and the first sentence says \"Priya owns it\", the answer is Priya. The assistant's question about Heron could be a separate thread.\n\nActually, looking at the structure of the prompt, it seems like a test of \"current state tracking\" where the answer is the latest owner mentioned. If the project is Falcon, and there's no update, the answer is Priya. If the project is Heron, the answer is Dmitri. Since the prompt doesn't specify the project name in the question, maybe the answer should be the owner of the most recently mentioned project.\n\nBut wait - what if the question is \"Who currently owns the project?\" and the expected answer is \"Priya\" because the project is Falcon, and the assistant's turn is a non-sequitur about a different project? In compressed memory, all lines are typically relevant.\n\nLet me try a different approach. Maybe the ellipsis hides the fact that the user said something like \"Falcon is now called Heron\" or \"Priya is no longer on Falcon.\" But we can't see that.\n\nGiven the instruction \"if something changed over time, report the latest value\", and the fact that the assistant says \"Dmitri owns Heron now\", this implies a change (Dmitri owns it now, as opposed to someone else before). The latest value of ownership for the project in question (Heron) is Dmitri. If the question refers to that project, the answer is Dmitri.\n\nIf the question refers to Falcon, there was no change shown in the memory, so the latest value is Priya.\n\nSince the question uses the definite article \"the project\", and the first sentence introduces \"New internal project\" (making it the salient discourse entity),",
+              "correct": false,
+              "has_gold": true,
+              "stale": true
+            },
+            {
+              "probe": "proj-host",
+              "is_override": false,
+              "gold": "GitLab",
+              "answer": "GitLab",
+              "correct": true,
+              "has_gold": true,
+              "stale": false
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "aggregate": {
+    "raw": {
+      "overall_accuracy": 1.0,
+      "gold_recall": 1.0,
+      "override_accuracy": 1.0,
+      "staleness_rate": 0.0,
+      "mean_context_tokens": 184.2,
+      "n_probes": 38,
+      "n_override_probes": 22
+    },
+    "csl": {
+      "overall_accuracy": 0.9210526315789473,
+      "gold_recall": 0.9210526315789473,
+      "override_accuracy": 0.9090909090909091,
+      "staleness_rate": 0.0,
+      "mean_context_tokens": 95.0,
+      "n_probes": 38,
+      "n_override_probes": 22
+    },
+    "summary": {
+      "overall_accuracy": 0.8947368421052632,
+      "gold_recall": 0.8947368421052632,
+      "override_accuracy": 0.9090909090909091,
+      "staleness_rate": 0.0,
+      "mean_context_tokens": 70.0,
+      "n_probes": 38,
+      "n_override_probes": 22
+    },
+    "rag-append": {
+      "overall_accuracy": 0.868421052631579,
+      "gold_recall": 0.8947368421052632,
+      "override_accuracy": 0.8181818181818182,
+      "staleness_rate": 0.13636363636363635,
+      "mean_context_tokens": 300.0,
+      "n_probes": 38,
+      "n_override_probes": 22
+    }
+  },
+  "metadata": {
+    "update_model": "claude-haiku-4-5-via-meridian",
+    "answer_model": "kimi-k2.6",
+    "budget": 300,
+    "n_scenarios": 12,
+    "with_graphiti": false,
+    "elapsed_seconds": 3745.1
+  }
+}

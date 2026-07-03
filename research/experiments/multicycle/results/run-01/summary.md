@@ -1,0 +1,20 @@
+| arm | item | last cycle alive | final integrity | stale cycles | first_seen resets |
+| --- | --- | --- | --- | --- | --- |
+| carry | BELIEF-STABLE | 19 | 1.0 | 0 | 0 |
+| carry | DEC-STABLE | 12 | 1.0 | 0 | 0 |
+| carry | FACT-EVOLVE | 12 | 0.473 | 0 | 1 |
+| carry | FILLER-1 | 4 | 1.0 | 0 | 0 |
+| carry | FILLER-2 | 19 | 1.0 | 0 | 0 |
+| carry | OQ-STABLE | 20 | 1.0 | 0 | 0 |
+| control | BELIEF-STABLE | 20 | 0.994 | 0 | 5 |
+| control | DEC-STABLE | 20 | 0.409 | 0 | 2 |
+| control | FACT-EVOLVE | 8 | 0.645 | 0 | 4 |
+| control | FILLER-1 | 8 | 1.0 | 0 | 2 |
+| control | FILLER-2 | 20 | 0.544 | 0 | 3 |
+| control | OQ-STABLE | 20 | 1.0 | 0 | 8 |
+| distractor | BELIEF-STABLE | 20 | 0.994 | 0 | 1 |
+| distractor | DEC-STABLE | 20 | 0.527 | 0 | 4 |
+| distractor | FACT-EVOLVE | 7 | 0.462 | 0 | 3 |
+| distractor | FILLER-1 | 4 | 0.989 | 0 | 1 |
+| distractor | FILLER-2 | 0 | 1.0 | 0 | 0 |
+| distractor | OQ-STABLE | 20 | 0.852 | 0 | 12 |

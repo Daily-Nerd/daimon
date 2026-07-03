@@ -1,0 +1,129 @@
+{
+  "session_id": "distractor-cycle-018",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "verbatim",
+      "quote": "Active topic: Ingest pipeline hardening and reconciliation work",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced despite investigation)",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced)",
+        "external_state": true,
+        "importance": 8,
+        "first_seen": "2026-06-19T00:00:00Z"
+      },
+      {
+        "text": "Should moraxil-flag be kept enabled or disabled after hexal-freeze lifts?",
+        "trust": "verbatim",
+        "quote": "After hexal-freeze lifts: Revisit the moraxil-flag setting and decide whether to keep it enabled or disable it",
+        "external_state": true,
+        "importance": 7,
+        "first_seen": "2026-06-16T00:00:00Z"
+      },
+      {
+        "text": "[Fix Pending] Apply fix for websocket test fixture timing hole",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": false,
+        "importance": 7,
+        "first_seen": "2026-06-19T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Added tracing spans around the retry queue consumer",
+        "trust": "verbatim",
+        "quote": "Also today: Added tracing spans around the retry queue consumer.",
+        "importance": 5,
+        "first_seen": "2026-06-19T00:00:00Z"
+      },
+      {
+        "text": "Reviewed the dependency bump PR and flagged the license change",
+        "trust": "verbatim",
+        "quote": "Also today: Reviewed the dependency bump PR and flagged the license change.",
+        "importance": 4,
+        "first_seen": "2026-06-19T00:00:00Z"
+      },
+      {
+        "text": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "trust": "verbatim",
+        "quote": "Also today: Migrated the CI runners to the new base image and pinned the toolchain.",
+        "importance": 6,
+        "first_seen": "2026-06-17T00:00:00Z"
+      },
+      {
+        "text": "Refactored the settings loader to fail fast on malformed profiles",
+        "trust": "verbatim",
+        "quote": "Also today: Refactored the settings loader to fail fast on malformed profiles.",
+        "importance": 6,
+        "first_seen": "2026-06-17T00:00:00Z"
+      },
+      {
+        "text": "Wrote the on-call handover doc for the deploy rotation",
+        "trust": "verbatim",
+        "quote": "Also today: Wrote the on-call handover doc for the deploy rotation.",
+        "importance": 4,
+        "first_seen": "2026-06-18T00:00:00Z"
+      },
+      {
+        "text": "Benchmarked the JSON parser swap; ~12% faster on large payloads",
+        "trust": "verbatim",
+        "quote": "Also today: Benchmarked the JSON parser swap; ~12% faster on large payloads.",
+        "importance": 5,
+        "first_seen": "2026-06-18T00:00:00Z"
+      },
+      {
+        "text": "Cleaned up dead feature flags from the last two releases",
+        "trust": "verbatim",
+        "quote": "Also today: Cleaned up dead feature flags from the last two releases.",
+        "importance": 5,
+        "first_seen": "2026-06-18T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "No hard blockers; open items are tracked and managed",
+        "trust": "verbatim",
+        "quote": "No hard blockers; the open items are tracked in the working context.",
+        "importance": 7,
+        "first_seen": "2026-06-18T00:00:00Z"
+      },
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "trust": "verbatim",
+        "quote": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "importance": 7,
+        "first_seen": "2026-06-02T00:00:00Z"
+      },
+      {
+        "text": "[Diagnosis] Root cause of websocket test fixture timing hole: timing hole in fixture identified",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-19T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "Whether the quorint-ledger entry drop is a reproducible bug or an edge case (unreproduced despite investigation)",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 7,
+        "first_seen": "2026-06-15T00:00:00Z"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-19T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-distractor"
+}

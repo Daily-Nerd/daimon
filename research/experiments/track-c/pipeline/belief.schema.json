@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daily-nerd.io/daimon/track-c/belief.schema.json",
+  "title": "Track C run file",
+  "description": "Input to pipeline/run.py. extracted_claims = beliefs pulled by the Stage-1 gate, with timestamps and validity. gold_contradictions / evolution_pairs = human labels used to score.",
+  "type": "object",
+  "required": ["extracted_claims"],
+  "properties": {
+    "session_pair": { "type": "string" },
+    "extracted_claims": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/claim" }
+    },
+    "gold_contradictions": {
+      "type": "array",
+      "description": "Human-labeled pairs that genuinely conflict at overlapping times. Format: [[id,id], ...].",
+      "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 }
+    },
+    "evolution_pairs": {
+      "type": "array",
+      "description": "Human-labeled pairs where the same belief legitimately CHANGED over time (must NOT be flagged). Format: [[id,id], ...].",
+      "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 }
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "required": ["id", "subject", "stance", "timestamp"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "subject": { "type": "string", "description": "Stable dotted topic key; same topic across sessions MUST share this key." },
+        "stance": { "type": "string", "description": "Canonical position label; same position -> same string." },
+        "timestamp": { "type": "number", "description": "Monotonic order; session-1 claims < session-3 claims." },
+        "validity": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["ongoing", "point", "explicit"] },
+            "start": { "type": "number" },
+            "end": { "type": ["number", "null"] }
+          }
+        },
+        "is_belief": { "type": "boolean", "description": "Human audit: true = genuine stable belief; false = noise the gate should have dropped (counts against BEP)." },
+        "quote": { "type": "string" }
+      }
+    }
+  }
+}

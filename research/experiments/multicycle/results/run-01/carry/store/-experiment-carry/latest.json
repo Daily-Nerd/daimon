@@ -1,0 +1,49 @@
+{
+  "session_id": "carry-cycle-020",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "inferred",
+      "quote": "",
+      "importance": 6,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? Still unreproduced.",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 7,
+        "first_seen": "2026-05-02T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Keep the session short today.",
+        "trust": "verbatim",
+        "quote": "Let's keep the session short today.",
+        "importance": 2,
+        "first_seen": "2026-06-19T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "No hard blockers remain in the current work pipeline.",
+        "trust": "verbatim",
+        "quote": "No hard blockers; the open items are tracked in the working context.",
+        "importance": 5,
+        "first_seen": "2026-06-17T00:00:00Z"
+      }
+    ],
+    "uncertainties": [],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-21T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-carry"
+}

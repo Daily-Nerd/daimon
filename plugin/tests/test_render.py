@@ -1,0 +1,486 @@
+import sys
+
+import pytest
+
+from daimon_briefing import render
+
+
+def _force_rich_present(monkeypatch):
+    import types
+    monkeypatch.setitem(sys.modules, "rich", types.ModuleType("rich"))
+
+
+def _force_rich_absent(monkeypatch):
+    monkeypatch.setitem(sys.modules, "rich", None)
+
+
+def test_supports_rich_false_when_daimon_plain(monkeypatch):
+    _force_rich_present(monkeypatch)
+    monkeypatch.setattr(render, "_isatty", lambda: True)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    assert render.supports_rich() is False
+
+
+def test_supports_rich_false_when_no_color(monkeypatch):
+    _force_rich_present(monkeypatch)
+    monkeypatch.setattr(render, "_isatty", lambda: True)
+    monkeypatch.delenv("DAIMON_PLAIN", raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert render.supports_rich() is False
+
+
+def test_supports_rich_false_when_not_tty(monkeypatch):
+    _force_rich_present(monkeypatch)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("DAIMON_PLAIN", raising=False)
+    monkeypatch.setattr(render, "_isatty", lambda: False)
+    assert render.supports_rich() is False
+
+
+def test_supports_rich_false_when_rich_absent(monkeypatch):
+    _force_rich_absent(monkeypatch)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("DAIMON_PLAIN", raising=False)
+    monkeypatch.setattr(render, "_isatty", lambda: True)
+    assert render.supports_rich() is False
+
+
+def test_supports_rich_true_when_all_conditions_met(monkeypatch):
+    _force_rich_present(monkeypatch)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("DAIMON_PLAIN", raising=False)
+    monkeypatch.setattr(render, "_isatty", lambda: True)
+    assert render.supports_rich() is True
+
+
+def test_render_brief_plain_matches_briefing_text(monkeypatch, sample_checkpoint, capsys):
+    # DAIMON_PLAIN=1 from the autouse fixture forces the plain path.
+    from daimon_briefing import briefing
+    render.render_brief(sample_checkpoint)
+    out = capsys.readouterr().out
+    expected = briefing.render(sample_checkpoint)
+    assert out.strip() == expected.strip()
+
+
+def test_render_brief_rich_smoke(monkeypatch, sample_checkpoint, capsys):
+    # Rich path: assert on CONTENT only, not format. Rich emits ANSI escapes,
+    # box-drawing, and width-dependent wrapping, so exact-format assertions here
+    # would be brittle. Format correctness is covered on the plain path.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_brief(sample_checkpoint)
+    out = capsys.readouterr().out
+    assert "VERIFY BEFORE TRUSTING" in out
+    assert "PR #6" in out
+
+
+def test_render_brief_no_content(capsys):
+    render.render_brief({})
+    out = capsys.readouterr().out
+    assert out == "No checkpoint yet — nothing to brief. Run `serialize` first.\n"
+
+
+def test_render_brief_notes_version_mismatch(sample_checkpoint, capsys):
+    # #93: a checkpoint whose format_version differs from the current one gets a
+    # note instead of silently rendering against a changed schema.
+    render.render_brief({**sample_checkpoint, "format_version": "D-000"})
+    out = capsys.readouterr().out
+    assert "D-000" in out and "format" in out.lower()
+
+
+def test_render_brief_no_note_for_current_version(sample_checkpoint, capsys):
+    from daimon_briefing import serializer
+    render.render_brief({**sample_checkpoint, "format_version": serializer.PROMPT_VERSION})
+    out = capsys.readouterr().out
+    assert "format" not in out.lower()
+
+
+def test_render_brief_no_note_for_legacy_checkpoint(sample_checkpoint, capsys):
+    # Legacy checkpoint (no format_version) renders normally, no note.
+    render.render_brief(sample_checkpoint)
+    out = capsys.readouterr().out
+    assert "format" not in out.lower()
+
+
+def _status_data():
+    return {
+        "project": "/p/A",
+        "proj": {"exists": True, "session_id": "S-proj", "age": "2d", "path": "/c/A/latest.json"},
+        "glob": {"exists": True, "session_id": "S-proj", "age": "2d",
+                 "path": "/c/latest.json", "same_session_as_project": True},
+        "last": {"result": {"outcome": "success", "line": "wrote checkpoint: /c/x.json (took 1s)"},
+                 "spawn": {"session_id": "S-proj", "age": "1m"}},
+    }
+
+
+def test_render_status_plain_exact_format(capsys):
+    # Plain output is deterministic — assert exact lines, not substrings.
+    render.render_status(_status_data())
+    out = capsys.readouterr().out
+    assert out == (
+        "project: /p/A\n"
+        "project checkpoint: session S-proj, written 2d ago\n"
+        "  /c/A/latest.json\n"
+        "global checkpoint: same as project "
+        "(this project produced the most recent checkpoint anywhere)\n"
+        "  /c/latest.json\n"
+        "last serialize result: success — wrote checkpoint: /c/x.json (took 1s)\n"
+        "last serialize spawn: session S-proj, 1m ago\n"
+    )
+
+
+def test_render_status_plain_global_fallback_exact_format(capsys):
+    # Distinct-session global → fallback wording with its own session + age.
+    data = _status_data()
+    data["glob"] = {"exists": True, "session_id": "S-glob", "age": "5d",
+                    "path": "/c/latest.json"}
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "global checkpoint (fallback): session S-glob, written 5d ago\n" in out
+    assert "  /c/latest.json\n" in out
+
+
+def test_render_status_rich_smoke(monkeypatch, capsys):
+    # Rich path: content-only (see test_render_brief_rich_smoke for rationale).
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_status(_status_data())
+    out = capsys.readouterr().out
+    assert "S-proj" in out
+    assert "success" in out
+
+
+def _outstanding_sample():
+    return [
+        {"sid": "S-A", "kind": "error", "class": "healable", "age": 180,
+         "age_str": "3m", "transcript": "/t/S-A.jsonl", "project": "/p/A",
+         "spawned": True, "line": "error: boom (transcript: /t/S-A.jsonl) after 3s"},
+        {"sid": "S-C", "kind": "hung", "class": "hung", "age": 2400,
+         "age_str": "40m", "transcript": None, "project": "/p/C",
+         "spawned": True, "line": None},
+    ]
+
+
+def test_render_status_outstanding_block_plain_exact(capsys):
+    data = _status_data()
+    data["outstanding"] = _outstanding_sample()
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "⚠ 2 sessions failed to serialize (no checkpoint):\n" in out
+    assert "  - S-A  error 3m ago — run `daimon heal`\n" in out
+    assert "  - S-C  spawned 40m ago, no result (hung/killed; transcript unavailable)\n" in out
+
+
+def test_render_status_outstanding_retry_exhausted_hint(capsys):
+    data = _status_data()
+    data["outstanding"] = [{"sid": "S-A", "kind": "error", "class": "retry-exhausted",
+                            "age": 180, "age_str": "3m", "transcript": "/t/S-A.jsonl",
+                            "project": "/p/A", "spawned": True, "line": "error: boom"}]
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "  - S-A  error 3m ago — retry attempted, still failing\n" in out
+
+
+def test_render_status_unrecoverable_hint(capsys):
+    data = _status_data()
+    data["outstanding"] = [{"sid": "S-Z", "kind": "error", "class": "unrecoverable",
+                            "age": 300, "age_str": "5m", "transcript": "/gone/S-Z.jsonl",
+                            "project": "/p/Z", "spawned": False, "line": "error: boom"}]
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "  - S-Z  error 5m ago — transcript unavailable, cannot auto-heal\n" in out
+
+
+def test_render_status_no_block_when_outstanding_empty(capsys):
+    data = _status_data()
+    data["outstanding"] = []
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "failed to serialize" not in out
+
+
+def test_render_status_outstanding_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = _status_data()
+    data["outstanding"] = _outstanding_sample()
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "S-A" in out and "S-C" in out
+    assert "heal" in out
+
+
+def _cfg_ready():
+    return {"ready": True, "resolved_backend": "command", "command_source": "claude-cli",
+            "command": "claude", "has_api_key": False, "has_model": False,
+            "env_file": "/home/u/.daimon/env"}
+
+
+def test_render_configure_plain_exact_format(capsys):
+    render.render_configure(_cfg_ready())
+    out = capsys.readouterr().out
+    assert out == (
+        "✓ ready — backend: command (claude CLI, zero-config)\n"
+        "  env file: /home/u/.daimon/env\n"
+    )
+
+
+def test_render_configure_rich_smoke(monkeypatch, capsys):
+    # Rich path: content-only (see test_render_brief_rich_smoke for rationale).
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_configure(_cfg_ready())
+    out = capsys.readouterr().out
+    assert "ready" in out.lower()
+
+
+# --- _explain(): one-line backend explanation, all branches -----------------
+
+@pytest.mark.parametrize("st, expected", [
+    # command/claude-cli ready, resolved via zero-config claude CLI
+    ({"resolved_backend": "command", "ready": True, "command_source": "claude-cli",
+      "command": "claude"},
+     "backend: command (claude CLI, zero-config)"),
+    # command ready, but resolved from an explicit command (not the CLI auto-detect)
+    ({"resolved_backend": "command", "ready": True, "command_source": "env",
+      "command": "/usr/bin/claude"},
+     "backend: command (/usr/bin/claude)"),
+    # claude-cli backend alias, ready, zero-config
+    ({"resolved_backend": "claude-cli", "ready": True, "command_source": "claude-cli",
+      "command": "claude"},
+     "backend: claude-cli (claude CLI, zero-config)"),
+    # command backend, not ready
+    ({"resolved_backend": "command", "ready": False, "command_source": "",
+      "command": ""},
+     "no backend — install the claude CLI or set litellm creds"),
+    # litellm ready
+    ({"resolved_backend": "litellm", "ready": True, "has_api_key": True,
+      "has_model": True},
+     "backend: litellm"),
+    # litellm not ready, only api_key missing
+    ({"resolved_backend": "litellm", "ready": False, "has_api_key": False,
+      "has_model": True},
+     "backend: litellm — missing: api_key"),
+    # litellm not ready, only model missing
+    ({"resolved_backend": "litellm", "ready": False, "has_api_key": True,
+      "has_model": False},
+     "backend: litellm — missing: model"),
+    # litellm not ready, both missing — order is api_key, then model
+    ({"resolved_backend": "litellm", "ready": False, "has_api_key": False,
+      "has_model": False},
+     "backend: litellm — missing: api_key, model"),
+    # litellm not ready but nothing flagged missing — generic no-backend fallback
+    ({"resolved_backend": "litellm", "ready": False, "has_api_key": True,
+      "has_model": True},
+     "no backend — install the claude CLI or set litellm creds"),
+])
+def test_explain_branches(st, expected):
+    assert render._explain(st) == expected
+
+
+def test_render_brief_honors_llm_briefing_when_present(monkeypatch, sample_checkpoint, capsys):
+    # When DAIMON_LLM_BRIEFING is opted in, the CLI brief must surface the LLM
+    # narrative (same source of truth as the hermes hook), not the deterministic text.
+    from daimon_briefing import briefing
+    monkeypatch.setattr(briefing.config, "llm_briefing", lambda: True)
+    monkeypatch.setattr(briefing, "_render_llm", lambda cp: "LLM-NARRATIVE-SENTINEL")
+    # plain path (autouse DAIMON_PLAIN=1 keeps supports_rich False)
+    render.render_brief(sample_checkpoint)
+    out = capsys.readouterr().out
+    assert "LLM-NARRATIVE-SENTINEL" in out
+
+
+def test_render_brief_appends_drift_block(monkeypatch, sample_checkpoint, capsys):
+    # Plain drift block is deterministic — assert the exact header + line format.
+    drift = [{"item": {"text": "Adopt D-007 prompt"}, "kind": "soft",
+              "anchor": {"qualified_name": "plugin/x.py::run"}}]
+    render.render_brief(sample_checkpoint, drift=drift)
+    out = capsys.readouterr().out
+    assert "CODE DRIFT — verify before trusting (anchored code changed):\n" in out
+    assert "- [changed] Adopt D-007 prompt  (plugin/x.py::run)\n" in out
+
+
+def test_render_brief_no_drift_block_when_empty(monkeypatch, sample_checkpoint, capsys):
+    render.render_brief(sample_checkpoint, drift=[])
+    out = capsys.readouterr().out
+    assert "CODE DRIFT" not in out.upper()
+
+
+def test_render_brief_drift_malformed_anchor_label(sample_checkpoint, capsys):
+    # A malformed anchor (no qualified_name) renders a label, not empty parens.
+    drift = [{"item": {"text": "broken-item"}, "kind": "hard", "anchor": {}}]
+    render.render_brief(sample_checkpoint, drift=drift)
+    out = capsys.readouterr().out
+    assert "- [GONE] broken-item  (malformed anchor)\n" in out
+
+
+def test_rich_brief_shows_overflow_marker(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    b = {
+        "external": [], "open_loops": [],
+        "decisions": [{"text": f"d{i}", "trust": "inferred"} for i in range(8, 18)],
+        "decisions_overflow": 8,
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+    }
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "earlier decision" in out
+
+
+def test_rich_brief_no_marker_when_not_capped(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    b = {
+        "external": [], "open_loops": [],
+        "decisions": [{"text": "d0", "trust": "inferred"}],
+        "decisions_overflow": 0,
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+    }
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "earlier decision" not in out
+
+
+def test_rich_brief_shows_contradictions_section(capsys):
+    # #101: contradictions flow through the same build() intermediate into the
+    # rich path, as their own panel, style-matched to the other sections.
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    b = {
+        "external": [], "open_loops": [], "decisions": [], "decisions_overflow": 0,
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+        "contradictions": [{"text": "cache cold vs warm", "trust": "inferred"}],
+    }
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "Contradictions flagged" in out
+    assert "cache cold vs warm" in out
+
+
+def _identity_status_data(identity, health):
+    return {
+        "project": identity["git_root"],
+        "proj": {"exists": True, "session_id": "P", "age": "1m", "path": "/p"},
+        "glob": {"exists": False},
+        "same": False, "last": None, "outstanding": [],
+        "identity": identity, "health": health,
+    }
+
+
+def test_plain_status_shows_identity_and_verdict(capsys):
+    from daimon_briefing import render
+    ident = {"cwd": "/a/b", "git_root": "/a", "slug": "-a"}
+    render.render_status(_identity_status_data(ident, {"ok": True, "verdict": "✓ fresh", "warnings": []}))
+    out = capsys.readouterr().out
+    assert "identity:" in out and "/a/b" in out and "git-root /a" in out and "-a" in out
+    assert "✓ fresh" in out
+
+
+def test_plain_status_shows_split_warning(capsys):
+    from daimon_briefing import render
+    ident = {"cwd": "/a/b", "git_root": "/a", "slug": "-a"}
+    health = {"ok": False, "verdict": "⚠ split: related bucket '-a-sub' has newer work",
+              "warnings": ["split: related bucket '-a-sub' has newer work"]}
+    render.render_status(_identity_status_data(ident, health))
+    out = capsys.readouterr().out
+    assert "-a-sub" in out
+
+
+def test_rich_status_shows_identity_and_verdict(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+    ident = {"cwd": "/a/b", "git_root": "/a", "slug": "-a"}
+    render._rich_status(_identity_status_data(ident, {"ok": True, "verdict": "✓ fresh", "warnings": []}))
+    out = capsys.readouterr().out
+    assert "/a/b" in out and "git-root /a" in out and "-a" in out
+    assert "fresh" in out
+
+
+def test_rich_status_shows_split_warning(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+    ident = {"cwd": "/a/b", "git_root": "/a", "slug": "-a"}
+    health = {"ok": False, "verdict": "⚠ split: related bucket '-a-sub' has newer work",
+              "warnings": ["split: related bucket '-a-sub' has newer work"]}
+    render._rich_status(_identity_status_data(ident, health))
+    out = capsys.readouterr().out
+    assert "-a-sub" in out
+
+
+def test_render_heal_target_dry_run(capsys):
+    from daimon_briefing import render
+    plan = {"target": {"sid": "S-A", "transcript": "/t/a.jsonl", "project": "/p",
+                       "age_str": "3m", "line": "x"}, "skipped": [], "note": ""}
+    render.render_heal(plan, dry_run=True)
+    out = capsys.readouterr().out
+    assert "would heal S-A" in out and "/t/a.jsonl" in out
+
+
+def test_render_heal_target_real(capsys):
+    from daimon_briefing import render
+    plan = {"target": {"sid": "S-A", "transcript": "/t/a.jsonl", "project": "/p",
+                       "age_str": "3m", "line": "x"}, "skipped": [], "note": ""}
+    render.render_heal(plan, dry_run=False)
+    out = capsys.readouterr().out
+    assert "healing S-A" in out and "would heal" not in out
+
+
+def test_render_heal_note_and_skipped(capsys):
+    from daimon_briefing import render
+    plan = {"target": None,
+            "skipped": [{"sid": "H1", "age_str": "40m", "reason": "spawned, no result (hung/killed) — transcript unavailable"}],
+            "note": "nothing to heal — 1 failure can't be auto-repaired:"}
+    render.render_heal(plan, dry_run=False)
+    out = capsys.readouterr().out
+    assert "nothing to heal — 1 failure can't be auto-repaired:" in out
+    assert "H1" in out and "hung/killed" in out
+
+
+# ---- Teammates section (#111): attributed, never merged, empty = no-op ----
+
+
+def _teammate_sections():
+    from daimon_briefing import briefing
+    cp = {
+        "working_context": {
+            "active_topic": {"text": "Refactoring the store", "trust": "inferred"},
+            "recent_decisions": [
+                {"text": "Use atomic writes", "trust": "verbatim", "quote": "atomic or bust"},
+            ],
+            "open_questions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }
+    return [("grace", briefing.build(cp))]
+
+
+def test_render_brief_teammates_plain(sample_checkpoint, capsys):
+    render.render_brief(sample_checkpoint, teammates=_teammate_sections())
+    out = capsys.readouterr().out
+    assert "Teammates — where they left off:" in out
+    assert "[grace]" in out
+    assert "Active topic: Refactoring the store" in out
+    assert "Use atomic writes" in out
+
+
+def test_render_brief_teammates_none_is_noop(sample_checkpoint, capsys):
+    render.render_brief(sample_checkpoint, teammates=None)
+    without = capsys.readouterr().out
+    render.render_brief(sample_checkpoint, teammates=[])
+    empty = capsys.readouterr().out
+    assert without == empty
+    assert "Teammates" not in without  # empty team → byte-identical, no section
+
+
+def test_render_brief_teammates_rich_smoke(monkeypatch, sample_checkpoint, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_brief(sample_checkpoint, teammates=_teammate_sections())
+    out = capsys.readouterr().out
+    assert "grace" in out
+    assert "Refactoring the store" in out

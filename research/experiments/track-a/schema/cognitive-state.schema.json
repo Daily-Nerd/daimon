@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daily-nerd.io/daimon/track-a/cognitive-state.schema.json",
+  "title": "Cognitive State (CRP checkpoint)",
+  "description": "Serialized agent state at session end. Based on RFC §5.1, extended with per-item trust classes to test D-006 (extractive pinning). Each load-bearing item carries a `trust` class and, when verbatim, a source `quote`.",
+  "type": "object",
+  "required": ["session_id", "working_context", "epistemic_snapshot"],
+  "additionalProperties": false,
+  "properties": {
+    "session_id": { "type": "string" },
+    "timestamp": { "type": "string", "description": "ISO8601; pass in, do not generate at runtime" },
+    "working_context": {
+      "type": "object",
+      "required": ["active_topic", "open_questions", "recent_decisions"],
+      "additionalProperties": false,
+      "properties": {
+        "active_topic": { "$ref": "#/$defs/item" },
+        "open_questions": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+        "recent_decisions": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+        "emotional_valence": {
+          "$ref": "#/$defs/item",
+          "description": "Inferred by nature; trust will be `inferred`. Not scored for recall fidelity, tracked for tone accuracy."
+        }
+      }
+    },
+    "epistemic_snapshot": {
+      "type": "object",
+      "required": ["strong_beliefs", "uncertainties"],
+      "additionalProperties": false,
+      "properties": {
+        "strong_beliefs": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+        "uncertainties": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+        "contradictions_flagged": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+      }
+    },
+    "worker_queue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task"],
+        "properties": {
+          "task": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "done"] },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 10 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["text", "trust"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "description": "The decontextualized statement." },
+        "trust": {
+          "type": "string",
+          "enum": ["verbatim", "inferred"],
+          "description": "verbatim = directly supported by a quote in the transcript (extractive, D-006-pinned). inferred = synthesized/paraphrased by the model."
+        },
+        "quote": {
+          "type": "string",
+          "description": "REQUIRED when trust=verbatim: the exact source span from the transcript."
+        }
+      }
+    }
+  }
+}

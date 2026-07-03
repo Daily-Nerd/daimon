@@ -1,0 +1,4 @@
+# Real conversation corpus and per-run files stay LOCAL — never committed.
+# The synthetic fixture in fixtures/ IS committed (it's authored test data).
+corpus/
+runs/

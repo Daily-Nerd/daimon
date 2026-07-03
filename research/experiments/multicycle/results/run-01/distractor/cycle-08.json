@@ -1,0 +1,87 @@
+{
+  "session_id": "distractor-cycle-008",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "verbatim",
+      "quote": "Active topic: Ingest pipeline hardening and reconciliation work",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced bug requiring investigation)",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced)",
+        "external_state": true,
+        "importance": 9,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "Has the websocket test fixture timing hole fix been applied?",
+        "trust": "verbatim",
+        "quote": "fix not yet applied or described",
+        "external_state": true,
+        "importance": 7,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "After hexal-freeze lifts: decide whether to keep moraxil-flag enabled or disable it",
+        "trust": "verbatim",
+        "quote": "After hexal-freeze lifts: Revisit the moraxil-flag setting and decide whether to keep it enabled or disable it",
+        "external_state": true,
+        "importance": 5,
+        "first_seen": "2026-06-07T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Migrated CI runners to new base image and pinned the toolchain",
+        "trust": "verbatim",
+        "quote": "Migrated the CI runners to the new base image and pinned the toolchain.",
+        "importance": 6,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "Refactored settings loader to fail fast on malformed profiles",
+        "trust": "verbatim",
+        "quote": "Refactored the settings loader to fail fast on malformed profiles.",
+        "importance": 5,
+        "first_seen": "2026-06-09T00:00:00Z"
+      },
+      {
+        "text": "Investigated the flaky websocket test; timing hole in fixture identified",
+        "trust": "verbatim",
+        "quote": "Investigated the flaky websocket test; timing hole in the fixture.",
+        "importance": 6,
+        "first_seen": "2026-06-09T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 6,
+        "first_seen": "2026-06-02T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "Whether the quorint-ledger reconciliation actually drops entries when the upstream feed pauses mid-batch",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch?",
+        "importance": 9,
+        "first_seen": "2026-06-08T00:00:00Z"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-09T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-distractor"
+}

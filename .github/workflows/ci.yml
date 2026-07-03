@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the declared minimum (requires-python); 3.13 is latest stable.
+        python-version: ["3.10", "3.13"]
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: plugin/uv.lock
+
+      - name: Run tests
+        # --extra pretty: the rich-path smoke tests in test_render.py import
+        # rich unconditionally, so the suite requires it even though runtime
+        # deps are stdlib-only.
+        # HOME is redirected so any test that escapes the isolation fixtures
+        # fails loudly instead of silently touching a real ~/.daimon.
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-home"
+          HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q

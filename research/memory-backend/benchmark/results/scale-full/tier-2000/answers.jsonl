@@ -1,0 +1,152 @@
+{"scenario": "infra-migration", "method": "raw", "probe": "infra-lang", "is_override": true, "gold": "Rust", "answer": "Rust.", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "raw", "probe": "infra-orch", "is_override": true, "gold": "Kubernetes", "answer": "Kubernetes.", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "raw", "probe": "infra-budget", "is_override": true, "gold": "20", "answer": "20%", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "raw", "probe": "infra-team", "is_override": false, "gold": "12", "answer": "12 engineers.", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "csl", "probe": "infra-lang", "is_override": true, "gold": "Rust", "answer": "Rust", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "csl", "probe": "infra-orch", "is_override": true, "gold": "Kubernetes", "answer": "Kubernetes", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "csl", "probe": "infra-budget", "is_override": true, "gold": "20", "answer": "20%", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "csl", "probe": "infra-team", "is_override": false, "gold": "12", "answer": "12", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "summary", "probe": "infra-lang", "is_override": true, "gold": "Rust", "answer": "Rust", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "summary", "probe": "infra-orch", "is_override": true, "gold": "Kubernetes", "answer": "Staying on Kubernetes.", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "summary", "probe": "infra-budget", "is_override": true, "gold": "20", "answer": "20%", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "summary", "probe": "infra-team", "is_override": false, "gold": "12", "answer": "12", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "rag-append", "probe": "infra-lang", "is_override": true, "gold": "Rust", "answer": "Rust.", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "rag-append", "probe": "infra-orch", "is_override": true, "gold": "Kubernetes", "answer": "No orchestration decision is documented in the memory provided.", "correct": false, "stale": false}
+{"scenario": "infra-migration", "method": "rag-append", "probe": "infra-budget", "is_override": true, "gold": "20", "answer": "20%", "correct": true, "stale": false}
+{"scenario": "infra-migration", "method": "rag-append", "probe": "infra-team", "is_override": false, "gold": "12", "answer": "12 engineers", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "raw", "probe": "prod-flagship", "is_override": true, "gold": "billing", "answer": "Billing revamp.", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "raw", "probe": "prod-pricing", "is_override": true, "gold": "usage-based", "answer": "Usage-based pricing.", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "raw", "probe": "prod-date", "is_override": true, "gold": "Q4", "answer": "Q4", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "csl", "probe": "prod-flagship", "is_override": true, "gold": "billing", "answer": "Billing revamp (transitioning from per-seat to usage-based pricing)", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "csl", "probe": "prod-pricing", "is_override": true, "gold": "usage-based", "answer": "Usage-based pricing (consumption-aligned).", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "csl", "probe": "prod-date", "is_override": true, "gold": "Q4", "answer": "Q4 2026", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "summary", "probe": "prod-flagship", "is_override": true, "gold": "billing", "answer": "Billing revamp.", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "summary", "probe": "prod-pricing", "is_override": true, "gold": "usage-based", "answer": "Usage-based.", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "summary", "probe": "prod-date", "is_override": true, "gold": "Q4", "answer": "Q4", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "rag-append", "probe": "prod-flagship", "is_override": true, "gold": "billing", "answer": "Billing revamp.", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "rag-append", "probe": "prod-pricing", "is_override": true, "gold": "usage-based", "answer": "Usage-based pricing.", "correct": true, "stale": false}
+{"scenario": "product-roadmap", "method": "rag-append", "probe": "prod-date", "is_override": true, "gold": "Q4", "answer": "Q4", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "raw", "probe": "care-med", "is_override": true, "gold": "Betoxil", "answer": "Betoxil 75mg once daily.", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "raw", "probe": "care-dose", "is_override": true, "gold": "75mg", "answer": "Betoxil 75mg daily.", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "raw", "probe": "care-followup", "is_override": false, "gold": "6 weeks", "answer": "2026-08-05 (6 weeks from today).", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "csl", "probe": "care-med", "is_override": true, "gold": "Betoxil", "answer": "Betoxil 75mg once daily", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "csl", "probe": "care-dose", "is_override": true, "gold": "75mg", "answer": "75mg once daily", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "csl", "probe": "care-followup", "is_override": false, "gold": "6 weeks", "answer": "2026-08-05", "correct": false, "stale": false}
+{"scenario": "care-plan", "method": "summary", "probe": "care-med", "is_override": true, "gold": "Betoxil", "answer": "Betoxil 75mg once daily.", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "summary", "probe": "care-dose", "is_override": true, "gold": "75mg", "answer": "Betoxil 75mg once daily", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "summary", "probe": "care-followup", "is_override": false, "gold": "6 weeks", "answer": "Approximately August 5, 2026 (6 weeks from today, June 24, 2026).", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "rag-append", "probe": "care-med", "is_override": true, "gold": "Betoxil", "answer": "Betoxil", "correct": true, "stale": false}
+{"scenario": "care-plan", "method": "rag-append", "probe": "care-dose", "is_override": true, "gold": "75mg", "answer": "Alfarin 50mg, Betoxil 75mg daily.", "correct": false, "stale": true}
+{"scenario": "care-plan", "method": "rag-append", "probe": "care-followup", "is_override": false, "gold": "6 weeks", "answer": "2026-08-05 (6 weeks from today)", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "raw", "probe": "pa-diet", "is_override": true, "gold": "vegan", "answer": "Vegan.", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "raw", "probe": "pa-meeting", "is_override": true, "gold": "afternoon", "answer": "Afternoons.", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "raw", "probe": "pa-channel", "is_override": true, "gold": "Slack", "answer": "Slack", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "raw", "probe": "pa-airport", "is_override": false, "gold": "SFO", "answer": "SFO", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "csl", "probe": "pa-diet", "is_override": true, "gold": "vegan", "answer": "Vegan", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "csl", "probe": "pa-meeting", "is_override": true, "gold": "afternoon", "answer": "Afternoons", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "csl", "probe": "pa-channel", "is_override": true, "gold": "Slack", "answer": "slack", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "csl", "probe": "pa-airport", "is_override": false, "gold": "SFO", "answer": "SFO", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "summary", "probe": "pa-diet", "is_override": true, "gold": "vegan", "answer": "Not mentioned in memory.", "correct": false, "stale": false}
+{"scenario": "assistant-prefs", "method": "summary", "probe": "pa-meeting", "is_override": true, "gold": "afternoon", "answer": "Afternoons only.", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "summary", "probe": "pa-channel", "is_override": true, "gold": "Slack", "answer": "Slack", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "summary", "probe": "pa-airport", "is_override": false, "gold": "SFO", "answer": "Not documented in memory.", "correct": false, "stale": false}
+{"scenario": "assistant-prefs", "method": "rag-append", "probe": "pa-diet", "is_override": true, "gold": "vegan", "answer": "Vegan.", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "rag-append", "probe": "pa-meeting", "is_override": true, "gold": "afternoon", "answer": "Afternoons", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "rag-append", "probe": "pa-channel", "is_override": true, "gold": "Slack", "answer": "Slack", "correct": true, "stale": false}
+{"scenario": "assistant-prefs", "method": "rag-append", "probe": "pa-airport", "is_override": false, "gold": "SFO", "answer": "SFO", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "raw", "probe": "vend-vendor", "is_override": true, "gold": "Braintree", "answer": "Braintree.", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "raw", "probe": "vend-term", "is_override": true, "gold": "24", "answer": "24 months", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "raw", "probe": "vend-currency", "is_override": false, "gold": "EUR", "answer": "EUR.", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "csl", "probe": "vend-vendor", "is_override": true, "gold": "Braintree", "answer": "Braintree", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "csl", "probe": "vend-term", "is_override": true, "gold": "24", "answer": "24 months", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "csl", "probe": "vend-currency", "is_override": false, "gold": "EUR", "answer": "EUR", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "summary", "probe": "vend-vendor", "is_override": true, "gold": "Braintree", "answer": "Braintree (with EUR settlement confirmed).", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "summary", "probe": "vend-term", "is_override": true, "gold": "24", "answer": "24 months", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "summary", "probe": "vend-currency", "is_override": false, "gold": "EUR", "answer": "EUR", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "rag-append", "probe": "vend-vendor", "is_override": true, "gold": "Braintree", "answer": "Stripe.", "correct": false, "stale": true}
+{"scenario": "vendor-selection", "method": "rag-append", "probe": "vend-term", "is_override": true, "gold": "24", "answer": "24 months", "correct": true, "stale": false}
+{"scenario": "vendor-selection", "method": "rag-append", "probe": "vend-currency", "is_override": false, "gold": "EUR", "answer": "EUR", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "raw", "probe": "ofc-city", "is_override": true, "gold": "Lisbon", "answer": "Lisbon.", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "raw", "probe": "ofc-seats", "is_override": false, "gold": "40", "answer": "40 people.", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "raw", "probe": "ofc-network", "is_override": false, "gold": "Cisco", "answer": "Cisco.", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "csl", "probe": "ofc-city", "is_override": true, "gold": "Lisbon", "answer": "Lisbon", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "csl", "probe": "ofc-seats", "is_override": false, "gold": "40", "answer": "40 people", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "csl", "probe": "ofc-network", "is_override": false, "gold": "Cisco", "answer": "Cisco", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "summary", "probe": "ofc-city", "is_override": true, "gold": "Lisbon", "answer": "Lisbon", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "summary", "probe": "ofc-seats", "is_override": false, "gold": "40", "answer": "40 people.", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "summary", "probe": "ofc-network", "is_override": false, "gold": "Cisco", "answer": "Cisco", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "rag-append", "probe": "ofc-city", "is_override": true, "gold": "Lisbon", "answer": "Lisbon", "correct": true, "stale": false}
+{"scenario": "office-relocation", "method": "rag-append", "probe": "ofc-seats", "is_override": false, "gold": "40", "answer": "Not mentioned in the provided memory.", "correct": false, "stale": false}
+{"scenario": "office-relocation", "method": "rag-append", "probe": "ofc-network", "is_override": false, "gold": "Cisco", "answer": "Cisco", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "raw", "probe": "lead-mobile", "is_override": true, "gold": "Tobias", "answer": "Tobias", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "raw", "probe": "lead-web", "is_override": true, "gold": "Marisol", "answer": "Marisol.", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "raw", "probe": "lead-mobile-size", "is_override": false, "gold": "5", "answer": "5 engineers.", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "csl", "probe": "lead-mobile", "is_override": true, "gold": "Tobias", "answer": "Marisol", "correct": false, "stale": true}
+{"scenario": "team-leads", "method": "csl", "probe": "lead-web", "is_override": true, "gold": "Marisol", "answer": "Tobias", "correct": false, "stale": true}
+{"scenario": "team-leads", "method": "csl", "probe": "lead-mobile-size", "is_override": false, "gold": "5", "answer": "5", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "summary", "probe": "lead-mobile", "is_override": true, "gold": "Tobias", "answer": "Tobias", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "summary", "probe": "lead-web", "is_override": true, "gold": "Marisol", "answer": "Marisol", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "summary", "probe": "lead-mobile-size", "is_override": false, "gold": "5", "answer": "Not specified in the memory provided.", "correct": false, "stale": false}
+{"scenario": "team-leads", "method": "rag-append", "probe": "lead-mobile", "is_override": true, "gold": "Tobias", "answer": "Tobias", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "rag-append", "probe": "lead-web", "is_override": true, "gold": "Marisol", "answer": "Marisol.", "correct": true, "stale": false}
+{"scenario": "team-leads", "method": "rag-append", "probe": "lead-mobile-size", "is_override": false, "gold": "5", "answer": "5 engineers.", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "raw", "probe": "grant-funder", "is_override": true, "gold": "Whitaker", "answer": "Whitaker Trust.", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "raw", "probe": "grant-amount", "is_override": false, "gold": "1.2", "answer": "1.2 million", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "raw", "probe": "grant-pi", "is_override": false, "gold": "Okafor", "answer": "Dr. Okafor.", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "csl", "probe": "grant-funder", "is_override": true, "gold": "Whitaker", "answer": "Whitaker_Trust", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "csl", "probe": "grant-amount", "is_override": false, "gold": "1.2", "answer": "1.2M", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "csl", "probe": "grant-pi", "is_override": false, "gold": "Okafor", "answer": "Dr_Okafor", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "summary", "probe": "grant-funder", "is_override": true, "gold": "Whitaker", "answer": "Whitaker Trust", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "summary", "probe": "grant-amount", "is_override": false, "gold": "1.2", "answer": "$1.2 million", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "summary", "probe": "grant-pi", "is_override": false, "gold": "Okafor", "answer": "Not specified in the memory provided.", "correct": false, "stale": false}
+{"scenario": "research-grant", "method": "rag-append", "probe": "grant-funder", "is_override": true, "gold": "Whitaker", "answer": "Whitaker Trust", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "rag-append", "probe": "grant-amount", "is_override": false, "gold": "1.2", "answer": "1.2 million", "correct": true, "stale": false}
+{"scenario": "research-grant", "method": "rag-append", "probe": "grant-pi", "is_override": false, "gold": "Okafor", "answer": "Not specified in the provided memory.", "correct": false, "stale": false}
+{"scenario": "deploy-regions", "method": "raw", "probe": "region-eu", "is_override": true, "gold": "Stockholm", "answer": "Stockholm.", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "raw", "probe": "region-us", "is_override": false, "gold": "Virginia", "answer": "Virginia.", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "raw", "probe": "region-cdn", "is_override": false, "gold": "Fastly", "answer": "Fastly.", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "csl", "probe": "region-eu", "is_override": true, "gold": "Stockholm", "answer": "Stockholm", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "csl", "probe": "region-us", "is_override": false, "gold": "Virginia", "answer": "Virginia", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "csl", "probe": "region-cdn", "is_override": false, "gold": "Fastly", "answer": "Fastly", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "summary", "probe": "region-eu", "is_override": true, "gold": "Stockholm", "answer": "Stockholm", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "summary", "probe": "region-us", "is_override": false, "gold": "Virginia", "answer": "Virginia", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "summary", "probe": "region-cdn", "is_override": false, "gold": "Fastly", "answer": "Fastly", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "rag-append", "probe": "region-eu", "is_override": true, "gold": "Stockholm", "answer": "Frankfurt", "correct": false, "stale": true}
+{"scenario": "deploy-regions", "method": "rag-append", "probe": "region-us", "is_override": false, "gold": "Virginia", "answer": "Virginia.", "correct": true, "stale": false}
+{"scenario": "deploy-regions", "method": "rag-append", "probe": "region-cdn", "is_override": false, "gold": "Fastly", "answer": "Fastly", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "raw", "probe": "quota-units", "is_override": true, "gold": "175", "answer": "175 units per rep.", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "raw", "probe": "quota-price", "is_override": false, "gold": "80", "answer": "$80", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "raw", "probe": "quota-commission", "is_override": false, "gold": "8", "answer": "8 percent.", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "csl", "probe": "quota-units", "is_override": true, "gold": "175", "answer": "175", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "csl", "probe": "quota-price", "is_override": false, "gold": "80", "answer": "$80", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "csl", "probe": "quota-commission", "is_override": false, "gold": "8", "answer": "8%", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "summary", "probe": "quota-units", "is_override": true, "gold": "175", "answer": "175 units per rep", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "summary", "probe": "quota-price", "is_override": false, "gold": "80", "answer": "$80 per unit", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "summary", "probe": "quota-commission", "is_override": false, "gold": "8", "answer": "Not mentioned in memory.", "correct": false, "stale": false}
+{"scenario": "sales-quota", "method": "rag-append", "probe": "quota-units", "is_override": true, "gold": "175", "answer": "175 units per rep.", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "rag-append", "probe": "quota-price", "is_override": false, "gold": "80", "answer": "$80", "correct": true, "stale": false}
+{"scenario": "sales-quota", "method": "rag-append", "probe": "quota-commission", "is_override": false, "gold": "8", "answer": "8%", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "raw", "probe": "trial-status", "is_override": true, "gold": "suspended", "answer": "Suspended due to liver enzyme elevations.", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "raw", "probe": "trial-enroll", "is_override": false, "gold": "120", "answer": "120 participants.", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "raw", "probe": "trial-cro", "is_override": false, "gold": "Meridian", "answer": "Meridian Research", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "csl", "probe": "trial-status", "is_override": true, "gold": "suspended", "answer": "Suspended due to liver enzyme elevations. Enrollment halted.", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "csl", "probe": "trial-enroll", "is_override": false, "gold": "120", "answer": "120", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "csl", "probe": "trial-cro", "is_override": false, "gold": "Meridian", "answer": "Meridian_Research", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "summary", "probe": "trial-status", "is_override": true, "gold": "suspended", "answer": "Not found in memory. Memory only references a medical trial (not specified as Xelorin) that is suspended, with enrollment target of 120 contingent on future resumption.", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "summary", "probe": "trial-enroll", "is_override": false, "gold": "120", "answer": "120", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "summary", "probe": "trial-cro", "is_override": false, "gold": "Meridian", "answer": "Meridian Research", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "rag-append", "probe": "trial-status", "is_override": true, "gold": "suspended", "answer": "Trial suspended — liver enzyme elevations flagged by safety board.", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "rag-append", "probe": "trial-enroll", "is_override": false, "gold": "120", "answer": "120", "correct": true, "stale": false}
+{"scenario": "trial-protocol", "method": "rag-append", "probe": "trial-cro", "is_override": false, "gold": "Meridian", "answer": "Meridian Research", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "raw", "probe": "proj-name", "is_override": true, "gold": "Heron", "answer": "Heron", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "raw", "probe": "proj-owner", "is_override": true, "gold": "Dmitri", "answer": "Dmitri", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "raw", "probe": "proj-host", "is_override": false, "gold": "GitLab", "answer": "GitLab", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "csl", "probe": "proj-name", "is_override": true, "gold": "Heron", "answer": "Heron", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "csl", "probe": "proj-owner", "is_override": true, "gold": "Dmitri", "answer": "[redacted: model recap of private sessions removed for public release; verdict fields preserved verbatim]", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "csl", "probe": "proj-host", "is_override": false, "gold": "GitLab", "answer": "GitLab", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "summary", "probe": "proj-name", "is_override": true, "gold": "Heron", "answer": "Heron and Daimon", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "summary", "probe": "proj-owner", "is_override": true, "gold": "Dmitri", "answer": "Heron: Dmitri. Daimon: unspecified.", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "summary", "probe": "proj-host", "is_override": false, "gold": "GitLab", "answer": "GitLab (Heron)", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "rag-append", "probe": "proj-name", "is_override": true, "gold": "Heron", "answer": "Heron", "correct": true, "stale": false}
+{"scenario": "project-rename", "method": "rag-append", "probe": "proj-owner", "is_override": true, "gold": "Dmitri", "answer": "Priya", "correct": false, "stale": true}
+{"scenario": "project-rename", "method": "rag-append", "probe": "proj-host", "is_override": false, "gold": "GitLab", "answer": "GitLab", "correct": true, "stale": false}

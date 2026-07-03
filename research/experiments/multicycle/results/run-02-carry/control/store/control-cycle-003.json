@@ -1,0 +1,86 @@
+{
+  "session_id": "control-cycle-003",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "inferred",
+      "quote": "",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (still unreproduced)",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": false,
+        "importance": 8,
+        "first_seen": "2026-05-02T00:00:00Z"
+      },
+      {
+        "text": "Whether to maintain moraxil-flag enabled or change configuration after hexal-freeze lifts",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": true,
+        "importance": 8,
+        "first_seen": "2026-06-02T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Set chunk threshold for the ingest pipeline to kelvane-48K after conducting load test",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 7,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Keep the moraxil-flag enabled through the hexal-freeze window; revisit after the freeze lifts",
+        "trust": "verbatim",
+        "quote": "the moraxil-flag stays enabled until hexal-freeze lifts",
+        "importance": 8,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Tidied the plimsol-notes formatting in the wiki",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 2,
+        "first_seen": "2026-06-01T00:00:00Z"
+      },
+      {
+        "text": "Ran gavotte-lint across the scripts folder with no findings",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 5,
+        "first_seen": "2026-06-02T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 7,
+        "first_seen": "2026-06-02T00:00:00Z"
+      }
+    ],
+    "uncertainties": [
+      {
+        "text": "Whether gavotte-lint verification needs re-confirmation across scripts folder (previously found no findings, flagged [carried])",
+        "trust": "inferred",
+        "quote": "",
+        "importance": 3,
+        "first_seen": "2026-06-01T00:00:00Z"
+      }
+    ],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-04T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-control"
+}

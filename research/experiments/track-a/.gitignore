@@ -1,0 +1,3 @@
+# Your real conversations and per-run artifacts stay LOCAL — never committed.
+sessions/
+runs/

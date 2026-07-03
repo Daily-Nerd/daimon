@@ -1,0 +1,45 @@
+{
+  "_instructions": "Human-authored ANSWER KEY. Fill this from the raw transcript BEFORE reading any AI reconstruction. List every item that was genuinely true at session end. Be exhaustive on open_questions and decisions — those are the load-bearing facts. Mark trust: 'verbatim' if you can point to an exact quote (fill `quote`), else 'inferred'. For facts that EVOLVED within the session (an earlier value was corrected/superseded later), `quote` must be the FINAL state and the earlier values go in optional `superseded_states` — this flags the item for the staleness pass (scoring/rubric.md, Pass 3). Delete this _instructions key when done.",
+  "session_id": "S1",
+  "ground_truth_items": [
+    {
+      "id": "gt1",
+      "type": "open_question",
+      "text": "EXAMPLE — should we migrate the auth service from sessions to JWT?",
+      "trust": "verbatim",
+      "quote": "EXAMPLE — 'I'm still not sure if JWT is worth it for auth'"
+    },
+    {
+      "id": "gt2",
+      "type": "decision",
+      "text": "EXAMPLE — keep bcrypt; do not migrate the password hashing",
+      "trust": "verbatim",
+      "quote": "EXAMPLE — 'ok let's keep bcrypt, not worth the migration'",
+      "superseded_states": [
+        "EXAMPLE — 'let's switch to argon2' (reversed 40 turns later; quote above is the final state)"
+      ]
+    },
+    {
+      "id": "gt3",
+      "type": "belief",
+      "text": "EXAMPLE — microservices are overkill at our current scale",
+      "trust": "inferred",
+      "quote": ""
+    },
+    {
+      "id": "gt4",
+      "type": "uncertainty",
+      "text": "EXAMPLE — unsure whether to use Rust or Go for the new service",
+      "trust": "verbatim",
+      "quote": "EXAMPLE — 'Rust or Go? genuinely torn'"
+    },
+    {
+      "id": "gt5",
+      "type": "active_topic",
+      "text": "EXAMPLE — refactoring the authentication service",
+      "trust": "inferred",
+      "quote": ""
+    }
+  ],
+  "_type_legend": "open_question | decision | belief | uncertainty | active_topic | emotional_valence"
+}

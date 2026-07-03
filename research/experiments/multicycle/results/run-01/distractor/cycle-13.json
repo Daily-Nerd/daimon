@@ -1,0 +1,72 @@
+{
+  "session_id": "distractor-cycle-013",
+  "working_context": {
+    "active_topic": {
+      "text": "Ingest pipeline hardening and reconciliation work",
+      "trust": "verbatim",
+      "quote": "Active topic: Ingest pipeline hardening and reconciliation work",
+      "importance": 8,
+      "first_seen": "2026-06-01T00:00:00Z"
+    },
+    "open_questions": [
+      {
+        "text": "Does quorint-ledger reconciliation drop entries when upstream feed pauses mid-batch? (unreproduced bug requiring investigation)",
+        "trust": "verbatim",
+        "quote": "Does the quorint-ledger reconciliation drop entries when the upstream feed pauses mid-batch? (unreproduced)",
+        "external_state": true,
+        "importance": 8,
+        "first_seen": "2026-06-14T00:00:00Z"
+      },
+      {
+        "text": "Apply the fix for the websocket test fixture timing hole",
+        "trust": "inferred",
+        "quote": "",
+        "external_state": false,
+        "importance": 6,
+        "first_seen": "2026-06-13T00:00:00Z"
+      },
+      {
+        "text": "After hexal-freeze lifts: decide whether to keep moraxil-flag enabled or disable it",
+        "trust": "verbatim",
+        "quote": "After hexal-freeze lifts: Revisit the moraxil-flag setting and decide whether to keep it enabled or disable it",
+        "external_state": true,
+        "importance": 5,
+        "first_seen": "2026-06-07T00:00:00Z"
+      }
+    ],
+    "recent_decisions": [
+      {
+        "text": "Reviewed the dependency bump PR and flagged the license change",
+        "trust": "verbatim",
+        "quote": "Also today: Reviewed the dependency bump PR and flagged the license change.",
+        "importance": 6,
+        "first_seen": "2026-06-14T00:00:00Z"
+      },
+      {
+        "text": "Migrated the CI runners to the new base image and pinned the toolchain",
+        "trust": "verbatim",
+        "quote": "Also today: Migrated the CI runners to the new base image and pinned the toolchain.",
+        "importance": 7,
+        "first_seen": "2026-06-14T00:00:00Z"
+      }
+    ]
+  },
+  "epistemic_snapshot": {
+    "strong_beliefs": [
+      {
+        "text": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "trust": "verbatim",
+        "quote": "The tervane-cache eviction policy is the reason p99 latency stays flat under burst load",
+        "importance": 7,
+        "first_seen": "2026-06-02T00:00:00Z"
+      }
+    ],
+    "uncertainties": [],
+    "contradictions_flagged": []
+  },
+  "worker_queue": [],
+  "created": "2026-06-14T00:00:00Z",
+  "format_version": "D-011",
+  "author": "Kibukx",
+  "project_slug": "-experiment-distractor"
+}
