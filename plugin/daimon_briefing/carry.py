@@ -107,9 +107,27 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                          and _same_item(text, str(n.get("text") or ""), generic)),
                         None)
             if twin is not None:
-                # Session re-discussed it: the new wording wins, but the item's
-                # AGE does not reset (run-01: 8-12 resets/20 cycles killed the
-                # #128 overdue boost). Keep the older birth stamp.
+                # Session re-discussed it. Split by the PREV item's trust class
+                # (#22, two-path recall):
+                #   - verbatim -> FREEZE. A verbatim item carries an immutable
+                #     pinned quote (D-006); recall must not re-write it
+                #     (reconsolidation, Nader/Schafe/LeDoux 2000). The prev's
+                #     frozen original text+quote+trust overwrite the reworded
+                #     native twin. prev is the older by construction and holds
+                #     the canonical pin, so it wins even when the native twin is
+                #     itself verbatim with a DIFFERENT quote (don't-erode; the
+                #     asymmetric bias in _same_item — false-merge worse than
+                #     false-non-merge — favors the original). external_state and
+                #     other native fields are left untouched.
+                #   - inferred/untagged -> new wording wins (beliefs are allowed
+                #     to reconsolidate; that is correct).
+                # AGE never resets either way (run-01: 8-12 resets/20 cycles
+                # killed the #128 overdue boost) — keep the older birth stamp.
+                if item.get("trust") == "verbatim":
+                    twin["text"] = item["text"]
+                    if item.get("quote"):
+                        twin["quote"] = item["quote"]
+                    twin["trust"] = "verbatim"
                 if item.get("first_seen") and not twin.get("first_seen"):
                     twin["first_seen"] = item["first_seen"]
                 elif item.get("first_seen") and twin.get("first_seen"):

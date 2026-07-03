@@ -215,3 +215,93 @@ def test_in_call_duplicate_prev_items_carry_once():
     out = carry.merge(_cp("S-new"), prev, NOW)
     qs = out["working_context"]["open_questions"]
     assert len(qs) == 1
+
+
+# --- verbatim-freeze on re-discovery (#22): reconsolidation defense ----------
+# A [✓ verbatim] item carries an immutable pinned quote (D-006). When a later
+# session re-discusses it and the serializer emits a reworded native twin, the
+# prev's frozen original text+quote+trust must win — recall must NOT re-write a
+# verbatim item (Nader/Schafe/LeDoux reconsolidation; daimon has a verbatim
+# store the brain lacks). Inferred beliefs still evolve, unchanged.
+
+_VERB_ORIG = ("quorint-ledger reconciliation drops entries when upstream "
+              "feed pauses")
+_VERB_QUOTE = "drops entries when upstream feed pauses"
+_VERB_TWIN = ("quorint-ledger reconciliation still dropping entries on "
+              "feed pauses")
+
+
+def test_verbatim_prev_freezes_reworded_native_twin():
+    # CORE: prev verbatim + reworded (here inferred) native twin -> the merged
+    # item is the frozen original text+quote, trust stays verbatim. RED today:
+    # "new wording wins" keeps the reworded native text and drops the quote.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["text"] == _VERB_ORIG          # frozen original, not reworded
+    assert qs[0]["quote"] == _VERB_QUOTE        # pinned quote survived recall
+    assert qs[0]["trust"] == "verbatim"         # not downgraded to inferred
+    assert qs[0]["first_seen"] == _iso(45)      # older birth stamp preserved
+
+
+def test_inferred_prev_still_reconsolidates_new_wording_wins():
+    # GUARD against over-freezing: an inferred prev item is ALLOWED to evolve.
+    # New wording wins exactly as before the #22 fix; nothing is frozen.
+    prev = _cp("S-prev", 1, questions=[_item(_VERB_ORIG, days=45)])
+    new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert "still dropping" in qs[0]["text"]    # NEW wording won
+    assert qs[0]["trust"] == "inferred"         # NOT frozen to verbatim
+    assert qs[0]["first_seen"] == _iso(45)      # age still inherited
+
+
+def test_verbatim_identical_twin_survives_byte_identical():
+    # No-op path: native item already byte-identical to the prev verbatim. Exact
+    # text is caught by the idempotency guard before freeze; assert nothing is
+    # corrupted (text+quote+trust intact, still one item).
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=0)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["text"] == _VERB_ORIG
+    assert qs[0]["quote"] == _VERB_QUOTE
+    assert qs[0]["trust"] == "verbatim"
+
+
+def test_verbatim_freeze_inherits_older_first_seen():
+    # first_seen birth-stamp inheritance still works on the freeze path: the
+    # native twin has a NEWER stamp; the older prev original stamp must win,
+    # AND the payload is frozen to verbatim.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert qs[0]["first_seen"] == _iso(45)      # older birth stamp inherited
+    assert qs[0]["trust"] == "verbatim"         # payload frozen alongside
+
+
+def test_two_verbatim_twins_different_quotes_older_original_wins():
+    # DESIGN CHOICE: a re-discovered item that is ALSO verbatim but carries a
+    # DIFFERENT quote -> freeze to the OLDER pinned original (prev). The thesis
+    # is don't-erode; _same_item's asymmetric bias (a false merge is worse than
+    # a false non-merge) favors keeping the original over the reworded requote.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, trust="verbatim",
+        quote="still dropping entries on feed pauses", days=0)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["text"] == _VERB_ORIG                    # older original text
+    assert qs[0]["quote"] == _VERB_QUOTE                  # older pinned quote
+    assert qs[0]["trust"] == "verbatim"
