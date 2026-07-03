@@ -133,3 +133,15 @@ ADR-lite. Each decision: what, alternatives, rationale, reversal cost, date, sta
 **Reversal cost:** Medium — changes the serialize prompt and likely the checkpoint schema.
 
 **Status:** ✅ **Resolved (probe, 2026-06-09 — `findings/03`).** Three-arm probe on S2 (the worst long session): D-007 prompt alone lifts RR 37.9%→58.6% (helps, insufficient); D-007 prompt + **chunked multi-pass extraction** (800-line chunks + merge) reaches **RR 89.7% / FMR 6.7%** — clears both bars. The richer prompt is adopted AND the architecture is chunked: serialization for long transcripts is chunk→extract→merge (`docs/MVP-DREAM-BRIEFING.md §4`). Merge pass showed no fabrication (FMR under bar). Caveats: n=1, LLM-judged. See also `.scars/0001` (judge grounding must reference transcript, not answer key).
+
+## D-013 — Verbatim expiry stays; verbatim immutability extended to every render surface
+
+**What (2026-07-03):** Two rules pinned after the four-lens audit (issue #30). (1) **Verbatim items are NOT exempt from carry's weight-floor expiry** — rational forgetting (Anderson & Schooler; the #78/#123 decay model) applies to every trust class. Verbatim means *exact wording*, not *immortal*: an unresolved verbatim item nobody has touched decays past the floor and drops from carry like any other item. (2) **Verbatim text is immutable on every surface, not just carry (#23):** render-time budget truncation (stage 1, `briefing.render_plain`) skips verbatim items' text — an oversized verbatim item may be *dropped whole* (announced by the trim note) but never rewritten in place — and the opt-in LLM briefing render is post-validated (`_validate_llm_render`): a render that loses or mutates any verbatim quote is rejected and the deterministic render takes over.
+
+**Alternatives:** Full expiry exemption for verbatim (risk: the cap-8/kind budget fills with stale verbatim items and crowds out fresh carries); a longer decay horizon for verbatim (adds a tuning knob with no field data — violates don't-tune-on-n=1); leaving the LLM render unvalidated but documented as experimental (keeps the differentiator broken on an opt-in path).
+
+**Rationale:** The verbatim/inferred distinction is the product's central guarantee; it must mean exactly one thing everywhere. Immutability governs *wording* (reconsolidation fix, #22/#23); expiry governs *retention* (rational forgetting). Keeping the two orthogonal preserves both cognitive-science groundings without inventing an unfounded knob.
+
+**Reversal cost:** Low — an expiry exemption or horizon knob can be added in carry.merge if field data ever shows load-bearing verbatim items dying at the floor.
+
+**Status:** ✅ **Active (2026-07-03).** Implemented with issue #30: truncation exemption + LLM-render post-validation + untagged trust rendering. Related: #22/#23 (freeze on re-discovery), D-006 (extractive pinning).

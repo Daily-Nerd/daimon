@@ -115,13 +115,20 @@ def test_llm_briefing_sends_configured_temperature(sample_checkpoint, monkeypatc
     monkeypatch.setenv("DAIMON_LLM_TEMPERATURE", "1")
     captured = {}
 
+    # The fake response must carry every verbatim quote — #30 post-validation
+    # rejects an LLM render that loses one, and this test is about the
+    # request body, not the validation gate.
+    faithful = ('llm-rendered briefing: "I\'ll merge it myself later from the '
+                'GitHub UI" / "do we chunk below 1200 lines or single-pass?" / '
+                '"we adopt the D-007 prompt for the serializer"')
+
     def fake_urlopen(req, timeout=None):
         captured["body"] = json.loads(req.data)
-        payload = {"choices": [{"message": {"content": "llm-rendered briefing"}}]}
+        payload = {"choices": [{"message": {"content": faithful}}]}
         return io.BytesIO(json.dumps(payload).encode())
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    assert briefing.render(sample_checkpoint) == "llm-rendered briefing"
+    assert briefing.render(sample_checkpoint) == faithful
     assert captured["body"]["temperature"] == 1.0
 
 
@@ -446,3 +453,97 @@ def test_line_carried_marker_precedes_quote():
             "quote": "the exact words", "carried_from": "S-0"}
     line = briefing._line(item)
     assert line.index("[carried]") < line.index("the exact words")
+
+
+# ---- #30: trust-class integrity — the differentiator's own guarantees ----
+
+
+def _llm_briefing_env(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BRIEFING", "1")
+    monkeypatch.setenv("DAIMON_LLM_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "test-model")
+
+
+def test_llm_render_rejected_when_verbatim_quote_missing(sample_checkpoint, monkeypatch):
+    # The LLM path used to print whatever came back — a verbatim pin could be
+    # silently dropped or reworded. A render that loses any verbatim quote is
+    # rejected and the deterministic render takes over (#30).
+    _llm_briefing_env(monkeypatch)
+    from daimon_briefing import llm
+    monkeypatch.setattr(llm, "chat",
+                        lambda *a, **k: "a fluent briefing that quotes nothing")
+    out = briefing.render(sample_checkpoint)
+    # deterministic fallback: every verbatim quote is present, mechanically
+    assert "I'll merge it myself later from the GitHub UI" in out
+    assert "do we chunk below 1200 lines or single-pass?" in out
+
+
+def test_llm_render_accepted_when_quotes_survive(sample_checkpoint, monkeypatch):
+    _llm_briefing_env(monkeypatch)
+    from daimon_briefing import llm
+    faithful = (
+        "While you were away: verify PR #6 first — "
+        '"I\'ll merge it myself later from the GitHub UI". '
+        'Open: "do we chunk below 1200 lines or single-pass?". '
+        'Decided: "we adopt the D-007 prompt for the serializer".'
+    )
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: faithful)
+    assert briefing.render(sample_checkpoint) == faithful
+
+
+def test_llm_render_tolerates_rewrapped_whitespace(sample_checkpoint, monkeypatch):
+    # LLMs re-wrap lines; a quote split across a newline is still intact.
+    _llm_briefing_env(monkeypatch)
+    from daimon_briefing import llm
+    rewrapped = (
+        'Verify: "I\'ll merge it myself\nlater from the GitHub UI".\n'
+        'Open: "do we chunk below 1200\nlines or single-pass?".\n'
+        'Decided: "we adopt the D-007\nprompt for the serializer".'
+    )
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: rewrapped)
+    assert briefing.render(sample_checkpoint) == rewrapped
+
+
+def test_budget_truncation_never_rewrites_verbatim_text(monkeypatch):
+    # #23 froze verbatim text in carry; render must honor the same rule —
+    # budget pressure truncates INFERRED items first, verbatim text stays
+    # byte-intact (#30).
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "400")
+    long_verbatim = "the exact verbatim wording " + "alpha bravo " * 60
+    long_inferred = "an inferred summary " + "charlie delta " * 60
+    cp = {
+        "session_id": "S-v",
+        "working_context": {
+            "active_topic": {"text": "topic", "trust": "inferred"},
+            "open_questions": [
+                {"text": long_verbatim, "trust": "verbatim", "importance": 9,
+                 "first_seen": "2026-07-01T00:00:00Z"},
+                {"text": long_inferred, "trust": "inferred", "importance": 9,
+                 "first_seen": "2026-07-01T00:00:00Z"},
+            ],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }
+    b = briefing.build(cp, now=1_800_000_000.0)
+    out = briefing.render_plain(b)
+    # Verbatim: either byte-intact (render strips trailing whitespace) or
+    # dropped whole — a rewritten-in-place verbatim text is the violation.
+    assert (long_verbatim.strip() in out
+            or "the exact verbatim wording" not in out), \
+        "verbatim text was truncated in place — rewritten, not dropped"
+    # Budget pressure DID land on the inferred item (proves the exemption is
+    # doing work, not that the budget never fired).
+    assert long_inferred.strip() not in out
+
+
+def test_mark_untagged_trust_is_not_inferred():
+    # An item with no trust class must not be presented as a confident
+    # "~ inferred" — that is a classification it never earned (#30). The
+    # recall CLI already says "untagged"; the briefing must agree.
+    assert briefing._mark({"text": "x"}) == "? untagged"
+    assert briefing._mark({"text": "x", "trust": ""}) == "? untagged"
+    assert briefing._mark({"text": "x", "trust": "inferred"}) == "~ inferred"
+    assert briefing._mark({"text": "x", "trust": "verbatim"}) == "✓ verbatim"
