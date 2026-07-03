@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-011"
+PROMPT_VERSION = "D-012"
 
 
 class SerializeError(Exception):
@@ -114,6 +114,10 @@ RULES — follow every one exactly; this is the point of the exercise:
     what the next session does; 9-10 = architectural or hard to reverse. Score by CONSEQUENCE,
     not by how recently it was said.
 
+15. TRANSCRIPT LANGUAGE: write every item's `text` in the same language as the transcript
+    (a Spanish session produces Spanish items). Never translate quotes — a `quote` is always
+    the exact original wording. Schema keys and structure stay in English as shown.
+
 Schema shape:
 {
   "session_id": "<id>",
@@ -181,6 +185,10 @@ MERGE RULES — follow every one exactly:
 11. IMPORTANCE: carry each item's integer `importance` (1-10) into the merged output. When
     deduplicating, keep the canonical item's score; if the duplicates' scores differ, keep the
     HIGHEST — under-weighting a load-bearing item costs more than over-weighting a minor one.
+
+12. TRANSCRIPT LANGUAGE: keep every item's `text` in the same language as the transcript —
+    merging must not translate items (a Spanish session stays Spanish). Never translate quotes;
+    a `quote` is always the exact original wording. Schema keys and structure stay in English.
 
 Schema shape:
 {
