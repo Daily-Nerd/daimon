@@ -5,6 +5,14 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/Daily-Nerd/daimon/compare/v0.3.0...v0.3.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **version:** derive __version__ from installed metadata ([15c73c6](https://github.com/Daily-Nerd/daimon/commit/15c73c641036a969ffe2b2eb7f9cb862cabcfa60))
+* **version:** derive __version__ from installed metadata ([#11](https://github.com/Daily-Nerd/daimon/issues/11)) ([3147490](https://github.com/Daily-Nerd/daimon/commit/3147490aceb82fd786b2e321c043369db8b634b2))
+
 ## [0.3.0](https://github.com/Daily-Nerd/daimon/compare/v0.2.0...v0.3.0) (2026-07-03)
 
 
