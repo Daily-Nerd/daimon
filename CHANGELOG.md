@@ -5,6 +5,16 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/Daily-Nerd/daimon/compare/v0.2.0...v0.3.0) (2026-07-03)
+
+
+### Features
+
+* **harvest:** Spanish scar markers — detector no longer silent on Spanish replies ([#7](https://github.com/Daily-Nerd/daimon/issues/7)) ([7622e75](https://github.com/Daily-Nerd/daimon/commit/7622e7576ebdbc1b97cbe56d8c6a07b8a45681d6))
+* **recall:** unicode tokenization + diacritic folding + Spanish stopwords ([#6](https://github.com/Daily-Nerd/daimon/issues/6)) ([db785ce](https://github.com/Daily-Nerd/daimon/commit/db785ce6f9ccd4ed917547f806159b647f4a1427))
+* **serializer:** D-012 — preserve transcript language in item text ([a02af81](https://github.com/Daily-Nerd/daimon/commit/a02af819585580f0d2308a9444784ded3a0b4434))
+* **serializer:** D-012 — preserve transcript language in item text ([#9](https://github.com/Daily-Nerd/daimon/issues/9)) ([58668dd](https://github.com/Daily-Nerd/daimon/commit/58668ddce75ea40249d8e62e4e319e6241978ca5))
+
 ## [Unreleased]
 
 ### Added
