@@ -557,3 +557,51 @@ def test_windsurf_probe_non_json_stdin_still_exits_zero(tmp_path):
     )
     assert proc.returncode == 0
     assert list((tmp_path / "daimon-windsurf-probe").glob("payload-*.raw"))
+
+
+def test_windsurf_probe_scan_vscdb_finds_trajectory_key(tmp_path):
+    # #35: Windsurf stores Cascade state in VS Code-style sqlite (state.vscdb,
+    # ItemTable). The scan mode must report which key holds a given trajectory
+    # WITHOUT shipping whole conversation blobs — key names, sizes, and a
+    # small head of the matching value only.
+    import sqlite3, subprocess
+    probe = Path(__file__).resolve().parents[2] / "hook" / "daimon-windsurf-probe.py"
+    db = tmp_path / "state.vscdb"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
+    traj = "b0ba5494-dce6-47a2-8da0-a7c11b18d392"
+    blob = json.dumps({"trajectories": [{"id": traj, "turns": [
+        {"role": "user", "text": "hola"},
+        {"role": "assistant", "text": "### Planner Response\n\nHola!"}]}]})
+    conn.execute("INSERT INTO ItemTable VALUES (?, ?)",
+                 ("windsurf.cascadeState", blob.encode()))
+    conn.execute("INSERT INTO ItemTable VALUES (?, ?)",
+                 ("editor.fontSize", b"14"))
+    conn.commit()
+    conn.close()
+
+    proc = subprocess.run(
+        [sys.executable, str(probe), "--scan-vscdb", traj, "--db", str(db)],
+        capture_output=True, text=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
+    assert proc.returncode == 0
+    reports = list((tmp_path / "daimon-windsurf-probe").glob("vscdb-scan-*.txt"))
+    assert reports, "scan report not written"
+    report = reports[0].read_text()
+    assert "windsurf.cascadeState" in report          # the key that matched
+    assert traj in report
+    assert "hola" in report                            # head sample present
+    assert "editor.fontSize" not in report or "MATCH" not in report.split("editor.fontSize")[1][:40]
+
+
+def test_windsurf_probe_scan_vscdb_missing_db_exits_zero(tmp_path):
+    import subprocess
+    probe = Path(__file__).resolve().parents[2] / "hook" / "daimon-windsurf-probe.py"
+    proc = subprocess.run(
+        [sys.executable, str(probe), "--scan-vscdb", "whatever",
+         "--db", str(tmp_path / "absent.vscdb")],
+        capture_output=True, text=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
+    assert proc.returncode == 0
