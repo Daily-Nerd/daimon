@@ -25,9 +25,13 @@ Each item is marked `✓ verbatim` (pinned to an exact quote — trust it) or
 
 ## Automatic behavior
 
-You do not need to invoke anything. The briefing appears automatically on the first
-turn of a new session if a prior checkpoint exists. Checkpoints are written
-automatically when a session ends.
+You do not need to invoke anything. The plugin wires the host's native session
+hooks: a checkpoint is written automatically when a session **ends**, and the
+briefing appears automatically at the **start** of the next session if a prior
+checkpoint exists. Between those, a lightweight **proactive recall** watches your
+prompts and surfaces a one-line "you worked on this before" pointer when the
+current prompt overlaps a prior open loop — without re-suggesting anything the
+start-of-session briefing already carried.
 
 ## Manual trigger
 
@@ -43,7 +47,29 @@ See the plugin README. Key knobs: `DAIMON_DISABLE=1` (kill switch),
 `DAIMON_CHECKPOINT_DIR`, `DAIMON_MIN_MESSAGES`, `DAIMON_LLM_*` (falling back to
 `LITELLM_*`), `DAIMON_LLM_BACKEND=command` + `DAIMON_LLM_COMMAND` (headless-CLI fallback).
 
-## Scope (Slice 1)
+## What ships today
 
-Local-file checkpoints, single-pass serialization, no Honcho. Long-transcript recall
-(chunking) is Slice 2; Honcho-backed cross-session recall is Slice 3.
+Daimon is self-contained and host-agnostic — no server, no external memory
+backend, stdlib-only at runtime. The capabilities behind the briefing:
+
+- **Checkpoint → briefing loop.** Session end serializes the transcript into a
+  per-project JSON checkpoint; session start reconstructs it into the briefing.
+- **Chunked extraction.** Long transcripts are split into overlapping chunks,
+  serialized pass-by-pass, then merged — so recall holds up on long sessions
+  instead of degrading as the transcript grows.
+- **Deterministic carry.** Unresolved open loops that still matter are carried
+  forward into the next checkpoint by exact term overlap (no LLM in the carry
+  step) and marked `[carried]` so you can see a loop survived from an earlier
+  session rather than being freshly observed.
+- **Proactive recall.** A per-prompt pointer to prior work when your current
+  prompt overlaps an open loop (see *Automatic behavior*).
+- **Trust classing.** Every item is `✓ verbatim` (pinned to an exact quote) or
+  `~ inferred` (paraphrased), so you know what to trust literally.
+- **Code-drift detection.** `daimon anchor <file> <symbol>` binds a checkpoint
+  item to a code symbol; the briefing flags it under **CODE DRIFT — verify
+  before trusting** when that symbol's body changes or disappears (offline,
+  stdlib `ast`).
+- **Scars.** An optional session-end pass harvests negative-knowledge signals
+  (abandoned approaches, landmines) into the repo's `.scars/` directory.
+- **Status & self-heal.** `daimon status` reports checkpoint/briefing health;
+  a failed capture self-heals on the next session start.

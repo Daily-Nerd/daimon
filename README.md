@@ -68,7 +68,7 @@ Daimon's surface, honestly scoped:
 
 - **The briefing UX** — a session-*start* artifact (`research/findings/07`).
 - **The cognitive-checkpoint serializer** — extractive trust/provenance/supersession over a real transcript (D-006/D-007), self-contained, no graph DB.
-- **Host-agnostic hooks** — Claude Code + Codex today, hermes optional; other hosts (Odysseus, openclawd, …) reachable via a thin adapter.
+- **Host-agnostic hooks** — Claude Code (live-validated daily) + Codex (adapter ships, not yet live-dogfooded), hermes optional; other hosts (Odysseus, openclawd, …) reachable via a thin adapter.
 - **The initiative taxonomy** — attention-gated proactive interruption (MVP ships Level 0 only: pull at session start, nothing pings you).
 
 Honcho and Graphiti were evaluated as a memory substrate and **not adopted** — they conflict with Daimon's lean / offline / no-gateway constraints (the lexical-first verdict is in `research/memory-backend/`; rationale in **[D-009](./research/DECISIONS.md)**). A Claimify-style extraction gate, if built, is a natural upstream PR to Graphiti — not a runtime dependency.
@@ -79,7 +79,7 @@ Honcho and Graphiti were evaluated as a memory substrate and **not adopted** —
 
 This project was previously framed as a standalone "persistent AI companion" with an epistemic-graph differentiator. That framing was **retired** per **[D-008](./research/DECISIONS.md)** (user-approved 2026-06-09): Track B (`findings/07`) found ~7/9 of the proposed epistemic-graph features already shipped by Honcho + Graphiti. The differentiator was a dependency, not a moat.
 
-**Update ([D-009](./research/DECISIONS.md), 2026-06-27):** D-008's "build on Honcho + Graphiti" half **never shipped** and was inverted by later evidence — the gateway outages this cycle plus the memory-backend scale-test (see [research/memory-backend/](./research/memory-backend/) and D-009 in [research/DECISIONS.md](./research/DECISIONS.md)). The runtime is **self-contained and host-agnostic** (Claude Code + Codex today; hermes optional); Honcho/Graphiti are not runtime dependencies.
+**Update ([D-009](./research/DECISIONS.md), 2026-06-27):** D-008's "build on Honcho + Graphiti" half **never shipped** and was inverted by later evidence — the gateway outages this cycle plus the memory-backend scale-test (see [research/memory-backend/](./research/memory-backend/) and D-009 in [research/DECISIONS.md](./research/DECISIONS.md)). The runtime is **self-contained and host-agnostic** (Claude Code live-validated; Codex adapter shipped, awaiting first live run; hermes optional); Honcho/Graphiti are not runtime dependencies.
 
 **Authoritative architecture:** [docs/MVP-DREAM-BRIEFING.md](./docs/MVP-DREAM-BRIEFING.md)
 **Evidence trail:** [research/](./research/README.md) — algorithms, findings, decisions, open questions
