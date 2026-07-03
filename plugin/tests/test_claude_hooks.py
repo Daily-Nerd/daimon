@@ -524,3 +524,36 @@ def test_session_end_spawn_line_records_transcript(tmp_path, tmp_checkpoint_dir)
     log = tmp_path / ".daimon" / "logs" / "serialize.log"
     content = _wait_for_text(log, "spawned serialize for S-tr")
     assert f"(transcript: {transcript})" in content
+
+
+def test_windsurf_probe_captures_payload_and_transcript_sample(tmp_path):
+    # #35: the probe must dump the raw payload, parsed JSON, and a head sample
+    # of any on-disk *path* field — and always exit 0.
+    import subprocess
+    probe = Path(__file__).resolve().parents[2] / "hook" / "daimon-windsurf-probe.py"
+    transcript = tmp_path / "trajectory.jsonl"
+    transcript.write_text('{"type":"user_prompt","status":"done"}\n' * 3)
+    payload = {"trajectory_id": "T1", "transcript_path": str(transcript)}
+    proc = subprocess.run(
+        [sys.executable, str(probe)], input=json.dumps(payload),
+        capture_output=True, text=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
+    assert proc.returncode == 0
+    out_dir = tmp_path / "daimon-windsurf-probe"
+    files = {p.name.split("-", 1)[0] + Path(p.name).suffix for p in out_dir.iterdir()}
+    assert any(f.startswith("payload") and f.endswith(".json") for f in files)
+    samples = list(out_dir.glob("sample-transcript_path-*.txt"))
+    assert samples and "user_prompt" in samples[0].read_text()
+
+
+def test_windsurf_probe_non_json_stdin_still_exits_zero(tmp_path):
+    import subprocess
+    probe = Path(__file__).resolve().parents[2] / "hook" / "daimon-windsurf-probe.py"
+    proc = subprocess.run(
+        [sys.executable, str(probe)], input="not json at all",
+        capture_output=True, text=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
+    assert proc.returncode == 0
+    assert list((tmp_path / "daimon-windsurf-probe").glob("payload-*.raw"))
