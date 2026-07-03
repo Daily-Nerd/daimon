@@ -1,10 +1,16 @@
 """Daimon dream-briefing — hermes plugin entrypoint (Slice 1, local-file, no Honcho)."""
 
+from importlib import metadata
 from pathlib import Path
 
 from . import hooks
 
-__version__ = "0.2.0"
+try:
+    # Single source of truth: the installed distribution (pyproject version).
+    # A hardcoded string here shipped a 0.3.0 wheel that reported 0.2.0 (#10).
+    __version__ = metadata.version("daimon-briefing")
+except metadata.PackageNotFoundError:  # imported from a raw source tree
+    __version__ = "0.0.0+unknown"
 
 
 def register(ctx):
