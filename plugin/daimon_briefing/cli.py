@@ -119,6 +119,7 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     session_id = path.stem
     # Elapsed time lands in serialize.log — checkpoint generation runs 4-25 min
     # in production and was invisible before this.
+    llm.reset_fallback()  # #28: detect a silent backend downgrade during THIS run
     start = time.monotonic()
     try:
         checkpoint = serializer.serialize_strict(session_id, messages, chat=_chat)
@@ -157,6 +158,11 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
     elapsed = int(time.monotonic() - start)
     msg = f"wrote checkpoint: {out} (took {elapsed}s)"
+    if llm.fallback_used():
+        # Trailing marker (#28): the configured backend failed and the weaker
+        # command fallback produced this checkpoint — success, but downgraded.
+        # Suffix-safe: _RESULT_OK_RE/_LEDGER_OK_RE are prefix-anchored.
+        msg += " [fallback backend]"
     print(msg)
     _append_serialize_log(msg)
     # Opt-in scar-candidate harvest (#100), mirroring the hermes host wiring
@@ -495,11 +501,21 @@ def _checkpoint_info(path, now) -> dict:
     }
 
 
-def _status_health(proj, glob, outstanding, siblings, *, now) -> dict:
+def _status_health(proj, glob, outstanding, siblings, *, now,
+                   disabled: bool = False) -> dict:
     """Objective health verdict for `status`. Pure — `now` is injected. Warns only
     on data-driven signals: a NEWER phantom-child bucket (the #74 split), a missing
-    project checkpoint, or outstanding serialize failures. No age thresholds."""
+    project checkpoint, outstanding serialize failures, or the kill switch being
+    set. No age thresholds."""
     warnings: list[str] = []
+
+    # #28: a stuck DAIMON_DISABLE=1 silently stops all capture — the single
+    # most important thing status can say, so it leads the verdict.
+    if disabled:
+        warnings.append(
+            "DAIMON_DISABLE is set — capture is OFF (no checkpoints are "
+            "being written)"
+        )
 
     proj_mtime = (now - proj["age_seconds"]) if proj.get("exists") else None
     newer = [
@@ -587,6 +603,29 @@ def _parse_serialize_log(path, now) -> dict | None:
     return {"spawn": spawn, "result": result}
 
 
+def _crash_log_info(path: Path, now: float) -> dict | None:
+    """Tail of serialize-crash.log — the file spawn_serialize points child
+    stderr at. It was a write-only dead-drop: tracebacks landed there and no
+    command ever read it (#28). Returns None when absent/empty/unreadable;
+    else the last non-empty line (a traceback's final line names the
+    exception) plus the file's age."""
+    try:
+        st = path.stat()
+        if st.st_size == 0:
+            return None
+        with path.open("rb") as f:
+            f.seek(max(0, st.st_size - 4096))
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    age = int(now - st.st_mtime)
+    return {"last_line": lines[-1], "age_seconds": age,
+            "age": _format_age(age), "path": str(path)}
+
+
 def _cmd_status(args) -> int:
     now = time.time()
     project = _resolve_project(args.project)
@@ -602,8 +641,18 @@ def _cmd_status(args) -> int:
     except OSError:
         _ledger_text = ""
     outstanding = _compute_outstanding(_ledger_text, now)
+    crash = _crash_log_info(config.log_dir() / "serialize-crash.log", now)
+    recall_error = _crash_log_info(config.log_dir() / "recall-error.log", now)
+    disabled = config.is_disabled()
+    # Skips are terminal by design (too-short sessions), but invisible skips
+    # read as captured sessions (#28) — count them for display.
+    skipped_recent = sum(
+        1 for e in _session_ledger(_ledger_text, now).values()
+        if e["result_kind"] == "skipped"
+    )
     siblings = store.sibling_buckets(project)
-    health = _status_health(proj, glob, outstanding, siblings, now=now)
+    health = _status_health(proj, glob, outstanding, siblings, now=now,
+                            disabled=disabled)
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()
@@ -621,7 +670,8 @@ def _cmd_status(args) -> int:
         print(json.dumps(
             {"project": proj, "global": glob, "last_serialize": last,
              "outstanding": outstanding, "siblings": siblings, "health": health,
-             "team": team},
+             "team": team, "crash": crash, "disabled": disabled,
+             "skipped_recent": skipped_recent, "recall_error": recall_error},
             indent=2,
         ))
         return rc
@@ -629,7 +679,8 @@ def _cmd_status(args) -> int:
     render.render_status({
         "project": project, "proj": proj, "glob": glob, "same": same, "last": last,
         "outstanding": outstanding, "identity": identity, "health": health,
-        "team": team,
+        "team": team, "crash": crash, "skipped_recent": skipped_recent,
+        "recall_error": recall_error,
     })
     return rc
 
@@ -647,6 +698,11 @@ _HEAL_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\) after \d+s")
 _LEDGER_OK_RE = re.compile(r"^wrote checkpoint: (.+?) \(took \d+s\)")
 _LEDGER_SKIP_RE = re.compile(r"^skipped serialize for (\S+):")
 _LEDGER_PROJECT_RE = re.compile(r"project: (.*?)\)")
+# #28: hooks stamp the transcript path on the spawn line as a TRAILING group —
+# `... (reason: r, project: p) (transcript: <path>)` — so a child that crashes
+# before writing any result line still leaves a healable trail. Trailing-only
+# match keeps it disjoint from _HEAL_TRANSCRIPT_RE (error lines, `after Ns`).
+_LEDGER_SPAWN_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)\s*$")
 
 
 def _session_ledger(text: str, now: float) -> dict:
@@ -680,6 +736,9 @@ def _session_ledger(text: str, now: float) -> dict:
             if pm:
                 raw = pm.group(1).strip()
                 e["project"] = raw if (raw and raw != "?") else None
+            tm = _LEDGER_SPAWN_TRANSCRIPT_RE.search(line)
+            if tm:
+                e["transcript"] = tm.group(1)
             if "retry serialize for" in line:
                 e["retried"] = True
             continue
@@ -733,8 +792,16 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                         "transcript": e["transcript"], "project": e["project"],
                         "spawned": e["spawned"], "line": e["result_line"]})
         elif e["result_kind"] is None and e["spawned"] and age is not None and age > ceiling:
-            out.append({"sid": sid, "kind": "hung", "class": "hung", "age": age,
-                        "age_str": _format_age(age), "transcript": None,
+            # #28: a spawn line that recorded its transcript makes a hung
+            # (crashed/killed) serialize healable — the checkpoint is
+            # recoverable as long as the transcript is still on disk. The
+            # one-retry-ever policy (#26) applies unchanged via `retried`.
+            t = e["transcript"]
+            cls = ("healable"
+                   if t and transcript_exists(t) and not e["retried"]
+                   else "hung")
+            out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
+                        "age_str": _format_age(age), "transcript": t,
                         "project": e["project"], "spawned": True, "line": None})
     out.sort(key=lambda f: (f["age"] is None, f["age"] or 0))
     return out

@@ -77,9 +77,13 @@ def main() -> int:
     child_env = lib.project_env(cwd)
     try:
         lib.spawn_serialize(cli, transcript_path, child_env)
+        # Trailing (transcript: ...) group (#28): if the child crashes before
+        # writing any result line, this is the only surviving pointer to the
+        # transcript — it makes the hung session healable instead of lost.
         lib.log(
             f"session-end: spawned serialize for {session_id} "
-            f"(reason: {reason}, project: {cwd or '?'})"
+            f"(reason: {reason}, project: {cwd or '?'}) "
+            f"(transcript: {transcript_path})"
         )
     except OSError as exc:
         lib.log(f"session-end: spawn failed ({type(exc).__name__}: {exc})")

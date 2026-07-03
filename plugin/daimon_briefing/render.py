@@ -271,16 +271,48 @@ def render_heal(plan: dict, *, dry_run: bool) -> None:
         print(f"  - {s['sid']}  ({s['age_str']} ago) — {s['reason']}")
 
 
+def _print_skips_plain(n) -> None:
+    """Informational, not a warning (#28): a skip is by-design (too-short
+    session), but an invisible skip reads as a captured session."""
+    if n:
+        print(f"recent sessions skipped (too short to serialize): {n}")
+
+
+def _print_crash_plain(crash) -> None:
+    """One line for the newest child-process crash (#28). serialize-crash.log
+    is where spawn_serialize points child stderr; before this, nothing ever
+    read it back. No-op when the log is absent/empty."""
+    if not crash:
+        return
+    print(f"last serialize crash: {crash['age']} ago — {crash['last_line']}")
+    print(f"  full traceback: {crash['path']}")
+
+
+def _print_recall_error_plain(err) -> None:
+    """Newest swallowed recall-index error (#28) — without it, a broken index
+    reads as \"no prior work\"."""
+    if not err:
+        return
+    print(f"last recall error: {err['age']} ago — {err['last_line']}")
+
+
 def _outstanding_lines(outstanding) -> list:
     """Human lines for lost sessions; empty list when nothing is outstanding."""
     lines = []
     for f in outstanding:
         age = f["age_str"]
         if f["kind"] == "hung":
-            lines.append(
-                f"  - {f['sid']}  spawned {age} ago, no result "
-                f"(hung/killed; transcript unavailable)"
-            )
+            # #28: a hung spawn whose transcript survived is healable now.
+            if f["class"] == "healable":
+                lines.append(
+                    f"  - {f['sid']}  spawned {age} ago, no result "
+                    f"(hung/killed) — run `daimon heal`"
+                )
+            else:
+                lines.append(
+                    f"  - {f['sid']}  spawned {age} ago, no result "
+                    f"(hung/killed; transcript unavailable)"
+                )
         elif f["class"] == "retry-exhausted":
             lines.append(f"  - {f['sid']}  error {age} ago — retry attempted, still failing")
         elif f["class"] == "unrecoverable":
@@ -320,6 +352,9 @@ def _plain_status(data: dict) -> None:
         print("global checkpoint (fallback): none")
     if last is None:
         print("last serialize: no serialize history")
+        _print_crash_plain(data.get("crash"))
+        _print_recall_error_plain(data.get("recall_error"))
+        _print_skips_plain(data.get("skipped_recent"))
         return
     if last["result"]:
         print(f"last serialize result: {last['result']['outcome']} — {last['result']['line']}")
@@ -331,6 +366,9 @@ def _plain_status(data: dict) -> None:
         print(f"last serialize spawn: session {s['session_id']}{ago}")
     else:
         print("last serialize spawn: none logged yet")
+    _print_crash_plain(data.get("crash"))
+    _print_recall_error_plain(data.get("recall_error"))
+    _print_skips_plain(data.get("skipped_recent"))
 
     outstanding = data.get("outstanding") or []
     if outstanding:
@@ -391,6 +429,18 @@ def _rich_status(data: dict) -> None:
             console.print(f"last serialize spawn: session {s['session_id']}{ago}")
         else:
             console.print("last serialize spawn: none logged yet")
+    crash = data.get("crash")
+    if crash:
+        console.print(f"[red]last serialize crash:[/red] {crash['age']} ago — "
+                      f"{crash['last_line']}")
+        console.print(f"  [dim]full traceback: {crash['path']}[/dim]")
+    recall_err = data.get("recall_error")
+    if recall_err:
+        console.print(f"[red]last recall error:[/red] {recall_err['age']} ago — "
+                      f"{recall_err['last_line']}")
+    if data.get("skipped_recent"):
+        console.print(f"[dim]recent sessions skipped (too short to serialize): "
+                      f"{data['skipped_recent']}[/dim]")
 
     outstanding = data.get("outstanding") or []
     if outstanding:

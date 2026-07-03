@@ -359,3 +359,28 @@ def test_chat_auto_falls_to_litellm_when_nothing(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(llm.ChatError("No LLM API key")))
     with pytest.raises(llm.ChatError):
         llm.chat([{"role": "user", "content": "x"}])
+
+
+# ---- #28 S6: fallback must be observable, not just logged to a dead-drop ----
+
+
+def test_chat_fallback_sets_flag(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    def boom(*a, **k):
+        raise llm.ChatError("gateway down")
+    monkeypatch.setattr(llm, "_chat_litellm", boom)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FALLBACK")
+    llm.reset_fallback()
+    assert llm.fallback_used() is False
+    llm.chat([{"role": "user", "content": "x"}])
+    assert llm.fallback_used() is True
+
+
+def test_chat_direct_success_leaves_flag_clear(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setattr(llm, "_chat_litellm", lambda *a, **k: "OK")
+    llm.reset_fallback()
+    llm.chat([{"role": "user", "content": "x"}])
+    assert llm.fallback_used() is False

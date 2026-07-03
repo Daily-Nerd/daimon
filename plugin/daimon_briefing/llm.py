@@ -114,9 +114,26 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
     raise ChatError(f"LLM failed after {retries} tries: {last}")
 
 
+# #28: the silent-fallback flag. Sticky across chat() calls within one process
+# (a serialize is one child process, possibly several chat calls) so the caller
+# can stamp "this checkpoint used the weaker fallback backend" on its result
+# line. reset_fallback() at the start of a unit of work; fallback_used() after.
+_fallback_used = False
+
+
+def fallback_used() -> bool:
+    return _fallback_used
+
+
+def reset_fallback() -> None:
+    global _fallback_used
+    _fallback_used = False
+
+
 def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """Dispatch to the configured backend. litellm (default) falls back to a
     command backend on ChatError when fallback is enabled and one resolves."""
+    global _fallback_used
     backend = config.llm_backend()
     if backend == "auto":
         if config.llm_api_key():
@@ -133,6 +150,7 @@ def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadli
     except ChatError:
         if config.llm_fallback() and _resolve_command() is not None:
             log.warning("llm.fallback backend=command (litellm failed)")
+            _fallback_used = True
             return _chat_command(messages, deadline)
         raise
 

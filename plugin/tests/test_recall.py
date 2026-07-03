@@ -733,3 +733,54 @@ def test_suggest_caps_at_two_distinct_sessions(tmp_checkpoint_dir, monkeypatch):
                          project_dir="/repo/x", current_session="S-now")
     assert 0 < len(out) <= 2
     assert len({o["session_id"] for o in out}) == len(out)
+
+
+# ---- #28 S5: index errors leave a breadcrumb instead of failing to silence ----
+
+
+def test_search_index_error_writes_breadcrumb(tmp_checkpoint_dir, monkeypatch):
+    # A broken index degrades to [] (fail-open) — but silently, a broken
+    # recall is indistinguishable from "no prior work". The swallow must
+    # leave a trace status can surface (#28).
+    from daimon_briefing import config, store
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1"), project_dir="/repo/x")
+
+    def boom():
+        raise OSError("disk full")
+    monkeypatch.setattr(recall, "rebuild", boom)
+    monkeypatch.setattr(recall, "_ensure_fresh", boom)
+    assert recall.search("something", all_projects=True) == []
+    breadcrumb = config.log_dir() / "recall-error.log"
+    assert breadcrumb.exists()
+    assert "disk full" in breadcrumb.read_text(encoding="utf-8")
+
+
+def test_suggest_db_error_writes_breadcrumb(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import config, store
+    import sqlite3 as sq
+    store.write_checkpoint(
+        "S-old",
+        _cp("S-old", decisions=[{"text": "litellm gateway cache pinning",
+                                 "trust": "inferred"}]),
+        project_dir="/repo/x",
+    )
+    real_connect = sq.connect
+    def bad_connect(*a, **k):
+        raise sq.OperationalError("database is locked")
+    monkeypatch.setattr(recall.sqlite3, "connect", bad_connect)
+    out = recall.suggest("debugging the litellm gateway cache pinning",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out == []
+    breadcrumb = config.log_dir() / "recall-error.log"
+    assert breadcrumb.exists()
+    assert "database is locked" in breadcrumb.read_text(encoding="utf-8")
+
+
+def test_search_happy_path_writes_no_breadcrumb(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import config, store
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": "pelican decision", "trust": "inferred"}]), project_dir="/repo/x")
+    assert recall.search("pelican", all_projects=True)
+    assert not (config.log_dir() / "recall-error.log").exists()
