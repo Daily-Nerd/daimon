@@ -7,6 +7,18 @@ from daimon_briefing import carry
 
 NOW = 1_760_000_000.0  # arbitrary fixed epoch
 
+# Live false-merge specimen (2026-07-02): two UNRELATED items that matched on
+# exactly the generic terms {data, field, validation}. See #13.
+_SPEC_A = ("First external user validation — the core adoption-arc objective "
+           "that unblocks _MIN_OVERLAP field data, DAIMON_TEAM validation, and "
+           "teammate-noise research questions")
+_SPEC_B = ("Q-STALE + multi-cycle degradation validation — parked on LLM "
+           "budget. Need field data: what do 20 serialize cycles do to a "
+           "long-lived open loop, and how does that inform decay tuning?")
+# Sibling native item carrying the same generic vocabulary, so {data, field,
+# validation} each reach document-frequency 3 across the kind (A, sibling, B).
+_SPEC_SIB = "extra validation of the data field mapping"
+
 
 def _iso(days_before_now):
     import datetime as dt
@@ -133,6 +145,64 @@ def test_cap_keeps_heaviest_carried_only():
 
 def test_same_item_short_texts_never_fuzzy_match():
     assert carry._same_item("ok", "ok go") is False
+
+
+def test_generic_overlap_does_not_false_merge_specimen():
+    # Live #13 specimen: fresh native A and unrelated carried B share only the
+    # generic terms {data, field, validation}. B must survive as its OWN item;
+    # A must NOT inherit B's older birth stamp.
+    new = _cp("S-new", 0, questions=[
+        _item(_SPEC_A, days=0), _item(_SPEC_SIB, days=1)])
+    prev = _cp("S-prev", 1, questions=[_item(_SPEC_B, imp=7, days=45)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    texts = [q["text"] for q in qs]
+    assert _SPEC_B in texts                       # B kept, not erased
+    b_item = next(q for q in qs if q["text"] == _SPEC_B)
+    assert b_item["carried_from"] == "S-prev"
+    a_item = next(q for q in qs if q["text"] == _SPEC_A)
+    assert a_item["first_seen"] == _iso(0)        # A did NOT inherit B's stamp
+    assert "carried_from" not in a_item
+    assert len(qs) == 3
+
+
+def test_same_item_generic_filter_is_the_fix_not_a_threshold():
+    generic = frozenset({"data", "field", "validation"})
+    assert carry._same_item(_SPEC_A, _SPEC_B, generic) is False
+    assert carry._same_item(_SPEC_A, _SPEC_B) is True   # unfiltered: the bug
+
+
+def test_specific_twin_still_merges_and_inherits_age():
+    # Two rewordings sharing SPECIFIC low-DF terms must still match (run-02
+    # behavior): the guard filters vocabulary, not identity.
+    old = _item("quorint-ledger reconciliation drops entries when upstream "
+                "feed pauses", days=45)
+    new_twin = _item("quorint-ledger reconciliation still dropping entries on "
+                     "feed pauses", days=0)
+    prev = _cp("S-prev", 1, questions=[
+        old, _item("unrelated gavotte pipeline flaking noise", days=3)])
+    new = _cp("S-new", 0, questions=[
+        new_twin, _item("tervane cache eviction unclear noise", days=1)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    twin = next(q for q in qs if "still dropping" in q["text"])
+    assert twin["first_seen"] == _iso(45)               # matched -> age inherited
+    assert not any("drops entries" in q["text"] for q in qs)  # not duplicated
+
+
+def test_post_filter_floor_blocks_single_shared_term():
+    generic = frozenset({"data", "field", "validation"})
+    a = "data field validation alpha"          # filtered -> {alpha}
+    b = "data field validation alpha bravo"    # filtered -> {alpha, bravo}
+    # ratio would be 1/1 = 1.0 >= _MIN_RATIO without the floor; floor blocks it
+    assert carry._same_item(a, b, generic) is False
+
+
+def test_generic_terms_df_boundary():
+    texts = ["zeta omega alpha", "zeta omega beta", "omega gamma delta"]
+    generic = carry._generic_terms(texts)   # k defaults to _GENERIC_DF (3)
+    assert "omega" in generic       # 3 distinct texts -> generic
+    assert "zeta" not in generic    # exactly 2 distinct texts -> not generic
 
 
 def test_in_call_duplicate_prev_items_carry_once():
