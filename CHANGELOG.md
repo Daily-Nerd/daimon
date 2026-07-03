@@ -5,6 +5,14 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/Daily-Nerd/daimon/compare/v0.4.0...v0.5.0) (2026-07-03)
+
+
+### Features
+
+* **hosts:** probe --scan-vscdb — locate Cascade conversations in Windsurf's sqlite state ([#38](https://github.com/Daily-Nerd/daimon/issues/38)) ([0c83a55](https://github.com/Daily-Nerd/daimon/commit/0c83a5574fb41b6d9c08086eb0c7ff9ee5a66181))
+* **hosts:** Windsurf Cascade adapter — accumulated transcript, throttled serialize ([#41](https://github.com/Daily-Nerd/daimon/issues/41)) ([98cfa8f](https://github.com/Daily-Nerd/daimon/commit/98cfa8fbf195aed7a3798b64bd56f30b893afc2f))
+
 ## [0.4.0](https://github.com/Daily-Nerd/daimon/compare/v0.3.3...v0.4.0) (2026-07-03)
 
 
