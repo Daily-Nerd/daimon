@@ -5,6 +5,23 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/Daily-Nerd/daimon/compare/v0.3.3...v0.4.0) (2026-07-03)
+
+
+### Features
+
+* **carry:** freeze verbatim items on re-discovery to stop rewording erosion ([#23](https://github.com/Daily-Nerd/daimon/issues/23)) ([72c5846](https://github.com/Daily-Nerd/daimon/commit/72c5846417d54d4dadd0513fcda54a7c436b7183)), closes [#22](https://github.com/Daily-Nerd/daimon/issues/22)
+* **hosts:** Windsurf Cascade payload probe — ground truth before the adapter ([#37](https://github.com/Daily-Nerd/daimon/issues/37)) ([00bb1ec](https://github.com/Daily-Nerd/daimon/commit/00bb1ec34fbb610478144ceae0173e3a1441ee39))
+* **observability:** silent failures leave traces — crash log surfaced, hung serializes healable, fallback stamped ([#34](https://github.com/Daily-Nerd/daimon/issues/34)) ([7fc3d6f](https://github.com/Daily-Nerd/daimon/commit/7fc3d6fb574fb8ec62d1f1a5ec256e5b997556ce))
+* **recall:** AND-then-OR fallback — multi-term queries degrade to ranked partials instead of zeroing out ([#26](https://github.com/Daily-Nerd/daimon/issues/26)) ([69e9879](https://github.com/Daily-Nerd/daimon/commit/69e987926170f11e32cab9140efcfe91614b1206))
+
+
+### Bug Fixes
+
+* **briefing:** verbatim integrity on every render surface — LLM render post-validated, truncation exemption, untagged trust ([#36](https://github.com/Daily-Nerd/daimon/issues/36)) ([2e1dd8e](https://github.com/Daily-Nerd/daimon/commit/2e1dd8e7102cf7630bca6c4d64af05bff5236e0d))
+* **cli:** UX-contract batch — surface messages match behavior (7 repairs) ([#33](https://github.com/Daily-Nerd/daimon/issues/33)) ([d28dd52](https://github.com/Daily-Nerd/daimon/commit/d28dd529228a54a5587b88648fd847a71ee1701d))
+* **recall:** fold suggest() haystack — accented Spanish prior work was silenced by the overlap gate ([#32](https://github.com/Daily-Nerd/daimon/issues/32)) ([13226ad](https://github.com/Daily-Nerd/daimon/commit/13226ad3fe1921d6e94d4be961c71c0e5baff925))
+
 ## [0.3.3](https://github.com/Daily-Nerd/daimon/compare/v0.3.2...v0.3.3) (2026-07-03)
 
 
