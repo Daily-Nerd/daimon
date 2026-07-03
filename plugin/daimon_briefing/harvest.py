@@ -27,11 +27,18 @@ class Hit(NamedTuple):
 
 
 _AVOID_RE = re.compile(
-    r"\b(avoid|don't|do not|never|gotcha|pitfall|footgun|broke|breaks|mistake|dead[ -]?end)\b",
+    r"\b(avoid|don't|do not|never|gotcha|pitfall|footgun|broke|breaks|mistake|dead[ -]?end"
+    # Spanish band mirrors the English markers (#4). Bare "no" is far more
+    # frequent than "don't", so only specific imperative constructions fire —
+    # never plain negation ("no devuelve" stays silent).
+    r"|evit(?:a|á|ar|es|en)|nunca|jam[áa]s|trampa|romp(?:e|i[óo]|en)"
+    r"|callej[óo]n sin salida|punto muerto|no (?:hagas|toques|uses|llames))\b",
     re.IGNORECASE,
 )
 _INTENT_RE = re.compile(
-    r"\b(on purpose|intentional(?:ly)?|deliberately|looks wrong but|must stay|keep this)\b",
+    r"\b(on purpose|intentional(?:ly)?|deliberately|looks wrong but|must stay|keep this"
+    r"|a prop[óo]sito|intencional(?:mente)?|adrede|deliberadamente"
+    r"|parece (?:mal|incorrecto) pero|debe quedar(?:se)?)\b",
     re.IGNORECASE,
 )
 
