@@ -36,3 +36,18 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
           HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q
+
+  scar-lint:
+    name: scar lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Dogfood: the repo's own scar graph must always parse and lint clean.
+      # A malformed scar silently never fires — this gate makes that class
+      # of rot unmergeable.
+      - name: scar lint
+        run: uvx --from scar-cli scar lint
