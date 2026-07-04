@@ -2671,3 +2671,62 @@ def test_spawn_re_recognizes_windsurf_cascade_prefix():
     assert led["T-1"]["spawned"] is True
     assert led["T-1"]["transcript"] == "/t/T-1.md"
     assert led["T-1"]["project"] == "/p/A"
+
+
+# ---- #49: heal crash on hung targets + preflight-error attribution ----
+
+
+def test_heal_hung_target_does_not_crash(tmp_checkpoint_dir, tmp_log_dir, tmp_path, monkeypatch):
+    # Live crash (first Windsurf field run): a hung-healable target has
+    # line=None and _cmd_heal's retry-marker builder split() it.
+    from datetime import datetime, timezone
+    transcript = tmp_path / "H1.md"
+    transcript.write_text("**user**: hola\n")
+    _write_log(tmp_log_dir, [
+        "2026-07-03T22:00:00Z windsurf-cascade: spawned serialize for H1 "
+        f"(project: /p/H) (transcript: {transcript})",
+    ])
+    ran = {}
+    monkeypatch.setattr(cli, "_run_serialize", lambda p, proj: ran.update(p=p) or 0)
+    monkeypatch.setattr(cli.time, "time",
+                        lambda: datetime(2026, 7, 3, 23, 0, 0, tzinfo=timezone.utc).timestamp())
+    rc = cli.main(["heal"])
+    assert rc == 0
+    assert ran.get("p") == transcript  # the hung session actually got healed
+    # the retry marker landed with a non-crashy prior
+    log_text = (tmp_log_dir / "serialize.log").read_text()
+    assert "retry serialize for H1" in log_text
+
+
+def test_preflight_error_line_attributes_to_session(tmp_checkpoint_dir):
+    # A child that dies pre-flight (no API key) must not read as hung/killed:
+    # the error line carries the transcript so the ledger attributes it.
+    text = "\n".join([
+        "2026-07-03T22:00:00Z windsurf-cascade: spawned serialize for P1 "
+        "(project: /p/A) (transcript: /t/P1.md)",
+        "error: no LLM API key — set DAIMON_LLM_API_KEY (env or ~/.daimon/env) "
+        "(transcript: /t/P1.md)",
+    ])
+    led = cli._session_ledger(text, now=0.0)
+    assert led["P1"]["result_kind"] == "error"
+    assert led["P1"]["transcript"] == "/t/P1.md"
+
+
+def test_preflight_error_session_is_healable_when_transcript_exists():
+    ledger = {"P1": _led(result_line="error: no LLM API key — set DAIMON_LLM_API_KEY "
+                                     "(env or ~/.daimon/env) (transcript: /t/P1.md)")}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: True)
+    assert out[0]["class"] == "healable"
+
+
+def test_serialize_preflight_errors_carry_transcript_suffix(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch, tmp_path):
+    # End-to-end: _run_serialize's own pre-flight error lines carry the suffix.
+    monkeypatch.delenv("DAIMON_LLM_API_KEY", raising=False)
+    monkeypatch.setattr(cli.config, "llm_api_key", lambda: None)
+    p = tmp_path / "S-pre.md"
+    p.write_text("**user**: hola\n")
+    rc = cli.main(["serialize", str(p)])
+    assert rc == 1
+    log_text = (tmp_log_dir / "serialize.log").read_text()
+    assert f"(transcript: {p})" in log_text

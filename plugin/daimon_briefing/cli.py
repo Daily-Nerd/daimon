@@ -105,13 +105,19 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
 
     # Pre-flight missing credentials so the error names them before any LLM work
     # (a conflated message cost a live debugging round-trip — see PR #12 fallout).
+    # Pre-flight error lines carry the transcript suffix (#49): without it the
+    # ledger cannot attribute the failure to its session, and a config gap
+    # (no key) reads as "hung/killed" in status instead of its real cause.
+    # With it, the session is attributable AND healable once config is fixed.
     if _chat is llm.chat and not config.llm_api_key():
-        msg = "error: no LLM API key — set DAIMON_LLM_API_KEY (env or ~/.daimon/env)"
+        msg = ("error: no LLM API key — set DAIMON_LLM_API_KEY "
+               f"(env or ~/.daimon/env) (transcript: {path})")
         print(msg, file=sys.stderr)
         _append_serialize_log(msg)
         return 1
     if _chat is llm.chat and not config.llm_model():
-        msg = "error: no LLM model — set DAIMON_LLM_MODEL (env or ~/.daimon/env)"
+        msg = ("error: no LLM model — set DAIMON_LLM_MODEL "
+               f"(env or ~/.daimon/env) (transcript: {path})")
         print(msg, file=sys.stderr)
         _append_serialize_log(msg)
         return 1
@@ -688,10 +694,13 @@ def _cmd_status(args) -> int:
 
 # ---- heal: opportunistic ONE-shot repair of the most recent FAILED serialize ----
 
-# The transcript carried by a SerializeError result line (see _run_serialize):
-# `error: <exc> (transcript: <path>) after <N>s`. Pre-flight errors (no API key,
-# transcript-not-found) carry no `(transcript:...)` and so are not healable.
-_HEAL_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\) after \d+s")
+# The transcript carried by an error result line (see _run_serialize):
+# `error: <exc> (transcript: <path>) after <N>s` for serialize failures, or
+# `error: <preflight msg> (transcript: <path>)` for pre-flight errors (#49) —
+# the `after Ns` clause is optional so both attribute to their session. A
+# pre-flight-failed session with its transcript on disk is healable: fixing
+# the config (e.g. adding the API key) makes the retry succeed.
+_HEAL_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)(?: after \d+s|$)")
 
 # Per-session ledger regexes (kept SEPARATE from _RESULT_OK_RE/_RESULT_ERR_RE,
 # which _parse_serialize_log depends on). Success lines embed the session id in
@@ -881,7 +890,9 @@ def _cmd_heal(args) -> int:
     if not transcript_path.exists():
         print(f"heal aborted: transcript for {t['sid']} vanished")
         return 0
-    prior = t["line"].split(" (transcript:")[0]
+    # A hung target has no result line (#34 made spawn-with-transcript hung
+    # sessions healable) — the retry marker still needs a prior (#49).
+    prior = (t["line"] or "hung: spawned, no result").split(" (transcript:")[0]
     _append_retry_log(t["sid"], prior)
     return _run_serialize(transcript_path, t["project"])
 
