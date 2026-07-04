@@ -191,6 +191,66 @@ def test_unparsed_pre_prompt_dump_bounded_once(tmp_path):
     assert len(dumps) == 1
 
 
+def _with_transcript_payload(transcript_path):
+    return {
+        "agent_action_name": "post_cascade_response_with_transcript",
+        "trajectory_id": TRAJ,
+        "timestamp": "2026-07-03T16:45:48.476887-06:00",
+        "execution_id": "exec-1",
+        "model_name": "Claude Sonnet 4.5",
+        "tool_info": {"transcript_path": str(transcript_path)},
+    }
+
+
+def test_with_transcript_existing_path_spawns_native_serialize(tmp_path):
+    # #70: the native Cascade transcript, when present, is what gets
+    # serialized — NOT the daimon-side accumulation file, and no probe dump.
+    native = tmp_path / "native-transcript.jsonl"
+    native.write_text('{"type": "user_input", "status": "done", '
+                      '"user_input": {"user_response": "hola"}}\n',
+                      encoding="utf-8")
+    payload = _with_transcript_payload(native)
+    proc, capture = _run(payload, tmp_path,
+                         extra_env={"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "0"})
+    assert proc.returncode == 0
+    calls = _wait_for_capture(capture)
+    assert str(native) in calls
+    assert not _transcript(tmp_path).exists()
+    dumps = list((tmp_path / ".daimon" / "windsurf").glob("unparsed-*.json"))
+    assert dumps == []
+
+
+def test_with_transcript_missing_path_dumps_probe_no_spawn(tmp_path):
+    missing = tmp_path / "does-not-exist.jsonl"
+    payload = _with_transcript_payload(missing)
+    proc, capture = _run(payload, tmp_path,
+                         extra_env={"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "0"})
+    assert proc.returncode == 0
+    time.sleep(0.3)
+    assert not capture.exists() or "serialize" not in capture.read_text()
+    dumps = list((tmp_path / ".daimon" / "windsurf").glob("unparsed-*.json"))
+    assert dumps and str(missing) in dumps[0].read_text(encoding="utf-8")
+
+
+def test_with_transcript_shares_throttle_marker_with_accumulation(tmp_path):
+    # Both post events share the SAME per-trajectory marker — registering
+    # both must never double-spawn inside one throttle interval.
+    extra = {"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "3600"}
+    proc, capture = _run(_post_payload("first"), tmp_path, extra_env=extra)
+    assert proc.returncode == 0
+    _wait_for_capture(capture)
+
+    native = tmp_path / "native-transcript.jsonl"
+    native.write_text('{"type": "planner_response", "status": "done", '
+                      '"planner_response": {"response": "listo"}}\n',
+                      encoding="utf-8")
+    payload = _with_transcript_payload(native)
+    proc, capture2 = _run(payload, tmp_path, extra_env=extra)
+    assert proc.returncode == 0
+    time.sleep(0.5)
+    assert capture2.read_text().count("serialize") == 1  # unchanged: no new spawn
+
+
 def test_pre_user_prompt_docs_shape_appends_user_turn(tmp_path):
     # Documented shape (docs.devin.ai/desktop/cascade/hooks): text lives in
     # tool_info.user_prompt. Regression guard — passes on the current

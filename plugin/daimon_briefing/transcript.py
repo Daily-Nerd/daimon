@@ -3,7 +3,8 @@
 1. from_session(session_id) — reads hermes session history via SessionDB. The hermes
    import is guarded (hermes only available in-hermes); unavailable -> [] not raise.
 2. from_file(path) — CLI/dogfood fallback. `.jsonl` parses as an agent session
-   transcript; anything else as plain text/markdown.
+   transcript; anything else as plain text/markdown. Includes a dedicated
+   branch for Windsurf Cascade's native transcript (#70).
 
 All messages normalize to OpenAI-format dicts: {"role": str, "content": str}.
 """
@@ -101,6 +102,34 @@ def _from_jsonl(text: str) -> list[dict]:
             codex_messages.append({"role": role, "content": content.strip()})
     if codex_messages:
         return codex_messages
+
+    # Windsurf Cascade's native transcript (#70): rows are exactly
+    # {type, status, <payload-key>} and the payload key does NOT always equal
+    # the type (grep_search_v2 keeps payload key grep_search) — so text
+    # carriers are matched by type, never derived from it. The exact-3-key
+    # shape (not just the type name) is what distinguishes a genuine Cascade
+    # row from other hosts' JSONL that happens to reuse a `user_input` key.
+    # canceled lines are dropped; done AND error both serialize (a
+    # failed-but-emitted response is still context).
+    windsurf_messages: list[dict] = []
+    for obj in objects:
+        obj_type = obj.get("type")
+        if obj_type not in ("user_input", "planner_response"):
+            continue
+        if len(obj) != 3 or "status" not in obj:
+            continue
+        if obj.get("status") == "canceled":
+            continue
+        role = "user" if obj_type == "user_input" else "assistant"
+        payload = obj.get(obj_type)
+        if not isinstance(payload, dict):
+            continue
+        text_key = "user_response" if obj_type == "user_input" else "response"
+        text = payload.get(text_key)
+        if isinstance(text, str) and text.strip():
+            windsurf_messages.append({"role": role, "content": text.strip()})
+    if windsurf_messages:
+        return windsurf_messages
 
     messages: list[dict] = []
     for obj in objects:

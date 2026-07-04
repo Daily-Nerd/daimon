@@ -145,6 +145,38 @@ def test_from_file_parses_current_codex_event_stream_without_duplicates(tmp_path
     ]
 
 
+def test_from_file_windsurf_cascade_jsonl_parses_user_and_assistant(tmp_path):
+    # Field-confirmed (#70): native Cascade transcript rows are exactly
+    # {type, status, <payload-key>}. canceled is dropped, error is kept
+    # (a failed-but-emitted response is still context), tool lines skipped.
+    p = _write_jsonl(tmp_path / "cascade.jsonl", [
+        {"type": "user_input", "status": "done",
+         "user_input": {"user_response": "arreglá el bug de auth"}},
+        {"type": "run_command", "status": "done",
+         "run_command": {"command": "pytest"}},
+        {"type": "planner_response", "status": "canceled",
+         "planner_response": {"response": "should not appear"}},
+        {"type": "planner_response", "status": "done",
+         "planner_response": {"response": "Ya lo arreglé."}},
+        {"type": "user_input", "status": "error",
+         "user_input": {"user_response": "seguí, dale"}},
+    ])
+    msgs = transcript.from_file(p)
+    assert msgs == [
+        {"role": "user", "content": "arreglá el bug de auth"},
+        {"role": "assistant", "content": "Ya lo arreglé."},
+        {"role": "user", "content": "seguí, dale"},
+    ]
+
+
+def test_from_file_windsurf_cascade_noise_only_returns_empty(tmp_path):
+    p = _write_jsonl(tmp_path / "cascade.jsonl", [
+        {"type": "grep_search_v2", "status": "done", "grep_search": {"query": "foo"}},
+        {"type": "list_directory", "status": "done", "list_directory": {"path": "/x"}},
+    ])
+    assert transcript.from_file(p) == []
+
+
 def test_from_session_returns_empty_when_hermes_unavailable(monkeypatch):
     # Force the hermes import seam to fail; must degrade to [] not raise.
     monkeypatch.setattr(transcript, "_load_session_db", lambda: None)

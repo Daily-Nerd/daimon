@@ -1,33 +1,52 @@
 #!/usr/bin/env python3
-"""Windsurf Cascade adapter: accumulate a transcript per trajectory, serialize
-on a throttle (#35).
+"""Windsurf Cascade adapter: serialize from the native transcript when
+Cascade provides one, accumulate a daimon-side transcript otherwise (#35, #70).
 
-Register this ONE script for BOTH Cascade hook events (docs:
+Register this ONE script for THREE Cascade hook events (docs:
 https://docs.windsurf.com/windsurf/cascade/hooks):
 
-    pre_user_prompt          -> records the user side of the turn
-    post_cascade_response    -> records the assistant side + (throttled)
-                                spawns `daimon serialize`
+    pre_user_prompt                        -> records the user side of the
+                                               turn (legacy accumulation path)
+    post_cascade_response                   -> records the assistant side +
+                                               (throttled) spawns
+                                               `daimon serialize` on the
+                                               ACCUMULATED transcript
+    post_cascade_response_with_transcript   -> (throttled) spawns
+                                               `daimon serialize` directly on
+                                               Cascade's NATIVE transcript —
+                                               preferred when available; no
+                                               accumulation write for this
+                                               event
 
-Why accumulation: the real `post_cascade_response` payload carries NO
-transcript path, `~/.windsurf/transcripts/` does not exist, and state.vscdb
-holds UI state only (probe rounds 1-2, live machine). Windsurf keeps its
-conversations out of reach, so daimon keeps its own: each hook call appends a
-`**role**:`-marked turn to ~/.daimon/windsurf/transcripts/<trajectory_id>.md —
-the exact markdown shape `daimon serialize` already parses.
+Native transcript preferred: issue #70 field evidence showed Windsurf DOES
+write a native `.jsonl` transcript (~/.windsurf/transcripts/<trajectory_id>.jsonl)
+when `post_cascade_response_with_transcript` is registered, carrying both
+conversation sides. When that path is registered and its file exists, it is
+the source of truth and accumulation becomes redundant for that trajectory.
+
+Why accumulation still exists (legacy path, #35): the plain
+`post_cascade_response` payload carries NO transcript path, and hosts that
+only register the two legacy events never get one. Windsurf otherwise keeps
+its conversations out of reach, so daimon keeps its own: each hook call
+appends a `**role**:`-marked turn to
+~/.daimon/windsurf/transcripts/<trajectory_id>.md — the exact markdown shape
+`daimon serialize` already parses.
 
 Self-probing (#62): any payload this adapter cannot handle — unextractable
-`pre_user_prompt` text, a missing trajectory_id, or an event it does not
-know (the docs list 12; `post_cascade_response_with_transcript` is the one
-worth catching) — is dumped to ~/.daimon/windsurf/unparsed-<event>-<stamp>.json
-so the next adapter iteration can be built from evidence instead of another
-probe round. At most ONE dump per event name: a script registered for all
-12 Cascade events must not flood the state dir.
+`pre_user_prompt` text, a missing trajectory_id, a
+`post_cascade_response_with_transcript` whose transcript_path is missing or
+does not exist, or an event it does not know — is dumped to
+~/.daimon/windsurf/unparsed-<event>-<stamp>.json so the next adapter
+iteration can be built from evidence instead of another probe round. At most
+ONE dump per event name: a script registered for all 12 Cascade events must
+not flood the state dir.
 
-Throttle: `post_cascade_response` fires EVERY turn; serializing each one is
-an LLM call per turn. DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL seconds
-(default 300, 0 = every turn) gate the spawn per trajectory — the codex-stop
-pattern. Accumulation itself is never throttled.
+Throttle: `post_cascade_response` and `post_cascade_response_with_transcript`
+both fire EVERY turn; serializing each one is an LLM call per turn.
+DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL seconds (default 300, 0 = every turn)
+gate the spawn per trajectory — the codex-stop pattern. Both events share the
+SAME per-trajectory marker, so registering both never double-spawns.
+Accumulation itself is never throttled.
 
 Fail-open everywhere: always exit 0; a broken daimon must never break
 Cascade. Kill switch: DAIMON_DISABLE=1.
@@ -192,9 +211,22 @@ def main() -> int:
         _append_turn(trajectory_id, "user", text)
         return 0
 
+    if event == "post_cascade_response_with_transcript":
+        tool_info = payload.get("tool_info")
+        raw_path = tool_info.get("transcript_path") if isinstance(tool_info, dict) else None
+        native_path = Path(raw_path) if isinstance(raw_path, str) and raw_path.strip() else None
+        if native_path is None or not native_path.exists():
+            if _dump_probe(event, payload):
+                lib.log("windsurf-cascade: post_cascade_response_with_transcript "
+                        "transcript_path missing or absent — dumped for the next "
+                        "adapter iteration")
+            return 0
+        _spawn_serialize_for(trajectory_id, native_path,
+                             f"native transcript: {native_path}")
+        return 0
+
     if event != "post_cascade_response":
-        # Unknown events dump instead of vanishing (#62) —
-        # post_cascade_response_with_transcript lands here until adopted.
+        # Unknown events dump instead of vanishing (#62).
         if _dump_probe(event, payload):
             lib.log(f"windsurf-cascade: unhandled event {event} — payload dumped "
                     "for the next adapter iteration")
@@ -207,22 +239,30 @@ def main() -> int:
         return 0
     transcript_path = _append_turn(trajectory_id, "assistant", response)
 
+    _spawn_serialize_for(trajectory_id, transcript_path,
+                         f"transcript: {transcript_path}")
+    return 0
+
+
+def _spawn_serialize_for(trajectory_id: str, transcript_path, detail: str) -> None:
+    """Throttled spawn of `daimon serialize` shared by BOTH post events — same
+    per-trajectory marker, so registering post_cascade_response AND
+    post_cascade_response_with_transcript together never double-spawns (#70)."""
     if not _should_spawn(trajectory_id):
         lib.log(f"windsurf-cascade: skipped serialize for {trajectory_id} (throttled)")
-        return 0
+        return
     cli = lib.resolve_cli()
     if cli is None:
         lib.log("windsurf-cascade: `daimon` CLI not found — checkpoint skipped")
-        return 0
+        return
     cwd = _project_cwd()
     try:
         lib.spawn_serialize(cli, str(transcript_path), lib.project_env(cwd))
         _mark_spawned(trajectory_id)
         lib.log(f"windsurf-cascade: spawned serialize for {trajectory_id} "
-                f"(project: {cwd or '?'}) (transcript: {transcript_path})")
+                f"(project: {cwd or '?'}) ({detail})")
     except OSError as exc:
         lib.log(f"windsurf-cascade: spawn failed ({type(exc).__name__}: {exc})")
-    return 0
 
 
 if __name__ == "__main__":

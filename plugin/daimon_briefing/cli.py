@@ -1250,7 +1250,8 @@ _HOOK_HOSTS = {
     "windsurf": {
         "files": ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py"),
         "entry": "daimon-windsurf-hooks.py",
-        "events": ("pre_user_prompt", "post_cascade_response"),
+        "events": ("pre_user_prompt", "post_cascade_response",
+                   "post_cascade_response_with_transcript"),
     },
 }
 
