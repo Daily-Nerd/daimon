@@ -37,12 +37,17 @@ _chat = llm.chat
 def _formatter_class():
     """argparse help formatter: RichHelpFormatter-family when rich-argparse
     (daimon[pretty]) is importable, else the stock formatter everywhere
-    already used it. Unlike render.supports_rich(), this needs no separate
-    TTY/NO_COLOR/DAIMON_PLAIN gate of its own — rich's Console auto-detects a
-    non-terminal stream and honors NO_COLOR itself, so `--help` degrades to
-    plain text automatically when piped or redirected; a bare import guard is
-    the whole contract, and it keeps `--help` byte-identical to before #68
-    whenever rich-argparse is absent."""
+    already used it. Unlike render.supports_rich(), this needs no TTY gate of
+    its own — rich's Console auto-detects a non-terminal stream, so `--help`
+    degrades to plain text automatically when piped or redirected. It DOES
+    need to honor the same DAIMON_PLAIN/NO_COLOR opt-outs supports_rich checks
+    (same truthiness semantics), because rich-argparse's own Console has no
+    idea what DAIMON_PLAIN means — left ungated, `--help` would ignore a
+    user's explicit plain-mode request while every other command honors it."""
+    if os.environ.get("DAIMON_PLAIN", "").strip().lower() in render._TRUTHY:
+        return argparse.RawDescriptionHelpFormatter
+    if os.environ.get("NO_COLOR") is not None:
+        return argparse.RawDescriptionHelpFormatter
     try:
         from rich_argparse import RawDescriptionRichHelpFormatter
         return RawDescriptionRichHelpFormatter
@@ -986,7 +991,6 @@ def _cmd_team_sync(args) -> int:
             "(run `daimon team init <remote-url>`)",
         ])
         return 0
-    lines = []
     for r in reports:
         parts = [f"{r['committed']} committed", "pushed" if r["pushed"] else "no push"]
         if r["fetched"]:
@@ -994,10 +998,13 @@ def _cmd_team_sync(args) -> int:
         line = f"{r['slug']}: " + ", ".join(parts)
         if r["notes"]:
             line += " (" + "; ".join(r["notes"]) + ")"
-        lines.append(line)
+        # Rendered per-report (not collected and rendered once after the loop):
+        # this keeps a report's stdout line interleaved with ITS OWN stderr
+        # warnings below, matching the ordering the pre-#68 print()-per-report
+        # loop had.
+        render.render_team_sync([line])
         for w in r["warnings"]:
             print(f"warning: {w}", file=sys.stderr)
-    render.render_team_sync(lines)
     return 0
 
 

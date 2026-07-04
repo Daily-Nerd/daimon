@@ -1187,8 +1187,12 @@ def test_help_falls_back_to_stock_formatter_when_rich_argparse_absent(monkeypatc
     assert "daimon brief" in out
 
 
-def test_help_uses_rich_formatter_when_rich_argparse_present(capsys):
+def test_help_uses_rich_formatter_when_rich_argparse_present(capsys, monkeypatch):
     pytest.importorskip("rich_argparse")
+    # The autouse fixture sets DAIMON_PLAIN=1 for test determinism; that would
+    # now (correctly) force the stock formatter regardless of rich-argparse's
+    # presence, so unset it here to actually exercise the rich path.
+    monkeypatch.delenv("DAIMON_PLAIN", raising=False)
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])
     assert exc.value.code == 0
@@ -1197,6 +1201,18 @@ def test_help_uses_rich_formatter_when_rich_argparse_present(capsys):
     # and subcommand descriptions through, just with different chrome.
     assert "Examples:" in out
     assert "daimon brief" in out
+
+
+def test_formatter_class_honors_daimon_plain_even_with_rich_argparse(monkeypatch):
+    # DAIMON_PLAIN must win over an importable rich_argparse — _formatter_class
+    # has to mirror render.supports_rich()'s ENV-VAR gate (DAIMON_PLAIN checked
+    # first, then NO_COLOR), not just the bare import guard. Regression for a
+    # review finding: --help used to ignore plain-mode opt-outs entirely.
+    pytest.importorskip("rich_argparse")
+    import argparse
+
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    assert cli._formatter_class() is argparse.RawDescriptionHelpFormatter
 
 
 def test_help_propagates_to_nested_subparsers(capsys):
