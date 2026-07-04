@@ -160,7 +160,8 @@ def test_configure_test_passes_with_working_backend(monkeypatch, capsys, tmp_pat
     from daimon_briefing import cli, llm
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setenv("DAIMON_LLM_COMMAND", "fake-cli")
-    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (0, "ok", ""))
+    # #59: --test now requires extractable JSON, same bar as serialization.
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (0, '{"ok": true}', ""))
     rc = cli.main(["configure", "--test"])
     out = capsys.readouterr().out
     assert rc == 0
@@ -179,3 +180,32 @@ def test_configure_test_fails_loud_with_broken_backend(monkeypatch, capsys, tmp_
     assert rc == 1
     assert "backend test: FAILED" in err
     assert "backend-stderr.log" in err
+
+
+# ---- #59: --test proves JSON-extraction fitness, not just transport ----
+
+
+def test_configure_test_fails_when_backend_cannot_produce_json(monkeypatch, capsys):
+    # Field case: an agent-harness CLI chats politely but never emits JSON —
+    # transport-only smoke test said ok while every serialize failed.
+    from daimon_briefing import cli, llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "chatty-agent")
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (0, "Sure! Let me think about that...", ""))
+    rc = cli.main(["configure", "--test"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "extractable JSON" in err
+
+
+def test_configure_test_passes_with_json_capable_backend(monkeypatch, capsys):
+    from daimon_briefing import cli, llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "good-cli")
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (0, 'Here you go: {"ok": true}', ""))
+    rc = cli.main(["configure", "--test"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "backend test: ok" in out
