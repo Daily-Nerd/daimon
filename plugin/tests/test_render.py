@@ -774,3 +774,66 @@ def test_render_team_status_rich_smoke(monkeypatch, capsys):
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     render.render_team_status(["x: fresh — 0 unpushed checkpoint(s), authors: Ada"])
     assert "fresh" in capsys.readouterr().out
+
+
+# ---- #75: residual rich-parity — write-checkpoint, anchor --attach,
+# configure results, brief note, heal abort
+
+
+def test_render_write_checkpoint_plain_exact_format(capsys):
+    render.render_write_checkpoint(["wrote checkpoint: /tmp/x.json (source: introspection)"])
+    assert capsys.readouterr().out == "wrote checkpoint: /tmp/x.json (source: introspection)\n"
+
+
+def test_render_write_checkpoint_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_write_checkpoint(["wrote checkpoint: /tmp/x.json (source: introspection)"])
+    assert "wrote checkpoint" in capsys.readouterr().out
+
+
+def test_render_anchor_attach_plain_exact_format(capsys):
+    render.render_anchor_attach(["attached store.py::Store.save to: the save item"])
+    assert capsys.readouterr().out == "attached store.py::Store.save to: the save item\n"
+
+
+def test_render_anchor_attach_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_anchor_attach(["attached store.py::Store.save to: the save item"])
+    assert "attached" in capsys.readouterr().out
+
+
+def test_render_configure_lines_plain_exact_format(capsys):
+    render.render_configure_lines(["backend test: ok (1.2s round trip)", "wrote /tmp/env"])
+    assert capsys.readouterr().out == "backend test: ok (1.2s round trip)\nwrote /tmp/env\n"
+
+
+def test_render_configure_lines_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_configure_lines(["backend test: ok (1.2s round trip)"])
+    assert "round trip" in capsys.readouterr().out
+
+
+def test_render_brief_note_plain_exact_format(capsys):
+    line = ("⚠ no checkpoint for this project — showing the global "
+            "checkpoint (fallback), possibly another project's.")
+    render.render_brief_note([line])
+    assert capsys.readouterr().out == line + "\n"
+
+
+def test_render_brief_note_rich_smoke(monkeypatch, capsys):
+    # ⚠-prefixed lines take the warning styling on the rich path; content-only
+    # assertion per the house rule (format is covered plain).
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_brief_note(["⚠ no checkpoint for this project"])
+    assert "no checkpoint for this project" in capsys.readouterr().out
+
+
+def test_render_heal_abort_plain_exact_format(capsys):
+    render.render_heal_abort(["heal aborted: transcript for S-1 vanished"])
+    assert capsys.readouterr().out == "heal aborted: transcript for S-1 vanished\n"
+
+
+def test_render_heal_abort_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_heal_abort(["heal aborted: transcript for S-1 vanished"])
+    assert "heal aborted" in capsys.readouterr().out

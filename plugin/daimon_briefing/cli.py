@@ -286,7 +286,7 @@ def _cmd_write_checkpoint(args) -> int:
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))
-    print(f"wrote checkpoint: {out} (source: {args.source})")
+    render.render_write_checkpoint([f"wrote checkpoint: {out} (source: {args.source})"])
     return 0
 
 
@@ -332,7 +332,7 @@ def _cmd_anchor(args) -> int:
     item = matches[0]
     item["anchored_to"] = a
     store.write_checkpoint(session_id, checkpoint, project_dir=project)
-    print(f"attached {a['qualified_name']} to: {item.get('text')}")
+    render.render_anchor_attach([f"attached {a['qualified_name']} to: {item.get('text')}"])
     return 0
 
 
@@ -367,8 +367,8 @@ def _cmd_brief(args) -> int:
     # state as this project's without saying so.
     proj_path = store.project_latest_path(project)
     if checkpoint and proj_path is not None and not proj_path.exists():
-        print("⚠ no checkpoint for this project — showing the global "
-              "checkpoint (fallback), possibly another project's.")
+        render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
+                                  "checkpoint (fallback), possibly another project's."])
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -946,7 +946,7 @@ def _cmd_heal(args) -> int:
     t = plan["target"]
     transcript_path = Path(t["transcript"])
     if not transcript_path.exists():
-        print(f"heal aborted: transcript for {t['sid']} vanished")
+        render.render_heal_abort([f"heal aborted: transcript for {t['sid']} vanished"])
         return 0
     # A hung target has no result line (#34 made spawn-with-transcript hung
     # sessions healable) — the retry marker still needs a prior (#49).
@@ -1067,7 +1067,7 @@ def _cmd_configure(args) -> int:
                   file=sys.stderr)
             return 1
         elapsed = time.monotonic() - start
-        print(f"backend test: ok ({elapsed:.1f}s round trip)")
+        render.render_configure_lines([f"backend test: ok ({elapsed:.1f}s round trip)"])
         return 0
 
     st = configure.status()
@@ -1089,7 +1089,7 @@ def _cmd_configure(args) -> int:
                 updates["DAIMON_LLM_COMMAND_OUTPUT"] = args.output
         # claude-cli: just pin the backend, no credentials needed.
         path = configure.write_env(updates)
-        print(f"wrote {path}")
+        render.render_configure_lines([f"wrote {path}"])
         render.render_configure(configure.status())  # reprint the new resolved state
         return 0
 
@@ -1097,8 +1097,8 @@ def _cmd_configure(args) -> int:
         return 0  # nothing to do
     if not sys.stdin.isatty():
         # Non-interactive and not ready: guide, never block.
-        print("not ready — re-run with --backend {litellm,command,claude-cli} "
-              "and the matching value flags, or run interactively in a terminal.")
+        render.render_configure_lines(["not ready — re-run with --backend {litellm,command,claude-cli} "
+                                       "and the matching value flags, or run interactively in a terminal."])
         return 0
 
     # Interactive: prompt for a backend and its values.
@@ -1125,7 +1125,7 @@ def _cmd_configure(args) -> int:
             updates["DAIMON_LLM_COMMAND_OUTPUT"] = output
     # claude-cli: nothing more to ask.
     path = configure.write_env(updates)
-    print(f"wrote {path}")
+    render.render_configure_lines([f"wrote {path}"])
     render.render_configure(configure.status())
     return 0
 

@@ -499,8 +499,8 @@ def _render_lines(lines, *, footer=None) -> None:
     """Shared "print a list of pre-formatted lines" primitive behind
     render_skill_lines/render_recall_lines/render_hooks_*/render_team_*: the
     plain path is a bare print loop (byte-identical to each command's
-    pre-#68 output); the rich path upgrades "warning:"-prefixed lines to
-    yellow. `markup=False` is load-bearing — recall lines contain literal
+    pre-#68 output); the rich path upgrades "warning:"- and "⚠"-prefixed
+    lines to yellow. `markup=False` is load-bearing — recall lines contain literal
     "[author]"/"[trust]"/"[kind]" brackets, which rich's Console would
     otherwise parse as (invalid, silently-dropped) style tags, eating the
     content. `footer`, if given, prints after a blank-line separator."""
@@ -516,7 +516,7 @@ def _render_lines(lines, *, footer=None) -> None:
 
     console = Console()
     for ln in lines:
-        style = "yellow" if ln.startswith("warning:") else None
+        style = "yellow" if ln.startswith(("warning:", "⚠")) else None
         console.print(ln, style=style, markup=False)
     if footer:
         console.print("")
@@ -557,6 +557,38 @@ def render_team_sync(lines) -> None:
 
 
 def render_team_status(lines) -> None:
+    _render_lines(lines)
+
+
+# ---- residual command results (#75) ------------------------------------------
+
+
+def render_write_checkpoint(lines) -> None:
+    """`daimon write-checkpoint` success line. Validation errors stay plain on
+    stderr and never route through here."""
+    _render_lines(lines)
+
+
+def render_anchor_attach(lines) -> None:
+    """`daimon anchor --attach` success line. The no-attach JSON dump and all
+    error paths stay plain unconditionally."""
+    _render_lines(lines)
+
+
+def render_configure_lines(lines) -> None:
+    """`daimon configure` result lines: backend-test ok, "wrote <env path>",
+    and the non-interactive not-ready guidance. The resolved-state block
+    renders via render_configure; FAILED paths stay plain on stderr."""
+    _render_lines(lines)
+
+
+def render_brief_note(lines) -> None:
+    """`daimon brief` advisory notes — the ⚠ global-fallback warning."""
+    _render_lines(lines)
+
+
+def render_heal_abort(lines) -> None:
+    """`daimon heal` abort notice (target transcript vanished)."""
     _render_lines(lines)
 
 
