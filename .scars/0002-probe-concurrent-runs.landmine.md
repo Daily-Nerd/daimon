@@ -10,7 +10,7 @@ anchors:
   - path: research/experiments/track-a/probe_d007.py
   - pattern: "score.json"
 evidence:
-  - "2026-06-09: background run + user foreground run started ~3min apart; idempotency check (score.json exists?) raced, both re-serialized arms B/C, ~116k duplicate kimi tokens, interleaved artifacts in runs/S2/probe-d007/"
+  - note: "2026-06-09: background run + user foreground run started ~3min apart; idempotency check (score.json exists?) raced, both re-serialized arms B/C, ~116k duplicate kimi tokens, interleaved artifacts in runs/S2/probe-d007/"
 expires:
   condition: "probe gains a lockfile or unique run-id dirs"
   review_after: 2027-06-09

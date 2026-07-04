@@ -11,7 +11,7 @@ anchors:
   - pattern: "GROUNDING_JUDGE_SYS"
   - path: research/experiments/track-a/scoring/score.py
 evidence:
-  - commit: e665a43
+  - note: "lab commit e665a43 (pre-public-history archive)"
 expires:
   condition: "FMR scoring no longer uses LLM-as-judge"
   review_after: 2027-06-09

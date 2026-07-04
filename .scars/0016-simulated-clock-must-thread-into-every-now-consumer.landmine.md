@@ -10,7 +10,7 @@ anchors:
   - path: research/experiments/multicycle/
   - pattern: "briefing\.build\b"
 evidence:
-  - commit: 510787d  # fix squashed into PR #134
+  - note: "lab commit 510787d (pre-public-history archive; fix squashed into lab PR #134)"
   - note: live run-01 killed 2026-07-02 — 6 cycles of spend invalidated
 expires:
   condition: "briefing.build / scoring.effective_weight require an explicit now (no wall-clock default)"

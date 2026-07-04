@@ -12,7 +12,7 @@ anchors:
   - pattern: "DAIMON_LLM_NO_CACHE"
 evidence:
   - note: H1 attempts 5-6 (2026-06-12): chunk 2 returned empty after 344s once; every later identical request replayed the cached empty in <1s, including the pre-cache-buster retry
-  - commit: 26d6253
+  - note: "lab commit 26d6253 (pre-public-history archive)"
 expires:
   condition: "gateway response caching disabled for the daimon key, or all daimon calls send no-cache"
   review_after: 2026-09-12

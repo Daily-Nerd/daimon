@@ -10,8 +10,8 @@ anchors:
   - path: plugin/pyproject.toml
   - pattern: "uv run daimon"
 evidence:
-  - "2026-07-02: live verification of D-011 importance emission ran a 320s chunked serialize that silently produced a D-010 checkpoint — `uv run daimon serialize` from repo root had executed ~/.local/share/uv/tools/daimon-briefing (last `uv tool install` snapshot), not the branch code"
-  - "2026-07-02, same day, second bite: bare `uv run pytest` resolved a leaked foreign VIRTUAL_ENV (fabcap/.venv), so the hook-subprocess e2e tests exercised the stale global tool via PATH — the new recall-inject hook test failed until rerun as `uv run --project plugin pytest`"
+  - note: "2026-07-02: live verification of D-011 importance emission ran a 320s chunked serialize that silently produced a D-010 checkpoint — `uv run daimon serialize` from repo root had executed ~/.local/share/uv/tools/daimon-briefing (last `uv tool install` snapshot), not the branch code"
+  - note: "2026-07-02, same day, second bite: bare `uv run pytest` resolved a leaked foreign VIRTUAL_ENV (fabcap/.venv), so the hook-subprocess e2e tests exercised the stale global tool via PATH — the new recall-inject hook test failed until rerun as `uv run --project plugin pytest`"
 expires:
   condition: "pyproject.toml moves to the repo root, or the global `daimon` uv tool is installed --editable"
   review_after: 2027-01-01
