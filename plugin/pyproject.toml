@@ -11,7 +11,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-pretty = ["rich>=13"]
+pretty = [
+    "rich>=13",
+    "rich-argparse>=1.8.0",
+]
 
 # pip-distributable hermes plugin: auto-discovered via the entry-point group.
 # VERIFIED — website/docs/guides/build-a-hermes-plugin.md (Entry-Point Group: "hermes_agent.plugins")

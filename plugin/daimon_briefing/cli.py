@@ -17,6 +17,7 @@
 """
 
 import argparse
+import functools
 import getpass
 import json
 import os
@@ -31,6 +32,27 @@ from . import __version__
 
 # Module-level seam so tests can inject a fake LLM client.
 _chat = llm.chat
+
+
+def _formatter_class():
+    """argparse help formatter: RichHelpFormatter-family when rich-argparse
+    (daimon[pretty]) is importable, else the stock formatter everywhere
+    already used it. Unlike render.supports_rich(), this needs no TTY gate of
+    its own — rich's Console auto-detects a non-terminal stream, so `--help`
+    degrades to plain text automatically when piped or redirected. It DOES
+    need to honor the same DAIMON_PLAIN/NO_COLOR opt-outs supports_rich checks
+    (same truthiness semantics), because rich-argparse's own Console has no
+    idea what DAIMON_PLAIN means — left ungated, `--help` would ignore a
+    user's explicit plain-mode request while every other command honors it."""
+    if os.environ.get("DAIMON_PLAIN", "").strip().lower() in render._TRUTHY:
+        return argparse.RawDescriptionHelpFormatter
+    if os.environ.get("NO_COLOR") is not None:
+        return argparse.RawDescriptionHelpFormatter
+    try:
+        from rich_argparse import RawDescriptionRichHelpFormatter
+        return RawDescriptionRichHelpFormatter
+    except ImportError:
+        return argparse.RawDescriptionHelpFormatter
 
 
 def _prompt(question: str) -> str:
@@ -382,15 +404,17 @@ def _cmd_recall(args) -> int:
         print(json.dumps(results, indent=2, ensure_ascii=False))
         return 0
     if not results:
-        print("no matches")
+        render.render_recall_lines(["no matches"])
         return 0
     now = time.time()
+    lines = []
     for r in results:
         age = _format_age(now - r["created"]) if r.get("created") else "?"
         superseded = f" [superseded by {r['superseded_by']}]" if r.get("superseded_by") else ""
         trust = r.get("trust") or "untagged"
-        print(f"[{r['author']}] [{trust}] [{r['kind']}] {r['text']} "
-              f"({r['session_id']}, {age} ago){superseded}")
+        lines.append(f"[{r['author']}] [{trust}] [{r['kind']}] {r['text']} "
+                     f"({r['session_id']}, {age} ago){superseded}")
+    render.render_recall_lines(lines)
     return 0
 
 
@@ -940,9 +964,11 @@ def _cmd_team_init(args) -> int:
     except teamsync.TeamError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(f"initialized team sidecar: {dest}")
-    print("checkpoints now sync there — `daimon team sync` runs opportunistically "
-          "at session start")
+    render.render_team_init([
+        f"initialized team sidecar: {dest}",
+        "checkpoints now sync there — `daimon team sync` runs opportunistically "
+        "at session start",
+    ])
     return 0
 
 
@@ -956,12 +982,14 @@ def _cmd_team_sync(args) -> int:
         print("daimon team: --project is ignored — sync is project-agnostic "
               "(all own checkpoints sync)", file=sys.stderr)
     if not teamsync.git_available():
-        print("daimon team: git not found on PATH — sync skipped")
+        render.render_team_sync(["daimon team: git not found on PATH — sync skipped"])
         return 0
     reports = teamsync.sync()
     if not reports:
-        print("daimon team: no team remote configured — nothing to sync "
-              "(run `daimon team init <remote-url>`)")
+        render.render_team_sync([
+            "daimon team: no team remote configured — nothing to sync "
+            "(run `daimon team init <remote-url>`)",
+        ])
         return 0
     for r in reports:
         parts = [f"{r['committed']} committed", "pushed" if r["pushed"] else "no push"]
@@ -970,7 +998,11 @@ def _cmd_team_sync(args) -> int:
         line = f"{r['slug']}: " + ", ".join(parts)
         if r["notes"]:
             line += " (" + "; ".join(r["notes"]) + ")"
-        print(line)
+        # Rendered per-report (not collected and rendered once after the loop):
+        # this keeps a report's stdout line interleaved with ITS OWN stderr
+        # warnings below, matching the ordering the pre-#68 print()-per-report
+        # loop had.
+        render.render_team_sync([line])
         for w in r["warnings"]:
             print(f"warning: {w}", file=sys.stderr)
     return 0
@@ -978,19 +1010,23 @@ def _cmd_team_sync(args) -> int:
 
 def _cmd_team_status(args) -> int:
     if not teamsync.git_available():
-        print("daimon team: git not found on PATH")
+        render.render_team_status(["daimon team: git not found on PATH"])
         return 0
     rows = teamsync.team_status()
     if not rows:
-        print("no team remote configured — run `daimon team init <remote-url>`")
+        render.render_team_status([
+            "no team remote configured — run `daimon team init <remote-url>`",
+        ])
         return 0
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0
+    lines = []
     for row in rows:
         authors = ", ".join(row["authors"]) or "none yet"
-        print(f"{row['slug']}: {row['freshness']} — "
-              f"{row['unpushed']} unpushed checkpoint(s), authors: {authors}")
+        lines.append(f"{row['slug']}: {row['freshness']} — "
+                     f"{row['unpushed']} unpushed checkpoint(s), authors: {authors}")
+    render.render_team_status(lines)
     return 0
 
 
@@ -1200,29 +1236,7 @@ def _cmd_stats(args) -> int:
     if args.json:
         print(json.dumps(data, indent=2))
         return 0
-    u, c, s = data["usage"], data["capture"], data["store"]
-    print("usage (local, never transmitted):")
-    if u:
-        for cmd_name, n in sorted(u.items(), key=lambda kv: -kv[1]):
-            print(f"  {cmd_name}: {n}")
-    else:
-        print("  none recorded yet")
-    print("capture:")
-    print(f"  serialized: {c['success']}  skipped: {c['skipped']}  "
-          f"errors: {c['errors']}  via fallback backend: {c['fallback_serializes']}")
-    if c["hosts"]:
-        print("  spawns by host: " + ", ".join(
-            f"{h}: {n}" for h, n in sorted(c["hosts"].items())))
-    if c["success"]:
-        print(f"  serialize seconds: max {c['max_serialize_seconds']}, "
-              f"avg {c['total_serialize_seconds'] // c['success']}")
-    print("store:")
-    print(f"  checkpoints: {s['checkpoints']}  project buckets: {s['project_buckets']}")
-    if s["items_by_kind"]:
-        print("  items by kind: " + ", ".join(
-            f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))
-    print(f"  trust: verbatim {s['items_verbatim']}, inferred {s['items_inferred']}, "
-          f"untagged {s['items_untagged']}  (carried: {s['items_carried']})")
+    render.render_stats(data)
     return 0
 
 
@@ -1246,8 +1260,9 @@ def _hooks_target_dir() -> Path:
 
 
 def _cmd_hooks_list(args) -> int:
-    for host, spec in sorted(_HOOK_HOSTS.items()):
-        print(f"{host}  ({spec['entry']}; events: {', '.join(spec['events'])})")
+    lines = [f"{host}  ({spec['entry']}; events: {', '.join(spec['events'])})"
+             for host, spec in sorted(_HOOK_HOSTS.items())]
+    render.render_hooks_list(lines)
     return 0
 
 
@@ -1272,16 +1287,19 @@ def _cmd_hooks_install(args) -> int:
         dest.write_bytes(data)
         dest.chmod(dest.stat().st_mode | 0o100)  # u+x
     entry = target / spec["entry"]
-    print(f"installed {len(spec['files'])} file(s) to {target}")
-    print("")
-    print(f"Register this command for the events below "
-          f"(host hooks config — see the host's hooks documentation):")
-    print(f"  command: python3 {entry}")
+    lines = [
+        f"installed {len(spec['files'])} file(s) to {target}",
+        "",
+        "Register this command for the events below "
+        "(host hooks config — see the host's hooks documentation):",
+        f"  command: python3 {entry}",
+    ]
     for ev in spec["events"]:
-        print(f"  event:   {ev}")
-    print("")
-    print("Re-run `daimon hooks install " + args.host +
-          "` after every `uv tool upgrade daimon-briefing`.")
+        lines.append(f"  event:   {ev}")
+    lines.append("")
+    lines.append("Re-run `daimon hooks install " + args.host +
+                 "` after every `uv tool upgrade daimon-briefing`.")
+    render.render_hooks_install(lines)
     return 0
 
 
@@ -1343,6 +1361,12 @@ def _cmd_skill_uninstall(args) -> int:
 
 
 def main(argv=None) -> int:
+    # #68: one formatter selection for the WHOLE parser tree. argparse does not
+    # propagate formatter_class from parent to subparser, so every add_parser
+    # call below must receive it — done here by patching add_parser on each
+    # subparsers action into a partial pre-bound with `fmt`, rather than
+    # threading formatter_class= through 20+ individual call sites.
+    fmt = _formatter_class()
     parser = argparse.ArgumentParser(
         prog="daimon",
         description="Cognitive checkpoints — serialize sessions, brief on resume.",
@@ -1350,12 +1374,13 @@ def main(argv=None) -> int:
                "  daimon brief                 render the latest briefing\n"
                "  daimon status                checkpoint presence + last serialize\n"
                "  daimon configure             detect/repair the LLM backend\n",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=fmt,
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser = functools.partial(sub.add_parser, formatter_class=fmt)
 
     p_ser = sub.add_parser("serialize", help="serialize a transcript file into a checkpoint")
     p_ser.add_argument("transcript", help="path to a text/markdown transcript")
@@ -1384,7 +1409,6 @@ def main(argv=None) -> int:
     p_brief = sub.add_parser(
         "brief", help="render the briefing from the latest checkpoint",
         epilog="Examples:\n  daimon brief\n  daimon brief --project .\n  DAIMON_PLAIN=1 daimon brief\n",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_brief.add_argument(
         "--project",
@@ -1402,7 +1426,6 @@ def main(argv=None) -> int:
         epilog="Examples:\n  daimon anchor daimon_briefing/cli.py _cmd_brief\n"
                "  daimon anchor pkg/mod.py MyClass.method --project .\n"
                "  daimon anchor pkg/mod.py fn --attach 'auth decision'\n",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_anchor.add_argument("file", help="repo-relative path to the source file")
     p_anchor.add_argument("symbol", help="symbol name or Class.method")
@@ -1421,7 +1444,6 @@ def main(argv=None) -> int:
         epilog="Examples:\n"
                "  daimon recall auth caching\n"
                "  daimon recall gateway --all-projects --json\n",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_recall.add_argument(
         "query", nargs="+",
@@ -1459,7 +1481,6 @@ def main(argv=None) -> int:
         epilog="Examples:\n"
                "  daimon status\n"
                "  daimon status --project . --json\n",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_status.add_argument(
         "--project",
@@ -1486,9 +1507,9 @@ def main(argv=None) -> int:
                "  daimon team init git@github.com:org/team-memory.git\n"
                "  daimon team sync\n"
                "  daimon team status\n",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     team_sub = p_team.add_subparsers(dest="team_cmd", required=True)
+    team_sub.add_parser = functools.partial(team_sub.add_parser, formatter_class=fmt)
     pt_init = team_sub.add_parser(
         "init", help="clone the private team sidecar repo (empty remote OK)"
     )
@@ -1543,6 +1564,7 @@ def main(argv=None) -> int:
         help="ship host hook scripts from the package (#43): list, install",
     )
     hooks_sub = p_hooks.add_subparsers(dest="hooks_cmd", required=True)
+    hooks_sub.add_parser = functools.partial(hooks_sub.add_parser, formatter_class=fmt)
     ph_list = hooks_sub.add_parser("list", help="hosts with packaged hook scripts")
     ph_list.set_defaults(func=_cmd_hooks_list)
     ph_install = hooks_sub.add_parser(
@@ -1557,6 +1579,7 @@ def main(argv=None) -> int:
         "skill",
         help="install the daimon agent skill into a host's rules/skills file (#66)")
     skill_sub = p_skill.add_subparsers(dest="skill_cmd", required=True)
+    skill_sub.add_parser = functools.partial(skill_sub.add_parser, formatter_class=fmt)
     ps_list = skill_sub.add_parser("list", help="hosts with a skill renderer")
     ps_list.set_defaults(func=_cmd_skill_list)
     ps_show = skill_sub.add_parser(

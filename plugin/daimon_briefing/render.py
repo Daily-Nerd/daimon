@@ -492,6 +492,18 @@ def render_skill_lines(lines, *, footer=None) -> None:
     char-cap truncation notice) that gets yellow styling on the rich path.
     `footer`, if given, is trailing line(s) printed after a blank line — the
     upgrade-reminder `skill install` prints after its result lines."""
+    _render_lines(lines, footer=footer)
+
+
+def _render_lines(lines, *, footer=None) -> None:
+    """Shared "print a list of pre-formatted lines" primitive behind
+    render_skill_lines/render_recall_lines/render_hooks_*/render_team_*: the
+    plain path is a bare print loop (byte-identical to each command's
+    pre-#68 output); the rich path upgrades "warning:"-prefixed lines to
+    yellow. `markup=False` is load-bearing — recall lines contain literal
+    "[author]"/"[trust]"/"[kind]" brackets, which rich's Console would
+    otherwise parse as (invalid, silently-dropped) style tags, eating the
+    content. `footer`, if given, prints after a blank-line separator."""
     if not supports_rich():
         for ln in lines:
             print(ln)
@@ -504,11 +516,135 @@ def render_skill_lines(lines, *, footer=None) -> None:
 
     console = Console()
     for ln in lines:
-        if ln.startswith("warning:"):
-            console.print(ln, style="yellow")
-        else:
-            console.print(ln)
+        style = "yellow" if ln.startswith("warning:") else None
+        console.print(ln, style=style, markup=False)
     if footer:
         console.print("")
         for ln in footer:
-            console.print(ln)
+            console.print(ln, markup=False)
+
+
+# ---- recall: `daimon recall` (#68) ------------------------------------------
+
+
+def render_recall_lines(lines) -> None:
+    """`daimon recall` human-facing matches, or the single "no matches" line.
+    `--json` and `recall-inject` (machine-consumed) never route through here —
+    they stay plain unconditionally."""
+    _render_lines(lines)
+
+
+# ---- hooks: `daimon hooks list|install` (#68) -------------------------------
+
+
+def render_hooks_list(lines) -> None:
+    _render_lines(lines)
+
+
+def render_hooks_install(lines) -> None:
+    _render_lines(lines)
+
+
+# ---- team: `daimon team init|sync|status` (#68) -----------------------------
+
+
+def render_team_init(lines) -> None:
+    _render_lines(lines)
+
+
+def render_team_sync(lines) -> None:
+    _render_lines(lines)
+
+
+def render_team_status(lines) -> None:
+    _render_lines(lines)
+
+
+# ---- stats: `daimon stats` (#68) --------------------------------------------
+
+
+def render_stats(data: dict) -> None:
+    if supports_rich():
+        _rich_stats(data)
+    else:
+        _plain_stats(data)
+
+
+def _plain_stats(data: dict) -> None:
+    u, c, s = data["usage"], data["capture"], data["store"]
+    print("usage (local, never transmitted):")
+    if u:
+        for cmd_name, n in sorted(u.items(), key=lambda kv: -kv[1]):
+            print(f"  {cmd_name}: {n}")
+    else:
+        print("  none recorded yet")
+    print("capture:")
+    print(f"  serialized: {c['success']}  skipped: {c['skipped']}  "
+          f"errors: {c['errors']}  via fallback backend: {c['fallback_serializes']}")
+    if c["hosts"]:
+        print("  spawns by host: " + ", ".join(
+            f"{h}: {n}" for h, n in sorted(c["hosts"].items())))
+    if c["success"]:
+        print(f"  serialize seconds: max {c['max_serialize_seconds']}, "
+              f"avg {c['total_serialize_seconds'] // c['success']}")
+    print("store:")
+    print(f"  checkpoints: {s['checkpoints']}  project buckets: {s['project_buckets']}")
+    if s["items_by_kind"]:
+        print("  items by kind: " + ", ".join(
+            f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))
+    print(f"  trust: verbatim {s['items_verbatim']}, inferred {s['items_inferred']}, "
+          f"untagged {s['items_untagged']}  (carried: {s['items_carried']})")
+
+
+def _rich_stats(data: dict) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    u, c, s = data["usage"], data["capture"], data["store"]
+
+    usage_table = Table(title="usage (local, never transmitted)", title_justify="left",
+                        show_header=True, header_style="bold")
+    usage_table.add_column("command")
+    usage_table.add_column("count", justify="right")
+    if u:
+        for cmd_name, n in sorted(u.items(), key=lambda kv: -kv[1]):
+            usage_table.add_row(cmd_name, str(n))
+    else:
+        usage_table.add_row("[dim]none recorded yet[/dim]", "")
+    console.print(usage_table)
+
+    capture_table = Table(title="capture", title_justify="left",
+                          show_header=True, header_style="bold")
+    capture_table.add_column("metric")
+    capture_table.add_column("value")
+    capture_table.add_row("serialized", str(c["success"]))
+    capture_table.add_row("skipped", str(c["skipped"]))
+    capture_table.add_row("errors", str(c["errors"]))
+    capture_table.add_row("via fallback backend", str(c["fallback_serializes"]))
+    if c["hosts"]:
+        capture_table.add_row("spawns by host", ", ".join(
+            f"{h}: {n}" for h, n in sorted(c["hosts"].items())))
+    if c["success"]:
+        capture_table.add_row(
+            "serialize seconds",
+            f"max {c['max_serialize_seconds']}, "
+            f"avg {c['total_serialize_seconds'] // c['success']}",
+        )
+    console.print(capture_table)
+
+    store_table = Table(title="store", title_justify="left",
+                        show_header=True, header_style="bold")
+    store_table.add_column("metric")
+    store_table.add_column("value")
+    store_table.add_row("checkpoints", str(s["checkpoints"]))
+    store_table.add_row("project buckets", str(s["project_buckets"]))
+    if s["items_by_kind"]:
+        store_table.add_row("items by kind", ", ".join(
+            f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))
+    store_table.add_row(
+        "trust",
+        f"verbatim {s['items_verbatim']}, inferred {s['items_inferred']}, "
+        f"untagged {s['items_untagged']}  (carried: {s['items_carried']})",
+    )
+    console.print(store_table)
