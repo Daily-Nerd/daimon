@@ -1019,6 +1019,65 @@ def _cmd_configure(args) -> int:
     return 0
 
 
+# ---- hooks: ship host hook scripts from the package (#43) ----
+
+# host -> (files to install, entry script, events to register). The packaged
+# copies live in daimon_briefing/_hooks/ and are drift-guarded against the
+# repo's hook/ dir by tests/test_hooks_install.py. Claude Code is absent on
+# purpose: the plugin marketplace owns that path.
+_HOOK_HOSTS = {
+    "windsurf": {
+        "files": ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py"),
+        "entry": "daimon-windsurf-hooks.py",
+        "events": ("pre_user_prompt", "post_cascade_response"),
+    },
+}
+
+
+def _hooks_target_dir() -> Path:
+    return Path.home() / ".daimon" / "hooks"
+
+
+def _cmd_hooks_list(args) -> int:
+    for host, spec in sorted(_HOOK_HOSTS.items()):
+        print(f"{host}  ({spec['entry']}; events: {', '.join(spec['events'])})")
+    return 0
+
+
+def _cmd_hooks_install(args) -> int:
+    """Copy the host's packaged hook script(s) to ~/.daimon/hooks/ — a STABLE
+    path the host's hooks config points at once. Idempotent: re-running after
+    `uv tool upgrade daimon-briefing` refreshes the scripts to match the
+    installed CLI, which is the whole point (#43: a curl'd script drifts)."""
+    from importlib import resources
+
+    spec = _HOOK_HOSTS.get(args.host)
+    if spec is None:
+        known = ", ".join(sorted(_HOOK_HOSTS))
+        print(f"error: unknown host '{args.host}' (known: {known})", file=sys.stderr)
+        return 2
+    target = _hooks_target_dir()
+    target.mkdir(parents=True, exist_ok=True)
+    pkg = resources.files("daimon_briefing._hooks")
+    for name in spec["files"]:
+        data = (pkg / name).read_bytes()
+        dest = target / name
+        dest.write_bytes(data)
+        dest.chmod(dest.stat().st_mode | 0o100)  # u+x
+    entry = target / spec["entry"]
+    print(f"installed {len(spec['files'])} file(s) to {target}")
+    print("")
+    print(f"Register this command for the events below "
+          f"(host hooks config — see the host's hooks documentation):")
+    print(f"  command: python3 {entry}")
+    for ev in spec["events"]:
+        print(f"  event:   {ev}")
+    print("")
+    print("Re-run `daimon hooks install " + args.host +
+          "` after every `uv tool upgrade daimon-briefing`.")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="daimon",
@@ -1201,6 +1260,21 @@ def main(argv=None) -> int:
     p_cfg.add_argument("--command", help="command: DAIMON_LLM_COMMAND")
     p_cfg.add_argument("--output", help="command: DAIMON_LLM_COMMAND_OUTPUT (text|json:<key>)")
     p_cfg.set_defaults(func=_cmd_configure)
+
+    p_hooks = sub.add_parser(
+        "hooks",
+        help="ship host hook scripts from the package (#43): list, install",
+    )
+    hooks_sub = p_hooks.add_subparsers(dest="hooks_cmd", required=True)
+    ph_list = hooks_sub.add_parser("list", help="hosts with packaged hook scripts")
+    ph_list.set_defaults(func=_cmd_hooks_list)
+    ph_install = hooks_sub.add_parser(
+        "install",
+        help="copy a host's hook script(s) to the stable path ~/.daimon/hooks/ "
+             "and print the registration snippet — re-run after every upgrade",
+    )
+    ph_install.add_argument("host", help="host to install (see `daimon hooks list`)")
+    ph_install.set_defaults(func=_cmd_hooks_install)
 
     args = parser.parse_args(argv)
     return args.func(args)
