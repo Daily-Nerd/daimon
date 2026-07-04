@@ -1004,6 +1004,22 @@ def _cmd_configure(args) -> int:
     With no flags it is SAFE everywhere: it only prompts on a TTY when daimon is
     not ready, and otherwise just prints guidance — it never blocks.
     """
+    # --test (#56): prove the RESOLVED backend works, interactively, at setup
+    # time — the alternative is a real serialize failing minutes later inside
+    # a detached hook child. One tiny prompt through the same llm.chat path
+    # serialization uses; failure prints the cause and where stderr landed.
+    if getattr(args, "test", False):
+        start = time.monotonic()
+        try:
+            llm.chat([{"role": "user", "content": "Reply with exactly: ok"}],
+                     retries=1)
+        except llm.ChatError as exc:
+            print(f"backend test: FAILED — {exc}", file=sys.stderr)
+            return 1
+        elapsed = time.monotonic() - start
+        print(f"backend test: ok ({elapsed:.1f}s round trip)")
+        return 0
+
     st = configure.status()
     render.render_configure(st)
 
@@ -1436,6 +1452,11 @@ def main(argv=None) -> int:
     p_cfg.add_argument("--base-url", help="litellm: DAIMON_LLM_BASE_URL")
     p_cfg.add_argument("--command", help="command: DAIMON_LLM_COMMAND")
     p_cfg.add_argument("--output", help="command: DAIMON_LLM_COMMAND_OUTPUT (text|json:<key>)")
+    p_cfg.add_argument(
+        "--test", action="store_true",
+        help="send one tiny prompt through the resolved backend and report "
+             "pass/fail — run this right after configuring (#56)",
+    )
     p_cfg.set_defaults(func=_cmd_configure)
 
     p_stats = sub.add_parser(

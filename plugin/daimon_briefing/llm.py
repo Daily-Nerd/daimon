@@ -244,7 +244,23 @@ def _chat_command(messages, deadline):
         except subprocess.TimeoutExpired:
             raise ChatError("command backend timed out")
         if rc != 0:
-            raise ChatError(f"command backend exited {rc} (stderr suppressed)")
+            # stderr stays OFF every wire, but the user's own disk is the same
+            # trust domain as the transcript being serialized — discarding it
+            # locally turned every backend failure into guesswork (#56, exit
+            # 101 in the field with zero diagnostics). Truncate-per-run: the
+            # log is "the last failure", not an archive.
+            hint = "stderr suppressed"
+            try:
+                d = config.log_dir()
+                d.mkdir(parents=True, exist_ok=True)
+                p = d / "backend-stderr.log"
+                p.write_text(
+                    f"command backend exit {rc} (argv0: {argv[0]})\n{err or ''}\n",
+                    encoding="utf-8")
+                hint = f"stderr: {p}"
+            except OSError:
+                pass
+            raise ChatError(f"command backend exited {rc} ({hint})")
         try:
             text = _extract_output(out, output_spec)
         except (json.JSONDecodeError, KeyError, TypeError):
