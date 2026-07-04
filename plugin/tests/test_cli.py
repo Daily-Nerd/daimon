@@ -102,8 +102,12 @@ def test_cli_serialize_no_api_key_names_the_cause(
     # The live failure mode: hook fired but no LLM credentials configured.
     # Must fail fast BEFORE the LLM call, naming the missing key — not the
     # conflated "too short, LLM error, or invalid output".
+    # Backend pinned litellm: since #52 pre-flight only requires a key on
+    # litellm-bound transports (a dev machine's `claude` on PATH would
+    # otherwise legitimately pass).
     for var in ("DAIMON_LLM_API_KEY", "LITELLM_API_KEY"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
     rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
     assert rc != 0
@@ -2722,7 +2726,9 @@ def test_preflight_error_session_is_healable_when_transcript_exists():
 def test_serialize_preflight_errors_carry_transcript_suffix(
         tmp_checkpoint_dir, tmp_log_dir, monkeypatch, tmp_path):
     # End-to-end: _run_serialize's own pre-flight error lines carry the suffix.
+    # Backend pinned litellm — pre-flight is backend-aware since #52.
     monkeypatch.delenv("DAIMON_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
     monkeypatch.setattr(cli.config, "llm_api_key", lambda: None)
     p = tmp_path / "S-pre.md"
     p.write_text("**user**: hola\n")
@@ -2730,3 +2736,52 @@ def test_serialize_preflight_errors_carry_transcript_suffix(
     assert rc == 1
     log_text = (tmp_log_dir / "serialize.log").read_text()
     assert f"(transcript: {p})" in log_text
+
+
+# ---- #52: pre-flight must mirror llm.chat's backend routing ----
+
+
+def _clear_llm_env_52(monkeypatch):
+    for var in ("DAIMON_LLM_API_KEY", "LITELLM_API_KEY", "DAIMON_LLM_MODEL",
+                "LITELLM_MODEL", "DAIMON_LLM_BACKEND", "DAIMON_LLM_COMMAND"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_preflight_passes_for_command_backend_without_key(monkeypatch, tmp_path):
+    # A `command` backend needs no API key and no model — pre-flight killed
+    # it anyway (field-found: a command-backend user could never serialize).
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "some-llm-cli")
+    assert cli._preflight_error(Path("/t/x.md")) is None
+
+
+def test_preflight_passes_for_claude_cli_backend_without_key(monkeypatch):
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    assert cli._preflight_error(Path("/t/x.md")) is None
+
+
+def test_preflight_passes_for_auto_when_command_resolves(monkeypatch):
+    # The advertised zero-config path: auto backend, claude on PATH, no key.
+    from daimon_briefing import llm
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text"))
+    assert cli._preflight_error(Path("/t/x.md")) is None
+
+
+def test_preflight_names_missing_key_when_litellm_bound(monkeypatch):
+    from daimon_briefing import llm
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)  # nothing on PATH
+    err = cli._preflight_error(Path("/t/x.md"))
+    assert err is not None and "DAIMON_LLM_API_KEY" in err
+    assert "(transcript: /t/x.md)" in err  # #49 attribution survives
+
+
+def test_preflight_names_missing_model_when_key_present(monkeypatch):
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-x")
+    err = cli._preflight_error(Path("/t/x.md"))
+    assert err is not None and "DAIMON_LLM_MODEL" in err
