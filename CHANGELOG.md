@@ -5,6 +5,14 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0](https://github.com/Daily-Nerd/daimon/compare/v0.7.0...v0.8.0) (2026-07-04)
+
+
+### Features
+
+* **cli:** rich-parity for remaining human-facing output ([#76](https://github.com/Daily-Nerd/daimon/issues/76)) ([9e0920f](https://github.com/Daily-Nerd/daimon/commit/9e0920f37086b76b0329ddd2206da320de89a1db))
+* **hosts:** serialize Windsurf sessions from the native Cascade transcript ([#71](https://github.com/Daily-Nerd/daimon/issues/71)) ([5d8d4e8](https://github.com/Daily-Nerd/daimon/commit/5d8d4e8589541c5b8ae85dd0273a681f98d8c6a1))
+
 ## [0.7.0](https://github.com/Daily-Nerd/daimon/compare/v0.6.0...v0.7.0) (2026-07-04)
 
 
