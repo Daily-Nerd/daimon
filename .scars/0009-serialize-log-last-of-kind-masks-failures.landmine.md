@@ -7,7 +7,6 @@ confidence: 0.9
 created: 2026-06-30
 authors: ["claude-code", "kibukx"]
 anchors:
-  - path: plugin/daimon_briefing/cli.py
   - pattern: "_parse_serialize_log|last[_ ]?result"
 evidence:
   - pr: 0
