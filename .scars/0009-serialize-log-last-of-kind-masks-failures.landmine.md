@@ -11,7 +11,7 @@ anchors:
   - pattern: "_parse_serialize_log|last[_ ]?result"
 evidence:
   - pr: 0
-  - commit: 5dbee88  # squash-merge of PR #73
+  - note: "lab commit 5dbee88 (pre-public-history archive; squash-merge of lab PR #73)"
 expires:
   condition: "serialize.log becomes per-session (one file per session) instead of a single global append-only ledger"
   review_after: 2027-06-30

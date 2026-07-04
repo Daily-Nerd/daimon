@@ -10,8 +10,8 @@ anchors:
   - path: research/experiments/lib/llm.py
   - path: research/memory-backend/benchmark/evaluate.py
 evidence:
-  - commit: d8d0fb9  # squash-merge of PR #69
-  - commit: 162e49c  # squash-merge of PR #71
+  - note: "lab commit d8d0fb9 (pre-public-history archive; squash-merge of lab PR #69)"
+  - note: "lab commit 162e49c (pre-public-history archive; squash-merge of lab PR #71)"
   - pr: 69
   - pr: 71
 expires:

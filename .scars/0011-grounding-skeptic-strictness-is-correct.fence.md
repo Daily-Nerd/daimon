@@ -12,7 +12,7 @@ anchors:
   - pattern: "verify_negative|GROUNDED IS STRICT|skeptic"
 evidence:
   - pr: 59
-  - commit: fcaaffd  # squash-merge of PR #59
+  - note: "lab commit fcaaffd (pre-public-history archive; squash-merge of lab PR #59)"
   - note: See .scars landmine #4 (per-claim judge deltas are noise-dominated without forced verification).
 expires:
   condition: "The fixture is re-labeled against full transcripts and the skeptic still misses >25% of TRUE judge_errors that are single-sentence (not multi-turn) assertions."

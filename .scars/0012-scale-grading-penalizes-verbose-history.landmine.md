@@ -10,7 +10,7 @@ anchors:
   - path: research/memory-backend/benchmark/state/grade.py
   - pattern: "ANSWER_PROMPT|asserts_stale|is_override"
 evidence:
-  - commit: bc1114b  # fix squashed into PR #41
+  - note: "lab commit bc1114b (pre-public-history archive; fix squashed into lab PR #41)"
   - note: First 2K scale smoke: prose override 0.167 / staleness 0.833 vs CSL 1.000 — looked like prose collapses under noise.
 expires:
   condition: "grading scores semantic current-state instead of substring-matching stale tokens"

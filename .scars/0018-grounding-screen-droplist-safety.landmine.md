@@ -10,7 +10,7 @@ anchors:
   - path: research/experiments/track-a/scoring/grounding_screen.py
   - pattern: "STOPWORDS|salient_tokens|screen_negative"
 evidence:
-  - commit: fef27b5  # squash-merge of PR #51
+  - note: "lab commit fef27b5 (pre-public-history archive; squash-merge of lab PR #51)"
 expires:
   condition: "the screen stops auto-confirming the absent bucket (e.g. a skeptic re-judge is added over the ABSENT bucket — present-bucket adjudication alone does NOT expire this)"
   review_after: 2027-06-29

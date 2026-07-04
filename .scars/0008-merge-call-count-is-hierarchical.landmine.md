@@ -10,7 +10,7 @@ anchors:
   - path: plugin/daimon_briefing/serializer.py
   - pattern: "MERGE_SYS"
 evidence:
-  - commit: 6aa7844  # squash-merge of PR #70
+  - note: "lab commit 6aa7844 (pre-public-history archive; squash-merge of lab PR #70)"
   - pr: 70
 expires:
   condition: "merge_partials stops folding hierarchically (single-pass merge restored)"

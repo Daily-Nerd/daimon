@@ -10,7 +10,7 @@ anchors:
   - path: plugin/pyproject.toml
   - pattern: "uv tool install"
 evidence:
-  - "2026-06-10: after editing plugin source, `uv tool install --force ./plugin` reported success but the installed daimon-briefing still printed the OLD conflated error message; `--force --reinstall` picked up the edits. Version stayed 0.1.0 both times."
+  - note: "2026-06-10: after editing plugin source, `uv tool install --force ./plugin` reported success but the installed daimon-briefing still printed the OLD conflated error message; `--force --reinstall` picked up the edits. Version stayed 0.1.0 both times."
 expires:
   condition: "plugin adopts per-change version bumps, or install docs/scripts always pass --reinstall"
   review_after: 2027-06-10
