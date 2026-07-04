@@ -462,3 +462,53 @@ def _rich_status(data: dict) -> None:
             title=f"⚠ {n} session{'s' if n != 1 else ''} failed to serialize (no checkpoint)",
             border_style="red", title_align="left",
         ))
+
+
+# ---- skill: `daimon skill list|install|uninstall` (#66) --------------------
+
+
+def render_skill_list(rows) -> None:
+    """`daimon skill list`: `rows` is [(host, scopes), ...], `scopes` a list of
+    "global"/"project" strings — same shape a simple table needs."""
+    if not supports_rich():
+        for host, scopes in rows:
+            print(f"{host}  ({', '.join(scopes)})")
+        return
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("host")
+    table.add_column("scopes")
+    for host, scopes in rows:
+        table.add_row(host, ", ".join(scopes))
+    console.print(table)
+
+
+def render_skill_lines(lines, *, footer=None) -> None:
+    """Generic renderer for `skill install`/`uninstall` result lines: mostly
+    plain confirmations, occasionally a "warning: ..." line (e.g. a host's
+    char-cap truncation notice) that gets yellow styling on the rich path.
+    `footer`, if given, is trailing line(s) printed after a blank line — the
+    upgrade-reminder `skill install` prints after its result lines."""
+    if not supports_rich():
+        for ln in lines:
+            print(ln)
+        if footer:
+            print("")
+            for ln in footer:
+                print(ln)
+        return
+    from rich.console import Console
+
+    console = Console()
+    for ln in lines:
+        if ln.startswith("warning:"):
+            console.print(ln, style="yellow")
+        else:
+            console.print(ln)
+    if footer:
+        console.print("")
+        for ln in footer:
+            console.print(ln)

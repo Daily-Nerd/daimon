@@ -1297,10 +1297,12 @@ def _resolve_project_cwd() -> Path:
 
 def _cmd_skill_list(args) -> int:
     from . import skill_install
+    rows = []
     for host in sorted(skill_install.HOSTS):
         scopes = [s for s in ("global", "project")
                   if skill_install.HOSTS[host].get(s) is not None]
-        print(f"{host}  ({', '.join(scopes)})")
+        rows.append((host, scopes))
+    render.render_skill_list(rows)
     return 0
 
 
@@ -1320,11 +1322,10 @@ def _cmd_skill_install(args) -> int:
     except skill_install.SkillInstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    for ln in lines:
-        print(ln)
-    print("")
-    print(f"Re-run `daimon skill install {args.host}` after every "
-          "`uv tool upgrade daimon-briefing` to refresh the content.")
+    render.render_skill_lines(lines, footer=(
+        f"Re-run `daimon skill install {args.host}` after every "
+        "`uv tool upgrade daimon-briefing` to refresh the content.",
+    ))
     return 0
 
 
@@ -1337,8 +1338,7 @@ def _cmd_skill_uninstall(args) -> int:
     except skill_install.SkillInstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    for ln in lines:
-        print(ln)
+    render.render_skill_lines(lines)
     return 0
 
 
