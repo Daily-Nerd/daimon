@@ -384,3 +384,35 @@ def test_chat_direct_success_leaves_flag_clear(monkeypatch):
     llm.reset_fallback()
     llm.chat([{"role": "user", "content": "x"}])
     assert llm.fallback_used() is False
+
+
+# ---- #56: command-backend stderr lands locally; never guessed at again ----
+
+
+def test_command_backend_failure_writes_stderr_log(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (101, "", "panic: no prompt provided"))
+    with pytest.raises(llm.ChatError) as exc:
+        llm.chat([{"role": "user", "content": "hola"}])
+    assert "backend-stderr.log" in str(exc.value)
+    assert "suppressed" not in str(exc.value)
+    log = tmp_path / "logs" / "backend-stderr.log"
+    assert "panic: no prompt provided" in log.read_text()
+    assert "exit 101" in log.read_text()
+
+
+def test_command_backend_stderr_log_truncates_per_run(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (1, "", "first"))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "x"}])
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (1, "", "second"))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "x"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert "second" in text and "first" not in text

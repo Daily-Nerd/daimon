@@ -151,3 +151,31 @@ def test_write_env_sorted_lines(tmp_path, monkeypatch):
     configure.write_env({"B_KEY": "2", "A_KEY": "1"})
     lines = [ln for ln in env_file.read_text().splitlines() if ln]
     assert lines == ["A_KEY=1", "B_KEY=2"]
+
+
+# ---- #56: configure --test — prove the backend works AT SETUP ----
+
+
+def test_configure_test_passes_with_working_backend(monkeypatch, capsys, tmp_path):
+    from daimon_briefing import cli, llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "fake-cli")
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (0, "ok", ""))
+    rc = cli.main(["configure", "--test"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "backend test: ok" in out
+
+
+def test_configure_test_fails_loud_with_broken_backend(monkeypatch, capsys, tmp_path):
+    from daimon_briefing import cli, llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (101, "", "panic: no prompt"))
+    rc = cli.main(["configure", "--test"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "backend test: FAILED" in err
+    assert "backend-stderr.log" in err
