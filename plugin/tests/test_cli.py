@@ -2785,3 +2785,81 @@ def test_preflight_names_missing_model_when_key_present(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-x")
     err = cli._preflight_error(Path("/t/x.md"))
     assert err is not None and "DAIMON_LLM_MODEL" in err
+
+
+# ---- #54: daimon stats — local usage + capture aggregates, zero phone-home ----
+
+
+def test_brief_appends_usage_line(tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["brief"]) == 0
+    usage = (tmp_log_dir / "usage.log").read_text()
+    assert "brief" in usage
+
+
+def test_usage_logging_respects_kill_switch(tmp_checkpoint_dir, tmp_log_dir,
+                                            sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert cli.main(["brief"]) == 0
+    assert not (tmp_log_dir / "usage.log").exists()
+
+
+def test_stats_json_reports_usage_capture_and_store(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    _write_log(tmp_log_dir, [
+        "2026-07-03T10:00:00Z session-end: spawned serialize for S1 "
+        "(reason: exit, project: /p/A) (transcript: /t/S1.jsonl)",
+        "wrote checkpoint: /c/S1.json (took 42s)",
+        "2026-07-03T11:00:00Z windsurf-cascade: spawned serialize for W1 "
+        "(project: /p/B) (transcript: /t/W1.md)",
+        "skipped serialize for W1: too short (2 < 10 messages)",
+        "error: boom (transcript: /t/X.jsonl) after 3s",
+        "wrote checkpoint: /c/S2.json (took 8s) [fallback backend]",
+    ])
+    assert cli.main(["brief"]) == 0
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["brief"] == 2
+    cap = data["capture"]
+    assert cap["success"] == 2
+    assert cap["skipped"] == 1
+    assert cap["errors"] == 1
+    assert cap["fallback_serializes"] == 1
+    assert cap["hosts"]["session-end"] == 1
+    assert cap["hosts"]["windsurf-cascade"] == 1
+    assert cap["max_serialize_seconds"] == 42
+    st = data["store"]
+    assert st["checkpoints"] >= 1
+    assert st["items_verbatim"] >= 1   # sample_checkpoint carries verbatim items
+    assert st["items_inferred"] >= 1
+
+
+def test_stats_plain_renders_key_lines(tmp_checkpoint_dir, tmp_log_dir,
+                                       sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["stats"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "usage" in out.lower()
+    assert "brief" in out
+    assert "verbatim" in out
+
+
+def test_stats_empty_world_is_calm(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"] == {}
+    assert data["capture"]["success"] == 0
+    assert data["store"]["checkpoints"] == 0
