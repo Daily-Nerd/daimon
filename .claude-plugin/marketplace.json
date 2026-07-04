@@ -9,7 +9,7 @@
       "name": "daimon",
       "source": "./",
       "description": "Dream-briefing for AI coding agents: a cognitive checkpoint at session end, a 'while you were away' briefing at session start.",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "author": {
         "name": "Daily-Nerd"
       },
