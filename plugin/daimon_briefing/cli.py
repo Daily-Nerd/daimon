@@ -1011,10 +1011,24 @@ def _cmd_configure(args) -> int:
     if getattr(args, "test", False):
         start = time.monotonic()
         try:
-            llm.chat([{"role": "user", "content": "Reply with exactly: ok"}],
-                     retries=1)
+            reply = llm.chat(
+                [{"role": "user", "content":
+                  'Reply with exactly this JSON and nothing else: {"ok": true}'}],
+                retries=1)
         except llm.ChatError as exc:
             print(f"backend test: FAILED — {exc}", file=sys.stderr)
+            return 1
+        # Same extraction path serialization uses (#59): a transport that
+        # answers but cannot return extractable JSON — agent-style CLIs often
+        # can't — must fail HERE, not on the first real serialize.
+        try:
+            llm.extract_json(reply)
+        except json.JSONDecodeError:
+            print("backend test: FAILED — transport works, but the backend did "
+                  "not return extractable JSON; serialization will fail. "
+                  "Agent-style CLIs often can't do this — use an "
+                  "OpenAI-compatible endpoint or a raw-completion CLI.",
+                  file=sys.stderr)
             return 1
         elapsed = time.monotonic() - start
         print(f"backend test: ok ({elapsed:.1f}s round trip)")
