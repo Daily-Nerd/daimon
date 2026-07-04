@@ -16,10 +16,13 @@ conversations out of reach, so daimon keeps its own: each hook call appends a
 `**role**:`-marked turn to ~/.daimon/windsurf/transcripts/<trajectory_id>.md —
 the exact markdown shape `daimon serialize` already parses.
 
-Self-probing: a `pre_user_prompt` payload this adapter cannot extract text
-from is dumped to ~/.daimon/windsurf/unparsed-<stamp>.json (payload only,
-fail-open) so the next adapter iteration can be built from evidence instead
-of another probe round.
+Self-probing (#62): any payload this adapter cannot handle — unextractable
+`pre_user_prompt` text, a missing trajectory_id, or an event it does not
+know (the docs list 12; `post_cascade_response_with_transcript` is the one
+worth catching) — is dumped to ~/.daimon/windsurf/unparsed-<event>-<stamp>.json
+so the next adapter iteration can be built from evidence instead of another
+probe round. At most ONE dump per event name: a script registered for all
+12 Cascade events must not flood the state dir.
 
 Throttle: `post_cascade_response` fires EVERY turn; serializing each one is
 an LLM call per turn. DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL seconds
@@ -128,14 +131,21 @@ def _extract_prompt(payload: dict) -> str | None:
     return None
 
 
-def _dump_unparsed(payload: dict) -> None:
+def _dump_probe(event: str, payload: dict) -> bool:
+    """Bounded self-probe dump (#62): at most one unparsed-*.json per event
+    name. Returns True when a dump was written (callers log only then, so a
+    hook registered for every Cascade event stays quiet after the first)."""
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tag = _safe_name(event or "unknown")
+        if any(STATE_DIR.glob(f"unparsed-{tag}-*.json")):
+            return False
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        (STATE_DIR / f"unparsed-{stamp}.json").write_text(
+        (STATE_DIR / f"unparsed-{tag}-{stamp}.json").write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        return True
     except OSError:
-        pass
+        return False
 
 
 def _project_cwd() -> str:
@@ -166,21 +176,29 @@ def main() -> int:
     event = str(payload.get("agent_action_name") or "")
     trajectory_id = str(payload.get("trajectory_id") or "").strip()
     if not trajectory_id:
-        lib.log(f"windsurf-cascade: no trajectory_id on {event or '?'} — skipped")
+        if _dump_probe(f"{event or 'unknown'}-no-trajectory-id", payload):
+            lib.log(f"windsurf-cascade: no trajectory_id on {event or '?'} — "
+                    "payload dumped, skipped")
         return 0
 
     if event == "pre_user_prompt":
         text = _extract_prompt(payload)
         if text is None:
-            _dump_unparsed(payload)
-            lib.log("windsurf-cascade: pre_user_prompt shape unknown — dumped for "
-                    "the next adapter iteration (transcript stays assistant-only)")
+            if _dump_probe(event, payload):
+                lib.log("windsurf-cascade: pre_user_prompt shape unknown — dumped "
+                        "for the next adapter iteration (transcript stays "
+                        "assistant-only)")
             return 0
         _append_turn(trajectory_id, "user", text)
         return 0
 
     if event != "post_cascade_response":
-        return 0  # future events: ignore quietly, fail-open
+        # Unknown events dump instead of vanishing (#62) —
+        # post_cascade_response_with_transcript lands here until adopted.
+        if _dump_probe(event, payload):
+            lib.log(f"windsurf-cascade: unhandled event {event} — payload dumped "
+                    "for the next adapter iteration")
+        return 0
 
     tool_info = payload.get("tool_info")
     response = tool_info.get("response") if isinstance(tool_info, dict) else None
