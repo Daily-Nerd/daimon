@@ -37,11 +37,24 @@ def test_compact_repeats_must_win_rule_at_end():
     last_line = body.strip().splitlines()[-1]
     assert "daimon brief" in last_line
     assert "MUST" in last_line or "silent" in last_line
+    # Pin the repetition itself, not just the last line's content: the
+    # session-start rule must occur at least twice (top protocol + MUST line).
+    assert body.count("daimon brief") >= 2
 
 
 def test_compact_has_concrete_example():
     # Gemini under-follows prose; a few-shot example is load-bearing there.
-    assert "verbatim]" in skill_content.render_compact()
+    assert "[✓ verbatim]" in skill_content.render_compact()
+
+
+def test_variants_use_real_trust_tag_literals():
+    # briefing.py renders "[✓ verbatim]", "[~ inferred]", "[? untagged]" —
+    # not the placeholders "[verbatim]"/"[inferred]" this content used to
+    # teach. Both variants must match what daimon brief actually prints.
+    for text in (skill_content.render_full(), skill_content.render_compact()):
+        assert "[✓ verbatim]" in text
+        assert "[~ inferred]" in text
+        assert "[? untagged]" in text
 
 
 def test_both_variants_state_silence_guard():
