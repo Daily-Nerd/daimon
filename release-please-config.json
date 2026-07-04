@@ -10,6 +10,11 @@
           "jsonpath": "$.project.version"
         },
         {
+          "type": "toml",
+          "path": "plugin/uv.lock",
+          "jsonpath": "$.package[?(@.name=='daimon-briefing')].version"
+        },
+        {
           "type": "json",
           "path": ".claude-plugin/plugin.json",
           "jsonpath": "$.version"
