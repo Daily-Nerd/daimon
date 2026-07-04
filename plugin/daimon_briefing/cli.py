@@ -82,6 +82,28 @@ def _append_retry_log(session_id: str, prior: str) -> None:
         pass
 
 
+def _preflight_error(path: Path) -> str | None:
+    """Credential pre-flight, mirroring llm.chat's routing (#52): an API key
+    and model are required only when the resolved transport is llm-bound.
+    The command / claude-cli backends need neither — pre-flight used to demand
+    them anyway, so a command-backend user could never serialize (and the
+    zero-config claude path only worked when a stray gateway key happened to
+    be in env). Error lines carry the transcript suffix (#49) so the ledger
+    attributes the failure to its session and heal can retry once fixed."""
+    backend = config.llm_backend()
+    if backend in ("command", "claude-cli"):
+        return None
+    if backend == "auto" and llm._resolve_command() is not None:
+        return None  # llm.chat will route to the command CLI, key-free
+    if not config.llm_api_key():
+        return ("error: no LLM API key — set DAIMON_LLM_API_KEY "
+                f"(env or ~/.daimon/env) (transcript: {path})")
+    if not config.llm_model():
+        return ("error: no LLM model — set DAIMON_LLM_MODEL "
+                f"(env or ~/.daimon/env) (transcript: {path})")
+    return None
+
+
 def _run_serialize(transcript_path: Path, project: str | None) -> int:
     """Serialize one transcript to a checkpoint routed to `project` (used AS-IS;
     None => global pointer only, NO cwd fallback). The caller decides routing —
@@ -105,22 +127,12 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
 
     # Pre-flight missing credentials so the error names them before any LLM work
     # (a conflated message cost a live debugging round-trip — see PR #12 fallout).
-    # Pre-flight error lines carry the transcript suffix (#49): without it the
-    # ledger cannot attribute the failure to its session, and a config gap
-    # (no key) reads as "hung/killed" in status instead of its real cause.
-    # With it, the session is attributable AND healable once config is fixed.
-    if _chat is llm.chat and not config.llm_api_key():
-        msg = ("error: no LLM API key — set DAIMON_LLM_API_KEY "
-               f"(env or ~/.daimon/env) (transcript: {path})")
-        print(msg, file=sys.stderr)
-        _append_serialize_log(msg)
-        return 1
-    if _chat is llm.chat and not config.llm_model():
-        msg = ("error: no LLM model — set DAIMON_LLM_MODEL "
-               f"(env or ~/.daimon/env) (transcript: {path})")
-        print(msg, file=sys.stderr)
-        _append_serialize_log(msg)
-        return 1
+    if _chat is llm.chat:
+        preflight = _preflight_error(path)
+        if preflight is not None:
+            print(preflight, file=sys.stderr)
+            _append_serialize_log(preflight)
+            return 1
 
     session_id = path.stem
     # Elapsed time lands in serialize.log — checkpoint generation runs 4-25 min
