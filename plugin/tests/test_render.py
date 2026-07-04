@@ -532,3 +532,45 @@ def test_render_brief_teammates_rich_smoke(monkeypatch, sample_checkpoint, capsy
     out = capsys.readouterr().out
     assert "grace" in out
     assert "Refactoring the store" in out
+
+
+# ---- skill: `daimon skill list|install|uninstall` (#66) --------------------
+
+
+def test_render_skill_list_plain_exact_format(capsys):
+    render.render_skill_list([("claude", ["global"]), ("cursor", ["global", "project"])])
+    out = capsys.readouterr().out
+    assert out == "claude  (global)\ncursor  (global, project)\n"
+
+
+def test_render_skill_list_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_skill_list([("claude", ["global"]), ("cursor", ["global", "project"])])
+    out = capsys.readouterr().out
+    assert "claude" in out and "cursor" in out
+
+
+def test_render_skill_lines_plain_no_footer(capsys):
+    render.render_skill_lines(["installed daimon skill (full) -> /h/.claude/skills/daimon/SKILL.md"])
+    out = capsys.readouterr().out
+    assert out == "installed daimon skill (full) -> /h/.claude/skills/daimon/SKILL.md\n"
+
+
+def test_render_skill_lines_plain_with_footer(capsys):
+    render.render_skill_lines(["installed daimon skill (full) -> /d"], footer=("Re-run `daimon skill install x`",))
+    out = capsys.readouterr().out
+    assert out == "installed daimon skill (full) -> /d\n\nRe-run `daimon skill install x`\n"
+
+
+def test_render_skill_lines_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_skill_lines(
+        ["warning: /d is 9,000 bytes — cursor truncates this file at 6,000 bytes; "
+         "trim your own rules or use --project",
+         "installed daimon skill (full) -> /d"],
+        footer=("Re-run `daimon skill install cursor`",),
+    )
+    out = capsys.readouterr().out
+    assert "truncates this file" in out
+    assert "installed daimon skill" in out
+    assert "Re-run `daimon skill install cursor`" in out
