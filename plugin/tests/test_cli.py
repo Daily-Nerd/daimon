@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -1167,6 +1168,53 @@ def test_status_help_has_example(capsys):
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "Examples:" in out
+
+
+# ---- #68: --help formatter — rich-argparse when present, stock when absent -
+
+
+def test_help_falls_back_to_stock_formatter_when_rich_argparse_absent(monkeypatch, capsys):
+    # Same seam test_render.py uses to force an ImportError (_force_rich_absent):
+    # a None entry in sys.modules makes `import rich_argparse` raise, so this
+    # exercises _formatter_class()'s except-ImportError branch even though the
+    # dev venv has rich-argparse installed for the rich-path tests below.
+    monkeypatch.setitem(sys.modules, "rich_argparse", None)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Examples:" in out
+    assert "daimon brief" in out
+
+
+def test_help_uses_rich_formatter_when_rich_argparse_present(capsys):
+    pytest.importorskip("rich_argparse")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    # content-only smoke: rich-argparse's formatter still carries the epilog
+    # and subcommand descriptions through, just with different chrome.
+    assert "Examples:" in out
+    assert "daimon brief" in out
+
+
+def test_help_propagates_to_nested_subparsers(capsys):
+    # #68: argparse does NOT propagate formatter_class from parent to child —
+    # a nested subcommand (team sync, hooks install, skill install) must still
+    # get a working --help regardless of which formatter is selected.
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["team", "sync", "--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "--project" in out
+
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["hooks", "install", "--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "host" in out
 
 
 def test_cli_anchor_prints_resolved_block(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):

@@ -574,3 +574,203 @@ def test_render_skill_lines_rich_smoke(monkeypatch, capsys):
     assert "truncates this file" in out
     assert "installed daimon skill" in out
     assert "Re-run `daimon skill install cursor`" in out
+
+
+# ---- stats: `daimon stats` (#68 rich parity) --------------------------------
+
+
+def _stats_sample():
+    return {
+        "usage": {"brief": 2},
+        "capture": {
+            "success": 2, "skipped": 1, "errors": 1, "fallback_serializes": 1,
+            "hosts": {"session-end": 1, "windsurf-cascade": 1},
+            "max_serialize_seconds": 42, "total_serialize_seconds": 50,
+        },
+        "store": {
+            "checkpoints": 3, "project_buckets": 2,
+            "items_by_kind": {"decision": 2, "belief": 1},
+            "items_verbatim": 2, "items_inferred": 1, "items_untagged": 0,
+            "items_carried": 1,
+        },
+    }
+
+
+def _stats_empty():
+    return {
+        "usage": {},
+        "capture": {"success": 0, "skipped": 0, "errors": 0,
+                    "fallback_serializes": 0, "hosts": {},
+                    "max_serialize_seconds": 0, "total_serialize_seconds": 0},
+        "store": {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
+                  "items_verbatim": 0, "items_inferred": 0, "items_untagged": 0,
+                  "items_carried": 0},
+    }
+
+
+def test_render_stats_plain_exact_format(capsys):
+    render.render_stats(_stats_sample())
+    out = capsys.readouterr().out
+    assert out == (
+        "usage (local, never transmitted):\n"
+        "  brief: 2\n"
+        "capture:\n"
+        "  serialized: 2  skipped: 1  errors: 1  via fallback backend: 1\n"
+        "  spawns by host: session-end: 1, windsurf-cascade: 1\n"
+        "  serialize seconds: max 42, avg 25\n"
+        "store:\n"
+        "  checkpoints: 3  project buckets: 2\n"
+        "  items by kind: belief: 1, decision: 2\n"
+        "  trust: verbatim 2, inferred 1, untagged 0  (carried: 1)\n"
+    )
+
+
+def test_render_stats_plain_empty_world(capsys):
+    render.render_stats(_stats_empty())
+    out = capsys.readouterr().out
+    assert out == (
+        "usage (local, never transmitted):\n"
+        "  none recorded yet\n"
+        "capture:\n"
+        "  serialized: 0  skipped: 0  errors: 0  via fallback backend: 0\n"
+        "store:\n"
+        "  checkpoints: 0  project buckets: 0\n"
+        "  trust: verbatim 0, inferred 0, untagged 0  (carried: 0)\n"
+    )
+
+
+def test_render_stats_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_stats(_stats_sample())
+    out = capsys.readouterr().out
+    assert "usage" in out.lower()
+    assert "brief" in out
+    assert "verbatim" in out
+
+
+# ---- recall: `daimon recall` (#68 rich parity) ------------------------------
+
+
+def test_render_recall_lines_plain_no_matches(capsys):
+    render.render_recall_lines(["no matches"])
+    assert capsys.readouterr().out == "no matches\n"
+
+
+def test_render_recall_lines_plain_exact_format(capsys):
+    render.render_recall_lines(
+        ["[alice] [verbatim] [decision] did the thing (S1, 2h ago)"]
+    )
+    out = capsys.readouterr().out
+    assert out == "[alice] [verbatim] [decision] did the thing (S1, 2h ago)\n"
+
+
+def test_render_recall_lines_rich_smoke_preserves_brackets(monkeypatch, capsys):
+    # Bracketed content ([author], [trust], [kind]) must survive rich markup
+    # parsing untouched — rich would otherwise silently eat "[alice]" as an
+    # (invalid) style tag. Regression guard for that data-loss failure mode.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_recall_lines(
+        ["[alice] [verbatim] [decision] did the thing (S1, 2h ago)"]
+    )
+    out = capsys.readouterr().out
+    assert "[alice]" in out
+    assert "[verbatim]" in out
+    assert "[decision]" in out
+
+
+# ---- hooks: `daimon hooks list|install` (#68 rich parity) -------------------
+
+
+def test_render_hooks_list_plain_exact_format(capsys):
+    render.render_hooks_list(
+        ["windsurf  (daimon-windsurf-hooks.py; events: pre_user_prompt, post_cascade_response)"]
+    )
+    out = capsys.readouterr().out
+    assert out == "windsurf  (daimon-windsurf-hooks.py; events: pre_user_prompt, post_cascade_response)\n"
+
+
+def test_render_hooks_list_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_hooks_list(["windsurf  (entry.py; events: a, b)"])
+    out = capsys.readouterr().out
+    assert "windsurf" in out
+
+
+def test_render_hooks_install_plain_exact_format(capsys):
+    render.render_hooks_install([
+        "installed 2 file(s) to /h/.daimon/hooks",
+        "",
+        "Register this command for the events below "
+        "(host hooks config — see the host's hooks documentation):",
+        "  command: python3 /h/.daimon/hooks/daimon-windsurf-hooks.py",
+        "  event:   pre_user_prompt",
+        "  event:   post_cascade_response",
+        "",
+        "Re-run `daimon hooks install windsurf` after every "
+        "`uv tool upgrade daimon-briefing`.",
+    ])
+    out = capsys.readouterr().out
+    assert out == (
+        "installed 2 file(s) to /h/.daimon/hooks\n"
+        "\n"
+        "Register this command for the events below "
+        "(host hooks config — see the host's hooks documentation):\n"
+        "  command: python3 /h/.daimon/hooks/daimon-windsurf-hooks.py\n"
+        "  event:   pre_user_prompt\n"
+        "  event:   post_cascade_response\n"
+        "\n"
+        "Re-run `daimon hooks install windsurf` after every "
+        "`uv tool upgrade daimon-briefing`.\n"
+    )
+
+
+def test_render_hooks_install_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_hooks_install(["installed 1 file(s) to /h/.daimon/hooks"])
+    out = capsys.readouterr().out
+    assert "installed" in out
+
+
+# ---- team: `daimon team init|sync|status` (#68 rich parity) ----------------
+
+
+def test_render_team_init_plain_exact_format(capsys):
+    render.render_team_init([
+        "initialized team sidecar: /h/.daimon/team/x",
+        "checkpoints now sync there — `daimon team sync` runs opportunistically "
+        "at session start",
+    ])
+    out = capsys.readouterr().out
+    assert out == (
+        "initialized team sidecar: /h/.daimon/team/x\n"
+        "checkpoints now sync there — `daimon team sync` runs opportunistically "
+        "at session start\n"
+    )
+
+
+def test_render_team_init_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_team_init(["initialized team sidecar: /x"])
+    assert "initialized" in capsys.readouterr().out
+
+
+def test_render_team_sync_plain_exact_format(capsys):
+    render.render_team_sync(["x: 1 committed, pushed"])
+    assert capsys.readouterr().out == "x: 1 committed, pushed\n"
+
+
+def test_render_team_sync_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_team_sync(["x: 1 committed, pushed"])
+    assert "committed" in capsys.readouterr().out
+
+
+def test_render_team_status_plain_exact_format(capsys):
+    render.render_team_status(["x: fresh — 0 unpushed checkpoint(s), authors: Ada"])
+    assert capsys.readouterr().out == "x: fresh — 0 unpushed checkpoint(s), authors: Ada\n"
+
+
+def test_render_team_status_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_team_status(["x: fresh — 0 unpushed checkpoint(s), authors: Ada"])
+    assert "fresh" in capsys.readouterr().out

@@ -29,8 +29,9 @@ jobs:
 
       - name: Run tests
         # --extra pretty: the rich-path smoke tests in test_render.py import
-        # rich unconditionally, so the suite requires it even though runtime
-        # deps are stdlib-only.
+        # rich unconditionally, and the --help formatter tests in test_cli.py
+        # exercise rich-argparse the same way, so the suite requires both even
+        # though runtime deps are stdlib-only.
         # HOME is redirected so any test that escapes the isolation fixtures
         # fails loudly instead of silently touching a real ~/.daimon.
         run: |
