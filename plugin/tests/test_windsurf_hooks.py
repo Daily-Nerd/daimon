@@ -154,8 +154,51 @@ def test_unparseable_stdin_exits_zero(tmp_path):
     assert proc.returncode == 0
 
 
-def test_missing_trajectory_id_skips_quietly(tmp_path):
-    proc, _ = _run({"agent_action_name": "post_cascade_response",
-                    "tool_info": {"response": "x"}}, tmp_path)
+def test_missing_trajectory_id_dumps_probe_payload(tmp_path):
+    # #62: a payload without trajectory_id must still land in a probe dump —
+    # the field showed this path swallowing pre_user_prompt invisibly.
+    proc, _ = _run({"agent_action_name": "pre_user_prompt",
+                    "tool_info": {"user_prompt": "hola"}}, tmp_path)
     assert proc.returncode == 0
     assert not (tmp_path / ".daimon" / "windsurf" / "transcripts").exists()
+    dumps = list((tmp_path / ".daimon" / "windsurf").glob("unparsed-*.json"))
+    assert dumps and "hola" in dumps[0].read_text(encoding="utf-8")
+
+
+def test_unhandled_event_dumps_once(tmp_path):
+    # #62: unknown agent_action_name must probe-dump instead of vanishing —
+    # and repeated payloads for the same event must not flood the state dir.
+    payload = {"agent_action_name": "post_cascade_response_with_transcript",
+               "trajectory_id": TRAJ,
+               "tool_info": {"transcript_path": "/x/y.jsonl"}}
+    proc, _ = _run(payload, tmp_path)
+    assert proc.returncode == 0
+    proc, _ = _run(payload, tmp_path)
+    assert proc.returncode == 0
+    dumps = list((tmp_path / ".daimon" / "windsurf").glob("unparsed-*.json"))
+    assert len(dumps) == 1
+    assert "transcript_path" in dumps[0].read_text(encoding="utf-8")
+
+
+def test_unparsed_pre_prompt_dump_bounded_once(tmp_path):
+    # #62: the existing pre_user_prompt shape dump joins the same
+    # one-dump-per-event bound.
+    payload = {"agent_action_name": "pre_user_prompt", "trajectory_id": TRAJ,
+               "tool_info": {"weird_field": {"nested": True}}}
+    _run(payload, tmp_path)
+    _run(payload, tmp_path)
+    dumps = list((tmp_path / ".daimon" / "windsurf").glob("unparsed-*.json"))
+    assert len(dumps) == 1
+
+
+def test_pre_user_prompt_docs_shape_appends_user_turn(tmp_path):
+    # Documented shape (docs.devin.ai/desktop/cascade/hooks): text lives in
+    # tool_info.user_prompt. Regression guard — passes on the current
+    # extractor by design.
+    payload = {"agent_action_name": "pre_user_prompt", "trajectory_id": TRAJ,
+               "tool_info": {"user_prompt": "can you run the echo hello command"}}
+    proc, _ = _run(payload, tmp_path)
+    assert proc.returncode == 0
+    text = _transcript(tmp_path).read_text(encoding="utf-8")
+    assert "**user**:" in text
+    assert "can you run the echo hello command" in text
