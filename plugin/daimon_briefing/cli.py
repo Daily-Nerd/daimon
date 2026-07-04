@@ -82,6 +82,24 @@ def _append_retry_log(session_id: str, prior: str) -> None:
         pass
 
 
+def _note_usage(command: str) -> None:
+    """One LOCAL line per deliberate read command (#54): `<iso> <command>` to
+    usage.log. Never transmitted anywhere — `daimon stats` aggregates it so a
+    user can answer "do I actually re-read briefings?" (and choose to share
+    the answer). Best-effort, and silent under the kill switch: disabled
+    means daimon writes nothing."""
+    if config.is_disabled():
+        return
+    try:
+        log_dir = config.log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with (log_dir / "usage.log").open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {command}\n")
+    except OSError:
+        pass
+
+
 def _preflight_error(path: Path) -> str | None:
     """Credential pre-flight, mirroring llm.chat's routing (#52): an API key
     and model are required only when the resolved transport is llm-bound.
@@ -317,6 +335,7 @@ def _team_briefings(project) -> list:
 
 
 def _cmd_brief(args) -> int:
+    _note_usage("brief")
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
@@ -347,6 +366,7 @@ def _cmd_recall(args) -> int:
     """Lexical search over the derived recall index. The index is disposable —
     recall.search auto-(re)builds it — so the only hard failure surfaced here is
     an FTS5-less sqlite3 (rc 1, named); everything else degrades to no matches."""
+    _note_usage("recall")
     query = " ".join(args.query)
     if args.limit < 1:
         print(f"error: --limit must be >= 1 (got {args.limit})", file=sys.stderr)
@@ -427,6 +447,7 @@ def _cmd_recall_inject(args) -> int:
     """Print 0-2 'you worked on this before' lines for the prompt on stdin, or
     nothing. rc 0 ALWAYS — this sits on the user's per-prompt critical path and
     a suggestion is never worth blocking a prompt (fail-open, like the hooks)."""
+    _note_usage("recall-inject")
     try:
         prompt = sys.stdin.read()
         project = _resolve_project(args.project)
@@ -646,6 +667,7 @@ def _crash_log_info(path: Path, now: float) -> dict | None:
 
 
 def _cmd_status(args) -> int:
+    _note_usage("status")
     now = time.time()
     project = _resolve_project(args.project)
     proj = _checkpoint_info(store.project_latest_path(project), now)
@@ -1042,6 +1064,138 @@ def _cmd_configure(args) -> int:
     return 0
 
 
+# ---- stats: local usage + capture aggregates (#54) — zero phone-home ----
+
+# Host prefix on a spawn line, for per-host capture counts. Deliberately the
+# same alternation as _SPAWN_RE (a new host adapter updates both).
+_STATS_HOST_RE = re.compile(
+    r"^\S+ (gemini-session-end|session-end|codex-stop|windsurf-cascade): "
+    r"spawned serialize for "
+)
+
+
+def _stats_usage() -> dict:
+    """usage.log -> {command: count}. Counts every line — the file only holds
+    `<iso> <command>` entries."""
+    counts: dict = {}
+    try:
+        text = (config.log_dir() / "usage.log").read_text(encoding="utf-8")
+    except OSError:
+        return counts
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            counts[parts[1]] = counts.get(parts[1], 0) + 1
+    return counts
+
+
+def _stats_capture() -> dict:
+    """serialize.log -> aggregate counters. Tallies EVERY line (scar #9: no
+    last-of-kind collapse — a buried failure still counts)."""
+    out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
+           "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0}
+    try:
+        text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        m = _RESULT_OK_RE.match(line)
+        if m:
+            out["success"] += 1
+            took = int(m.group(1))
+            out["max_serialize_seconds"] = max(out["max_serialize_seconds"], took)
+            out["total_serialize_seconds"] += took
+            if "[fallback backend]" in line:
+                out["fallback_serializes"] += 1
+            continue
+        if _LEDGER_SKIP_RE.match(line):
+            out["skipped"] += 1
+            continue
+        if _RESULT_ERR_RE.match(line):
+            out["errors"] += 1
+            continue
+        hm = _STATS_HOST_RE.match(line)
+        if hm:
+            out["hosts"][hm.group(1)] = out["hosts"].get(hm.group(1), 0) + 1
+    return out
+
+
+def _stats_store() -> dict:
+    """Checkpoint store -> counts by kind and trust class + carried items.
+    Reuses recall's section map so a new cognitive kind shows up here for free."""
+    out = {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
+           "items_verbatim": 0, "items_inferred": 0, "items_untagged": 0,
+           "items_carried": 0}
+    d = config.checkpoint_dir()
+    try:
+        out["project_buckets"] = sum(1 for p in d.iterdir() if p.is_dir())
+        files = store._session_files(d)
+    except OSError:
+        return out
+    for p in files:
+        try:
+            cp = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(cp, dict):
+            continue
+        out["checkpoints"] += 1
+        for section, key, kind in recall._KIND_SOURCES:
+            block = cp.get(section)
+            raw = block.get(key) if isinstance(block, dict) else None
+            if key == "active_topic":
+                raw = [raw]
+            for item in raw if isinstance(raw, list) else []:
+                if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+                    continue
+                out["items_by_kind"][kind] = out["items_by_kind"].get(kind, 0) + 1
+                trust = item.get("trust")
+                if trust == "verbatim":
+                    out["items_verbatim"] += 1
+                elif trust:
+                    out["items_inferred"] += 1
+                else:
+                    out["items_untagged"] += 1
+                if item.get("carried_from"):
+                    out["items_carried"] += 1
+    return out
+
+
+def _cmd_stats(args) -> int:
+    """Aggregate what is already on disk. Nothing is transmitted anywhere —
+    sharing the output is a deliberate act (the user pastes it)."""
+    data = {"usage": _stats_usage(), "capture": _stats_capture(),
+            "store": _stats_store()}
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    u, c, s = data["usage"], data["capture"], data["store"]
+    print("usage (local, never transmitted):")
+    if u:
+        for cmd_name, n in sorted(u.items(), key=lambda kv: -kv[1]):
+            print(f"  {cmd_name}: {n}")
+    else:
+        print("  none recorded yet")
+    print("capture:")
+    print(f"  serialized: {c['success']}  skipped: {c['skipped']}  "
+          f"errors: {c['errors']}  via fallback backend: {c['fallback_serializes']}")
+    if c["hosts"]:
+        print("  spawns by host: " + ", ".join(
+            f"{h}: {n}" for h, n in sorted(c["hosts"].items())))
+    if c["success"]:
+        print(f"  serialize seconds: max {c['max_serialize_seconds']}, "
+              f"avg {c['total_serialize_seconds'] // c['success']}")
+    print("store:")
+    print(f"  checkpoints: {s['checkpoints']}  project buckets: {s['project_buckets']}")
+    if s["items_by_kind"]:
+        print("  items by kind: " + ", ".join(
+            f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))
+    print(f"  trust: verbatim {s['items_verbatim']}, inferred {s['items_inferred']}, "
+          f"untagged {s['items_untagged']}  (carried: {s['items_carried']})")
+    return 0
+
+
 # ---- hooks: ship host hook scripts from the package (#43) ----
 
 # host -> (files to install, entry script, events to register). The packaged
@@ -1283,6 +1437,14 @@ def main(argv=None) -> int:
     p_cfg.add_argument("--command", help="command: DAIMON_LLM_COMMAND")
     p_cfg.add_argument("--output", help="command: DAIMON_LLM_COMMAND_OUTPUT (text|json:<key>)")
     p_cfg.set_defaults(func=_cmd_configure)
+
+    p_stats = sub.add_parser(
+        "stats",
+        help="local usage + capture aggregates (#54) — nothing is transmitted; "
+             "sharing the output is a deliberate paste",
+    )
+    p_stats.add_argument("--json", action="store_true", help="machine-readable output")
+    p_stats.set_defaults(func=_cmd_stats)
 
     p_hooks = sub.add_parser(
         "hooks",
