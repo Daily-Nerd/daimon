@@ -160,12 +160,36 @@ def test_from_file_windsurf_cascade_jsonl_parses_user_and_assistant(tmp_path):
          "planner_response": {"response": "Ya lo arreglé."}},
         {"type": "user_input", "status": "error",
          "user_input": {"user_response": "seguí, dale"}},
+        {"type": "planner_response", "status": "error",
+         "planner_response": {"response": "falló a mitad, pero esto salió"}},
     ])
     msgs = transcript.from_file(p)
     assert msgs == [
         {"role": "user", "content": "arreglá el bug de auth"},
         {"role": "assistant", "content": "Ya lo arreglé."},
         {"role": "user", "content": "seguí, dale"},
+        {"role": "assistant", "content": "falló a mitad, pero esto salió"},
+    ]
+
+
+def test_from_file_windsurf_cascade_tolerates_schema_widened_rows(tmp_path):
+    # Forward-compat: a Cascade row that grows a 4th key (e.g. timestamp)
+    # must still parse as a turn — a strict key-count gate would silently
+    # disable the whole branch and the best-effort fallback would drop every
+    # planner_response (no role mapping) → user-only transcripts. The
+    # `status` key is the discriminator, not the key count.
+    p = _write_jsonl(tmp_path / "cascade.jsonl", [
+        {"type": "user_input", "status": "done",
+         "timestamp": "2026-07-04T10:00:00Z",
+         "user_input": {"user_response": "hola"}},
+        {"type": "planner_response", "status": "done",
+         "timestamp": "2026-07-04T10:00:05Z",
+         "planner_response": {"response": "hola, ¿qué hacemos?"}},
+    ])
+    msgs = transcript.from_file(p)
+    assert msgs == [
+        {"role": "user", "content": "hola"},
+        {"role": "assistant", "content": "hola, ¿qué hacemos?"},
     ]
 
 

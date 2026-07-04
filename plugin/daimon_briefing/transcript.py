@@ -103,12 +103,14 @@ def _from_jsonl(text: str) -> list[dict]:
     if codex_messages:
         return codex_messages
 
-    # Windsurf Cascade's native transcript (#70): rows are exactly
+    # Windsurf Cascade's native transcript (#70): rows carry
     # {type, status, <payload-key>} and the payload key does NOT always equal
     # the type (grep_search_v2 keeps payload key grep_search) — so text
-    # carriers are matched by type, never derived from it. The exact-3-key
-    # shape (not just the type name) is what distinguishes a genuine Cascade
-    # row from other hosts' JSONL that happens to reuse a `user_input` key.
+    # carriers are matched by type, never derived from it. The `status` key
+    # (deliberately NOT a key count: a schema-widened row must still parse,
+    # or the whole branch silently disables and the role-less fallback drops
+    # every planner_response) is what distinguishes a genuine Cascade row
+    # from other hosts' JSONL that happens to reuse a `user_input` key.
     # canceled lines are dropped; done AND error both serialize (a
     # failed-but-emitted response is still context).
     windsurf_messages: list[dict] = []
@@ -116,7 +118,7 @@ def _from_jsonl(text: str) -> list[dict]:
         obj_type = obj.get("type")
         if obj_type not in ("user_input", "planner_response"):
             continue
-        if len(obj) != 3 or "status" not in obj:
+        if "status" not in obj:
             continue
         if obj.get("status") == "canceled":
             continue
