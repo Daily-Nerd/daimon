@@ -8,7 +8,7 @@ created: 2026-07-02
 authors: ["claude-code", "kibukx"]
 anchors:
   - path: .scars/
-  - pattern: "pattern:.*\\\\"
+violation: "pattern:.*\\\\"
 evidence:
   - note: 2026-07-02, promote refusal: \"briefing\\\\.build\\\\(\" (reflexive YAML double-backslash) reaches the regex engine RAW — '\\\\(' = literal backslash + bare group-open: 'missing ), unterminated subpattern'. scar promote refused.
   - note: 2026-07-02, rot round-trip on scar #16: double-backslash form reported dead (raw '\\\\.' never matches a plain dot); single-QUOTED form kept the quotes as pattern chars (echoed /'briefing\\.build\\b'/) — still dead; double-quoted single-backslash \"briefing\\.build\\b\" went live. Parser strips double quotes only, processes NO escapes.
