@@ -5,6 +5,24 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/Daily-Nerd/daimon/compare/v0.6.0...v0.7.0) (2026-07-04)
+
+
+### Features
+
+* **cli:** daimon skill — portable agent skill installed per host ([#67](https://github.com/Daily-Nerd/daimon/issues/67)) ([2ccbb9a](https://github.com/Daily-Nerd/daimon/commit/2ccbb9a51bc5cc7b1b4c30077dfb6273dda92ddd))
+* **cli:** daimon stats — local usage + capture aggregates, zero phone-home ([#55](https://github.com/Daily-Nerd/daimon/issues/55)) ([b19da46](https://github.com/Daily-Nerd/daimon/commit/b19da46ca11880668756f3f887c7788cae2ad9f1))
+* **cli:** rich-parity for stats, recall, hooks, team, and --help ([#69](https://github.com/Daily-Nerd/daimon/issues/69)) ([282ee5e](https://github.com/Daily-Nerd/daimon/commit/282ee5ee85bbfaca5488a70817cafc3ecdb081c4))
+* **configure:** `--test` smoke-tests the backend; command stderr lands in a local log ([#57](https://github.com/Daily-Nerd/daimon/issues/57)) ([6e94136](https://github.com/Daily-Nerd/daimon/commit/6e9413680bfb48226c8d2f02e03bfc714dc935a3))
+
+
+### Bug Fixes
+
+* **configure:** `--test` proves JSON-extraction fitness, not just transport ([#60](https://github.com/Daily-Nerd/daimon/issues/60)) ([11b4e20](https://github.com/Daily-Nerd/daimon/commit/11b4e2049e08ebd423ff6a42335cf1f87dca5490))
+* **heal:** survive hung targets; attribute pre-flight errors to their session ([#50](https://github.com/Daily-Nerd/daimon/issues/50)) ([29c7d93](https://github.com/Daily-Nerd/daimon/commit/29c7d93bf2df4928c50fb1d68c0e6064fa583fea))
+* **hosts:** Windsurf adapter probe-dumps payloads it previously dropped silently ([#63](https://github.com/Daily-Nerd/daimon/issues/63)) ([e9d0120](https://github.com/Daily-Nerd/daimon/commit/e9d0120524318f66d21b63365a9cf70757025438))
+* **serialize:** backend-aware pre-flight — command/claude-cli backends need no API key ([#53](https://github.com/Daily-Nerd/daimon/issues/53)) ([1827604](https://github.com/Daily-Nerd/daimon/commit/1827604872f84ef1475905fd8361f69b3d0b4006))
+
 ## [0.6.0](https://github.com/Daily-Nerd/daimon/compare/v0.5.0...v0.6.0) (2026-07-04)
 
 
