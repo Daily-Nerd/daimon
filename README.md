@@ -97,6 +97,27 @@ python3 hook/daimon-hooks.py install   # Claude Code without the plugin system
 
 That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status` — it reports capture health honestly, including failures, skips, and crashes; a failed capture self-heals on the next start.
 
+### Teach your agent the protocol
+
+Hooks capture your sessions; the skill teaches the agent on the other side
+how to use them — read the briefing at session start, treat `verbatim`
+items as immutable quotes, verify stale-looking claims before repeating them.
+
+```sh
+daimon skill install claude      # ~/.claude/skills/daimon/SKILL.md
+daimon skill install codex       # managed block in ~/.codex/AGENTS.md
+daimon skill install windsurf    # global rules (or --project for .windsurf/rules/)
+daimon skill install cursor --project   # .cursor/rules/daimon.mdc (Cursor has no global rules file)
+daimon skill install gemini      # managed block in ~/.gemini/GEMINI.md
+```
+
+`daimon skill show` prints exactly what will be written (add `--compact` for
+the rules-host variant). `daimon skill list` shows which scopes each host
+supports. On shared files (`AGENTS.md`, `GEMINI.md`, Windsurf global rules)
+daimon only ever touches its own marker block — `daimon skill uninstall
+<host>` removes exactly that block, or the whole file for hosts where the
+skill owns it outright. Re-run install after upgrading to refresh the content.
+
 ---
 
 ## What you get beyond the briefing
@@ -117,7 +138,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 | Surface | State |
 |---------|-------|
 | Claude Code plugin + hooks | live-validated daily |
-| CLI (`brief`, `status`, `recall`, `heal`, `anchor`, `configure`, `hooks`) | stable, on PyPI |
+| CLI (`brief`, `status`, `recall`, `heal`, `anchor`, `configure`, `hooks`, `skill`) | stable, on PyPI |
 | Windsurf adapter | shipped, in live validation |
 | Codex adapter | shipped, awaiting first live run |
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
