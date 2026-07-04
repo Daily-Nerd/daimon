@@ -43,7 +43,8 @@ HOSTS = {
     "windsurf": {
         "global": (".codeium/windsurf/memories/global_rules.md", "block", "compact"),
         "project": (".windsurf/rules/daimon.md", "owned", "compact"),
-        "char_cap": 6000,
+        "char_cap": 6000,  # documented cap is chars; compared as bytes below
+                           # (conservative — fires earlier, never later)
     },
     "cursor": {
         "global": None,
@@ -132,10 +133,15 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
         new = _replace_block(old, _block(variant))
         dest.write_text(new, encoding="utf-8")
         cap = spec.get("char_cap")
-        if cap and len(new) > cap:
+        # Codex's documented cap is bytes; Windsurf's is chars. Comparing
+        # UTF-8 byte length against both is the conservative choice — bytes
+        # >= chars for any text with non-ASCII content, so a byte-based
+        # warning can only fire earlier than a char-based one, never later.
+        new_size = len(new.encode("utf-8"))
+        if cap and new_size > cap:
             lines.append(
-                f"warning: {dest} is {len(new):,} chars — {host} truncates "
-                f"this file at {cap:,} chars; trim your own rules or use --project")
+                f"warning: {dest} is {new_size:,} bytes — {host} truncates "
+                f"this file at {cap:,} bytes; trim your own rules or use --project")
     lines.insert(0, f"installed daimon skill ({variant}) -> {dest}")
     return lines
 

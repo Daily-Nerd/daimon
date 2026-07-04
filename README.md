@@ -111,7 +111,8 @@ daimon skill install cursor --project   # .cursor/rules/daimon.mdc (Cursor has n
 daimon skill install gemini      # managed block in ~/.gemini/GEMINI.md
 ```
 
-`daimon skill show` prints exactly what will be written (add `--compact` for
+`daimon skill show` prints the skill content (hosts add a thin format
+wrapper — version markers or frontmatter — around it; add `--compact` for
 the rules-host variant). `daimon skill list` shows which scopes each host
 supports. On shared files (`AGENTS.md`, `GEMINI.md`, Windsurf global rules)
 daimon only ever touches its own marker block — `daimon skill uninstall

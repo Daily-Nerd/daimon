@@ -39,7 +39,10 @@ def test_compact_repeats_must_win_rule_at_end():
     assert "MUST" in last_line or "silent" in last_line
     # Pin the repetition itself, not just the last line's content: the
     # session-start rule must occur at least twice (top protocol + MUST line).
-    assert body.count("daimon brief") >= 2
+    # Count the backtick-delimited command, not the bare substring "daimon
+    # brief" — that also matches "daimon briefing" and would pass on a
+    # confounded count.
+    assert body.count("run `daimon brief`") >= 2
 
 
 def test_compact_has_concrete_example():
