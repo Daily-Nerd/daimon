@@ -1,0 +1,86 @@
+name: Bug report
+description: Something broke — capture, serialization, briefing, CLI, or a host hook
+title: "fix: "
+labels: ["bug", "type:fix"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Everything daimon knows about itself is local. The diagnostics below answer most
+        questions in one round-trip — paste them and skip the back-and-forth.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did and what broke. Quote error text exactly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. daimon hooks install windsurf
+        2. ...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options:
+        - Claude Code
+        - Codex
+        - Windsurf / Devin
+        - No host (daimon CLI directly)
+        - Other (say which in "What happened")
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Serializer backend
+      description: The backend `daimon configure` set up, if you know it.
+      options:
+        - anthropic
+        - openai-compatible (Gemini, etc.)
+        - claude-cli
+        - command
+        - don't know
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Paste the output of these three (all local, nothing is transmitted — redact
+        anything you consider sensitive):
+
+            daimon --version
+            daimon status
+            daimon stats
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: "`tail -50 ~/.daimon/logs/serialize.log` around the failure."
+      render: text
+    validations:
+      required: false

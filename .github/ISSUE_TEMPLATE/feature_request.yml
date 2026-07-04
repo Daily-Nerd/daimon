@@ -1,0 +1,41 @@
+name: Feature request
+description: A capability daimon should have, or a pain it should remove
+title: "feat: "
+labels: ["enhancement", "type:feat"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: The pain point, as concretely as you can. What happens today that shouldn't, or can't happen that should?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How it would work from your side — commands, output, behavior. Rough is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or other shapes this could take.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Where would you use it?
+      options:
+        - Claude Code
+        - Codex
+        - Windsurf / Devin
+        - daimon CLI directly
+        - Everywhere / host-independent
+    validations:
+      required: false
