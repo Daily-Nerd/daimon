@@ -5,6 +5,18 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/Daily-Nerd/daimon/compare/v0.5.0...v0.6.0) (2026-07-04)
+
+
+### Features
+
+* **cli:** ship host hook scripts in the package — `daimon hooks install <host>` ([#44](https://github.com/Daily-Nerd/daimon/issues/44)) ([0db3ba0](https://github.com/Daily-Nerd/daimon/commit/0db3ba0c5d83ac1f9c78fe602131e86b4b8d6eee))
+
+
+### Documentation
+
+* **readme:** PyPI-first quickstart, sample briefing, Windsurf setup, plain-language status ([#47](https://github.com/Daily-Nerd/daimon/issues/47)) ([989b4c0](https://github.com/Daily-Nerd/daimon/commit/989b4c0b60f51697dec5d2c58992a29088aab7b8))
+
 ## [0.5.0](https://github.com/Daily-Nerd/daimon/compare/v0.4.0...v0.5.0) (2026-07-03)
 
 
