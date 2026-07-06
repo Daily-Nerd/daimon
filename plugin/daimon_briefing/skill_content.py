@@ -1,13 +1,13 @@
 """Canonical agent-skill content, two densities (#66).
 
-FULL renders Claude Code's lazily-loaded SKILL.md — description-gated, so the
-frontmatter description carries triggering conditions ONLY (a workflow summary
-there makes agents skip the body). COMPACT renders the always-injected rules
-block for Codex/Gemini/Windsurf/Cursor — those hosts concatenate the whole
-file into every prompt, so triggers live in the rule text, the budget is
-brutal (Windsurf global rules cap the FILE at 6,000 chars, shared with the
-user's own rules), and the must-win rule repeats at the end because every
-vendor resolves instruction conflicts later-wins.
+FULL renders the lazily-loaded SKILL.md (Claude Code; Windsurf global since
+#88) — description-gated, so the frontmatter description carries triggering
+conditions ONLY (a workflow summary there makes agents skip the body).
+COMPACT renders the always-injected rules block for Codex/Gemini/Cursor and
+Windsurf --project — those hosts concatenate the whole file into every
+prompt, so triggers live in the rule text, the budget is brutal (Windsurf
+rules files cap at 6,000 chars each), and the must-win rule repeats at the
+end because every vendor resolves instruction conflicts later-wins.
 """
 
 SKILL_NAME = "using-daimon-memory"

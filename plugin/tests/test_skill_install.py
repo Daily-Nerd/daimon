@@ -100,13 +100,58 @@ def test_half_broken_markers_refuse(tmp_path):
         install("codex", project=False, home=home, cwd=tmp_path)
 
 
-def test_windsurf_global_warns_over_char_cap(tmp_path):
+def test_codex_global_warns_over_char_cap(tmp_path):
     home = tmp_path / "home"
-    rules = home / ".codeium" / "windsurf" / "memories"
-    rules.mkdir(parents=True)
-    (rules / "global_rules.md").write_text("x" * 5000, encoding="utf-8")
-    result_lines = install("windsurf", project=False, home=home, cwd=tmp_path)
-    assert any("6,000" in ln or "6000" in ln for ln in result_lines)
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "AGENTS.md").write_text("x" * 32000, encoding="utf-8")
+    result_lines = install("codex", project=False, home=home, cwd=tmp_path)
+    assert any("32,768" in ln or "32768" in ln for ln in result_lines)
+
+
+# ---- windsurf global: real skills dir + memories migration (#88) ----
+
+
+def test_windsurf_global_writes_full_skill(tmp_path):
+    # #88 field report: global skills live at
+    # ~/.codeium/windsurf/skills/<name>/SKILL.md — memories/global_rules.md is
+    # Windsurf's MEMORIES store, not a skills registry.
+    _, home, _ = _run("windsurf", tmp_path)
+    dest = home / ".codeium" / "windsurf" / "skills" / "daimon" / "SKILL.md"
+    text = dest.read_text(encoding="utf-8")
+    assert text.startswith("---\nname: using-daimon-memory")
+    assert "daimon brief" in text
+
+
+def test_windsurf_global_install_migrates_legacy_memories_block(tmp_path):
+    # Pre-#88 installs left a marker block in memories/global_rules.md.
+    # Reinstall must relocate the skill AND strip the stale block, leaving
+    # the user's own memories byte-identical.
+    home = tmp_path / "home"
+    mem = home / ".codeium" / "windsurf" / "memories"
+    mem.mkdir(parents=True)
+    user = "# my real memories\n\nprefers tabs.\n"
+    legacy = (f"{user}\n<!-- daimon:skill v0.7.0 start -->\nold skill\n"
+              "<!-- daimon:skill v0.7.0 end -->\n")
+    (mem / "global_rules.md").write_text(legacy, encoding="utf-8")
+    install("windsurf", project=False, home=home, cwd=tmp_path)
+    assert (home / ".codeium" / "windsurf" / "skills" / "daimon"
+            / "SKILL.md").exists()
+    assert (mem / "global_rules.md").read_text(encoding="utf-8") == user
+
+
+def test_windsurf_global_uninstall_cleans_legacy_block_too(tmp_path):
+    home = tmp_path / "home"
+    mem = home / ".codeium" / "windsurf" / "memories"
+    mem.mkdir(parents=True)
+    user = "# my real memories\n"
+    (mem / "global_rules.md").write_text(
+        f"{user}\n<!-- daimon:skill v0.7.0 start -->\nold\n"
+        "<!-- daimon:skill v0.7.0 end -->\n", encoding="utf-8")
+    install("windsurf", project=False, home=home, cwd=tmp_path)
+    uninstall("windsurf", project=False, home=home, cwd=tmp_path)
+    assert not (home / ".codeium" / "windsurf" / "skills" / "daimon"
+                / "SKILL.md").exists()
+    assert (mem / "global_rules.md").read_text(encoding="utf-8") == user
 
 
 # ---- uninstall ----
