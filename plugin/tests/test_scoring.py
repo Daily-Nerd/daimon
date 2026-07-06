@@ -77,3 +77,22 @@ def test_deterministic():
     a = scoring.effective_weight(_item(12, 7), "uncertainty", _NOW)
     b = scoring.effective_weight(_item(12, 7), "uncertainty", _NOW)
     assert a == b
+
+
+def test_future_stamp_does_not_outrank_fresh():
+    # Teammate clock skew (#31 item 8): a stamp hours in the future must not
+    # take max recency — it gets NEUTRAL weight, below a genuinely fresh item.
+    future = scoring.effective_weight(_item(-2, 5), "recent_decision", _NOW)
+    fresh = scoring.effective_weight(_item(0, 5), "recent_decision", _NOW)
+    neutral = scoring.effective_weight(_item(None, 5), "recent_decision", _NOW)
+    assert future < fresh
+    assert future == neutral
+
+
+def test_small_clock_skew_tolerated_as_fresh():
+    # Seconds-level skew between machines is normal — treat as age 0, not lies.
+    skewed = _item(None, 5)
+    skewed["first_seen"] = _time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_NOW + 60))  # 60s in the future
+    w = scoring.effective_weight(skewed, "recent_decision", _NOW)
+    assert w == scoring.effective_weight(_item(0, 5), "recent_decision", _NOW)

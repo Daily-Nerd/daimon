@@ -28,6 +28,7 @@ import json
 import os
 import re
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,6 +77,54 @@ def _atomic_write(path: Path, blob: str) -> None:
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     tmp.write_text(blob, encoding="utf-8")
     os.replace(tmp, path)  # atomic on POSIX
+
+
+_LOCK_NAME = ".pointer.lock"   # dotfile: invisible to _session_files (.json
+                               # filter) and _pointer_stems (_POINTER_RE)
+_LOCK_TRIES = 50               # x 20ms = ~1s bounded wait, then fail open
+_LOCK_INTERVAL = 0.02
+
+try:
+    import fcntl as _fcntl
+except ImportError:            # non-POSIX: lock degrades to a no-op
+    _fcntl = None
+
+
+@contextmanager
+def _pointer_lock(d: Path):
+    """Serialize the check-rotate-write pointer sequence in dir `d` (#31):
+    two sessions ending together interleave _pointer_regresses / rotation /
+    the latest write (multi-step TOCTOU) — one can clobber the prev-N chain
+    or let an older checkpoint win `latest`. flock on a sidecar dotfile with
+    a bounded wait; yields whether the lock was actually acquired. Fail-open
+    everywhere (no fcntl, unwritable dir, contention past the wait): the
+    caller proceeds unguarded, which is exactly the pre-lock behavior."""
+    if _fcntl is None:
+        yield False
+        return
+    fh = None
+    held = False
+    try:
+        fh = open(d / _LOCK_NAME, "a+")
+        for _ in range(_LOCK_TRIES):
+            try:
+                _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                held = True
+                break
+            except OSError:
+                time.sleep(_LOCK_INTERVAL)
+    except OSError:
+        pass
+    try:
+        yield held
+    finally:
+        if fh is not None:
+            try:
+                if held:
+                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
+                fh.close()
+            except OSError:
+                pass
 
 
 def _rotate_pointers(d: Path, history: int) -> None:
@@ -219,16 +268,63 @@ def _pointer_stems(d: Path) -> set[str] | None:
     return stems
 
 
+_TMP_REAP_SECONDS = 3600   # a *.tmp older than this is a kill-9 orphan, not an
+                           # in-flight _atomic_write (#31 item 3)
+
+
+def _reap_stale_tmps(d: Path) -> None:
+    """Unlink orphaned *.tmp files (kill-9 mid-_atomic_write) in the flat dir
+    and every bucket subdir. Age-gated so a write in flight right now is never
+    touched. Best-effort: never raises (#31 item 3 — GC only pruned .json, so
+    these accumulated forever)."""
+    cutoff = time.time() - _TMP_REAP_SECONDS
+    try:
+        dirs = [d] + [e for e in d.iterdir() if e.is_dir()]
+    except OSError:
+        return
+    for sub in dirs:
+        try:
+            tmps = [p for p in sub.iterdir()
+                    if p.is_file() and p.name.endswith(".tmp")]
+        except OSError:
+            continue
+        for p in tmps:
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except OSError:
+                pass
+
+
+def _max_importance(path: Path) -> int:
+    """Max item importance in a checkpoint file, 0 when unreadable/unstamped.
+    Torn or legacy files pin nothing — recency retention handles them as
+    before; pinning is a best-effort bonus, never a gate."""
+    try:
+        cp = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    best = 0
+    for item in serializer.iter_items(cp):
+        imp = item.get("importance")
+        if isinstance(imp, int) and not isinstance(imp, bool) and imp > best:
+            best = imp
+    return best
+
+
 def _gc_checkpoints(d: Path, keep: int) -> None:
     """Prune old per-session checkpoint files, retaining the newest `keep` plus any
-    a live pointer references. keep <= 0 disables GC (keep forever). Best-effort:
-    never raises — a GC failure must not fail the serialize that triggered it
-    (mirrors _rotate_pointers / cli._append_serialize_log's try/except OSError).
+    a live pointer references, plus any pinned by importance (#31 item 1: max
+    item importance >= config.gc_pin_importance(); 0 disables). keep <= 0
+    disables GC (keep forever). Best-effort: never raises — a GC failure must
+    not fail the serialize that triggered it (mirrors _rotate_pointers /
+    cli._append_serialize_log's try/except OSError).
 
     Known race, accepted: the pointer scan is a snapshot, so a bucket + pointer
     written by a concurrent serialize between scan and unlink is invisible here.
     Harmless in practice — that pointer references a just-written file, which the
     newest-`keep` window already retains (default 100 is generous for this too)."""
+    _reap_stale_tmps(d)  # independent of `keep`: orphaned tmps are never data
     if keep <= 0:
         return
     try:
@@ -240,11 +336,14 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
             return  # protection set unknowable — fail-safe, prune nothing
         files.sort(key=_file_recency, reverse=True)
         stale = files[keep:]
+        pin = config.gc_pin_importance()
     except OSError:
         return
     for p in stale:
         if p.stem in protected:
             continue
+        if pin and _max_importance(p) >= pin:
+            continue  # pinned: high-importance memory outlives the window
         try:
             p.unlink()
         except OSError:
@@ -294,15 +393,22 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # session. Rotation is skipped together with the write so prev-N history
     # doesn't churn on a blocked update.
     new_epoch = _created_epoch(checkpoint.get("created"))
-    if not _pointer_regresses(d, new_epoch):
-        _rotate_pointers(d, history)
-        _atomic_write(d / _LATEST, blob)
+    # The regress check + rotation + latest write is one critical section per
+    # pointer dir (#31 item 2): unguarded, two sessions ending together can
+    # interleave the steps — clobbering the prev-N chain or letting an older
+    # write win latest. _pointer_lock serializes it; on lock failure the
+    # sequence proceeds unguarded (pre-lock behavior, fail-open).
+    with _pointer_lock(d):
+        if not _pointer_regresses(d, new_epoch):
+            _rotate_pointers(d, history)
+            _atomic_write(d / _LATEST, blob)
     if slug:
         pdir = d / slug
         pdir.mkdir(parents=True, exist_ok=True)
-        if not _pointer_regresses(pdir, new_epoch):
-            _rotate_pointers(pdir, history)
-            _atomic_write(pdir / _LATEST, blob)
+        with _pointer_lock(pdir):
+            if not _pointer_regresses(pdir, new_epoch):
+                _rotate_pointers(pdir, history)
+                _atomic_write(pdir / _LATEST, blob)
     # Opportunistic retention: serialize already succeeded, so pruning old
     # per-session files here never touches the read/briefing hot path (#92).
     _gc_checkpoints(d, config.checkpoint_keep())
