@@ -114,6 +114,18 @@ def checkpoint_keep() -> int:
         return 100
 
 
+def gc_pin_importance() -> int:
+    """Item-importance threshold that pins a checkpoint file against GC (#31):
+    a file whose max item importance reaches this survives outside the newest-N
+    window — an importance-10 decision must not die to 100 newer trivia
+    (rational forgetting weighs NEED, not just recency). Default 9; 0 disables
+    pinning (pure recency window, the pre-#31 behavior)."""
+    try:
+        return min(10, max(0, int(_get("DAIMON_GC_PIN_IMPORTANCE") or "9")))
+    except ValueError:
+        return 9
+
+
 def max_briefing_decisions() -> int:
     """Cap on decisions shown in the briefing (render-time view). Default 10; 0 =
     unbounded. The checkpoint keeps ALL decisions — this bounds only the injected
