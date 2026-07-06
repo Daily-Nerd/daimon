@@ -55,7 +55,10 @@ def test_latest_pointer_is_separate_file(tmp_checkpoint_dir, sample_checkpoint):
 def test_write_leaves_no_temp_files(tmp_checkpoint_dir, sample_checkpoint):
     store.write_checkpoint("S-prev", sample_checkpoint)
     files = {p.name for p in tmp_checkpoint_dir.iterdir()}
-    assert files == {"S-prev.json", "latest.json"}
+    # .pointer.lock is deliberate infrastructure (#31 item 2), not a leak —
+    # unlinking a flock file after release reintroduces the ABA race it
+    # exists to prevent, so it stays. This guards against leaked *.tmp only.
+    assert files == {"S-prev.json", "latest.json", store._LOCK_NAME}
 
 
 # ---- schema stamping: format_version + created at write time (#93) ----
@@ -749,3 +752,89 @@ def test_first_seen_idempotent_on_rewrite(tmp_checkpoint_dir, sample_checkpoint)
     back = store.read_checkpoint("S-1")
     carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
     assert _first_seens(back)[carried_text] == "2026-01-01T00:00:00Z"
+
+
+# ---- #31 audit tail: importance-pinned GC, tmp reaping, pointer lock --------
+
+
+def _imp_cp(sample, sid, created, importance):
+    return {**sample, "session_id": sid, "created": created,
+            "working_context": {
+                "active_topic": {"text": f"topic {sid}", "trust": "inferred"},
+                "open_questions": [{"text": f"question of {sid}",
+                                    "trust": "inferred",
+                                    "importance": importance}],
+                "recent_decisions": [],
+            }}
+
+
+def test_gc_pins_high_importance_beyond_keep(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # #31 item 1: recency-only GC killed an importance-10 decision when newer
+    # low-importance checkpoints filled the window. Max item importance >= the
+    # pin threshold (default 9) exempts the file from pruning.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
+    monkeypatch.setenv("DAIMON_CHECKPOINT_KEEP", "2")
+    store.write_checkpoint("S1", _imp_cp(sample_checkpoint, "S1",
+                                         "2021-01-01T00:00:00Z", 10))
+    for i, sid in enumerate(("S2", "S3", "S4")):
+        store.write_checkpoint(sid, _imp_cp(sample_checkpoint, sid,
+                                            f"202{i + 2}-01-01T00:00:00Z", 3))
+    present = _session_files_present(tmp_checkpoint_dir)
+    assert "S1.json" in present            # pinned by importance
+    assert "S2.json" not in present        # normal prune
+    assert {"S3.json", "S4.json"} <= present
+
+
+def test_gc_pin_disabled_at_zero(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
+    monkeypatch.setenv("DAIMON_CHECKPOINT_KEEP", "2")
+    monkeypatch.setenv("DAIMON_GC_PIN_IMPORTANCE", "0")
+    store.write_checkpoint("S1", _imp_cp(sample_checkpoint, "S1",
+                                         "2021-01-01T00:00:00Z", 10))
+    for i, sid in enumerate(("S2", "S3", "S4")):
+        store.write_checkpoint(sid, _imp_cp(sample_checkpoint, sid,
+                                            f"202{i + 2}-01-01T00:00:00Z", 3))
+    present = _session_files_present(tmp_checkpoint_dir)
+    assert "S1.json" not in present        # pinning off -> pure recency window
+
+
+def test_gc_reaps_stale_tmp_files(tmp_checkpoint_dir, sample_checkpoint):
+    # #31 item 3: kill-9 mid-write orphans *.tmp forever (GC only touched
+    # .json). Stale tmp (>1h) is reaped, in the flat dir AND buckets; a fresh
+    # tmp (a write possibly in flight right now) is left alone.
+    import os as _os
+    import time as _time
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"},
+                           project_dir="/p/A")
+    d = tmp_checkpoint_dir
+    bucket = next(p for p in d.iterdir() if p.is_dir())
+    stale_flat = d / "dead.json.999.tmp"
+    stale_bucket = bucket / "dead.json.999.tmp"
+    fresh = d / "live.json.888.tmp"
+    for p in (stale_flat, stale_bucket, fresh):
+        p.write_text("{}", encoding="utf-8")
+    old = _time.time() - 2 * 3600
+    _os.utime(stale_flat, (old, old))
+    _os.utime(stale_bucket, (old, old))
+    store._gc_checkpoints(d, keep=100)
+    assert not stale_flat.exists()
+    assert not stale_bucket.exists()
+    assert fresh.exists()
+
+
+def test_pointer_lock_excludes_second_holder(tmp_checkpoint_dir):
+    # #31 item 2: rotate-then-write latest is a multi-step TOCTOU when two
+    # sessions end together. The critical section is now flock-guarded; a
+    # second would-be holder cannot acquire while the first holds it.
+    import pytest
+    fcntl = pytest.importorskip("fcntl")
+    d = tmp_checkpoint_dir
+    d.mkdir(parents=True, exist_ok=True)
+    with store._pointer_lock(d) as held:
+        assert held
+        probe = open(d / store._LOCK_NAME, "a+")
+        try:
+            with pytest.raises(OSError):
+                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            probe.close()

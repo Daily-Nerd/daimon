@@ -54,9 +54,19 @@ def _overdue_boost(overdue_days: float) -> float:
     return min(_ESCALATION_CAP, 1.0 + overdue_days ** 1.5 / 100.0)
 
 
+_SKEW_TOLERANCE = 300.0   # seconds a stamp may sit in the future (normal
+                          # machine-to-machine clock skew) and still count as
+                          # fresh; beyond it the stamp is a lie (#31 item 8)
+
+
 def _age_days(item, now: float) -> float | None:
     epoch = store._created_epoch(item.get("first_seen"))
     if epoch is None:
+        return None
+    # A stamp further in the future than clock skew explains gets NEUTRAL
+    # recency (None), never max: a future-stamped teammate item must not
+    # outrank genuinely fresh local work (#31 item 8).
+    if epoch - now > _SKEW_TOLERANCE:
         return None
     return max(0.0, (now - epoch) / 86400.0)
 

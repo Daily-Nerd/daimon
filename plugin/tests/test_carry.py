@@ -305,3 +305,16 @@ def test_two_verbatim_twins_different_quotes_older_original_wins():
     assert qs[0]["text"] == _VERB_ORIG                    # older original text
     assert qs[0]["quote"] == _VERB_QUOTE                  # older pinned quote
     assert qs[0]["trust"] == "verbatim"
+
+
+def test_in_call_reworded_prev_twins_carry_once():
+    # #31 item 9: two prev items that are REWORDED twins of each other (fuzzy
+    # _same_item hit, no exact-text match, no native twin) must not both
+    # carry — the carry-once intent covers fuzzy twins, not just byte-exact.
+    prev = _cp("S-prev", 1, questions=[
+        _item("quorint ledger reconciliation loop drops entries"),
+        _item("quorint ledger reconciliation loop dropping entries nightly"),
+    ])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1

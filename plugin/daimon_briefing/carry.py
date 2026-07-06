@@ -138,6 +138,12 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 continue
             if scoring.effective_weight(item, item_type, now) < floor:
                 continue  # expired — deterministic exit (noise budget)
+            # Carry-once covers REWORDED twins too (#31 item 9): a prev item
+            # that fuzzy-matches something already carried this call is the
+            # same loop reworded — first (prev-order) wording wins.
+            if any(_same_item(text, str(c.get("text") or ""), generic)
+                   for c in carried):
+                continue
             kept = copy.deepcopy(item)
             kept.setdefault("carried_from", prev_sid)
             carried.append(kept)

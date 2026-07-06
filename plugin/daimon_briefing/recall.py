@@ -307,12 +307,19 @@ def rebuild() -> int:
     try:
         _init_schema(conn)
         count = 0
-        # (author, project_slug) -> (recency, session_id) of the newest checkpoint
+        # (author, project_slug) -> (recency, session_id) of the newest checkpoint.
+        # session_id is the same-second tie-break (#31 item 7): scan order is
+        # readdir order, which is unspecified — without a stable secondary key
+        # the superseded flags flip across rebuilds. Tuple compare gives it.
         newest: dict[tuple, tuple[float, str]] = {}
         for sid, author, slug, recency, cp in _scan_sources():
-            key = (author, slug)
-            if key not in newest or recency > newest[key][0]:
-                newest[key] = (recency, sid)
+            # Unattributed sessions never supersede each other (#31 item 6):
+            # NULL slugs are UNRELATED projects sharing a non-identity, not
+            # one project's history — they stay out of the newest map entirely.
+            if slug is not None:
+                key = (author, slug)
+                if key not in newest or (recency, sid) > newest[key]:
+                    newest[key] = (recency, sid)
             for kind, text, trust, quote, importance, first_seen in _items(cp):
                 cur = conn.execute(
                     "INSERT INTO items"
@@ -484,7 +491,8 @@ tratando todavia entonces ahora gracias quizas intenta intentar
 # imperative/filler band (favor/ayuda/necesito = please/help/need); scar #18
 # rule — do not drop beyond the frequency band the English list established.
 
-_TERM_CAP = 12          # enough signal for OR-matching, bounded query cost
+_TERM_CAP = 24          # bounded query cost; 12 dropped real cue terms on long
+                        # prompts (#31 item 5, encoding-specificity inversion)
 _MIN_TERMS = 2          # a one-word prompt is never a retrieval request
 _MIN_OVERLAP = 2        # matched SESSION must share >=2 distinct salient terms
                         # across its items: one shared word is coincidence, not
@@ -573,7 +581,11 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         " i.session_id, i.created, i.importance, i.first_seen, i.superseded_by,"
         " bm25(items_fts) AS rank"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
-        " WHERE items_fts MATCH ? AND i.project_slug = ? LIMIT 64"
+        # Best-ranked candidates first (#31 item 4): without ORDER BY the LIMIT
+        # window is arbitrary — on a busy project (>N matching rows) the
+        # strongest rows could be truncated away, silencing prior work.
+        " WHERE items_fts MATCH ? AND i.project_slug = ?"
+        " ORDER BY rank ASC LIMIT 256"
     )
     try:
         conn = sqlite3.connect(str(config.recall_db()))

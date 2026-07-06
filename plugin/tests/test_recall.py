@@ -784,3 +784,103 @@ def test_search_happy_path_writes_no_breadcrumb(tmp_checkpoint_dir, monkeypatch)
         {"text": "pelican decision", "trust": "inferred"}]), project_dir="/repo/x")
     assert recall.search("pelican", all_projects=True)
     assert not (config.log_dir() / "recall-error.log").exists()
+
+
+# ---- #31 audit tail: suggest truncation, term cap, supersession edges -------
+
+
+def test_suggest_survives_busy_project_candidate_overflow(tmp_checkpoint_dir, monkeypatch):
+    # #31 item 4: the candidate query was LIMIT 64 with no ORDER BY — on a
+    # busy project (>64 matching rows) the strongest rows could be arbitrarily
+    # truncated away, silencing prior work. Best-ranked rows must survive.
+    filler = [{"text": f"quorint filler ledger entry number {i} alpha",
+               "trust": "inferred", "importance": 5,
+               "first_seen": "2026-06-20T00:00:00Z"} for i in range(68)]
+    strong = [{"text": "quorint zephyr reconciliation drops entries on pause",
+               "trust": "verbatim", "importance": 8,
+               "first_seen": "2026-06-20T00:00:00Z"},
+              {"text": "zephyr quorint retry loop confirmed unresolved",
+               "trust": "inferred", "importance": 7,
+               "first_seen": "2026-06-20T00:00:00Z"}]
+    store.write_checkpoint(
+        "S-busy", _cp125("S-busy", questions=filler + strong,
+                         created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x")
+    recall.rebuild()
+    out = recall.suggest("quorint zephyr reconciliation status",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out, "strong rows were truncated out of the candidate window"
+    assert "zephyr" in out[0]["text"]
+
+
+def test_suggest_rich_prompt_terms_beyond_twelve_still_match(tmp_checkpoint_dir, monkeypatch):
+    # #31 item 5: _TERM_CAP dropped prompt terms 13+ — a richer cue silenced
+    # a match (encoding-specificity inversion). Terms past the old cap must
+    # still retrieve.
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", questions=[{
+            "text": "quorint zephyr reconciliation pipeline unresolved",
+            "trust": "inferred", "importance": 7,
+            "first_seen": "2026-06-20T00:00:00Z"}],
+            created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x")
+    recall.rebuild()
+    junk = ("alpine bravado charlemagne dolomite ellipse foxglove gargoyle "
+            "hyacinth ignition jamboree kaleidoscope labyrinth")  # 12 salient
+    out = recall.suggest(f"{junk} quorint zephyr",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-old"
+
+
+def test_unattributed_sessions_never_supersede_each_other(tmp_checkpoint_dir, monkeypatch):
+    # #31 item 6: all NULL-slug (unattributed) sessions shared one supersession
+    # bucket — the newest unattributed session superseded unrelated
+    # unattributed projects. Unattributed sessions must not supersede at all.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-un-old", _cp125("S-un-old", questions=[{
+            "text": "gargantuan refactor of the flotilla parser pending",
+            "trust": "inferred"}], created="2026-06-01T00:00:00Z"))
+    store.write_checkpoint(
+        "S-un-new", _cp125("S-un-new", questions=[{
+            "text": "totally unrelated kraken deployment question open",
+            "trust": "inferred"}], created="2026-06-20T00:00:00Z"))
+    recall.rebuild()
+    conn = sqlite3.connect(str(config.recall_db()))
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT superseded_by FROM items"
+            " WHERE session_id = 'S-un-old'").fetchall()
+    finally:
+        conn.close()
+    assert rows == [(None,)], f"unattributed session was superseded: {rows}"
+
+
+def test_supersession_same_second_tie_breaks_deterministically(tmp_checkpoint_dir, monkeypatch):
+    # #31 item 7: newest-per-(author, slug) tie-broke by arbitrary scan order
+    # on same-second recency — nondeterministic superseded flags across
+    # rebuilds. Ties must break on session_id (greater wins), stable always.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    same = "2026-06-20T00:00:00Z"
+    # S-aaa written FIRST: pre-fix, the first-scanned session won ties, so
+    # this ordering makes the old nondeterminism pick the wrong winner.
+    store.write_checkpoint(
+        "S-aaa", _cp125("S-aaa", questions=[{
+            "text": "aardvark index rebuild question", "trust": "inferred"}],
+            created=same), project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-zzz", _cp125("S-zzz", questions=[{
+            "text": "zeppelin cache warmup question", "trust": "inferred"}],
+            created=same), project_dir="/repo/x")
+    for _ in range(2):  # stable across rebuilds
+        recall.rebuild()
+        conn = sqlite3.connect(str(config.recall_db()))
+        try:
+            old = conn.execute("SELECT DISTINCT superseded_by FROM items"
+                               " WHERE session_id = 'S-aaa'").fetchall()
+            new = conn.execute("SELECT DISTINCT superseded_by FROM items"
+                               " WHERE session_id = 'S-zzz'").fetchall()
+        finally:
+            conn.close()
+        assert old == [("S-zzz",)]
+        assert new == [(None,)]
