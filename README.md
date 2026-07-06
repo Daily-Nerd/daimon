@@ -106,7 +106,7 @@ items as immutable quotes, verify stale-looking claims before repeating them.
 ```sh
 daimon skill install claude      # ~/.claude/skills/daimon/SKILL.md
 daimon skill install codex       # managed block in ~/.codex/AGENTS.md
-daimon skill install windsurf    # global rules (or --project for .windsurf/rules/)
+daimon skill install windsurf    # ~/.codeium/windsurf/skills/daimon/SKILL.md (or --project for .windsurf/rules/)
 daimon skill install cursor --project   # .cursor/rules/daimon.mdc (Cursor has no global rules file)
 daimon skill install gemini      # managed block in ~/.gemini/GEMINI.md
 ```
@@ -114,7 +114,7 @@ daimon skill install gemini      # managed block in ~/.gemini/GEMINI.md
 `daimon skill show` prints the skill content (hosts add a thin format
 wrapper — version markers or frontmatter — around it; add `--compact` for
 the rules-host variant). `daimon skill list` shows which scopes each host
-supports. On shared files (`AGENTS.md`, `GEMINI.md`, Windsurf global rules)
+supports. On shared files (`AGENTS.md`, `GEMINI.md`)
 daimon only ever touches its own marker block — `daimon skill uninstall
 <host>` removes exactly that block, or the whole file for hosts where the
 skill owns it outright. Re-run install after upgrading to refresh the content.

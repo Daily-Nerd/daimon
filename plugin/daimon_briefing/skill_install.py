@@ -3,7 +3,7 @@
 Two writer families. Owned-file: the destination is daimon's own file
 (SKILL.md, daimon.mdc, daimon.md) — overwrite is safe and idempotent by
 construction. Marker-block: the destination is a file the USER owns
-(AGENTS.md, GEMINI.md, Windsurf global rules) — daimon may only replace the
+(AGENTS.md, GEMINI.md) — daimon may only replace the
 region between its own version-stamped markers, appends the block at the END
 of the file (every vendor resolves instruction conflicts later-wins), and
 refuses on half-broken marker state rather than guess.
@@ -41,10 +41,14 @@ HOSTS = {
         "char_cap": 32768,  # Codex project_doc_max_bytes default — stops reading past it
     },
     "windsurf": {
-        "global": (".codeium/windsurf/memories/global_rules.md", "block", "compact"),
+        # Global skills live at ~/.codeium/windsurf/skills/<name>/SKILL.md
+        # (#88 field report) — memories/global_rules.md is Windsurf's MEMORIES
+        # store, which pre-#88 versions polluted with a compact block; install
+        # and uninstall both clean that legacy block (see _WINDSURF_LEGACY).
+        # Project scope stays a rules file: the project-level skills path is
+        # unverified on a live machine.
+        "global": (".codeium/windsurf/skills/daimon/SKILL.md", "owned", "full"),
         "project": (".windsurf/rules/daimon.md", "owned", "compact"),
-        "char_cap": 6000,  # documented cap is chars; compared as bytes below
-                           # (conservative — fires earlier, never later)
     },
     "cursor": {
         "global": None,
@@ -69,6 +73,28 @@ _OWNED_WRAPPERS = {
 
 class SkillInstallError(Exception):
     pass
+
+
+# Pre-#88 Windsurf global installs wrote a marker block into the MEMORIES
+# file. Both install and uninstall strip that stale block so an upgrade (or
+# removal) never leaves skill content squatting in the memories channel.
+_WINDSURF_LEGACY = ".codeium/windsurf/memories/global_rules.md"
+
+
+def _clean_windsurf_legacy(home: Path) -> str | None:
+    """Remove the daimon marker block from the legacy memories file if present.
+    Returns a report line, or None when there is nothing to clean. Same
+    lossless-boundary contract as the block uninstall path."""
+    legacy = home / _WINDSURF_LEGACY
+    try:
+        text = legacy.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not _BLOCK_RE.search(text):
+        return None
+    new = _BLOCK_RE.sub("", text, count=1).rstrip("\n")
+    legacy.write_text((new + "\n") if new else "", encoding="utf-8")
+    return f"removed legacy daimon:skill block from {legacy} (memories, pre-#88)"
 
 
 def _render(variant: str) -> str:
@@ -133,15 +159,19 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
         new = _replace_block(old, _block(variant))
         dest.write_text(new, encoding="utf-8")
         cap = spec.get("char_cap")
-        # Codex's documented cap is bytes; Windsurf's is chars. Comparing
-        # UTF-8 byte length against both is the conservative choice — bytes
-        # >= chars for any text with non-ASCII content, so a byte-based
-        # warning can only fire earlier than a char-based one, never later.
+        # Codex's documented cap is bytes (project_doc_max_bytes). Byte length
+        # is also the conservative comparison if a chars-capped host ever
+        # returns here — bytes >= chars for any non-ASCII text, so a byte
+        # warning can only fire earlier, never later.
         new_size = len(new.encode("utf-8"))
         if cap and new_size > cap:
             lines.append(
                 f"warning: {dest} is {new_size:,} bytes — {host} truncates "
                 f"this file at {cap:,} bytes; trim your own rules or use --project")
+    if host == "windsurf" and not project:
+        cleaned = _clean_windsurf_legacy(home)
+        if cleaned:
+            lines.append(cleaned)
     lines.insert(0, f"installed daimon skill ({variant}) -> {dest}")
     return lines
 
@@ -149,11 +179,16 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
 def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
     _spec_dict, (rel, kind, _variant) = _spec(host, project)
     dest = (cwd if project else home) / rel
+    legacy_lines = []
+    if host == "windsurf" and not project:
+        cleaned = _clean_windsurf_legacy(home)
+        if cleaned:
+            legacy_lines.append(cleaned)
     if not dest.exists():
-        return [f"nothing installed at {dest}"]
+        return legacy_lines + [f"nothing installed at {dest}"]
     if kind == "owned":
         dest.unlink()
-        return [f"removed {dest}"]
+        return legacy_lines + [f"removed {dest}"]
     text = dest.read_text(encoding="utf-8")
     if not _BLOCK_RE.search(text):
         return [f"no daimon:skill block in {dest} — left untouched"]
