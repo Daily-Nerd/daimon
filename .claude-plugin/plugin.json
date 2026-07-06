@@ -1,7 +1,7 @@
 {
   "name": "daimon",
   "displayName": "Daimon",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Dream-briefing for AI coding agents: a cognitive checkpoint at session end, a 'while you were away' briefing at session start.",
   "author": {
     "name": "Daily-Nerd",
