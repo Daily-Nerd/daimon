@@ -1361,7 +1361,21 @@ def _cmd_skill_uninstall(args) -> int:
     return 0
 
 
+def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
+    """Uncaught-crash header (#92): serialize-crash.log is the detached
+    child's RAW stderr fd — no logger sits in the write path, so the only
+    process that can timestamp a crash is the crashing one. One ISO-stamped
+    line, then the stock traceback. Covers uncaught Python exceptions (the
+    dominant case); interpreter-level deaths still write nothing."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cmd = next((a for a in sys.argv[1:] if not a.startswith("-")), "?")
+    print(f"--- crash {stamp} pid={os.getpid()} cmd={cmd} ---",
+          file=sys.stderr, flush=True)
+    sys.__excepthook__(exc_type, exc, tb)
+
+
 def main(argv=None) -> int:
+    sys.excepthook = _crash_stamp_excepthook  # #92: stamp uncaught crashes
     # #68: one formatter selection for the WHOLE parser tree. argparse does not
     # propagate formatter_class from parent to subparser, so every add_parser
     # call below must receive it — done here by patching add_parser on each
