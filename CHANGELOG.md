@@ -5,6 +5,13 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1](https://github.com/Daily-Nerd/daimon/compare/v0.8.0...v0.8.1) (2026-07-06)
+
+
+### Documentation
+
+* **hosts:** Windsurf terminal briefing is permanent — no hook channel reaches the agent ([#82](https://github.com/Daily-Nerd/daimon/issues/82)) ([8fe88c6](https://github.com/Daily-Nerd/daimon/commit/8fe88c6ff1ddd9f0ec864ecd683af5d0441e64f5))
+
 ## [0.8.0](https://github.com/Daily-Nerd/daimon/compare/v0.7.0...v0.8.0) (2026-07-04)
 
 
