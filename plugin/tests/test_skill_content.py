@@ -24,7 +24,7 @@ def test_full_has_trigger_only_frontmatter():
     full = skill_content.render_full()
     assert full.startswith("---\n")
     header = full.split("---\n")[1]
-    assert "name: using-daimon-memory" in header
+    assert "name: daimon" in header
     assert "description: Use when" in header
     for leak in ("run daimon brief", "then", "first,"):
         assert leak not in header.split("description:")[1].split("\n")[0].lower()

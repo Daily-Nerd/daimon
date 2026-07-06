@@ -10,7 +10,10 @@ rules files cap at 6,000 chars each), and the must-win rule repeats at the
 end because every vendor resolves instruction conflicts later-wins.
 """
 
-SKILL_NAME = "using-daimon-memory"
+# Agent Skills contract (#90): the frontmatter name MUST equal the skill's
+# directory name — every install path writes into a `daimon/` dir. Triggering
+# guidance lives in the description; the name is an identifier, not prose.
+SKILL_NAME = "daimon"
 
 _DESCRIPTION = (
     "Use when a daimon briefing appears in context, when the user references "
