@@ -2927,3 +2927,31 @@ def test_stats_empty_world_is_calm(tmp_checkpoint_dir, capsys):
     assert data["usage"] == {}
     assert data["capture"]["success"] == 0
     assert data["store"]["checkpoints"] == 0
+
+
+# ---- crash stamping (#92): timestamp header before uncaught tracebacks ------
+
+
+def test_crash_excepthook_stamps_before_traceback(capsys, monkeypatch):
+    # serialize-crash.log is the detached child's raw stderr — the only place
+    # a timestamp can come from is the crashing process itself. The hook must
+    # print one ISO-stamped header line, then the normal traceback.
+    monkeypatch.setattr(sys, "argv", ["daimon", "serialize", "/tmp/t.md"])
+    try:
+        raise RuntimeError("boom for the stamp test")
+    except RuntimeError:
+        exc_type, exc, tb = sys.exc_info()
+    cli._crash_stamp_excepthook(exc_type, exc, tb)
+    err = capsys.readouterr().err
+    first = err.splitlines()[0]
+    assert re.fullmatch(
+        r"--- crash \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z pid=\d+ "
+        r"cmd=serialize ---", first)
+    assert "RuntimeError: boom for the stamp test" in err
+
+
+def test_main_installs_crash_excepthook(monkeypatch):
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    with pytest.raises(SystemExit):
+        cli.main(["--version"])
+    assert sys.excepthook is cli._crash_stamp_excepthook
