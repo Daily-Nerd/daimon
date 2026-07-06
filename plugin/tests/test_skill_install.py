@@ -25,7 +25,7 @@ def test_claude_global_writes_full_skill(tmp_path):
     _, home, _ = _run("claude", tmp_path)
     dest = home / ".claude" / "skills" / "daimon" / "SKILL.md"
     text = dest.read_text(encoding="utf-8")
-    assert text.startswith("---\nname: using-daimon-memory")
+    assert text.startswith("---\nname: daimon")
     assert "daimon brief" in text
 
 
@@ -118,7 +118,7 @@ def test_windsurf_global_writes_full_skill(tmp_path):
     _, home, _ = _run("windsurf", tmp_path)
     dest = home / ".codeium" / "windsurf" / "skills" / "daimon" / "SKILL.md"
     text = dest.read_text(encoding="utf-8")
-    assert text.startswith("---\nname: using-daimon-memory")
+    assert text.startswith("---\nname: daimon")
     assert "daimon brief" in text
 
 

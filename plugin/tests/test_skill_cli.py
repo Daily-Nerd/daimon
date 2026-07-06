@@ -8,7 +8,7 @@ from daimon_briefing import cli
 def test_skill_show_prints_full(capsys):
     assert cli.main(["skill", "show"]) == 0
     out = capsys.readouterr().out
-    assert "name: using-daimon-memory" in out
+    assert "name: daimon" in out
 
 
 def test_skill_show_compact(capsys):
