@@ -5,6 +5,17 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2](https://github.com/Daily-Nerd/daimon/compare/v0.8.1...v0.8.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* **cli:** stamp uncaught crashes with a timestamp header before the traceback ([#93](https://github.com/Daily-Nerd/daimon/issues/93)) ([e282c1f](https://github.com/Daily-Nerd/daimon/commit/e282c1fec2347a85bff88e30a6b850e6a2411d93))
+* **release:** reach through release-please's tagged TOML values in the uv.lock jsonpath ([#86](https://github.com/Daily-Nerd/daimon/issues/86)) ([968ae42](https://github.com/Daily-Nerd/daimon/commit/968ae42b802c4bf18c646ed49cb6d189ec53c148))
+* **skill:** frontmatter name matches the skill directory name ([#91](https://github.com/Daily-Nerd/daimon/issues/91)) ([8b09e50](https://github.com/Daily-Nerd/daimon/commit/8b09e50917ea43c62af54e384ade7c2caa27bee5))
+* **skill:** install the Windsurf global skill into the skills directory, not memories ([#89](https://github.com/Daily-Nerd/daimon/issues/89)) ([606be08](https://github.com/Daily-Nerd/daimon/commit/606be0868b6499ab3df9afee0abadb8bc1c6021c))
+* **store:** carry reads only the project's own latest pointer ([#95](https://github.com/Daily-Nerd/daimon/issues/95)) ([468ba04](https://github.com/Daily-Nerd/daimon/commit/468ba0464bb7fd222fd7611569bd67584616c699))
+
 ## [0.8.1](https://github.com/Daily-Nerd/daimon/compare/v0.8.0...v0.8.1) (2026-07-06)
 
 
