@@ -2948,6 +2948,25 @@ def test_usage_logging_respects_kill_switch(tmp_checkpoint_dir, tmp_log_dir,
     assert not (tmp_log_dir / "usage.log").exists()
 
 
+def test_brief_auto_logs_distinct_single_token(tmp_checkpoint_dir, tmp_log_dir,
+                                               sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["brief", "--auto"]) == 0
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert len(lines) == 1
+    assert lines[0].split()[1] == "brief:auto"  # single token: len(parts)==2 filter survives
+
+
+def test_brief_without_auto_logs_plain_token(tmp_checkpoint_dir, tmp_log_dir,
+                                             sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["brief"]) == 0
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "brief"
+
+
 def test_stats_json_reports_usage_capture_and_store(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys):
     from daimon_briefing import store

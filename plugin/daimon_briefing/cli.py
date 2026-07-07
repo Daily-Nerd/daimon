@@ -361,7 +361,7 @@ def _team_briefings(project) -> list:
 
 
 def _cmd_brief(args) -> int:
-    _note_usage("brief")
+    _note_usage("brief:auto" if getattr(args, "auto", False) else "brief")
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
@@ -1462,6 +1462,11 @@ def main(argv=None) -> int:
         help="when this project has no checkpoint, render the full global "
              "checkpoint (possibly another project's) instead of the "
              "header-only note (#96)",
+    )
+    p_brief.add_argument(
+        "--auto", action="store_true",
+        help="mark this render as hook-driven (SessionStart) so `daimon stats` "
+             "can separate automatic briefings from deliberate re-reads (#54)",
     )
     p_brief.set_defaults(func=_cmd_brief)
 
