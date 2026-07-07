@@ -77,7 +77,7 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # facing brief, so suppression stays clean (no note to render).
         try:
             events = store.resolutions(project_dir=project)
-            checkpoint, _withheld = briefing.withhold(checkpoint, events)
+            checkpoint, _withheld, _candidates = briefing.withhold(checkpoint, events)
         except Exception:
             pass
         text = briefing.render(checkpoint)

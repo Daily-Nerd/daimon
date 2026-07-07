@@ -363,8 +363,12 @@ _ITEM_LISTS = (
 
 
 def _redact_checkpoint(checkpoint: dict) -> None:
-    """Capture-time secret redaction (#104): runs BEFORE _stamp_item_ids so
-    ids hash the redacted text (identity stays stable across re-writes).
+    """Capture-time secret redaction (#104): runs before this module's own
+    _stamp_item_ids call below, so ids stamped HERE hash redacted text. On
+    the serialize path the cli stamps ids earlier (before bind_links, #14),
+    so ids there hash pre-redaction text — no leak (sha1 slices are not
+    reversible) and no consumer recomputes ids from text, but identity for
+    secret-bearing items differs between the two paths.
     Covers text AND quote on every list item plus active_topic — verbatim
     quotes are the likeliest secret carriers. Stamps a visible
     checkpoint["redactions"] counter only when something was scrubbed."""
@@ -386,6 +390,11 @@ def _redact_checkpoint(checkpoint: dict) -> None:
             if isinstance(item, dict):
                 _scrub(item, "text")
                 _scrub(item, "quote")
+                links = item.get("links")
+                if isinstance(links, list):
+                    for link in links:
+                        if isinstance(link, dict) and isinstance(link.get("target"), str):
+                            _scrub(link, "target")
     topic = (checkpoint.get("working_context") or {}).get("active_topic")
     if isinstance(topic, dict):
         _scrub(topic, "text")
@@ -778,10 +787,17 @@ def resolutions(project_dir=None) -> dict:
 
 
 def is_resolved(event) -> bool:
-    """Liveness rule (#102): latest event wins; a status starting with
-    'reopen' returns the item to live; anything else means resolved. Status
-    is free-form text by design — never an enum, so unknown statuses resolve
-    (the writer bothered to record a lifecycle fact) rather than vanish."""
+    """Liveness rule (#102, #14): latest event wins; three states — a status
+    starting with 'reopen' returns the item to live; 'supersede-candidate'
+    is a machine SUGGESTION and stays live by construction (a guess must
+    never suppress); anything else means resolved. Status is free-form text
+    by design — never an enum, so unknown statuses resolve (the writer
+    bothered to record a lifecycle fact) rather than vanish."""
     if not isinstance(event, dict):
         return False
-    return not str(event.get("status") or "").lower().startswith("reopen")
+    status = str(event.get("status") or "").lower()
+    if status.startswith("supersede-candidate"):
+        return False  # a machine SUGGESTION is live by construction (#14):
+                      # every consumer (carry, withhold, future) inherits
+                      # no-suppression without knowing candidates exist.
+    return not status.startswith("reopen")

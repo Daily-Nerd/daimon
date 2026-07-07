@@ -1066,3 +1066,29 @@ def test_append_event_redacts_note_and_item_text(tmp_checkpoint_dir):
     raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text()
     assert "AKIAIOSFODNN7EXAMPLE" not in raw and "eyJhbGci" not in raw
     assert "[redacted:aws-key]" in raw
+
+
+def test_is_resolved_supersede_candidate_is_live():
+    from daimon_briefing import store
+    assert store.is_resolved({"status": "supersede-candidate:r-9f2c1a"}) is False
+    assert store.is_resolved({"status": "superseded-by:r-9f2c1a"}) is True   # regression
+    assert store.is_resolved({"status": "REOPENED"}) is False                 # regression
+
+
+def test_redact_scrubs_link_targets(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {"recent_decisions": [
+        {"text": "use gateway B",
+         "links": [{"type": "supersedes",
+                    "target": "use gateway A with DAIMON_LLM_API_KEY=sk-abcdef1234567890"}]}]}}
+    store.write_checkpoint("S1", cp)
+    tgt = cp["working_context"]["recent_decisions"][0]["links"][0]["target"]
+    assert "sk-abcdef1234567890" not in tgt and "[redacted:api-key]" in tgt
+    assert cp["redactions"]["api-key"] == 1
+
+
+def test_redact_tolerates_malformed_links(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {"recent_decisions": [
+        {"text": "x", "links": ["bare", {"no": "target"}, {"target": 7}]}]}}
+    store.write_checkpoint("S1", cp)  # must not raise

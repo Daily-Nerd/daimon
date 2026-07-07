@@ -118,13 +118,20 @@ RULES — follow every one exactly; this is the point of the exercise:
     (a Spanish session produces Spanish items). Never translate quotes — a `quote` is always
     the exact original wording. Schema keys and structure stay in English as shown.
 
+16. SUPERSESSION LINKS (conservative): when a recent_decision explicitly REPLACES a prior
+    decision — signaled by explicit replacement language such as "instead of", "replaces", or
+    "we changed from X to Y" — attach `"links": [{"type": "supersedes", "target": "<short
+    description of the OLD decision>"}]` to that item. NEVER attach a supersedes link from
+    topic overlap or similarity alone; the replacement must be stated explicitly, not guessed.
+    Omit `links` entirely when no such replacement applies — do not emit an empty array.
+
 Schema shape:
 {
   "session_id": "<id>",
   "working_context": {
     "active_topic": {"text": "", "trust": "", "quote": "", "importance": 0},
     "open_questions": [{"text": "", "trust": "", "quote": "", "external_state": false, "importance": 0}],
-    "recent_decisions": [{"text": "", "trust": "", "quote": "", "importance": 0}]
+    "recent_decisions": [{"text": "", "trust": "", "quote": "", "importance": 0, "links": [{"type": "", "target": ""}]}]
   },
   "epistemic_snapshot": {
     "strong_beliefs": [{"text": "", "trust": "", "quote": "", "importance": 0}],
@@ -190,13 +197,18 @@ MERGE RULES — follow every one exactly:
     merging must not translate items (a Spanish session stays Spanish). Never translate quotes;
     a `quote` is always the exact original wording. Schema keys and structure stay in English.
 
+13. LINKS PRESERVATION: preserve every item's `links` array verbatim — never drop, alter, or
+    invent a link entry. When deduplicating two items into one canonical item, the merged
+    item's `links` is the union of both items' links (dedupe identical {type, target} pairs)
+    so neither side's links are lost.
+
 Schema shape:
 {
   "session_id": "<id>",
   "working_context": {
     "active_topic": {"text": "", "trust": "", "quote": "", "importance": 0},
     "open_questions": [{"text": "", "trust": "", "quote": "", "external_state": false, "importance": 0}],
-    "recent_decisions": [{"text": "", "trust": "", "quote": "", "importance": 0}]
+    "recent_decisions": [{"text": "", "trust": "", "quote": "", "importance": 0, "links": [{"type": "", "target": ""}]}]
   },
   "epistemic_snapshot": {
     "strong_beliefs": [{"text": "", "trust": "", "quote": "", "importance": 0}],

@@ -2428,6 +2428,121 @@ def test_serialize_carry_failure_still_writes_checkpoint(
     assert written["session_id"] == "S-new"
 
 
+# ---- #14 Task 4: candidate emission behind the human-speaks-once gate ----
+
+
+def test_candidate_emitted_when_no_prior_event(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+
+    project = "/p/candidate-emit"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    pairs = [("r-old", "r-new", "old text")]
+    count = cli._emit_supersede_candidates(pairs, {}, project)
+    assert count == 1
+
+    slug = store.project_slug(project)
+    lines = (tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()
+    evt = json.loads(lines[0])
+    assert evt["item_ref"] == "r-old"
+    assert evt["status"] == "supersede-candidate:r-new"
+    assert evt["source"] == "serializer"
+    assert evt["item_text"] == "old text"
+
+
+def test_candidate_skipped_after_human_confirm_and_reject(tmp_checkpoint_dir, monkeypatch):
+    project = "/p/candidate-human"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    pairs = [("r-old", "r-new", "old text")]
+
+    events_confirmed = {"r-old": {"status": "superseded-by:r-new", "source": "cli"}}
+    assert cli._emit_supersede_candidates(pairs, events_confirmed, project) == 0
+
+    events_rejected = {"r-old": {"status": "reopened", "source": "cli"}}
+    assert cli._emit_supersede_candidates(pairs, events_rejected, project) == 0
+
+
+def test_candidate_idempotent_and_new_id_reemits(tmp_checkpoint_dir, monkeypatch):
+    project = "/p/candidate-idem"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    pairs = [("r-old", "r-new", "old text")]
+
+    events_same = {"r-old": {"status": "supersede-candidate:r-new", "source": "serializer"}}
+    assert cli._emit_supersede_candidates(pairs, events_same, project) == 0
+
+    events_diff = {"r-old": {"status": "supersede-candidate:r-other", "source": "serializer"}}
+    assert cli._emit_supersede_candidates(pairs, events_diff, project) == 1
+
+
+def test_stamp_before_bind_gives_fresh_native_a_real_new_id(tmp_checkpoint_dir):
+    # Sequence pin: fresh native items only get ids inside write_checkpoint,
+    # which runs AFTER the carry block — so the serialize wiring must stamp
+    # ids itself before binding, or every fresh decision binds with
+    # new_id="" and gate (c) collapses all such pairs into one.
+    from daimon_briefing import carry, store
+
+    prev = {
+        "session_id": "S-prev",
+        "working_context": {
+            "open_questions": [],
+            "recent_decisions": [
+                {"text": "use gateway A for serialize", "id": "r-old001"},
+            ],
+        },
+        "epistemic_snapshot": {"uncertainties": []},
+    }
+    cp = {
+        "session_id": "S-new",
+        "working_context": {
+            "open_questions": [],
+            "recent_decisions": [
+                # FRESH native decision — no id yet, exactly as the serializer
+                # emits it before write_checkpoint stamps.
+                {"text": "use gateway B",
+                 "links": [{"type": "supersedes",
+                            "target": "gateway A serialize choice"}]},
+            ],
+        },
+        "epistemic_snapshot": {"uncertainties": []},
+    }
+    store._stamp_item_ids(cp)
+    pairs = carry.bind_links(cp, prev)
+    assert len(pairs) == 1
+    old_id, new_id, old_text = pairs[0]
+    assert old_id == "r-old001"
+    assert new_id  # non-empty — the stamped id, not ""
+    assert new_id == cp["working_context"]["recent_decisions"][0]["id"]
+    assert old_text == "use gateway A for serialize"
+
+
+def test_candidate_skips_falsy_new_id(tmp_checkpoint_dir, monkeypatch):
+    # Defense-in-depth: never write "supersede-candidate:" with no target.
+    from daimon_briefing import store
+
+    project = "/p/candidate-falsy"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    pairs = [("r-old", "", "old text")]
+    assert cli._emit_supersede_candidates(pairs, {}, project) == 0
+    slug = store.project_slug(project)
+    assert not (tmp_checkpoint_dir / slug / "events.jsonl").exists()
+
+
+def test_carry_still_carries_candidate_ref(tmp_checkpoint_dir, monkeypatch):
+    # B1 pin: a supersede-candidate event must NOT resolve the item — the
+    # serialize path's `resolved` set (resolutions + is_resolved) must not
+    # contain it, or carry would silently drop the candidate item.
+    from daimon_briefing import store
+
+    project = "/p/candidate-carry-pin"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    store.append_event("X", "supersede-candidate:r-new", source="serializer",
+                       project_dir=project)
+
+    events = store.resolutions(project_dir=project)
+    resolved = frozenset(ref for ref, evt in events.items()
+                         if store.is_resolved(evt))
+    assert "X" not in resolved
+
+
 # ---- #29: UX-contract batch — surface messages must match what the code does ----
 
 
@@ -2600,6 +2715,53 @@ def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkp
     assert rc == 0
     out = capsys.readouterr().out
     assert out.strip() == "no suppressed items"
+
+
+# ---- #14: withhold's third outcome, end-to-end (brief annotation + status subsection) ----
+
+
+def test_brief_shows_annotation_and_status_lists_subsection(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["working_context"]["recent_decisions"][0]
+    item_id = item["id"]
+    # new-id must be serializer-shaped (kind initial + hex slice) — withhold's
+    # #14 shape gate refuses anything else, so the fixture uses a real shape.
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x")
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "likely superseded by r-9f3a2b" in out
+    assert f"daimon resolve {item_id} --status superseded-by:r-9f3a2b" in out
+
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "likely superseded (unconfirmed):" in out
+    assert item_id in out
+    assert "r-9f3a2b" in out
+
+
+def test_transient_field_never_persisted(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # The `_supersede_candidate` stamp lives ONLY on withhold's returned copy —
+    # no writer ever persists it. Run a brief (which triggers withhold), then
+    # re-read the checkpoint straight off disk and confirm it never appears.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item_id = written["working_context"]["recent_decisions"][0]["id"]
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x")
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    capsys.readouterr()
+
+    path = store.project_latest_path("/repo/x")
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert "_supersede_candidate" not in json.dumps(on_disk)
 
 
 def test_recall_rejects_nonpositive_limit(tmp_checkpoint_dir, capsys):

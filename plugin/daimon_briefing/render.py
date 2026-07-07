@@ -141,6 +141,16 @@ def _rich_brief(b: dict) -> None:
             quote = i.get("quote", "").strip()
             if quote:
                 body.append(f'    "{quote}"\n', style="dim italic")
+            candidate = i.get("_supersede_candidate")
+            if candidate:
+                # #14: parity with briefing._line's plain-path annotation —
+                # this panel builds its own Text body rather than routing
+                # through _line, so the flag has to be repeated here.
+                item_id = i.get("id") or "?"
+                body.append(
+                    f"    ⚠ likely superseded by {candidate} — confirm: "
+                    f"daimon resolve {item_id} --status superseded-by:{candidate}\n",
+                    style="yellow")
         if key == "decisions":
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:
