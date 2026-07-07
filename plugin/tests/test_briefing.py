@@ -705,6 +705,15 @@ def test_line_renders_candidate_annotation():
     assert "daimon resolve r-old --status superseded-by:r-new" in line
 
 
+def test_line_renders_candidate_reject_hint():
+    # #111: a human who disagrees with the machine's guess needs a printed
+    # path too — the reject command rides alongside the confirm command.
+    item = {"text": "use the old gateway timeout", "id": "r-old",
+            "_supersede_candidate": "r-new"}
+    line = briefing._line(item)
+    assert "reject: daimon reverify r-old" in line
+
+
 def test_reopen_clears_candidate_flag():
     # A reopen event as the LATEST event means the item is neither resolved
     # nor a candidate — no drop, no stamp, no annotation.

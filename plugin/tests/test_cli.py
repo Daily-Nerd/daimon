@@ -2743,6 +2743,10 @@ def test_brief_shows_annotation_and_status_lists_subsection(
     assert "likely superseded (unconfirmed):" in out
     assert item_id in out
     assert "r-9f3a2b" in out
+    # #111: the subsection prints both the confirm and the reject command,
+    # so a human who disagrees with the guess has a printed path.
+    assert f"daimon resolve {item_id} --status superseded-by:r-9f3a2b" in out
+    assert f"daimon reverify {item_id}" in out
 
 
 def test_transient_field_never_persisted(tmp_checkpoint_dir, sample_checkpoint, capsys):
@@ -3586,3 +3590,53 @@ def test_reverify_anchor_drifted_still_refused_without_evidence(tmp_checkpoint_d
     assert cli.main(["reverify", iid]) == 1
     r = store.resolutions(project_dir="/p/A")
     assert store.is_resolved(r[iid])  # unchanged — still resolved, nothing appended
+
+
+# ---- #111: candidate reject — evidence-free, silences re-detection ----
+
+
+def test_reverify_rejects_candidate_without_evidence(tmp_checkpoint_dir, capsys, monkeypatch):
+    # A supersede-candidate is an unconfirmed machine SUGGESTION, never a
+    # withheld item — rejecting a guess needs no proof. reverify with no
+    # --evidence must succeed and write a reopened (human) event.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "supersede-candidate:o-9f3a2b",
+                       source="serializer", project_dir="/p/A")
+    assert cli.main(["reverify", iid]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    # latest event is now a human reopen — the item stays live (not resolved)
+    # and is no longer a candidate.
+    assert not store.is_resolved(r[iid])
+    assert str(r[iid].get("source")) != "serializer"
+
+
+def test_reverify_candidate_reject_silences_re_detection(tmp_checkpoint_dir, capsys, monkeypatch):
+    # After an evidence-free reject, the human-speaks-once gate (#14) keeps
+    # the machine silent forever — re-serialize offers nothing.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "supersede-candidate:o-9f3a2b",
+                       source="serializer", project_dir="/p/A")
+    assert cli.main(["reverify", iid]) == 0
+    events = store.resolutions(project_dir="/p/A")
+    pairs = [(iid, "o-9f3a2b", "release pipeline awaiting manual approval step")]
+    assert cli._emit_supersede_candidates(pairs, events, "/p/A") == 0
+
+
+def test_reverify_still_refuses_resolved_item_without_evidence(tmp_checkpoint_dir, capsys, monkeypatch):
+    # Guard: the evidence-free path is candidate-only. A genuinely RESOLVED
+    # item (not a machine candidate) still demands evidence — #103 semantics
+    # are untouched.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    assert cli.main(["reverify", iid]) == 1
+    out = capsys.readouterr().out
+    assert "without evidence" in out

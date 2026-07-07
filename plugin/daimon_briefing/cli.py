@@ -562,6 +562,26 @@ def _cmd_resolve(args) -> int:
     return 0
 
 
+def _is_supersede_candidate(item_id: str, project) -> bool:
+    """True when the item's LATEST lifecycle event is a serializer-authored
+    supersede-candidate — an unconfirmed machine SUGGESTION (#14) that has
+    never withheld anything. This is the one reopen target that needs no
+    evidence: rejecting a guess is not vouching for a claim (#111). The
+    source gate mirrors `_emit_supersede_candidates` — only the serializer
+    ever writes candidates, so a human verdict already latest reads as
+    not-a-candidate and keeps the evidence gate. Fails closed: a broken
+    events fold means 'not a candidate', so the evidence gate still applies."""
+    try:
+        prior = store.resolutions(project_dir=project).get(item_id)
+    except Exception:
+        return False
+    if not isinstance(prior, dict):
+        return False
+    status = str(prior.get("status") or "").lower()
+    source = str(prior.get("source") or "")
+    return status.startswith("supersede-candidate") and source == "serializer"
+
+
 def _cmd_reverify(args) -> int:
     """Evidence-gated reopen (#103): re-stamping a resolved item without
     evidence would mark an unchecked claim verified — the one thing this
@@ -569,7 +589,12 @@ def _cmd_reverify(args) -> int:
     the original anchor still checks out live (the code proved itself) or
     the caller supplies --evidence (a human vouches for it); otherwise the
     refusal appends nothing. Exact id only — no fuzzy match, because
-    reopening is a deliberate act; find ids via `daimon status --suppressed`."""
+    reopening is a deliberate act; find ids via `daimon status --suppressed`.
+
+    #111 exception: when the target is an unconfirmed supersede CANDIDATE
+    (a machine guess that has never withheld anything), reopen is allowed
+    with no evidence — rejecting a suggestion is not vouching for a claim.
+    The reopened event is a human verdict, so re-detection stays silent."""
     project = _resolve_project(args.project)
     checkpoint = store.read_latest(project_dir=project, fallback=False)
     if not isinstance(checkpoint, dict):
@@ -594,6 +619,12 @@ def _cmd_reverify(args) -> int:
             note += "; " + evidence
     elif evidence:
         note = f"evidence: {evidence}"
+    elif _is_supersede_candidate(item["id"], project):
+        # #111: the target is an unconfirmed machine SUGGESTION, never a
+        # withheld/suppressed item — rejecting a guess needs no proof. The
+        # reopened event below is a human verdict, so the human-speaks-once
+        # gate (#14) silences re-detection of this candidate permanently.
+        note = "candidate rejected"
     else:
         print("re-stamping without evidence would mark an unchecked claim "
               "verified — supply --evidence, or fix the anchored code and retry")
@@ -937,6 +968,10 @@ def _print_suppressed(project) -> int:
             text = str(item.get("text") or "").strip()
             new_id = item.get("_supersede_candidate") or "-"
             print(f"  {item_id}  [{key}] {text}  -> {new_id}")
+            # #111: both a confirm and a reject path — a human who disagrees
+            # with the guess must not have to reach for evidence machinery.
+            print(f"    confirm: daimon resolve {item_id} --status superseded-by:{new_id}")
+            print(f"    reject: daimon reverify {item_id}")
     return 0
 
 
@@ -1836,7 +1871,8 @@ def main(argv=None) -> int:
         "refuses without proof, so a claim can't get re-verified for free",
         epilog="Examples:\n"
                "  daimon reverify o-3f8a2c --evidence \"checked release page\"\n"
-               "  daimon reverify o-3f8a2c   # reopens only if the anchor still checks live\n",
+               "  daimon reverify o-3f8a2c   # reopens only if the anchor still checks live\n"
+               "  daimon reverify o-3f8a2c   # rejects an unconfirmed supersede candidate — no evidence needed\n",
     )
     p_reverify.add_argument("target", help="item id (exact only — reverify is deliberate, no fuzzy match)")
     p_reverify.add_argument("--evidence", help="why this claim can be trusted again")
