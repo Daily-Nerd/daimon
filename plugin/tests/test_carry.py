@@ -364,3 +364,120 @@ def test_merge_without_resolved_kwarg_unchanged():
     assert len(qs) == 1
     assert qs[0]["text"] == "zephyr ledger drop unresolved"
     assert qs[0]["carried_from"] == "S-prev"
+
+
+# --- bind_links (#14): pure text-target -> prev-id binding for supersedes
+# links. Never-guess: only a UNIQUE same-kind prev match rewrites. -----------
+
+def test_bind_links_unique_match_rewrites_and_returns_pair():
+    prev = _cp("S-prev", 1, decisions=[
+        _item("use gateway A for serialize", id="r-old001")])
+    merged = _cp("S-new", 0, decisions=[
+        _item("use gateway B", id="r-new001",
+              links=[{"type": "supersedes",
+                      "target": "gateway A serialize choice"}])])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == [("r-old001", "r-new001", "use gateway A for serialize")]
+    link = merged["working_context"]["recent_decisions"][0]["links"][0]
+    assert link["target"] == "r-old001"
+
+
+def test_bind_links_ambiguous_stays_text_no_pair():
+    prev = _cp("S-prev", 1, decisions=[
+        _item("old zulu rollout plan alpha version one", id="r-old010"),
+        _item("old zulu rollout plan beta version two", id="r-old020"),
+    ])
+    target = "legacy zulu rollout plan alpha beta"
+    merged = _cp("S-new", 0, decisions=[
+        _item("switch to plan omega", id="r-new002",
+              links=[{"type": "supersedes", "target": target}])])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == []
+    link = merged["working_context"]["recent_decisions"][0]["links"][0]
+    assert link["target"] == target
+
+
+def test_bind_links_skips_self_and_twin():
+    # Native item INHERITED the prev item's id (twin id-inheritance, carry.py
+    # ~151-152) and its link target text-matches that SAME prev item.
+    orig = "gateway A serialize choice locked"
+    prev = _cp("S-prev", 1, decisions=[_item(orig, id="r-old001")])
+    merged = _cp("S-new", 0, decisions=[
+        _item("gateway A serialize choice still locked", id="r-old001",
+              links=[{"type": "supersedes", "target": orig}])])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == []
+    link = merged["working_context"]["recent_decisions"][0]["links"][0]
+    assert link["target"] == orig
+
+
+def test_bind_links_ignores_id_shaped_targets_and_malformed():
+    prev = _cp("S-prev", 1, decisions=[
+        _item("some other decision entirely", id="r-abc123")])
+    merged = _cp("S-new", 0, decisions=[
+        _item("native decision one", id="r-new003",
+              links=[{"type": "supersedes", "target": "r-abc123"}]),
+        _item("native decision two", id="r-new004",
+              links=["bare", {"type": "supersedes"}]),
+    ])
+    pairs = carry.bind_links(merged, prev)  # no raise
+    assert pairs == []
+    decisions = merged["working_context"]["recent_decisions"]
+    assert decisions[0]["links"][0]["target"] == "r-abc123"
+
+
+def test_bind_links_carried_native_does_not_double_count_generic():
+    # Reviewer repro: merge() carries prev items verbatim into merged natives
+    # (stamped carried_from), so counting them AGAIN in the DF universe pushes
+    # shared vocabulary over _GENERIC_DF=3, strips it as generic, and collapses
+    # a genuinely AMBIGUOUS target into a false-unique bind. Carried natives
+    # must be excluded from the universe — their vocabulary is already
+    # represented via prev_items. Ambiguous must stay unbound.
+    prev = _cp("S-prev", 1, decisions=[
+        _item("alpha bravo charlie delta echo", id="d-old001"),
+        _item("alpha bravo charlie foxtrot golf", id="d-old002"),
+    ])
+    target = "alpha bravo charlie delta echo"
+    merged = _cp("S-new", 0, decisions=[
+        _item("alpha bravo charlie delta echo", id="d-old001",
+              carried_from="S-prev"),  # carried verbatim by merge()
+        _item("switch to the new gateway plan", id="d-new001",
+              links=[{"type": "supersedes", "target": target}]),
+    ])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == []  # target matches BOTH prev decisions -> ambiguous
+    link = merged["working_context"]["recent_decisions"][1]["links"][0]
+    assert link["target"] == target  # unchanged
+
+
+def test_bind_links_dedupes_triples_but_rewrites_both_links():
+    # Two supersedes links on ONE item both resolving to the same prev item:
+    # both targets are rewritten, but the returned list carries ONE triple
+    # (dedupe by (old_id, new_id), keep first).
+    prev = _cp("S-prev", 1, decisions=[
+        _item("use gateway A for serialize", id="d-old001")])
+    merged = _cp("S-new", 0, decisions=[
+        _item("use gateway B", id="d-new001",
+              links=[{"type": "supersedes",
+                      "target": "gateway A serialize choice"},
+                     {"type": "supersedes",
+                      "target": "serialize via gateway A"}])])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == [("d-old001", "d-new001", "use gateway A for serialize")]
+    links = merged["working_context"]["recent_decisions"][0]["links"]
+    assert links[0]["target"] == "d-old001"
+    assert links[1]["target"] == "d-old001"
+
+
+def test_bind_links_same_kind_only():
+    # Target text matches an OPEN QUESTION in prev, not a decision -> the
+    # decisions-kind walk never looks at prev open_questions, so no bind.
+    text = "gateway A serialize choice locked"
+    prev = _cp("S-prev", 1, questions=[_item(text, id="q-old001")])
+    merged = _cp("S-new", 0, decisions=[
+        _item("switch decision", id="r-new005",
+              links=[{"type": "supersedes", "target": text}])])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == []
+    link = merged["working_context"]["recent_decisions"][0]["links"][0]
+    assert link["target"] == text

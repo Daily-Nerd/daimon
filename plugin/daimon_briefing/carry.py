@@ -9,9 +9,16 @@ caller injects clock and knobs (scar: a default wall-clock anywhere silently
 freezes time math under simulation)."""
 
 import copy
+import re
 from collections import Counter
 
 from . import recall, scoring, store
+
+# An item id already looks like this (store._stamp_item_ids: kind-initial +
+# >=6 hex chars, optional -N collision suffix) — never treat it as free text
+# to rebind. Bounded quantifiers only (scar: unbounded prefix before an
+# alternation froze the write path under quadratic backtracking).
+_ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,}(-\d+)?")
 
 # (section, key, scoring TYPE_RULES type). Beliefs regenerate cheaply and
 # active_topic is per-session by definition — neither carries (v1).
@@ -169,3 +176,70 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                      reverse=True)
         native.extend(carried[:cap])
     return out
+
+
+def bind_links(merged_cp: dict, prev_cp: dict | None) -> list[tuple[str, str, str]]:
+    """Pure text-target -> prev-id binding (#14). For every `supersedes` link
+    on merged_cp's carried-kind items whose `target` is still free text (not
+    already an item-id shape), find the SAME-KIND prev item it refers to by
+    `_same_item` and rewrite `link["target"]` to that item's id — IN PLACE on
+    merged_cp (caller owns the copy, mirrors `merge`'s contract).
+
+    Never-guess: only a UNIQUE prev match rewrites; zero or multiple matches
+    leave the text target untouched (same don't-merge bias as `_same_item` —
+    a wrong bind fabricates provenance, a missed bind just stays text).
+    Self/twin guard: skip when the matched prev id equals the item's own id
+    (twin id-inheritance in `merge` makes a decision supersede itself
+    reachable). Malformed links (non-dict, missing/non-str target) are
+    skipped, never raised on.
+
+    Returns (old_id, new_id, old_text) triples for the caller to turn into
+    events — no I/O here, same as `merge`. Deduped by (old_id, new_id): two
+    links resolving to the same prev item are one supersession event."""
+    if not isinstance(merged_cp, dict) or not isinstance(prev_cp, dict):
+        return []
+    pairs: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()  # dedupe triples by (old_id, new_id) —
+    # two links resolving to the same prev item are one supersession event
+    for section, key, _item_type in _CARRIED_KINDS:
+        native = (merged_cp.get(section) or {}).get(key)
+        if not isinstance(native, list):
+            continue
+        prev_items = [p for p in ((prev_cp.get(section) or {}).get(key) or [])
+                      if isinstance(p, dict) and p.get("id")
+                      and str(p.get("text") or "").strip()]
+        if not prev_items:
+            continue
+        # DF universe: natives + prev, but SKIP carried natives — merge()
+        # copied those verbatim from prev, so counting them again doubles
+        # their vocabulary's document frequency, forges generic status for
+        # terms two prev candidates legitimately share, and collapses an
+        # ambiguous target into a false-unique bind.
+        generic = _generic_terms(
+            [str(i.get("text") or "") for i in native
+             if isinstance(i, dict) and not i.get("carried_from")]
+            + [str(p["text"]) for p in prev_items])
+        for item in native:
+            if not isinstance(item, dict) or not isinstance(item.get("links"), list):
+                continue
+            for link in item["links"]:
+                if not isinstance(link, dict) or link.get("type") != "supersedes":
+                    continue
+                target = link.get("target")
+                if not isinstance(target, str) or not target.strip():
+                    continue
+                if _ID_SHAPE.fullmatch(target):
+                    continue  # already bound
+                matches = [p for p in prev_items
+                           if _same_item(target, str(p["text"]), generic)]
+                if len(matches) != 1:
+                    continue  # unbound or ambiguous — leave as text
+                prev_id, old_text = matches[0]["id"], matches[0]["text"]
+                if prev_id == item.get("id"):
+                    continue  # self/twin supersession — no-op, not a link
+                link["target"] = prev_id  # every matched link rebinds,
+                new_id = item.get("id") or ""
+                if (prev_id, new_id) not in seen:  # but one event per pair
+                    seen.add((prev_id, new_id))
+                    pairs.append((prev_id, new_id, old_text))
+    return pairs
