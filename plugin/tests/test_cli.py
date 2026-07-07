@@ -3176,3 +3176,71 @@ def test_main_installs_crash_excepthook(monkeypatch):
     with pytest.raises(SystemExit):
         cli.main(["--version"])
     assert sys.excepthook is cli._crash_stamp_excepthook
+
+
+# ---- #102: daimon resolve / daimon log ----
+
+
+def _write_cp_with_ids(store, project="/p/A"):
+    cp = {"working_context": {"open_questions": [
+        {"text": "release pipeline awaiting manual approval step", "trust": "inferred"},
+        {"text": "serializer chunk retry budget unclear", "trust": "inferred"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir=project)
+    return cp
+
+
+def test_resolve_by_exact_id_appends_event(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert store.is_resolved(r[iid])
+
+
+def test_resolve_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", "release pipeline manual approval",
+                     "--status", "resolved", "--note", "approved and shipped"]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert r[iid]["note"] == "approved and shipped"
+
+
+def test_resolve_ambiguous_refuses_and_lists_candidates(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "gateway retry budget for serializer chunks"},
+        {"text": "serializer chunk retry budget unclear"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    assert cli.main(["resolve", "serializer chunk retry budget"]) == 1
+    out = capsys.readouterr().out
+    for item in cp["working_context"]["open_questions"]:
+        assert item["id"] in out  # both candidates listed with ids
+    assert store.resolutions(project_dir="/p/A") == {}  # nothing appended
+
+
+def test_resolve_no_match_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["resolve", "completely unrelated nonsense query"]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_log_appends_freeform_event(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["log", "--text", "midnight deploy went clean"]) == 0
+    slug = store.project_slug("/p/A")
+    line = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
+    assert line["kind"] == "note"
+    assert line["note"] == "midnight deploy went clean"
+    assert line["item_ref"] == ""
