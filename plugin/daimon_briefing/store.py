@@ -663,3 +663,81 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
                     best[key] = (rec, cp.get("author") or adir.name, cp)
     ordered = sorted(best.values(), key=lambda t: t[0], reverse=True)
     return [(author, cp) for _rec, author, cp in ordered]
+
+
+# ---- #102: append-only resolution events ----
+
+
+def _events_path(project_dir=None):
+    slug = project_slug(project_dir)
+    if not slug:
+        return None
+    return config.checkpoint_dir() / slug / "events.jsonl"
+
+
+def append_event(item_ref: str, status: str, note: str = "",
+                 kind: str = "resolution", source: str = "cli",
+                 project_dir=None) -> bool:
+    """One appended JSON line per lifecycle fact (#102). Append-only: the
+    file is never rewritten — resolution is a derivation at read, so the
+    audit trail must stay byte-stable. Silent no-op under the kill switch
+    and when the project is unknown (an event without a bucket has no
+    reader)."""
+    if config.is_disabled():
+        return False
+    path = _events_path(project_dir)
+    if path is None:
+        return False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        evt = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "kind": kind, "item_ref": item_ref, "status": status,
+               "source": source}
+        if note:
+            evt["note"] = note
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(evt, ensure_ascii=False) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def resolutions(project_dir=None) -> dict:
+    """events.jsonl -> {item_ref: latest event} — latest by ts, NEVER line
+    order (concurrent writers may interleave). Unknown kinds and extra
+    fields ride along untouched; unparseable lines are skipped best-effort:
+    a reader must never drop the log over one bad line."""
+    out: dict = {}
+    path = _events_path(project_dir)
+    if path is None:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        try:
+            evt = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(evt, dict):
+            continue
+        ref = str(evt.get("item_ref") or "")
+        if not ref:
+            continue
+        cur = out.get(ref)
+        new_e = _created_epoch(evt.get("ts"))
+        cur_e = _created_epoch(cur.get("ts")) if cur else None
+        if cur is None or (new_e is not None and (cur_e is None or new_e >= cur_e)):
+            out[ref] = evt
+    return out
+
+
+def is_resolved(event) -> bool:
+    """Liveness rule (#102): latest event wins; a status starting with
+    'reopen' returns the item to live; anything else means resolved. Status
+    is free-form text by design — never an enum, so unknown statuses resolve
+    (the writer bothered to record a lifecycle fact) rather than vanish."""
+    if not isinstance(event, dict):
+        return False
+    return not str(event.get("status") or "").lower().startswith("reopen")

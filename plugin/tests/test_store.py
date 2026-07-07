@@ -909,3 +909,60 @@ def test_non_dict_and_empty_items_are_skipped(tmp_checkpoint_dir):
     cp = {"working_context": {"open_questions": ["bare string", {"text": ""}, {"no": "text"}]}}
     store.write_checkpoint("S1", cp)  # must not raise
     assert "id" not in cp["working_context"]["open_questions"][1]
+
+
+# ---- #102: append-only event log + fold ----
+
+
+def test_append_event_writes_jsonl_line(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    assert store.append_event("o-abc123", "resolved", note="shipped",
+                              project_dir="/p/A") is True
+    slug = store.project_slug("/p/A")
+    lines = (tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()
+    evt = json.loads(lines[0])
+    assert evt["item_ref"] == "o-abc123"
+    assert evt["status"] == "resolved"
+    assert evt["note"] == "shipped"
+    assert evt["kind"] == "resolution"
+    assert evt["ts"].endswith("Z")
+
+
+def test_append_event_respects_kill_switch(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert store.append_event("o-abc123", "resolved", project_dir="/p/A") is False
+    slug = store.project_slug("/p/A")
+    assert not (tmp_checkpoint_dir / slug / "events.jsonl").exists()
+
+
+def test_resolutions_latest_wins_by_timestamp_not_line_order(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    # NEWER event written FIRST in the file — fold must still prefer it
+    (d / "events.jsonl").write_text(
+        '{"ts": "2026-07-07T10:00:00Z", "kind": "resolution", "item_ref": "o-a", "status": "reopened"}\n'
+        '{"ts": "2026-07-06T10:00:00Z", "kind": "resolution", "item_ref": "o-a", "status": "resolved"}\n'
+        'not json at all\n'
+        '{"ts": "2026-07-07T09:00:00Z", "kind": "future-kind", "item_ref": "o-b", "status": "done", "extra": 1}\n'
+    )
+    r = store.resolutions(project_dir="/p/A")
+    assert r["o-a"]["status"] == "reopened"
+    assert r["o-b"]["extra"] == 1  # unknown kind + field preserved
+
+
+def test_is_resolved_semantics():
+    from daimon_briefing import store
+    assert store.is_resolved(None) is False
+    assert store.is_resolved({"status": "resolved"}) is True
+    assert store.is_resolved({"status": "superseded-by:o-x"}) is True
+    assert store.is_resolved({"status": "REOPENED — regression"}) is False
+
+
+def test_resolutions_missing_file_or_project_is_empty(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    assert store.resolutions(project_dir="/p/NOPE") == {}
+    assert store.resolutions(project_dir=None) == {}
