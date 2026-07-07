@@ -65,3 +65,39 @@ def test_non_string_and_empty_passthrough():
     assert redact.redact_text("") == ("", {})
     assert redact.redact_text(None) == (None, {})
     assert redact.redact_text(7) == (7, {})
+
+
+# ---- #104 final-review fixes: backtracking bounds + marker idempotency ----
+
+
+def test_redaction_markers_never_rematch_on_second_pass():
+    # I3: [redacted:api-key] / [redacted:credential-url] markers satisfy the
+    # patterns' own value class, so re-running redact_text over already-
+    # redacted text (the anchor --attach rewrite path) must not re-count.
+    s = ("set DAIMON_LLM_API_KEY=sk-abcdef1234567890 in env and "
+         "postgres://admin:hunter2secret@db.example.com:5432/x")
+    out, counts = _one(s)
+    assert counts.get("api-key") == 1
+    assert counts.get("credential-url") == 1
+    out2, counts2 = _one(out)
+    assert out2 == out
+    assert counts2 == {}
+
+
+def test_api_key_pattern_no_quadratic_blowup_on_long_word_run():
+    # C1: unbounded prefix quantifier overlapping the keyword alternation
+    # caused O(N^2) backtracking on long separator-free [\w-] runs.
+    out, counts = _one("a" * 50000)
+    assert counts == {}
+
+
+def test_api_key_pattern_no_quadratic_blowup_on_long_hyphenated_run():
+    out, counts = _one("a-" * 25000)
+    assert counts == {}
+
+
+def test_credential_url_pattern_no_quadratic_blowup_on_long_scheme_run():
+    # I2: unbounded scheme span caused O(N^2) backtracking on long
+    # lowercase-dotted runs that never resolve to "://".
+    out, counts = _one("a." * 25000)
+    assert counts == {}

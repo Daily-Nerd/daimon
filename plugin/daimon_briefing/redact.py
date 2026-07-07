@@ -22,10 +22,10 @@ _PATTERNS = (
     ("bearer", re.compile(
         r"(?i)\b(?:bearer|authorization:\s*\w+)\s+[A-Za-z0-9._~+/=-]{16,}")),
     ("api-key", re.compile(
-        r"(?i)([\w-]*(?:api[_-]?key|secret|token|password|passwd))(\s*[=:]\s*)"
-        r"['\"]?[^\s'\"]{8,}")),
+        r"(?i)\b([\w-]{0,32}?(?:api[_-]?key|secret|token|password|passwd))"
+        r"(\s*[=:]\s*)['\"]?(?!\[redacted:)[^\s'\"]{8,}")),
     ("credential-url", re.compile(
-        r"\b([a-z][a-z0-9+.-]*://[^/\s:@]+):[^/\s@]+@")),
+        r"\b([a-z][a-z0-9+.-]{0,15}://[^/\s:@]+):(?!\[redacted:)[^/\s@]+@")),
 )
 
 

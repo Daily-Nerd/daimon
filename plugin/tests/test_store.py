@@ -1044,6 +1044,19 @@ def test_rewrite_merges_redaction_counts(tmp_checkpoint_dir):
     assert cp["redactions"] == {"aws-key": 1, "stripe-key": 1}
 
 
+def test_rewrite_same_secret_keeps_redaction_count_stable(tmp_checkpoint_dir):
+    # I3: api-key/credential-url markers satisfy their own patterns' value
+    # class, so re-writing the SAME already-redacted dict (anchor --attach
+    # path) must not inflate the count on every re-write.
+    from daimon_briefing import store
+    cp = {"working_context": {"open_questions": [
+        {"text": "set DAIMON_LLM_API_KEY=sk-abcdef1234567890 in env"}]}}
+    store.write_checkpoint("S1", cp)
+    assert cp["redactions"] == {"api-key": 1}
+    store.write_checkpoint("S1", cp)
+    assert cp["redactions"] == {"api-key": 1}
+
+
 def test_append_event_redacts_note_and_item_text(tmp_checkpoint_dir):
     from daimon_briefing import store
     store.append_event("o-a", "resolved", note="key was AKIAIOSFODNN7EXAMPLE",
