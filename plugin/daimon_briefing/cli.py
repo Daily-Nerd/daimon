@@ -219,6 +219,17 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
                                      floor=config.carry_floor(),
                                      cap=config.carry_max(),
                                      resolved=resolved)
+            # #14: text-target supersession links bound to prev-item ids ->
+            # candidate events, gated so a human verdict is never overridden
+            # (see _emit_supersede_candidates). Same fail-open try as merge
+            # itself — a broken emission must never cost the checkpoint.
+            # Stamp ids BEFORE binding: fresh natives are only stamped inside
+            # write_checkpoint (after this block), so without this every new
+            # item binds with new_id="" and the event carries no target.
+            # Setdefault-idempotent — write_checkpoint's re-stamp no-ops.
+            store._stamp_item_ids(checkpoint)
+            pairs = carry.bind_links(checkpoint, prev)
+            _emit_supersede_candidates(pairs, events, project)
         except Exception:  # keep the unmerged checkpoint, proceed to write
             pass
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
@@ -244,6 +255,52 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
         except Exception:  # a broken harvest must not fail the serialize
             pass
     return 0
+
+
+def _emit_supersede_candidates(pairs, events: dict, project) -> int:
+    """Turn `carry.bind_links` triples into `supersede-candidate:*` events,
+    gated so a machine SUGGESTION never overrides a human verdict (#14,
+    human-speaks-once).
+
+    `events` is the SAME `store.resolutions` fold the serialize block already
+    fetched for `resolved` — reused, not re-read, so this stays consistent
+    with the resolved set computed moments earlier in the same call.
+
+    Gate per (old_id, new_id, old_text) triple:
+    (a) prior = events.get(old_id) — the latest lifecycle fact for old_id.
+    (b) prior exists and its source isn't "serializer" -> a HUMAN spoke
+        (confirmed via superseded-by, rejected via reopened, or anything
+        else typed by a person) -> skip, forever. The gate itself is why a
+        latest-event check is enough for permanence: machine events only
+        ever land through this function, and this function refuses to
+        write over a non-serializer prior, so once a human event is latest
+        no future serialize run can dethrone it — there is no path back to
+        a machine-authored latest.
+    (c) prior exists, is a serializer-authored candidate, and already points
+        at this same new_id -> idempotent, skip (re-running serialize on an
+        unchanged pair must not spam the log).
+    (d) otherwise -> append. Covers both the fresh case (no prior) and the
+        candidate-changed case (prior candidate names a DIFFERENT new_id —
+        the carry target moved, so a fresh candidate replaces it as latest).
+
+    Returns the number of events actually appended."""
+    appended = 0
+    for old_id, new_id, old_text in pairs:
+        if not new_id:
+            continue  # defense-in-depth: never write a candidate with no
+                      # target ("supersede-candidate:") — the wiring stamps
+                      # ids before binding, but a caller that skips that
+                      # step must not corrupt the event log
+        prior = events.get(old_id)
+        if prior and str(prior.get("source") or "") != "serializer":
+            continue  # human spoke — machine stays silent forever
+        if prior and prior.get("status") == f"supersede-candidate:{new_id}":
+            continue  # idempotent — same candidate already latest
+        if store.append_event(old_id, f"supersede-candidate:{new_id}",
+                              source="serializer", item_text=old_text,
+                              project_dir=project):
+            appended += 1
+    return appended
 
 
 def _session_end_stamp(path) -> str:
