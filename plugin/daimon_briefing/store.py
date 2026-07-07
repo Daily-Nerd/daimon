@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, serializer
+from . import config, redact, serializer
 
 _LATEST = "latest.json"
 # Rotation pointers, not per-session checkpoints. Anything else ending in .json in
@@ -362,6 +362,45 @@ _ITEM_LISTS = (
 )
 
 
+def _redact_checkpoint(checkpoint: dict) -> None:
+    """Capture-time secret redaction (#104): runs BEFORE _stamp_item_ids so
+    ids hash the redacted text (identity stays stable across re-writes).
+    Covers text AND quote on every list item plus active_topic — verbatim
+    quotes are the likeliest secret carriers. Stamps a visible
+    checkpoint["redactions"] counter only when something was scrubbed."""
+    counts: dict = {}
+
+    def _scrub(d: dict, field: str) -> None:
+        val = d.get(field)
+        red, c = redact.redact_text(val)
+        if c:
+            d[field] = red
+            for k, n in c.items():
+                counts[k] = counts.get(k, 0) + n
+
+    for section, key in _ITEM_LISTS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                _scrub(item, "text")
+                _scrub(item, "quote")
+    topic = (checkpoint.get("working_context") or {}).get("active_topic")
+    if isinstance(topic, dict):
+        _scrub(topic, "text")
+        _scrub(topic, "quote")
+    if counts:
+        # MERGE, never overwrite: a re-write (anchor --attach reads, mutates,
+        # writes the same dict) only re-matches NEW secrets — old markers don't
+        # match the patterns again, so overwriting would drop kinds still
+        # physically present in the checkpoint.
+        merged = dict(checkpoint.get("redactions") or {})
+        for k, n in counts.items():
+            merged[k] = merged.get(k, 0) + n
+        checkpoint["redactions"] = merged
+
+
 def _stamp_item_ids(checkpoint: dict) -> None:
     """Stable per-item ids (#102): sha1 of kind:text, 6 hex chars, prefixed
     with the kind's initial. setdefault semantics — an item that already
@@ -417,6 +456,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # store stays free of the git/subprocess dependency (scar 0). Present on every
     # checkpoint so read_team can attribute it later, even when team-write is off.
     checkpoint.setdefault("author", config.author())
+    _redact_checkpoint(checkpoint)
     _stamp_item_ids(checkpoint)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
@@ -689,6 +729,8 @@ def append_event(item_ref: str, status: str, note: str = "",
     if path is None:
         return False
     try:
+        note, _ = redact.redact_text(note)
+        item_text, _ = redact.redact_text(item_text)
         path.parent.mkdir(parents=True, exist_ok=True)
         evt = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "kind": kind, "item_ref": item_ref, "status": status,

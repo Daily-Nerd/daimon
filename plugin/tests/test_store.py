@@ -983,3 +983,73 @@ def test_append_event_omits_empty_item_text(tmp_checkpoint_dir):
     slug = store.project_slug("/p/A")
     evt = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
     assert "item_text" not in evt
+
+
+# ---- #104: capture-time redaction wiring ----
+
+
+def test_write_checkpoint_redacts_text_and_quote(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {"open_questions": [
+        {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?",
+         "quote": "he pasted DAIMON_LLM_API_KEY=sk-abcdef1234567890"}]}}
+    store.write_checkpoint("S1", cp)
+    item = cp["working_context"]["open_questions"][0]
+    assert "AKIAIOSFODNN7EXAMPLE" not in item["text"]
+    assert "sk-abcdef1234567890" not in item["quote"]
+    assert cp["redactions"] == {"aws-key": 1, "api-key": 1}
+    on_disk = (tmp_checkpoint_dir / "S1.json").read_text()
+    assert "AKIAIOSFODNN7EXAMPLE" not in on_disk and "sk-abcdef" not in on_disk
+
+
+def test_write_checkpoint_redacts_active_topic(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {"active_topic": {
+        "text": "rotating postgres://admin:hunter2secret@db/x"}}}
+    store.write_checkpoint("S1", cp)
+    assert "hunter2secret" not in cp["working_context"]["active_topic"]["text"]
+
+
+def test_no_redactions_key_when_clean(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {"open_questions": [{"text": "all clean here"}]}}
+    store.write_checkpoint("S1", cp)
+    assert "redactions" not in cp
+
+
+def test_item_id_hashes_redacted_text(tmp_checkpoint_dir):
+    import hashlib
+    from daimon_briefing import store
+    cp = {"working_context": {"open_questions": [
+        {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?"}]}}
+    store.write_checkpoint("S1", cp)
+    item = cp["working_context"]["open_questions"][0]
+    digest = hashlib.sha1(
+        f"open_questions:{item['text']}".encode("utf-8")).hexdigest()
+    assert item["id"] == f"o-{digest[:6]}"  # id derived from REDACTED text
+
+
+def test_rewrite_merges_redaction_counts(tmp_checkpoint_dir):
+    # The anchor --attach path: read_latest -> mutate -> write_checkpoint on the
+    # SAME dict. Old markers don't re-match patterns, so a naive overwrite of
+    # checkpoint["redactions"] would drop kinds still physically present.
+    from daimon_briefing import store
+    cp = {"working_context": {"open_questions": [
+        {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?"}]}}
+    store.write_checkpoint("S1", cp)
+    assert cp["redactions"] == {"aws-key": 1}
+    cp["working_context"]["open_questions"].append(
+        {"text": "charge key sk_live_abcdef1234567890 exposed"})
+    store.write_checkpoint("S1", cp)
+    assert cp["redactions"] == {"aws-key": 1, "stripe-key": 1}
+
+
+def test_append_event_redacts_note_and_item_text(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    store.append_event("o-a", "resolved", note="key was AKIAIOSFODNN7EXAMPLE",
+                       item_text="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.x",
+                       project_dir="/p/A")
+    slug = store.project_slug("/p/A")
+    raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text()
+    assert "AKIAIOSFODNN7EXAMPLE" not in raw and "eyJhbGci" not in raw
+    assert "[redacted:aws-key]" in raw
