@@ -2362,6 +2362,35 @@ def test_serialize_carry_kill_switch(
     assert "quorint reconciliation loop unresolved" not in texts
 
 
+def test_serialize_carry_ignores_other_projects_checkpoint(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    """#94: a fresh project's FIRST serialize has no per-project pointer, so
+    carry's read_latest used to fall back to the global pointer — the most
+    recent checkpoint of ANY project — and permanently fold a foreign
+    project's items into this project's bucket. Carry must read only the
+    project's own pointer."""
+    from daimon_briefing import store
+
+    _prev_with_open_question("/p/other-project", "2026-06-25T08:00:00Z",
+                             "2026-06-28T00:00:00Z")
+
+    chat = fake_chat_factory(_valid_json("S-new"))
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/fresh-project")
+
+    p = _timed_jsonl(tmp_path, "S-new.jsonl", [
+        "2026-07-01T10:00:00Z", "2026-07-01T10:01:00Z", "2026-07-01T10:02:00Z",
+    ])
+    rc = cli.main(["serialize", str(p)])
+    assert rc == 0
+
+    written = store.read_latest(project_dir="/p/fresh-project")
+    texts = {q.get("text") for q in written["working_context"]["open_questions"]}
+    assert "quorint reconciliation loop unresolved" not in texts
+
+
 def test_serialize_carry_failure_still_writes_checkpoint(
     tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
 ):

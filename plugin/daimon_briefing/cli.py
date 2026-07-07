@@ -206,7 +206,11 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
         # itself (a briefing missing carried items is strictly better than
         # no briefing at all; same idiom as harvest.run's swallow below).
         try:
-            prev = store.read_latest(project)
+            # fallback=False (#94): on a project's first serialize there is no
+            # per-project pointer, and the global pointer is another project's
+            # checkpoint — carrying from it would write foreign items into
+            # this project's bucket permanently. No prev -> no carry.
+            prev = store.read_latest(project, fallback=False)
             now = store._created_epoch(checkpoint.get("created")) or time.time()
             checkpoint = carry.merge(checkpoint, prev, now,
                                      floor=config.carry_floor(),
