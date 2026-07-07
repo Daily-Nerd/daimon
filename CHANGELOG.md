@@ -5,6 +5,19 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0](https://github.com/Daily-Nerd/daimon/compare/v0.9.0...v0.10.0) (2026-07-07)
+
+
+### Features
+
+* **brief:** reject path for supersede candidates — hint in annotation, evidence-free reject ([#112](https://github.com/Daily-Nerd/daimon/issues/112)) ([542fdcd](https://github.com/Daily-Nerd/daimon/commit/542fdcd015c8656f77876df3beee14775ae653a0))
+* **brief:** withhold event-resolved items — evidence-gated reverify ([#103](https://github.com/Daily-Nerd/daimon/issues/103)) ([#107](https://github.com/Daily-Nerd/daimon/issues/107)) ([0ae8f12](https://github.com/Daily-Nerd/daimon/commit/0ae8f1268859cc64a9459e9d391b77583a057bd8))
+* **scar:** add deadend for exact-shape guards on host transcript rows failing silently ([3affcb2](https://github.com/Daily-Nerd/daimon/commit/3affcb24543efd81809a34223541f93bcb059100))
+* **schema:** typed supersedes links with candidate events — detect, offer, human confirms ([#110](https://github.com/Daily-Nerd/daimon/issues/110)) ([b45619a](https://github.com/Daily-Nerd/daimon/commit/b45619a5c9c1167a3f95e0a0f84c5249d5cbfcec))
+* **stats:** distinguish hook-driven briefings from deliberate re-reads ([#101](https://github.com/Daily-Nerd/daimon/issues/101)) ([aecec3b](https://github.com/Daily-Nerd/daimon/commit/aecec3bcfd726522eb43b36e366368b06dd8dff1))
+* **store:** append-only resolution events — supersede-not-delete lifecycle ([#102](https://github.com/Daily-Nerd/daimon/issues/102)) ([#105](https://github.com/Daily-Nerd/daimon/issues/105)) ([304f9c7](https://github.com/Daily-Nerd/daimon/commit/304f9c7fd34d87f1a6f8f7b0a8fab5551d0dfaf4))
+* **store:** capture-time secret redaction on checkpoint and event writes ([#108](https://github.com/Daily-Nerd/daimon/issues/108)) ([83cdba0](https://github.com/Daily-Nerd/daimon/commit/83cdba0a10fa94085ac2696b964f125042645895))
+
 ## [0.9.0](https://github.com/Daily-Nerd/daimon/compare/v0.8.2...v0.9.0) (2026-07-07)
 
 
