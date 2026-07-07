@@ -149,7 +149,8 @@ def _rich_brief(b: dict) -> None:
                 item_id = i.get("id") or "?"
                 body.append(
                     f"    ⚠ likely superseded by {candidate} — confirm: "
-                    f"daimon resolve {item_id} --status superseded-by:{candidate}\n",
+                    f"daimon resolve {item_id} --status superseded-by:{candidate}\n"
+                    f"    reject: daimon reverify {item_id}\n",
                     style="yellow")
         if key == "decisions":
             note = briefing._overflow_note(b.get("decisions_overflow", 0))

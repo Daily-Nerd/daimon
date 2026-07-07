@@ -55,7 +55,8 @@ def _line(item) -> str:
         # withheld, just flagged with a one-command confirm path.
         item_id = item.get("id") or "?"
         base += (f"\n  ⚠ likely superseded by {candidate} — confirm: "
-                 f"daimon resolve {item_id} --status superseded-by:{candidate}")
+                 f"daimon resolve {item_id} --status superseded-by:{candidate}"
+                 f"\n    reject: daimon reverify {item_id}")
     return base
 
 
