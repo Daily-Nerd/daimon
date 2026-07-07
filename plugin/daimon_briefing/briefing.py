@@ -11,11 +11,15 @@ beliefs, then uncertainties, then contradictions flagged. Verbatim items are mar
 distinctly from inferred ones.
 """
 
+import copy
 import logging
 import re
 import time
 
-from . import config, llm, scoring
+# store/carry import graph checked (#103): neither store, carry, recall, nor
+# scoring imports briefing — no cycle, so this stays a normal module-level
+# import (contrast carry.py's own local-import notes, which don't apply here).
+from . import carry, config, llm, scoring, store
 
 log = logging.getLogger("daimon.briefing")
 
@@ -112,6 +116,80 @@ def build(checkpoint, now=None) -> dict | None:
         "uncertainties": uncertainties,
         "contradictions": contradictions,
     }
+
+
+# ---- #103: withhold event-resolved items at render time ----
+
+
+def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
+    """Drop items the world has already resolved, at RENDER time only — the
+    checkpoint on disk (and carry's copy of it) is never touched. `resolutions`
+    is `{item_ref: latest_event}`, exactly store.resolutions()'s shape; pure,
+    no I/O — the caller does the read (fail-open lives there, not here).
+
+    Binding is exact for id-bearing items: an item withholds only if ITS OWN
+    id is a resolved ref. id-LESS (legacy) items fall back to a fuzzy match on
+    item_text via carry._same_item/_generic_terms — but that fuzzy path is
+    id-bearing items' one guardrail: they NEVER take it, even on an exact text
+    coincidence (test_id_bearing_item_never_fuzzy_withheld). A fuzzy withhold
+    of an id-bearing item would silently suppress a live memory that merely
+    resembles a closed one — the worst failure mode this feature can have.
+
+    No resolved events, or a non-dict checkpoint -> (checkpoint, []) UNCHANGED,
+    same no-op idiom as carry.merge: no copy is made unless something actually
+    withholds, so the common case (nothing resolved yet) costs nothing."""
+    if not isinstance(checkpoint, dict) or not resolutions:
+        return checkpoint, []
+
+    resolved_refs = {ref for ref, evt in resolutions.items() if store.is_resolved(evt)}
+    if not resolved_refs:
+        return checkpoint, []
+    resolved_texts = [str(resolutions[ref].get("item_text") or "").strip()
+                       for ref in resolved_refs]
+    resolved_texts = [t for t in resolved_texts if t]
+
+    # Dry run over the ORIGINAL checkpoint — decide what would be withheld
+    # before paying for a deepcopy (most briefs resolve nothing).
+    to_drop = []  # [(section, key, index, item, event)]
+    for section, key, _item_type in carry._CARRIED_KINDS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id")
+            if item_id:
+                evt = resolutions.get(item_id)
+                if evt is not None and item_id in resolved_refs:
+                    to_drop.append((section, key, idx, item, evt))
+                continue  # id-bearing: bound exactly or not at all, never fuzzy
+            text = str(item.get("text") or "").strip()
+            if not text or not resolved_texts:
+                continue
+            generic = carry._generic_terms(resolved_texts + [text])
+            for ref in resolved_refs:
+                evt = resolutions[ref]
+                cand_text = str(evt.get("item_text") or "").strip()
+                if cand_text and carry._same_item(text, cand_text, generic):
+                    to_drop.append((section, key, idx, item, evt))
+                    break
+
+    if not to_drop:
+        return checkpoint, []
+
+    out = copy.deepcopy(checkpoint)
+    withheld = []
+    drop_idx_by_list: dict[tuple[str, str], set] = {}
+    for section, key, idx, item, evt in to_drop:
+        drop_idx_by_list.setdefault((section, key), set()).add(idx)
+        withheld.append((key, item, evt))
+    for (section, key), idxs in drop_idx_by_list.items():
+        items = out[section][key]
+        kept = [it for i, it in enumerate(items) if i not in idxs]
+        items[:] = kept
+
+    return out, withheld
 
 
 # ---- #79: token budget — section-preserving truncation ----

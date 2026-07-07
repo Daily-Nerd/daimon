@@ -396,6 +396,15 @@ def _cmd_brief(args) -> int:
     if fallback_used:
         render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
                                   "checkpoint (fallback), possibly another project's."])
+    withheld = []
+    if checkpoint:
+        # Withhold (#103): render-time derivation, fail-open — a briefing
+        # must never die over suppression machinery.
+        try:
+            events = store.resolutions(project_dir=project)
+            checkpoint, withheld = briefing.withhold(checkpoint, events)
+        except Exception:
+            withheld = []
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -405,6 +414,10 @@ def _cmd_brief(args) -> int:
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
     teammates = _team_briefings(project) if getattr(args, "team", False) else None
     render.render_brief(checkpoint, drift=drift, teammates=teammates)
+    if withheld:
+        render.render_brief_note([
+            f"{len(withheld)} resolved item(s) withheld — "
+            "`daimon status --suppressed` to list"])
     return 0
 
 

@@ -547,3 +547,56 @@ def test_mark_untagged_trust_is_not_inferred():
     assert briefing._mark({"text": "x", "trust": ""}) == "? untagged"
     assert briefing._mark({"text": "x", "trust": "inferred"}) == "~ inferred"
     assert briefing._mark({"text": "x", "trust": "verbatim"}) == "✓ verbatim"
+
+
+# ---- #103: withhold event-resolved items at render time ----
+
+
+def _res_evt(ref, status="resolved", text=""):
+    e = {"ts": "2026-07-07T00:00:00Z", "kind": "resolution",
+         "item_ref": ref, "status": status}
+    if text:
+        e["item_text"] = text
+    return e
+
+
+def test_withhold_by_exact_id():
+    cp = {"working_context": {"open_questions": [
+        {"text": "is the gateway stable", "id": "o-aaa"},
+        {"text": "does carry hold", "id": "o-bbb"}]}}
+    filtered, withheld = briefing.withhold(cp, {"o-aaa": _res_evt("o-aaa")})
+    texts = [i["text"] for i in filtered["working_context"]["open_questions"]]
+    assert texts == ["does carry hold"]
+    assert withheld[0][1]["id"] == "o-aaa"
+    assert len(cp["working_context"]["open_questions"]) == 2  # input untouched
+
+
+def test_reopen_event_does_not_withhold():
+    cp = {"working_context": {"open_questions": [{"text": "x y z", "id": "o-aaa"}]}}
+    filtered, withheld = briefing.withhold(
+        cp, {"o-aaa": _res_evt("o-aaa", status="reopened")})
+    assert withheld == []
+    assert filtered["working_context"]["open_questions"]
+
+
+def test_legacy_idless_item_withheld_by_item_text_fuzzy():
+    cp = {"working_context": {"open_questions": [
+        {"text": "release pipeline approval step still awaiting manual gate"}]}}  # no id
+    ev = _res_evt("o-old01", text="release pipeline manual approval gate awaiting")
+    filtered, withheld = briefing.withhold(cp, {"o-old01": ev})
+    assert filtered["working_context"]["open_questions"] == []
+    assert len(withheld) == 1
+
+
+def test_id_bearing_item_never_fuzzy_withheld():
+    cp = {"working_context": {"open_questions": [
+        {"text": "release pipeline manual approval gate awaiting", "id": "o-live1"}]}}
+    ev = _res_evt("o-old01", text="release pipeline manual approval gate awaiting")
+    filtered, withheld = briefing.withhold(cp, {"o-old01": ev})
+    assert withheld == []  # exact text match but id-bearing: never fuzzy-bound
+
+
+def test_no_resolved_events_returns_input_unchanged():
+    cp = {"working_context": {"open_questions": [{"text": "x", "id": "o-a"}]}}
+    filtered, withheld = briefing.withhold(cp, {})
+    assert filtered is cp and withheld == []

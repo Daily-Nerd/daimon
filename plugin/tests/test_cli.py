@@ -2511,6 +2511,45 @@ def test_brief_fallback_full_via_env(
     assert "fallback" in out.lower()
 
 
+def test_brief_withholds_resolved_item_and_notes_suppression(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #103: a resolved item must not print in the brief, and the withheld
+    # count must be announced so the suppression is never silent.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    # write_checkpoint stamps a stable per-item id (#102) on every item, so a
+    # real checkpoint's items are id-bearing by the time brief reads them —
+    # resolve that exact id (the id-less fuzzy path is for legacy checkpoints
+    # predating id-stamping, covered by the pure-function tests).
+    written = store.read_latest(project_dir="/repo/x")
+    item_id = written["working_context"]["open_questions"][1]["id"]
+    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Chunk threshold for the serializer" not in out
+    assert "1 resolved item(s) withheld" in out
+    assert "--suppressed" in out
+
+
+def test_brief_fails_open_when_resolutions_raises(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #103: withhold machinery must never take the briefing down with it —
+    # a broken events.jsonl (or any resolutions() failure) still renders the
+    # full, unfiltered brief and exits clean.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(store, "resolutions", _boom)
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Chunk threshold for the serializer" in out
+
+
 def test_recall_rejects_nonpositive_limit(tmp_checkpoint_dir, capsys):
     # --limit 0 / -N used to clamp silently to 1 result. Reject loudly.
     rc = cli.main(["recall", "anything", "--limit", "0"])
