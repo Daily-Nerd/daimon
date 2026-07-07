@@ -2717,6 +2717,53 @@ def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkp
     assert out.strip() == "no suppressed items"
 
 
+# ---- #14: withhold's third outcome, end-to-end (brief annotation + status subsection) ----
+
+
+def test_brief_shows_annotation_and_status_lists_subsection(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["working_context"]["recent_decisions"][0]
+    item_id = item["id"]
+    # new-id must be serializer-shaped (kind initial + hex slice) — withhold's
+    # #14 shape gate refuses anything else, so the fixture uses a real shape.
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x")
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "likely superseded by r-9f3a2b" in out
+    assert f"daimon resolve {item_id} --status superseded-by:r-9f3a2b" in out
+
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "likely superseded (unconfirmed):" in out
+    assert item_id in out
+    assert "r-9f3a2b" in out
+
+
+def test_transient_field_never_persisted(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # The `_supersede_candidate` stamp lives ONLY on withhold's returned copy —
+    # no writer ever persists it. Run a brief (which triggers withhold), then
+    # re-read the checkpoint straight off disk and confirm it never appears.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item_id = written["working_context"]["recent_decisions"][0]["id"]
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x")
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    capsys.readouterr()
+
+    path = store.project_latest_path("/repo/x")
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert "_supersede_candidate" not in json.dumps(on_disk)
+
+
 def test_recall_rejects_nonpositive_limit(tmp_checkpoint_dir, capsys):
     # --limit 0 / -N used to clamp silently to 1 result. Reject loudly.
     rc = cli.main(["recall", "anything", "--limit", "0"])

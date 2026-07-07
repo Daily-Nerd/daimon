@@ -564,18 +564,20 @@ def test_withhold_by_exact_id():
     cp = {"working_context": {"open_questions": [
         {"text": "is the gateway stable", "id": "o-aaa"},
         {"text": "does carry hold", "id": "o-bbb"}]}}
-    filtered, withheld = briefing.withhold(cp, {"o-aaa": _res_evt("o-aaa")})
+    filtered, withheld, candidates = briefing.withhold(cp, {"o-aaa": _res_evt("o-aaa")})
     texts = [i["text"] for i in filtered["working_context"]["open_questions"]]
     assert texts == ["does carry hold"]
     assert withheld[0][1]["id"] == "o-aaa"
+    assert candidates == []
     assert len(cp["working_context"]["open_questions"]) == 2  # input untouched
 
 
 def test_reopen_event_does_not_withhold():
     cp = {"working_context": {"open_questions": [{"text": "x y z", "id": "o-aaa"}]}}
-    filtered, withheld = briefing.withhold(
+    filtered, withheld, candidates = briefing.withhold(
         cp, {"o-aaa": _res_evt("o-aaa", status="reopened")})
     assert withheld == []
+    assert candidates == []
     assert filtered["working_context"]["open_questions"]
 
 
@@ -583,23 +585,25 @@ def test_legacy_idless_item_withheld_by_item_text_fuzzy():
     cp = {"working_context": {"open_questions": [
         {"text": "release pipeline approval step still awaiting manual gate"}]}}  # no id
     ev = _res_evt("o-old01", text="release pipeline manual approval gate awaiting")
-    filtered, withheld = briefing.withhold(cp, {"o-old01": ev})
+    filtered, withheld, candidates = briefing.withhold(cp, {"o-old01": ev})
     assert filtered["working_context"]["open_questions"] == []
     assert len(withheld) == 1
+    assert candidates == []
 
 
 def test_id_bearing_item_never_fuzzy_withheld():
     cp = {"working_context": {"open_questions": [
         {"text": "release pipeline manual approval gate awaiting", "id": "o-live1"}]}}
     ev = _res_evt("o-old01", text="release pipeline manual approval gate awaiting")
-    filtered, withheld = briefing.withhold(cp, {"o-old01": ev})
+    filtered, withheld, candidates = briefing.withhold(cp, {"o-old01": ev})
     assert withheld == []  # exact text match but id-bearing: never fuzzy-bound
+    assert candidates == []
 
 
 def test_no_resolved_events_returns_input_unchanged():
     cp = {"working_context": {"open_questions": [{"text": "x", "id": "o-a"}]}}
-    filtered, withheld = briefing.withhold(cp, {})
-    assert filtered is cp and withheld == []
+    filtered, withheld, candidates = briefing.withhold(cp, {})
+    assert filtered is cp and withheld == [] and candidates == []
 
 
 def test_withhold_covers_strong_beliefs():
@@ -609,14 +613,106 @@ def test_withhold_covers_strong_beliefs():
     # store._ITEM_LISTS kinds; carry's own 3-kind carry policy is untouched.
     cp = {"epistemic_snapshot": {"strong_beliefs": [
         {"text": "extractive pinning prevents silent fact loss", "id": "b-aaa"}]}}
-    filtered, withheld = briefing.withhold(cp, {"b-aaa": _res_evt("b-aaa")})
+    filtered, withheld, candidates = briefing.withhold(cp, {"b-aaa": _res_evt("b-aaa")})
     assert filtered["epistemic_snapshot"]["strong_beliefs"] == []
     assert withheld[0][1]["id"] == "b-aaa"
+    assert candidates == []
 
 
 def test_withhold_covers_contradictions_flagged():
     cp = {"epistemic_snapshot": {"contradictions_flagged": [
         {"text": "conflicting claims about the gateway", "id": "c-aaa"}]}}
-    filtered, withheld = briefing.withhold(cp, {"c-aaa": _res_evt("c-aaa")})
+    filtered, withheld, candidates = briefing.withhold(cp, {"c-aaa": _res_evt("c-aaa")})
     assert filtered["epistemic_snapshot"]["contradictions_flagged"] == []
     assert withheld[0][1]["id"] == "c-aaa"
+    assert candidates == []
+
+
+# ---- #14: withhold's third outcome — supersede-candidate is a live SUGGESTION ----
+
+
+def test_withhold_candidate_kept_and_stamped():
+    cp = {"working_context": {"recent_decisions": [
+        {"text": "use the old gateway timeout", "id": "r-old"}]}}
+    resolutions = {"r-old": _res_evt("r-old", status="supersede-candidate:r-9f3a2b")}
+    filtered, withheld, candidates = briefing.withhold(cp, resolutions)
+    # item PRESENT in filtered, and stamped on the returned copy only.
+    kept = filtered["working_context"]["recent_decisions"]
+    assert len(kept) == 1
+    assert kept[0]["id"] == "r-old"
+    assert kept[0]["_supersede_candidate"] == "r-9f3a2b"
+    assert withheld == []
+    assert len(candidates) == 1
+    assert candidates[0][0] == "recent_decisions"
+    assert candidates[0][1]["id"] == "r-old"
+    assert candidates[0][1]["_supersede_candidate"] == "r-9f3a2b"
+    assert candidates[0][2]["status"] == "supersede-candidate:r-9f3a2b"
+    # input checkpoint is never mutated — no transient field, ever.
+    assert "_supersede_candidate" not in cp["working_context"]["recent_decisions"][0]
+
+
+def test_withhold_candidate_malformed_new_id_never_stamped():
+    # The status field is free-form by design, so a candidate's payload can
+    # carry arbitrary text ("supersede-candidate:o-new1a; echo pwned"). That
+    # text would ride verbatim into the rendered confirm-command suggestion
+    # AND the hook-injected LLM context — an injection surface. Only an
+    # id-shaped payload earns a stamp; a malformed machine claim earns no
+    # surface at all: no stamp, no candidates entry, item stays live and
+    # renders normally.
+    cp = {"working_context": {"open_questions": [
+        {"text": "is the gateway stable", "id": "o-aaa"}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {"o-aaa": _res_evt(
+            "o-aaa", status="supersede-candidate:o-new1a; echo pwned")})
+    assert withheld == []
+    assert candidates == []
+    kept = filtered["working_context"]["open_questions"]
+    assert len(kept) == 1
+    assert "_supersede_candidate" not in kept[0]
+    assert "pwned" not in briefing._line(kept[0])
+
+
+def test_withhold_candidate_conforming_id_still_stamps():
+    # Regression pair for the shape gate: a real serializer-shaped id
+    # (kind initial + hex slice, optional counter suffix) must still stamp.
+    cp = {"working_context": {"open_questions": [
+        {"text": "is the gateway stable", "id": "o-aaa"}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {"o-aaa": _res_evt("o-aaa", status="supersede-candidate:o-1a2b3c-2")})
+    assert withheld == []
+    assert len(candidates) == 1
+    assert filtered["working_context"]["open_questions"][0][
+        "_supersede_candidate"] == "o-1a2b3c-2"
+
+
+def test_withhold_hard_still_drops():
+    # Regression: a hard "superseded-by" (cli) resolution still drops the
+    # item exactly as before, and candidates comes back empty.
+    cp = {"working_context": {"open_questions": [
+        {"text": "is the gateway stable", "id": "o-aaa"}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {"o-aaa": _res_evt("o-aaa", status="superseded-by:o-new")})
+    assert filtered["working_context"]["open_questions"] == []
+    assert len(withheld) == 1
+    assert candidates == []
+
+
+def test_line_renders_candidate_annotation():
+    item = {"text": "use the old gateway timeout", "id": "r-old",
+            "_supersede_candidate": "r-new"}
+    line = briefing._line(item)
+    assert "likely superseded by r-new" in line
+    assert "daimon resolve r-old --status superseded-by:r-new" in line
+
+
+def test_reopen_clears_candidate_flag():
+    # A reopen event as the LATEST event means the item is neither resolved
+    # nor a candidate — no drop, no stamp, no annotation.
+    cp = {"working_context": {"recent_decisions": [
+        {"text": "use the old gateway timeout", "id": "r-old"}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {"r-old": _res_evt("r-old", status="reopened")})
+    assert withheld == []
+    assert candidates == []
+    kept = filtered["working_context"]["recent_decisions"]
+    assert "_supersede_candidate" not in kept[0]

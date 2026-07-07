@@ -49,6 +49,13 @@ def _line(item) -> str:
         base += " [carried]"
     if quote:
         base += f'  — "{quote}"'
+    candidate = item.get("_supersede_candidate")
+    if candidate:
+        # #14: a machine-suggested (unconfirmed) supersession — never
+        # withheld, just flagged with a one-command confirm path.
+        item_id = item.get("id") or "?"
+        base += (f"\n  ⚠ likely superseded by {candidate} — confirm: "
+                 f"daimon resolve {item_id} --status superseded-by:{candidate}")
     return base
 
 
@@ -120,8 +127,15 @@ def build(checkpoint, now=None) -> dict | None:
 
 # ---- #103: withhold event-resolved items at render time ----
 
+# #14 shape gate for a supersede-candidate's new-id payload: kind initial +
+# hex slice (+ optional collision counter), same shape store._stamp_item_ids
+# emits and carry._ID_SHAPE recognizes — duplicated rather than imported
+# because carry's copy is unbounded ({6,}) and this one fullmatches
+# attacker-adjacent event text, where bounded quantifiers are the rule.
+_CANDIDATE_ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,40}(-\d+)?")
 
-def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
+
+def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
     """Drop items the world has already resolved, at RENDER time only — the
     checkpoint on disk (and carry's copy of it) is never touched. `resolutions`
     is `{item_ref: latest_event}`, exactly store.resolutions()'s shape; pure,
@@ -135,22 +149,49 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
     of an id-bearing item would silently suppress a live memory that merely
     resembles a closed one — the worst failure mode this feature can have.
 
-    No resolved events, or a non-dict checkpoint -> (checkpoint, []) UNCHANGED,
-    same no-op idiom as carry.merge: no copy is made unless something actually
-    withholds, so the common case (nothing resolved yet) costs nothing."""
+    #14: a THIRD outcome — a "supersede-candidate:<new-id>" latest event is a
+    machine SUGGESTION, not a resolution (store.is_resolved says so: it stays
+    live). Candidates are never dropped; instead the RETURNED COPY's item gets
+    a transient `_supersede_candidate = "<new-id>"` stamp so render/CLI layers
+    can flag it — id-bearing only, by construction (candidates are only ever
+    emitted against ids).
+
+    No resolved/candidate events, or a non-dict checkpoint ->
+    (checkpoint, [], []) UNCHANGED, same no-op idiom as carry.merge: no copy
+    is made unless something actually withholds or is stamped, so the common
+    case (nothing resolved yet) costs nothing."""
     if not isinstance(checkpoint, dict) or not resolutions:
-        return checkpoint, []
+        return checkpoint, [], []
 
     resolved_refs = {ref for ref, evt in resolutions.items() if store.is_resolved(evt)}
-    if not resolved_refs:
-        return checkpoint, []
+    candidate_refs: dict[str, str] = {}
+    for ref, evt in resolutions.items():
+        if not isinstance(evt, dict):
+            continue
+        status = str(evt.get("status") or "")
+        if status.lower().startswith("supersede-candidate") and ":" in status:
+            new_id = status.split(":", 1)[1].strip()
+            # Shape gate: the status field is free-form by design, so the
+            # payload after the colon can be ANY text — and it rides verbatim
+            # into the rendered confirm-command suggestion and the hook-
+            # injected LLM context (an injection surface). Only an id-shaped
+            # payload earns a stamp; a malformed machine claim earns no
+            # surface at all (unannotated, unlisted — still never withheld).
+            # Mirrors carry._ID_SHAPE, with the hex run bounded (fullmatch on
+            # attacker-adjacent input wants bounded quantifiers).
+            if new_id and _CANDIDATE_ID_SHAPE.fullmatch(new_id):
+                candidate_refs[ref] = new_id
+
+    if not resolved_refs and not candidate_refs:
+        return checkpoint, [], []
     resolved_texts = [str(resolutions[ref].get("item_text") or "").strip()
                        for ref in resolved_refs]
     resolved_texts = [t for t in resolved_texts if t]
 
-    # Dry run over the ORIGINAL checkpoint — decide what would be withheld
-    # before paying for a deepcopy (most briefs resolve nothing).
+    # Dry run over the ORIGINAL checkpoint — decide what would be withheld/
+    # stamped before paying for a deepcopy (most briefs resolve nothing).
     to_drop = []  # [(section, key, index, item, event)]
+    to_stamp = []  # [(section, key, index, event, new_id)]
     for section, key in store._ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
@@ -166,6 +207,9 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
                 # check never needs the superset's own membership re-verified).
                 if item_id in resolved_refs:
                     to_drop.append((section, key, idx, item, resolutions[item_id]))
+                elif item_id in candidate_refs:
+                    to_stamp.append((section, key, idx, resolutions[item_id],
+                                      candidate_refs[item_id]))
                 continue  # id-bearing: bound exactly or not at all, never fuzzy
             text = str(item.get("text") or "").strip()
             if not text or not resolved_texts:
@@ -178,10 +222,22 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
                     to_drop.append((section, key, idx, item, evt))
                     break
 
-    if not to_drop:
-        return checkpoint, []
+    if not to_drop and not to_stamp:
+        return checkpoint, [], []
 
     out = copy.deepcopy(checkpoint)
+
+    # Stamp BEFORE dropping: to_stamp/to_drop indices both refer to the
+    # ORIGINAL (pre-removal) list positions, and stamping never changes list
+    # length — so stamping first keeps every index valid for the drop pass
+    # that follows, regardless of whether a stamped and a dropped item share
+    # a section/key list.
+    candidates = []
+    for section, key, idx, evt, new_id in to_stamp:
+        item = out[section][key][idx]
+        item["_supersede_candidate"] = new_id
+        candidates.append((key, item, evt))
+
     withheld = []
     drop_idx_by_list: dict[tuple[str, str], set] = {}
     for section, key, idx, item, evt in to_drop:
@@ -192,7 +248,7 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
         kept = [it for i, it in enumerate(items) if i not in idxs]
         items[:] = kept
 
-    return out, withheld
+    return out, withheld, candidates
 
 
 # ---- #79: token budget — section-preserving truncation ----

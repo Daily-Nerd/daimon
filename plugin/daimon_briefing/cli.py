@@ -456,10 +456,14 @@ def _cmd_brief(args) -> int:
     withheld = []
     if checkpoint:
         # Withhold (#103): render-time derivation, fail-open — a briefing
-        # must never die over suppression machinery.
+        # must never die over suppression machinery. #14: candidates ride
+        # along stamped on `checkpoint` itself — the deterministic path
+        # (render_plain via briefing._line) picks up the annotation; the
+        # opt-in LLM briefing path does not surface it (same pre-existing
+        # scope as [carried]), so nothing further is done with them here.
         try:
             events = store.resolutions(project_dir=project)
-            checkpoint, withheld = briefing.withhold(checkpoint, events)
+            checkpoint, withheld, _candidates = briefing.withhold(checkpoint, events)
         except Exception:
             withheld = []
     # NOTE: drift is checked against the resolved project root. If read_latest fell
@@ -901,26 +905,38 @@ def _print_suppressed(project) -> int:
     must not crash `status`, it should just report nothing suppressed."""
     checkpoint = store.read_latest(project_dir=project, fallback=False)
     withheld = []
+    candidates = []
     if checkpoint:
         try:
             events = store.resolutions(project_dir=project)
-            _, withheld = briefing.withhold(checkpoint, events)
+            _, withheld, candidates = briefing.withhold(checkpoint, events)
         except Exception:
             withheld = []
-    if not withheld:
+            candidates = []
+    if not withheld and not candidates:
         print("no suppressed items")
         return 0
-    print(f"suppressed items ({len(withheld)}):")
-    for key, item, evt in withheld:
-        item_id = item.get("id") or "-"
-        text = str(item.get("text") or "").strip()
-        status = str(evt.get("status") or "")
-        ts = str(evt.get("ts") or "")
-        note = str(evt.get("note") or "").strip()
-        paren = f"{status} {ts}"
-        if note:
-            paren += f", {note}"
-        print(f"  {item_id}  [{key}] {text}  ({paren})")
+    if withheld:
+        print(f"suppressed items ({len(withheld)}):")
+        for key, item, evt in withheld:
+            item_id = item.get("id") or "-"
+            text = str(item.get("text") or "").strip()
+            status = str(evt.get("status") or "")
+            ts = str(evt.get("ts") or "")
+            note = str(evt.get("note") or "").strip()
+            paren = f"{status} {ts}"
+            if note:
+                paren += f", {note}"
+            print(f"  {item_id}  [{key}] {text}  ({paren})")
+    if candidates:
+        # #14: machine SUGGESTIONS, not resolutions — a separate subsection
+        # so they never read as confirmed suppressions.
+        print("likely superseded (unconfirmed):")
+        for key, item, evt in candidates:
+            item_id = item.get("id") or "-"
+            text = str(item.get("text") or "").strip()
+            new_id = item.get("_supersede_candidate") or "-"
+            print(f"  {item_id}  [{key}] {text}  -> {new_id}")
     return 0
 
 
