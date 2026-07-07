@@ -864,3 +864,30 @@ def test_serialize_strict_sanitizes_importance_never_fails_on_junk(fake_chat_fac
 def test_validate_tolerates_importance_field():
     ckpt = _ckpt_with_importances([3])
     assert serializer.validate(ckpt)
+
+
+def test_recent_decisions_schema_carries_links_shape():
+    # #14: recent_decisions items gain an optional links shape for typed
+    # cross-references (v1 scope: supersedes only). Both prompts render the
+    # same schema block, so both must show the new item shape.
+    links_shape = '"links": [{"type": "", "target": ""}]'
+    assert links_shape in serializer.SERIALIZE_SYS
+    assert links_shape in serializer.MERGE_SYS
+
+
+def test_extraction_rule_mentions_supersedes_conservatively():
+    # Conservative extraction: only explicit replacement language earns a
+    # supersedes link — never mere topic overlap between two decisions.
+    sys_prompt = serializer.SERIALIZE_SYS
+    assert "supersedes" in sys_prompt
+    assert "instead of" in sys_prompt  # explicit-replacement language required
+    assert "topic overlap" in sys_prompt  # anti-overreach guard
+
+
+def test_merge_sys_preserves_links():
+    # Merge must carry links through untouched, and union them (never drop
+    # either side's) when two items collapse into one canonical item.
+    sys_prompt = serializer.MERGE_SYS
+    assert "LINKS PRESERVATION" in sys_prompt
+    assert "verbatim" in sys_prompt
+    assert "union" in sys_prompt.lower()
