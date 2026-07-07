@@ -3025,6 +3025,85 @@ def test_stats_empty_world_is_calm(tmp_checkpoint_dir, capsys):
     assert data["store"]["checkpoints"] == 0
 
 
+# ---- retention: hook briefings vs deliberate re-reads ----
+
+from datetime import datetime, timedelta, timezone
+
+
+def _usage_line(days_ago, cmd, now):
+    stamp = (now - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"{stamp} {cmd}\n"
+
+
+def test_retention_counts_hook_briefs_and_rereads_in_window(tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(20, "brief", now)          # before first auto -> untagged
+        + _usage_line(10, "brief:auto", now)   # first auto = upgrade marker
+        + _usage_line(5, "brief:auto", now)
+        + _usage_line(4, "brief", now)         # after marker -> deliberate re-read
+        + _usage_line(3, "status", now)
+        + _usage_line(2, "recall", now)
+        + _usage_line(16, "status", now)       # outside the 14d window -> ignored
+    )
+    r = cli._stats_retention(now=now)
+    assert r["window_days"] == 14
+    assert r["hook_briefs"] == 2
+    assert r["rereads"] == {"brief": 1, "status": 1, "recall": 1}
+    assert r["rereads_total"] == 3
+    assert r["rereads_per_hook_brief"] == 1.5
+    assert r["untagged_briefs"] == 1
+    assert r["stale_hook_warning"] is False
+
+
+def test_retention_zero_hook_briefs_ratio_is_none(tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(_usage_line(1, "status", now))
+    r = cli._stats_retention(now=now)
+    assert r["hook_briefs"] == 0
+    assert r["rereads_per_hook_brief"] is None
+
+
+def test_retention_all_briefs_untagged_when_no_auto_ever(tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(3, "brief", now) + _usage_line(1, "brief", now))
+    r = cli._stats_retention(now=now)
+    assert r["untagged_briefs"] == 2
+    assert r["rereads"]["brief"] == 0  # never guessed
+
+
+def test_retention_stale_hook_warning_fires_on_spawns_without_auto(tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    stamp = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        f"{stamp} session-end: spawned serialize for S9 (pid 1)\n")
+    r = cli._stats_retention(now=now)
+    assert r["stale_hook_warning"] is True
+
+
+def test_retention_no_warning_without_spawns(tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    r = cli._stats_retention(now=now)
+    assert r["stale_hook_warning"] is False
+
+
+def test_stats_json_includes_retention(tmp_checkpoint_dir, tmp_log_dir,
+                                       sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "retention" in data
+    assert set(data["retention"]) >= {"window_days", "hook_briefs", "rereads",
+                                      "rereads_total", "rereads_per_hook_brief",
+                                      "untagged_briefs", "stale_hook_warning"}
+
+
 # ---- crash stamping (#92): timestamp header before uncaught tracebacks ------
 
 

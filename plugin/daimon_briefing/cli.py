@@ -24,7 +24,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import anchor, briefing, carry, config, configure, harvest, llm, recall, render, serializer, store, teamsync, transcript
@@ -1251,11 +1251,85 @@ def _stats_store() -> dict:
     return out
 
 
+_USAGE_STAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
+_RETENTION_WINDOW_DAYS = 14
+
+
+def _parse_stamp(token: str):
+    try:
+        return datetime.strptime(token, _USAGE_STAMP_FMT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _spawns_in_window(cutoff) -> bool:
+    """True when serialize.log shows any hook-spawned capture inside the
+    window — i.e. sessions ARE happening on this machine."""
+    try:
+        text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        line = line.strip()
+        if not _STATS_HOST_RE.match(line):
+            continue
+        stamp = _parse_stamp(line.split()[0])
+        if stamp is not None and stamp >= cutoff:
+            return True
+    return False
+
+
+def _stats_retention(now=None) -> dict:
+    """usage.log -> hook-driven briefings (`brief:auto`) vs deliberate
+    re-reads, over the last _RETENTION_WINDOW_DAYS. Plain `brief` lines
+    stamped before the first `brief:auto` ever logged predate the flag and
+    are reported as untagged — ambiguous, never guessed (#54 honesty rule).
+    stale_hook_warning: sessions were captured in the window but zero
+    auto-briefings were logged — the SessionStart hook likely predates
+    --auto."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=_RETENTION_WINDOW_DAYS)
+    out = {"window_days": _RETENTION_WINDOW_DAYS, "hook_briefs": 0,
+           "rereads": {"brief": 0, "status": 0, "recall": 0},
+           "rereads_total": 0, "rereads_per_hook_brief": None,
+           "untagged_briefs": 0, "stale_hook_warning": False}
+    try:
+        lines = (config.log_dir() / "usage.log").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    events = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        stamp = _parse_stamp(parts[0])
+        if stamp is not None:
+            events.append((stamp, parts[1]))
+    first_auto = min((s for s, cmd in events if cmd == "brief:auto"), default=None)
+    for stamp, cmd in events:
+        if cmd == "brief" and (first_auto is None or stamp < first_auto):
+            out["untagged_briefs"] += 1
+            continue
+        if stamp < cutoff:
+            continue
+        if cmd == "brief:auto":
+            out["hook_briefs"] += 1
+        elif cmd in out["rereads"]:
+            out["rereads"][cmd] += 1
+    out["rereads_total"] = sum(out["rereads"].values())
+    if out["hook_briefs"]:
+        out["rereads_per_hook_brief"] = round(
+            out["rereads_total"] / out["hook_briefs"], 2)
+    if out["hook_briefs"] == 0 and _spawns_in_window(cutoff):
+        out["stale_hook_warning"] = True
+    return out
+
+
 def _cmd_stats(args) -> int:
     """Aggregate what is already on disk. Nothing is transmitted anywhere —
     sharing the output is a deliberate act (the user pastes it)."""
     data = {"usage": _stats_usage(), "capture": _stats_capture(),
-            "store": _stats_store()}
+            "store": _stats_store(), "retention": _stats_retention()}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0
