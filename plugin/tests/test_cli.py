@@ -2511,6 +2511,97 @@ def test_brief_fallback_full_via_env(
     assert "fallback" in out.lower()
 
 
+def test_brief_withholds_resolved_item_and_notes_suppression(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #103: a resolved item must not print in the brief, and the withheld
+    # count must be announced so the suppression is never silent.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    # write_checkpoint stamps a stable per-item id (#102) on every item, so a
+    # real checkpoint's items are id-bearing by the time brief reads them —
+    # resolve that exact id (the id-less fuzzy path is for legacy checkpoints
+    # predating id-stamping, covered by the pure-function tests).
+    written = store.read_latest(project_dir="/repo/x")
+    item_id = written["working_context"]["open_questions"][1]["id"]
+    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Chunk threshold for the serializer" not in out
+    assert "1 resolved item(s) withheld" in out
+    assert "--suppressed" in out
+
+
+def test_brief_fails_open_when_resolutions_raises(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #103: withhold machinery must never take the briefing down with it —
+    # a broken events.jsonl (or any resolutions() failure) still renders the
+    # full, unfiltered brief and exits clean.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(store, "resolutions", _boom)
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Chunk threshold for the serializer" in out
+
+
+def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #103: `daimon status --suppressed` answers the brief's "N resolved
+    # item(s) withheld" note with the actual listing, reusing briefing.withhold
+    # rather than reimplementing the classification.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["working_context"]["open_questions"][1]
+    item_id = item["id"]
+    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "suppressed items (1):" in out
+    assert item_id in out
+    assert "Chunk threshold for the serializer" in out
+    assert "resolved" in out
+    # the live item must never show up in the suppressed listing
+    assert "PR #6 state" not in out
+
+
+def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #103 I2: `daimon resolve` accepts all five item kinds (store._ITEM_LISTS),
+    # but withhold used to iterate only carry._CARRIED_KINDS (3 of 5) — a
+    # resolved strong_beliefs id never suppressed. Cover the gap end-to-end.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["epistemic_snapshot"]["strong_beliefs"][0]
+    item_id = item["id"]
+    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Extractive pinning prevents silent fact loss" not in out
+    assert "1 resolved item(s) withheld" in out
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "suppressed items (1):" in out
+    assert item_id in out
+
+
+def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.strip() == "no suppressed items"
+
+
 def test_recall_rejects_nonpositive_limit(tmp_checkpoint_dir, capsys):
     # --limit 0 / -N used to clamp silently to 1 result. Reject loudly.
     rc = cli.main(["recall", "anything", "--limit", "0"])
@@ -3198,6 +3289,7 @@ def test_resolve_by_exact_id_appends_event(tmp_checkpoint_dir, capsys, monkeypat
     assert cli.main(["resolve", iid]) == 0
     r = store.resolutions(project_dir="/p/A")
     assert store.is_resolved(r[iid])
+    assert r[iid]["item_text"] == "release pipeline awaiting manual approval step"
 
 
 def test_resolve_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
@@ -3244,3 +3336,91 @@ def test_log_appends_freeform_event(tmp_checkpoint_dir, capsys, monkeypatch):
     assert line["kind"] == "note"
     assert line["note"] == "midnight deploy went clean"
     assert line["item_ref"] == ""
+
+
+# ---- #103: daimon reverify — evidence-gated reopen ----
+
+
+def test_reverify_not_found_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["reverify", "no-such-id"]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_reverify_refuses_without_evidence_when_no_anchor(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    assert cli.main(["reverify", iid]) == 1
+    out = capsys.readouterr().out
+    assert "without evidence" in out
+    r = store.resolutions(project_dir="/p/A")
+    assert store.is_resolved(r[iid])  # unchanged — still resolved, nothing appended
+
+
+def test_reverify_with_evidence_reopens(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    assert cli.main(["reverify", iid, "--evidence", "checked release page"]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert not store.is_resolved(r[iid])
+    assert "checked release page" in r[iid]["note"]
+
+
+def test_reverify_anchor_live_reopens_without_evidence(tmp_checkpoint_dir, tmp_path, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "anchored claim about foo()", "trust": "inferred",
+         "anchored_to": {"file": "foo.py", "symbol": "foo", "body_hash": "deadbeef"}},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
+    assert cli.main(["reverify", iid]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert not store.is_resolved(r[iid])
+    assert "anchor live" in r[iid]["note"]
+
+
+def test_reverify_anchor_live_and_evidence_combined_note(tmp_checkpoint_dir, capsys, monkeypatch):
+    # M4: when the anchor is live AND --evidence is supplied, the note
+    # concatenates both — "reverified: anchor live; <evidence>".
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "anchored claim about foo()", "trust": "inferred",
+         "anchored_to": {"file": "foo.py", "symbol": "foo", "body_hash": "deadbeef"}},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
+    assert cli.main(["reverify", iid, "--evidence", "saw it work"]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert not store.is_resolved(r[iid])
+    assert r[iid]["note"] == "reverified: anchor live; saw it work"
+
+
+def test_reverify_anchor_drifted_still_refused_without_evidence(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "anchored claim about bar()", "trust": "inferred",
+         "anchored_to": {"file": "bar.py", "symbol": "bar", "body_hash": "deadbeef"}},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    monkeypatch.setattr(cli.anchor, "check", lambda a, p: "hard")
+    assert cli.main(["reverify", iid]) == 1
+    r = store.resolutions(project_dir="/p/A")
+    assert store.is_resolved(r[iid])  # unchanged — still resolved, nothing appended

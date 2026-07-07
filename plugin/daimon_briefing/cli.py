@@ -396,6 +396,15 @@ def _cmd_brief(args) -> int:
     if fallback_used:
         render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
                                   "checkpoint (fallback), possibly another project's."])
+    withheld = []
+    if checkpoint:
+        # Withhold (#103): render-time derivation, fail-open — a briefing
+        # must never die over suppression machinery.
+        try:
+            events = store.resolutions(project_dir=project)
+            checkpoint, withheld = briefing.withhold(checkpoint, events)
+        except Exception:
+            withheld = []
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -405,6 +414,10 @@ def _cmd_brief(args) -> int:
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
     teammates = _team_briefings(project) if getattr(args, "team", False) else None
     render.render_brief(checkpoint, drift=drift, teammates=teammates)
+    if withheld:
+        render.render_brief_note([
+            f"{len(withheld)} resolved item(s) withheld — "
+            "`daimon status --suppressed` to list"])
     return 0
 
 
@@ -480,11 +493,56 @@ def _cmd_resolve(args) -> int:
             print("resolve by exact id: daimon resolve <id>")
             return 1
     ok = store.append_event(target["id"], args.status, note=args.note or "",
-                            project_dir=project)
+                            project_dir=project, item_text=str(target.get("text") or ""))
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
     print(f"resolved {target['id']}: {target.get('text', '')} [{args.status}]")
+    return 0
+
+
+def _cmd_reverify(args) -> int:
+    """Evidence-gated reopen (#103): re-stamping a resolved item without
+    evidence would mark an unchecked claim verified — the one thing this
+    tool must never do to its own audit trail. Reopen is allowed only when
+    the original anchor still checks out live (the code proved itself) or
+    the caller supplies --evidence (a human vouches for it); otherwise the
+    refusal appends nothing. Exact id only — no fuzzy match, because
+    reopening is a deliberate act; find ids via `daimon status --suppressed`."""
+    project = _resolve_project(args.project)
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    if not isinstance(checkpoint, dict):
+        print("no checkpoint for this project yet — nothing to reverify")
+        return 1
+    item = None
+    for section, key in store._ITEM_LISTS:
+        for it in ((checkpoint.get(section) or {}).get(key) or []):
+            if isinstance(it, dict) and it.get("id") == args.target:
+                item = it
+                break
+        if item is not None:
+            break
+    if item is None:
+        print(f"no item found with id {args.target!r}")
+        return 1
+    evidence = args.evidence or ""
+    a = item.get("anchored_to")
+    if isinstance(a, dict) and anchor.check(a, project) == "live":
+        note = "reverified: anchor live"
+        if evidence:
+            note += "; " + evidence
+    elif evidence:
+        note = f"evidence: {evidence}"
+    else:
+        print("re-stamping without evidence would mark an unchecked claim "
+              "verified — supply --evidence, or fix the anchored code and retry")
+        return 1
+    ok = store.append_event(item["id"], "reopened", note=note,
+                            item_text=item.get("text", ""), project_dir=project)
+    if not ok:
+        print("event not written (daimon disabled or project unknown)")
+        return 1
+    print(f"reopened {item['id']}: {item.get('text', '')}")
     return 0
 
 
@@ -774,10 +832,47 @@ def _crash_log_info(path: Path, now: float) -> dict | None:
             "age": _format_age(age), "path": str(path)}
 
 
+def _print_suppressed(project) -> int:
+    """`daimon status --suppressed` (#103): the visibility answer to brief's
+    silent-suppression note ("N resolved item(s) withheld — `daimon status
+    --suppressed` to list"). Reuses briefing.withhold for the classification
+    rather than reimplementing it — the resolved/live split must stay in
+    exactly one place. Reads ONLY this project's own latest checkpoint
+    (fallback=False, same rule as carry #94): listing another project's
+    withheld items under this project's status would be worse than listing
+    none. Fails open like brief's withhold call — a broken events.jsonl
+    must not crash `status`, it should just report nothing suppressed."""
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    withheld = []
+    if checkpoint:
+        try:
+            events = store.resolutions(project_dir=project)
+            _, withheld = briefing.withhold(checkpoint, events)
+        except Exception:
+            withheld = []
+    if not withheld:
+        print("no suppressed items")
+        return 0
+    print(f"suppressed items ({len(withheld)}):")
+    for key, item, evt in withheld:
+        item_id = item.get("id") or "-"
+        text = str(item.get("text") or "").strip()
+        status = str(evt.get("status") or "")
+        ts = str(evt.get("ts") or "")
+        note = str(evt.get("note") or "").strip()
+        paren = f"{status} {ts}"
+        if note:
+            paren += f", {note}"
+        print(f"  {item_id}  [{key}] {text}  ({paren})")
+    return 0
+
+
 def _cmd_status(args) -> int:
     _note_usage("status")
-    now = time.time()
     project = _resolve_project(args.project)
+    if getattr(args, "suppressed", False):
+        return _print_suppressed(project)
+    now = time.time()
     proj = _checkpoint_info(store.project_latest_path(project), now)
     glob = _checkpoint_info(store.global_latest_path(), now)
     same = bool(
@@ -1663,6 +1758,18 @@ def main(argv=None) -> int:
     p_resolve.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_resolve.set_defaults(func=_cmd_resolve)
 
+    p_reverify = sub.add_parser(
+        "reverify", help="evidence-gated reopen of a resolved item (#103) — "
+        "refuses without proof, so a claim can't get re-verified for free",
+        epilog="Examples:\n"
+               "  daimon reverify o-3f8a2c --evidence \"checked release page\"\n"
+               "  daimon reverify o-3f8a2c   # reopens only if the anchor still checks live\n",
+    )
+    p_reverify.add_argument("target", help="item id (exact only — reverify is deliberate, no fuzzy match)")
+    p_reverify.add_argument("--evidence", help="why this claim can be trusted again")
+    p_reverify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_reverify.set_defaults(func=_cmd_reverify)
+
     p_log = sub.add_parser(
         "log", help="append a freeform timeline event (zero-LLM) to this project's event log (#102)",
     )
@@ -1695,6 +1802,10 @@ def main(argv=None) -> int:
     )
     p_status.add_argument(
         "--json", action="store_true", help="machine-readable output"
+    )
+    p_status.add_argument(
+        "--suppressed", action="store_true",
+        help="list items withheld from the briefing as resolved (#103)",
     )
     p_status.set_defaults(func=_cmd_status)
 

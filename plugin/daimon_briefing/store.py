@@ -677,7 +677,7 @@ def _events_path(project_dir=None):
 
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
-                 project_dir=None) -> bool:
+                 project_dir=None, item_text: str = "") -> bool:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
     audit trail must stay byte-stable. Silent no-op under the kill switch
@@ -695,6 +695,8 @@ def append_event(item_ref: str, status: str, note: str = "",
                "source": source}
         if note:
             evt["note"] = note
+        if item_text:
+            evt["item_text"] = item_text
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(evt, ensure_ascii=False) + "\n")
         return True
