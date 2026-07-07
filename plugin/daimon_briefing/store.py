@@ -386,6 +386,11 @@ def _redact_checkpoint(checkpoint: dict) -> None:
             if isinstance(item, dict):
                 _scrub(item, "text")
                 _scrub(item, "quote")
+                links = item.get("links")
+                if isinstance(links, list):
+                    for link in links:
+                        if isinstance(link, dict) and isinstance(link.get("target"), str):
+                            _scrub(link, "target")
     topic = (checkpoint.get("working_context") or {}).get("active_topic")
     if isinstance(topic, dict):
         _scrub(topic, "text")
@@ -784,4 +789,9 @@ def is_resolved(event) -> bool:
     (the writer bothered to record a lifecycle fact) rather than vanish."""
     if not isinstance(event, dict):
         return False
-    return not str(event.get("status") or "").lower().startswith("reopen")
+    status = str(event.get("status") or "").lower()
+    if status.startswith("supersede-candidate"):
+        return False  # a machine SUGGESTION is live by construction (#14):
+                      # every consumer (carry, withhold, future) inherits
+                      # no-suppression without knowing candidates exist.
+    return not status.startswith("reopen")
