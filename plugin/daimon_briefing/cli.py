@@ -480,7 +480,7 @@ def _cmd_resolve(args) -> int:
             print("resolve by exact id: daimon resolve <id>")
             return 1
     ok = store.append_event(target["id"], args.status, note=args.note or "",
-                            project_dir=project)
+                            project_dir=project, item_text=str(target.get("text") or ""))
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1

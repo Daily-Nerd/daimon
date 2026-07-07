@@ -966,3 +966,20 @@ def test_resolutions_missing_file_or_project_is_empty(tmp_checkpoint_dir):
     from daimon_briefing import store
     assert store.resolutions(project_dir="/p/NOPE") == {}
     assert store.resolutions(project_dir=None) == {}
+
+
+def test_append_event_stores_item_text_when_given(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    store.append_event("o-abc", "resolved", project_dir="/p/A",
+                       item_text="the exact loop wording")
+    slug = store.project_slug("/p/A")
+    evt = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
+    assert evt["item_text"] == "the exact loop wording"
+
+
+def test_append_event_omits_empty_item_text(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    store.append_event("o-abc", "resolved", project_dir="/p/A")
+    slug = store.project_slug("/p/A")
+    evt = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
+    assert "item_text" not in evt
