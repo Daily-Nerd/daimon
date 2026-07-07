@@ -852,3 +852,60 @@ def test_pointer_lock_excludes_second_holder(tmp_checkpoint_dir):
                 fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             probe.close()
+
+
+# ---- #102: stable item ids stamped at write ----
+
+
+def _cp_with_items():
+    return {
+        "working_context": {
+            "open_questions": [{"text": "will the cache hold", "trust": "inferred"}],
+            "recent_decisions": [{"text": "ship the guard", "trust": "verbatim"}],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [{"text": "carry must stay pure"}],
+            "uncertainties": [{"text": "is the window right"}],
+            "contradictions_flagged": [{"text": "doc says X code says Y"}],
+        },
+    }
+
+
+def test_write_stamps_id_on_every_list_item(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = _cp_with_items()
+    store.write_checkpoint("S1", cp)
+    assert cp["working_context"]["open_questions"][0]["id"].startswith("o-")
+    assert cp["working_context"]["recent_decisions"][0]["id"].startswith("r-")
+    assert cp["epistemic_snapshot"]["strong_beliefs"][0]["id"].startswith("s-")
+    assert cp["epistemic_snapshot"]["uncertainties"][0]["id"].startswith("u-")
+    assert cp["epistemic_snapshot"]["contradictions_flagged"][0]["id"].startswith("c-")
+
+
+def test_id_stamping_is_idempotent_and_deterministic(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = _cp_with_items()
+    store.write_checkpoint("S1", cp)
+    first = cp["working_context"]["open_questions"][0]["id"]
+    store.write_checkpoint("S1b", cp)
+    assert cp["working_context"]["open_questions"][0]["id"] == first
+    cp2 = _cp_with_items()
+    store.write_checkpoint("S2", cp2)
+    assert cp2["working_context"]["open_questions"][0]["id"] == first  # same kind+text -> same id
+
+
+def test_identical_text_twins_get_distinct_ids(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = _cp_with_items()
+    cp["working_context"]["open_questions"].append(
+        {"text": "will the cache hold"})  # exact duplicate text
+    store.write_checkpoint("S1", cp)
+    ids = [i["id"] for i in cp["working_context"]["open_questions"]]
+    assert len(set(ids)) == 2
+
+
+def test_non_dict_and_empty_items_are_skipped(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {"open_questions": ["bare string", {"text": ""}, {"no": "text"}]}}
+    store.write_checkpoint("S1", cp)  # must not raise
+    assert "id" not in cp["working_context"]["open_questions"][1]

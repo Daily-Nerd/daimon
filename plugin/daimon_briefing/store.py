@@ -24,6 +24,7 @@ one a live pointer still references. The default is generous on purpose so #33's
 merged checkpoint history keeps a deep well of files to reconstruct from.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -350,6 +351,50 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
             pass
 
 
+# The five list sections that hold checkpoint items. active_topic is a single
+# per-session dict and never needs an id (it does not carry, #33).
+_ITEM_LISTS = (
+    ("working_context", "open_questions"),
+    ("working_context", "recent_decisions"),
+    ("epistemic_snapshot", "strong_beliefs"),
+    ("epistemic_snapshot", "uncertainties"),
+    ("epistemic_snapshot", "contradictions_flagged"),
+)
+
+
+def _stamp_item_ids(checkpoint: dict) -> None:
+    """Stable per-item ids (#102): sha1 of kind:text, 6 hex chars, prefixed
+    with the kind's initial. setdefault semantics — an item that already
+    carries an id (a carried twin, a re-write) is never re-stamped, so
+    identity survives rotation and re-serialization. Collisions within one
+    checkpoint widen the slice; identical-text twins fall through to a
+    counter suffix (same text, same kind, still two loops)."""
+    seen: set = set()
+    for section, key in _ITEM_LISTS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+                continue
+            if item.get("id"):
+                seen.add(item["id"])
+                continue
+            digest = hashlib.sha1(
+                f"{key}:{item['text']}".encode("utf-8")).hexdigest()
+            cand = ""
+            for width in (6, 8, 12, 40):
+                cand = f"{key[0]}-{digest[:width]}"
+                if cand not in seen:
+                    break
+            n = 2
+            while cand in seen:
+                cand = f"{key[0]}-{digest[:6]}-{n}"
+                n += 1
+            item["id"] = cand
+            seen.add(cand)
+
+
 def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Path:
     """Write the session checkpoint + the global latest pointer, and — when the
     project is known — the per-project latest pointer too. The global pointer is
@@ -372,6 +417,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # store stays free of the git/subprocess dependency (scar 0). Present on every
     # checkpoint so read_team can attribute it later, even when team-write is off.
     checkpoint.setdefault("author", config.author())
+    _stamp_item_ids(checkpoint)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
     # session older than the pointer window would lose its project forever and
