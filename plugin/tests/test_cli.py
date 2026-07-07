@@ -3104,6 +3104,35 @@ def test_stats_json_includes_retention(tmp_checkpoint_dir, tmp_log_dir,
                                       "untagged_briefs", "stale_hook_warning"}
 
 
+def test_stats_plain_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
+                                               sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(_usage_line(1, "brief:auto", now)
+                                           + _usage_line(0, "status", now))
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "retention (last 14d):" in out
+    assert "hook briefings: 1" in out
+    assert "re-reads per hook briefing: 1.0" in out
+
+
+def test_stats_plain_warns_on_stale_hook(tmp_checkpoint_dir, tmp_log_dir,
+                                         sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    store.write_checkpoint("S1", sample_checkpoint)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        f"{stamp} session-end: spawned serialize for S9 (pid 1)\n")
+    assert cli.main(["stats"]) == 0
+    assert "re-run `daimon hooks install`" in capsys.readouterr().out
+
+
 # ---- crash stamping (#92): timestamp header before uncaught tracebacks ------
 
 
