@@ -318,3 +318,49 @@ def test_in_call_reworded_prev_twins_carry_once():
     out = carry.merge(_cp("S-new"), prev, NOW)
     qs = out["working_context"]["open_questions"]
     assert len(qs) == 1
+
+
+# --- id inheritance + resolved-skip (#102): merge stays pure, caller injects
+# the resolved set as a frozenset of item_ref strings. -----------------------
+
+def test_twin_inherits_prev_id():
+    prev = _cp("S-prev", 1, questions=[
+        _item("cache guard holds", id="o-aaa111")])
+    new = _cp("S-new", 0, questions=[
+        _item("the cache guard is holding", days=0)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["id"] == "o-aaa111"
+
+
+def test_resolved_prev_item_does_not_carry():
+    prev = _cp("S-prev", 1, questions=[
+        _item("dead loop no longer relevant", id="o-dead01"),
+        _item("control sibling loop still open", id="o-alive1")])
+    out = carry.merge(_cp("S-new"), prev, NOW, resolved=frozenset({"o-dead01"}))
+    qs = out["working_context"]["open_questions"]
+    texts = [q["text"] for q in qs]
+    assert "dead loop no longer relevant" not in texts
+    assert "control sibling loop still open" in texts
+
+
+def test_resolved_prev_with_native_twin_still_inherits_id_and_native_survives():
+    prev = _cp("S-prev", 1, questions=[
+        _item("dead loop no longer relevant", id="o-dead01")])
+    new = _cp("S-new", 0, questions=[
+        _item("dead loop is no longer relevant now", days=0)])
+    out = carry.merge(new, prev, NOW, resolved=frozenset({"o-dead01"}))
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1  # native twin never dropped
+    assert qs[0]["id"] == "o-dead01"
+
+
+def test_merge_without_resolved_kwarg_unchanged():
+    prev = _cp("S-prev", 1, questions=[_item("zephyr ledger drop unresolved")])
+    new = _cp("S-new")
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["text"] == "zephyr ledger drop unresolved"
+    assert qs[0]["carried_from"] == "S-prev"

@@ -852,3 +852,117 @@ def test_pointer_lock_excludes_second_holder(tmp_checkpoint_dir):
                 fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             probe.close()
+
+
+# ---- #102: stable item ids stamped at write ----
+
+
+def _cp_with_items():
+    return {
+        "working_context": {
+            "open_questions": [{"text": "will the cache hold", "trust": "inferred"}],
+            "recent_decisions": [{"text": "ship the guard", "trust": "verbatim"}],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [{"text": "carry must stay pure"}],
+            "uncertainties": [{"text": "is the window right"}],
+            "contradictions_flagged": [{"text": "doc says X code says Y"}],
+        },
+    }
+
+
+def test_write_stamps_id_on_every_list_item(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = _cp_with_items()
+    store.write_checkpoint("S1", cp)
+    assert cp["working_context"]["open_questions"][0]["id"].startswith("o-")
+    assert cp["working_context"]["recent_decisions"][0]["id"].startswith("r-")
+    assert cp["epistemic_snapshot"]["strong_beliefs"][0]["id"].startswith("s-")
+    assert cp["epistemic_snapshot"]["uncertainties"][0]["id"].startswith("u-")
+    assert cp["epistemic_snapshot"]["contradictions_flagged"][0]["id"].startswith("c-")
+
+
+def test_id_stamping_is_idempotent_and_deterministic(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = _cp_with_items()
+    store.write_checkpoint("S1", cp)
+    first = cp["working_context"]["open_questions"][0]["id"]
+    store.write_checkpoint("S1b", cp)
+    assert cp["working_context"]["open_questions"][0]["id"] == first
+    cp2 = _cp_with_items()
+    store.write_checkpoint("S2", cp2)
+    assert cp2["working_context"]["open_questions"][0]["id"] == first  # same kind+text -> same id
+
+
+def test_identical_text_twins_get_distinct_ids(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = _cp_with_items()
+    cp["working_context"]["open_questions"].append(
+        {"text": "will the cache hold"})  # exact duplicate text
+    store.write_checkpoint("S1", cp)
+    ids = [i["id"] for i in cp["working_context"]["open_questions"]]
+    assert len(set(ids)) == 2
+
+
+def test_non_dict_and_empty_items_are_skipped(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {"open_questions": ["bare string", {"text": ""}, {"no": "text"}]}}
+    store.write_checkpoint("S1", cp)  # must not raise
+    assert "id" not in cp["working_context"]["open_questions"][1]
+
+
+# ---- #102: append-only event log + fold ----
+
+
+def test_append_event_writes_jsonl_line(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    assert store.append_event("o-abc123", "resolved", note="shipped",
+                              project_dir="/p/A") is True
+    slug = store.project_slug("/p/A")
+    lines = (tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()
+    evt = json.loads(lines[0])
+    assert evt["item_ref"] == "o-abc123"
+    assert evt["status"] == "resolved"
+    assert evt["note"] == "shipped"
+    assert evt["kind"] == "resolution"
+    assert evt["ts"].endswith("Z")
+
+
+def test_append_event_respects_kill_switch(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert store.append_event("o-abc123", "resolved", project_dir="/p/A") is False
+    slug = store.project_slug("/p/A")
+    assert not (tmp_checkpoint_dir / slug / "events.jsonl").exists()
+
+
+def test_resolutions_latest_wins_by_timestamp_not_line_order(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    # NEWER event written FIRST in the file — fold must still prefer it
+    (d / "events.jsonl").write_text(
+        '{"ts": "2026-07-07T10:00:00Z", "kind": "resolution", "item_ref": "o-a", "status": "reopened"}\n'
+        '{"ts": "2026-07-06T10:00:00Z", "kind": "resolution", "item_ref": "o-a", "status": "resolved"}\n'
+        'not json at all\n'
+        '{"ts": "2026-07-07T09:00:00Z", "kind": "future-kind", "item_ref": "o-b", "status": "done", "extra": 1}\n'
+    )
+    r = store.resolutions(project_dir="/p/A")
+    assert r["o-a"]["status"] == "reopened"
+    assert r["o-b"]["extra"] == 1  # unknown kind + field preserved
+
+
+def test_is_resolved_semantics():
+    from daimon_briefing import store
+    assert store.is_resolved(None) is False
+    assert store.is_resolved({"status": "resolved"}) is True
+    assert store.is_resolved({"status": "superseded-by:o-x"}) is True
+    assert store.is_resolved({"status": "REOPENED — regression"}) is False
+
+
+def test_resolutions_missing_file_or_project_is_empty(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    assert store.resolutions(project_dir="/p/NOPE") == {}
+    assert store.resolutions(project_dir=None) == {}

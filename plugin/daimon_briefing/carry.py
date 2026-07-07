@@ -64,13 +64,23 @@ def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
 
 
 def merge(new_cp: dict, prev_cp: dict | None, now: float,
-          floor: float = 0.05, cap: int = 8) -> dict:
+          floor: float = 0.05, cap: int = 8,
+          resolved: frozenset = frozenset()) -> dict:
     """Fold prev_cp's carry-eligible items into a COPY of new_cp.
 
     Native items are never dropped or reordered — carry only appends, and (on
     a dedup hit) copies the older first_seen onto the native twin so decay age
     survives rewording. Anachronism guard: healing an old session must not
     swallow a newer checkpoint's state.
+
+    `resolved` (#102): a set of item_ref/id strings the CALLER has already
+    determined are closed (via store.resolutions/is_resolved) — merge does no
+    I/O itself (module invariant, see the module docstring). A resolved prev
+    item with NO native twin is not carried. A resolved prev item WITH a
+    native twin still runs the twin block: id inheritance still lands on the
+    twin (that's what lets #103 suppress the re-extraction at render time),
+    and the native item itself is never dropped — only the render layer, not
+    carry, decides what to do with a resolved-but-still-mentioned item.
 
     No-op paths (non-dict inputs, anachronism guard) return new_cp UNCHANGED,
     not a copy — callers reassign the result immediately, so a defensive
@@ -135,7 +145,14 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                     cur = store._created_epoch(twin["first_seen"])
                     if old is not None and (cur is None or old < cur):
                         twin["first_seen"] = item["first_seen"]
+                # Identity rides the same rail as first_seen (#102): the prev
+                # item's id lands on the reworded native twin, so a resolution
+                # recorded against the old id still binds after re-extraction.
+                if item.get("id"):
+                    twin.setdefault("id", item["id"])
                 continue
+            if item.get("id") in resolved:
+                continue  # world closed this loop (#102) — stop carrying it
             if scoring.effective_weight(item, item_type, now) < floor:
                 continue  # expired — deterministic exit (noise budget)
             # Carry-once covers REWORDED twins too (#31 item 9): a prev item

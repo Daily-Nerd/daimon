@@ -212,9 +212,13 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
             # this project's bucket permanently. No prev -> no carry.
             prev = store.read_latest(project, fallback=False)
             now = store._created_epoch(checkpoint.get("created")) or time.time()
+            events = store.resolutions(project_dir=project)
+            resolved = frozenset(ref for ref, evt in events.items()
+                                 if store.is_resolved(evt))
             checkpoint = carry.merge(checkpoint, prev, now,
                                      floor=config.carry_floor(),
-                                     cap=config.carry_max())
+                                     cap=config.carry_max(),
+                                     resolved=resolved)
         except Exception:  # keep the unmerged checkpoint, proceed to write
             pass
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
@@ -438,6 +442,63 @@ def _cmd_recall(args) -> int:
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}] {r['text']} "
                      f"({r['session_id']}, {age} ago){superseded}")
     render.render_recall_lines(lines)
+    return 0
+
+
+# ---- resolve/log: zero-LLM append-only event writers (#102) ----
+
+
+def _cmd_resolve(args) -> int:
+    """Append a resolution event for ONE checkpoint item (#102). Exact id
+    first; else a fuzzy query that must match uniquely — an ambiguous bind
+    is refused with candidates listed, because a wrong bind silently
+    suppresses a live memory (the false-merge lesson, #13)."""
+    project = _resolve_project(args.project)
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    if not isinstance(checkpoint, dict):
+        print("no checkpoint for this project yet — nothing to resolve")
+        return 1
+    items = []
+    for section, key in store._ITEM_LISTS:
+        for item in ((checkpoint.get(section) or {}).get(key) or []):
+            if isinstance(item, dict) and item.get("id"):
+                items.append((key, item))
+    target = next((it for _, it in items if it["id"] == args.target), None)
+    if target is None:
+        texts = [str(it.get("text") or "") for _, it in items]
+        generic = carry._generic_terms(texts)
+        hits = [(key, it) for key, it in items
+                if carry._same_item(args.target, str(it.get("text") or ""), generic)]
+        if len(hits) == 1:
+            target = hits[0][1]
+        else:
+            label = "no item matches" if not hits else "ambiguous — matches"
+            print(f"{label} {args.target!r}; candidates:")
+            listing = hits or items
+            for key, it in listing:
+                print(f"  {it['id']}  [{key}] {it.get('text', '')}")
+            print("resolve by exact id: daimon resolve <id>")
+            return 1
+    ok = store.append_event(target["id"], args.status, note=args.note or "",
+                            project_dir=project)
+    if not ok:
+        print("event not written (daimon disabled or project unknown)")
+        return 1
+    print(f"resolved {target['id']}: {target.get('text', '')} [{args.status}]")
+    return 0
+
+
+def _cmd_log(args) -> int:
+    """Freeform zero-LLM event append (#102): a timeline fact worth keeping
+    that is not tied to one item. The fold ignores ref-less lines; readers
+    of the raw log get the audit trail."""
+    project = _resolve_project(args.project)
+    ok = store.append_event("", args.status, note=args.text,
+                            kind=args.kind, project_dir=project)
+    if not ok:
+        print("event not written (daimon disabled or project unknown)")
+        return 1
+    print(f"logged [{args.kind}] {args.text}")
     return 0
 
 
@@ -1587,6 +1648,29 @@ def main(argv=None) -> int:
         "--limit", type=int, default=20, help="max results (default: 20)"
     )
     p_recall.set_defaults(func=_cmd_recall)
+
+    p_resolve = sub.add_parser(
+        "resolve", help="mark a checkpoint item resolved — append-only event, "
+        "folds at read so the item stops carrying (#102)",
+        epilog="Examples:\n  daimon resolve o-3f8a2c\n"
+               "  daimon resolve \"release pipeline approval\" --note \"shipped in 0.9\"\n",
+    )
+    p_resolve.add_argument("target", help="item id (exact) or a query that must match exactly one item")
+    p_resolve.add_argument("--status", default="resolved",
+                           help="free-form lifecycle status (default: resolved; "
+                                "a status starting with 'reopen' revives the item)")
+    p_resolve.add_argument("--note", help="optional context recorded on the event")
+    p_resolve.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_resolve.set_defaults(func=_cmd_resolve)
+
+    p_log = sub.add_parser(
+        "log", help="append a freeform timeline event (zero-LLM) to this project's event log (#102)",
+    )
+    p_log.add_argument("--text", required=True, help="what happened")
+    p_log.add_argument("--kind", default="note", help="event kind (default: note)")
+    p_log.add_argument("--status", default="", help="optional free-form status")
+    p_log.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_log.set_defaults(func=_cmd_log)
 
     p_inject = sub.add_parser(
         "recall-inject",
