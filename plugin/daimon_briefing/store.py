@@ -474,15 +474,22 @@ def read_checkpoint(session_id: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_latest(project_dir=None) -> dict | None:
+def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
     """Latest checkpoint, preferring the project's own pointer when known;
-    falls back to the global pointer (pre-routing checkpoints, fresh projects)."""
+    falls back to the global pointer (pre-routing checkpoints, fresh projects).
+
+    fallback=False reads ONLY the project's own pointer (#94): the global
+    pointer holds the most recent checkpoint of ANY project, so callers that
+    PERSIST what they read (carry) must never see it — display callers (brief)
+    keep the fallback and label it."""
     d = config.checkpoint_dir()
     slug = project_slug(project_dir)
     if slug:
         path = d / slug / _LATEST
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
+    if not fallback:
+        return None
     path = d / _LATEST
     if not path.exists():
         return None

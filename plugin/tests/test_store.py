@@ -222,6 +222,20 @@ def test_read_latest_none_when_both_absent(tmp_checkpoint_dir):
     assert store.read_latest(project_dir="/p/never-seen") is None
 
 
+def test_read_latest_no_fallback_skips_global(tmp_checkpoint_dir, sample_checkpoint):
+    # #94: carry's read path must not see another project's checkpoint through
+    # the global pointer — a fresh project reads None, not a foreign session.
+    store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"},
+                           project_dir="/p/other")
+    assert store.read_latest(project_dir="/p/fresh", fallback=False) is None
+
+
+def test_read_latest_no_fallback_still_reads_own_project(tmp_checkpoint_dir, sample_checkpoint):
+    store.write_checkpoint("S-a", {**sample_checkpoint, "session_id": "S-a"},
+                           project_dir="/p/A")
+    assert store.read_latest(project_dir="/p/A", fallback=False)["session_id"] == "S-a"
+
+
 # ---- checkpoint rotation: keep last N pointers per dir (#33 Phase 1) ----
 
 
