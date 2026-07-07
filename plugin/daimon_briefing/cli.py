@@ -501,6 +501,51 @@ def _cmd_resolve(args) -> int:
     return 0
 
 
+def _cmd_reverify(args) -> int:
+    """Evidence-gated reopen (#103): re-stamping a resolved item without
+    evidence would mark an unchecked claim verified — the one thing this
+    tool must never do to its own audit trail. Reopen is allowed only when
+    the original anchor still checks out live (the code proved itself) or
+    the caller supplies --evidence (a human vouches for it); otherwise the
+    refusal appends nothing. Exact id only — no fuzzy match, because
+    reopening is a deliberate act; find ids via `daimon status --suppressed`."""
+    project = _resolve_project(args.project)
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    if not isinstance(checkpoint, dict):
+        print("no checkpoint for this project yet — nothing to reverify")
+        return 1
+    item = None
+    for section, key in store._ITEM_LISTS:
+        for it in ((checkpoint.get(section) or {}).get(key) or []):
+            if isinstance(it, dict) and it.get("id") == args.target:
+                item = it
+                break
+        if item is not None:
+            break
+    if item is None:
+        print(f"no item found with id {args.target!r}")
+        return 1
+    evidence = args.evidence or ""
+    a = item.get("anchored_to")
+    if isinstance(a, dict) and anchor.check(a, project) == "live":
+        note = "reverified: anchor live"
+        if evidence:
+            note += "; " + evidence
+    elif evidence:
+        note = f"evidence: {evidence}"
+    else:
+        print("re-stamping without evidence would mark an unchecked claim "
+              "verified — supply --evidence, or fix the anchored code and retry")
+        return 1
+    ok = store.append_event(item["id"], "reopened", note=note,
+                            item_text=item.get("text", ""), project_dir=project)
+    if not ok:
+        print("event not written (daimon disabled or project unknown)")
+        return 1
+    print(f"reopened {item['id']}: {item.get('text', '')}")
+    return 0
+
+
 def _cmd_log(args) -> int:
     """Freeform zero-LLM event append (#102): a timeline fact worth keeping
     that is not tied to one item. The fold ignores ref-less lines; readers
@@ -1712,6 +1757,18 @@ def main(argv=None) -> int:
     p_resolve.add_argument("--note", help="optional context recorded on the event")
     p_resolve.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_resolve.set_defaults(func=_cmd_resolve)
+
+    p_reverify = sub.add_parser(
+        "reverify", help="evidence-gated reopen of a resolved item (#103) — "
+        "refuses without proof, so a claim can't get re-verified for free",
+        epilog="Examples:\n"
+               "  daimon reverify o-3f8a2c --evidence \"checked release page\"\n"
+               "  daimon reverify o-3f8a2c   # reopens only if the anchor still checks live\n",
+    )
+    p_reverify.add_argument("target", help="item id (exact only — reverify is deliberate, no fuzzy match)")
+    p_reverify.add_argument("--evidence", help="why this claim can be trusted again")
+    p_reverify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_reverify.set_defaults(func=_cmd_reverify)
 
     p_log = sub.add_parser(
         "log", help="append a freeform timeline event (zero-LLM) to this project's event log (#102)",

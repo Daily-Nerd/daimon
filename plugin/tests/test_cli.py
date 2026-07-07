@@ -3314,3 +3314,72 @@ def test_log_appends_freeform_event(tmp_checkpoint_dir, capsys, monkeypatch):
     assert line["kind"] == "note"
     assert line["note"] == "midnight deploy went clean"
     assert line["item_ref"] == ""
+
+
+# ---- #103: daimon reverify — evidence-gated reopen ----
+
+
+def test_reverify_not_found_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["reverify", "no-such-id"]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_reverify_refuses_without_evidence_when_no_anchor(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    assert cli.main(["reverify", iid]) == 1
+    out = capsys.readouterr().out
+    assert "without evidence" in out
+    r = store.resolutions(project_dir="/p/A")
+    assert store.is_resolved(r[iid])  # unchanged — still resolved, nothing appended
+
+
+def test_reverify_with_evidence_reopens(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    assert cli.main(["reverify", iid, "--evidence", "checked release page"]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert not store.is_resolved(r[iid])
+    assert "checked release page" in r[iid]["note"]
+
+
+def test_reverify_anchor_live_reopens_without_evidence(tmp_checkpoint_dir, tmp_path, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "anchored claim about foo()", "trust": "inferred",
+         "anchored_to": {"file": "foo.py", "symbol": "foo", "body_hash": "deadbeef"}},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
+    assert cli.main(["reverify", iid]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert not store.is_resolved(r[iid])
+    assert "anchor live" in r[iid]["note"]
+
+
+def test_reverify_anchor_drifted_still_refused_without_evidence(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "anchored claim about bar()", "trust": "inferred",
+         "anchored_to": {"file": "bar.py", "symbol": "bar", "body_hash": "deadbeef"}},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    monkeypatch.setattr(cli.anchor, "check", lambda a, p: "hard")
+    assert cli.main(["reverify", iid]) == 1
+    r = store.resolutions(project_dir="/p/A")
+    assert store.is_resolved(r[iid])  # unchanged — still resolved, nothing appended
