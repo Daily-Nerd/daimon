@@ -212,9 +212,13 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
             # this project's bucket permanently. No prev -> no carry.
             prev = store.read_latest(project, fallback=False)
             now = store._created_epoch(checkpoint.get("created")) or time.time()
+            events = store.resolutions(project_dir=project)
+            resolved = frozenset(ref for ref, evt in events.items()
+                                 if store.is_resolved(evt))
             checkpoint = carry.merge(checkpoint, prev, now,
                                      floor=config.carry_floor(),
-                                     cap=config.carry_max())
+                                     cap=config.carry_max(),
+                                     resolved=resolved)
         except Exception:  # keep the unmerged checkpoint, proceed to write
             pass
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
