@@ -246,6 +246,84 @@ def test_brief_hook_disable_suppresses_heal(tmp_path, tmp_checkpoint_dir):
     assert not capture.exists()
 
 
+def _fake_cli_argv_recording(tmp_path) -> tuple[Path, Path]:
+    """A fake `daimon` that appends each invocation's full argv to a capture
+    file (one line per call) and prints a briefing body — lets a test observe
+    exactly which flags `_emit_briefing` passed and how many times it retried."""
+    fake_bin = tmp_path / "fakebin"
+    fake_bin.mkdir()
+    capture = tmp_path / "argv.txt"
+    script = fake_bin / "daimon"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> "{capture}"\n'
+        "echo briefing-body\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return fake_bin, capture
+
+
+def test_brief_hook_passes_auto_flag(tmp_path, tmp_checkpoint_dir, sample_checkpoint):
+    # #100: `daimon brief --auto` (Task 1) is only useful if the hook sends it.
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    fake_bin, capture = _fake_cli_argv_recording(tmp_path)
+    proc = _run(
+        BRIEF_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new"},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    recorded = capture.read_text()
+    assert "--auto" in recorded
+
+
+def _fake_cli_preflag(tmp_path) -> tuple[Path, Path]:
+    """A fake `daimon` shaped like a CLI installed before the --auto flag
+    shipped: the plugin (and this hook) update independently of the CLI via
+    uv/pip, so a newer hook meeting an older CLI on PATH is a real field
+    scenario. It rejects --auto with argparse's exit code 2 but briefs fine
+    without it. Records each invocation to let a test count the retry."""
+    fake_bin = tmp_path / "fakebin"
+    fake_bin.mkdir()
+    capture = tmp_path / "argv.txt"
+    script = fake_bin / "daimon"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> "{capture}"\n'
+        'case "$*" in *--auto*) exit 2;; esac\n'
+        "echo briefing-body\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return fake_bin, capture
+
+
+def test_brief_hook_retries_without_auto_on_preflag_cli(tmp_path, tmp_checkpoint_dir, sample_checkpoint):
+    # #100: exit 2 (argparse rejection) from a pre-flag CLI must degrade to a
+    # plain retry, never a lost briefing.
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    fake_bin, capture = _fake_cli_preflag(tmp_path)
+    proc = _run(
+        BRIEF_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new"},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    assert "briefing-body" in proc.stdout  # briefing survived the mismatch
+
+    # Filter to `brief` invocations only: main() also opportunistically spawns
+    # `daimon heal` detached against this same fake CLI, and that line must not
+    # be mistaken for the retry.
+    brief_calls = [
+        line for line in capture.read_text().splitlines()
+        if line.split()[:1] == ["brief"]
+    ]
+    assert len(brief_calls) == 2  # --auto attempted first, then the plain retry
+    assert "--auto" in brief_calls[0]
+    assert "--auto" not in brief_calls[1]
+
+
 # ---- daimon-session-end.py ----
 
 

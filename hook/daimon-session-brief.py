@@ -29,6 +29,12 @@ except Exception:  # noqa: BLE001 — missing/corrupt lib must never crash the h
 TIMEOUT = 8  # seconds; hook budget is 10
 
 
+def _run_brief(cli, cwd: str, auto: bool):
+    argv = [cli, "brief", "--auto"] if auto else [cli, "brief"]
+    return subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT,
+                          env=lib.project_env(cwd))
+
+
 def _emit_briefing(cwd: str, cli) -> None:
     # No binary at all is the plugin-install onboarding state (#91): the plugin
     # ships the hooks, the CLI arrives separately. One actionable line, exit 0.
@@ -55,10 +61,12 @@ def _emit_briefing(cwd: str, cli) -> None:
 
     # The CLI must route the same way this hook did: hand it the project cwd.
     try:
-        proc = subprocess.run(
-            [cli, "brief"], capture_output=True, text=True, timeout=TIMEOUT,
-            env=lib.project_env(cwd),
-        )
+        proc = _run_brief(cli, cwd, auto=True)
+        if proc.returncode == 2:
+            # argparse exit 2: a pre-flag `daimon` on PATH rejected --auto
+            # (the plugin updates independently of the CLI). A briefing must
+            # never die over instrumentation — retry plain.
+            proc = _run_brief(cli, cwd, auto=False)
     except subprocess.TimeoutExpired:
         print(f"daimon: `daimon brief` timed out after {TIMEOUT}s — briefing skipped")
         return

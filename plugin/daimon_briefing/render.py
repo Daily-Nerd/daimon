@@ -610,6 +610,22 @@ def _plain_stats(data: dict) -> None:
             print(f"  {cmd_name}: {n}")
     else:
         print("  none recorded yet")
+    r = data.get("retention")
+    if r:
+        print(f"retention (last {r['window_days']}d):")
+        print(f"  hook briefings: {r['hook_briefs']}")
+        rr = r["rereads"]
+        print(f"  deliberate re-reads: brief {rr['brief']}, status {rr['status']}, "
+              f"recall {rr['recall']}  (total {r['rereads_total']})")
+        ratio = r["rereads_per_hook_brief"]
+        print(f"  re-reads per hook briefing: "
+              f"{ratio if ratio is not None else 'n/a'}")
+        if r["untagged_briefs"]:
+            print(f"  untagged brief lines (pre --auto): {r['untagged_briefs']}")
+        if r["stale_hook_warning"]:
+            print("  ⚠ sessions captured but no hook briefings logged — the "
+                  "SessionStart hook may predate --auto; re-run `daimon hooks "
+                  "install` (or update the plugin)")
     print("capture:")
     print(f"  serialized: {c['success']}  skipped: {c['skipped']}  "
           f"errors: {c['errors']}  via fallback backend: {c['fallback_serializes']}")
@@ -645,6 +661,30 @@ def _rich_stats(data: dict) -> None:
     else:
         usage_table.add_row("[dim]none recorded yet[/dim]", "")
     console.print(usage_table)
+
+    r = data.get("retention")
+    if r:
+        ret_table = Table(title=f"retention (last {r['window_days']}d)",
+                          title_justify="left", show_header=True,
+                          header_style="bold")
+        ret_table.add_column("metric")
+        ret_table.add_column("value", justify="right")
+        ret_table.add_row("hook briefings", str(r["hook_briefs"]))
+        rr = r["rereads"]
+        ret_table.add_row("deliberate re-reads",
+                          f"brief {rr['brief']}, status {rr['status']}, "
+                          f"recall {rr['recall']} (total {r['rereads_total']})")
+        ratio = r["rereads_per_hook_brief"]
+        ret_table.add_row("re-reads per hook briefing",
+                          "n/a" if ratio is None else str(ratio))
+        if r["untagged_briefs"]:
+            ret_table.add_row("untagged brief lines (pre --auto)",
+                              str(r["untagged_briefs"]))
+        console.print(ret_table)
+        if r["stale_hook_warning"]:
+            console.print("[yellow]⚠ sessions captured but no hook briefings "
+                          "logged — re-run `daimon hooks install` (or update "
+                          "the plugin)[/yellow]")
 
     capture_table = Table(title="capture", title_justify="left",
                           show_header=True, header_style="bold")
