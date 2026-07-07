@@ -3120,6 +3120,23 @@ def test_stats_plain_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
     assert "re-reads per hook briefing: 1.0" in out
 
 
+def test_stats_rich_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
+                                              sample_checkpoint, capsys, monkeypatch):
+    pytest.importorskip("rich")
+    from daimon_briefing import render, store
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(_usage_line(1, "brief:auto", now)
+                                           + _usage_line(0, "status", now))
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "retention (last 14d)" in out
+    assert "hook briefings" in out
+    assert "1.0" in out  # re-reads per hook briefing ratio
+
+
 def test_stats_plain_warns_on_stale_hook(tmp_checkpoint_dir, tmp_log_dir,
                                          sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
