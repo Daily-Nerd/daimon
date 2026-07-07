@@ -122,7 +122,10 @@ daimon serialize path/to/transcript.md
 daimon brief
 #   → prints the briefing to stdout
 #   → with DAIMON_PROJECT_DIR set, prefers that project's latest.json
-#     (global latest.json is the fallback)
+#   → no checkpoint for the project yet: prints a header-only note saying
+#     where the most recent activity lives, instead of rendering another
+#     project's checkpoint; opt in to the full global-fallback body with
+#     --global-fallback or DAIMON_BRIEF_GLOBAL_FALLBACK=full
 
 # 3. Check whether a checkpoint actually got written (no log grepping):
 daimon status [--project DIR] [--json]

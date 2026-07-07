@@ -366,11 +366,30 @@ def _cmd_brief(args) -> int:
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
     checkpoint = store.read_latest(project_dir=project)
+    proj_path = store.project_latest_path(project)
+    fallback_used = (checkpoint is not None and proj_path is not None
+                     and not proj_path.exists())
+    if fallback_used and not (getattr(args, "global_fallback", False)
+                              or config.brief_global_fallback()):
+        # Header-only fallback (#96): the foreign body is suppressed — one
+        # warning line above a hundred foreign lines does not read as a
+        # warning. Orient (where the activity actually is) and exit clean;
+        # `daimon status` still shows the full pointer table.
+        slug = str(checkpoint.get("project_slug") or "").strip() or "another project"
+        epoch = store._created_epoch(checkpoint.get("created"))
+        age = f"{_format_age(time.time() - epoch)} ago" if epoch else "age unknown"
+        render.render_brief_note([
+            "No briefing for this project yet — the first serialized session "
+            "will create one.",
+            f"(Most recent activity elsewhere: {slug}, {age}.)",
+            "Use --global-fallback or DAIMON_BRIEF_GLOBAL_FALLBACK=full to "
+            "view that checkpoint here.",
+        ])
+        return 0
     # Label the global-pointer fallback (#29): status calls the same situation
     # "global checkpoint (fallback)"; brief must not present another project's
     # state as this project's without saying so.
-    proj_path = store.project_latest_path(project)
-    if checkpoint and proj_path is not None and not proj_path.exists():
+    if fallback_used:
         render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
                                   "checkpoint (fallback), possibly another project's."])
     # NOTE: drift is checked against the resolved project root. If read_latest fell
@@ -1437,6 +1456,12 @@ def main(argv=None) -> int:
         "--team", action="store_true",
         help="also show a 'Teammates' section: each teammate's active topic + "
              "recent decisions from the shared team memory (#111)",
+    )
+    p_brief.add_argument(
+        "--global-fallback", action="store_true",
+        help="when this project has no checkpoint, render the full global "
+             "checkpoint (possibly another project's) instead of the "
+             "header-only note (#96)",
     )
     p_brief.set_defaults(func=_cmd_brief)
 

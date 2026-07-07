@@ -51,10 +51,14 @@ def test_cli_serialize_writes_checkpoint(tmp_checkpoint_dir, fake_chat_factory, 
     assert store.read_latest()["session_id"] == "sample_transcript"
 
 
-def test_cli_brief_prints_briefing(tmp_checkpoint_dir, sample_checkpoint, capsys):
+def test_cli_brief_prints_briefing(tmp_checkpoint_dir, sample_checkpoint, capsys,
+                                   monkeypatch):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    # Route to the checkpoint's own project — a slugless global-only write
+    # would hit the #96 header-only fallback instead of rendering.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
     rc = cli.main(["brief"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -307,6 +311,8 @@ def test_cli_brief_prefers_project_latest(tmp_checkpoint_dir, sample_checkpoint,
 
 
 def test_cli_brief_falls_back_to_global(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #96: the global fallback is header-only by default — the foreign body
+    # renders only on explicit opt-in (covered by test_brief_fallback_full_*).
     from daimon_briefing import store
 
     store.write_checkpoint("S-global", sample_checkpoint)
@@ -314,7 +320,8 @@ def test_cli_brief_falls_back_to_global(tmp_checkpoint_dir, sample_checkpoint, c
     rc = cli.main(["brief"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "PR #6" in out
+    assert "no briefing for this project yet" in out.lower()
+    assert "PR #6" not in out
 
 
 def test_cli_brief_routes_to_cwd_when_no_env(
@@ -2461,6 +2468,47 @@ def test_brief_no_fallback_label_for_own_project(
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     assert "fallback" not in capsys.readouterr().out.lower()
+
+
+def test_brief_fallback_header_only_by_default(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #96: a fresh project's fallback briefing was 100% another project's
+    # content under one warning line — two field reports read it as
+    # contamination. Default is now an orientation header; the foreign body
+    # renders only on explicit opt-in.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/some-other-project"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no briefing for this project yet" in out.lower()
+    assert "-repo-x" in out  # says WHERE the recent activity actually lives
+    # none of the foreign checkpoint's items may render
+    assert "PR #6 state" not in out
+    assert "D-007" not in out
+
+
+def test_brief_fallback_full_via_flag(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/other", "--global-fallback"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "PR #6 state" in out          # full foreign body on opt-in
+    assert "fallback" in out.lower()     # #29 warning label retained
+
+
+def test_brief_fallback_full_via_env(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/other"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "PR #6 state" in out
+    assert "fallback" in out.lower()
 
 
 def test_recall_rejects_nonpositive_limit(tmp_checkpoint_dir, capsys):

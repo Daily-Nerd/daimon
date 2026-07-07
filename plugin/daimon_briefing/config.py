@@ -77,6 +77,15 @@ def checkpoint_history() -> int:
         return 3
 
 
+def brief_global_fallback() -> bool:
+    """#96: brief's cross-project global-pointer fallback is header-only by
+    default — a fresh project's briefing that is 100% another project's
+    content reads as contamination no matter how it is labeled (two field
+    reports on the #94 arc). Opt in to the full foreign body with
+    DAIMON_BRIEF_GLOBAL_FALLBACK=full (or 1)."""
+    return (_get("DAIMON_BRIEF_GLOBAL_FALLBACK") or "") in ("full", "1")
+
+
 def carry_enabled() -> bool:
     """Deterministic cross-session carry (#33 Phase 2). Default ON — it fixes a
     measured defect (multicycle run-01: whole-item loss under LLM-mediated
