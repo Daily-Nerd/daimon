@@ -2571,6 +2571,28 @@ def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkp
     assert "PR #6 state" not in out
 
 
+def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #103 I2: `daimon resolve` accepts all five item kinds (store._ITEM_LISTS),
+    # but withhold used to iterate only carry._CARRIED_KINDS (3 of 5) — a
+    # resolved strong_beliefs id never suppressed. Cover the gap end-to-end.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["epistemic_snapshot"]["strong_beliefs"][0]
+    item_id = item["id"]
+    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Extractive pinning prevents silent fact loss" not in out
+    assert "1 resolved item(s) withheld" in out
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "suppressed items (1):" in out
+    assert item_id in out
+
+
 def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
@@ -3367,6 +3389,25 @@ def test_reverify_anchor_live_reopens_without_evidence(tmp_checkpoint_dir, tmp_p
     r = store.resolutions(project_dir="/p/A")
     assert not store.is_resolved(r[iid])
     assert "anchor live" in r[iid]["note"]
+
+
+def test_reverify_anchor_live_and_evidence_combined_note(tmp_checkpoint_dir, capsys, monkeypatch):
+    # M4: when the anchor is live AND --evidence is supplied, the note
+    # concatenates both — "reverified: anchor live; <evidence>".
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "anchored claim about foo()", "trust": "inferred",
+         "anchored_to": {"file": "foo.py", "symbol": "foo", "body_hash": "deadbeef"}},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
+    assert cli.main(["reverify", iid, "--evidence", "saw it work"]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert not store.is_resolved(r[iid])
+    assert r[iid]["note"] == "reverified: anchor live; saw it work"
 
 
 def test_reverify_anchor_drifted_still_refused_without_evidence(tmp_checkpoint_dir, capsys, monkeypatch):

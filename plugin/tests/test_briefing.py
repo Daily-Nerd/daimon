@@ -600,3 +600,23 @@ def test_no_resolved_events_returns_input_unchanged():
     cp = {"working_context": {"open_questions": [{"text": "x", "id": "o-a"}]}}
     filtered, withheld = briefing.withhold(cp, {})
     assert filtered is cp and withheld == []
+
+
+def test_withhold_covers_strong_beliefs():
+    # #103 I2: withhold used to iterate only carry._CARRIED_KINDS (3 of 5
+    # item kinds), so a resolved strong_beliefs id never suppressed — even
+    # though `daimon resolve` accepts it. withhold must cover all five
+    # store._ITEM_LISTS kinds; carry's own 3-kind carry policy is untouched.
+    cp = {"epistemic_snapshot": {"strong_beliefs": [
+        {"text": "extractive pinning prevents silent fact loss", "id": "b-aaa"}]}}
+    filtered, withheld = briefing.withhold(cp, {"b-aaa": _res_evt("b-aaa")})
+    assert filtered["epistemic_snapshot"]["strong_beliefs"] == []
+    assert withheld[0][1]["id"] == "b-aaa"
+
+
+def test_withhold_covers_contradictions_flagged():
+    cp = {"epistemic_snapshot": {"contradictions_flagged": [
+        {"text": "conflicting claims about the gateway", "id": "c-aaa"}]}}
+    filtered, withheld = briefing.withhold(cp, {"c-aaa": _res_evt("c-aaa")})
+    assert filtered["epistemic_snapshot"]["contradictions_flagged"] == []
+    assert withheld[0][1]["id"] == "c-aaa"

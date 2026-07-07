@@ -271,6 +271,55 @@ def test_pre_llm_call_routes_project_through_resolve_project_root(
     assert captured["project_dir"] == "/git/top"
 
 
+# ---- #103 I1: pre_llm_call must withhold resolved items before injecting ----
+
+
+def test_pre_llm_call_withholds_resolved_item(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # hermes' pre_llm_call rendered the RAW checkpoint — a resolved item still
+    # auto-injected into every new session's context. Fix mirrors _cmd_brief:
+    # read this project's resolutions, apply briefing.withhold, then render.
+    # A project_dir is required: resolutions() no-ops (empty dict) for the
+    # unrouted/global bucket (project_slug(None) is None), so the fixture
+    # must route through a real project like the CLI-level #103 tests do.
+    from daimon_briefing import store
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item_id = written["working_context"]["open_questions"][1]["id"]
+    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    out = hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert isinstance(out, dict)
+    assert "Chunk threshold for the serializer" not in out["context"]
+    # PR #6 item is untouched — only the resolved item is withheld.
+    assert "PR #6" in out["context"]
+
+
+def test_pre_llm_call_fails_open_when_resolutions_raises(
+    tmp_checkpoint_dir, sample_checkpoint, monkeypatch
+):
+    # Withhold machinery must never suppress the injection path either — a
+    # broken events.jsonl still injects the full, unfiltered briefing.
+    from daimon_briefing import store
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x")
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(hooks.store, "resolutions", _boom)
+    out = hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert isinstance(out, dict)
+    assert "Chunk threshold for the serializer" in out["context"]
+
+
 # ---- register(ctx) ----
 
 

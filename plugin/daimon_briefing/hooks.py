@@ -64,11 +64,22 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
             return None
         if not is_first_turn:
             return None
-        checkpoint = store.read_latest(
-            project_dir=config.resolve_project_root(config.project_dir())
-        )
+        project = config.resolve_project_root(config.project_dir())
+        checkpoint = store.read_latest(project_dir=project)
         if checkpoint is None:
             return None
+        # Withhold (#103 I1): this in-process injection path used to render the
+        # RAW checkpoint, so a resolved item still auto-injected into every new
+        # session's context — `daimon brief` already suppressed it, this hook
+        # didn't. Same fail-open rule as _cmd_brief: any resolutions() failure
+        # falls back to the unfiltered checkpoint, never blocks injection. No
+        # withheld-count note here — this is context injection, not a human-
+        # facing brief, so suppression stays clean (no note to render).
+        try:
+            events = store.resolutions(project_dir=project)
+            checkpoint, _withheld = briefing.withhold(checkpoint, events)
+        except Exception:
+            pass
         text = briefing.render(checkpoint)
         if not text:
             return None

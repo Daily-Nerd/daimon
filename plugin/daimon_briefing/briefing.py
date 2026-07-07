@@ -151,7 +151,7 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
     # Dry run over the ORIGINAL checkpoint — decide what would be withheld
     # before paying for a deepcopy (most briefs resolve nothing).
     to_drop = []  # [(section, key, index, item, event)]
-    for section, key, _item_type in carry._CARRIED_KINDS:
+    for section, key in store._ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
@@ -160,9 +160,12 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list]:
                 continue
             item_id = item.get("id")
             if item_id:
-                evt = resolutions.get(item_id)
-                if evt is not None and item_id in resolved_refs:
-                    to_drop.append((section, key, idx, item, evt))
+                # resolved_refs is built from resolutions.items(), so membership
+                # here already guarantees resolutions[item_id] exists (M1: the
+                # old `evt is not None and ...` check was redundant — a subset
+                # check never needs the superset's own membership re-verified).
+                if item_id in resolved_refs:
+                    to_drop.append((section, key, idx, item, resolutions[item_id]))
                 continue  # id-bearing: bound exactly or not at all, never fuzzy
             text = str(item.get("text") or "").strip()
             if not text or not resolved_texts:
