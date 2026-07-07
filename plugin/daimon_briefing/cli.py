@@ -787,10 +787,47 @@ def _crash_log_info(path: Path, now: float) -> dict | None:
             "age": _format_age(age), "path": str(path)}
 
 
+def _print_suppressed(project) -> int:
+    """`daimon status --suppressed` (#103): the visibility answer to brief's
+    silent-suppression note ("N resolved item(s) withheld — `daimon status
+    --suppressed` to list"). Reuses briefing.withhold for the classification
+    rather than reimplementing it — the resolved/live split must stay in
+    exactly one place. Reads ONLY this project's own latest checkpoint
+    (fallback=False, same rule as carry #94): listing another project's
+    withheld items under this project's status would be worse than listing
+    none. Fails open like brief's withhold call — a broken events.jsonl
+    must not crash `status`, it should just report nothing suppressed."""
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    withheld = []
+    if checkpoint:
+        try:
+            events = store.resolutions(project_dir=project)
+            _, withheld = briefing.withhold(checkpoint, events)
+        except Exception:
+            withheld = []
+    if not withheld:
+        print("no suppressed items")
+        return 0
+    print(f"suppressed items ({len(withheld)}):")
+    for key, item, evt in withheld:
+        item_id = item.get("id") or "-"
+        text = str(item.get("text") or "").strip()
+        status = str(evt.get("status") or "")
+        ts = str(evt.get("ts") or "")
+        note = str(evt.get("note") or "").strip()
+        paren = f"{status} {ts}"
+        if note:
+            paren += f", {note}"
+        print(f"  {item_id}  [{key}] {text}  ({paren})")
+    return 0
+
+
 def _cmd_status(args) -> int:
     _note_usage("status")
-    now = time.time()
     project = _resolve_project(args.project)
+    if getattr(args, "suppressed", False):
+        return _print_suppressed(project)
+    now = time.time()
     proj = _checkpoint_info(store.project_latest_path(project), now)
     glob = _checkpoint_info(store.global_latest_path(), now)
     same = bool(
@@ -1708,6 +1745,10 @@ def main(argv=None) -> int:
     )
     p_status.add_argument(
         "--json", action="store_true", help="machine-readable output"
+    )
+    p_status.add_argument(
+        "--suppressed", action="store_true",
+        help="list items withheld from the briefing as resolved (#103)",
     )
     p_status.set_defaults(func=_cmd_status)
 

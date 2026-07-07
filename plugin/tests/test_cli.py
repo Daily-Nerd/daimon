@@ -2550,6 +2550,36 @@ def test_brief_fails_open_when_resolutions_raises(
     assert "Chunk threshold for the serializer" in out
 
 
+def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #103: `daimon status --suppressed` answers the brief's "N resolved
+    # item(s) withheld" note with the actual listing, reusing briefing.withhold
+    # rather than reimplementing the classification.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["working_context"]["open_questions"][1]
+    item_id = item["id"]
+    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "suppressed items (1):" in out
+    assert item_id in out
+    assert "Chunk threshold for the serializer" in out
+    assert "resolved" in out
+    # the live item must never show up in the suppressed listing
+    assert "PR #6 state" not in out
+
+
+def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.strip() == "no suppressed items"
+
+
 def test_recall_rejects_nonpositive_limit(tmp_checkpoint_dir, capsys):
     # --limit 0 / -N used to clamp silently to 1 result. Reject loudly.
     rc = cli.main(["recall", "anything", "--limit", "0"])
