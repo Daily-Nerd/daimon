@@ -1,14 +1,16 @@
 # Positioning
 
 > **This doc replaced an earlier pitch** that sold Daimon as a standalone, category-defining "persistent AI companion" with a 9/10 moat and market sizing. That framing was retired per **[D-008](../research/DECISIONS.md)** (user-approved 2026-06-09). Track B (`research/findings/07`) found ~7/9 of the proposed epistemic-graph features already shipped by Honcho + Graphiti — the "differentiator" was a dependency. No market sizing, no empty-quadrant claim, no moat language below. The success metric is post-ship adoption, not a category slide.
+>
+> **Superseded again by [D-009](../research/DECISIONS.md)** (2026-06-27): D-008's own "build on Honcho + Graphiti" framing was never implemented. The shipped runtime is **self-contained and host-agnostic** — its own lean stack (checkpoint store + prose serializer + deterministic render + pluggable LLM backend), no server, no external memory backend. Honcho/Graphiti remain evaluated-and-rejected alternatives (see "Why it doesn't compete with Honcho or Graphiti" below), not a dependency. This doc is preserved as the historical pitch; the current authoritative architecture is [MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md).
 
 ---
 
 ## What it is
 
-Daimon is a **dream-briefing skill** for hermes-agent-style coding agents (hermes, Claude Code). At session end it writes a small cognitive checkpoint; at the next session's start it reconstructs that into a short, skimmable briefing — "while you were away / here's where we left off." The agent resumes from a faithful prior state instead of confidently guessing.
+Daimon is a **dream-briefing skill** for coding agents. At session end it writes a small cognitive checkpoint; at the next session's start it reconstructs that into a short, skimmable briefing — "while you were away / here's where we left off." The agent resumes from a faithful prior state instead of confidently guessing.
 
-It ships as a hooks + `SKILL.md` hybrid on top of Honcho. See [MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md) for the authoritative architecture.
+The primary integration is native host hooks (Claude Code, Codex, Gemini, Windsurf) shelling out to the `daimon` CLI; a hermes-agent plugin is an optional secondary surface. See [MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md) for the authoritative architecture.
 
 ---
 

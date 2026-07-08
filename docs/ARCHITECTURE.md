@@ -2,7 +2,7 @@
 
 > ## ⚠️ SUPERSEDED — read this first
 >
-> This document describes the **standalone-system architecture**, retired per **[D-008](../research/DECISIONS.md)** (user-approved 2026-06-09). The current authoritative architecture is **[MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md)** — a dream-briefing skill (hooks + `SKILL.md`) on hermes-agent + Honcho, with upstream contributions to Graphiti.
+> This document describes the **standalone-system architecture**, retired per **[D-008](../research/DECISIONS.md)** (user-approved 2026-06-09). The current authoritative architecture is **[MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md)** — a **self-contained, host-agnostic** dream-briefing runtime per **[D-009](../research/DECISIONS.md)** (2026-06-27), which superseded D-008's own "hooks + `SKILL.md` on hermes-agent + Honcho, with upstream contributions to Graphiti" framing before it shipped. Honcho/Graphiti are not runtime dependencies.
 >
 > **Preserved, not deleted** (research docs reference it). Per-component status:
 >

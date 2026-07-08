@@ -2,7 +2,7 @@
 
 > ## ⚠️ SUPERSEDED — read this first
 >
-> This RFC specs the **standalone "persistent AI companion" system**, which was retired per **[D-008](../research/DECISIONS.md)** (user-approved 2026-06-09). The current authoritative architecture is **[MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md)** — a dream-briefing skill on hermes-agent + Honcho, with upstream contributions to Graphiti.
+> This RFC specs the **standalone "persistent AI companion" system**, which was retired per **[D-008](../research/DECISIONS.md)** (user-approved 2026-06-09). The current authoritative architecture is **[MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md)** — a **self-contained, host-agnostic** dream-briefing runtime per **[D-009](../research/DECISIONS.md)** (2026-06-27), which superseded D-008's own "dream-briefing skill on hermes-agent + Honcho, with upstream contributions to Graphiti" framing before it shipped. Honcho/Graphiti are not runtime dependencies.
 >
 > **This file is preserved, not deleted.** Research docs reference it by section number (e.g. "RFC §5.1"). Each section below is tagged:
 >
