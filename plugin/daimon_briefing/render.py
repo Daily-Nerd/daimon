@@ -653,6 +653,11 @@ def _plain_stats(data: dict) -> None:
             f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))
     print(f"  trust: verbatim {s['items_verbatim']}, inferred {s['items_inferred']}, "
           f"untagged {s['items_untagged']}  (carried: {s['items_carried']})")
+    e = data.get("events")
+    if e:
+        print("events (this project):")
+        print(f"  log lines: {e['lines']}  resolved refs: {e['resolved_refs']}  "
+              f"fold: {e['fold_ms']}ms")
 
 
 def _rich_stats(data: dict) -> None:
@@ -731,3 +736,14 @@ def _rich_stats(data: dict) -> None:
         f"untagged {s['items_untagged']}  (carried: {s['items_carried']})",
     )
     console.print(store_table)
+
+    e = data.get("events")
+    if e:
+        events_table = Table(title="events (this project)", title_justify="left",
+                             show_header=True, header_style="bold")
+        events_table.add_column("metric")
+        events_table.add_column("value")
+        events_table.add_row("log lines", str(e["lines"]))
+        events_table.add_row("resolved refs", str(e["resolved_refs"]))
+        events_table.add_row("fold", f"{e['fold_ms']}ms")
+        console.print(events_table)

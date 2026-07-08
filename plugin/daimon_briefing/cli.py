@@ -1589,11 +1589,36 @@ def _stats_retention(now=None) -> dict:
     return out
 
 
+def _stats_events(project_dir) -> dict:
+    """events.jsonl (current project) -> raw line count + fold cost. The
+    measure-first instrument for #106: compaction of the append-only log stays
+    deferred until these numbers show a real cost. `lines` counts EVERY
+    appended line (the growth signal), `resolved_refs` the folded item count,
+    and `fold_ms` times a full store.resolutions() — read + parse + latest-by-ts
+    fold over the whole log, measured at stats time. Fails open to zeroes when
+    the project is unknown or the log is missing/corrupt (same as the fold)."""
+    out = {"lines": 0, "fold_ms": 0.0, "resolved_refs": 0}
+    path = store._events_path(project_dir)
+    if path is None:
+        return out
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return out
+    out["lines"] = len(text.splitlines())
+    start = time.perf_counter()
+    folded = store.resolutions(project_dir=project_dir)
+    out["fold_ms"] = round((time.perf_counter() - start) * 1000, 2)
+    out["resolved_refs"] = len(folded)
+    return out
+
+
 def _cmd_stats(args) -> int:
     """Aggregate what is already on disk. Nothing is transmitted anywhere —
     sharing the output is a deliberate act (the user pastes it)."""
     data = {"usage": _stats_usage(), "capture": _stats_capture(),
-            "store": _stats_store(), "retention": _stats_retention()}
+            "store": _stats_store(), "retention": _stats_retention(),
+            "events": _stats_events(_resolve_project(None))}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0

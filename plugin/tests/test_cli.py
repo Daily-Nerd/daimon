@@ -3280,6 +3280,39 @@ def test_stats_empty_world_is_calm(tmp_checkpoint_dir, capsys):
     assert data["usage"] == {}
     assert data["capture"]["success"] == 0
     assert data["store"]["checkpoints"] == 0
+    # events instrument reports zeroes when there is no log to fold
+    assert data["events"] == {"lines": 0, "fold_ms": 0.0, "resolved_refs": 0}
+
+
+def test_stats_events_reports_line_count_and_fold_time(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # measure-first instrument (#106): the events section counts every appended
+    # line for the CURRENT project and times a full read+fold at stats time.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.append_event("o-a", "resolved", project_dir="/p/A")
+    store.append_event("o-a", "reopened", project_dir="/p/A")  # same ref, later line
+    store.append_event("o-b", "resolved", project_dir="/p/A")
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    ev = json.loads(capsys.readouterr().out)["events"]
+    assert ev["lines"] == 3          # every appended line, not folded refs
+    assert ev["resolved_refs"] == 2  # o-a and o-b after fold
+    assert isinstance(ev["fold_ms"], float)
+    assert ev["fold_ms"] >= 0.0
+
+
+def test_stats_events_scoped_to_current_project(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # the section reports ONLY the current project's log — another project's
+    # events must not leak into the count.
+    from daimon_briefing import store
+    store.append_event("o-a", "resolved", project_dir="/p/A")
+    store.append_event("o-b", "resolved", project_dir="/p/OTHER")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["events"]["lines"] == 1
 
 
 # ---- retention: hook briefings vs deliberate re-reads ----
