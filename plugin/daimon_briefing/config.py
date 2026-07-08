@@ -266,6 +266,17 @@ def project_dir() -> str | None:
     return _get("DAIMON_PROJECT_DIR") or None
 
 
+def claude_projects_dir() -> Path:
+    """Where host transcripts live: ~/.claude/projects/<slug>/<session>.jsonl.
+    The #125 audit reads (never writes) these to re-check stored quotes against
+    their source. Overridable so tests point it at a tmp fixture instead of the
+    developer's real transcripts."""
+    raw = _get("DAIMON_CLAUDE_PROJECTS_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".claude" / "projects"
+
+
 def resolve_project_root(raw: str | None) -> str | None:
     """Normalize a project dir to its git toplevel so a subdir session maps to the
     ONE repo bucket (#74).

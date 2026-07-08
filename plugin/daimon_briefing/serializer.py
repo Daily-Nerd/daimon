@@ -14,6 +14,7 @@ lines; chunking lifted long-session recall ~55% -> ~93% in probe runs.
 
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -349,6 +350,96 @@ def validate(checkpoint) -> bool:
     return True
 
 
+# ---- #125: deterministic verbatim-quote verification ----
+#
+# The `verbatim` trust class promises the quote appears in the transcript, but
+# nothing ever checked it — it was LLM self-report. These functions verify at
+# serialize time, against the SAME rendered text the extractor read, using a
+# fixed normalization stack ("tier f", measured in #125): the checker must be
+# dumber than the thing it checks, so it is pure string ops, no LLM.
+
+_MIN_FRAGMENT = 8   # an ellipsis fragment shorter than this after normalization
+                    # is too generic to pin — dropped (a quote with none left is
+                    # unverifiable, which fails conservatively).
+_ELLIPSIS_RE = re.compile(r"\.\.\.|…")
+_REDACTED_RE = re.compile(r"\[redacted:[^\]]*\]")
+# Leading list markers ("- ", "* ", "1. ") anchored per line, stripped before
+# whitespace folding collapses the newlines they depend on.
+_LIST_MARKER_RE = re.compile(r"^[ \t]*(?:[-*+]\s+|\d+\.\s+)", re.MULTILINE)
+_MD_MARKER_RE = re.compile(r"[*`_~]")
+_WS_RE = re.compile(r"\s+")
+
+
+def _normalize_for_match(text: str) -> str:
+    """Tier-f normalization shared by both sides of a quote match: strip markdown
+    markers (list markers + emphasis chars) BEFORE folding whitespace so
+    `**text**` equals `text`, then collapse whitespace and casefold. Applied
+    identically to quote and haystack, so symmetric stripping never manufactures
+    a match the raw text wouldn't support."""
+    text = _LIST_MARKER_RE.sub("", text)
+    text = _MD_MARKER_RE.sub("", text)
+    text = _WS_RE.sub(" ", text).strip()
+    return text.casefold()
+
+
+def quote_matches(quote, haystack) -> bool:
+    """True when `quote` appears in `haystack` under tier-f normalization.
+
+    Splits the quote on ellipsis into ordered fragments (an author eliding a
+    span), drops fragments shorter than _MIN_FRAGMENT chars after normalization,
+    and requires every surviving fragment to appear IN ORDER — each searched
+    from the previous fragment's match end. A quote left with no usable fragment
+    is unverifiable and returns False (conservative: never auto-pass). Redaction
+    placeholders are stripped from fragments first, so a stored quote already
+    carrying a `[redacted:...]` marker still matches."""
+    if not isinstance(quote, str) or not isinstance(haystack, str):
+        return False
+    hay = _normalize_for_match(haystack)
+    fragments = []
+    for raw in _ELLIPSIS_RE.split(quote):
+        frag = _normalize_for_match(_REDACTED_RE.sub("", raw))
+        if len(frag) >= _MIN_FRAGMENT:
+            fragments.append(frag)
+    if not fragments:
+        return False
+    pos = 0
+    for frag in fragments:
+        idx = hay.find(frag, pos)
+        if idx < 0:
+            return False
+        pos = idx + len(frag)
+    return True
+
+
+def verify_quotes(checkpoint, transcript_text: str) -> int:
+    """Verify every verbatim item's quote against the rendered transcript, in
+    place (#125). On a hit the item gets `quote_verified: true`; on a miss it is
+    downgraded to trust="inferred" with `quote_verified: false` and the downgrade
+    is logged (count + item-text prefix). Items already trust="inferred" are left
+    untouched — no stamp. Runs ONCE at serialize, PRE-redaction, so the quote is
+    still the raw text (a quote whose secret redaction will later mask still
+    verifies here against the raw rendered text). Returns the downgrade count."""
+    downgraded = 0
+    for item in iter_items(checkpoint):
+        if item.get("trust") != "verbatim":
+            continue
+        quote = item.get("quote")
+        if not isinstance(quote, str) or not quote.strip():
+            continue
+        if quote_matches(quote, transcript_text):
+            item["quote_verified"] = True
+        else:
+            item["trust"] = "inferred"
+            item["quote_verified"] = False
+            downgraded += 1
+            log.warning("quote verification: downgraded verbatim->inferred: %.80s",
+                        item.get("text") or "")
+    if downgraded:
+        log.info("quote verification: %d verbatim item(s) downgraded to inferred",
+                 downgraded)
+    return downgraded
+
+
 def _call_and_parse(chat, system, user_content, deadline, what: str,
                     parse_retries: int = 1) -> dict:
     """One LLM call -> parsed JSON dict, with named failures.
@@ -546,6 +637,11 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
             "class, or verbatim item without a quote)"
         )
     sanitize_importance(checkpoint)
+    # #125: verify verbatim quotes against the SAME rendered text the extractor
+    # read, PRE-redaction (redaction runs later in write_checkpoint and would
+    # otherwise mass-downgrade legitimate quotes it had masked). Verify once,
+    # stamp the verdict — the briefing never re-greps.
+    verify_quotes(checkpoint, transcript_text)
     return checkpoint
 
 

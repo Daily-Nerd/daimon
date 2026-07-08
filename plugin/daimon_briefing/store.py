@@ -351,6 +351,13 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
             pass
 
 
+# Reserved decision-item field (#125): `receipt_hash` is an optional slot on
+# recent_decisions items, reserved for future signed-provenance support. Nothing
+# writes it yet; it defaults to absent and readers use .get. The write path
+# preserves it untouched when present — carry copies whole items (carry.merge
+# deepcopy) and redaction/id-stamping below only ever touch named fields — so no
+# code here needs to name it; this note is the reservation.
+
 # The five list sections that hold checkpoint items. active_topic is a single
 # per-session dict and never needs an id (it does not carry, #33).
 _ITEM_LISTS = (
