@@ -1,5 +1,7 @@
 # Daimon
 
+[![codecov](https://codecov.io/gh/Daily-Nerd/daimon/graph/badge.svg?token=gYJmnMwAue)](https://codecov.io/gh/Daily-Nerd/daimon)
+
 Your AI coding agent forgets everything between sessions. **Daimon** writes a small
 cognitive checkpoint when a session ends, then renders a "while you were away"
 briefing when the next one starts — so the agent resumes from a faithful record of
