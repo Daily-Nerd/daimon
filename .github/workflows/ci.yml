@@ -36,7 +36,47 @@ jobs:
         # fails loudly instead of silently touching a real ~/.daimon.
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
-          HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q
+          HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q --cov=daimon_briefing --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        # Reporting only — no coverage threshold gates the build yet. The
+        # upload no-ops gracefully when CODECOV_TOKEN is unset, so a missing
+        # secret never turns CI red.
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: Daily-Nerd/daimon
+          files: ./plugin/coverage.xml
+          flags: py${{ matrix.python-version }}
+          fail_ci_if_error: false
+
+  lint:
+    name: lint (ruff + mypy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugin/uv.lock
+
+      # Blocking: ruff and mypy are version-pinned in the dev extra so the
+      # gate is reproducible.
+      - name: ruff check
+        run: uv run --extra dev ruff check daimon_briefing
+
+      # Non-blocking: mypy currently reports pre-existing errors that are a
+      # deliberate follow-up. continue-on-error keeps them visible in the log
+      # without blocking merges; tightened to blocking in a later slice.
+      - name: mypy
+        continue-on-error: true
+        run: uv run --extra dev mypy daimon_briefing
 
   scar-lint:
     name: scar lint

@@ -10,7 +10,14 @@ authors = [{ name = "Daily-Nerd / Daimon" }]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# Versions are pinned so the CI lint gate is reproducible: a ruff/mypy
+# point release that changes rule behaviour can't silently turn CI red.
+dev = [
+    "pytest>=8.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.15.20",
+    "mypy==2.2.0",
+]
 pretty = [
     "rich>=13",
     "rich-argparse>=1.8.0",
@@ -34,3 +41,26 @@ packages = ["daimon_briefing"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+# 88 is ruff's own default and the tree already sits within the default
+# lint rule set (E4/E7/E9/F) with zero findings. Line length is not gated
+# here — E501 is not in the default select, and `ruff format` is a deferred,
+# scar-sensitive slice — so this value only informs future formatting.
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+# The default rule set, stated explicitly so a future ruff default change
+# can't shift what the pinned gate enforces. Passes clean today.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+# Non-blocking in CI (continue-on-error). ignore_missing_imports absorbs the
+# optional rich / host-provided imports; strict mode and the remaining errors
+# are a deliberate follow-up, not this slice.
+python_version = "3.10"
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["daimon_briefing"]
