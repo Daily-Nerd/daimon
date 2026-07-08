@@ -5,6 +5,24 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0](https://github.com/Daily-Nerd/daimon/compare/v0.11.1...v0.12.0) (2026-07-08)
+
+
+### Features
+
+* **serializer:** verify verbatim quotes against transcript at serialize time ([#126](https://github.com/Daily-Nerd/daimon/issues/126)) ([6766046](https://github.com/Daily-Nerd/daimon/commit/6766046d6595e2d3c342baf122bdd2fe1d44350e))
+
+
+### Bug Fixes
+
+* **briefing:** reject and tolerate null text/quote instead of crashing the render ([#135](https://github.com/Daily-Nerd/daimon/issues/135)) ([fe6637d](https://github.com/Daily-Nerd/daimon/commit/fe6637d309dc75648075a3ac0f4bd1cb30aa1a85))
+* **redact:** close secret-leak gaps for quoted keys, token prefixes, and password-only URLs ([#133](https://github.com/Daily-Nerd/daimon/issues/133)) ([f66b64e](https://github.com/Daily-Nerd/daimon/commit/f66b64e53f407171052f79f8ff9dca6e79cd994e))
+
+
+### Documentation
+
+* add Codecov coverage badge to root and plugin READMEs ([#131](https://github.com/Daily-Nerd/daimon/issues/131)) ([aead9fe](https://github.com/Daily-Nerd/daimon/commit/aead9fe8a2200d39ef5bb8b0ebc72ff1f146751f))
+
 ## [0.11.1](https://github.com/Daily-Nerd/daimon/compare/v0.11.0...v0.11.1) (2026-07-08)
 
 
