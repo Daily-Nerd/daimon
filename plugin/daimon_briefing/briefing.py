@@ -40,8 +40,12 @@ def _mark(item) -> str:
 
 
 def _line(item) -> str:
-    text = item.get("text", "").strip()
-    quote = item.get("quote", "").strip()
+    # #134: dict.get returns the stored None for a present-but-null key (the
+    # default only fires for an ABSENT key), so a torn/legacy checkpoint could
+    # crash the whole render here. Use the codebase's str(x or "") idiom
+    # (store.py, carry.py) — tolerant of null, same as iter_items' stance.
+    text = str(item.get("text") or "").strip()
+    quote = str(item.get("quote") or "").strip()
     base = f'- [{_mark(item)}] {text}'
     if item.get("carried_from"):
         # Epistemic honesty, same philosophy as trust marks: a loop carried
@@ -61,7 +65,8 @@ def _line(item) -> str:
 
 
 def _nonempty(item) -> bool:
-    return bool(item and isinstance(item, dict) and item.get("text", "").strip())
+    # #134: null-safe — a present-but-null text must read as empty, not crash.
+    return bool(item and isinstance(item, dict) and str(item.get("text") or "").strip())
 
 
 def _overflow_note(dropped: int) -> str | None:

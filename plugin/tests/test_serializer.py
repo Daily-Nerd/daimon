@@ -721,6 +721,24 @@ def test_valid_item_rejects_malformed_anchor():
     assert serializer._valid_item(item) is False
 
 
+# ---- #134: a present-but-null (or non-str) text passed validation, reached
+# disk, then crashed the briefing render on the next session ----
+
+
+def test_valid_item_rejects_null_text():
+    assert serializer._valid_item({"text": None, "trust": "inferred"}) is False
+
+
+def test_valid_item_rejects_nonstr_text():
+    assert serializer._valid_item({"text": 123, "trust": "inferred"}) is False
+
+
+def test_valid_item_still_accepts_empty_text():
+    # active_topic MAY have empty text (test_validate_allows_empty_active_topic_text)
+    # — a str-but-empty text stays valid; only a non-str text is rejected.
+    assert serializer._valid_item({"text": "", "trust": "inferred"}) is True
+
+
 # ---- #118: validation-failure retry with attempt nonce ----
 
 
