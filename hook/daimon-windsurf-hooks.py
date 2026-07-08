@@ -125,11 +125,14 @@ def _mark_spawned(trajectory_id: str) -> None:
 def _append_turn(trajectory_id: str, role: str, text: str) -> Path:
     """Append one `**role**:`-marked turn — the markdown shape
     transcript.from_file's role regex parses (marker starts a turn, following
-    lines are its continuation)."""
+    lines are its continuation). Turn text is secret-scrubbed at this write
+    site (#109): the accumulation file is a disk artifact `daimon serialize`
+    reads later, so a quoted secret must not land here raw. main() has already
+    gated on lib.redaction_available(), so the scrub is guaranteed real."""
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     path = TRANSCRIPT_DIR / f"{_safe_name(trajectory_id)}.md"
     with path.open("a", encoding="utf-8") as f:
-        f.write(f"**{role}**: {text.strip()}\n\n")
+        f.write(f"**{role}**: {lib.redact_text(text).strip()}\n\n")
     return path
 
 
@@ -150,10 +153,26 @@ def _extract_prompt(payload: dict) -> str | None:
     return None
 
 
+def _redact_payload(obj):
+    """Deep copy of `obj` with every string leaf secret-scrubbed (#109). Keys,
+    structure, and non-string scalars are preserved so the probe dump stays a
+    faithful, usable diagnostic — only secret-shaped substrings inside string
+    values are masked. main() has gated on lib.redaction_available()."""
+    if isinstance(obj, str):
+        return lib.redact_text(obj)
+    if isinstance(obj, dict):
+        return {k: _redact_payload(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_payload(v) for v in obj]
+    return obj
+
+
 def _dump_probe(event: str, payload: dict) -> bool:
     """Bounded self-probe dump (#62): at most one unparsed-*.json per event
     name. Returns True when a dump was written (callers log only then, so a
-    hook registered for every Cascade event stays quiet after the first)."""
+    hook registered for every Cascade event stays quiet after the first).
+    Payload string leaves are secret-scrubbed at this write site (#109) so no
+    quoted secret reaches unparsed-*.json, while structure stays usable."""
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         tag = _safe_name(event or "unknown")
@@ -161,7 +180,8 @@ def _dump_probe(event: str, payload: dict) -> bool:
             return False
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         (STATE_DIR / f"unparsed-{tag}-{stamp}.json").write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            json.dumps(_redact_payload(payload), indent=2, ensure_ascii=False),
+            encoding="utf-8")
         return True
     except OSError:
         return False
@@ -181,6 +201,14 @@ def main() -> int:
         _fallback_log("windsurf-cascade: hook library missing (_daimon_hook_lib.py) — skipped")
         return 0
     if lib.disabled():
+        return 0
+    if not lib.redaction_available():
+        # #109: every write site below (accumulation, probe dumps) persists
+        # transcript-derived text. Without the redaction module we cannot
+        # guarantee a quoted secret is scrubbed, so skip rather than write raw —
+        # #104's disk guarantee outranks accumulation. Fail-open: still exit 0.
+        lib.log("windsurf-cascade: redaction module unavailable — skipped "
+                "(no raw transcript persisted)")
         return 0
 
     try:

@@ -1634,7 +1634,11 @@ def _cmd_stats(args) -> int:
 # purpose: the plugin marketplace owns that path.
 _HOOK_HOSTS = {
     "windsurf": {
-        "files": ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py"),
+        # redact.py ships alongside the scripts so the standalone hooks can
+        # scrub secrets at their write sites (#109) without importing the
+        # venv-only package. A test keeps it byte-identical to the canonical
+        # daimon_briefing/redact.py.
+        "files": ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py", "redact.py"),
         "entry": "daimon-windsurf-hooks.py",
         "events": ("pre_user_prompt", "post_cascade_response",
                    "post_cascade_response_with_transcript"),

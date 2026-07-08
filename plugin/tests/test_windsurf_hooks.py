@@ -251,6 +251,37 @@ def test_with_transcript_shares_throttle_marker_with_accumulation(tmp_path):
     assert capture2.read_text().count("serialize") == 1  # unchanged: no new spawn
 
 
+_STRIPE = "sk_live_a1B2c3D4e5F6g7H8"
+
+
+def test_post_response_redacts_secret_in_accumulated_transcript(tmp_path):
+    # #109: the accumulation .md is a disk artifact `daimon serialize` reads
+    # later — a quoted secret in a turn must be scrubbed at the append write
+    # site so it never reaches disk raw (mirrors the #104 checkpoint seam).
+    proc, _ = _run(_post_payload(f"deploy with {_STRIPE} now"), tmp_path)
+    assert proc.returncode == 0
+    text = _transcript(tmp_path).read_text(encoding="utf-8")
+    assert _STRIPE not in text
+    assert "[redacted:stripe-key]" in text
+
+
+def test_probe_dump_redacts_secret_but_keeps_structure(tmp_path):
+    # #109: probe dumps persist raw event payloads. Secret-shaped values must
+    # be scrubbed while keys / structure survive, so the dump stays a usable
+    # diagnostic for the next adapter iteration.
+    payload = {"agent_action_name": "pre_user_prompt", "trajectory_id": TRAJ,
+               "tool_info": {"weird_field": {"note": f"key is {_STRIPE}"}}}
+    proc, _ = _run(payload, tmp_path)
+    assert proc.returncode == 0
+    dumps = list((tmp_path / ".daimon" / "windsurf").glob("unparsed-*.json"))
+    assert dumps
+    body = dumps[0].read_text(encoding="utf-8")
+    assert _STRIPE not in body
+    assert "[redacted:stripe-key]" in body
+    parsed = json.loads(body)  # still valid JSON, structure intact
+    assert parsed["tool_info"]["weird_field"]["note"]  # key + leaf preserved
+
+
 def test_pre_user_prompt_docs_shape_appends_user_turn(tmp_path):
     # Documented shape (docs.devin.ai/desktop/cascade/hooks): text lives in
     # tool_info.user_prompt. Regression guard — passes on the current

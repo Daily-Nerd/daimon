@@ -12,7 +12,7 @@ from daimon_briefing import cli
 REPO_HOOK_DIR = Path(__file__).parents[2] / "hook"
 PKG_HOOKS_DIR = Path(__file__).parents[1] / "daimon_briefing" / "_hooks"
 
-_SHIPPED = ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py")
+_SHIPPED = ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py", "redact.py")
 
 
 @pytest.mark.parametrize("name", _SHIPPED)
@@ -22,6 +22,16 @@ def test_packaged_hook_matches_repo_copy(name):
     repo = (REPO_HOOK_DIR / name).read_bytes()
     packaged = (PKG_HOOKS_DIR / name).read_bytes()
     assert repo == packaged, f"{name}: repo hook/ and packaged _hooks/ differ"
+
+
+def test_shipped_redact_matches_canonical_module():
+    # #109: the standalone hooks scrub secrets with a redact.py shipped next to
+    # them (they cannot import the venv-only package). It MUST stay byte-
+    # identical to the canonical module, so patterns — and scar 0022's long-
+    # input backtracking guarantee — live in ONE place and never drift.
+    canonical = (Path(__file__).parents[1] / "daimon_briefing" / "redact.py").read_bytes()
+    shipped = (PKG_HOOKS_DIR / "redact.py").read_bytes()
+    assert shipped == canonical, "hook-shipped redact.py drifted from the canonical module"
 
 
 def test_hooks_install_windsurf_writes_stable_executable_copies(tmp_path, monkeypatch, capsys):
