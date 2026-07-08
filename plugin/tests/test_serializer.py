@@ -18,7 +18,10 @@ def _valid_checkpoint_json(session_id="S1"):
                 "active_topic": {"text": "topic", "trust": "inferred"},
                 "open_questions": [{"text": "q", "trust": "inferred"}],
                 "recent_decisions": [
-                    {"text": "d", "trust": "verbatim", "quote": "exact words"}
+                    # Quote is present in the make_messages() transcript these
+                    # tests render, so #125 verify_quotes keeps it verbatim
+                    # rather than downgrading an unpinned quote to inferred.
+                    {"text": "d", "trust": "verbatim", "quote": "line 3 from assistant"}
                 ],
             },
             "epistemic_snapshot": {

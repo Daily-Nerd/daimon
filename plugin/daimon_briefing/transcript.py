@@ -9,6 +9,7 @@
 All messages normalize to OpenAI-format dicts: {"role": str, "content": str}.
 """
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -245,6 +246,18 @@ def last_timestamp(path) -> str | None:
 
 # Matches "**user**:", "user:", "**Assistant**:" etc. at line start.
 _ROLE_RE = re.compile(r"^\s*\**\s*(user|assistant|system|tool)\s*\**\s*:\s*", re.IGNORECASE)
+
+
+def file_sha256(path) -> str | None:
+    """SHA-256 hex over a transcript file's RAW bytes (#125), or None when the
+    file is unreadable. Binds a checkpoint to its source content, not just the
+    filename stem, so a transcript later truncated, rotated, or edited is
+    detectable. Hashes bytes, not decoded text — no encoding normalization can
+    silently change the digest."""
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def from_file(path) -> list[dict]:

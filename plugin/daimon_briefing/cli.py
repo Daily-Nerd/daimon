@@ -157,6 +157,10 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     timestamp to compare against a checkpoint mtime — out of scope, FR #27.)
     Returns the rc."""
     path = transcript_path
+    # Hash the raw transcript bytes at read time (#125), before any LLM work, so
+    # the checkpoint can bind to its exact source content. None when unreadable —
+    # stamped only when present; readers tolerate its absence (old checkpoints).
+    transcript_sha = transcript.file_sha256(path)
     try:
         messages = transcript.from_file(path)
     except FileNotFoundError:
@@ -197,6 +201,8 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     # of an old transcript carries its true age and store's pointer guard can
     # keep it from stealing `latest` from a newer session.
     checkpoint["created"] = _session_end_stamp(path)
+    if transcript_sha:
+        checkpoint["transcript_hash"] = transcript_sha
     if config.carry_enabled():
         # Deterministic carry (#33 Phase 2): fold the previous checkpoint's
         # unresolved items in BEFORE the write rotates it away. Clock = this
@@ -1216,6 +1222,92 @@ def _heal_plan(text, now) -> dict:
     return {"target": target, "skipped": skipped, "note": note}
 
 
+def _find_audit_transcript(session_id: str, slug):
+    """Locate a stored checkpoint's source transcript for the #125 audit:
+    <claude_projects>/<slug>/<session_id>.jsonl, with a glob fallback across
+    buckets (a session's project may have moved or forked its bucket). Returns
+    the Path or None when nothing matches."""
+    base = config.claude_projects_dir()
+    if slug:
+        direct = base / slug / f"{session_id}.jsonl"
+        if direct.exists():
+            return direct
+    try:
+        for cand in base.glob(f"*/{session_id}.jsonl"):
+            return cand
+    except OSError:
+        pass
+    return None
+
+
+def _cmd_audit_quotes(args) -> int:
+    """Read-only audit (#125): re-check every stored verbatim quote against its
+    source transcript with the SAME tier-f matcher serialize uses, and REPORT.
+    Never rewrites a trust tag — a blind backfill would flip a large share of the
+    historical corpus, many of them wrongly (quotes crossing content the current
+    renderer no longer emits). Default scope is the current project; --all spans
+    the whole corpus."""
+    project = _resolve_project(args.project)
+    want_slug = store.project_slug(project)
+    d = config.checkpoint_dir()
+    try:
+        files = store._session_files(d)
+    except OSError:
+        files = []
+    scanned = paired = unpaired = items = verified = failed = 0
+    failures: list[tuple[str, str]] = []
+    for f in sorted(files):
+        try:
+            cp = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(cp, dict):
+            continue
+        slug = cp.get("project_slug")
+        if not args.all and want_slug is not None and slug != want_slug:
+            continue
+        scanned += 1
+        session_id = str(cp.get("session_id") or f.stem)
+        tpath = _find_audit_transcript(session_id, slug)
+        haystack = None
+        if tpath is not None:
+            try:
+                haystack = serializer._render_transcript(transcript.from_file(tpath))
+            except (OSError, FileNotFoundError):
+                haystack = None
+        if haystack is None:
+            unpaired += 1
+            continue
+        paired += 1
+        for item in serializer.iter_items(cp):
+            if item.get("trust") != "verbatim":
+                continue
+            quote = item.get("quote")
+            if not isinstance(quote, str) or not quote.strip():
+                continue
+            items += 1
+            if serializer.quote_matches(quote, haystack):
+                verified += 1
+            else:
+                failed += 1
+                failures.append((session_id, str(item.get("text") or "")))
+    rate = (verified / items) if items else 0.0
+    scope = "all projects" if args.all else project
+    lines = [
+        f"audit-quotes ({scope})",
+        f"  checkpoints scanned: {scanned}  paired: {paired}  unpaired: {unpaired}",
+        f"  verbatim quotes checked: {items}  verified: {verified}  "
+        f"failed: {failed}  rate: {rate:.1%}",
+    ]
+    if failures:
+        top = max(0, args.top)
+        lines.append(f"  top {min(top, len(failures))} failures (item text prefix):")
+        for sid, text in failures[:top]:
+            lines.append(f"    [{sid}] {text[:80]}")
+    print("\n".join(lines))
+    return 0
+
+
 def _cmd_heal(args) -> int:
     """Explain the heal decision, then repair the newest healable session if safe.
     Every no-op returns 0 (a no-op heal is never an error). `--dry-run` explains
@@ -1946,6 +2038,24 @@ def main(argv=None) -> int:
         help="list items withheld from the briefing as resolved (#103)",
     )
     p_status.set_defaults(func=_cmd_status)
+
+    p_audit = sub.add_parser(
+        "audit-quotes",
+        help="re-check stored verbatim quotes against their source transcripts "
+             "and report mismatches (read-only, never rewrites tags, #125)",
+        epilog="Examples:\n"
+               "  daimon audit-quotes\n"
+               "  daimon audit-quotes --all --top 20\n",
+    )
+    p_audit.add_argument(
+        "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_audit.add_argument(
+        "--all", action="store_true",
+        help="audit every project's checkpoints, not just the current one")
+    p_audit.add_argument(
+        "--top", type=int, default=10,
+        help="how many failing quotes to list (default: 10)")
+    p_audit.set_defaults(func=_cmd_audit_quotes)
 
     p_heal = sub.add_parser(
         "heal",
