@@ -157,14 +157,21 @@ def _redact_payload(obj):
     """Deep copy of `obj` with every string leaf secret-scrubbed (#109). Keys,
     structure, and non-string scalars are preserved so the probe dump stays a
     faithful, usable diagnostic — only secret-shaped substrings inside string
-    values are masked. main() has gated on lib.redaction_available()."""
+    values are masked. main() has gated on lib.redaction_available().
+
+    JSON payloads only ever yield dict/list/str/scalar, but the helper is
+    fail-safe against reuse: tuples are scrubbed like lists, and ANY other
+    unrecognized type is rendered via str() and scrubbed rather than passed
+    through raw — a silent skip would contradict the disk-wide guarantee."""
     if isinstance(obj, str):
         return lib.redact_text(obj)
     if isinstance(obj, dict):
         return {k: _redact_payload(v) for k, v in obj.items()}
-    if isinstance(obj, list):
+    if isinstance(obj, (list, tuple)):
         return [_redact_payload(v) for v in obj]
-    return obj
+    if obj is None or isinstance(obj, (bool, int, float)):
+        return obj
+    return lib.redact_text(str(obj))
 
 
 def _dump_probe(event: str, payload: dict) -> bool:
