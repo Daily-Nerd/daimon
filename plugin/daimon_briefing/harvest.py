@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from . import transcript
+from . import redact, transcript
 
 log = logging.getLogger("daimon_briefing")
 
@@ -113,9 +113,15 @@ def to_candidate(hit, anchor, session_id, today):
 
     `title` is emitted via json.dumps → a valid double-quoted YAML scalar even when
     the sentence contains ':' or quotes (the #1 hand-written-scar YAML footgun).
+
+    The verbatim sentence is secret-scrubbed here (#109) before it becomes the
+    candidate's title, slug, and body — candidate files are committable, so a
+    quoted secret must never persist to .scars/candidates/*.md. Classification
+    (_scar_type) reads the raw hit: its markers are prose, untouched by redaction.
     """
     typ = _scar_type(hit)
-    title = " ".join(hit.sentence.split())[:80].rstrip()
+    sentence, _ = redact.redact_text(hit.sentence)
+    title = " ".join(sentence.split())[:80].rstrip()
     slug = _slug(title)
     review = (
         datetime.date.fromisoformat(today) + datetime.timedelta(days=365)
@@ -138,7 +144,7 @@ def to_candidate(hit, anchor, session_id, today):
         f"  review_after: {review}\n"
         "status: candidate\n"
         "---\n\n"
-        f"{hit.sentence.strip()}\n\n"
+        f"{sentence.strip()}\n\n"
         "Auto-harvested from the session transcript — a human must verify the claim "
         "and confirm the anchor before promotion.\n"
     )

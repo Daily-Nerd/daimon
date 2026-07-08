@@ -179,6 +179,21 @@ def test_to_candidate_title_with_colon_is_yaml_safe():
     assert fm["title"].startswith('"')  # json.dumps quoting keeps YAML valid
 
 
+def test_to_candidate_redacts_secret_in_body_and_title():
+    # #109: candidate files are committable — a verbatim assistant sentence
+    # carrying a secret must be scrubbed before it becomes the candidate's
+    # title, slug, and body.
+    hit = harvest.Hit(
+        "avoidance",
+        "Never hardcode sk_live_a1B2c3D4e5F6g7H8 in config.py.",
+        "", 0,
+    )
+    slug, md = harvest.to_candidate(hit, "config.py", "S1", "2026-06-30")
+    assert "sk_live_a1B2c3D4e5F6g7H8" not in md
+    assert "[redacted:stripe-key]" in md
+    assert "sk_live" not in slug
+
+
 def _assistant(text):
     return {"role": "assistant", "content": text}
 

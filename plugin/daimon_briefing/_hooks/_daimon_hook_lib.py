@@ -14,6 +14,7 @@ pure-JSON stdout, Codex's additionalContext envelope + Stop throttling, and
 Codex's mtime-only age line. Only what is genuinely identical lives here.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -32,6 +33,47 @@ FALLBACKS = [
 ]
 
 LOG_DIR = Path.home() / ".daimon" / "logs"
+
+
+def _load_redact():
+    """Load the shipped redaction module (#104) from THIS file's own directory,
+    where `daimon hooks install` places redact.py. File-location import (never
+    `import redact`) so it never depends on sys.path state and never collides
+    with an unrelated top-level module. None when absent — a stale install
+    missing redact.py; the hook write sites then SKIP rather than persist raw
+    text (#109). Patterns live ONLY in redact.py (scar 0022) — never copied
+    here, and a test keeps the shipped copy byte-identical to the package's."""
+    path = Path(__file__).resolve().parent / "redact.py"
+    if not path.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_daimon_hooks_redact", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # noqa: BLE001 — a broken module must never crash a hook
+        return None
+
+
+_REDACT = _load_redact()
+
+
+def redaction_available() -> bool:
+    """True when the shipped redaction module loaded. A hook MUST gate its
+    write sites on this and skip when False: #104's disk guarantee (a quoted
+    secret never persists) outranks accumulation/probe availability (#109)."""
+    return _REDACT is not None
+
+
+def redact_text(text: str) -> str:
+    """Best-effort capture-time secret scrub, delegating to the shipped redact
+    module (#104). Returns text UNCHANGED when the module is unavailable — the
+    caller gates on redaction_available() first, so that path never persists.
+    The module's own per-pattern fail-open guarantees a scrub, never a raise."""
+    if _REDACT is None:
+        return text
+    scrubbed, _counts = _REDACT.redact_text(text)
+    return scrubbed
 
 
 def disabled() -> bool:
