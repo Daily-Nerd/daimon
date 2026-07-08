@@ -5,6 +5,18 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0](https://github.com/Daily-Nerd/daimon/compare/v0.10.0...v0.11.0) (2026-07-08)
+
+
+### Features
+
+* **redact:** extend redaction to remaining transcript-persistence seams ([#116](https://github.com/Daily-Nerd/daimon/issues/116)) ([738ebe6](https://github.com/Daily-Nerd/daimon/commit/738ebe6d4e9e69741ffabd59e0e81d363a26cf9d)), closes [#109](https://github.com/Daily-Nerd/daimon/issues/109)
+
+
+### Documentation
+
+* **plugin:** rewrite package README for PyPI ([#118](https://github.com/Daily-Nerd/daimon/issues/118)) ([#119](https://github.com/Daily-Nerd/daimon/issues/119)) ([6df3745](https://github.com/Daily-Nerd/daimon/commit/6df374565f87d5f4b99ceda6103b2e046edc0226))
+
 ## [0.10.0](https://github.com/Daily-Nerd/daimon/compare/v0.9.0...v0.10.0) (2026-07-07)
 
 
