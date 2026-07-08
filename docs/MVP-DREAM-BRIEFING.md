@@ -1,6 +1,6 @@
 # MVP — Dream-Briefing (self-contained, host-agnostic)
 
-**Status:** Shipped MVP. This is the authoritative architecture. It describes the **self-contained, host-agnostic** runtime per **[D-009](../research/DECISIONS.md)** (2026-06-27), which supersedes the standalone-product framing in `docs/RFC.md` / `docs/ARCHITECTURE.md` (D-008) *and* D-008's "build on Honcho + Graphiti" substrate framing. Honcho and Graphiti were evaluated as a memory backend and **not adopted as runtime dependencies** — the shipped core is its own lean stack (checkpoint store + prose serializer + deterministic render + pluggable LLM backend).
+**Status:** Shipped MVP, current at **v0.11.0** (see `CHANGELOG.md`). This is the authoritative architecture. It describes the **self-contained, host-agnostic** runtime per **[D-009](../research/DECISIONS.md)** (2026-06-27), which supersedes the standalone-product framing in `docs/RFC.md` / `docs/ARCHITECTURE.md` (D-008) *and* D-008's "build on Honcho + Graphiti" substrate framing. Honcho and Graphiti were evaluated as a memory backend and **not adopted as runtime dependencies** — the shipped core is its own lean stack (checkpoint store + prose serializer + deterministic render + pluggable LLM backend).
 
 **Provenance rule for this doc:** every claim about the runtime or a host's hook contract is tagged **VERIFIED** (read in this repo's code or the host's docs, with path) or **ASSUMED** (inference, unread). This project was burned by overclaiming once (`findings/03`, `findings/07`); do not repeat it.
 
@@ -16,7 +16,7 @@ A **dream-briefing** is a session-*start* artifact: a skimmable "while you were 
 
 ## 2. Architecture
 
-The **primary integration is native host hooks.** Daimon ships standalone hook scripts that a host (Claude Code, Codex, Gemini) invokes at its own session boundaries; the scripts shell out to an installed `daimon` CLI which owns all serialization, rendering, and storage. There is **no server and no external memory backend** — the runtime is stdlib-only and offline-first. A hermes-agent plugin is an *optional secondary* surface (Appendix A).
+The **primary integration is native host hooks.** Daimon ships standalone hook scripts that a host (Claude Code, Codex, Gemini, Windsurf) invokes at its own session boundaries; the scripts shell out to an installed `daimon` CLI which owns all serialization, rendering, and storage. There is **no server and no external memory backend** — the runtime is stdlib-only and offline-first. A hermes-agent plugin is an *optional secondary* surface (Appendix A).
 
 ### Native hooks — Claude Code (VERIFIED — `hooks/hooks.json`, `hook/`)
 
@@ -28,9 +28,9 @@ The **primary integration is native host hooks.** Daimon ships standalone hook s
 | `SessionStart` | `hook/daimon-session-brief.py` | Inject the briefing as session context |
 | `UserPromptSubmit` | `hook/daimon-prompt-recall.py` | Proactive "you worked on this before" recall |
 
-**Write path (SessionEnd) — VERIFIED `hook/daimon-session-end.py`.** The hook reads the SessionEnd payload from stdin (`{session_id, transcript_path, cwd, reason, ...}`) and spawns `daimon serialize <transcript_path>` as a **detached** background process (`start_new_session=True`, so it survives `/exit`). Serialization is a 30s+ LLM call; blocking session exit on it is unacceptable, so the hook returns immediately and the child finishes on its own. Fail-open: always exit 0; diagnostics go to `~/.daimon/logs/serialize.log`. Per-project routing hands the session's `cwd` to the child so the checkpoint lands under the right project.
+**Write path (SessionEnd) — VERIFIED `hook/daimon-session-end.py`.** The hook reads the SessionEnd payload from stdin (`{session_id, transcript_path, cwd, reason, ...}`) and spawns `daimon serialize <transcript_path>` as a **detached** background process (`start_new_session=True`, so it survives `/exit`). Serialization is a 30s+ LLM call; blocking session exit on it is unacceptable, so the hook returns immediately and the child finishes on its own. Fail-open: always exit 0; diagnostics go to `~/.daimon/logs/serialize.log`. Per-project routing hands the session's `cwd` to the child so the checkpoint lands under the right project. **Capture-time secret redaction:** `redact.py` scrubs checkpoint and event text before it ever touches disk (0.10.0 #108), extended to the remaining transcript-persistence seams — e.g. the Windsurf accumulation file — in 0.11.0 (#116); the module ships alongside the hook scripts on `daimon hooks install` so standalone hosts get the same scrub without importing the venv-only package.
 
-**Read path (SessionStart) — VERIFIED `hook/daimon-session-brief.py`.** The hook shells out to `daimon brief`; whatever the CLI prints to stdout is injected as additional session context. The CLI is the *single source of truth* for briefing rendering, so no host re-renders the checkpoint and the hosts never drift. Fail-open (exit 0); a missing CLI prints a one-line install hint instead of a briefing.
+**Read path (SessionStart) — VERIFIED `hook/daimon-session-brief.py`.** The hook shells out to `daimon brief`; whatever the CLI prints to stdout is injected as additional session context. The CLI is the *single source of truth* for briefing rendering, so no host re-renders the checkpoint and the hosts never drift. Fail-open (exit 0); a missing CLI prints a one-line install hint instead of a briefing. **Render contract:** a project with no checkpoint of its own defaults to a three-line header-only orientation note (most recent activity elsewhere + how to opt in) instead of rendering another project's full body — the old full-body cross-project fallback is opt-in via `--global-fallback` / `DAIMON_BRIEF_GLOBAL_FALLBACK=full` (0.9.0 #97, closing #96's field-reported contamination read).
 
 **Proactive recall (UserPromptSubmit) — VERIFIED `hook/daimon-prompt-recall.py`.** Fires on every prompt, pipes the prompt to `daimon recall-inject` on stdin, and injects a one-line pointer when the prompt overlaps a prior open loop. Because it fires per-prompt, failures are **silent** (exit 0, no output) — the only thing it ever prints is a real suggestion — and it never re-suggests what the SessionStart briefing already carried.
 
@@ -39,18 +39,49 @@ The **primary integration is native host hooks.** Daimon ships standalone hook s
 1. **The native SessionEnd payload carries the transcript path.** The serializer reads the transcript directly from the file the host names — there is no separate session-database read and no dependency on host-internal storage.
 2. **The briefing is injected at session start, not deferred.** SessionStart stdout becomes session context, so the "while you were away" artifact lands before the first model turn. (Hosts whose start hook cannot inject — see Appendix A for the hermes case — defer to the first model call instead.)
 
-### Host adapters — Codex and Gemini (code VERIFIED, not yet live-dogfooded — `hook/_daimon_hook_lib.py`, `hook/daimon-codex-*.py`, `hook/daimon-gemini-*.py`)
+### Host adapters — Codex, Gemini, and Windsurf (code VERIFIED — `hook/_daimon_hook_lib.py`, `hook/daimon-codex-*.py`, `hook/daimon-gemini-*.py`, `hook/daimon-windsurf-hooks.py`)
 
-The hook scripts are standalone and **stdlib-only**: they run inside whatever interpreter the host invokes and **cannot import the `daimon_briefing` package** (it lives in an isolated uv-tool venv), so they locate and shell out to the installed `daimon` CLI. Everything the adapters would otherwise duplicate — kill-switch check, CLI resolution, per-project env, detached spawn helpers, checkpoint-age formatting — lives in the shared `hook/_daimon_hook_lib.py`. Host-specific behavior stays in each script: Gemini's pure-JSON stdout, Codex's `additionalContext` envelope and throttled `Stop` hook (Codex has no SessionEnd, so it serializes on a throttled Stop). This is the "thin host adapter" D-009 calls for — new hosts (Odysseus, openclawd, …) become first-class by adding a script pair against the same shared lib.
+The hook scripts are standalone and **stdlib-only**: they run inside whatever interpreter the host invokes and **cannot import the `daimon_briefing` package** (it lives in an isolated uv-tool venv), so they locate and shell out to the installed `daimon` CLI. Everything the adapters would otherwise duplicate — kill-switch check, CLI resolution, per-project env, detached spawn helpers, checkpoint-age formatting — lives in the shared `hook/_daimon_hook_lib.py`. Host-specific behavior stays in each script: Gemini's pure-JSON stdout, Codex's `additionalContext` envelope and throttled `Stop` hook (Codex has no SessionEnd, so it serializes on a throttled Stop), Windsurf's single Cascade script covering three hook events with native-transcript preference and accumulation fallback (below). This is the "thin host adapter" D-009 calls for — new hosts (Odysseus, openclawd, …) become first-class by adding a script pair against the same shared lib. Windsurf is the shipped proof of that shape: `daimon-windsurf-hooks.py` + `_daimon_hook_lib.py` (0.4.0–0.6.0), installable in one command (`daimon hooks install windsurf`, 0.6.0 #44) — the same pattern the next host adapter follows.
+
+**Windsurf adapter shape (VERIFIED — `hook/daimon-windsurf-hooks.py`).** One script is registered for three Cascade events: `pre_user_prompt` and `post_cascade_response` (legacy accumulation — Daimon builds its own transcript at `~/.daimon/windsurf/transcripts/<trajectory_id>.md` because the plain payload carries no transcript path) and `post_cascade_response_with_transcript`, which serializes directly from Cascade's native `.jsonl` transcript when the host provides one (preferred; accumulation is redundant for that trajectory). Both serialize-capable events are throttled per trajectory (`DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL`, default 300s). Unhandled payload shapes are self-probed to `~/.daimon/windsurf/unparsed-*.json` for the next adapter iteration. **Caveat:** Cascade's hook set has no session-start-equivalent event, so unlike Claude Code/Codex/Gemini the briefing is not injected as context on Windsurf — it is read via the terminal (`daimon brief`, e.g. through the skill), a permanent host constraint, not a gap to be fixed (0.8.1 #82).
 
 **Live-validation status per host (honest ladder — trust class applies to hosts too):**
 
 - **Claude Code — LIVE.** The only field-tested host: daily dogfood, full loop (serialize → carry → brief → recall), field incidents recorded in `research/LOGBOOK.md`.
 - **Codex — code-verified + unit-tested (`test_codex_hooks.py`), zero recorded live sessions.** The adapter and installer ship, but no LOGBOOK entry documents a real Codex session completing the capture → inject loop. Treat "runs on Codex" as INFERRED until one is on record.
 - **Gemini — briefing hook shipped; serialize CANNOT run end-to-end today.** Capture is staged behind upstream `gemini-cli#14715` (`transcript_path` stub). Half a loop, by upstream constraint.
+- **Windsurf — adapter shipped and code-verified (native-transcript serialize, 0.8.0 #71; probe-hardened, 0.7.0 #63), live validation in progress.** No LOGBOOK entry yet documents a complete dogfooded loop the way Claude Code's does — treat end-to-end "runs on Windsurf" as INFERRED from code + unit tests until one is on record.
 - **hermes — secondary path (Appendix A), unit-tested against a fake host context only.** Never run under a real hermes-agent.
 
-### Diagram (ASCII — native-hook path)
+### Diagram (native-hook path)
+
+```mermaid
+sequenceDiagram
+    participant N as Session N (host)
+    participant EH as SessionEnd hook
+    participant D as daimon CLI
+    participant S as ~/.daimon store
+    participant BH as SessionStart hook
+    participant N1 as Session N+1 (host)
+
+    N->>EH: session ends — host passes transcript_path, cwd on stdin
+    EH->>D: spawn detached: daimon serialize transcript
+    Note over D: serializer (D-010 prompt, D-006 trust classes)<br/>redact.py scrubs secrets before write (0.10.0 #35;108, 0.11.0 #35;116)
+    D->>S: checkpoint JSON + deterministic carry of unresolved loops
+    Note over S: stable item ids + append-only events.jsonl (supersede-not-delete)<br/>daimon resolve / log / reverify (0.10.0 #35;102/#35;103)
+    N1->>BH: session starts
+    BH->>D: daimon brief
+    D->>S: read latest checkpoint + resolution events
+    D-->>BH: deterministic render — event-resolved items withheld
+    BH-->>N1: stdout injected as context before first model turn
+    loop each later prompt
+        N1->>D: UserPromptSubmit hook → daimon recall-inject
+        D-->>N1: one-line pointer if prompt overlaps a prior open loop (else silent)
+    end
+```
+
+<details>
+<summary>Fully annotated ASCII version (terminal-friendly)</summary>
 
 ```
   SESSION N (work happens)
@@ -66,15 +97,20 @@ The hook scripts are standalone and **stdlib-only**: they run inside whatever in
         │                 │  transcript → CHKPT  │  + cognitive-state schema
         │                 │  (extractive-pinned, │  (D-006 trust classes)
         │                 │   chunked if long)   │  (D-007 recall fix)
+        │                 │  redact.py scrubs    │  (0.10.0 #108, 0.11.0 #116)
+        │                 │  secrets before write│
         │                 └─────────┬───────────┘
         │                           ▼
         │            ~/.daimon/checkpoints/<project>/<id>.json   (per-project store)
         │            deterministic carry: unresolved loops → next checkpoint, [carried]
+        │            stable item ids + append-only events.jsonl (supersede-not-delete):
+        │              `daimon resolve` / `daimon log` / `daimon reverify` (0.10.0 #102/#103)
   ─────────────────────────────────────────────────────────────────
   SESSION N+1 (resume)
   ─────────────────────────────────────────────────────────────────
    SessionStart hook (daimon-session-brief.py)   ← shells out to `daimon brief`
         │   RECONSTRUCT checkpoint → briefing (deterministic render)
+        │   event-resolved items withheld; evidence-gated `daimon reverify` reopens one
         ▼
    stdout → injected as session context           ← briefing lands before first turn
         ▼
@@ -85,6 +121,8 @@ The hook scripts are standalone and **stdlib-only**: they run inside whatever in
         │   prompt overlaps a prior open loop? inject a one-line pointer (else silent)
 ```
 
+</details>
+
 **Why hooks + a CLI, not a pure SKILL.md skill:** a SKILL.md skill is invoked by slash command or conversation — it has **no automatic session-start/session-end trigger**. The briefing must fire *automatically* at boundaries, so the serialize/inject/recall mechanism lives in **host hooks**, and the bundled `skills/daimon-briefing/SKILL.md` is only the user-facing surface (what a stranger's agent reads to explain the tool).
 
 ---
@@ -93,7 +131,7 @@ The hook scripts are standalone and **stdlib-only**: they run inside whatever in
 
 The Track-A rig (`research/experiments/track-a/`) was the serializer seed — its prompts and schema ship, hardened, in `plugin/daimon_briefing/`:
 
-- **`schema/cognitive-state.schema.json`** — the checkpoint format, carrying per-item **trust classes** (`verbatim` + required `quote` / `inferred`) implementing **D-006** (extractive pinning). This is the shipped checkpoint schema.
+- **`schema/cognitive-state.schema.json`** — the checkpoint format, carrying per-item **trust classes** (`verbatim` + required `quote` / `inferred`) implementing **D-006** (extractive pinning). This is the shipped checkpoint schema. It also carries **typed `supersedes` links**: the serializer attaches `{"type": "supersedes", "target": "<old decision>"}` when a session explicitly changes an earlier decision (`serializer.py`), the briefing surfaces the resulting candidate inline (`⚠ likely superseded by … — confirm: daimon resolve … / reject: daimon reverify …`), and a human confirms or rejects it — the machine never auto-resolves (0.10.0 #110).
 - **`prompts/01-serialize.md`** (now `serializer.py`, D-010 prompt) — the session-end serialize prompt with the anti-confabulation constraint. Runs behind `daimon serialize`; D-007 revisions landed here.
 - **`prompts/02-reconstruct.md`** — the checkpoint→briefing prompt, now the deterministic render behind `daimon brief`.
 - **`scoring/score.py` + the 5 ground-truthed sessions** — kept as a **regression harness**. Any prompt/schema/chunking change re-runs against the held answer keys; gate = RR ≥70%, FMR ≤10% (`findings/03`). This is the guardrail that stops a recall fix from reintroducing fabrication.
@@ -151,12 +189,14 @@ SCAR (git-native negative-knowledge graph: deadends/fences/landmines, `.scars/`)
 
 What ships today, behind `daimon`:
 
-- **Checkpoint → briefing loop** — SessionEnd serialize, SessionStart briefing, per-project checkpoint store. Live-validated on Claude Code; the Codex adapter ships code-verified but has no recorded live session (see the host-status ladder in §2). A host-free dogfood CLI (`daimon serialize` / `daimon brief`) needs no host at all.
+- **Checkpoint → briefing loop** — SessionEnd serialize, SessionStart briefing, per-project checkpoint store. Live-validated on Claude Code; the Codex and Windsurf adapters ship code-verified but have no recorded live session (see the host-status ladder in §2). A host-free dogfood CLI (`daimon serialize` / `daimon brief`) needs no host at all.
 - **Recall fix (D-007)** — chunked multi-pass extraction + merge for long transcripts, gated against the §3 regression harness (RR ≥70%, FMR ≤10%). Serializer failures are surfaced by cause (ChatError vs JSON-parse vs schema-validation) to the CLI/log rather than swallowed.
 - **Deterministic carry** — unresolved open loops carried forward by exact term overlap, marked `[carried]`.
+- **Resolution lifecycle (0.10.0)** — stable per-item ids; an append-only `events.jsonl` per project (supersede-not-delete, never rewritten); `daimon resolve` / `daimon log` / `daimon reverify` (#102, #103) as zero-LLM lifecycle writers; the briefing withholds event-resolved items at render time and only reopens one through an evidence-gated `daimon reverify`; typed `supersedes` links let a supersede candidate be confirmed (`daimon resolve … --status superseded-by:<id>`) or rejected outright, evidence-free (`daimon reverify <id>`) (#110, #112).
 - **Proactive recall** — `daimon recall-inject` behind the UserPromptSubmit hook.
 - **Code-drift detection** — `daimon anchor <file> <symbol>` binds a checkpoint item to a code symbol; the briefing flags it under **CODE DRIFT** when the symbol's body changes (offline, stdlib `ast`).
-- **Operability** — `daimon status` (health), `daimon heal` (one-shot recovery of a failed serialize, also fired detached at SessionStart), `daimon configure` (backend detection + `~/.daimon/env`).
+- **Capture-time redaction** — `redact.py` scrubs secrets from checkpoint and event text at write time (0.10.0 #108), extended to the remaining transcript-persistence seams in 0.11.0 (#116); ships with `daimon hooks install <host>`.
+- **Operability** — `daimon status` (health), `daimon heal` (one-shot recovery of a failed serialize, also fired detached at SessionStart), `daimon configure` (backend detection + `~/.daimon/env`), `daimon stats` (local usage + capture aggregates, zero phone-home, #55; distinguishing hook-driven briefings from deliberate re-reads, #101), `daimon skill install` (portable agent skill per host, #67), `daimon hooks install` (ships packaged host hook scripts from the package, currently Windsurf, #44), `daimon team init/sync/status` (opt-in sidecar-repo shared team memory, #111–#113).
 
 Not shipped / not planned as a runtime dependency: any external memory server or graph backend (D-009).
 
@@ -172,7 +212,7 @@ Not shipped / not planned as a runtime dependency: any external memory server or
 
 **ASSUMED / UNVERIFIED (verify before relying):**
 - **Q-model — serializer model + latency budget in-hook.** Which model the detached serializer calls (the host's configured model? a separate cheap model? the `claude` CLI backend?) and its latency budget at session end depend on the user's `daimon configure` result. Single-model confound (`findings/03`) still applies — don't reuse old kimi-k2.6 numbers as a floor.
-- **Q-host — host adapters beyond Claude Code.** The Codex/Gemini adapter *code* is verified and unit-tested, but no host other than Claude Code has a recorded live session — Codex awaits its first dogfooded loop, Gemini serialize is blocked upstream (`gemini-cli#14715`), hermes has only fake-context unit tests. Odysseus/openclawd/other hosts are ASSUMED reachable via the same `_daimon_hook_lib.py` shape until an adapter is actually written and dogfooded.
+- **Q-host — host adapters beyond Claude Code.** The Codex/Gemini/Windsurf adapter *code* is verified and unit-tested, but no host other than Claude Code has a recorded live session — Codex and Windsurf await their first dogfooded loop, Gemini serialize is blocked upstream (`gemini-cli#14715`), hermes has only fake-context unit tests. Odysseus/openclawd/other hosts are ASSUMED reachable via the same `_daimon_hook_lib.py` shape until an adapter is actually written and dogfooded.
 - **Q-carry — carry tuning.** The salient-term overlap thresholds and generic-term filtering in `carry.py` are tuned on limited live data; re-tune as more sessions accumulate.
 
 ---
