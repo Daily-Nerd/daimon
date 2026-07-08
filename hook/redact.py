@@ -25,7 +25,7 @@ _PATTERNS = (
     # backtracking, so an open-ended body ({N,}) is linear and safe — and
     # redacts the whole token (a capped upper bound would leak the tail).
     ("github-token", re.compile(
-        r"\b(?:gh[oprsu]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,})\b")),
+        r"\b(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})\b")),
     ("gitlab-token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}")),
     ("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("google-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}")),

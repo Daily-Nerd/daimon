@@ -45,6 +45,14 @@ def test_github_fine_grained_pat_redacted():
     assert "B" * 40 not in out and c.get("github-token") == 1
 
 
+def test_github_token_over_36_chars_redacted():
+    # #132 hardening: an exact-length {36} pattern leaks any token that is not
+    # precisely 36 chars — a longer or future-format ghp_ token walks to disk.
+    # {36,N} keeps the leak closed for realistic length growth.
+    out, c = _one("token ghp_" + "A" * 40 + " committed")
+    assert "ghp_" + "A" * 40 not in out and c.get("github-token") == 1
+
+
 def test_gitlab_token_redacted():
     out, c = _one("glpat-" + "C" * 20 + " leaked")
     assert "C" * 20 not in out and c.get("gitlab-token") == 1
