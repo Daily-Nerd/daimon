@@ -1,5 +1,7 @@
 # Daimon
 
+[![codecov](https://codecov.io/gh/Daily-Nerd/daimon/graph/badge.svg?token=gYJmnMwAue)](https://codecov.io/gh/Daily-Nerd/daimon)
+
 > A **dream-briefing** for your AI agent: a skimmable "while you were away / here's where we left off" artifact, shown when you resume a session.
 
 Your agent forgets everything between sessions. Daimon writes a small cognitive checkpoint when a session ends and turns it into a briefing when the next one starts — so the agent resumes from a faithful prior state instead of a confident guess:
