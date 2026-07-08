@@ -766,7 +766,7 @@ def resolutions(project_dir=None) -> dict:
         return out
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return out
     for line in lines:
         try:

@@ -648,6 +648,33 @@ def test_render_stats_rich_smoke(monkeypatch, capsys):
     assert "verbatim" in out
 
 
+def test_render_stats_plain_events_section(capsys):
+    data = _stats_sample()
+    data["events"] = {"lines": 12, "fold_ms": 0.34, "resolved_refs": 7}
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert "events (this project):" in out
+    assert "log lines: 12" in out
+    assert "resolved refs: 7" in out
+    assert "fold: 0.34ms" in out
+
+
+def test_render_stats_plain_omits_events_when_absent(capsys):
+    # optional section, mirrors retention — no events key, no section
+    render.render_stats(_stats_sample())
+    assert "events (this project):" not in capsys.readouterr().out
+
+
+def test_render_stats_rich_events_section(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = _stats_sample()
+    data["events"] = {"lines": 12, "fold_ms": 0.34, "resolved_refs": 7}
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert "events" in out.lower()
+    assert "12" in out
+
+
 # ---- recall: `daimon recall` (#68 rich parity) ------------------------------
 
 
