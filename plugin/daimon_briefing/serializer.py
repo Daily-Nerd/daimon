@@ -260,6 +260,12 @@ def _valid_item(item) -> bool:
         return False
     if "text" not in item or "trust" not in item:
         return False
+    # #134: presence != a usable value. A present-but-null (or non-str) text
+    # passed this check, reached disk, then crashed briefing.render on the next
+    # session. Reject at the boundary. Empty str stays valid — active_topic MAY
+    # carry empty text (test_validate_allows_empty_active_topic_text).
+    if not isinstance(item["text"], str):
+        return False
     if item["trust"] not in _TRUST_CLASSES:
         return False
     if item["trust"] == "verbatim":

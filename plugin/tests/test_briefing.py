@@ -455,6 +455,32 @@ def test_line_carried_marker_precedes_quote():
     assert line.index("[carried]") < line.index("the exact words")
 
 
+# ---- #134: null text/quote must render, not crash (torn/legacy checkpoint) ----
+
+
+def test_line_tolerates_null_text_and_quote():
+    # dict.get returns the stored None for a present-but-null key, so the old
+    # .get("text", "").strip() raised AttributeError. Must not raise now.
+    assert isinstance(briefing._line({"text": None, "trust": "inferred"}), str)
+    assert isinstance(
+        briefing._line({"text": None, "trust": "verbatim", "quote": None}), str)
+
+
+def test_nonempty_tolerates_null_text():
+    assert briefing._nonempty({"text": None, "trust": "inferred"}) is False
+
+
+def test_build_drops_null_text_item_and_renders_good_ones():
+    # End-to-end: one null-text item among good items must not take down the
+    # whole render — the bad item drops, the good items still show.
+    cp = {"working_context": {"recent_decisions": [
+              {"text": None, "trust": "inferred"},
+              {"text": "shipped the fix", "trust": "inferred"}]},
+          "epistemic_snapshot": {}}
+    out = briefing.render_plain(briefing.build(cp))
+    assert "shipped the fix" in out
+
+
 # ---- #30: trust-class integrity — the differentiator's own guarantees ----
 
 
