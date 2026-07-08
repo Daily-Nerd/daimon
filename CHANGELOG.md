@@ -5,6 +5,14 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1](https://github.com/Daily-Nerd/daimon/compare/v0.11.0...v0.11.1) (2026-07-08)
+
+
+### Documentation
+
+* propagate 0.6.0–0.11.0 reality into public docs ([#121](https://github.com/Daily-Nerd/daimon/issues/121)) ([0ceb2b5](https://github.com/Daily-Nerd/daimon/commit/0ceb2b54897ff6303c5ab1c38c70b7bf5531e255))
+* split per-host setup guides into docs/hosts/ ([#124](https://github.com/Daily-Nerd/daimon/issues/124)) ([cf6cc55](https://github.com/Daily-Nerd/daimon/commit/cf6cc55c85bb35d112600fb74d2a04133d1be1ba))
+
 ## [0.11.0](https://github.com/Daily-Nerd/daimon/compare/v0.10.0...v0.11.0) (2026-07-08)
 
 
