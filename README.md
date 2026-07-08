@@ -64,6 +64,9 @@ Config lives in `~/.daimon/env` (hooks run with the host's inherited env, not yo
 
 ### Hook up your host
 
+See [docs/hosts/](./docs/hosts/) for per-host setup guides (Claude Code,
+Codex, Gemini CLI, Windsurf). Quick version:
+
 **Claude Code (plugin — recommended):**
 
 ```
@@ -154,6 +157,7 @@ Daimon is self-contained at runtime — no external memory backend, no server. T
 ## Docs
 
 - [MVP — Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md) — authoritative architecture
+- [docs/hosts/](./docs/hosts/) — per-host setup guides (Claude Code, Codex, Gemini CLI, Windsurf)
 - [Codex hooks](./hook/CODEX.md) — Codex adapter setup
 - [The Problem](./docs/PROBLEM.md) — the context-loss thesis
 - [Research Logbook](./research/README.md) — findings, decisions, evidence trail
