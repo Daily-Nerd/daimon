@@ -445,6 +445,85 @@ def test_sync_removes_stale_index_lock_keeps_fresh(bare_remote, tmp_path):
     assert isinstance(report, dict)  # degraded, never raised
 
 
+# ---- #136: git timeouts degrade offline, non-interactive credentials ----
+
+
+def test_git_timeout_returns_failed_completedprocess_not_raise(tmp_path, monkeypatch):
+    # TimeoutExpired subclasses SubprocessError (NOT OSError), so it would slip
+    # past every caller's OSError catch. _git must convert it into the same
+    # rc != 0 shape the offline/TeamError paths already handle — never raise.
+    def boom(argv, *a, **k):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=k.get("timeout", 1))
+    monkeypatch.setattr(teamsync.subprocess, "run", boom)
+    proc = teamsync._git(tmp_path, "ls-remote", "origin")
+    assert isinstance(proc, subprocess.CompletedProcess)
+    assert proc.returncode != 0
+    assert "timed out" in (proc.stderr or "")
+
+
+def test_git_calls_are_non_interactive(tmp_path, monkeypatch):
+    # A private remote with no cached creds must fail fast, not block on git's
+    # interactive credential prompt until the timeout fires.
+    captured = {}
+    real_run = subprocess.run
+
+    def spy(argv, *a, **k):
+        captured.update(k)
+        captured["argv"] = argv
+        return real_run(argv, *a, **k)
+
+    monkeypatch.setattr(teamsync.subprocess, "run", spy)
+    teamsync._git(tmp_path, "rev-parse", "HEAD")
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert captured["stdin"] is subprocess.DEVNULL
+    assert captured["capture_output"] is True  # existing kwargs preserved, not clobbered
+    assert captured["text"] is True
+
+
+def test_sync_remote_offline_on_timeout_never_raises(bare_remote, monkeypatch):
+    # The "never raises / lands offline" contract must hold under a hung remote,
+    # not just under a clean rc != 0 (which the offline test already covers).
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+
+    def timeout_run(argv, *a, **k):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=k.get("timeout", 1))
+
+    monkeypatch.setattr(teamsync.subprocess, "run", timeout_run)
+    r = teamsync.sync_remote(sidecar)  # must NOT raise
+    assert isinstance(r, dict)
+    assert any("offline" in n for n in r["notes"])
+    assert r["pushed"] is False
+
+
+def test_cli_team_sync_rc0_on_timeout(bare_remote, monkeypatch):
+    # End-to-end: a hung remote degrades to rc 0, never a traceback + crash.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    teamsync.init(str(bare_remote))
+
+    def timeout_run(argv, *a, **k):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=k.get("timeout", 1))
+
+    monkeypatch.setattr(teamsync.subprocess, "run", timeout_run)
+    assert cli.main(["team", "sync"]) == 0
+
+
+def test_init_clone_timeout_surfaces_teamerror(tmp_path, monkeypatch):
+    # init's contract is a clean TeamError on failure — a clone timeout must
+    # surface there, not as a raw TimeoutExpired traceback.
+    real_run = subprocess.run
+
+    def maybe_timeout(argv, *a, **k):
+        if "clone" in argv:
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=k.get("timeout", 1))
+        return real_run(argv, *a, **k)
+
+    monkeypatch.setattr(teamsync.subprocess, "run", maybe_timeout)
+    with pytest.raises(teamsync.TeamError, match="clone failed"):
+        teamsync.init(str(tmp_path / "some-remote.git"))
+
+
 def test_merge_works_without_any_git_identity(bare_remote, tmp_path, monkeypatch):
     # CI runners have NO git identity and auto-detect fails ("(none)" hostname);
     # macOS auto-detects, which masked this locally. Reproduce CI exactly:
