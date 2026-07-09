@@ -41,7 +41,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, scoring, store
+from . import config, schema, scoring, store
 
 log = logging.getLogger("daimon.recall")
 
@@ -73,15 +73,9 @@ _FTS5_MISSING_MSG = (
 )
 
 # (checkpoint section, key, indexed kind). Every trust-tagged cognitive list in
-# the serializer schema, including contradictions_flagged (item shape varies).
-_KIND_SOURCES = (
-    ("working_context", "active_topic", "topic"),
-    ("working_context", "open_questions", "question"),
-    ("working_context", "recent_decisions", "decision"),
-    ("epistemic_snapshot", "strong_beliefs", "belief"),
-    ("epistemic_snapshot", "uncertainties", "uncertainty"),
-    ("epistemic_snapshot", "contradictions_flagged", "contradiction"),
-)
+# the serializer schema, including contradictions_flagged (item shape varies) —
+# derived from the shared item-field table (#146).
+_KIND_SOURCES = schema.KIND_SOURCES
 
 
 class RecallError(RuntimeError):
@@ -500,14 +494,10 @@ _MIN_OVERLAP = 2        # matched SESSION must share >=2 distinct salient terms
                         # — a multi-topic prompt splits its terms across items
                         # (first field miss, 2026-07-02)
 
-# recall index `kind` -> scoring TYPE_RULES key (#78 composition).
-_KIND_TO_TYPE = {
-    "question": "open_question",
-    "decision": "recent_decision",
-    "belief": "strong_belief",
-    "uncertainty": "uncertainty",
-    "topic": "active_topic",
-}
+# recall index `kind` -> scoring TYPE_RULES key (#78 composition), from the
+# shared schema (#146). `contradiction` has no dedicated rules and is absent —
+# the .get() below keeps its default fallback.
+_KIND_TO_TYPE = schema.KIND_TO_TYPE
 
 
 def _fold(tok: str) -> str:

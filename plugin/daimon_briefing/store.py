@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, redact, serializer
+from . import config, redact, schema, serializer
 
 _LATEST = "latest.json"
 # Rotation pointers, not per-session checkpoints. Anything else ending in .json in
@@ -358,15 +358,12 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
 # deepcopy) and redaction/id-stamping below only ever touch named fields — so no
 # code here needs to name it; this note is the reservation.
 
-# The five list sections that hold checkpoint items. active_topic is a single
-# per-session dict and never needs an id (it does not carry, #33).
-_ITEM_LISTS = (
-    ("working_context", "open_questions"),
-    ("working_context", "recent_decisions"),
-    ("epistemic_snapshot", "strong_beliefs"),
-    ("epistemic_snapshot", "uncertainties"),
-    ("epistemic_snapshot", "contradictions_flagged"),
-)
+# The five list sections that hold checkpoint items, from the shared schema
+# (#146 — one definition; serializer/recall/carry derive theirs from the same
+# table). active_topic is a single per-session dict and never needs an id (it
+# does not carry, #33). Aliased because briefing.withhold and cli iterate
+# store._ITEM_LISTS.
+_ITEM_LISTS = schema.ITEM_LISTS
 
 
 def _redact_checkpoint(checkpoint: dict) -> None:
