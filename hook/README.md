@@ -71,6 +71,12 @@ venv-only `daimon_briefing` package. Re-run `daimon hooks install <host>`
 after every `daimon` upgrade so the installed scripts (and the bundled
 `redact.py`) stay in sync with the installed CLI.
 
+Redaction scope is **disk-only** by design: every artifact that persists
+(checkpoints, event log, transcript accumulation, probe dumps, diagnostic
+logs) is scrubbed at its write site, while the serializer's LLM backend still
+receives the raw transcript text — that backend is the egress point the user
+configures, not a disk artifact.
+
 ## Drift guard
 
 Canonical adapter sources live here in `hook/`; the Claude Code plugin and
