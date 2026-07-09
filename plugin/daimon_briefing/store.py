@@ -784,11 +784,41 @@ def append_event(item_ref: str, status: str, note: str = "",
         return False
 
 
+def _tie_rank(evt: dict) -> int:
+    """Same-second precedence (#143), from event content only. reopen beats
+    resolving: when order is unknowable the item stays visible — hiding a
+    live item costs more than showing a resolved one. supersede-candidate
+    loses to everything: a machine SUGGESTION must never shadow a same-second
+    definitive statement (mirrors is_resolved's no-suppression rule)."""
+    status = str(evt.get("status") or "").lower()
+    if status.startswith("supersede-candidate"):
+        return 0
+    if status.startswith("reopen"):
+        return 2
+    return 1
+
+
+def _tie_wins(new_evt: dict, cur_evt: dict) -> bool:
+    """Same-second tie rule (#143), derived from event CONTENT only so the
+    fold is identical under any line order (concurrent writers interleave;
+    a future log rewrite may reorder). Higher _tie_rank wins; equal ranks
+    fall to canonical-JSON comparison: arbitrary, but deterministic."""
+    new_r, cur_r = _tie_rank(new_evt), _tie_rank(cur_evt)
+    if new_r != cur_r:
+        return new_r > cur_r
+    return (json.dumps(new_evt, sort_keys=True, ensure_ascii=False)
+            > json.dumps(cur_evt, sort_keys=True, ensure_ascii=False))
+
+
 def resolutions(project_dir=None) -> dict:
     """events.jsonl -> {item_ref: latest event} — latest by ts, NEVER line
-    order (concurrent writers may interleave). Unknown kinds and extra
-    fields ride along untouched; unparseable lines are skipped best-effort:
-    a reader must never drop the log over one bad line."""
+    order (concurrent writers may interleave, and a rewritten/reordered log
+    must fold identically). Equal-ts ties break on content via _tie_wins
+    (#143): reopen > resolving > supersede-candidate, then canonical-JSON
+    order — never the line's position in the file. Unknown
+    kinds and extra fields ride along untouched; unparseable lines are
+    skipped best-effort: a reader must never drop the log over one bad
+    line."""
     out: dict = {}
     path = _events_path(project_dir)
     if path is None:
@@ -808,9 +838,15 @@ def resolutions(project_dir=None) -> dict:
         if not ref:
             continue
         cur = out.get(ref)
+        if cur is None:
+            out[ref] = evt
+            continue
         new_e = _created_epoch(evt.get("ts"))
-        cur_e = _created_epoch(cur.get("ts")) if cur else None
-        if cur is None or (new_e is not None and (cur_e is None or new_e >= cur_e)):
+        if new_e is None:
+            continue  # an unstamped event never displaces a stamped one
+        cur_e = _created_epoch(cur.get("ts"))
+        if (cur_e is None or new_e > cur_e
+                or (new_e == cur_e and _tie_wins(evt, cur))):
             out[ref] = evt
     return out
 
