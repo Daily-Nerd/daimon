@@ -138,6 +138,8 @@ def build(checkpoint, now=None) -> dict | None:
 # emits and carry._ID_SHAPE recognizes — duplicated rather than imported
 # because carry's copy is unbounded ({6,}) and this one fullmatches
 # attacker-adjacent event text, where bounded quantifiers are the rule.
+# Also gates the fuzzy pool (#145): a resolution ref of this shape belongs
+# to a stamped item, whose suppression is exact-id-only.
 _CANDIDATE_ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,40}(-\d+)?")
 
 
@@ -154,6 +156,9 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
     coincidence (test_id_bearing_item_never_fuzzy_withheld). A fuzzy withhold
     of an id-bearing item would silently suppress a live memory that merely
     resembles a closed one — the worst failure mode this feature can have.
+    The pool is guarded symmetrically (#145): only resolutions whose OWN ref
+    is not id-shaped feed the fuzzy match, so a resolved id-bearing loop's
+    text can't fuzzy-suppress a live id-less item that merely resembles it.
 
     #14: a THIRD outcome — a "supersede-candidate:<new-id>" latest event is a
     machine SUGGESTION, not a resolution (store.is_resolved says so: it stays
@@ -190,8 +195,19 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
 
     if not resolved_refs and not candidate_refs:
         return checkpoint, [], []
+    # #145: the fuzzy pool holds ONLY resolutions whose own ref is not
+    # id-shaped (legacy, pre-id-stamping events). An id-bearing resolution is
+    # fully handled by the exact id branch below — its text in this pool
+    # contributes nothing to correct suppression and only creates the false-
+    # positive surface where a live id-less item that merely RESEMBLES an
+    # unrelated closed loop gets silently withheld. Ref shape decides:
+    # store._stamp_item_ids only ever emits ids of this shape, so a
+    # non-matching ref cannot belong to a stamped item. When the shape read
+    # is wrong the item is shown, not withheld — fail-open.
+    fuzzy_refs = [ref for ref in resolved_refs
+                  if not _CANDIDATE_ID_SHAPE.fullmatch(str(ref))]
     resolved_texts = [str(resolutions[ref].get("item_text") or "").strip()
-                       for ref in resolved_refs]
+                       for ref in fuzzy_refs]
     resolved_texts = [t for t in resolved_texts if t]
 
     # Dry run over the ORIGINAL checkpoint — decide what would be withheld/
@@ -221,7 +237,7 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
             if not text or not resolved_texts:
                 continue
             generic = carry._generic_terms(resolved_texts + [text])
-            for ref in resolved_refs:
+            for ref in fuzzy_refs:
                 evt = resolutions[ref]
                 cand_text = str(evt.get("item_text") or "").strip()
                 if cand_text and carry._same_item(text, cand_text, generic):
