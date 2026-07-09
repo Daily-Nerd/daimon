@@ -231,7 +231,7 @@ def test_on_session_end_passes_deadline_to_chat(tmp_checkpoint_dir, fake_chat_fa
 def test_on_session_end_routes_project_through_resolve_project_root(
     tmp_checkpoint_dir, fake_chat_factory, monkeypatch
 ):
-    from daimon_briefing import store, transcript
+    from daimon_briefing import transcript
 
     chat = fake_chat_factory(_valid_json("S-end"))
     monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
@@ -391,3 +391,194 @@ def test_on_session_end_checkpoint_survives_harvest_explosion(tmp_checkpoint_dir
 
     hooks.on_session_end(session_id="S-h", completed=True, interrupted=False, model="m", platform="cli")
     assert store.read_checkpoint("S-h") is not None  # checkpoint written despite harvest crash
+
+
+# ---- #142: a failed in-process capture must land in serialize.log (the ledger) ----
+
+
+def _ledger_text():
+    from daimon_briefing import config
+
+    return (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+
+
+def _fail_session(fake_chat_factory, monkeypatch, session_id="S-fail", **kwargs):
+    """Drive on_session_end into a real capture failure: the LLM explodes."""
+    from daimon_briefing import transcript
+
+    chat = fake_chat_factory(RuntimeError("kaboom"))
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+    hooks.on_session_end(
+        session_id=session_id, completed=True, interrupted=False, model="m",
+        platform="cli", **kwargs,
+    )
+
+
+def test_on_session_end_failure_writes_attributed_ledger_entry(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # log.exception alone reaches nothing `status`/`heal` parse — the failure
+    # must land in serialize.log in the CLI writer's exact shape, attributed
+    # to its session by the per-session ledger fold.
+    import time
+
+    from daimon_briefing import cli
+
+    _fail_session(fake_chat_factory, monkeypatch, session_id="S-fail")
+
+    text = _ledger_text()
+    entry = cli._session_ledger(text, time.time()).get("S-fail")
+    assert entry is not None
+    assert entry["result_kind"] == "error"
+    assert entry["spawned"] is True  # classified by the normal heal rules
+    assert "kaboom" in (entry["result_line"] or "")
+
+
+def test_failure_ledgered_even_when_project_resolution_raises(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # Project attribution is best-effort decoration: if resolving the project
+    # root itself blows up, the failure must still reach the ledger as '?'.
+    import time
+
+    from daimon_briefing import cli, config
+
+    def _boom(_dir):
+        raise RuntimeError("no project root")
+
+    monkeypatch.setattr(config, "resolve_project_root", _boom)
+    _fail_session(fake_chat_factory, monkeypatch, session_id="S-noproj")
+
+    text = _ledger_text()
+    assert "project: ?" in text
+    entry = cli._session_ledger(text, time.time()).get("S-noproj")
+    assert entry is not None
+    assert entry["result_kind"] == "error"
+
+
+def test_status_counts_failed_in_process_capture(
+    tmp_checkpoint_dir, fake_chat_factory, capsys, monkeypatch
+):
+    import json
+
+    from daimon_briefing import cli
+
+    _fail_session(fake_chat_factory, monkeypatch, session_id="S-fail")
+
+    cli.main(["status", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert "S-fail" in [f["sid"] for f in data["outstanding"]]
+
+
+def test_heal_plan_includes_failed_in_process_capture(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # No transcript file on disk -> not auto-repairable, but the plan must
+    # still surface the failed session instead of pretending nothing happened.
+    import time
+
+    from daimon_briefing import cli
+
+    _fail_session(fake_chat_factory, monkeypatch, session_id="S-fail")
+
+    plan = cli._heal_plan(_ledger_text(), time.time())
+    listed = [s["sid"] for s in plan["skipped"]]
+    if plan["target"] is not None:
+        listed.append(plan["target"]["sid"])
+    assert "S-fail" in listed
+
+
+def test_heal_retries_failed_in_process_capture_with_transcript(
+    tmp_checkpoint_dir, fake_chat_factory, capsys, monkeypatch
+):
+    # When the host hands the hook a real transcript file, the failure is
+    # healable like any spawned-CLI failure: heal targets it, marks the ONE
+    # retry (#26), and the retry writes the checkpoint.
+    import time
+    from pathlib import Path
+
+    from daimon_briefing import cli, store
+
+    tpath = Path(__file__).parent / "fixtures" / "sample_transcript.md"
+    sid = tpath.stem  # ledger attribution: session id == transcript stem
+
+    _fail_session(fake_chat_factory, monkeypatch, session_id=sid,
+                  transcript_path=str(tpath))
+
+    plan = cli._heal_plan(_ledger_text(), time.time())
+    assert plan["target"] is not None
+    assert plan["target"]["sid"] == sid
+
+    good_chat = fake_chat_factory(_valid_json(sid))
+    monkeypatch.setattr(cli, "_chat", good_chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    assert cli.main(["heal"]) == 0
+    assert store.read_checkpoint(sid) is not None
+    assert f"session-start: retry serialize for {sid}" in _ledger_text()
+
+
+def test_on_session_end_failure_ignores_mismatched_transcript_path(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # A host transcript path whose stem is NOT the session id would split the
+    # failure across two ledger entries (spawn under one id, error under
+    # another) — fall back to the session id token instead.
+    import time
+
+    from daimon_briefing import cli
+
+    _fail_session(fake_chat_factory, monkeypatch, session_id="S-fail",
+                  transcript_path="/somewhere/else.jsonl")
+
+    entry = cli._session_ledger(_ledger_text(), time.time()).get("S-fail")
+    assert entry is not None
+    assert entry["result_kind"] == "error"
+    assert entry["spawned"] is True
+
+
+def test_on_session_end_success_leaves_no_ledger_entry(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    from daimon_briefing import config, transcript
+
+    chat = fake_chat_factory(_valid_json("S-ok"))
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+    hooks.on_session_end(
+        session_id="S-ok", completed=True, interrupted=False, model="m", platform="cli"
+    )
+    assert not (config.log_dir() / "serialize.log").exists()
+
+
+def test_on_session_end_too_short_serialize_leaves_no_failure_entry(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # A too-short session is a legitimate skip, not a loss — it must never be
+    # ledgered as a failure heal would try to repair.
+    from daimon_briefing import config, serializer, transcript
+
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", fake_chat_factory(_valid_json("S-tiny")))
+
+    def _too_short(*_a, **_k):
+        raise serializer.TooShortError("too short")
+
+    monkeypatch.setattr(hooks.serializer, "serialize_strict", _too_short, raising=False)
+    monkeypatch.setattr(hooks.serializer, "serialize", lambda *a, **k: None)
+    hooks.on_session_end(
+        session_id="S-tiny", completed=True, interrupted=False, model="m", platform="cli"
+    )
+    log_file = config.log_dir() / "serialize.log"
+    assert not log_file.exists() or "error:" not in log_file.read_text(encoding="utf-8")
+
+
+def test_on_session_end_never_raises_when_ledger_write_fails(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    monkeypatch.setattr(hooks.config, "log_dir", _raiser)
+    _fail_session(fake_chat_factory, monkeypatch, session_id="S-fail")  # must not raise
+
+
+def test_hooks_docstring_no_stale_project_name():
+    assert "hermes" not in (hooks.__doc__ or "").lower()

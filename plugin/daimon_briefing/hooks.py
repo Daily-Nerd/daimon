@@ -1,7 +1,8 @@
-"""Hermes hook callbacks. Both hooks are defensive: a broken hook must NEVER break
-the user's session, so everything is wrapped — failures log and give up silently.
+"""Host hook callbacks for in-process capture. Both hooks are defensive: a
+broken hook must NEVER break the user's session, so everything is wrapped —
+failures log, leave a ledger entry in serialize.log, and give up.
 
-# VERIFIED website/docs/guides/build-a-hermes-plugin.md (hook callback signatures):
+# VERIFIED host plugin guide (hook callback signatures):
 #   on_session_end(session_id, completed, interrupted, model, platform, **kwargs)
 #   pre_llm_call(session_id, user_message, conversation_history, is_first_turn,
 #                model, platform, **kwargs) -> {"context": str} | str | None
@@ -9,6 +10,8 @@ the user's session, so everything is wrapped — failures log and give up silent
 
 import logging
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 from . import briefing, config, harvest, llm, serializer, store, transcript
 
@@ -18,23 +21,67 @@ log = logging.getLogger("daimon_briefing")
 _chat = llm.chat
 
 
+def _ledger_failure(session_id, exc, elapsed, transcript_path=None):
+    """Append a failed capture to serialize.log — the ledger `daimon status`
+    and `daimon heal` parse. log.exception alone reaches nothing the CLI reads,
+    so a failed in-process capture used to be silent, uncounted, non-healable.
+
+    Two lines, byte-shaped like the spawn + result pair every spawned-CLI
+    capture leaves (cli._SPAWN_RE / cli._RESULT_ERR_RE round-trip), so the
+    per-session ledger attributes the failure and heal classifies it under its
+    NORMAL rules: transcript file on disk -> healable (one retry ever, #26);
+    none -> counted but not auto-repairable. The parser derives the session id
+    from the transcript token's stem, so a host-provided path is used only when
+    its stem IS the session id — otherwise the spawn and error lines would
+    split across two ledger entries. Best-effort: must never raise into the
+    hook's own never-raise contract."""
+    try:
+        path = str(transcript_path or "").strip()
+        if not path or Path(path).stem != session_id:
+            path = session_id
+        try:
+            project = config.resolve_project_root(config.project_dir())
+        except Exception:
+            project = None
+        reason = " ".join(str(exc).split()) or type(exc).__name__
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        log_dir = config.log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (log_dir / "serialize.log").open("a", encoding="utf-8") as f:
+            f.write(
+                f"{stamp} session-end: spawned serialize for {session_id} "
+                f"(reason: in-process capture, project: {project or '?'}) "
+                f"(transcript: {path})\n"
+            )
+            f.write(f"error: {reason} (transcript: {path}) after {max(0, int(elapsed))}s\n")
+    except Exception:
+        log.exception("daimon: could not ledger capture failure for session %s", session_id)
+
+
 def on_session_end(session_id, completed=None, interrupted=None, model=None, platform=None, **kwargs):
     """End-of-session: read transcript -> serialize -> validate -> store. Never raises.
 
     DAIMON_TIMEOUT is the TOTAL budget for the serialize LLM work: the deadline is
     computed here at hook start and forwarded so retries cannot stack past it.
-    Everything — including config access — lives inside the try; nothing may escape.
+    Everything — including config access — lives inside the try; nothing may
+    escape, and any failure lands in serialize.log so status/heal see it (#142).
     """
+    start = time.monotonic()
     try:
         if config.is_disabled():
             return
-        start = time.monotonic()
         deadline = start + config.timeout_seconds()
         messages = transcript.from_session(session_id)
         if not messages or len(messages) < config.min_messages():
             return
-        checkpoint = serializer.serialize(session_id, messages, chat=_chat, deadline=deadline)
-        if checkpoint is None:
+        try:
+            # serialize_strict, NOT the never-raise serialize(): a swallowed
+            # LLM/schema failure would exit through the old "skip" branch and
+            # never reach the ledger — only a too-short session is a true skip.
+            checkpoint = serializer.serialize_strict(
+                session_id, messages, chat=_chat, deadline=deadline
+            )
+        except serializer.TooShortError:
             log.info("daimon: no checkpoint produced for session %s (skip)", session_id)
             return
         root = config.resolve_project_root(config.project_dir())
@@ -49,8 +96,10 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 harvest.run(messages, project_root=root, session_id=session_id)
             except Exception:
                 log.exception("daimon: scar harvest failed (checkpoint unaffected)")
-    except Exception:  # a broken hook must not break the session
+    except Exception as exc:  # a broken hook must not break the session
         log.exception("daimon: on_session_end failed for session %s (giving up)", session_id)
+        _ledger_failure(session_id, exc, time.monotonic() - start,
+                        kwargs.get("transcript_path"))
 
 
 def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
