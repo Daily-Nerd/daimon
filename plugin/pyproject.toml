@@ -1,6 +1,6 @@
 [project]
 name = "daimon-briefing"
-version = "0.12.2"
+version = "0.12.3"
 description = "Dream-briefing for AI coding agents: writes a cognitive checkpoint at session end and shows a 'while you were away' briefing at session start. Self-contained, stdlib-only."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -5,6 +5,13 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3](https://github.com/Daily-Nerd/daimon/compare/v0.12.2...v0.12.3) (2026-07-09)
+
+
+### Bug Fixes
+
+* **plugin:** remove duplicate hooks declaration from the plugin manifest ([#180](https://github.com/Daily-Nerd/daimon/issues/180)) ([34903f7](https://github.com/Daily-Nerd/daimon/commit/34903f741b5a01d0b83199e32126df1d33c00dbd)), closes [#179](https://github.com/Daily-Nerd/daimon/issues/179)
+
 ## [0.12.2](https://github.com/Daily-Nerd/daimon/compare/v0.12.1...v0.12.2) (2026-07-09)
 
 
