@@ -603,6 +603,38 @@ def test_reversal_id_shaped_target_matches_prev_id():
     assert len(ds) == 2
 
 
+def test_reversal_detected_past_malformed_and_empty_link_entries():
+    # The link walk must skip junk entries (non-dict, wrong type, missing or
+    # blank target) and still find the aimed supersedes link after them.
+    prev, new = _reversal_cps()
+    native = new["working_context"]["recent_decisions"][0]
+    native["links"] = [
+        "bare-string",
+        {"type": "related", "target": _REV_TARGET},
+        {"type": "supersedes"},
+        {"type": "supersedes", "target": "   "},
+        {"type": "supersedes", "target": 42},
+        {"type": "supersedes", "target": _REV_TARGET},
+    ]
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 2                            # reversal + carried prev
+    native_out = next(d for d in ds if not d.get("carried_from"))
+    assert native_out["text"] == _REV_NATIVE       # freeze did not fire
+
+
+def test_id_shaped_target_for_other_item_does_not_defeat_freeze():
+    # An already-bound target aimed at a DIFFERENT item's id is not a reversal
+    # of THIS prev item — the freeze must still apply to the twin.
+    prev, new = _reversal_cps()
+    new["working_context"]["recent_decisions"][0]["links"][0]["target"] = \
+        "r-fff999"  # id-shaped, but not the prev item's id
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["text"] == _REV_PREV              # frozen original won
+
+
 # --- quote_verified must travel with the quote on the freeze path (#167) -----
 
 def test_freeze_pops_stale_quote_verified_when_prev_has_none():
