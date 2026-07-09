@@ -25,6 +25,20 @@ Active topic: Migrating the scheduler off cron to the new worker pool
 
 Every item carries its **trust class**: `✓ verbatim` items are pinned to an exact quote from the transcript and are never reworded — not by carry-over between sessions, not by rendering, not by budget truncation. `~ inferred` items are the agent's own conclusions and are allowed to evolve. Items carried from older sessions say so. That distinction — knowing which memories are quotes and which are guesses — is the point.
 
+## See it happen
+
+Two sessions: commit to the AWS cert, then pivot to GCP. The next briefing carries the old commitment **flagged as likely superseded** — with the confirm/reject commands inline — instead of injecting it back as current fact. One command confirms, and the stale decision is withheld from then on:
+
+![daimon briefing flags a superseded decision, the human confirms, the next briefing withholds it](docs/demo/daimon-demo.gif)
+
+And because the briefing is injected automatically when a session starts, the agent itself answers from it — no commands, just ask:
+
+![headless Claude Code answers "where did we leave off?" from the injected briefing, calling out the stale pre-pivot items as superseded](docs/demo/claude-p.png)
+
+Ask it to show its work and it audits its own memory — verified quotes vs its own inferences, and the carried items that contradict each other: [see the full self-audit](docs/demo/claude-p-audit.png).
+
+Nothing here is mocked — the transcripts, the recording scripts, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
+
 The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings.
 
 ---
