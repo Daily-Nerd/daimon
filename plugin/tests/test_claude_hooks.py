@@ -544,7 +544,121 @@ def test_sweep_orphans_logs_breadcrumb_on_spawn(tmp_path, monkeypatch):
     monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: None)
     lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
     log_text = (tmp_path / "logs" / "serialize.log").read_text(encoding="utf-8")
-    assert "session-start: catch-up serialize spawned for S-orphan (orphaned transcript)" in log_text
+    # Ledger-shaped spawn line (ledger._SPAWN_RE), same shape as the session-end
+    # adapter's, with the trailing (transcript: ...) group (#28) so a crashed
+    # catch-up child stays healable rather than invisible.
+    assert (
+        "session-start: spawned serialize for S-orphan "
+        f"(reason: catch-up-orphan, project: /p/A) (transcript: {orphan})"
+    ) in log_text
+
+
+def test_sweep_orphans_spawn_line_project_unknown_placeholder(tmp_path, monkeypatch):
+    # No cwd known -> the project group logs '?' exactly like daimon-session-end.py.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: None)
+    lib.sweep_orphans("daimon", "", "S-new", str(current))
+    log_text = (tmp_path / "logs" / "serialize.log").read_text(encoding="utf-8")
+    assert "(reason: catch-up-orphan, project: ?)" in log_text
+
+
+# ---- #185: the catch-up spawn line is a first-class ledger citizen ----
+
+_CATCH_UP_SPAWN = (
+    "2026-07-09T18:00:00Z session-start: spawned serialize for S-orphan "
+    "(reason: catch-up-orphan, project: /p/A) (transcript: /tmp/S-orphan.jsonl)"
+)
+_CATCH_UP_NOW = time.mktime((2026, 7, 9, 18, 0, 30, 0, 0, 0))  # ~30s after the stamp
+
+
+def test_catch_up_spawn_line_registers_in_session_ledger():
+    from daimon_briefing import ledger
+
+    entry = ledger._session_ledger(_CATCH_UP_SPAWN + "\n", _CATCH_UP_NOW).get("S-orphan")
+    assert entry is not None
+    assert entry["spawned"] is True
+    assert entry["project"] == "/p/A"
+    assert entry["transcript"] == "/tmp/S-orphan.jsonl"
+    assert entry["retried"] is False  # 'spawned', not the #26 one-retry marker
+
+
+def test_catch_up_spawn_without_result_is_outstanding_and_healable():
+    # Heal coverage: a catch-up child that hangs/crashes past the ceiling must
+    # surface as outstanding — and be healable while its transcript survives.
+    from daimon_briefing import ledger
+
+    led = ledger._session_ledger(_CATCH_UP_SPAWN + "\n", _CATCH_UP_NOW)
+    out = ledger._outstanding_failures(
+        led, _CATCH_UP_NOW,
+        has_checkpoint=lambda sid: False,
+        ceiling=10,  # spawn is ~30s old -> past the hung ceiling
+        transcript_exists=lambda p: True,
+    )
+    assert [f["sid"] for f in out] == ["S-orphan"]
+    assert out[0]["class"] == "healable"
+
+
+def test_catch_up_spawn_resolved_by_hash_match_skip():
+    # spawn -> hash-match skip: the pair must resolve, never stuck outstanding.
+    from daimon_briefing import ledger
+
+    text = (_CATCH_UP_SPAWN + "\n"
+            "skipped serialize for S-orphan: transcript unchanged since checkpoint (hash match)\n")
+    led = ledger._session_ledger(text, _CATCH_UP_NOW)
+    assert led["S-orphan"]["result_kind"] == "skipped"
+    out = ledger._outstanding_failures(
+        led, _CATCH_UP_NOW,
+        has_checkpoint=lambda sid: False,
+        ceiling=10,
+        transcript_exists=lambda p: True,
+    )
+    assert out == []
+
+
+def test_catch_up_spawn_resolved_by_success():
+    # spawn -> wrote checkpoint: resolves the same way a session-end spawn does.
+    from daimon_briefing import ledger
+
+    text = (_CATCH_UP_SPAWN + "\n"
+            "wrote checkpoint: /home/u/.daimon/checkpoints/S-orphan.json (took 42s)\n")
+    led = ledger._session_ledger(text, _CATCH_UP_NOW)
+    assert led["S-orphan"]["result_kind"] == "success"
+    out = ledger._outstanding_failures(
+        led, _CATCH_UP_NOW,
+        has_checkpoint=lambda sid: False,
+        ceiling=10,
+        transcript_exists=lambda p: True,
+    )
+    assert out == []
+
+
+def test_catch_up_spawn_not_counted_in_host_capture_stats(tmp_path, monkeypatch):
+    # _STATS_HOST_RE deliberately excludes session-start spawns (they also carry
+    # the #26 retry marker) — a catch-up spawn must not inflate per-host counts,
+    # and its child's single result line is what stats tally (no double count).
+    from daimon_briefing import ledger
+
+    log_dir = tmp_path / "stats-logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log_dir))
+    log_dir.mkdir(parents=True)
+    (log_dir / "serialize.log").write_text(
+        _CATCH_UP_SPAWN + "\n"
+        "skipped serialize for S-orphan: transcript unchanged since checkpoint (hash match)\n",
+        encoding="utf-8",
+    )
+    stats = ledger._stats_capture()
+    assert stats["hosts"] == {}
+    assert stats["skipped"] == 1
+    assert stats["errors"] == 0
 
 
 def test_sweep_orphans_noop_without_cli(tmp_path, monkeypatch):

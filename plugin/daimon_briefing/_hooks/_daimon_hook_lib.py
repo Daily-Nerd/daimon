@@ -289,7 +289,20 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
         if best_path is None:
             return
         spawn_serialize(cli, str(best_path), project_env(cwd))
-        log(f"session-start: catch-up serialize spawned for {best_path.stem} (orphaned transcript)")
+        # Ledger-shaped spawn line: ledger._SPAWN_RE already lists the
+        # `session-start:` prefix (for the #26 retry marker), and the `spawned`
+        # verb keeps this distinct from that one-retry-ever marker. Being a
+        # first-class ledger citizen means a catch-up child that hangs or
+        # crashes past the ceiling surfaces in `daimon status`, and — thanks
+        # to the trailing (transcript: ...) group (#28), same shape as
+        # daimon-session-end.py's spawn line — stays healable instead of
+        # invisible. The child's own result line (wrote checkpoint / skipped /
+        # error) resolves the pair exactly like a session-end spawn.
+        log(
+            f"session-start: spawned serialize for {best_path.stem} "
+            f"(reason: catch-up-orphan, project: {cwd or '?'}) "
+            f"(transcript: {best_path})"
+        )
     except Exception as exc:  # noqa: BLE001 — the sweep must never break the briefing
         log(f"session-start: catch-up sweep failed ({type(exc).__name__}: {exc})")
 
