@@ -121,10 +121,15 @@ RULES — follow every one exactly; this is the point of the exercise:
 
 16. SUPERSESSION LINKS (conservative): when a recent_decision explicitly REPLACES a prior
     decision — signaled by explicit replacement language such as "instead of", "replaces", or
-    "we changed from X to Y" — attach `"links": [{"type": "supersedes", "target": "<short
-    description of the OLD decision>"}]` to that item. NEVER attach a supersedes link from
-    topic overlap or similarity alone; the replacement must be stated explicitly, not guessed.
-    Omit `links` entirely when no such replacement applies — do not emit an empty array.
+    "we changed from X to Y" — attach `"links": [{"type": "supersedes", "target": "<the OLD
+    decision, named as specifically as this transcript allows>"}]` to that item. The target is
+    matched against the old decision's stored text by word overlap, so name it with the exact
+    nouns the transcript uses for it (subject + object + qualifiers, e.g. "use Tutorials Dojo
+    practice exam sets for week 9", not "Tutorials Dojo purchase plan") — never invent summary
+    words the transcript does not contain, and never compress it below the words needed to pick
+    it out. NEVER attach a supersedes link from topic overlap or similarity alone; the
+    replacement must be stated explicitly, not guessed. Omit `links` entirely when no such
+    replacement applies — do not emit an empty array.
 
 Schema shape:
 {

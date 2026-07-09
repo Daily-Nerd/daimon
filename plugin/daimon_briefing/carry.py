@@ -279,6 +279,22 @@ def bind_links(merged_cp: dict, prev_cp: dict | None) -> list[tuple[str, str, st
                     continue  # already bound
                 matches = [p for p in prev_items
                            if _same_item(target, str(p["text"]), generic)]
+                if not matches:
+                    # Loose-target fallback (#168): supersession pairs share
+                    # their subject vocabulary BY NATURE — when it reaches
+                    # DF>=3 across the kind (reversal + restatement + prev
+                    # original), generic subtraction strips exactly the terms
+                    # that identify the target and pass 1 finds nothing.
+                    # Retry on FULL vocabulary, strict >=3 shared floor only
+                    # (no ratio path — terse targets over-fire it); the
+                    # unique-match gate below still refuses ambiguity, so a
+                    # generic-vocab target matching several items stays text.
+                    # Zero matches only: pass 1 finding SEVERAL is a verdict
+                    # (ambiguous), not a miss.
+                    matches = [p for p in prev_items
+                               if len(set(recall.salient_terms(target))
+                                      & set(recall.salient_terms(str(p["text"]))))
+                               >= _MIN_SHARED]
                 if len(matches) != 1:
                     continue  # unbound or ambiguous — leave as text
                 prev_id, old_text = matches[0]["id"], matches[0]["text"]
