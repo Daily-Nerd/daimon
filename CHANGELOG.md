@@ -5,6 +5,13 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2](https://github.com/Daily-Nerd/daimon/compare/v0.12.1...v0.12.2) (2026-07-09)
+
+
+### Bug Fixes
+
+* **packaging:** complete PyPI metadata — project URLs, classifiers, keywords, license in the wheel ([#177](https://github.com/Daily-Nerd/daimon/issues/177)) ([b05aeae](https://github.com/Daily-Nerd/daimon/commit/b05aeae5d1db7def1aad9cfcc7abdf2220d37e6a)), closes [#176](https://github.com/Daily-Nerd/daimon/issues/176)
+
 ## [0.12.1](https://github.com/Daily-Nerd/daimon/compare/v0.12.0...v0.12.1) (2026-07-09)
 
 
