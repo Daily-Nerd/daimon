@@ -652,6 +652,96 @@ def test_freeze_pops_stale_quote_verified_when_prev_has_none():
     assert "quote_verified" not in q
 
 
+# --- loose-target fallback in bind_links (#168) ------------------------------
+# Supersession pairs share their subject vocabulary BY NATURE — the subject is
+# the identity. When that vocabulary reaches document-frequency 3 across the
+# kind (reversal + restatement + prev original), generic subtraction strips it
+# and the link target can no longer reach the _same_item floors, so the
+# supersession silently never binds. Fallback: when the generic-subtracted pass
+# finds ZERO matches, retry without subtraction under the strict >=3 shared
+# floor only (no ratio path — terse targets over-fire it), still requiring a
+# UNIQUE match (never-guess: ambiguity stays unbound).
+
+def _loose_target_cps():
+    prev = _cp("S-prev", 1, decisions=[
+        _item("commit to the aws solutions architect exam ten week plan",
+              id="d-old001"),
+        _item("zephyr gateway rollout ordering unrelated", id="d-old002"),
+    ])
+    merged = _cp("S-new", 0, decisions=[
+        _item("drop the aws solutions architect prep entirely",
+              id="d-new001",
+              links=[{"type": "supersedes",
+                      "target": "aws solutions architect advanced preparation"}]),
+        _item("aws solutions architect course refund requested",
+              id="d-new002"),
+    ])
+    return prev, merged
+
+
+def test_bind_links_generic_stripped_target_falls_back_to_unique_bind():
+    # RED today: {aws, solutions, architect} hit DF>=3 across the kind ->
+    # generic -> the target's residue {advanced, preparation} shares nothing
+    # with the prev item -> pass 1 finds zero -> link stays free text. The
+    # fallback must bind it: full-vocabulary overlap is 3 shared terms and the
+    # match is unique.
+    prev, merged = _loose_target_cps()
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == [("d-old001", "d-new001",
+                      "commit to the aws solutions architect exam ten week "
+                      "plan")]
+    link = merged["working_context"]["recent_decisions"][0]["links"][0]
+    assert link["target"] == "d-old001"
+
+
+def test_bind_links_fallback_refuses_ambiguous_full_vocab():
+    # Two prev items both reach >=3 shared full-vocabulary terms with the
+    # target -> fallback must stay unbound (a wrong bind fabricates
+    # provenance).
+    prev, merged = _loose_target_cps()
+    prev["working_context"]["recent_decisions"][1] = _item(
+        "retake the aws solutions architect exam next quarter", id="d-old002")
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == []
+    link = merged["working_context"]["recent_decisions"][0]["links"][0]
+    assert link["target"] == "aws solutions architect advanced preparation"
+
+
+def test_bind_links_fallback_requires_three_full_shared_terms():
+    # Documented limit (the terse-target class, live specimen): "Tutorials
+    # Dojo purchase plan" shares only {tutorials, dojo} with the prev item —
+    # 2 < 3 shared and ratio 2/4 = 0.5 < 0.6, so pass 1 misses; the fallback
+    # (>=3 full-vocabulary shared, no ratio path) must ALSO refuse. Two terms
+    # is not identity — the prompt-side fix (name the old decision
+    # specifically) is the answer for this class, not looser matching.
+    prev = _cp("S-prev", 1, decisions=[
+        _item("use tutorials dojo practice exam sets for week nine",
+              id="d-old001")])
+    merged = _cp("S-new", 0, decisions=[
+        _item("switch to the plimsol skills program instead",
+              id="d-new001",
+              links=[{"type": "supersedes",
+                      "target": "tutorials dojo purchase plan"}])])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == []
+
+
+def test_bind_links_pass1_ambiguity_never_falls_back():
+    # Pass 1 finding MULTIPLE matches is a verdict (ambiguous), not a miss —
+    # the fallback only runs on zero matches. Mirrors
+    # test_bind_links_ambiguous_stays_text_no_pair with the fallback present.
+    prev = _cp("S-prev", 1, decisions=[
+        _item("old zulu rollout plan alpha version one", id="r-old010"),
+        _item("old zulu rollout plan beta version two", id="r-old020"),
+    ])
+    merged = _cp("S-new", 0, decisions=[
+        _item("switch to plan omega", id="r-new002",
+              links=[{"type": "supersedes",
+                      "target": "legacy zulu rollout plan alpha beta"}])])
+    pairs = carry.bind_links(merged, prev)
+    assert pairs == []
+
+
 def test_freeze_copies_prev_quote_verified_with_quote():
     # Prev carries its own verdict — it rides along with the pinned quote.
     prev = _cp("S-prev", 1, questions=[_item(
