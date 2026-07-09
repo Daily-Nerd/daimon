@@ -22,6 +22,7 @@ import argparse
 import functools
 import getpass
 import json
+import logging
 import os
 import sys
 import time
@@ -146,6 +147,48 @@ def _preflight_error(path: Path) -> str | None:
     return None
 
 
+def _attach_serialize_log_handler() -> None:
+    """Route `daimon_briefing` logger records (INFO+) into serialize.log for
+    the serialize path only (#194). Without any handler, logging.lastResort
+    dumps WARNING+ to stderr — which spawn_serialize points at
+    serialize-crash.log — so an ordinary quote-verification downgrade read as
+    a crash in `status`. First-class instead: the record lands in
+    serialize.log, timestamped (`<iso> LEVEL logger: message`) so no ledger
+    regex (_SPAWN_RE / _RESULT_*_RE / _LEDGER_*_RE) can ever match it, and a
+    handler on the package logger suppresses lastResort. Keyed by target path
+    (a DAIMON_LOG_DIR repoint replaces the handler; a repeat in-process
+    serialize does not stack a second one). Fail-open: an unwritable log dir
+    must never fail the serialize. brief/status never call this — they keep
+    writing nothing."""
+    pkg_log = logging.getLogger("daimon_briefing")
+    try:
+        target = config.log_dir() / "serialize.log"
+    except Exception:
+        return
+    for h in pkg_log.handlers:
+        if getattr(h, "_daimon_serialize_log", None) == str(target):
+            return
+    for h in list(pkg_log.handlers):  # stale target (log dir repointed)
+        if getattr(h, "_daimon_serialize_log", None):
+            pkg_log.removeHandler(h)
+            h.close()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(target, encoding="utf-8", delay=True)
+    except OSError:
+        return
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s",
+                            datefmt="%Y-%m-%dT%H:%M:%SZ")
+    fmt.converter = time.gmtime  # ledger stamps are UTC "Z"; match them
+    handler.setFormatter(fmt)
+    handler.setLevel(logging.INFO)
+    handler._daimon_serialize_log = str(target)
+    pkg_log.addHandler(handler)
+    # INFO must pass the logger-level gate too (default effective WARNING) —
+    # the chunked-serialize heartbeat is the reason this log exists at all.
+    pkg_log.setLevel(logging.INFO)
+
+
 def _run_serialize(transcript_path: Path, project: str | None) -> int:
     """Serialize one transcript to a checkpoint routed to `project` (used AS-IS;
     None => global pointer only, NO cwd fallback). The caller decides routing —
@@ -158,6 +201,9 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     (No "(superseded by newer checkpoint)" hint here: result lines carry no
     timestamp to compare against a checkpoint mtime — out of scope, FR #27.)
     Returns the rc."""
+    # #194: serializer/llm diagnostics belong in serialize.log, not lastResort
+    # stderr (which lands in serialize-crash.log and misreads as a crash).
+    _attach_serialize_log_handler()
     path = transcript_path
     # Hash the raw transcript bytes at read time (#125), before any LLM work, so
     # the checkpoint can bind to its exact source content. None when unreadable —
@@ -856,12 +902,11 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
     return {"ok": False, "verdict": "⚠ " + warnings[0], "warnings": warnings}
 
 
-def _crash_log_info(path: Path, now: float) -> dict | None:
-    """Tail of serialize-crash.log — the file spawn_serialize points child
-    stderr at. It was a write-only dead-drop: tracebacks landed there and no
-    command ever read it (#28). Returns None when absent/empty/unreadable;
-    else the last non-empty line (a traceback's final line names the
-    exception) plus the file's age."""
+def _tail_log_info(path: Path, now: float) -> dict | None:
+    """Tail of a breadcrumb log (recall-error.log): last non-empty line plus
+    the file's age. Returns None when absent/empty/unreadable. Every line in
+    that file IS an error by construction (recall._note_error), so no header
+    anchoring — unlike serialize-crash.log, see _crash_log_info."""
     try:
         st = path.stat()
         if st.st_size == 0:
@@ -876,6 +921,56 @@ def _crash_log_info(path: Path, now: float) -> dict | None:
         return None
     age = int(now - st.st_mtime)
     return {"last_line": lines[-1], "age_seconds": age,
+            "age": _format_age(age), "path": str(path)}
+
+
+def _crash_log_info(path: Path, now: float) -> dict | None:
+    """Tail of serialize-crash.log — the file spawn_serialize points child
+    stderr at, read back by `status` (#28). A crash is ONLY what carries the
+    #92 excepthook header (`--- crash <iso> pid=… cmd=… ---`): the file is
+    raw child stderr, so stray lastResort warnings land there too and used to
+    misreport as a crash (#194). Reports the LAST crash — age from the
+    header's stamp (mtime only as fallback: a later stray write must not
+    re-age an old crash), last_line the traceback's exception line."""
+    try:
+        st = path.stat()
+        if st.st_size == 0:
+            return None
+        with path.open("rb") as f:
+            f.seek(max(0, st.st_size - 4096))
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    lines = tail.splitlines()
+    hdr = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("--- crash "):
+            hdr = i
+    if hdr is None:
+        return None  # warnings-only file (legacy lastResort strays): no crash
+    block = lines[hdr + 1:]
+    # The exception line: last unindented line directly following an indented
+    # one (traceback frames are indented; the raising line is not). Falls back
+    # to the block's last non-empty line, then to the header itself (a child
+    # killed mid-write leaves a bare header).
+    last_line = None
+    for prev, ln in zip(block, block[1:]):
+        if ln.strip() and not ln[:1].isspace() and prev[:1].isspace():
+            last_line = ln.strip()
+    if last_line is None:
+        nonempty = [ln.strip() for ln in block if ln.strip()]
+        last_line = nonempty[-1] if nonempty else lines[hdr].strip()
+    age = None
+    parts = lines[hdr].split()
+    if len(parts) >= 3:
+        try:
+            ts = datetime.strptime(parts[2], "%Y-%m-%dT%H:%M:%SZ")
+            age = int(now - ts.replace(tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            pass  # unstamped/foreign header: fall back to file mtime
+    if age is None:
+        age = int(now - st.st_mtime)
+    return {"last_line": last_line, "age_seconds": age,
             "age": _format_age(age), "path": str(path)}
 
 
@@ -949,7 +1044,7 @@ def _cmd_status(args) -> int:
         _ledger_text = ""
     outstanding = _compute_outstanding(_ledger_text, now)
     crash = _crash_log_info(config.log_dir() / "serialize-crash.log", now)
-    recall_error = _crash_log_info(config.log_dir() / "recall-error.log", now)
+    recall_error = _tail_log_info(config.log_dir() / "recall-error.log", now)
     disabled = config.is_disabled()
     # Skips are terminal by design (too-short sessions), but invisible skips
     # read as captured sessions (#28) — count them for display.

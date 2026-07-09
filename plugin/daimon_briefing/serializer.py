@@ -445,10 +445,12 @@ def verify_quotes(checkpoint, transcript_text: str) -> int:
             item["quote_verified"] = False
             downgraded += 1
             # Log-line-only scrub: item ids are not stamped until store-save,
-            # so the text prefix is the only diagnostic handle here. The item
-            # itself stays raw (store redacts it; ids hash redacted text).
+            # so the text is the only diagnostic handle here. The item itself
+            # stays raw (store redacts it; ids hash redacted text). Untruncated
+            # (#194): this line is the only surviving record of the downgrade —
+            # the CLI routes it to serialize.log, which holds full result lines.
             logged, _ = redact.redact_text(item.get("text") or "")
-            log.warning("quote verification: downgraded verbatim->inferred: %.80s",
+            log.warning("quote verification: downgraded verbatim->inferred: %s",
                         logged)
     if downgraded:
         log.info("quote verification: %d verbatim item(s) downgraded to inferred",

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import sys
@@ -3228,20 +3229,85 @@ def test_crash_log_info_empty_file_is_none(tmp_path):
     assert cli._crash_log_info(p, now=0.0) is None
 
 
-def test_crash_log_info_reports_last_line_and_age(tmp_path):
+def test_crash_log_info_reports_last_line_and_header_age(tmp_path):
+    # #194: age comes from the #92 header stamp, NOT file mtime — a later
+    # stray write must not make an old crash look fresh (mtime deliberately
+    # newer than the stamp here to prove the header wins).
     p = tmp_path / "serialize-crash.log"
     p.write_text(
+        "--- crash 2026-07-09T00:00:00Z pid=123 cmd=serialize ---\n"
         "Traceback (most recent call last):\n"
         '  File "x.py", line 1, in <module>\n'
         "OSError: [Errno 28] No space left on device\n"
     )
     import os
-    os.utime(p, (1000.0, 1000.0))
-    info = cli._crash_log_info(p, now=1300.0)
+    os.utime(p, (9e9, 9e9))
+    now = datetime(2026, 7, 9, 0, 5, 0, tzinfo=timezone.utc).timestamp()
+    info = cli._crash_log_info(p, now=now)
     assert info["last_line"] == "OSError: [Errno 28] No space left on device"
     assert info["age_seconds"] == 300
     assert info["age"] == "5m"
     assert info["path"] == str(p)
+
+
+def test_crash_log_info_warnings_only_is_none(tmp_path):
+    # #194: pre-fix, lastResort dumped serializer WARNINGs into this file and
+    # status misreported them as a crash. No `--- crash ` header -> no crash.
+    p = tmp_path / "serialize-crash.log"
+    p.write_text(
+        "quote verification: downgraded verbatim->inferred: some item text\n"
+        "quote verification: downgraded verbatim->inferred: another item\n"
+    )
+    assert cli._crash_log_info(p, now=0.0) is None
+
+
+def test_crash_log_info_mixed_reports_crash_block(tmp_path):
+    # Warnings before AND after the crash block: the reported line is still
+    # the traceback's exception line, not a stray trailing warning.
+    p = tmp_path / "serialize-crash.log"
+    p.write_text(
+        "quote verification: downgraded verbatim->inferred: pre-crash noise\n"
+        "--- crash 2026-07-09T00:00:00Z pid=123 cmd=serialize ---\n"
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 1, in <module>\n'
+        "RuntimeError: child exploded\n"
+        "quote verification: downgraded verbatim->inferred: post-crash noise\n"
+    )
+    info = cli._crash_log_info(p, now=0.0)
+    assert info["last_line"] == "RuntimeError: child exploded"
+
+
+def test_crash_log_info_reports_last_of_multiple_crashes(tmp_path):
+    p = tmp_path / "serialize-crash.log"
+    p.write_text(
+        "--- crash 2026-07-08T00:00:00Z pid=1 cmd=serialize ---\n"
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 1, in <module>\n'
+        "OSError: old crash\n"
+        "--- crash 2026-07-09T00:00:00Z pid=2 cmd=serialize ---\n"
+        "Traceback (most recent call last):\n"
+        '  File "y.py", line 2, in <module>\n'
+        "ValueError: new crash\n"
+    )
+    now = datetime(2026, 7, 9, 0, 5, 0, tzinfo=timezone.utc).timestamp()
+    info = cli._crash_log_info(p, now=now)
+    assert info["last_line"] == "ValueError: new crash"
+    assert info["age_seconds"] == 300  # newest header's stamp, not the old one
+
+
+def test_crash_log_info_bad_header_stamp_falls_back_to_mtime(tmp_path):
+    p = tmp_path / "serialize-crash.log"
+    p.write_text(
+        "--- crash NOT-A-STAMP pid=1 cmd=serialize ---\n"
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 1, in <module>\n'
+        "OSError: boom\n"
+    )
+    import os
+    os.utime(p, (1000.0, 1000.0))
+    info = cli._crash_log_info(p, now=1300.0)
+    assert info["last_line"] == "OSError: boom"
+    assert info["age_seconds"] == 300
 
 
 def test_status_json_includes_crash_info(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
@@ -3249,7 +3315,10 @@ def test_status_json_includes_crash_info(tmp_checkpoint_dir, sample_checkpoint, 
     store.write_checkpoint("S1", sample_checkpoint)
     crash = config.log_dir() / "serialize-crash.log"
     crash.parent.mkdir(parents=True, exist_ok=True)
-    crash.write_text("RuntimeError: child exploded\n")
+    crash.write_text(
+        "--- crash 2026-07-09T00:00:00Z pid=123 cmd=serialize ---\n"
+        "RuntimeError: child exploded\n"
+    )
     rc = cli.main(["status", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
@@ -3261,12 +3330,30 @@ def test_status_plain_shows_crash_line(tmp_checkpoint_dir, sample_checkpoint, ca
     store.write_checkpoint("S1", sample_checkpoint)
     crash = config.log_dir() / "serialize-crash.log"
     crash.parent.mkdir(parents=True, exist_ok=True)
-    crash.write_text("RuntimeError: child exploded\n")
+    crash.write_text(
+        "--- crash 2026-07-09T00:00:00Z pid=123 cmd=serialize ---\n"
+        "RuntimeError: child exploded\n"
+    )
     rc = cli.main(["status"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "last serialize crash" in out.lower()
     assert "RuntimeError: child exploded" in out
+
+
+def test_status_plain_no_crash_line_for_warnings_only_log(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #194: the live misreport — lastResort warnings in serialize-crash.log
+    # made status render "last serialize crash" for a healthy pipeline.
+    from daimon_briefing import config, store
+    store.write_checkpoint("S1", sample_checkpoint)
+    crash = config.log_dir() / "serialize-crash.log"
+    crash.parent.mkdir(parents=True, exist_ok=True)
+    crash.write_text(
+        "quote verification: downgraded verbatim->inferred: some item\n")
+    rc = cli.main(["status"])
+    assert rc == 0
+    assert "last serialize crash" not in capsys.readouterr().out.lower()
 
 
 def test_status_plain_no_crash_line_when_log_absent(tmp_checkpoint_dir, sample_checkpoint, capsys):
@@ -3275,6 +3362,151 @@ def test_status_plain_no_crash_line_when_log_absent(tmp_checkpoint_dir, sample_c
     rc = cli.main(["status"])
     assert rc == 0
     assert "last serialize crash" not in capsys.readouterr().out.lower()
+
+
+# ---- #194: serializer diagnostics land in serialize.log, not the crash file ----
+
+
+@pytest.fixture
+def _detach_serialize_log_handler():
+    # The #194 handler survives on the package logger across tests (module
+    # state); detach so a later test's DAIMON_LOG_DIR repoint starts clean.
+    yield
+    pkg = logging.getLogger("daimon_briefing")
+    for h in list(pkg.handlers):
+        if getattr(h, "_daimon_serialize_log", None):
+            pkg.removeHandler(h)
+            h.close()
+
+
+def test_serialize_routes_downgrade_warning_to_serialize_log(
+        tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, capsys,
+        monkeypatch, _detach_serialize_log_handler):
+    # A quote-verification downgrade must land in serialize.log UNTRUNCATED
+    # (no %.80s cap — this line is the only surviving record of the item text).
+    tail_marker = ("the item text runs well past eighty characters so the old "
+                   "prefix cap would have cut it long before END-OF-ITEM")
+    assert len(tail_marker) > 80
+    payload = json.dumps({
+        "session_id": "sample_transcript",
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [
+                {"text": tail_marker, "trust": "verbatim",
+                 "quote": "THIS QUOTE APPEARS NOWHERE IN THE TRANSCRIPT"}
+            ],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    })
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(payload))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
+    assert rc == 0
+    log = (tmp_log_dir / "serialize.log").read_text()
+    assert "downgraded verbatim->inferred" in log
+    assert "END-OF-ITEM" in log  # full text survived, cap dropped
+
+
+def test_attach_serialize_log_handler_is_idempotent(
+        tmp_log_dir, _detach_serialize_log_handler):
+    # Repeat in-process serializes (tests, heal after serialize) must not
+    # stack handlers — each record appears exactly once.
+    cli._attach_serialize_log_handler()
+    cli._attach_serialize_log_handler()
+    pkg = logging.getLogger("daimon_briefing")
+    ours = [h for h in pkg.handlers if getattr(h, "_daimon_serialize_log", None)]
+    assert len(ours) == 1
+    logging.getLogger("daimon_briefing.serializer").warning("once-sentinel")
+    assert (tmp_log_dir / "serialize.log").read_text().count("once-sentinel") == 1
+
+
+def test_attach_serialize_log_handler_follows_log_dir_repoint(
+        tmp_path, monkeypatch, _detach_serialize_log_handler):
+    # DAIMON_LOG_DIR changed between attaches (test isolation) -> the stale
+    # handler is replaced, records land in the NEW dir only.
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(a))
+    cli._attach_serialize_log_handler()
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(b))
+    cli._attach_serialize_log_handler()
+    pkg = logging.getLogger("daimon_briefing")
+    ours = [h for h in pkg.handlers if getattr(h, "_daimon_serialize_log", None)]
+    assert len(ours) == 1
+    logging.getLogger("daimon_briefing.serializer").warning("repoint-sentinel")
+    assert "repoint-sentinel" in (b / "serialize.log").read_text()
+    assert not (a / "serialize.log").exists() or \
+        "repoint-sentinel" not in (a / "serialize.log").read_text()
+
+
+def test_serialize_log_handler_suppresses_lastresort_stderr(
+        tmp_log_dir, capsys, _detach_serialize_log_handler):
+    # The whole #194 chain starts with logging.lastResort dumping WARNINGs to
+    # stderr (which spawn_serialize points at serialize-crash.log). A handler
+    # anywhere on the logger chain suppresses lastResort — prove it with root
+    # handlers cleared (pytest's own capture handler would mask the check).
+    cli._attach_serialize_log_handler()
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    root.handlers[:] = []
+    try:
+        logging.getLogger("daimon_briefing.serializer").warning("stderr-sentinel")
+    finally:
+        root.handlers[:] = saved
+    assert "stderr-sentinel" not in capsys.readouterr().err
+    assert "stderr-sentinel" in (tmp_log_dir / "serialize.log").read_text()
+
+
+def test_serialize_survives_unwritable_log_dir(
+        tmp_path, tmp_checkpoint_dir, fake_chat_factory, capsys, monkeypatch,
+        _detach_serialize_log_handler):
+    # Fail open: a log dir that cannot exist (parent is a FILE) must not fail
+    # the serialize itself.
+    blocker = tmp_path / "blocked"
+    blocker.write_text("")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(blocker / "logs"))
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
+    assert rc == 0
+    assert "wrote checkpoint" in capsys.readouterr().out
+
+
+def test_attach_serialize_log_handler_fails_open_on_log_dir_error(
+        monkeypatch, _detach_serialize_log_handler):
+    # Fail open one seam earlier than the unwritable-dir case: config.log_dir()
+    # itself raising (bad DAIMON_LOG_DIR expansion, broken config) must leave
+    # the logger untouched instead of failing the serialize.
+    def boom():
+        raise RuntimeError("no log dir")
+    monkeypatch.setattr(cli.config, "log_dir", boom)
+    cli._attach_serialize_log_handler()
+    pkg = logging.getLogger("daimon_briefing")
+    assert not [h for h in pkg.handlers
+                if getattr(h, "_daimon_serialize_log", None)]
+
+
+def test_diagnostic_lines_are_invisible_to_ledger_parsers(tmp_log_dir):
+    # The timestamped `<iso> LEVEL logger: message` shape must never match a
+    # ledger regex — a diagnostic that parses as a result/spawn would corrupt
+    # status/heal/stats. (Load-bearing contract, see ledger.py header.)
+    diag = ("2026-07-09T12:00:00Z WARNING daimon_briefing.serializer: "
+            "quote verification: downgraded verbatim->inferred: error: fake")
+    assert not cli._SPAWN_RE.match(diag)
+    assert not cli._RESULT_OK_RE.match(diag)
+    assert not cli._RESULT_ERR_RE.match(diag)
+    assert not cli._LEDGER_SKIP_RE.match(diag)
+    lines = [
+        "2026-07-09T11:59:00Z session-end: spawned serialize for S9 "
+        "(reason: end, project: /p) (transcript: /t/S9.md)",
+        diag,
+        "wrote checkpoint: /tmp/S9.json (took 7s)",
+    ]
+    _write_log(tmp_log_dir, lines)
+    parsed = cli._parse_serialize_log(tmp_log_dir / "serialize.log", now=0.0)
+    assert parsed["spawn"]["session_id"] == "S9"
+    assert parsed["result"]["outcome"] == "success"
 
 
 # ---- #28 S3+S4: disabled banner + skipped-session visibility ----
