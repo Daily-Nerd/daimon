@@ -100,7 +100,10 @@ def main() -> int:
     if lib.disabled():
         return 0
 
-    cwd = str(lib.payload().get("cwd") or "").strip()
+    data = lib.payload()
+    cwd = str(data.get("cwd") or "").strip()
+    session_id = str(data.get("session_id") or "").strip()
+    transcript_path = str(data.get("transcript_path") or "").strip()
     cli = lib.resolve_cli()
     try:
         _emit_briefing(cwd, cli)
@@ -109,6 +112,14 @@ def main() -> int:
     # Opportunistic self-heal runs regardless of whether a briefing emitted: a
     # failed serialize leaves NO checkpoint, exactly the case where heal matters.
     lib.spawn_heal(cli, cwd)
+    # Orphan catch-up sweep (#188), porting Claude Code's #185 mechanism as-is:
+    # Codex's Stop hook throttles serialize per session, so a session whose
+    # final activity lands inside the throttle window and never resumes is
+    # never captured again. Scanning this session's transcript-sibling
+    # directory at the NEXT session's start recovers it. Runs LAST, after the
+    # briefing is already emitted — lib.sweep_orphans' own fail-open guarantee
+    # means it can never affect what Codex already saw.
+    lib.sweep_orphans(cli, cwd, session_id, transcript_path)
     return 0
 
 
