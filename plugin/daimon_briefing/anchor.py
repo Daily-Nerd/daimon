@@ -1,9 +1,12 @@
-"""Anchor cognitive items to code symbols and detect drift — stdlib only.
+"""Anchor cognitive items to code symbols and detect drift.
 
 A symbol is identified by (file, symbol) where symbol is `name` or `Class.method`.
 The fingerprint is a structural hash (`ast.dump` of the def node), so it is stable
 to formatting/comments/line-shift and changes only on real structural edits. No MCP,
 no LLM, no network — resolution and drift checks read the project's own source.
+Dependencies stay minimal for the same reason: stdlib plus the import-free
+`schema` leaf, from which `_all_items` derives its field walk so drift coverage
+cannot lag behind the checkpoint shape (#146/#160).
 
 Caveat: `ast.dump` output is stable only WITHIN a Python version. A checkpoint anchored
 under one interpreter and checked under another may report a spurious "soft" drift — it
@@ -14,6 +17,8 @@ resolved and checked by the same interpreter.
 import ast
 import hashlib
 from pathlib import Path
+
+from . import schema
 
 _DEF = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
@@ -79,15 +84,17 @@ def check(anchor: dict, project_root) -> str:
 
 
 def _all_items(checkpoint: dict):
-    wc = checkpoint.get("working_context") or {}
-    es = checkpoint.get("epistemic_snapshot") or {}
-    for key in ("open_questions", "recent_decisions"):
-        yield from (wc.get(key) or [])
-    for key in ("strong_beliefs", "uncertainties"):
-        yield from (es.get(key) or [])
-    active = wc.get("active_topic")
-    if isinstance(active, dict):
-        yield active
+    """Yield every item schema.ITEM_FIELDS declares (#146) — singletons
+    (active_topic) only when they are dicts, list entries as-is (drifted()
+    tolerates non-dict entries per item)."""
+    for field in schema.ITEM_FIELDS:
+        block = checkpoint.get(field.section) or {}
+        if field.singleton:
+            item = block.get(field.key)
+            if isinstance(item, dict):
+                yield item
+        else:
+            yield from (block.get(field.key) or [])
 
 
 def drifted(checkpoint: dict, project_root) -> list[dict]:
