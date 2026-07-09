@@ -166,6 +166,149 @@ def _fake_cli(tmp_path) -> tuple[Path, Path]:
     return fake_bin, capture
 
 
+# ---- orphan catch-up sweep (#188): SessionStart wiring to lib.sweep_orphans ----
+#
+# lib.sweep_orphans itself (newest-only, 14-day cutoff, checkpoint-freshness
+# skip, directory-missing no-op, spawn-failure fail-open) is already
+# exhaustively unit-tested in test_claude_hooks.py against the exact same
+# shared function — it is reused here unmodified, not copied. These tests
+# only cover what is specific to the Codex hook: that SessionStart actually
+# wires session_id/transcript_path through to the sweep, runs it after heal,
+# and never lets it disturb the briefing.
+
+
+def _age(path: Path, seconds: float) -> None:
+    past = time.time() - seconds
+    os.utime(path, (past, past))
+
+
+def _fake_cli_argv_recording(tmp_path) -> tuple[Path, Path]:
+    """A fake `daimon` that appends each invocation's full argv to a capture
+    file (one line per call), so a test can distinguish the `heal` call from
+    a `serialize <path>` call spawned later by the same hook run."""
+    fake_bin = tmp_path / "fakebin"
+    fake_bin.mkdir()
+    capture = tmp_path / "argv.txt"
+    script = fake_bin / "daimon"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> "{capture}"\n'
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return fake_bin, capture
+
+
+def test_codex_session_start_spawns_catch_up_serialize_for_orphaned_transcript(
+    tmp_path, tmp_checkpoint_dir
+):
+    fake_bin, capture = _fake_cli_argv_recording(tmp_path)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)  # 1h old, no checkpoint anywhere -> orphan
+
+    proc = _run(
+        START_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new", "transcript_path": str(current)},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    content = _wait_for_text(capture, "serialize")
+    serialize_calls = [
+        line for line in content.splitlines() if line.split()[:1] == ["serialize"]
+    ]
+    assert len(serialize_calls) == 1
+    assert str(orphan) in serialize_calls[0]
+
+
+def test_codex_session_start_no_catch_up_spawn_without_orphan(tmp_path, tmp_checkpoint_dir):
+    fake_bin, capture = _fake_cli_argv_recording(tmp_path)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+
+    proc = _run(
+        START_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new", "transcript_path": str(current)},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    _wait_for_text(capture, "heal")  # heal always fires — confirms the child had time to run
+    content = capture.read_text()
+    serialize_calls = [
+        line for line in content.splitlines() if line.split()[:1] == ["serialize"]
+    ]
+    assert serialize_calls == []
+
+
+def test_codex_session_start_excludes_current_session_via_session_id(
+    tmp_path, tmp_checkpoint_dir
+):
+    # The current session's OWN transcript must never be swept, even aged and
+    # uncaptured — proves the hook actually threads session_id through to
+    # lib.sweep_orphans rather than relying on path identity alone.
+    fake_bin, capture = _fake_cli_argv_recording(tmp_path)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    _age(current, 3600)
+
+    proc = _run(
+        START_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new", "transcript_path": str(current)},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    _wait_for_text(capture, "heal")
+    content = capture.read_text()
+    serialize_calls = [
+        line for line in content.splitlines() if line.split()[:1] == ["serialize"]
+    ]
+    assert serialize_calls == []
+
+
+def test_codex_session_start_sweep_noop_when_transcript_dir_missing(tmp_path, tmp_checkpoint_dir):
+    # Codex's transcript_path layout is documented as not a stable interface
+    # (hook/CODEX.md) — a sibling directory that doesn't exist must be a silent
+    # no-op, never a crash.
+    fake_bin, capture = _fake_cli_argv_recording(tmp_path)
+    missing = tmp_path / "gone" / "S-new.jsonl"
+
+    proc = _run(
+        START_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new", "transcript_path": str(missing)},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    _wait_for_text(capture, "heal")
+    content = capture.read_text()
+    serialize_calls = [
+        line for line in content.splitlines() if line.split()[:1] == ["serialize"]
+    ]
+    assert serialize_calls == []
+
+
+def test_codex_session_start_sweep_never_breaks_briefing_output(
+    tmp_path, tmp_checkpoint_dir, sample_checkpoint
+):
+    # No transcript_path in the payload at all -> sweep can't act, briefing is
+    # unaffected (matches every pre-#188 session-start test's payload shape).
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    proc = _run(START_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
+    assert proc.returncode == 0
+    ctx = _additional_context(proc.stdout)
+    assert "checkpoint: S-global" in ctx
+
+
 def _wait_for(path: Path, timeout=10.0) -> str:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

@@ -238,12 +238,22 @@ _ORPHAN_MAX_AGE_SECONDS = 14 * 24 * 3600  # 14 days — bounds the sweep's direc
 
 
 def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
-    """Catch-up sweep (#185) for a `claude --resume` fork's never-captured
-    transcript: resuming a dead session forks it into a NEW session id with its
-    own transcript file, but the host can fail to fire SessionEnd for that fork
-    (e.g. the IDE window is killed again before a clean exit) — there is then
-    nothing daimon can hook at ITS end, so recovery has to happen here, at the
-    NEXT session's start instead.
+    """Catch-up sweep for a transcript that was never captured because the
+    host's own end-of-session capture path silently missed it. Two callers,
+    same shared logic (host-agnostic by design — nothing below is Claude- or
+    Codex-specific):
+
+    - Claude Code (#185): resuming a dead session forks it into a NEW session
+      id with its own transcript file, but the host can fail to fire
+      SessionEnd for that fork (e.g. the IDE window is killed again before a
+      clean exit) — there is then nothing daimon can hook at ITS end.
+    - Codex (#188): the Stop hook throttles serialize per session
+      (`DAIMON_CODEX_MIN_SERIALIZE_INTERVAL`), so a session whose final
+      activity lands inside the throttle window and never resumes is never
+      serialized again.
+
+    Either way, recovery has to happen here, at the NEXT session's start,
+    instead of at the missed end-of-session event.
 
     Scans the directory the CURRENT session's own transcript lives in (its
     siblings are every other session ever run against this project) for the
