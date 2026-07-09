@@ -435,6 +435,28 @@ def test_on_session_end_failure_writes_attributed_ledger_entry(
     assert "kaboom" in (entry["result_line"] or "")
 
 
+def test_failure_ledgered_even_when_project_resolution_raises(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # Project attribution is best-effort decoration: if resolving the project
+    # root itself blows up, the failure must still reach the ledger as '?'.
+    import time
+
+    from daimon_briefing import cli, config
+
+    def _boom(_dir):
+        raise RuntimeError("no project root")
+
+    monkeypatch.setattr(config, "resolve_project_root", _boom)
+    _fail_session(fake_chat_factory, monkeypatch, session_id="S-noproj")
+
+    text = _ledger_text()
+    assert "project: ?" in text
+    entry = cli._session_ledger(text, time.time()).get("S-noproj")
+    assert entry is not None
+    assert entry["result_kind"] == "error"
+
+
 def test_status_counts_failed_in_process_capture(
     tmp_checkpoint_dir, fake_chat_factory, capsys, monkeypatch
 ):
