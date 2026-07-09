@@ -145,7 +145,7 @@ skill owns it outright. Re-run install after upgrading to refresh the content.
 - **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled). Multi-term queries degrade to ranked partial matches instead of returning nothing.
 - **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it ("you worked on this before"), in English or Spanish — accented text is a first-class citizen.
 - **Code anchors** — `daimon anchor <file> <symbol>` pins a belief to a code symbol; if that code changes or disappears, the next briefing flags the item under **CODE DRIFT — verify before trusting**. Offline, stdlib `ast`.
-- **Team memory (opt-in)** — `daimon team init <remote>` mirrors checkpoints through a git remote; teammates' active topics and decisions appear in your briefing, clearly attributed, never merged into your own sections.
+- **Team memory (opt-in)** — `daimon team init <remote>` mirrors checkpoints through a git remote; teammates' active topics and decisions appear in your briefing, clearly attributed, never merged into your own sections. See the [team memory setup guide](./docs/team.md) — start with its privacy boundary, because the shared repo must be private.
 
 ## What's net-new here
 
