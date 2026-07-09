@@ -1603,7 +1603,7 @@ def test_cmd_status_json_has_health_and_siblings(tmp_checkpoint_dir, capsys, mon
 
 
 def test_heal_plan_targets_newest_healable(monkeypatch):
-    from daimon_briefing import cli
+    from daimon_briefing import cli, ledger
     # Build outstanding via a stubbed _compute_outstanding so the plan logic is unit-tested in isolation.
     items = [
         {"sid": "S-new", "class": "healable", "transcript": "/t/new.jsonl", "project": "/p",
@@ -1611,7 +1611,7 @@ def test_heal_plan_targets_newest_healable(monkeypatch):
         {"sid": "S-old", "class": "retry-exhausted", "transcript": "/t/old.jsonl", "project": "/p",
          "age_str": "9m", "line": "error: boom (transcript: /t/old.jsonl) after 3s"},
     ]
-    monkeypatch.setattr(cli, "_compute_outstanding", lambda text, now: items)
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: items)
     plan = cli._heal_plan("logtext", 1000.0)
     assert plan["target"]["sid"] == "S-new"
     assert plan["target"]["transcript"] == "/t/new.jsonl"
@@ -1622,14 +1622,14 @@ def test_heal_plan_targets_newest_healable(monkeypatch):
 
 
 def test_heal_plan_second_healable_says_rerun(monkeypatch):
-    from daimon_briefing import cli
+    from daimon_briefing import cli, ledger
     items = [
         {"sid": "S1", "class": "healable", "transcript": "/t/1", "project": "/p", "age_str": "1m",
          "line": "error: x (transcript: /t/1) after 1s"},
         {"sid": "S2", "class": "healable", "transcript": "/t/2", "project": "/p", "age_str": "2m",
          "line": "error: x (transcript: /t/2) after 1s"},
     ]
-    monkeypatch.setattr(cli, "_compute_outstanding", lambda text, now: items)
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: items)
     plan = cli._heal_plan("x", 1000.0)
     assert plan["target"]["sid"] == "S1"
     assert plan["skipped"][0]["sid"] == "S2"
@@ -1637,26 +1637,26 @@ def test_heal_plan_second_healable_says_rerun(monkeypatch):
 
 
 def test_heal_plan_no_log(monkeypatch):
-    from daimon_briefing import cli
-    monkeypatch.setattr(cli, "_compute_outstanding", lambda text, now: [])
+    from daimon_briefing import cli, ledger
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: [])
     plan = cli._heal_plan("", 1000.0)
     assert plan["target"] is None and plan["skipped"] == []
     assert "no serialize activity logged" in plan["note"]
 
 
 def test_heal_plan_no_outstanding(monkeypatch):
-    from daimon_briefing import cli
-    monkeypatch.setattr(cli, "_compute_outstanding", lambda text, now: [])
+    from daimon_briefing import cli, ledger
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: [])
     plan = cli._heal_plan("some log with only successes", 1000.0)
     assert plan["target"] is None
     assert "no outstanding failures" in plan["note"]
 
 
 def test_heal_plan_only_unrepairable(monkeypatch):
-    from daimon_briefing import cli
+    from daimon_briefing import cli, ledger
     items = [{"sid": "H1", "class": "hung", "transcript": None, "project": None,
               "age_str": "40m", "line": None}]
-    monkeypatch.setattr(cli, "_compute_outstanding", lambda text, now: items)
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: items)
     plan = cli._heal_plan("x", 1000.0)
     assert plan["target"] is None
     assert "can't be auto-repaired" in plan["note"]
