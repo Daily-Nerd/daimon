@@ -180,6 +180,48 @@ def test_brief_render_survives_syntax_error_in_anchored_file(tmp_path, capsys):
     assert "[GONE] q-broken-file" in out
 
 
+def test_drifted_collects_anchored_contradiction(tmp_path):
+    # Regression (#160): contradictions_flagged was the fifth hand-rolled
+    # item-list copy and was omitted from the drift scan — an anchored
+    # contradiction whose target symbol drifted never surfaced.
+    _write(tmp_path, "m.py", _SRC)
+    a = anchor.resolve(tmp_path, "m.py", "foo")
+    _write(tmp_path, "m.py", _SRC.replace("return x + 1", "return x + 99"))
+    checkpoint = {
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [],
+            "uncertainties": [],
+            "contradictions_flagged": [
+                {"text": "c-drifted", "trust": "inferred", "anchored_to": a}
+            ],
+        },
+    }
+    out = anchor.drifted(checkpoint, tmp_path)
+    assert [(d["item"]["text"], d["kind"]) for d in out] == [("c-drifted", "soft")]
+
+
+def test_all_items_covers_every_schema_item_field():
+    # Field-coverage pin against the descriptor (#146/#160): a field added to
+    # schema.ITEM_FIELDS must be walked by the drift scan — no sixth copy.
+    from daimon_briefing import schema
+
+    checkpoint = {}
+    expected = set()
+    for field in schema.ITEM_FIELDS:
+        text = f"{field.section}.{field.key}"
+        item = {"text": text, "trust": "inferred"}
+        section = checkpoint.setdefault(field.section, {})
+        section[field.key] = item if field.singleton else [item]
+        expected.add(text)
+    got = {item["text"] for item in anchor._all_items(checkpoint)}
+    assert got == expected
+
+
 def test_drifted_collects_soft_drift(tmp_path):
     _write(tmp_path, "m.py", _SRC)
     a = anchor.resolve(tmp_path, "m.py", "foo")
