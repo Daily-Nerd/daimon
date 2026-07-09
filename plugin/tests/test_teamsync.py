@@ -172,6 +172,24 @@ def test_sync_commit_excludes_prestaged_unrelated_paths(bare_remote, monkeypatch
     assert staged == ["notes.txt"]    # pre-staged entry survives untouched
 
 
+def test_sync_failed_add_aborts_commit(bare_remote, monkeypatch):
+    # #144: if staging the own dir fails, committing would publish whatever
+    # stale state the index happens to hold — abort instead.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    real_git = teamsync._git
+
+    def failing_add(cwd, *args, **kwargs):
+        if args and args[0] == "add":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="add failed")
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(teamsync, "_git", failing_add)
+    r = teamsync.sync_remote(sidecar)
+    assert r["committed"] == 0
+
+
 def test_sync_nothing_to_do_is_clean_noop(bare_remote, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     sidecar = teamsync.init(str(bare_remote))
