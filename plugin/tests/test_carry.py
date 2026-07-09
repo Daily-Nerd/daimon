@@ -752,3 +752,199 @@ def test_freeze_copies_prev_quote_verified_with_quote():
     q = out["working_context"]["open_questions"][0]
     assert q["quote"] == _VERB_QUOTE
     assert q["quote_verified"] is True
+
+
+# --- quantity-conflict guard on unlinked twin false merge (#173) ------------
+# A native item that UPDATES a prior verbatim decision (not a re-statement,
+# not an explicit #167 reversal) can share enough subject vocabulary to
+# twin-match under _same_item's term-overlap rule alone. When the two texts
+# state DIFFERENT numbers, that is structural evidence they are distinct
+# items, not a reworded twin — the guard must block the match regardless of
+# term overlap, so the #22 freeze never fires and the update survives.
+
+_QTY_PREV = ("Study commitment: target exam X with a ten-week plan at 6 "
+             "hours per week")
+_QTY_PREV_QUOTE = "ten-week plan at 6 hours per week"
+_QTY_NATIVE = ("Maintain 6 hours per week study commitment, compressed "
+               "into 3 weeks")
+
+
+def test_quantity_conflict_blocks_twin_merge_native_update_survives():
+    # #173 live specimen: {ten, 6} vs {6, 3} — neither is a subset of the
+    # other, a genuine two-sided numeric mismatch. RED today: term overlap
+    # ({study, commitment, week, hours}) alone twin-matches them and the #22
+    # freeze overwrites the native update's text+quote with the prev
+    # decision's, silently losing the "compressed into 3 weeks" change.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _QTY_PREV, trust="verbatim", quote=_QTY_PREV_QUOTE, days=10)])
+    new = _cp("S-new", 0, decisions=[_item(_QTY_NATIVE, days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    native = next(d for d in ds if not d.get("carried_from"))
+    assert native["text"] == _QTY_NATIVE          # update text intact
+    assert native.get("trust") != "verbatim"       # never frozen
+    assert "carried_from" not in native
+    carried = next(d for d in ds if d.get("carried_from"))
+    assert carried["text"] == _QTY_PREV            # prev survives separately
+    assert carried["quote"] == _QTY_PREV_QUOTE
+    assert carried["trust"] == "verbatim"
+    assert len(ds) == 2
+
+
+def test_quantity_equivalence_number_word_and_digit_still_freezes():
+    # GUARD against over-firing: "ten"/"six" and "10"/"6" normalize to the
+    # SAME value set -> no conflict -> the #22 freeze still applies exactly
+    # as before the guard existed.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        "Study commitment: target exam Y with a ten week plan at six hours "
+        "per week", trust="verbatim",
+        quote="ten week plan at six hours per week", days=45)])
+    new = _cp("S-new", 0, decisions=[_item(
+        "Study commitment: maintaining a 10 week plan at 6 hours per week",
+        days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["trust"] == "verbatim"
+    assert "ten week plan" in ds[0]["text"]         # frozen original won
+
+
+def test_quantity_subset_drop_still_freezes_restatement():
+    # DESIGN CHOICE: a restatement that DROPS one number but keeps the other
+    # ({10, 6} -> {6}) is a subset, not a conflict — #22's "restatement drops
+    # detail" behavior must still freeze it. Only a two-sided mismatch (#173
+    # specimen above) counts as conflict.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _QTY_PREV, trust="verbatim", quote=_QTY_PREV_QUOTE, days=45)])
+    new = _cp("S-new", 0, decisions=[_item(
+        "Study commitment still on at 6 hours per week", days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["trust"] == "verbatim"
+    assert ds[0]["text"] == _QTY_PREV               # frozen original won
+
+
+def test_quantity_conflict_dedup_path_prev_items_carry_separately():
+    # Same guard on the plain dedup path (#31 item 9's carry-once): two PREV
+    # items reworded-twins of each other on term overlap alone, but stating
+    # CONFLICTING quantities, must both carry rather than collapsing into one.
+    prev = _cp("S-prev", 1, decisions=[
+        _item("study commitment ten week plan six hours weekly", days=5),
+        _item("study commitment three week plan six hours weekly", days=3),
+    ])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 2
+
+
+# --- quantity extraction hardening (#173 review round 2) --------------------
+# Adversarial review found the naive extractor false-conflicts on ordinary
+# reformatting of the SAME number: "1,000" tokenized digit-by-digit around
+# the comma, "twenty-five" read as two separate words instead of one
+# compound, and "2.5" split into {2, 5} at the decimal point. All three bugs
+# point the same direction — over-blocking a legitimate freeze/merge — so
+# each gets a direct unit test on `_quantity_tokens` plus a merge-level
+# regression proving the freeze still fires end to end.
+
+def test_quantity_tokens_strips_thousand_separators():
+    assert carry._quantity_tokens("1,000 users churned") == frozenset({1000})
+    assert carry._quantity_tokens("1000 users churned") == frozenset({1000})
+
+
+def test_quantity_tokens_combines_compound_number_words():
+    assert carry._quantity_tokens("twenty-five students enrolled") == \
+        frozenset({25})
+    assert carry._quantity_tokens("twenty five students enrolled") == \
+        frozenset({25})
+    assert carry._quantity_tokens("25 students enrolled") == frozenset({25})
+
+
+def test_quantity_tokens_decimal_is_one_value():
+    assert carry._quantity_tokens("throughput at 2.5 times baseline") == \
+        frozenset({2.5})
+
+
+def test_quantity_tokens_zero():
+    assert carry._quantity_tokens("zero regressions found") == frozenset({0})
+
+
+def test_quantity_comma_thousands_restatement_still_freezes():
+    # "1,000" vs "1000" must normalize to the same value -> no conflict ->
+    # the #22 freeze fires exactly as it would with no comma at all.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        "Budget approved: 1,000 seats for the rollout", trust="verbatim",
+        quote="1,000 seats for the rollout", days=45)])
+    new = _cp("S-new", 0, decisions=[_item(
+        "Budget approved: 1000 seats confirmed for the rollout", days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["trust"] == "verbatim"
+    assert "1,000 seats" in ds[0]["text"]           # frozen original won
+
+
+def test_quantity_compound_word_restatement_still_freezes():
+    # "twenty-five" vs "25" must normalize to the same value -> no conflict.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        "Team target: twenty-five signups this month", trust="verbatim",
+        quote="twenty-five signups this month", days=45)])
+    new = _cp("S-new", 0, decisions=[_item(
+        "Team target: 25 signups confirmed this month", days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["trust"] == "verbatim"
+    assert "twenty-five signups" in ds[0]["text"]   # frozen original won
+
+
+# --- quantity guard interaction with the #167 reversal pipeline (#173 round
+# 2 pinning test) -------------------------------------------------------------
+# A reversal's native text can legitimately state a DIFFERENT quantity than
+# the prev item it reverses (that's the whole point of a reversal). The
+# guard already produces the correct outcome here on its own (no twin, so no
+# freeze — the same result #167's carve-out targets), but nothing pinned
+# that the REST of the pipeline (prev still carries alongside, bind_links
+# still resolves the supersedes link) keeps working when the guard is the
+# thing blocking the twin match instead of `_is_reversal_of`.
+
+_REV_QTY_PREV = ("Study commitment: target the quorint solutions architect "
+                  "exam with a 10-week plan at 6 hours per week")
+_REV_QTY_PREV_QUOTE = "10-week plan at 6 hours per week"
+_REV_QTY_NATIVE = ("Drop the 10-week quorint architect plan entirely; "
+                    "committing to a 3-week sprint instead")
+_REV_QTY_NATIVE_QUOTE = "committing to a 3-week sprint instead"
+_REV_QTY_TARGET = "quorint solutions architect exam 10-week plan"
+
+
+def _qty_reversal_cps():
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _REV_QTY_PREV, trust="verbatim", quote=_REV_QTY_PREV_QUOTE,
+        quote_verified=True, id="r-qty001", days=10)])
+    new = _cp("S-new", 0, decisions=[_item(
+        _REV_QTY_NATIVE, trust="verbatim", quote=_REV_QTY_NATIVE_QUOTE,
+        quote_verified=True, days=0,
+        links=[{"type": "supersedes", "target": _REV_QTY_TARGET}])])
+    return prev, new
+
+
+def test_quantity_conflict_guard_does_not_defeat_reversal_pipeline():
+    # prev {10, 6} vs native {10, 3} conflict on quantity alone (guard blocks
+    # the twin before _is_reversal_of even runs) -> same outcome #167 already
+    # guarantees: reversal text+quote survive untouched, prev carries
+    # alongside, and bind_links still resolves the supersedes link (whose
+    # target text cites only the OLD, non-conflicting "10-week" wording)
+    # into a supersede-candidate pair.
+    prev, new = _qty_reversal_cps()
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    native = next(d for d in ds if not d.get("carried_from"))
+    assert native["text"] == _REV_QTY_NATIVE
+    assert native["quote"] == _REV_QTY_NATIVE_QUOTE
+    assert len(ds) == 2
+    carried = next(d for d in ds if d.get("carried_from"))
+    assert carried["text"] == _REV_QTY_PREV
+    assert carried["id"] == "r-qty001"
+    native["id"] = "r-qty-new"  # what store._stamp_item_ids does pre-bind
+    pairs = carry.bind_links(out, prev)
+    assert pairs == [("r-qty001", "r-qty-new", _REV_QTY_PREV)]
