@@ -82,3 +82,18 @@ copy of `plugin/daimon_briefing/redact.py` that installs alongside standalone
 hosts). A byte-equality test (`plugin/tests/test_hooks_install.py`) guards
 both copies against drift — when you edit a script or `redact.py` here, copy
 the change into `plugin/daimon_briefing/_hooks/` in the same change.
+
+### Editing hook-shipped files
+
+Don't copy the duplicates by hand. Edit the canonical source, then run the
+sync script, then commit both:
+
+1. Edit the canonical file (`plugin/daimon_briefing/redact.py`, or the
+   adapter source here in `hook/`).
+2. `uv run python scripts/sync_hooks.py` — copies each canonical file to its
+   mirrors byte-for-byte.
+3. Commit the canonical file and its synced copies together.
+
+Run `uv run python scripts/sync_hooks.py --check` to see which copies (if any)
+have drifted without writing anything; it drives the same manifest the
+byte-equality test reads.

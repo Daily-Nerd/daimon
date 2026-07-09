@@ -1,8 +1,8 @@
 """#43: hook scripts ship in the package; `daimon hooks install <host>` puts
 them at a stable path so registration survives every upgrade."""
 
-import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,7 +12,17 @@ from daimon_briefing import cli
 REPO_HOOK_DIR = Path(__file__).parents[2] / "hook"
 PKG_HOOKS_DIR = Path(__file__).parents[1] / "daimon_briefing" / "_hooks"
 
-_SHIPPED = ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py", "redact.py")
+_SCRIPTS_DIR = Path(__file__).parents[2] / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from sync_hooks import SYNC_PAIRS  # noqa: E402
+
+# Derived from the one shared manifest — the names copied into the packaged
+# _hooks/ dir — so this list can never drift from what the sync script ships.
+_PKG_HOOKS_REL = "plugin/daimon_briefing/_hooks/"
+_SHIPPED = tuple(
+    Path(dst).name for _, dst in SYNC_PAIRS if dst.startswith(_PKG_HOOKS_REL)
+)
 
 
 @pytest.mark.parametrize("name", _SHIPPED)
