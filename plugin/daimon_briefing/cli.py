@@ -1239,6 +1239,8 @@ def _cmd_configure(args) -> int:
                 updates["DAIMON_LLM_COMMAND"] = args.command
             if args.output:
                 updates["DAIMON_LLM_COMMAND_OUTPUT"] = args.output
+            if args.input:
+                updates["DAIMON_LLM_COMMAND_INPUT"] = args.input
         # claude-cli: just pin the backend, no credentials needed.
         path = configure.write_env(updates)
         render.render_configure_lines([f"wrote {path}"])
@@ -1275,6 +1277,11 @@ def _cmd_configure(args) -> int:
         output = _prompt("output spec [text/json:<key>] (blank=text): ").strip()
         if output:
             updates["DAIMON_LLM_COMMAND_OUTPUT"] = output
+        input_spec = _prompt(
+            "input spec [stdin/arg/file:<flag>] (blank=stdin): "
+        ).strip()
+        if input_spec:
+            updates["DAIMON_LLM_COMMAND_INPUT"] = input_spec
     # claude-cli: nothing more to ask.
     path = configure.write_env(updates)
     render.render_configure_lines([f"wrote {path}"])
@@ -1819,6 +1826,12 @@ def main(argv=None) -> int:
     p_cfg.add_argument("--base-url", help="litellm: DAIMON_LLM_BASE_URL")
     p_cfg.add_argument("--command", help="command: DAIMON_LLM_COMMAND")
     p_cfg.add_argument("--output", help="command: DAIMON_LLM_COMMAND_OUTPUT (text|json:<key>)")
+    p_cfg.add_argument(
+        "--input",
+        help="command: DAIMON_LLM_COMMAND_INPUT (stdin|arg|file:<flag>) — how the "
+             "prompt reaches a CLI that doesn't read stdin, e.g. --input "
+             "'file:--prompt-file' for the Devin CLI (#58)",
+    )
     p_cfg.add_argument(
         "--test", action="store_true",
         help="send one tiny prompt through the resolved backend and report "

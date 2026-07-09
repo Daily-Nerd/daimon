@@ -248,20 +248,28 @@ def test_extract_output_text_and_json():
 def test_resolve_command_prefers_explicit(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_COMMAND", "mycli --flag")
     monkeypatch.delenv("DAIMON_LLM_COMMAND_OUTPUT", raising=False)
-    assert llm._resolve_command() == ("mycli --flag", "text")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_INPUT", raising=False)
+    assert llm._resolve_command() == ("mycli --flag", "text", "stdin")
 
 
 def test_resolve_command_claude_preset(monkeypatch):
     monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
     monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
-    cmd, out = llm._resolve_command()
+    cmd, out, inp = llm._resolve_command()
     assert cmd.startswith("claude -p") and out == "json:result"
+    assert inp == "stdin"  # #58: the claude-cli preset never changes off stdin
 
 
 def test_resolve_command_none(monkeypatch):
     monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
     monkeypatch.setattr(llm.shutil, "which", lambda b: None)
     assert llm._resolve_command() is None
+
+
+def test_resolve_command_carries_explicit_input_spec(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+    assert llm._resolve_command() == ("devin -p", "text", "file:--prompt-file")
 
 
 def test_chat_command_runs_and_sets_disable_env(monkeypatch):
@@ -278,6 +286,148 @@ def test_chat_command_runs_and_sets_disable_env(monkeypatch):
     assert seen["stdin"] == "USER:\nhi"
     assert seen["env"]["DAIMON_DISABLE"] == "1"
     assert os.path.isdir(seen["cwd"]) is False  # temp dir cleaned up after
+
+
+# ---- #58: DAIMON_LLM_COMMAND_INPUT — stdin (default) | arg | file:<flag> ----
+
+
+def test_chat_command_arg_mode_appends_prompt_as_final_argv_element(monkeypatch):
+    # The prompt must land as ONE raw argv element — never string-interpolated
+    # into the command template, so it can never reach a shell (matches
+    # _run_command's never-touches-shell contract).
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"], seen["stdin"] = argv, stdin_text
+        return 0, "ok", ""
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    out = llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert out == "ok"
+    assert seen["argv"] == ["devin", "-p", "USER:\nhi"]
+    assert seen["stdin"] in ("", None)  # nothing piped in arg mode
+
+
+def test_chat_command_file_mode_writes_0600_tempfile_inside_call_cwd(monkeypatch):
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"], seen["stdin"], seen["cwd"] = argv, stdin_text, cwd
+        # The file must exist and be readable WHILE the command runs.
+        flag, path = argv[-2], argv[-1]
+        seen["flag"] = flag
+        seen["file_contents"] = open(path, encoding="utf-8").read()
+        seen["file_mode"] = os.stat(path).st_mode & 0o777
+        seen["file_in_cwd"] = os.path.dirname(path) == cwd
+        return 0, "ok", ""
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    out = llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert out == "ok"
+    assert seen["flag"] == "--prompt-file"
+    assert seen["file_contents"] == "USER:\nhi"
+    assert seen["file_mode"] == 0o600
+    assert seen["file_in_cwd"] is True
+    assert seen["argv"][:2] == ["devin", "-p"]
+
+
+def test_apply_input_spec_file_flag_stripping_to_empty_degrades_to_stdin(tmp_path):
+    # Defensive boundary: config.llm_command_input() normalizes
+    # "file:<whitespace>" to "stdin" before _apply_input_spec ever sees it,
+    # but a spec reaching this function directly (tests, future callers)
+    # with a flag that strips to empty must degrade to stdin behavior —
+    # argv untouched, prompt piped — not append an empty flag to argv.
+    argv, stdin_text = llm._apply_input_spec(
+        ["mycli", "-p"], "PROMPT", "file:   ", str(tmp_path))
+    assert argv == ["mycli", "-p"]
+    assert stdin_text == "PROMPT"
+
+
+def test_chat_command_file_mode_strips_whitespace_around_flag(monkeypatch):
+    # "file:  --prompt-file  " must not smuggle the padding into argv as
+    # "  --prompt-file" — not an injection risk, but a silent misconfiguration
+    # most CLIs won't match. The flag is stripped after extraction.
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"] = argv
+        return 0, "ok", ""
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:  --prompt-file  ")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    out = llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert out == "ok"
+    assert seen["argv"][-2] == "--prompt-file"  # clean flag, no padding
+
+
+def test_chat_command_file_mode_cleaned_up_after_run(monkeypatch):
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["cwd"] = cwd
+        return 0, "ok", ""
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert os.path.isdir(seen["cwd"]) is False  # cwd (incl. tempfile) removed
+
+
+def test_chat_command_file_mode_cleaned_up_after_timeout(monkeypatch):
+    import subprocess as sp
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["cwd"] = cwd
+        raise sp.TimeoutExpired(cmd=argv, timeout=timeout)
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    with pytest.raises(llm.ChatError):
+        llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert os.path.isdir(seen["cwd"]) is False  # cleaned up even on timeout
+
+
+def test_chat_command_stdin_default_unchanged(monkeypatch):
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"], seen["stdin"] = argv, stdin_text
+        return 0, "ok", ""
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "mycli -p")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_INPUT", raising=False)
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert seen["argv"] == ["mycli", "-p"]  # nothing appended
+    assert seen["stdin"] == "USER:\nhi"
+
+
+def test_chat_command_arg_mode_over_arg_max_raises_chat_error_not_oserror(monkeypatch):
+    # A raw OSError E2BIG from the kernel exec() call is opaque; arg-mode must
+    # fail loud with a ChatError naming the limit before ever calling exec.
+    def fail_if_called(*a, **k):
+        raise AssertionError("_run_command must not be called over the ARG_MAX ceiling")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
+    monkeypatch.setattr(llm, "_run_command", fail_if_called)
+    huge = [{"role": "user", "content": "x" * (llm._ARG_MAX_BYTES + 1)}]
+    with pytest.raises(llm.ChatError) as exc:
+        llm._chat_command(huge, deadline=None)
+    msg = str(exc.value)
+    assert str(llm._ARG_MAX_BYTES) in msg
+    assert "file:" in msg or "stdin" in msg  # names the escape hatch
+
+
+def test_chat_command_unknown_input_mode_falls_open_to_stdin(monkeypatch):
+    # config.llm_command_input() already fails a bogus value open to "stdin"
+    # (with a logged warning) — _chat_command must never see the raw bogus
+    # string reach argv-building.
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"], seen["stdin"] = argv, stdin_text
+        return 0, "ok", ""
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "mycli -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "bogus-mode")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert seen["argv"] == ["mycli", "-p"]
+    assert seen["stdin"] == "USER:\nhi"
 
 
 def test_chat_command_no_command_raises(monkeypatch):

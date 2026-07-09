@@ -990,7 +990,7 @@ _CFG_LLM_VARS = (
     "DAIMON_LLM_API_KEY", "LITELLM_API_KEY",
     "DAIMON_LLM_MODEL", "LITELLM_MODEL",
     "DAIMON_LLM_BASE_URL", "LITELLM_BASE_URL",
-    "DAIMON_LLM_COMMAND", "DAIMON_LLM_COMMAND_OUTPUT",
+    "DAIMON_LLM_COMMAND", "DAIMON_LLM_COMMAND_OUTPUT", "DAIMON_LLM_COMMAND_INPUT",
 )
 
 
@@ -1067,6 +1067,41 @@ def test_cli_configure_command_flags_write_env(capsys, monkeypatch, tmp_path):
     assert values["DAIMON_LLM_COMMAND_OUTPUT"] == "json:result"
 
 
+def test_cli_configure_command_input_flag_write_env(capsys, monkeypatch, tmp_path):
+    # #58: --input alongside --command/--output, persisted the same way.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+
+    rc = cli.main([
+        "configure", "--backend", "command",
+        "--command", "devin -p", "--input", "file:--prompt-file",
+    ])
+    assert rc == 0
+
+    from daimon_briefing import config
+
+    values = config._file_values()
+    assert values["DAIMON_LLM_BACKEND"] == "command"
+    assert values["DAIMON_LLM_COMMAND"] == "devin -p"
+    assert values["DAIMON_LLM_COMMAND_INPUT"] == "file:--prompt-file"
+
+
+def test_cli_configure_status_surfaces_input_spec(capsys, monkeypatch, tmp_path):
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+
+    rc = cli.main(["configure"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "file:--prompt-file" in out
+
+
 def test_cli_configure_not_ready_non_tty_prints_guidance(
     capsys, monkeypatch, tmp_path
 ):
@@ -1105,6 +1140,57 @@ def test_cli_configure_interactive_litellm(capsys, monkeypatch, tmp_path):
     assert values["DAIMON_LLM_BACKEND"] == "litellm"
     assert values["DAIMON_LLM_API_KEY"] == "K"
     assert values["DAIMON_LLM_MODEL"] == "M"
+
+
+def test_cli_configure_interactive_command_with_input_spec(
+    capsys, monkeypatch, tmp_path
+):
+    # #58: the interactive command-backend path asks for the input spec too;
+    # answered specs are persisted alongside command/output.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+
+    answers = iter(["command", "devin -p", "json:result", "file:--prompt-file"])
+    monkeypatch.setattr(cli, "_prompt", lambda q: next(answers))
+
+    rc = cli.main(["configure"])
+    assert rc == 0
+
+    from daimon_briefing import config
+
+    values = config._file_values()
+    assert values["DAIMON_LLM_BACKEND"] == "command"
+    assert values["DAIMON_LLM_COMMAND"] == "devin -p"
+    assert values["DAIMON_LLM_COMMAND_OUTPUT"] == "json:result"
+    assert values["DAIMON_LLM_COMMAND_INPUT"] == "file:--prompt-file"
+
+
+def test_cli_configure_interactive_command_blank_input_not_written(
+    capsys, monkeypatch, tmp_path
+):
+    # A blank input-spec answer keeps the stdin default implicit — no key
+    # written, matching how blank command/output answers behave.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+
+    answers = iter(["command", "mycli -p", "", ""])
+    monkeypatch.setattr(cli, "_prompt", lambda q: next(answers))
+
+    rc = cli.main(["configure"])
+    assert rc == 0
+
+    from daimon_briefing import config
+
+    values = config._file_values()
+    assert values["DAIMON_LLM_COMMAND"] == "mycli -p"
+    assert "DAIMON_LLM_COMMAND_OUTPUT" not in values  # blank answer -> not written
+    assert "DAIMON_LLM_COMMAND_INPUT" not in values
 
 
 # ---- write-checkpoint: introspection path (#23) — JSON on stdin -> store ----

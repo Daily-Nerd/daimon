@@ -30,7 +30,7 @@ def resolved_backend() -> str:
 def status() -> dict:
     """Detection snapshot for the doctor view. No LLM call."""
     rb = resolved_backend()
-    cmd = llm._resolve_command()  # (command_str, output_spec) | None
+    cmd = llm._resolve_command()  # (command_str, output_spec, input_spec) | None
     if rb in ("command", "claude-cli"):
         ready = cmd is not None
     else:  # litellm needs BOTH key and model (matches the serialize pre-flight)
@@ -42,6 +42,7 @@ def status() -> dict:
         "has_api_key": config.llm_api_key() is not None,
         "has_model": config.llm_model() is not None,
         "command": cmd[0] if cmd else None,
+        "input": cmd[2] if cmd else None,  # #58: DAIMON_LLM_COMMAND_INPUT
         "command_source": (
             "explicit" if config.llm_command()
             else ("claude-cli" if cmd else None)

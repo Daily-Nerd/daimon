@@ -178,6 +178,60 @@ def test_llm_command_and_output(monkeypatch):
     assert config.llm_command_output() == "json:result"
 
 
+# ---- #58: DAIMON_LLM_COMMAND_INPUT — stdin (default) | arg | file:<flag> ----
+
+
+def test_llm_command_input_default_is_stdin(monkeypatch):
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_INPUT", raising=False)
+    assert config.llm_command_input() == "stdin"
+
+
+def test_llm_command_input_arg(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
+    assert config.llm_command_input() == "arg"
+
+
+def test_llm_command_input_file_with_flag(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+    assert config.llm_command_input() == "file:--prompt-file"
+
+
+def test_llm_command_input_unknown_mode_fails_open_to_stdin_with_warning(
+    monkeypatch, caplog
+):
+    # Matches the fail-open precedent of the sibling DAIMON_LLM_COMMAND_OUTPUT
+    # axis: a typo here must never crash every chat() call — it silently
+    # reverts to the safe default, but (unlike the output axis) logs a
+    # warning since the input axis is easier to get wrong silently.
+    import logging
+
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "bogus-mode")
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.config"):
+        assert config.llm_command_input() == "stdin"
+    assert any("bogus-mode" in r.getMessage() for r in caplog.records)
+
+
+def test_llm_command_input_file_without_flag_fails_open_to_stdin(monkeypatch, caplog):
+    # "file:" with an empty flag is not a usable spec — treat like any other
+    # unrecognized value.
+    import logging
+
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:")
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.config"):
+        assert config.llm_command_input() == "stdin"
+
+
+def test_llm_command_input_file_whitespace_only_flag_fails_open_to_stdin(
+    monkeypatch, caplog
+):
+    # A flag that strips to empty is the empty-flag case in disguise.
+    import logging
+
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:   ")
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.config"):
+        assert config.llm_command_input() == "stdin"
+
+
 def test_hung_after_seconds_default(monkeypatch):
     monkeypatch.delenv("DAIMON_HUNG_AFTER", raising=False)
     assert config.hung_after_seconds() == 1800

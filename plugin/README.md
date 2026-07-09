@@ -45,6 +45,21 @@ daimon configure --backend litellm \
 daimon configure --test    # send one tiny prompt and confirm the backend works
 ```
 
+Or point it at a headless LLM CLI you already have installed:
+
+```sh
+daimon configure --backend command --command "mycli -p"
+```
+
+Some CLIs don't read the prompt from stdin — the Devin CLI takes it as a flag
+pointing at a file. `--input` controls how the prompt reaches the command
+(`stdin` default, `arg` appends it as the final argument, `file:<flag>`
+writes it to a tempfile and passes `<flag> <path>`):
+
+```sh
+daimon configure --backend command --command "devin -p" --input "file:--prompt-file"
+```
+
 Config lives in `~/.daimon/env` (hooks run with the host's inherited environment, not
 your shell profile). Kill switch: `DAIMON_DISABLE=1`.
 

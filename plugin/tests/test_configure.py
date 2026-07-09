@@ -10,7 +10,7 @@ _LLM_VARS = (
     "DAIMON_LLM_API_KEY", "LITELLM_API_KEY",
     "DAIMON_LLM_MODEL", "LITELLM_MODEL",
     "DAIMON_LLM_BASE_URL", "LITELLM_BASE_URL",
-    "DAIMON_LLM_COMMAND", "DAIMON_LLM_COMMAND_OUTPUT",
+    "DAIMON_LLM_COMMAND", "DAIMON_LLM_COMMAND_OUTPUT", "DAIMON_LLM_COMMAND_INPUT",
 )
 
 
@@ -99,6 +99,37 @@ def test_explicit_command_source(clean_llm_env):
     assert st["ready"] is True
     assert st["command"] == "mycli -p"
     assert st["command_source"] == "explicit"
+
+
+# ---- #58: DAIMON_LLM_COMMAND_INPUT surfaced in status() ----
+
+
+def test_status_input_defaults_to_stdin_for_claude_cli(clean_llm_env):
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["input"] == "stdin"
+
+
+def test_status_input_defaults_to_stdin_for_explicit_command(clean_llm_env):
+    _set_claude(clean_llm_env, False)
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "mycli -p")
+    st = configure.status()
+    assert st["input"] == "stdin"
+
+
+def test_status_input_reflects_explicit_spec(clean_llm_env):
+    _set_claude(clean_llm_env, False)
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+    st = configure.status()
+    assert st["input"] == "file:--prompt-file"
+
+
+def test_status_input_none_when_no_backend_resolves(clean_llm_env):
+    _set_claude(clean_llm_env, False)
+    st = configure.status()
+    assert st["command"] is None
+    assert st["input"] is None
 
 
 # ---- write_env: merge, preserve, chmod 600, no-empty-file ----
@@ -237,3 +268,69 @@ def test_configure_test_passes_with_json_capable_backend(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "backend test: ok" in out
+
+
+# ---- #58: --test exercises the resolved DAIMON_LLM_COMMAND_INPUT automatically ----
+
+
+def test_configure_test_exercises_arg_mode_input(monkeypatch, capsys):
+    # --test goes through the same llm.chat() -> _chat_command() path as a
+    # real serialize, so a resolved arg-mode input spec must be exercised
+    # automatically — proven here by asserting the prompt actually landed in
+    # argv, not just that the call succeeded.
+    from daimon_briefing import cli, llm
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"] = argv
+        return 0, '{"ok": true}', ""
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    rc = cli.main(["configure", "--test"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "backend test: ok" in out
+    assert seen["argv"][:2] == ["devin", "-p"]
+    assert seen["argv"][-1].strip().endswith("}")  # the prompt landed as argv
+
+
+def test_configure_test_exercises_file_mode_input(monkeypatch, capsys):
+    from daimon_briefing import cli, llm
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"] = argv
+        seen["file_contents"] = open(argv[-1], encoding="utf-8").read()
+        return 0, '{"ok": true}', ""
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:--prompt-file")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    rc = cli.main(["configure", "--test"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "backend test: ok" in out
+    assert seen["argv"][-2] == "--prompt-file"
+    assert "Reply with exactly this JSON" in seen["file_contents"]
+
+
+def test_configure_test_catches_broken_input_spec(monkeypatch, capsys):
+    # A command that panics without an argv prompt (the field-found Devin
+    # bug) must surface as a FAILED --test, not a silent transport success —
+    # this is the exact regression #58 exists to prevent.
+    from daimon_briefing import cli, llm
+
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        if "--prompt-file" not in argv:
+            return 101, "", "panic: no prompt provided"
+        return 0, '{"ok": true}', ""
+
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    # input spec left at the (wrong-for-this-CLI) stdin default -> broken.
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_INPUT", raising=False)
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    rc = cli.main(["configure", "--test"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "backend test: FAILED" in err
