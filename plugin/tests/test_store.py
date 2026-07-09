@@ -1,8 +1,9 @@
 import json
 import re
+import time as _time
 from pathlib import Path
 
-from daimon_briefing import serializer, store
+from daimon_briefing import config, serializer, store
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
@@ -460,8 +461,6 @@ def test_gc_orders_by_created_stamp_with_mtime_fallback(tmp_checkpoint_dir, monk
 
 # ---- team memory (#111): author stamping, dual-write, read_team ----
 
-from daimon_briefing import config
-
 
 def _team_author_dir(author_slug: str) -> Path:
     return config.team_dir() / "local" / "authors" / author_slug
@@ -610,9 +609,6 @@ def test_read_team_never_raises_on_garbage(tmp_checkpoint_dir, monkeypatch):
 
 
 # ---- team retention (#113): read-time age filter, NO physical deletes ----
-
-
-import time as _time
 
 
 def _stamped(sample_checkpoint, sid, days_ago):
@@ -968,22 +964,71 @@ def test_resolutions_missing_file_or_project_is_empty(tmp_checkpoint_dir):
     assert store.resolutions(project_dir=None) == {}
 
 
-def test_resolutions_equal_timestamp_tie_break_last_line_wins(tmp_checkpoint_dir):
-    # CONTRACT (pinned, not a preference): when two events for the SAME
-    # item_ref share a timestamp, the fold keeps the one appearing LATER in
-    # file order. The fold replaces on `new_e >= cur_e`, so an equal ts lets
-    # each subsequent line overwrite — the last write to the log wins the tie.
+def test_resolutions_equal_timestamp_live_wins_both_orders(tmp_checkpoint_dir):
+    # CONTRACT (pinned, #143): when two events for the SAME item_ref share a
+    # timestamp, the tie-break derives from event CONTENT, never file order —
+    # a live-making event (reopen) beats a resolving one in BOTH append
+    # orders. Line order must not matter: concurrent writers interleave and
+    # a future log rewrite/compaction may reorder lines.
     from daimon_briefing import store
     slug = store.project_slug("/p/A")
     d = tmp_checkpoint_dir / slug
     d.mkdir(parents=True, exist_ok=True)
-    (d / "events.jsonl").write_text(
-        '{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a", "status": "resolved", "note": "first"}\n'
-        '{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a", "status": "reopened", "note": "second"}\n'
-    )
+    reopen = '{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a", "status": "reopened", "note": "back"}\n'
+    resolve = '{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a", "status": "resolved", "note": "done"}\n'
+
+    (d / "events.jsonl").write_text(reopen + resolve)
     r = store.resolutions(project_dir="/p/A")
     assert r["o-a"]["status"] == "reopened"
-    assert r["o-a"]["note"] == "second"
+    assert store.is_resolved(r["o-a"]) is False
+
+    (d / "events.jsonl").write_text(resolve + reopen)
+    r = store.resolutions(project_dir="/p/A")
+    assert r["o-a"]["status"] == "reopened"
+    assert store.is_resolved(r["o-a"]) is False
+
+
+def test_resolutions_equal_timestamp_candidate_loses_both_orders(tmp_checkpoint_dir):
+    # A supersede-candidate is a machine SUGGESTION — at an equal timestamp
+    # it loses to ANY definitive statement (reopen or resolve), in both
+    # append orders. Otherwise a same-second suggestion could shadow a human
+    # verdict whenever the two land in the same second (e.g. reverify right
+    # after serialize).
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    cand = ('{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a",'
+            ' "status": "supersede-candidate:o-x", "source": "serializer"}\n')
+    reopen = ('{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a",'
+              ' "status": "reopened", "source": "cli"}\n')
+    resolve = ('{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a",'
+               ' "status": "resolved", "source": "cli"}\n')
+
+    for log in (cand + reopen, reopen + cand):
+        (d / "events.jsonl").write_text(log)
+        assert store.resolutions(project_dir="/p/A")["o-a"]["status"] == "reopened"
+    for log in (cand + resolve, resolve + cand):
+        (d / "events.jsonl").write_text(log)
+        assert store.resolutions(project_dir="/p/A")["o-a"]["status"] == "resolved"
+
+
+def test_resolutions_equal_timestamp_same_class_tie_is_order_independent(tmp_checkpoint_dir):
+    # Two events of the SAME liveness class at the same second must fold to
+    # the same winner regardless of append order (content-derived tie-break,
+    # not line order) — so a reordered log yields an identical fold.
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    a = '{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a", "status": "resolved", "note": "alpha"}\n'
+    b = '{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a", "status": "resolved", "note": "beta"}\n'
+
+    (d / "events.jsonl").write_text(a + b)
+    winner_ab = store.resolutions(project_dir="/p/A")["o-a"]
+    (d / "events.jsonl").write_text(b + a)
+    winner_ba = store.resolutions(project_dir="/p/A")["o-a"]
+    assert winner_ab == winner_ba
 
 
 def test_resolutions_invalid_utf8_bytes_return_empty(tmp_checkpoint_dir):
