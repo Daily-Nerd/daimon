@@ -134,6 +134,24 @@ def test_verify_quotes_downgrades_on_miss(caplog):
     assert any("fabricated decision" in r.getMessage() for r in caplog.records)
 
 
+def test_verify_quotes_downgrade_log_redacts_secret(caplog):
+    # #141: the downgrade warning is the one verify_quotes line that carries
+    # item text, and it fires PRE-redaction — a secret inside a downgraded
+    # item must be scrubbed in the log line while the checkpoint item itself
+    # stays raw (store redacts it at write time, ids must hash redacted text).
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": f"rotate key {secret} next", "trust": "verbatim",
+         "quote": "this exact sentence is nowhere in the transcript at all"}]})
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.serializer"):
+        serializer.verify_quotes(cp, "assistant: something entirely unrelated")
+    msgs = [r.getMessage() for r in caplog.records]
+    assert not any(secret in m for m in msgs)
+    assert any("[redacted:aws-key]" in m for m in msgs)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["text"] == f"rotate key {secret} next"  # log-only scrub
+
+
 def test_verify_quotes_leaves_inferred_items_unstamped():
     cp = _cp_with({("working_context", "recent_decisions"): [
         {"text": "d", "trust": "inferred", "quote": ""}]})
