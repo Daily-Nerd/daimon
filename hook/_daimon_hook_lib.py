@@ -234,6 +234,66 @@ def spawn_team_sync(cli, cwd) -> None:
         pass
 
 
+_ORPHAN_MAX_AGE_SECONDS = 14 * 24 * 3600  # 14 days — bounds the sweep's directory scan
+
+
+def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
+    """Catch-up sweep (#185) for a `claude --resume` fork's never-captured
+    transcript: resuming a dead session forks it into a NEW session id with its
+    own transcript file, but the host can fail to fire SessionEnd for that fork
+    (e.g. the IDE window is killed again before a clean exit) — there is then
+    nothing daimon can hook at ITS end, so recovery has to happen here, at the
+    NEXT session's start instead.
+
+    Scans the directory the CURRENT session's own transcript lives in (its
+    siblings are every other session ever run against this project) for the
+    most recently modified transcript that looks uncaptured: no checkpoint on
+    disk for it at all, or a checkpoint OLDER than the transcript (written
+    before the session actually ended). Spawns AT MOST ONE detached serialize
+    per session start — the newest candidate — the exact same way
+    `daimon-session-end.py` does.
+
+    Idempotent by construction, so the mtime heuristic alone is enough: the
+    spawned serialize hits the #185 identical-bytes guard and no-ops if the
+    transcript actually WAS captured, and the existing too-short skip handles
+    noise/tiny files. Fail-open — this must run AFTER briefing emission and
+    never affect it, so every error here is swallowed, at most logged."""
+    if cli is None or not transcript_path:
+        return
+    try:
+        current = Path(transcript_path)
+        directory = current.parent
+        if not directory.is_dir():
+            return
+        cutoff = time.time() - _ORPHAN_MAX_AGE_SECONDS
+        ckpt_dir = checkpoint_dir()
+        best_path = None
+        best_mtime = None
+        for candidate in directory.glob("*.jsonl"):
+            if candidate.stem == session_id or candidate == current:
+                continue  # never sweep the session that is starting right now
+            try:
+                mtime = candidate.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < cutoff:
+                continue  # outside the bounded scan window
+            ckpt_path = ckpt_dir / f"{candidate.stem}.json"
+            try:
+                if ckpt_path.stat().st_mtime >= mtime:
+                    continue  # already captured at/after this transcript's mtime
+            except OSError:
+                pass  # no checkpoint on disk at all -> orphan candidate
+            if best_mtime is None or mtime > best_mtime:
+                best_path, best_mtime = candidate, mtime
+        if best_path is None:
+            return
+        spawn_serialize(cli, str(best_path), project_env(cwd))
+        log(f"session-start: catch-up serialize spawned for {best_path.stem} (orphaned transcript)")
+    except Exception as exc:  # noqa: BLE001 — the sweep must never break the briefing
+        log(f"session-start: catch-up sweep failed ({type(exc).__name__}: {exc})")
+
+
 def spawn_serialize(cli, transcript_path, env) -> None:
     """Spawn `daimon serialize <transcript>` DETACHED so the hook returns
     immediately (serialization is a 30s+ LLM call). Raises OSError on spawn

@@ -1,3 +1,5 @@
+import json
+
 import daimon_briefing as plugin
 from daimon_briefing import hooks
 from tests.conftest import make_messages
@@ -142,6 +144,127 @@ def test_on_session_end_never_raises_when_chat_explodes(tmp_checkpoint_dir, fake
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
     )
     assert store.read_checkpoint("S-end") is None
+
+
+# ---- #185: identical-bytes guard (shared with cli._run_serialize) ----
+
+
+def test_on_session_end_skips_when_transcript_hash_matches_checkpoint(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    from daimon_briefing import store, transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text('{"role": "user", "content": "hi"}\n')
+    sha = transcript_mod.file_sha256(tpath)
+    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": sha})
+
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
+    )
+    assert chat.calls == []  # never invoked — the guard short-circuited before the LLM
+
+
+def test_on_session_end_proceeds_when_transcript_hash_differs(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    from daimon_briefing import store, transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text('{"role": "user", "content": "hi"}\n')
+    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": "stale"})
+
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
+    )
+    assert len(chat.calls) == 1
+    assert store.read_checkpoint("S-end") is not None
+
+
+def test_on_session_end_proceeds_when_no_transcript_path_given(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # No file-based transcript to hash — the guard can't act, so behavior stays
+    # exactly as before #185 (fail-open, never blocks a legitimate capture).
+    from daimon_briefing import transcript as transcript_mod
+
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
+    )
+    assert len(chat.calls) == 1
+
+
+def test_on_session_end_proceeds_when_no_existing_checkpoint(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    from daimon_briefing import transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text('{"role": "user", "content": "hi"}\n')
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
+    )
+    assert len(chat.calls) == 1
+
+
+def test_on_session_end_skip_leaves_no_ledger_entry(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    # Mirrors the too-short skip: a hash-match skip is a benign no-op, never
+    # written to serialize.log (only in-process FAILURES are ledgered — #142).
+    from daimon_briefing import config, store, transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text('{"role": "user", "content": "hi"}\n')
+    sha = transcript_mod.file_sha256(tpath)
+    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": sha})
+
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
+    )
+    assert not (config.log_dir() / "serialize.log").exists()
+
+
+def test_on_session_end_guard_never_raises_when_transcript_unchanged_raises(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    from daimon_briefing import transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text('{"role": "user", "content": "hi"}\n')
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+    monkeypatch.setattr(hooks.store, "transcript_unchanged", _raiser)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
+    )  # must not raise — swallowed by the outer never-raise contract
 
 
 # ---- never-raise: failure injection at every dependency seam ----

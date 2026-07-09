@@ -91,7 +91,10 @@ def main() -> int:
     if lib.disabled():
         return 0
 
-    cwd = str(lib.payload().get("cwd") or "").strip()
+    data = lib.payload()
+    cwd = str(data.get("cwd") or "").strip()
+    session_id = str(data.get("session_id") or "").strip()
+    transcript_path = str(data.get("transcript_path") or "").strip()
     cli = lib.resolve_cli()
     try:
         _emit_briefing(cwd, cli)
@@ -103,6 +106,12 @@ def main() -> int:
     # Opportunistic team sync (#113): detached, gated on a real sidecar remote
     # existing (cheap dir scan inside) — never blocks or delays the briefing.
     lib.spawn_team_sync(cli, cwd)
+    # Orphan catch-up sweep (#185): recovers a `claude --resume` fork whose
+    # SessionEnd never fired (app-quit kills hooks) by scanning this project's
+    # transcript directory at the NEXT session's start instead. Runs LAST, after
+    # the briefing is already on stdout — its own fail-open guarantee (see
+    # lib.sweep_orphans) means it can never affect what the user already saw.
+    lib.sweep_orphans(cli, cwd, session_id, transcript_path)
     return 0
 
 

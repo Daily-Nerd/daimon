@@ -71,6 +71,23 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
         if config.is_disabled():
             return
         deadline = start + config.timeout_seconds()
+        # Identical-bytes guard (#185), same helper cli._run_serialize uses: when
+        # the host hands us a real transcript file (optional — this host reads
+        # messages via transcript.from_session, not a file, so a path is not
+        # always available) and its bytes are unchanged since the checkpoint
+        # already on disk for this session, skip rather than burn an LLM call
+        # reproducing a byte-identical checkpoint. No transcript_path -> can't
+        # hash -> proceeds exactly as before #185 (fail-open).
+        transcript_path = kwargs.get("transcript_path")
+        if transcript_path:
+            transcript_sha = transcript.file_sha256(transcript_path)
+            if store.transcript_unchanged(session_id, transcript_sha):
+                log.info(
+                    "daimon: skipped serialize for session %s: transcript "
+                    "unchanged since checkpoint (hash match)",
+                    session_id,
+                )
+                return
         messages = transcript.from_session(session_id)
         if not messages or len(messages) < config.min_messages():
             return

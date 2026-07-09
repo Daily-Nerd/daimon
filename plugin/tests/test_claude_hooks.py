@@ -24,6 +24,15 @@ MANAGER = HOOK_DIR / "daimon-hooks.py"
 LIB_NAME = "_daimon_hook_lib.py"
 VENV_BIN = Path(sys.executable).parent  # holds the `daimon` console script
 
+# Direct import of the (non-hyphenated) shared lib for unit-level sweep tests
+# (#185) — same technique test_windsurf_hooks.py uses for its hyphenated
+# sibling: the subprocess-level tests below exercise the real JSON-in/exit-0
+# contract, this covers sweep_orphans' internal branches without spawning a
+# real child process for every case.
+if str(HOOK_DIR) not in sys.path:
+    sys.path.insert(0, str(HOOK_DIR))
+import _daimon_hook_lib as lib  # noqa: E402
+
 
 def _manager(tmp_path, *args) -> subprocess.CompletedProcess:
     env = {
@@ -422,6 +431,233 @@ def test_session_end_no_cwd_no_project_env(tmp_path, tmp_checkpoint_dir):
     assert proc.returncode == 0
     captured = _wait_for(capture)
     assert "DAIMON_PROJECT_DIR=\n" in captured  # unset for the child, exactly as today
+
+
+# ---- sweep_orphans (#185): session-start catch-up sweep, unit-level ----
+
+
+def _age(path: Path, seconds: float) -> None:
+    past = time.time() - seconds
+    os.utime(path, (past, past))
+
+
+def test_sweep_orphans_spawns_for_uncaptured_transcript(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")  # a spawn also logs a breadcrumb
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)  # 1h old, no checkpoint anywhere -> orphan
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == [str(orphan)]
+
+
+def test_sweep_orphans_spawns_only_the_newest_candidate(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")  # a spawn also logs a breadcrumb
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    older = transcripts / "S-old.jsonl"
+    older.write_text("{}\n")
+    _age(older, 7200)
+    newer = transcripts / "S-newer.jsonl"
+    newer.write_text("{}\n")
+    _age(newer, 60)
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == [str(newer)]
+
+
+def test_sweep_orphans_excludes_current_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    _age(current, 3600)  # old + no checkpoint, but IS the current session
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == []
+
+
+def test_sweep_orphans_skips_when_checkpoint_is_newer_than_transcript(tmp_path, monkeypatch):
+    ckpt_dir = tmp_path / "checkpoints"
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(ckpt_dir))
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    captured = transcripts / "S-captured.jsonl"
+    captured.write_text("{}\n")
+    _age(captured, 3600)  # 1h old transcript
+    ckpt_dir.mkdir(parents=True)
+    (ckpt_dir / "S-captured.json").write_text("{}\n")  # checkpoint written NOW -> newer
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == []
+
+
+def test_sweep_orphans_ignores_transcripts_older_than_14_days(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    stale = transcripts / "S-ancient.jsonl"
+    stale.write_text("{}\n")
+    _age(stale, 15 * 24 * 3600)  # 15 days old, no checkpoint -> still ignored
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == []
+
+
+def test_sweep_orphans_logs_breadcrumb_on_spawn(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    # _daimon_hook_lib.LOG_DIR is a module-level constant (Path.home()-derived,
+    # not env-driven — these are standalone scripts, no DAIMON_LOG_DIR seam),
+    # so it's monkeypatched directly rather than via env var.
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: None)
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    log_text = (tmp_path / "logs" / "serialize.log").read_text(encoding="utf-8")
+    assert "session-start: catch-up serialize spawned for S-orphan (orphaned transcript)" in log_text
+
+
+def test_sweep_orphans_noop_without_cli(tmp_path, monkeypatch):
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans(None, "/p/A", "S-new", str(current))
+    assert calls == []
+
+
+def test_sweep_orphans_noop_without_transcript_path(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", "")
+    assert calls == []
+
+
+def test_sweep_orphans_never_raises_when_spawn_serialize_explodes(tmp_path, monkeypatch):
+    # Fail-open (#185): a sweep error must never propagate into the hook —
+    # the briefing has already printed by the time this runs.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    def _boom(*_a, **_k):
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(lib, "spawn_serialize", _boom)
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))  # must not raise
+    log_text = (tmp_path / "logs" / "serialize.log").read_text(encoding="utf-8")
+    assert "session-start: catch-up sweep failed" in log_text
+
+
+def test_sweep_orphans_never_raises_when_directory_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(tmp_path / "gone" / "S-new.jsonl"))
+    assert calls == []
+
+
+# ---- daimon-session-brief.py: orphan sweep wired end-to-end (#185) ----
+
+
+def test_brief_hook_spawns_catch_up_serialize_for_orphaned_transcript(tmp_path, tmp_checkpoint_dir):
+    fake_bin, capture = _fake_cli_argv_recording(tmp_path)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    proc = _run(
+        BRIEF_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new", "transcript_path": str(current)},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    content = _wait_for_text(capture, "serialize")
+    serialize_calls = [
+        line for line in content.splitlines() if line.split()[:1] == ["serialize"]
+    ]
+    assert len(serialize_calls) == 1
+    assert str(orphan) in serialize_calls[0]
+
+
+def test_brief_hook_no_catch_up_spawn_without_orphan(tmp_path, tmp_checkpoint_dir):
+    fake_bin, capture = _fake_cli_argv_recording(tmp_path)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+
+    proc = _run(
+        BRIEF_HOOK,
+        {"cwd": "/Users/x/projA", "session_id": "S-new", "transcript_path": str(current)},
+        tmp_path,
+        extra_env={"PATH": str(fake_bin)},
+    )
+    assert proc.returncode == 0
+    _wait_for_text(capture, "heal")  # heal always fires — confirms the child had time to run
+    content = capture.read_text()
+    serialize_calls = [
+        line for line in content.splitlines() if line.split()[:1] == ["serialize"]
+    ]
+    assert serialize_calls == []
+
+
+def test_brief_hook_sweep_never_breaks_briefing_output(
+    tmp_path, tmp_checkpoint_dir, sample_checkpoint
+):
+    # No transcript_path in the payload at all -> sweep can't act, briefing is
+    # unaffected (matches every pre-#185 brief-hook test's payload shape).
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
+    assert proc.returncode == 0
+    assert "checkpoint: S-global" in proc.stdout
 
 
 # ---- lib-missing fail-open (#108) ----

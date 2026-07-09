@@ -1258,3 +1258,43 @@ def test_read_latest_corrupt_global_pointer_returns_none(tmp_checkpoint_dir):
     tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
     (tmp_checkpoint_dir / "latest.json").write_text("{not json", encoding="utf-8")
     assert store.read_latest() is None  # tolerant, no raise
+
+
+# ---- transcript_unchanged (#185): identical-bytes guard ----
+
+
+def test_transcript_unchanged_true_on_hash_match(tmp_checkpoint_dir, sample_checkpoint):
+    ck = {**sample_checkpoint, "session_id": "S-hash", "transcript_hash": "abc123"}
+    store.write_checkpoint("S-hash", ck)
+    assert store.transcript_unchanged("S-hash", "abc123") is True
+
+
+def test_transcript_unchanged_false_on_hash_mismatch(tmp_checkpoint_dir, sample_checkpoint):
+    ck = {**sample_checkpoint, "session_id": "S-hash", "transcript_hash": "abc123"}
+    store.write_checkpoint("S-hash", ck)
+    assert store.transcript_unchanged("S-hash", "different-hash") is False
+
+
+def test_transcript_unchanged_false_when_no_existing_checkpoint(tmp_checkpoint_dir):
+    assert store.transcript_unchanged("S-never-seen", "abc123") is False
+
+
+def test_transcript_unchanged_false_when_stored_hash_missing(tmp_checkpoint_dir, sample_checkpoint):
+    # Pre-#125 checkpoints carry no transcript_hash at all — fail open, never skip.
+    ck = {**sample_checkpoint, "session_id": "S-nohash"}
+    ck.pop("transcript_hash", None)
+    store.write_checkpoint("S-nohash", ck)
+    assert store.transcript_unchanged("S-nohash", "abc123") is False
+
+
+def test_transcript_unchanged_false_when_stored_hash_malformed(tmp_checkpoint_dir, sample_checkpoint):
+    ck = {**sample_checkpoint, "session_id": "S-badhash", "transcript_hash": 12345}
+    store.write_checkpoint("S-badhash", ck)
+    assert store.transcript_unchanged("S-badhash", "abc123") is False
+
+
+def test_transcript_unchanged_false_when_new_hash_is_none(tmp_checkpoint_dir, sample_checkpoint):
+    # An unreadable/missing transcript hashes to None — never treated as a match.
+    ck = {**sample_checkpoint, "session_id": "S-hash2", "transcript_hash": "abc123"}
+    store.write_checkpoint("S-hash2", ck)
+    assert store.transcript_unchanged("S-hash2", None) is False

@@ -569,6 +569,28 @@ def sibling_buckets(project_dir) -> list[dict]:
     return out
 
 
+def transcript_unchanged(session_id: str, transcript_hash: str | None) -> bool:
+    """True when `transcript_hash` matches the `transcript_hash` already stamped
+    on the PER-SESSION checkpoint for `session_id` (#185): the identical-bytes
+    guard both serialize entry points (cli._run_serialize, hooks.on_session_end)
+    call BEFORE any LLM work, so a duplicate/late SessionEnd on an unchanged
+    transcript (e.g. a `claude --resume` fork's dead original session) is
+    skipped instead of burning a full LLM call to reproduce a byte-identical
+    checkpoint. Fail-open on every edge — no fresh hash, no existing checkpoint,
+    or a missing/malformed stored hash all return False (proceed with a normal
+    serialize); only an exact hex-digest match, computed the same way
+    (transcript.file_sha256, over raw pre-render bytes — #125), justifies a skip."""
+    if not transcript_hash:
+        return False
+    existing = read_checkpoint(session_id)
+    if not existing:
+        return False
+    stored = existing.get("transcript_hash")
+    if not isinstance(stored, str) or not stored:
+        return False
+    return stored == transcript_hash
+
+
 def read_checkpoint(session_id: str) -> dict | None:
     try:
         path = _contained_path(config.checkpoint_dir(), session_id)
