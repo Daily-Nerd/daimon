@@ -1,0 +1,62 @@
+# Codecov components (#192): per-subsystem coverage visibility.
+#
+# Components are pure report filtering (https://docs.codecov.com/docs/components):
+# they slice the existing single upload (--cov=daimon_briefing) by path, so this
+# file changes no uploads and adds no CI jobs. Phase 1 deliberately defines NO
+# per-component status gates — the repo-wide codecov/patch check remains the only
+# blocking signal; tighten per-component targets once baselines are visible.
+#
+# hook/ adapter scripts are exercised via subprocess in tests and never appear in
+# coverage reports, so they cannot be a component under the current collection.
+
+comment:
+  layout: "header, diff, flags, components, files"
+
+component_management:
+  individual_components:
+    - component_id: serializer-capture
+      name: serializer-capture
+      paths:
+        - plugin/daimon_briefing/serializer.py
+        - plugin/daimon_briefing/transcript.py
+        - plugin/daimon_briefing/llm.py
+        - plugin/daimon_briefing/harvest.py
+    - component_id: memory-core
+      name: memory-core
+      paths:
+        - plugin/daimon_briefing/carry.py
+        - plugin/daimon_briefing/scoring.py
+        - plugin/daimon_briefing/recall.py
+        - plugin/daimon_briefing/schema.py
+        - plugin/daimon_briefing/anchor.py
+    - component_id: briefing-render
+      name: briefing-render
+      paths:
+        - plugin/daimon_briefing/briefing.py
+        - plugin/daimon_briefing/render.py
+    - component_id: storage-ledger
+      name: storage-ledger
+      paths:
+        - plugin/daimon_briefing/store.py
+        - plugin/daimon_briefing/ledger.py
+    - component_id: cli
+      name: cli
+      paths:
+        - plugin/daimon_briefing/cli.py
+        - plugin/daimon_briefing/configure.py
+        - plugin/daimon_briefing/config.py
+    - component_id: host-hooks
+      name: host-hooks
+      paths:
+        - plugin/daimon_briefing/hooks.py
+        - plugin/daimon_briefing/_hooks/**
+    - component_id: redaction
+      name: redaction
+      paths:
+        - plugin/daimon_briefing/redact.py
+    - component_id: integrations
+      name: integrations
+      paths:
+        - plugin/daimon_briefing/teamsync.py
+        - plugin/daimon_briefing/skill_content.py
+        - plugin/daimon_briefing/skill_install.py
