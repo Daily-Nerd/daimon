@@ -4,8 +4,28 @@ version = "0.12.1"
 description = "Dream-briefing for AI coding agents: writes a cognitive checkpoint at session end and shows a 'while you were away' briefing at session start. Self-contained, stdlib-only."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+# PEP 639 SPDX expression; the LICENSE file here is a byte-identical copy of
+# the repo-root original (drift-guarded by tests/test_packaging.py) — the
+# package builds from plugin/, so the wheel can only ship what lives here.
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Daily-Nerd / Daimon" }]
+keywords = [
+    "claude-code", "ai-agents", "memory", "llm", "context",
+    "briefing", "provenance", "session", "checkpoint",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Environment :: Console",
+]
 # Runtime: stdlib only. hermes is provided by the host at runtime, never a hard dep.
 dependencies = []
 
@@ -22,6 +42,12 @@ pretty = [
     "rich>=13",
     "rich-argparse>=1.8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Daily-Nerd/daimon"
+Repository = "https://github.com/Daily-Nerd/daimon"
+Issues = "https://github.com/Daily-Nerd/daimon/issues"
+Changelog = "https://github.com/Daily-Nerd/daimon/blob/main/CHANGELOG.md"
 
 # pip-distributable hermes plugin: auto-discovered via the entry-point group.
 # VERIFIED — website/docs/guides/build-a-hermes-plugin.md (Entry-Point Group: "hermes_agent.plugins")
