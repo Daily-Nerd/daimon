@@ -7,8 +7,10 @@
     daimon status [--project DIR] [--json]
                                          checkpoint presence/age + last
                                          serialize outcome from the log
-    daimon heal                          re-serialize the most recent
-                                         FAILED session if safe (#26)
+    daimon heal [--force]                 re-serialize the most recent
+                                         FAILED session if safe (#26);
+                                         --force ignores a prior retry
+                                         marker (#15)
     daimon configure [--backend ...]     detect the resolved LLM backend
                                          and fill gaps in ~/.daimon/env
     daimon write-checkpoint [--project DIR] [--source S]
@@ -1079,15 +1081,18 @@ def _cmd_audit_quotes(args) -> int:
 def _cmd_heal(args) -> int:
     """Explain the heal decision, then repair the newest healable session if safe.
     Every no-op returns 0 (a no-op heal is never an error). `--dry-run` explains
-    without serializing."""
+    without serializing. `--force` (#15) ignores a prior retry marker so a
+    retry-exhausted session becomes healable again — the default one-retry-ever
+    policy is unchanged when --force is absent."""
     dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
         text = ""
     now = time.time()
-    plan = _heal_plan(text, now)
-    render.render_heal(plan, dry_run=dry_run)
+    plan = _heal_plan(text, now, force=force)
+    render.render_heal(plan, dry_run=dry_run, force=force)
     if dry_run or plan["target"] is None:
         return 0
     t = plan["target"]
@@ -1780,6 +1785,10 @@ def main(argv=None) -> int:
     p_heal.add_argument(
         "--dry-run", action="store_true",
         help="explain what heal would repair (and why not) without serializing",
+    )
+    p_heal.add_argument(
+        "--force", action="store_true",
+        help="ignore a prior retry marker and re-heal a retry-exhausted session (#15)",
     )
     p_heal.set_defaults(func=_cmd_heal)
 

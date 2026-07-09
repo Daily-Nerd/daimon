@@ -982,6 +982,87 @@ def test_cli_heal_noop_when_no_log(tmp_checkpoint_dir, tmp_log_dir, fake_chat_fa
     assert chat.calls == []
 
 
+# ---- #15: `heal --force` — explicit escape hatch past the one-retry-ever cap ----
+
+
+def test_cli_heal_force_reheals_retry_exhausted_session(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch
+):
+    # A retry marker already exists for the stem (default heal refuses, see
+    # test_cli_heal_dedup_one_retry_per_session) -> --force ignores the marker
+    # and repairs it anyway, appending a SECOND retry marker in the same
+    # parseable format (so the session re-classifies as retry-exhausted again
+    # until the next --force).
+    from daimon_briefing import config, store
+
+    stem = "sample_transcript"
+    transcript = FIXTURES / "sample_transcript.md"
+    _write_log(
+        tmp_log_dir,
+        [
+            f"2026-06-10T12:00:00Z session-end: spawned serialize for {stem} (reason: exit, project: /p/A)",
+            f"error: boom (transcript: {transcript}) after 1s",
+            f"2026-06-10T12:05:00Z session-start: retry serialize for {stem} (prior: error: boom)",
+            f"error: boom again (transcript: {transcript}) after 1s",
+        ],
+    )
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+
+    rc = cli.main(["heal", "--force"])
+    assert rc == 0
+    assert store.read_checkpoint(stem) is not None
+    log = (config.log_dir() / "serialize.log").read_text()
+    assert log.count(f"session-start: retry serialize for {stem}") == 2
+    # the new marker is still parseable by the ledger's spawn regex
+    outstanding = cli._compute_outstanding(log, time.time())
+    assert outstanding == []  # healed -> checkpoint now exists, nothing outstanding
+
+
+def test_cli_heal_default_still_refuses_after_force(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch
+):
+    # Default policy is unchanged: a session already retried (even via
+    # --force) is retry-exhausted again for a plain `daimon heal`.
+    from daimon_briefing import store
+
+    stem = "sample_transcript"
+    transcript = FIXTURES / "sample_transcript.md"
+    _write_log(
+        tmp_log_dir,
+        [
+            f"2026-06-10T12:00:00Z session-end: spawned serialize for {stem} (reason: exit, project: /p/A)",
+            f"error: boom (transcript: {transcript}) after 1s",
+            f"2026-06-10T12:05:00Z session-start: retry serialize for {stem} (prior: error: boom)",
+            f"error: boom again (transcript: {transcript}) after 1s",
+        ],
+    )
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+
+    rc = cli.main(["heal"])
+    assert rc == 0
+    assert chat.calls == []
+    assert store.read_checkpoint(stem) is None
+
+
+def test_heal_argparser_has_force(monkeypatch):
+    # Mirrors test_heal_argparser_has_dry_run: stub _cmd_heal to capture the
+    # parsed namespace without running a real heal.
+    from daimon_briefing import cli
+    seen = {}
+    monkeypatch.setattr(cli, "_cmd_heal", lambda args: seen.setdefault("force", args.force) or 0)
+
+    cli.main(["heal", "--force"])
+    assert seen["force"] is True
+
+    seen.clear()
+    cli.main(["heal"])
+    assert seen["force"] is False
+
+
 # ---- #48: `configure` — detect/report backend + fill gaps in ~/.daimon/env ----
 
 
@@ -1556,6 +1637,30 @@ def test_outstanding_retry_marker_is_exhausted_not_healable():
     assert out[0]["class"] == "retry-exhausted"
 
 
+def test_outstanding_force_promotes_retry_exhausted_to_healable():
+    # #15: --force ignores the retry marker when the transcript is still on
+    # disk — the session is repairable again, not permanently retry-exhausted.
+    ledger = {"X": _led(retried=True)}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: True, force=True)
+    assert out[0]["class"] == "healable"
+
+
+def test_outstanding_force_does_not_resurrect_missing_transcript():
+    # --force can't repair what genuinely can't be repaired: transcript gone
+    # is still unrecoverable even when forced.
+    ledger = {"X": _led(retried=True, transcript="/gone/X.jsonl")}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: False, force=True)
+    assert out[0]["class"] == "unrecoverable"
+
+
+def test_outstanding_without_force_retry_exhausted_stays_exhausted():
+    # force defaults False — status's own call (no force) must keep classifying
+    # a retried session as retry-exhausted, matching default heal's refusal.
+    ledger = {"X": _led(retried=True)}
+    out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: True)
+    assert out[0]["class"] == "retry-exhausted"
+
+
 def test_outstanding_hung_only_past_ceiling():
     young = {"X": _led(result_kind=None, result_line=None, transcript=None, spawn_age=100)}
     assert cli._outstanding_failures(young, 0.0, lambda sid: False, 1800, lambda p: True) == []
@@ -1698,7 +1803,7 @@ def test_heal_plan_targets_newest_healable(monkeypatch):
         {"sid": "S-old", "class": "retry-exhausted", "transcript": "/t/old.jsonl", "project": "/p",
          "age_str": "9m", "line": "error: boom (transcript: /t/old.jsonl) after 3s"},
     ]
-    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: items)
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: items)
     plan = cli._heal_plan("logtext", 1000.0)
     assert plan["target"]["sid"] == "S-new"
     assert plan["target"]["transcript"] == "/t/new.jsonl"
@@ -1716,7 +1821,7 @@ def test_heal_plan_second_healable_says_rerun(monkeypatch):
         {"sid": "S2", "class": "healable", "transcript": "/t/2", "project": "/p", "age_str": "2m",
          "line": "error: x (transcript: /t/2) after 1s"},
     ]
-    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: items)
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: items)
     plan = cli._heal_plan("x", 1000.0)
     assert plan["target"]["sid"] == "S1"
     assert plan["skipped"][0]["sid"] == "S2"
@@ -1725,7 +1830,7 @@ def test_heal_plan_second_healable_says_rerun(monkeypatch):
 
 def test_heal_plan_no_log(monkeypatch):
     from daimon_briefing import cli, ledger
-    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: [])
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: [])
     plan = cli._heal_plan("", 1000.0)
     assert plan["target"] is None and plan["skipped"] == []
     assert "no serialize activity logged" in plan["note"]
@@ -1733,7 +1838,7 @@ def test_heal_plan_no_log(monkeypatch):
 
 def test_heal_plan_no_outstanding(monkeypatch):
     from daimon_briefing import cli, ledger
-    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: [])
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: [])
     plan = cli._heal_plan("some log with only successes", 1000.0)
     assert plan["target"] is None
     assert "no outstanding failures" in plan["note"]
@@ -1743,11 +1848,32 @@ def test_heal_plan_only_unrepairable(monkeypatch):
     from daimon_briefing import cli, ledger
     items = [{"sid": "H1", "class": "hung", "transcript": None, "project": None,
               "age_str": "40m", "line": None}]
-    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now: items)
+    monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: items)
     plan = cli._heal_plan("x", 1000.0)
     assert plan["target"] is None
     assert "can't be auto-repaired" in plan["note"]
     assert plan["skipped"][0]["sid"] == "H1" and "hung" in plan["skipped"][0]["reason"]
+
+
+def test_heal_plan_force_targets_retry_exhausted(monkeypatch):
+    # #15: force=True forwards to _compute_outstanding, which itself
+    # promotes retry-exhausted -> healable; _heal_plan just picks it up like
+    # any other healable target — no special-casing needed at this layer.
+    from daimon_briefing import cli, ledger
+    items = [
+        {"sid": "S-old", "class": "healable", "transcript": "/t/old.jsonl", "project": "/p",
+         "age_str": "9m", "line": "error: boom (transcript: /t/old.jsonl) after 3s"},
+    ]
+    seen = {}
+
+    def fake_compute_outstanding(text, now, force=False):
+        seen["force"] = force
+        return items
+
+    monkeypatch.setattr(ledger, "_compute_outstanding", fake_compute_outstanding)
+    plan = cli._heal_plan("x", 1000.0, force=True)
+    assert seen["force"] is True
+    assert plan["target"]["sid"] == "S-old"
 
 
 # ---- #86: _cmd_heal — render always, gate the serialize, --dry-run ----
@@ -1758,7 +1884,7 @@ def test_cmd_heal_dry_run_does_not_serialize(monkeypatch, capsys):
     plan = {"target": {"sid": "S-A", "transcript": "/t/a.jsonl", "project": "/p",
                        "age_str": "3m", "line": "error: x (transcript: /t/a.jsonl) after 1s"},
             "skipped": [], "note": ""}
-    monkeypatch.setattr(cli, "_heal_plan", lambda text, now: plan)
+    monkeypatch.setattr(cli, "_heal_plan", lambda text, now, force=False: plan)
     called = {"n": 0}
     monkeypatch.setattr(cli, "_run_serialize", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or 0)
     monkeypatch.setattr(cli, "_append_retry_log", lambda *a, **k: called.__setitem__("retry", True))
@@ -1778,7 +1904,7 @@ def test_cmd_heal_real_serializes_target(monkeypatch, tmp_path):
     plan = {"target": {"sid": "S-A", "transcript": str(tp), "project": "/p",
                        "age_str": "3m", "line": "error: x (transcript: %s) after 1s" % tp},
             "skipped": [], "note": ""}
-    monkeypatch.setattr(cli, "_heal_plan", lambda text, now: plan)
+    monkeypatch.setattr(cli, "_heal_plan", lambda text, now, force=False: plan)
     monkeypatch.setattr(cli, "_append_retry_log", lambda *a, **k: None)
     seen = {}
     monkeypatch.setattr(cli, "_run_serialize", lambda path, proj: seen.update(path=path, proj=proj) or 0)
@@ -1792,13 +1918,30 @@ def test_cmd_heal_real_serializes_target(monkeypatch, tmp_path):
 
 def test_cmd_heal_no_target_returns_zero(monkeypatch, capsys):
     from daimon_briefing import cli
-    monkeypatch.setattr(cli, "_heal_plan", lambda text, now: {"target": None, "skipped": [], "note": "nothing to heal — no outstanding failures"})
+    monkeypatch.setattr(cli, "_heal_plan", lambda text, now, force=False: {"target": None, "skipped": [], "note": "nothing to heal — no outstanding failures"})
     monkeypatch.setattr(cli, "_run_serialize", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not serialize")))
 
     class A:
         dry_run = False
     assert cli._cmd_heal(A()) == 0
     assert "no outstanding failures" in capsys.readouterr().out
+
+
+def test_cmd_heal_forwards_force_to_heal_plan(monkeypatch):
+    from daimon_briefing import cli
+    seen = {}
+
+    def fake_heal_plan(text, now, force=False):
+        seen["force"] = force
+        return {"target": None, "skipped": [], "note": "nothing to heal — no outstanding failures"}
+
+    monkeypatch.setattr(cli, "_heal_plan", fake_heal_plan)
+
+    class A:
+        dry_run = False
+        force = True
+    assert cli._cmd_heal(A()) == 0
+    assert seen["force"] is True
 
 
 def test_heal_argparser_has_dry_run(monkeypatch):

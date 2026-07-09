@@ -302,14 +302,17 @@ def render_status(data: dict) -> None:
         _plain_status(data)
 
 
-def render_heal(plan: dict, *, dry_run: bool) -> None:
-    """Plain explanation of a heal decision. No rich — heal output is procedural."""
+def render_heal(plan: dict, *, dry_run: bool, force: bool = False) -> None:
+    """Plain explanation of a heal decision. No rich — heal output is procedural.
+    `force` (#15) gets its own wording ("force-heal") so the operator can tell
+    a --force run apart from an ordinary heal at a glance."""
     t = plan["target"]
     if t:
+        verb = "force-heal" if force else "heal"
         if dry_run:
-            print(f"would heal {t['sid']} (failed {t['age_str']} ago, transcript {t['transcript']})")
+            print(f"would {verb} {t['sid']} (failed {t['age_str']} ago, transcript {t['transcript']})")
         else:
-            print(f"healing {t['sid']} (failed {t['age_str']} ago)…")
+            print(f"{verb}ing {t['sid']} (failed {t['age_str']} ago)…")
     elif plan["note"]:
         print(plan["note"])
     for s in plan["skipped"]:
@@ -359,7 +362,13 @@ def _outstanding_lines(outstanding) -> list:
                     f"(hung/killed; transcript unavailable)"
                 )
         elif f["class"] == "retry-exhausted":
-            lines.append(f"  - {f['sid']}  error {age} ago — retry attempted, still failing")
+            # #15: name the escape hatch here — this is the one place an
+            # operator sees "retry-exhausted" without already reading heal's
+            # own skip reason.
+            lines.append(
+                f"  - {f['sid']}  error {age} ago — retry attempted, still failing "
+                f"(re-run with `daimon heal --force`)"
+            )
         elif f["class"] == "unrecoverable":
             lines.append(f"  - {f['sid']}  error {age} ago — transcript unavailable, cannot auto-heal")
         else:
