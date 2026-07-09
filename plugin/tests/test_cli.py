@@ -1748,6 +1748,103 @@ def test_run_serialize_too_short_is_skipped(tmp_path, tmp_log_dir, fake_chat_fac
     assert "error:" not in log            # NOT an error line
 
 
+# ---- #185: identical-bytes guard skips a re-serialize of an unchanged transcript ----
+
+
+def test_run_serialize_skips_when_transcript_hash_matches_checkpoint(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    from daimon_briefing import store, transcript
+
+    tp = FIXTURES / "sample_transcript.md"
+    sid = tp.stem
+    sha = transcript.file_sha256(tp)
+    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": sha})
+
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory("must not be called"))
+    rc = cli._run_serialize(tp, "/p")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"skipped serialize for {sid}: transcript unchanged since checkpoint (hash match)" in out
+    log = (tmp_log_dir / "serialize.log").read_text()
+    assert f"skipped serialize for {sid}: transcript unchanged since checkpoint (hash match)" in log
+    assert "error:" not in log
+
+
+def test_run_serialize_proceeds_when_transcript_hash_differs(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    from daimon_briefing import store
+
+    tp = FIXTURES / "sample_transcript.md"
+    sid = tp.stem
+    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": "stale-hash"})
+
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json(sid)))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli._run_serialize(tp, "/p")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wrote checkpoint" in out
+    assert "skipped" not in out
+
+
+def test_run_serialize_proceeds_when_no_existing_checkpoint(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    tp = FIXTURES / "sample_transcript.md"
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json(tp.stem)))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli._run_serialize(tp, "/p")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wrote checkpoint" in out
+
+
+def test_run_serialize_proceeds_when_existing_checkpoint_has_no_hash(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    from daimon_briefing import store
+
+    tp = FIXTURES / "sample_transcript.md"
+    sid = tp.stem
+    ck = json.loads(_valid_json(sid))
+    ck.pop("transcript_hash", None)
+    store.write_checkpoint(sid, ck)
+
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json(sid)))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli._run_serialize(tp, "/p")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wrote checkpoint" in out
+
+
+def test_run_serialize_skip_is_classified_skipped_by_ledger(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    # #185: the new skip reason must classify identically to the existing
+    # too-short skip — never "error", never outstanding/healable.
+    import time
+
+    from daimon_briefing import store, transcript
+
+    tp = FIXTURES / "sample_transcript.md"
+    sid = tp.stem
+    sha = transcript.file_sha256(tp)
+    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": sha})
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory("must not be called"))
+    cli._run_serialize(tp, "/p")
+    capsys.readouterr()
+
+    log = (tmp_log_dir / "serialize.log").read_text()
+    entry = cli._session_ledger(log, time.time()).get(sid)
+    assert entry is not None
+    assert entry["result_kind"] == "skipped"
+    outstanding = cli._compute_outstanding(log, time.time())
+    assert sid not in [f["sid"] for f in outstanding]
+
+
 def test_session_ledger_recognizes_skipped():
     from daimon_briefing import cli
     text = "skipped serialize for S1: transcript too short (1 < 10 messages)\n"

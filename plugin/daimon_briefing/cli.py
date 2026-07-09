@@ -161,6 +161,21 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     # the checkpoint can bind to its exact source content. None when unreadable —
     # stamped only when present; readers tolerate its absence (old checkpoints).
     transcript_sha = transcript.file_sha256(path)
+    session_id = path.stem
+
+    # Identical-bytes guard (#185): a `claude --resume` fork leaves the ORIGINAL
+    # session's transcript on disk unchanged, but a SessionEnd can still fire for
+    # it later (host quirk, retry, manual re-run) — without this, that re-run
+    # burns a full LLM call reproducing a byte-identical checkpoint and reports
+    # a misleading fresh "success" while the real (forked) session's work never
+    # gets captured. Checked BEFORE parsing/preflight/LLM so a hash match short-
+    # circuits all of it, even with no LLM backend configured at all.
+    if store.transcript_unchanged(session_id, transcript_sha):
+        msg = f"skipped serialize for {session_id}: transcript unchanged since checkpoint (hash match)"
+        print(msg)
+        _append_serialize_log(msg)
+        return 0
+
     try:
         messages = transcript.from_file(path)
     except FileNotFoundError:
@@ -178,7 +193,6 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
             _append_serialize_log(preflight)
             return 1
 
-    session_id = path.stem
     # Elapsed time lands in serialize.log — checkpoint generation runs 4-25 min
     # in production and was invisible before this.
     llm.reset_fallback()  # #28: detect a silent backend downgrade during THIS run
