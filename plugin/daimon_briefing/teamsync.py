@@ -154,9 +154,15 @@ def _identity_extra(sidecar) -> list[str]:
             "-c", f"user.email={store.project_slug(author)}@daimon.invalid"]
 
 
-def _commit(sidecar, message) -> subprocess.CompletedProcess:
+def _commit(sidecar, message, pathspec) -> subprocess.CompletedProcess:
+    """Pathspec-scoped commit (#144). A bare `git commit` snapshots the WHOLE
+    index — anything the user happened to have pre-staged in the sidecar would
+    be swept into the append-only team branch. The pathspec limits the commit
+    to the caller's own paths and leaves every other index entry exactly as it
+    was (git's partial-commit semantics)."""
     return _run_git(
-        ["git", "-C", str(sidecar), *_identity_extra(sidecar), "commit", "-m", message],
+        ["git", "-C", str(sidecar), *_identity_extra(sidecar),
+         "commit", "-m", message, "--", pathspec],
         GIT_TIMEOUT,
     )
 
@@ -201,7 +207,7 @@ def init(url: str) -> Path:
     if _head(dest) is None:  # unborn branch: the remote was empty
         (dest / "README.md").write_text(_STUB_README, encoding="utf-8")
         _git(dest, "add", "--", "README.md")
-        cp = _commit(dest, "sync: initialize team memory sidecar")
+        cp = _commit(dest, "sync: initialize team memory sidecar", "README.md")
         if cp.returncode != 0:
             raise TeamError(f"could not seed root commit: {_last_line(cp.stderr or cp.stdout)}")
         push = _git(dest, "push", "-u", "origin", _branch(dest), timeout=NET_TIMEOUT)
@@ -240,12 +246,15 @@ def _commit_own(sidecar, report) -> None:
     status = _git(sidecar, "status", "--porcelain", "--", own_dir)
     if status.returncode != 0 or not status.stdout.strip():
         return
-    _git(sidecar, "add", "--", own_dir)
-    staged = _git(sidecar, "diff", "--cached", "--name-only")
+    if _git(sidecar, "add", "--", own_dir).returncode != 0:
+        return
+    # Count scoped to the own dir (#144): the index may carry unrelated
+    # pre-staged entries, and the commit below deliberately excludes them.
+    staged = _git(sidecar, "diff", "--cached", "--name-only", "--", own_dir)
     n = len([ln for ln in staged.stdout.splitlines() if ln.strip()])
     if not n:
         return
-    cp = _commit(sidecar, f"sync: {config.author()} {n} checkpoint(s)")
+    cp = _commit(sidecar, f"sync: {config.author()} {n} checkpoint(s)", own_dir)
     if cp.returncode == 0:
         report["committed"] = n
     else:

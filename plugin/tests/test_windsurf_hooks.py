@@ -321,6 +321,38 @@ def test_redact_payload_preserves_scalars():
         "n": 42, "f": 1.5, "b": True, "z": None}
 
 
+def test_redaction_unavailable_skips_and_persists_no_raw_text(tmp_path):
+    # #141 (pins the #109 skip branch): with redact.py missing at hook runtime
+    # — a stale install — the hook must skip instead of writing raw: exit 0,
+    # a skip line in serialize.log, and NO transcript-derived text on disk.
+    bare = tmp_path / "barehooks"
+    bare.mkdir()
+    for name in ("daimon-windsurf-hooks.py", "_daimon_hook_lib.py"):
+        (bare / name).write_bytes((HOOK_DIR / name).read_bytes())
+    fake_bin, capture = _fake_cli(tmp_path)
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(tmp_path),
+        "DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "0",
+    }
+    payload = _post_payload(f"deploy with {_STRIPE} now")
+    proc = subprocess.run(
+        [sys.executable, str(bare / "daimon-windsurf-hooks.py")],
+        input=json.dumps(payload), capture_output=True, text=True,
+        env=env, timeout=30, cwd=str(tmp_path),
+    )
+    assert proc.returncode == 0  # fail-open: skip, never break Cascade
+    log = (tmp_path / ".daimon" / "logs" / "serialize.log").read_text(encoding="utf-8")
+    assert "redaction module unavailable" in log and "skipped" in log
+    assert not _transcript(tmp_path).exists()
+    assert not capture.exists() or "serialize" not in capture.read_text()
+    # the secret from the payload reached NO file under this HOME
+    for p in tmp_path.rglob("*"):
+        if p.is_file():
+            assert _STRIPE not in p.read_text(encoding="utf-8", errors="replace")
+
+
 def test_pre_user_prompt_docs_shape_appends_user_turn(tmp_path):
     # Documented shape (docs.devin.ai/desktop/cascade/hooks): text lives in
     # tool_info.user_prompt. Regression guard — passes on the current

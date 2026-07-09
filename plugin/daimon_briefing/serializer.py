@@ -18,7 +18,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, llm
+from . import config, llm, redact
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -421,10 +421,12 @@ def verify_quotes(checkpoint, transcript_text: str) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
     place (#125). On a hit the item gets `quote_verified: true`; on a miss it is
     downgraded to trust="inferred" with `quote_verified: false` and the downgrade
-    is logged (count + item-text prefix). Items already trust="inferred" are left
-    untouched — no stamp. Runs ONCE at serialize, PRE-redaction, so the quote is
-    still the raw text (a quote whose secret redaction will later mask still
-    verifies here against the raw rendered text). Returns the downgrade count."""
+    is logged (count + redacted item-text prefix — this runs pre-redaction, so
+    the raw text must not reach a log sink; #141). Items already trust="inferred"
+    are left untouched — no stamp. Runs ONCE at serialize, PRE-redaction, so the
+    quote is still the raw text (a quote whose secret redaction will later mask
+    still verifies here against the raw rendered text). Returns the downgrade
+    count."""
     downgraded = 0
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
@@ -438,8 +440,12 @@ def verify_quotes(checkpoint, transcript_text: str) -> int:
             item["trust"] = "inferred"
             item["quote_verified"] = False
             downgraded += 1
+            # Log-line-only scrub: item ids are not stamped until store-save,
+            # so the text prefix is the only diagnostic handle here. The item
+            # itself stays raw (store redacts it; ids hash redacted text).
+            logged, _ = redact.redact_text(item.get("text") or "")
             log.warning("quote verification: downgraded verbatim->inferred: %.80s",
-                        item.get("text") or "")
+                        logged)
     if downgraded:
         log.info("quote verification: %d verbatim item(s) downgraded to inferred",
                  downgraded)
