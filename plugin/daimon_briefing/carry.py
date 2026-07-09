@@ -12,7 +12,7 @@ import copy
 import re
 from collections import Counter
 
-from . import recall, scoring, store
+from . import recall, schema, scoring, store
 
 # An item id already looks like this (store._stamp_item_ids: kind-initial +
 # >=6 hex chars, optional -N collision suffix) — never treat it as free text
@@ -20,13 +20,10 @@ from . import recall, scoring, store
 # alternation froze the write path under quadratic backtracking).
 _ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,}(-\d+)?")
 
-# (section, key, scoring TYPE_RULES type). Beliefs regenerate cheaply and
-# active_topic is per-session by definition — neither carries (v1).
-_CARRIED_KINDS = (
-    ("working_context", "open_questions", "open_question"),
-    ("working_context", "recent_decisions", "recent_decision"),
-    ("epistemic_snapshot", "uncertainties", "uncertainty"),
-)
+# (section, key, scoring TYPE_RULES type), from the shared schema (#146).
+# Beliefs regenerate cheaply and active_topic is per-session by definition —
+# neither carries (v1); the carries flag in schema.ITEM_FIELDS records that.
+_CARRIED_KINDS = schema.CARRIED_KINDS
 
 _MIN_SHARED = 3     # shared salient terms for same-item
 _MIN_RATIO = 0.6    # or this fraction of the shorter term list

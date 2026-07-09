@@ -18,7 +18,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, llm, redact
+from . import config, llm, redact, schema
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -286,25 +286,24 @@ def _valid_item(item) -> bool:
 
 
 def iter_items(checkpoint):
-    """Yield every schema item dict in a checkpoint: active_topic plus the four
-    item lists. Single source for cross-cutting per-item passes (#126) — store's
-    first_seen stamping and sanitize_importance both walk exactly this set.
-    Tolerant of absent keys and non-dict entries (torn/legacy checkpoints)."""
-    wc = checkpoint.get("working_context")
-    es = checkpoint.get("epistemic_snapshot")
-    if isinstance(wc, dict):
-        topic = wc.get("active_topic")
-        if isinstance(topic, dict):
-            yield topic
-        for key in ("open_questions", "recent_decisions"):
-            for item in wc.get(key) or []:
-                if isinstance(item, dict):
-                    yield item
-    if isinstance(es, dict):
-        for key in ("strong_beliefs", "uncertainties"):
-            for item in es.get(key) or []:
-                if isinstance(item, dict):
-                    yield item
+    """Yield every schema item dict in a checkpoint: active_topic plus the five
+    item lists, exactly the fields schema.ITEM_FIELDS declares (#146). Single
+    source for cross-cutting per-item passes (#126) — store's first_seen
+    stamping and sanitize_importance both walk exactly this set. Tolerant of
+    absent keys and non-dict entries (torn/legacy checkpoints, and
+    contradictions_flagged whose item shape varies)."""
+    for field in schema.ITEM_FIELDS:
+        block = checkpoint.get(field.section)
+        if not isinstance(block, dict):
+            continue
+        if field.singleton:
+            item = block.get(field.key)
+            if isinstance(item, dict):
+                yield item
+            continue
+        for item in block.get(field.key) or []:
+            if isinstance(item, dict):
+                yield item
 
 
 def sanitize_importance(checkpoint) -> None:
