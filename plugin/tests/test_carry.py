@@ -481,3 +481,184 @@ def test_bind_links_same_kind_only():
     assert pairs == []
     link = merged["working_context"]["recent_decisions"][0]["links"][0]
     assert link["target"] == text
+
+
+# --- reversal guard on the verbatim freeze (#167) ----------------------------
+# A native item that REVERSES a prev verbatim decision shares its vocabulary
+# (both name the same subject), so _same_item twin-matches them — and the #22
+# freeze then overwrites the reversal with the decision it was reversing. The
+# reversal signature (the native carries its OWN verified quote AND a
+# `supersedes` link aimed at the prev item) must exclude it from twin
+# candidacy entirely: no freeze, no id inheritance, prev carried as its own
+# item so bind_links can emit the supersede-candidate event.
+
+_REV_PREV = ("Study commitment: target the quorint solutions architect exam "
+             "with a ten week plan")
+_REV_PREV_QUOTE = "committing to the quorint solutions architect exam"
+_REV_NATIVE = ("Drop the quorint solutions architect exam prep entirely; new "
+               "target is the plimsol cloud engineer exam")
+_REV_NATIVE_QUOTE = "dropping the quorint solutions architect prep entirely"
+_REV_TARGET = "quorint solutions architect exam preparation plan"
+
+
+def _reversal_cps():
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _REV_PREV, trust="verbatim", quote=_REV_PREV_QUOTE,
+        quote_verified=True, id="r-old001", days=10)])
+    new = _cp("S-new", 0, decisions=[_item(
+        _REV_NATIVE, trust="verbatim", quote=_REV_NATIVE_QUOTE,
+        quote_verified=True, days=0,
+        links=[{"type": "supersedes", "target": _REV_TARGET}])])
+    return prev, new
+
+
+def test_reversal_native_survives_prev_verbatim_freeze():
+    # RED today: the freeze overwrites the reversal's text+quote with the prev
+    # decision's, and the reversal is lost from the record.
+    prev, new = _reversal_cps()
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    native = next(d for d in ds if not d.get("carried_from"))
+    assert native["text"] == _REV_NATIVE          # reversal text intact
+    assert native["quote"] == _REV_NATIVE_QUOTE   # its own verified quote intact
+    assert native.get("quote_verified") is True
+    assert native.get("id") != "r-old001"         # no twin id-inheritance
+
+
+def test_reversal_prev_item_still_carries_alongside():
+    # The reversed decision is NOT silently dropped: it carries as its own item
+    # (distinct id) so the render layer can flag it as a supersede-candidate.
+    prev, new = _reversal_cps()
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 2
+    carried = next(d for d in ds if d.get("carried_from"))
+    assert carried["text"] == _REV_PREV
+    assert carried["id"] == "r-old001"
+    assert carried["carried_from"] == "S-prev"
+
+
+def test_reversal_then_bind_links_emits_candidate_pair():
+    # End of the pipeline the bug suppressed: after merge, the (stamped) native
+    # reversal binds its text target to the prev id and bind_links returns the
+    # pair — distinct ids, so the self/twin guard no longer eats the event.
+    prev, new = _reversal_cps()
+    out = carry.merge(new, prev, NOW)
+    native = next(d for d in out["working_context"]["recent_decisions"]
+                  if not d.get("carried_from"))
+    native["id"] = "r-new001"  # what store._stamp_item_ids does pre-bind
+    pairs = carry.bind_links(out, prev)
+    assert pairs == [("r-old001", "r-new001", _REV_PREV)]
+
+
+def test_unrelated_supersedes_link_does_not_defeat_freeze():
+    # GUARD against over-loosening: a native twin whose supersedes link points
+    # somewhere ELSE is a re-statement carrying an unrelated link — the #22
+    # freeze must still apply.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _REV_PREV, trust="verbatim", quote=_REV_PREV_QUOTE,
+        id="r-old001", days=10)])
+    new = _cp("S-new", 0, decisions=[_item(
+        "the quorint solutions architect exam commitment still stands",
+        trust="verbatim", quote="commitment still stands",
+        quote_verified=True, days=0,
+        links=[{"type": "supersedes",
+                "target": "zephyr gateway rollout ordering choice"}])])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["text"] == _REV_PREV             # frozen original won
+    assert ds[0]["quote"] == _REV_PREV_QUOTE
+
+
+def test_reversal_signature_requires_verified_quote():
+    # An UNVERIFIED native with a supersedes link is not trusted as a reversal
+    # (the quote could be fabricated) — freeze applies as before.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _REV_PREV, trust="verbatim", quote=_REV_PREV_QUOTE,
+        id="r-old001", days=10)])
+    new = _cp("S-new", 0, decisions=[_item(
+        _REV_NATIVE, trust="verbatim", quote=_REV_NATIVE_QUOTE,
+        quote_verified=False, days=0,
+        links=[{"type": "supersedes", "target": _REV_TARGET}])])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["text"] == _REV_PREV             # frozen original won
+
+
+def test_reversal_id_shaped_target_matches_prev_id():
+    # The serializer may emit an already-bound id target; the reversal guard
+    # must recognize it against the prev item's id, not just free text. The
+    # target must be _ID_SHAPE-valid (hex tail), so this fixture re-ids the
+    # prev item — "r-old001" has a non-hex tail and would take the text path.
+    prev, new = _reversal_cps()
+    prev["working_context"]["recent_decisions"][0]["id"] = "r-abc123"
+    new["working_context"]["recent_decisions"][0]["links"][0]["target"] = \
+        "r-abc123"
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    native = next(d for d in ds if not d.get("carried_from"))
+    assert native["text"] == _REV_NATIVE
+    assert len(ds) == 2
+
+
+def test_reversal_detected_past_malformed_and_empty_link_entries():
+    # The link walk must skip junk entries (non-dict, wrong type, missing or
+    # blank target) and still find the aimed supersedes link after them.
+    prev, new = _reversal_cps()
+    native = new["working_context"]["recent_decisions"][0]
+    native["links"] = [
+        "bare-string",
+        {"type": "related", "target": _REV_TARGET},
+        {"type": "supersedes"},
+        {"type": "supersedes", "target": "   "},
+        {"type": "supersedes", "target": 42},
+        {"type": "supersedes", "target": _REV_TARGET},
+    ]
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 2                            # reversal + carried prev
+    native_out = next(d for d in ds if not d.get("carried_from"))
+    assert native_out["text"] == _REV_NATIVE       # freeze did not fire
+
+
+def test_id_shaped_target_for_other_item_does_not_defeat_freeze():
+    # An already-bound target aimed at a DIFFERENT item's id is not a reversal
+    # of THIS prev item — the freeze must still apply to the twin.
+    prev, new = _reversal_cps()
+    new["working_context"]["recent_decisions"][0]["links"][0]["target"] = \
+        "r-fff999"  # id-shaped, but not the prev item's id
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["text"] == _REV_PREV              # frozen original won
+
+
+# --- quote_verified must travel with the quote on the freeze path (#167) -----
+
+def test_freeze_pops_stale_quote_verified_when_prev_has_none():
+    # Prev verbatim from a pre-#125 checkpoint (no quote_verified key). The
+    # freeze swaps in prev's quote; the native's quote_verified=True must NOT
+    # survive attached to a quote it never verified.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, trust="verbatim", quote="still dropping on pauses",
+        quote_verified=True, days=0)])
+    out = carry.merge(new, prev, NOW)
+    q = out["working_context"]["open_questions"][0]
+    assert q["quote"] == _VERB_QUOTE
+    assert "quote_verified" not in q
+
+
+def test_freeze_copies_prev_quote_verified_with_quote():
+    # Prev carries its own verdict — it rides along with the pinned quote.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE,
+        quote_verified=True, days=45)])
+    new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])
+    out = carry.merge(new, prev, NOW)
+    q = out["working_context"]["open_questions"][0]
+    assert q["quote"] == _VERB_QUOTE
+    assert q["quote_verified"] is True

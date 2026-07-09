@@ -67,6 +67,40 @@ def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
     return shared >= _MIN_SHARED or shared / min(len(a), len(b)) >= _MIN_RATIO
 
 
+def _is_reversal_of(native_item: dict, prev_text: str, prev_id,
+                    generic=frozenset()) -> bool:
+    """Reversal signature (#167): a native item that carries its OWN verified
+    quote AND a `supersedes` link aimed at the prev item is a REVERSAL of that
+    item, not a re-statement — merge's twin block must not treat it as a twin
+    (the #22 freeze would overwrite the reversal with the very decision it
+    reverses, and twin id-inheritance would make bind_links suppress the
+    supersede-candidate event as a self-link).
+
+    Both legs are required: the verified quote pins the reversal to THIS
+    session's transcript (an unverified quote could be fabricated re-extraction
+    — freeze stays the safe default), and the link must aim at the prev item
+    (id-equal when already bound, `_same_item` on free text otherwise) so an
+    unrelated supersedes link can't defeat the freeze."""
+    if native_item.get("quote_verified") is not True:
+        return False
+    links = native_item.get("links")
+    if not isinstance(links, list):
+        return False
+    for link in links:
+        if not isinstance(link, dict) or link.get("type") != "supersedes":
+            continue
+        target = link.get("target")
+        if not isinstance(target, str) or not target.strip():
+            continue
+        if _ID_SHAPE.fullmatch(target):
+            if prev_id and target == prev_id:
+                return True
+            continue
+        if _same_item(target, prev_text, generic):
+            return True
+    return False
+
+
 def merge(new_cp: dict, prev_cp: dict | None, now: float,
           floor: float = 0.05, cap: int = 8,
           resolved: frozenset = frozenset()) -> dict:
@@ -117,8 +151,15 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
             text = item["text"]
             if text in native_texts:
                 continue  # exact twin already present (idempotency)
+            # Reversal guard (#167): a native that supersedes THIS prev item
+            # (own verified quote + aimed link) is excluded from twin candidacy
+            # — no freeze, no id inheritance, and the prev item falls through
+            # to the normal carry path below so the render layer can flag it
+            # once bind_links emits the supersede-candidate event.
             twin = next((n for n in native if isinstance(n, dict)
-                         and _same_item(text, str(n.get("text") or ""), generic)),
+                         and _same_item(text, str(n.get("text") or ""), generic)
+                         and not _is_reversal_of(n, text, item.get("id"),
+                                                 generic)),
                         None)
             if twin is not None:
                 # Session re-discussed it. Split by the PREV item's trust class
@@ -141,6 +182,15 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                     twin["text"] = item["text"]
                     if item.get("quote"):
                         twin["quote"] = item["quote"]
+                        # quote_verified travels WITH the quote (#167): the
+                        # native's verdict attested its own (now replaced)
+                        # quote — keeping it would stamp "verified" on a quote
+                        # this session never checked. Prev's verdict rides
+                        # along; absent (pre-#125 checkpoint) means unknown.
+                        if "quote_verified" in item:
+                            twin["quote_verified"] = item["quote_verified"]
+                        else:
+                            twin.pop("quote_verified", None)
                     twin["trust"] = "verbatim"
                 if item.get("first_seen") and not twin.get("first_seen"):
                     twin["first_seen"] = item["first_seen"]
