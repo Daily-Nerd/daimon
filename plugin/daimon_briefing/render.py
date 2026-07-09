@@ -249,7 +249,13 @@ def _explain(st: dict) -> str:
             src = st["command_source"]
             if src == "claude-cli":
                 return f"backend: {rb} (claude CLI, zero-config)"
-            return f"backend: {rb} ({st['command']})"
+            base = f"backend: {rb} ({st['command']})"
+            # #58: only note the input spec when it's not the stdin default —
+            # keeps the common case's one-liner unchanged.
+            input_spec = st.get("input")
+            if input_spec and input_spec != "stdin":
+                base += f" [input: {input_spec}]"
+            return base
         return "no backend — install the claude CLI or set litellm creds"
     # litellm
     if st["ready"]:

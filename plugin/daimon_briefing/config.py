@@ -9,9 +9,12 @@ lines, and `#` comments are tolerated. Keep it chmod 600 — it holds API keys.
 """
 
 import getpass
+import logging
 import os
 import subprocess
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 def _env_file_path() -> Path:
@@ -428,7 +431,9 @@ def llm_fallback() -> bool:
 
 def llm_command() -> str | None:
     """Full CLI invocation for the command backend (binary + model + flags).
-    The prompt is piped via stdin, never argv."""
+    How the prompt reaches it is controlled separately by
+    llm_command_input() — stdin by default, but 'arg' and 'file:<flag>' let
+    it land in argv instead (#58)."""
     return _get("DAIMON_LLM_COMMAND") or None
 
 
@@ -436,3 +441,29 @@ def llm_command_output() -> str | None:
     """How to extract assistant text from the command's stdout:
     'text' (raw stdout) | 'json:<key>' (parse JSON, read <key>)."""
     return _get("DAIMON_LLM_COMMAND_OUTPUT") or None
+
+
+def llm_command_input() -> str:
+    """How the prompt reaches the command backend: 'stdin' (default —
+    piped via subprocess input=, current/original behavior) | 'arg' (appended
+    as the final raw argv element, never string-interpolated into the command
+    template) | 'file:<flag>' (written to a tempfile, then '<flag> <path>'
+    appended to argv). Needed for headless CLIs that don't read stdin at all
+    (e.g. the Devin CLI panics on a piped, promptless invocation — #58).
+
+    An unrecognized value fails OPEN to 'stdin' (matching the fail-open
+    precedent of the sibling llm_command_output() axis, where an unknown
+    spec silently falls through to the 'text' branch) rather than raising —
+    a typo here must not turn every chat() call into a crash. Unlike the
+    output axis, this logs a warning: the input axis is easier to get wrong
+    silently (a bad output spec still returns *something*; a bad input spec
+    on a stdin-only CLI runs the command with an empty argv-facing prompt).
+    """
+    val = (_get("DAIMON_LLM_COMMAND_INPUT") or "stdin").strip()
+    if val == "stdin" or val == "arg" or (val.startswith("file:") and val[len("file:"):]):
+        return val
+    log.warning(
+        "DAIMON_LLM_COMMAND_INPUT=%r not recognized (expected stdin|arg|file:<flag>) "
+        "— falling back to stdin", val,
+    )
+    return "stdin"

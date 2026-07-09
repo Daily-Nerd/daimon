@@ -318,6 +318,21 @@ def test_explain_branches(st, expected):
     assert render._explain(st) == expected
 
 
+# ---- #58: _explain() notes a non-default DAIMON_LLM_COMMAND_INPUT ----
+
+
+def test_explain_notes_non_default_input_spec():
+    st = {"resolved_backend": "command", "ready": True, "command_source": "explicit",
+          "command": "devin -p", "input": "file:--prompt-file"}
+    assert render._explain(st) == "backend: command (devin -p) [input: file:--prompt-file]"
+
+
+def test_explain_omits_note_for_default_stdin_input():
+    st = {"resolved_backend": "command", "ready": True, "command_source": "explicit",
+          "command": "devin -p", "input": "stdin"}
+    assert render._explain(st) == "backend: command (devin -p)"
+
+
 def test_render_brief_honors_llm_briefing_when_present(monkeypatch, sample_checkpoint, capsys):
     # When DAIMON_LLM_BRIEFING is opted in, the CLI brief must surface the LLM
     # narrative (same source of truth as the hermes hook), not the deterministic text.

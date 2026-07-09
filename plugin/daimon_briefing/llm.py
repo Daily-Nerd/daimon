@@ -193,15 +193,18 @@ def _flatten_messages(messages):
 
 
 def _resolve_command():
-    """Resolve the command backend (command_str, output_spec) or None.
+    """Resolve the command backend (command_str, output_spec, input_spec) or
+    None.
 
     Order: explicit DAIMON_LLM_COMMAND, else claude-cli preset if claude is
-    on PATH, else None (no fallback possible)."""
+    on PATH, else None (no fallback possible). The claude-cli preset always
+    stays on stdin — `claude -p` reads the prompt from stdin, so the input
+    axis (#58) only matters for explicit commands."""
     cmd = config.llm_command()
     if cmd:
-        return cmd, (config.llm_command_output() or "text")
+        return cmd, (config.llm_command_output() or "text"), config.llm_command_input()
     if shutil.which("claude"):
-        return _CLAUDE_PRESET
+        return (*_CLAUDE_PRESET, "stdin")
     return None
 
 
@@ -219,16 +222,65 @@ def _extract_output(stdout, output_spec):
     return stdout.strip()
 
 
+# Conservative byte ceiling for arg-mode prompts. Linux caps a single argv
+# element well under this (MAX_ARG_STRLEN, 128KiB) and the total argv+environ
+# against ARG_MAX (typically a few hundred KiB to a few MiB depending on OS);
+# 100_000 bytes leaves headroom under the tightest of those limits across
+# platforms so a chunked/merge-sized prompt fails loud with a named ChatError
+# — pointing at file:/stdin mode — instead of a raw OSError E2BIG from the
+# kernel exec() call.
+_ARG_MAX_BYTES = 100_000
+
+
+def _apply_input_spec(argv, prompt_text, input_spec, cwd):
+    """Wire `prompt_text` into argv/stdin per `input_spec`. Returns
+    (argv, stdin_text) for `_run_command`.
+
+    - "stdin": argv unchanged, prompt piped via stdin (original behavior).
+    - "arg": prompt appended as ONE final raw argv element — never
+      string-interpolated into the command template, so it can never reach a
+      shell (preserves _run_command's never-touches-shell contract). Guarded
+      by _ARG_MAX_BYTES.
+    - "file:<flag>": prompt written to a 0600 tempfile inside `cwd` (the
+      same per-call tempdir the caller already tempfile.mkdtemp()s and
+      shutil.rmtree()s in a finally — covers cleanup on success, failure,
+      AND timeout), then "<flag> <path>" appended to argv.
+
+    Any input_spec other than "arg"/"file:..." is treated as "stdin" —
+    config.llm_command_input() already fails unrecognized values open to
+    "stdin" before this is ever called, so this is a defensive default only.
+    """
+    if input_spec == "arg":
+        size = len(prompt_text.encode("utf-8"))
+        if size > _ARG_MAX_BYTES:
+            raise ChatError(
+                f"prompt too large for arg-mode command input ({size} bytes "
+                f"> {_ARG_MAX_BYTES}-byte limit) — switch "
+                f"DAIMON_LLM_COMMAND_INPUT to file:<flag> or the stdin default"
+            )
+        return [*argv, prompt_text], ""
+    if input_spec.startswith("file:"):
+        flag = input_spec[len("file:"):]
+        path = os.path.join(cwd, "prompt.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(prompt_text)
+        os.chmod(path, 0o600)
+        return [*argv, flag, path], ""
+    return argv, prompt_text
+
+
 def _chat_command(messages, deadline):
-    """Serialize via a headless LLM CLI. Prompt via stdin; runs isolated
+    """Serialize via a headless LLM CLI. Prompt reaches it per the resolved
+    input spec — stdin by default, or arg/file:<flag> for CLIs that don't
+    read stdin (DAIMON_LLM_COMMAND_INPUT, #58); runs isolated
     (DAIMON_DISABLE=1, temp cwd). Raises ChatError on any failure — never
     echoes prompt/stdout/stderr (they can carry secrets)."""
     resolved = _resolve_command()
     if not resolved:
         raise ChatError("No command backend (set DAIMON_LLM_COMMAND or install claude).")
-    command, output_spec = resolved
+    command, output_spec, input_spec = resolved
     argv = shlex.split(command)
-    stdin_text = _flatten_messages(messages)
+    prompt_text = _flatten_messages(messages)
     timeout = config.timeout_seconds()
     if deadline is not None:
         timeout = min(timeout, max(0.0, deadline - time.monotonic()))
@@ -237,6 +289,7 @@ def _chat_command(messages, deadline):
     env = {**os.environ, "DAIMON_DISABLE": "1"}
     cwd = tempfile.mkdtemp(prefix="daimon-cli-")
     try:
+        argv, stdin_text = _apply_input_spec(argv, prompt_text, input_spec, cwd)
         try:
             rc, out, err = _run_command(argv, stdin_text, timeout, env, cwd)
         except FileNotFoundError:

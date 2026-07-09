@@ -45,7 +45,10 @@ daimon brief
 
 See the plugin README. Key knobs: `DAIMON_DISABLE=1` (kill switch),
 `DAIMON_CHECKPOINT_DIR`, `DAIMON_MIN_MESSAGES`, `DAIMON_LLM_*` (falling back to
-`LITELLM_*`), `DAIMON_LLM_BACKEND=command` + `DAIMON_LLM_COMMAND` (headless-CLI fallback).
+`LITELLM_*`), `DAIMON_LLM_BACKEND=command` + `DAIMON_LLM_COMMAND` (headless-CLI
+fallback), `DAIMON_LLM_COMMAND_INPUT=stdin|arg|file:<flag>` (how the prompt
+reaches a command backend that doesn't read stdin, e.g.
+`file:--prompt-file` for the Devin CLI).
 
 ## What ships today
 
