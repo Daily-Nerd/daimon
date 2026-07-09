@@ -214,13 +214,18 @@ def test_render_status_outstanding_block_plain_exact(capsys):
 
 
 def test_render_status_outstanding_retry_exhausted_hint(capsys):
+    # #15: the escape hatch is discoverable from `status` itself, not just
+    # from reading the heal skip reason.
     data = _status_data()
     data["outstanding"] = [{"sid": "S-A", "kind": "error", "class": "retry-exhausted",
                             "age": 180, "age_str": "3m", "transcript": "/t/S-A.jsonl",
                             "project": "/p/A", "spawned": True, "line": "error: boom"}]
     render.render_status(data)
     out = capsys.readouterr().out
-    assert "  - S-A  error 3m ago — retry attempted, still failing\n" in out
+    assert (
+        "  - S-A  error 3m ago — retry attempted, still failing "
+        "(re-run with `daimon heal --force`)\n"
+    ) in out
 
 
 def test_render_status_unrecoverable_hint(capsys):
@@ -503,6 +508,37 @@ def test_render_heal_note_and_skipped(capsys):
     out = capsys.readouterr().out
     assert "nothing to heal — 1 failure can't be auto-repaired:" in out
     assert "H1" in out and "hung/killed" in out
+
+
+def test_render_heal_force_target_dry_run(capsys):
+    # #15: --force gets its own narration so a dry-run makes clear the retry
+    # marker is being ignored, not that this is an ordinary heal.
+    from daimon_briefing import render
+    plan = {"target": {"sid": "S-A", "transcript": "/t/a.jsonl", "project": "/p",
+                       "age_str": "9m", "line": "x"}, "skipped": [], "note": ""}
+    render.render_heal(plan, dry_run=True, force=True)
+    out = capsys.readouterr().out
+    assert "would force-heal S-A" in out and "/t/a.jsonl" in out
+
+
+def test_render_heal_force_target_real(capsys):
+    from daimon_briefing import render
+    plan = {"target": {"sid": "S-A", "transcript": "/t/a.jsonl", "project": "/p",
+                       "age_str": "9m", "line": "x"}, "skipped": [], "note": ""}
+    render.render_heal(plan, dry_run=False, force=True)
+    out = capsys.readouterr().out
+    assert "force-healing S-A" in out
+
+
+def test_render_heal_not_forced_omits_force_wording(capsys):
+    # force=False (the default) must not accidentally regress ordinary heal
+    # output to the forced wording.
+    from daimon_briefing import render
+    plan = {"target": {"sid": "S-A", "transcript": "/t/a.jsonl", "project": "/p",
+                       "age_str": "3m", "line": "x"}, "skipped": [], "note": ""}
+    render.render_heal(plan, dry_run=False)
+    out = capsys.readouterr().out
+    assert "healing S-A" in out and "force" not in out
 
 
 # ---- Teammates section (#111): attributed, never merged, empty = no-op ----

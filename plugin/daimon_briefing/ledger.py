@@ -39,7 +39,16 @@ def _append_retry_log(session_id: str, prior: str) -> None:
     """Mark a #26 heal retry in serialize.log BEFORE re-serializing. The line is
     a TIMESTAMPED spawn-style marker (matching the hook spawn-line stamp format)
     so `status` surfaces it AND the dedup check can find it later — one retry per
-    session, ever. Best-effort: never break a heal."""
+    session, ever, BY DEFAULT. That cap deliberately survived the cache-buster
+    era (#15): retries used to be pointless byte-identical replays against a
+    caching gateway, so capping at one was strictly correct; the serializer now
+    cache-busts both failure layers, so a second heal is no longer guaranteed
+    to reproduce the first failure. The cap stays anyway — it bounds token burn
+    on a permanently-bad transcript — but `daimon heal --force` is the explicit
+    operator override past it (`_outstanding_failures`'s `force` param). This
+    writer's format is unchanged either way: a forced retry appends the SAME
+    marker shape, so a forced heal re-classifies as retry-exhausted again until
+    the next --force. Best-effort: never break a heal."""
     try:
         log_dir = config.log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -201,13 +210,20 @@ def _session_ledger(text: str, now: float) -> dict:
     return sessions
 
 
-def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists) -> list:
+def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists, force=False) -> list:
     """Sessions still LOST — no checkpoint AND latest state != success.
     `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
     stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
     (exactly what heal will repair); error but retried -> retry-exhausted; error
     but no spawn record or transcript gone -> unrecoverable (lost, heal can't
-    retry it); spawn with no result older than `ceiling` -> hung."""
+    retry it); spawn with no result older than `ceiling` -> hung.
+
+    `force` (#15) is the `daimon heal --force` escape hatch: it ignores the
+    `retried` gate on both the error and hung paths, so a retry-exhausted (or
+    retried-hung) session reclassifies as `healable` again PROVIDED its
+    transcript still exists — force can't repair what's genuinely gone, so
+    those stay `unrecoverable`/`hung`. Callers that don't pass `force` (e.g.
+    `status`, and default `heal`) see classification exactly as before."""
     out = []
     for sid, e in ledger.items():
         if e["result_kind"] in ("success", "skipped"):
@@ -216,7 +232,7 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             continue
         age = e["spawn_age"]
         if e["result_kind"] == "error":
-            if e["retried"]:
+            if e["retried"] and not force:
                 cls = "retry-exhausted"
             elif e["spawned"] and e["transcript"] and transcript_exists(e["transcript"]):
                 cls = "healable"
@@ -230,10 +246,11 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             # #28: a spawn line that recorded its transcript makes a hung
             # (crashed/killed) serialize healable — the checkpoint is
             # recoverable as long as the transcript is still on disk. The
-            # one-retry-ever policy (#26) applies unchanged via `retried`.
+            # one-retry-ever policy (#26) applies unchanged via `retried`,
+            # unless `force` (#15) overrides it.
             t = e["transcript"]
             cls = ("healable"
-                   if t and transcript_exists(t) and not e["retried"]
+                   if t and transcript_exists(t) and (not e["retried"] or force)
                    else "hung")
             out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
                         "age_str": _format_age(age), "transcript": t,
@@ -242,32 +259,37 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
     return out
 
 
-def _compute_outstanding(text: str, now: float) -> list:
+def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
     """Wire the pure ledger/classifier to the live store + filesystem. Single
     source for both `status` (display) and `heal` (repair) so their notion of
-    'outstanding' can never drift."""
+    'outstanding' can never drift. `force` (#15) is forwarded to
+    `_outstanding_failures`; callers that don't pass it get unchanged default
+    classification."""
     return _outstanding_failures(
         _session_ledger(text, now), now,
         lambda sid: store.read_checkpoint(sid) is not None,
         config.hung_after_seconds(),
         lambda p: bool(p) and Path(p).exists(),
+        force=force,
     )
 
 
 _HEAL_SKIP_REASON = {
-    "retry-exhausted": "retry already attempted, still failing",
+    "retry-exhausted": "retry already attempted, still failing (re-run with --force)",
     "unrecoverable": "no spawn record or transcript gone — cannot auto-heal",
     "hung": "spawned, no result (hung/killed) — transcript unavailable",
 }
 
 
-def _heal_plan(text, now) -> dict:
+def _heal_plan(text, now, force=False) -> dict:
     """Decide what `heal` will repair and why. Pure — `now` injected. Reuses the
     SAME _compute_outstanding source as status, so their notion of healable agrees.
     target = the newest `healable` (already gauntlet-vetted); every other outstanding
     failure lands in `skipped` with a reason; `note` is the headline when there is no
-    target."""
-    outstanding = _compute_outstanding(text, now)
+    target. `force` (#15) is forwarded to _compute_outstanding — the classifier does
+    the actual retry-exhausted-to-healable promotion, so this layer needs no
+    special-casing beyond passing the flag through."""
+    outstanding = _compute_outstanding(text, now, force=force)
     healable = [f for f in outstanding if f["class"] == "healable"]
     target = None
     if healable:

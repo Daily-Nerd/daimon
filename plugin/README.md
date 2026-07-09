@@ -115,7 +115,7 @@ daimon skill list              # which scopes each host supports
 | `daimon recall <terms>` | Full-text search over your whole checkpoint history |
 | `daimon resolve <item>` | Mark a checkpoint item resolved so it stops carrying forward |
 | `daimon reverify <item>` | Evidence-gated reopen of a resolved item |
-| `daimon heal` | Re-serialize the most recent failed session, if it can be done safely |
+| `daimon heal [--force]` | Re-serialize the most recent failed session, if it can be done safely; `--force` ignores a prior retry marker to re-heal a retry-exhausted session |
 | `daimon stats` | Local usage + capture aggregates (nothing is transmitted) |
 | `daimon configure` | Detect/repair the LLM backend |
 | `daimon hooks install <host>` | Install packaged host hook scripts |
