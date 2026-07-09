@@ -21,7 +21,6 @@ import functools
 import getpass
 import json
 import os
-import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -29,6 +28,31 @@ from pathlib import Path
 
 from . import anchor, briefing, carry, config, configure, harvest, llm, recall, render, serializer, store, teamsync, transcript
 from . import __version__
+
+# The serialize.log ledger subsystem lives in ledger.py (#147, pure move).
+# EVERY moved name is re-imported here — including the ones cli.py no longer
+# calls itself — because `cli.<name>` is a stable seam: tests and host hooks
+# resolve the ledger through this module.
+from .ledger import (
+    _HEAL_SKIP_REASON,  # noqa: F401 — re-exported for compat
+    _HEAL_TRANSCRIPT_RE,  # noqa: F401 — re-exported for compat
+    _LEDGER_OK_RE,  # noqa: F401 — re-exported for compat
+    _LEDGER_PROJECT_RE,  # noqa: F401 — re-exported for compat
+    _LEDGER_SKIP_RE,
+    _LEDGER_SPAWN_TRANSCRIPT_RE,  # noqa: F401 — re-exported for compat
+    _RESULT_ERR_RE,
+    _RESULT_OK_RE,
+    _SPAWN_RE,  # noqa: F401 — re-exported for compat
+    _STATS_HOST_RE,
+    _append_retry_log,
+    _append_serialize_log,
+    _compute_outstanding,
+    _format_age,
+    _heal_plan,
+    _outstanding_failures,  # noqa: F401 — re-exported for compat
+    _parse_serialize_log,
+    _session_ledger,
+)
 
 # Module-level seam so tests can inject a fake LLM client.
 _chat = llm.chat
@@ -74,34 +98,6 @@ def _resolve_project(arg) -> str:
     project = arg or config.project_dir() or os.getcwd()
     resolved = str(Path(project).expanduser().resolve())
     return config.resolve_project_root(resolved)
-
-
-def _append_serialize_log(line: str) -> None:
-    """Append a result line to serialize.log so manual/CLI serializes are
-    visible to `status`, not only hook-spawned ones (FR #27). Best-effort:
-    logging must never break a serialize."""
-    try:
-        log_dir = config.log_dir()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with (log_dir / "serialize.log").open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError:
-        pass
-
-
-def _append_retry_log(session_id: str, prior: str) -> None:
-    """Mark a #26 heal retry in serialize.log BEFORE re-serializing. The line is
-    a TIMESTAMPED spawn-style marker (matching the hook spawn-line stamp format)
-    so `status` surfaces it AND the dedup check can find it later — one retry per
-    session, ever. Best-effort: never break a heal."""
-    try:
-        log_dir = config.log_dir()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with (log_dir / "serialize.log").open("a", encoding="utf-8") as f:
-            f.write(f"{stamp} session-start: retry serialize for {session_id} (prior: {prior})\n")
-    except OSError:
-        pass
 
 
 def _note_usage(command: str) -> None:
@@ -743,37 +739,6 @@ def _cmd_recall_inject(args) -> int:
 
 # ---- status: "did my ending checkpoint get generated?" without grepping logs ----
 
-# Hook spawn line: `<iso-stamp> <hook>: spawned serialize for <id> (...)`,
-# where <hook> is `session-end` (Claude), `codex-stop` (Codex), or
-# `gemini-session-end` (Gemini — must be listed BEFORE a bare `session-end`
-# would substring-match it; the alternation is exact so order only matters for
-# readability). The #26 heal retry marker (`<iso> session-start: retry
-# serialize for <id> (...)`) is also a spawn for status purposes, so both the
-# host and the verb are alternations. A new host adapter MUST add its prefix
-# here or its serializes are invisible to status/hung detection/heal.
-_SPAWN_RE = re.compile(
-    r"^(\S+) (?:gemini-session-end|session-end|codex-stop|windsurf-cascade|"
-    r"session-start): "
-    r"(?:spawned|retry) serialize for (\S+)"
-)
-# Child stdout/stderr land in the log RAW (no timestamp): the serialize
-# success/error lines printed by _cmd_serialize above.
-_RESULT_OK_RE = re.compile(r"^wrote checkpoint: .+ \(took (\d+)s\)")
-_RESULT_ERR_RE = re.compile(r"^error: .*?(?: after (\d+)s)?$")
-
-
-def _format_age(seconds) -> str:
-    """Coarse human age: 59 -> '59s', 61 -> '1m', 7200 -> '2h', 432000 -> '5d'."""
-    seconds = max(0, int(seconds))
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m"
-    if seconds < 86400:
-        return f"{seconds // 3600}h"
-    return f"{seconds // 86400}d"
-
-
 # Shared with store (single copy; hook/daimon-session-brief.py keeps its own
 # stdlib-only twin — see the docstring in store._created_epoch).
 _created_epoch = store._created_epoch
@@ -869,42 +834,6 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
             verdict += " — this project produced the most recent checkpoint"
         return {"ok": True, "verdict": verdict, "warnings": []}
     return {"ok": False, "verdict": "⚠ " + warnings[0], "warnings": warnings}
-
-
-def _parse_serialize_log(path, now) -> dict | None:
-    """Tail of serialize.log -> {spawn, result}, or None when there's no log.
-
-    Lines from overlapping sessions interleave, so spawn and result are
-    reported INDEPENDENTLY (last of each kind) — no pairing is attempted.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    spawn = result = None
-    for line in text.splitlines()[-200:]:  # tail is plenty; the log only appends
-        line = line.strip()
-        m = _SPAWN_RE.match(line)
-        if m:
-            spawn = {"session_id": m.group(2), "timestamp": m.group(1)}
-            continue
-        m = _RESULT_OK_RE.match(line)
-        if m:
-            result = {"outcome": "success", "duration_seconds": int(m.group(1)), "line": line}
-            continue
-        m = _RESULT_ERR_RE.match(line)
-        if m:
-            duration = int(m.group(1)) if m.group(1) else None
-            result = {"outcome": "error", "duration_seconds": duration, "line": line}
-    if spawn:
-        try:
-            ts = datetime.strptime(spawn["timestamp"], "%Y-%m-%dT%H:%M:%SZ")
-            age = int(now - ts.replace(tzinfo=timezone.utc).timestamp())
-            spawn["age_seconds"] = age
-            spawn["age"] = _format_age(age)
-        except ValueError:
-            pass  # unexpected stamp format: report the spawn without an age
-    return {"spawn": spawn, "result": result}
 
 
 def _crash_log_info(path: Path, now: float) -> dict | None:
@@ -1041,185 +970,6 @@ def _cmd_status(args) -> int:
         "recall_error": recall_error,
     })
     return rc
-
-
-# ---- heal: opportunistic ONE-shot repair of the most recent FAILED serialize ----
-
-# The transcript carried by an error result line (see _run_serialize):
-# `error: <exc> (transcript: <path>) after <N>s` for serialize failures, or
-# `error: <preflight msg> (transcript: <path>)` for pre-flight errors (#49) —
-# the `after Ns` clause is optional so both attribute to their session. A
-# pre-flight-failed session with its transcript on disk is healable: fixing
-# the config (e.g. adding the API key) makes the retry succeed.
-_HEAL_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)(?: after \d+s|$)")
-
-# Per-session ledger regexes (kept SEPARATE from _RESULT_OK_RE/_RESULT_ERR_RE,
-# which _parse_serialize_log depends on). Success lines embed the session id in
-# the checkpoint path: `wrote checkpoint: <dir>/<session>.json (took Ns)`.
-_LEDGER_OK_RE = re.compile(r"^wrote checkpoint: (.+?) \(took \d+s\)")
-_LEDGER_SKIP_RE = re.compile(r"^skipped serialize for (\S+):")
-_LEDGER_PROJECT_RE = re.compile(r"project: (.*?)\)")
-# #28: hooks stamp the transcript path on the spawn line as a TRAILING group —
-# `... (reason: r, project: p) (transcript: <path>)` — so a child that crashes
-# before writing any result line still leaves a healable trail. Trailing-only
-# match keeps it disjoint from _HEAL_TRANSCRIPT_RE (error lines, `after Ns`).
-_LEDGER_SPAWN_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)\s*$")
-
-
-def _session_ledger(text: str, now: float) -> dict:
-    """Fold serialize.log into per-session terminal state. Unlike
-    _parse_serialize_log (last-of-each-kind, no pairing), this attributes every
-    line to its session_id — spawn regex group, success checkpoint-path stem, or
-    error transcript stem — so a failure is never masked by a later session's
-    success. Pre-flight errors (no transcript) carry no session and are dropped."""
-    sessions: dict = {}
-
-    def _entry(sid: str) -> dict:
-        return sessions.setdefault(sid, {
-            "spawned": False, "spawn_ts": None, "spawn_age": None, "project": None,
-            "result_kind": None, "result_line": None, "transcript": None,
-            "retried": False,
-        })
-
-    for line in text.splitlines()[-200:]:
-        line = line.strip()
-        m = _SPAWN_RE.match(line)
-        if m:
-            e = _entry(m.group(2))
-            e["spawned"] = True
-            try:
-                ts = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ")
-                e["spawn_ts"] = ts.replace(tzinfo=timezone.utc).timestamp()
-                e["spawn_age"] = int(now - e["spawn_ts"])
-            except ValueError:
-                pass
-            pm = _LEDGER_PROJECT_RE.search(line)
-            if pm:
-                raw = pm.group(1).strip()
-                e["project"] = raw if (raw and raw != "?") else None
-            tm = _LEDGER_SPAWN_TRANSCRIPT_RE.search(line)
-            if tm:
-                e["transcript"] = tm.group(1)
-            if "retry serialize for" in line:
-                e["retried"] = True
-            continue
-        m = _LEDGER_OK_RE.match(line)
-        if m:
-            e = _entry(Path(m.group(1)).stem)
-            e["result_kind"] = "success"
-            e["result_line"] = line
-            e["transcript"] = None
-            continue
-        m = _LEDGER_SKIP_RE.match(line)
-        if m:
-            e = _entry(m.group(1))
-            e["result_kind"] = "skipped"
-            e["result_line"] = line
-            continue
-        if _RESULT_ERR_RE.match(line):
-            tm = _HEAL_TRANSCRIPT_RE.search(line)
-            if not tm:
-                continue  # pre-flight error, no session to attribute
-            e = _entry(Path(tm.group(1)).stem)
-            e["result_kind"] = "error"
-            e["result_line"] = line
-            e["transcript"] = tm.group(1)
-    return sessions
-
-
-def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists) -> list:
-    """Sessions still LOST — no checkpoint AND latest state != success.
-    `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
-    stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
-    (exactly what heal will repair); error but retried -> retry-exhausted; error
-    but no spawn record or transcript gone -> unrecoverable (lost, heal can't
-    retry it); spawn with no result older than `ceiling` -> hung."""
-    out = []
-    for sid, e in ledger.items():
-        if e["result_kind"] in ("success", "skipped"):
-            continue
-        if has_checkpoint(sid):
-            continue
-        age = e["spawn_age"]
-        if e["result_kind"] == "error":
-            if e["retried"]:
-                cls = "retry-exhausted"
-            elif e["spawned"] and e["transcript"] and transcript_exists(e["transcript"]):
-                cls = "healable"
-            else:
-                cls = "unrecoverable"
-            out.append({"sid": sid, "kind": "error", "class": cls, "age": age,
-                        "age_str": _format_age(age) if age is not None else "unknown",
-                        "transcript": e["transcript"], "project": e["project"],
-                        "spawned": e["spawned"], "line": e["result_line"]})
-        elif e["result_kind"] is None and e["spawned"] and age is not None and age > ceiling:
-            # #28: a spawn line that recorded its transcript makes a hung
-            # (crashed/killed) serialize healable — the checkpoint is
-            # recoverable as long as the transcript is still on disk. The
-            # one-retry-ever policy (#26) applies unchanged via `retried`.
-            t = e["transcript"]
-            cls = ("healable"
-                   if t and transcript_exists(t) and not e["retried"]
-                   else "hung")
-            out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
-                        "age_str": _format_age(age), "transcript": t,
-                        "project": e["project"], "spawned": True, "line": None})
-    out.sort(key=lambda f: (f["age"] is None, f["age"] or 0))
-    return out
-
-
-def _compute_outstanding(text: str, now: float) -> list:
-    """Wire the pure ledger/classifier to the live store + filesystem. Single
-    source for both `status` (display) and `heal` (repair) so their notion of
-    'outstanding' can never drift."""
-    return _outstanding_failures(
-        _session_ledger(text, now), now,
-        lambda sid: store.read_checkpoint(sid) is not None,
-        config.hung_after_seconds(),
-        lambda p: bool(p) and Path(p).exists(),
-    )
-
-
-_HEAL_SKIP_REASON = {
-    "retry-exhausted": "retry already attempted, still failing",
-    "unrecoverable": "no spawn record or transcript gone — cannot auto-heal",
-    "hung": "spawned, no result (hung/killed) — transcript unavailable",
-}
-
-
-def _heal_plan(text, now) -> dict:
-    """Decide what `heal` will repair and why. Pure — `now` injected. Reuses the
-    SAME _compute_outstanding source as status, so their notion of healable agrees.
-    target = the newest `healable` (already gauntlet-vetted); every other outstanding
-    failure lands in `skipped` with a reason; `note` is the headline when there is no
-    target."""
-    outstanding = _compute_outstanding(text, now)
-    healable = [f for f in outstanding if f["class"] == "healable"]
-    target = None
-    if healable:
-        t = healable[0]  # newest-first
-        target = {"sid": t["sid"], "transcript": t["transcript"],
-                  "project": t["project"], "age_str": t["age_str"], "line": t["line"]}
-
-    skipped = []
-    for f in outstanding:
-        if target and f["sid"] == target["sid"]:
-            continue
-        if f["class"] == "healable":
-            reason = "newer failure took this run — re-run 'daimon heal' to reach it"
-        else:
-            reason = _HEAL_SKIP_REASON.get(f["class"], "not auto-repairable")
-        skipped.append({"sid": f["sid"], "age_str": f["age_str"], "reason": reason})
-
-    if target is not None:
-        note = ""
-    elif not outstanding:
-        note = ("nothing to heal — no serialize activity logged"
-                if not text.strip() else "nothing to heal — no outstanding failures")
-    else:
-        n = len(skipped)
-        note = f"nothing to heal — {n} failure{'s' if n != 1 else ''} can't be auto-repaired:"
-    return {"target": target, "skipped": skipped, "note": note}
 
 
 def _find_audit_transcript(session_id: str, slug):
@@ -1510,13 +1260,6 @@ def _cmd_configure(args) -> int:
 
 
 # ---- stats: local usage + capture aggregates (#54) — zero phone-home ----
-
-# Host prefix on a spawn line, for per-host capture counts. Deliberately the
-# same alternation as _SPAWN_RE (a new host adapter updates both).
-_STATS_HOST_RE = re.compile(
-    r"^\S+ (gemini-session-end|session-end|codex-stop|windsurf-cascade): "
-    r"spawned serialize for "
-)
 
 
 def _stats_usage() -> dict:
