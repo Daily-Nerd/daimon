@@ -36,7 +36,15 @@ jobs:
         # fails loudly instead of silently touching a real ~/.daimon.
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
-          HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q --cov=daimon_briefing --cov-report=xml
+          HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q --cov=daimon_briefing --cov-report=xml --junitxml=junit.xml
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./plugin/junit.xml
+          flags: py${{ matrix.python-version }}
 
       - name: Upload coverage to Codecov
         # Reporting only — no coverage threshold gates the build yet. The
