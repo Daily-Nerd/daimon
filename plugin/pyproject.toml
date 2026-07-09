@@ -37,6 +37,8 @@ dev = [
     "pytest-cov==7.1.0",
     "ruff==0.15.20",
     "mypy==2.2.0",
+    # tomllib is stdlib only from 3.11; tests parse pyproject.toml on 3.10 too
+    "tomli>=2.0; python_version < '3.11'",
 ]
 pretty = [
     "rich>=13",

@@ -2,8 +2,12 @@
 license text must exist INSIDE the package dir for wheels/sdists to carry it —
 and that copy must never drift from the repo-root original (same byte-identity
 contract as the hook-shipped redact.py mirror in test_hooks_install.py)."""
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib  # stdlib from 3.11
+except ModuleNotFoundError:  # py3.10: tomli backport (dev extra, marker-gated)
+    import tomli as tomllib
 
 _PLUGIN = Path(__file__).resolve().parents[1]
 _REPO_ROOT = _PLUGIN.parent
