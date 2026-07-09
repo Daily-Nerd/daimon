@@ -485,8 +485,14 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     if slug:
         checkpoint.setdefault("project_slug", slug)
     # Birth stamps (#126) need the previous latest BEFORE this write moves it.
-    # read_latest never raises (returns None on absent/torn pointers).
-    _stamp_first_seen(checkpoint, read_latest(project_dir))
+    # read_latest never raises (returns None on absent/torn pointers). When the
+    # project is KNOWN, suppress the global fallback (#139): _stamp_first_seen
+    # PERSISTS what it reads, and the global pointer holds the most recent
+    # checkpoint of ANY project — a known project's first write must inherit
+    # nothing (None → all items fresh), never a foreign first_seen. When the
+    # project is UNKNOWN, the global pointer IS this stream's own prior
+    # checkpoint, so the fallback stays on (same-stream carry, #126 legacy).
+    _stamp_first_seen(checkpoint, read_latest(project_dir, fallback=not slug))
     blob = json.dumps(checkpoint, indent=2, ensure_ascii=False)
     history = config.checkpoint_history()
     _atomic_write(path, blob)
@@ -573,7 +579,12 @@ def read_checkpoint(session_id: str) -> dict | None:
         return None
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Torn/corrupt file is treated as absent, matching the module's tolerant
+    # readers (_pointer_regresses, _file_recency, sibling_buckets) (#139).
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
@@ -589,13 +600,21 @@ def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
     if slug:
         path = d / slug / _LATEST
         if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+            # A torn project pointer is treated as absent and falls through to the
+            # global fallback below (#139) — not the same as "no data".
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
     if not fallback:
         return None
     path = d / _LATEST
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 # ---- team memory (#111): opt-in shared mirror, derive-never-write shared state ----

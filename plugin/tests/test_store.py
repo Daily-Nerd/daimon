@@ -1122,3 +1122,60 @@ def test_redact_tolerates_malformed_links(tmp_checkpoint_dir):
     cp = {"working_context": {"recent_decisions": [
         {"text": "x", "links": ["bare", {"no": "target"}, {"target": 7}]}]}}
     store.write_checkpoint("S1", cp)  # must not raise
+
+
+# ---- #139: cross-project first_seen bleed + corrupt-pointer tolerance ----
+
+
+def _independent(sample_checkpoint, sid, days_ago):
+    # Deep copy so two checkpoints with matching item TEXT never share item dicts
+    # (a shallow copy would let one write's in-place first_seen stamp bleed into
+    # the other and mask what the pointer path actually returns).
+    return json.loads(json.dumps(_stamped(sample_checkpoint, sid, days_ago)))
+
+
+def test_first_seen_does_not_bleed_across_projects(tmp_checkpoint_dir, sample_checkpoint):
+    # Project A has an older checkpoint whose item text coincides with project B's.
+    # B's FIRST write has no per-project pointer yet; the birth stamp must NOT fall
+    # back to the global pointer (A's checkpoint) and inherit A's older first_seen.
+    store.write_checkpoint("S-a", _independent(sample_checkpoint, "S-a", 5), project_dir="/p/A")
+    store.write_checkpoint("S-b", _independent(sample_checkpoint, "S-b", 0), project_dir="/p/B")
+    back = store.read_checkpoint("S-b")
+    carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
+    assert _first_seens(back)[carried_text] == back["created"]  # fresh, not A's
+
+
+def test_first_seen_still_inherits_within_same_project(tmp_checkpoint_dir, sample_checkpoint):
+    # Guard against over-fixing: a second write to the SAME project still inherits
+    # first_seen from that project's own prior checkpoint (the project pointer path,
+    # which fallback=False does not touch).
+    store.write_checkpoint("S-1", _independent(sample_checkpoint, "S-1", 5), project_dir="/p/A")
+    t1 = store.read_checkpoint("S-1")["created"]
+    store.write_checkpoint("S-2", _independent(sample_checkpoint, "S-2", 0), project_dir="/p/A")
+    back = store.read_checkpoint("S-2")
+    carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
+    assert _first_seens(back)[carried_text] == t1  # inherited from A's own prior
+
+
+def test_read_checkpoint_corrupt_file_returns_none(tmp_checkpoint_dir, sample_checkpoint):
+    store.write_checkpoint("S-torn", sample_checkpoint)
+    (tmp_checkpoint_dir / "S-torn.json").write_text('{"created": "2026', encoding="utf-8")
+    assert store.read_checkpoint("S-torn") is None  # tolerant, no raise
+
+
+def test_read_latest_corrupt_project_pointer_falls_through_to_global(
+    tmp_checkpoint_dir, sample_checkpoint
+):
+    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"})  # global
+    slug = store.project_slug("/p/torn")
+    pdir = tmp_checkpoint_dir / slug
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "latest.json").write_text("{not json", encoding="utf-8")  # torn project pointer
+    got = store.read_latest(project_dir="/p/torn", fallback=True)
+    assert got is not None and got["session_id"] == "S-g"  # fell through, no raise
+
+
+def test_read_latest_corrupt_global_pointer_returns_none(tmp_checkpoint_dir):
+    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_checkpoint_dir / "latest.json").write_text("{not json", encoding="utf-8")
+    assert store.read_latest() is None  # tolerant, no raise
