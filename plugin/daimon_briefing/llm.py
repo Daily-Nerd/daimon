@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import config
+from . import config, redact
 
 log = logging.getLogger(__name__)
 
@@ -254,8 +254,11 @@ def _chat_command(messages, deadline):
                 d = config.log_dir()
                 d.mkdir(parents=True, exist_ok=True)
                 p = d / "backend-stderr.log"
+                # CLI backends can echo prompt fragments (transcript text)
+                # into stderr — scrub before it persists (#141).
+                err_logged, _ = redact.redact_text(err or "")
                 p.write_text(
-                    f"command backend exit {rc} (argv0: {argv[0]})\n{err or ''}\n",
+                    f"command backend exit {rc} (argv0: {argv[0]})\n{err_logged}\n",
                     encoding="utf-8")
                 hint = f"stderr: {p}"
             except OSError:
