@@ -1180,10 +1180,15 @@ def _cmd_configure(args) -> int:
     if getattr(args, "test", False):
         start = time.monotonic()
         try:
-            reply = llm.chat(
-                [{"role": "user", "content":
-                  'Reply with exactly this JSON and nothing else: {"ok": true}'}],
-                retries=1)
+            # working() (#182): the roundtrip is ~15s of otherwise-dead
+            # terminal at the exact moment a new user decides whether the
+            # tool works — spinner on rich/TTY, one plain line elsewhere.
+            with render.working("testing backend — one tiny prompt through "
+                                "the resolved backend"):
+                reply = llm.chat(
+                    [{"role": "user", "content":
+                      'Reply with exactly this JSON and nothing else: {"ok": true}'}],
+                    retries=1)
         except llm.ChatError as exc:
             print(f"backend test: FAILED — {exc}", file=sys.stderr)
             return 1
