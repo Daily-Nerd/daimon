@@ -17,6 +17,5 @@
     "session",
     "context",
     "hooks"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }
