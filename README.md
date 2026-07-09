@@ -76,7 +76,7 @@ Or any headless CLI that reads a prompt on stdin and prints the response:
 daimon configure --backend command --command '<your-llm-cli>' --output text
 ```
 
-Config lives in `~/.daimon/env` (hooks run with the host's inherited env, not your shell profile). Kill switch: `DAIMON_DISABLE=1`.
+Config lives in `~/.daimon/env` (hooks run with the host's inherited env, not your shell profile). Kill switch: `DAIMON_DISABLE=1`. Every tunable variable — checkpoint retention, carry, briefing budget, team memory, backend selection — is listed in [docs/configuration.md](./docs/configuration.md).
 
 ### Hook up your host
 
@@ -174,6 +174,7 @@ Daimon is self-contained at runtime — no external memory backend, no server. T
 
 - [MVP — Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md) — authoritative architecture
 - [docs/hosts/](./docs/hosts/) — per-host setup guides (Claude Code, Codex, Gemini CLI, Windsurf)
+- [Configuration](./docs/configuration.md) — environment-variable reference
 - [Codex hooks](./hook/CODEX.md) — Codex adapter setup
 - [The Problem](./docs/PROBLEM.md) — the context-loss thesis
 - [Research Logbook](./research/README.md) — findings, decisions, evidence trail
