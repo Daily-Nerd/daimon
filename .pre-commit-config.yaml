@@ -1,0 +1,28 @@
+# Local commit-time mirror of the CI lint gate. Install once after cloning:
+#
+#     uvx pre-commit install
+#
+# Check-only by design: no autofix hook — surprising rewrites at commit time
+# are worse than a red hook that tells you what to fix.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pinned to the exact ruff version in plugin/pyproject.toml's dev extra
+    # (ruff==0.15.20) — a version skew between this hook and CI would produce
+    # contradictory verdicts. Bump both together.
+    rev: v0.15.20
+    hooks:
+      - id: ruff-check
+        # Same paths the CI lint job checks (.github/workflows/ci.yml) —
+        # keep the two in sync.
+        files: ^(plugin/(daimon_briefing|tests)|scripts)/
+  - repo: local
+    hooks:
+      - id: hook-mirror-drift
+        name: hook mirror drift (scripts/sync_hooks.py --check)
+        # Some hook files are deliberate byte-for-byte copies of a canonical
+        # source; this fails the commit when a copy has drifted. Fix with:
+        #     uv run python scripts/sync_hooks.py
+        entry: uv run python scripts/sync_hooks.py --check
+        language: system
+        pass_filenames: false
+        always_run: true

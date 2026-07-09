@@ -7,6 +7,8 @@ dist/
 build/
 .pytest_cache/
 .coverage
+coverage.xml
+junit.xml
 htmlcov/
 .ruff_cache/
 .mypy_cache/

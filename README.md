@@ -163,4 +163,5 @@ Daimon is self-contained at runtime — no external memory backend, no server. T
 - [Codex hooks](./hook/CODEX.md) — Codex adapter setup
 - [The Problem](./docs/PROBLEM.md) — the context-loss thesis
 - [Research Logbook](./research/README.md) — findings, decisions, evidence trail
+- [Contributing](./CONTRIBUTING.md) — dev setup, tests, lint, pre-commit hooks
 - Historical docs ([RFC](./docs/RFC.md), [Architecture](./docs/ARCHITECTURE.md), [Pitch](./docs/PITCH.md), [Validation Plan](./docs/VALIDATION.md)) are preserved with status banners — superseded ≠ deleted.
