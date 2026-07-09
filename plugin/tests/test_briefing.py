@@ -518,6 +518,46 @@ def test_llm_render_accepted_when_quotes_survive(sample_checkpoint, monkeypatch)
     assert briefing.render(sample_checkpoint) == faithful
 
 
+def test_llm_render_rejected_when_topic_quote_missing(sample_checkpoint, monkeypatch):
+    # active_topic is a singleton item, not a list, so it used to skip the
+    # quote gate entirely — a dropped or reworded topic quote sailed through
+    # while every list-section quote was checked (#161).
+    _llm_briefing_env(monkeypatch)
+    from daimon_briefing import llm
+    sample_checkpoint["working_context"]["active_topic"] = {
+        "text": "Wiring the on_session_end hook",
+        "trust": "verbatim",
+        "quote": "let's wire the on_session_end hook next",
+    }
+    unfaithful = (  # every LIST quote survives; only the topic quote is lost
+        'Verify: "I\'ll merge it myself later from the GitHub UI". '
+        'Open: "do we chunk below 1200 lines or single-pass?". '
+        'Decided: "we adopt the D-007 prompt for the serializer".'
+    )
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: unfaithful)
+    out = briefing.render(sample_checkpoint)
+    assert out != unfaithful  # rejected — deterministic fallback took over
+    assert "Wiring the on_session_end hook" in out
+
+
+def test_llm_render_accepted_when_topic_quote_survives(sample_checkpoint, monkeypatch):
+    _llm_briefing_env(monkeypatch)
+    from daimon_briefing import llm
+    sample_checkpoint["working_context"]["active_topic"] = {
+        "text": "Wiring the on_session_end hook",
+        "trust": "verbatim",
+        "quote": "let's wire the on_session_end hook next",
+    }
+    faithful = (
+        'Topic: "let\'s wire the on_session_end hook next". '
+        'Verify: "I\'ll merge it myself later from the GitHub UI". '
+        'Open: "do we chunk below 1200 lines or single-pass?". '
+        'Decided: "we adopt the D-007 prompt for the serializer".'
+    )
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: faithful)
+    assert briefing.render(sample_checkpoint) == faithful
+
+
 def test_llm_render_tolerates_rewrapped_whitespace(sample_checkpoint, monkeypatch):
     # LLMs re-wrap lines; a quote split across a newline is still intact.
     _llm_briefing_env(monkeypatch)

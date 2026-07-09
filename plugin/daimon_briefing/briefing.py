@@ -19,7 +19,7 @@ import time
 # store/carry import graph checked (#103): neither store, carry, recall, nor
 # scoring imports briefing — no cycle, so this stays a normal module-level
 # import (contrast carry.py's own local-import notes, which don't apply here).
-from . import carry, config, llm, scoring, store
+from . import carry, config, llm, schema, scoring, store
 
 log = logging.getLogger("daimon.briefing")
 
@@ -407,13 +407,13 @@ def _render_parts(b: dict, trimmed: dict) -> str:
 
 
 def _iter_trusted_quotes(checkpoint):
-    """Yield every verbatim item's quote across the cognitive sections."""
-    wc = checkpoint.get("working_context") or {}
-    es = checkpoint.get("epistemic_snapshot") or {}
-    for items in (wc.get("open_questions"), wc.get("recent_decisions"),
-                  es.get("strong_beliefs"), es.get("uncertainties"),
-                  es.get("contradictions_flagged")):
-        for item in items or []:
+    """Yield every verbatim item's quote across the cognitive sections.
+    Sections come from schema.ITEM_FIELDS so a field added there is validated
+    here without another hand-kept list (#146 drift class; #161 added the
+    active_topic singleton this way)."""
+    for field in schema.ITEM_FIELDS:
+        value = (checkpoint.get(field.section) or {}).get(field.key)
+        for item in (value,) if field.singleton else (value or []):
             if (isinstance(item, dict) and item.get("trust") == "verbatim"
                     and str(item.get("quote") or "").strip()):
                 yield str(item["quote"]).strip()
