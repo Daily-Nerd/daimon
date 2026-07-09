@@ -37,13 +37,50 @@ model omits the supersession link on the pivot decision; rerun session 2 if the
 flag doesn't appear (`DAIMON_LLM_NO_CACHE=1` forces a fresh generation behind a
 caching gateway).
 
-## Re-record the GIF
+## Ask the agent instead
 
-The recording is scripted with [vhs](https://github.com/charmbracelet/vhs)
-(`brew install vhs`). `demo.tape` expects the two serialized checkpoints to
-already exist (steps above), a `daimon` on PATH, and the same
-`DAIMON_CHECKPOINT_DIR`; adjust the two `daimon resolve` ids to your run, then:
+With the Claude Code integration installed, the briefing is injected
+automatically when a session starts — including headless runs. From the demo
+project directory:
 
 ```sh
-vhs demo.tape   # writes daimon-demo.gif + daimon-demo-flag.png
+claude -p "where did we leave off?"
+```
+
+The agent answers from the briefing: the pivot as current state, verbatim
+quotes cited, and the pre-pivot carried items called out as superseded
+(`claude-p.png`). Push it further and it self-audits its own memory —
+which items are verified quotes, which are its own inferences, and which
+carried items contradict each other (`claude-p-audit.png`):
+
+```sh
+claude -p "where did we leave off? and tell me how you know that — which of
+your memories of this project are verified quotes vs your own inferences,
+what beliefs are you carrying, and what should I do next?"
+```
+
+Answers vary per run — retake until the stale-item callout appears.
+
+## Re-record the assets
+
+The recordings are scripted with [vhs](https://github.com/charmbracelet/vhs)
+(`brew install vhs`). Every tape expects the two serialized checkpoints to
+already exist (steps above) and a small `demo-env.sh` next to it that the
+hidden setup sources — exports `DAIMON_CHECKPOINT_DIR`, cd's into the demo
+project, and puts `daimon` on PATH:
+
+```sh
+#!/bin/zsh
+export DAIMON_CHECKPOINT_DIR=/path/to/demo-store
+cd /path/to/demo-project
+PROMPT='%F{cyan}~/cloud-study%f ❯ '
+setopt interactive_comments
+```
+
+Adjust the two `daimon resolve` ids in `demo.tape` to your run, then:
+
+```sh
+vhs demo.tape            # daimon-demo.gif + daimon-demo-flag.png
+vhs claude-p.tape        # claude-p.png (crop the idle rows below the output)
+vhs claude-p-audit.tape  # claude-p-audit.png
 ```

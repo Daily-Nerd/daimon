@@ -31,7 +31,13 @@ Two sessions: commit to the AWS cert, then pivot to GCP. The next briefing carri
 
 ![daimon briefing flags a superseded decision, the human confirms, the next briefing withholds it](docs/demo/daimon-demo.gif)
 
-Nothing here is mocked — the transcripts, the recording script, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
+And because the briefing is injected automatically when a session starts, the agent itself answers from it — no commands, just ask:
+
+![headless Claude Code answers "where did we leave off?" from the injected briefing, calling out the stale pre-pivot items as superseded](docs/demo/claude-p.png)
+
+Ask it to show its work and it audits its own memory — verified quotes vs its own inferences, and the carried items that contradict each other: [see the full self-audit](docs/demo/claude-p-audit.png).
+
+Nothing here is mocked — the transcripts, the recording scripts, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
 
 The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings.
 
