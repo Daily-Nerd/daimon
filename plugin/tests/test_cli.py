@@ -3473,6 +3473,20 @@ def test_serialize_survives_unwritable_log_dir(
     assert "wrote checkpoint" in capsys.readouterr().out
 
 
+def test_attach_serialize_log_handler_fails_open_on_log_dir_error(
+        monkeypatch, _detach_serialize_log_handler):
+    # Fail open one seam earlier than the unwritable-dir case: config.log_dir()
+    # itself raising (bad DAIMON_LOG_DIR expansion, broken config) must leave
+    # the logger untouched instead of failing the serialize.
+    def boom():
+        raise RuntimeError("no log dir")
+    monkeypatch.setattr(cli.config, "log_dir", boom)
+    cli._attach_serialize_log_handler()
+    pkg = logging.getLogger("daimon_briefing")
+    assert not [h for h in pkg.handlers
+                if getattr(h, "_daimon_serialize_log", None)]
+
+
 def test_diagnostic_lines_are_invisible_to_ledger_parsers(tmp_log_dir):
     # The timestamped `<iso> LEVEL logger: message` shape must never match a
     # ledger regex — a diagnostic that parses as a result/spawn would corrupt
