@@ -460,8 +460,16 @@ def llm_command_input() -> str:
     on a stdin-only CLI runs the command with an empty argv-facing prompt).
     """
     val = (_get("DAIMON_LLM_COMMAND_INPUT") or "stdin").strip()
-    if val == "stdin" or val == "arg" or (val.startswith("file:") and val[len("file:"):]):
+    if val == "stdin" or val == "arg":
         return val
+    if val.startswith("file:"):
+        # Normalize the flag: "file:  --prompt-file " would otherwise survive
+        # into argv as "  --prompt-file" — not an injection risk, but a silent
+        # misconfiguration most CLIs won't match. A flag that strips to empty
+        # is the empty-flag case in disguise and falls through to the warning.
+        flag = val[len("file:"):].strip()
+        if flag:
+            return f"file:{flag}"
     log.warning(
         "DAIMON_LLM_COMMAND_INPUT=%r not recognized (expected stdin|arg|file:<flag>) "
         "— falling back to stdin", val,

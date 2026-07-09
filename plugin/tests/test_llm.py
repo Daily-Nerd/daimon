@@ -331,6 +331,22 @@ def test_chat_command_file_mode_writes_0600_tempfile_inside_call_cwd(monkeypatch
     assert seen["argv"][:2] == ["devin", "-p"]
 
 
+def test_chat_command_file_mode_strips_whitespace_around_flag(monkeypatch):
+    # "file:  --prompt-file  " must not smuggle the padding into argv as
+    # "  --prompt-file" — not an injection risk, but a silent misconfiguration
+    # most CLIs won't match. The flag is stripped after extraction.
+    seen = {}
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"] = argv
+        return 0, "ok", ""
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "devin -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:  --prompt-file  ")
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    out = llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert out == "ok"
+    assert seen["argv"][-2] == "--prompt-file"  # clean flag, no padding
+
+
 def test_chat_command_file_mode_cleaned_up_after_run(monkeypatch):
     seen = {}
     def fake_run(argv, stdin_text, timeout, env, cwd):

@@ -221,6 +221,17 @@ def test_llm_command_input_file_without_flag_fails_open_to_stdin(monkeypatch, ca
         assert config.llm_command_input() == "stdin"
 
 
+def test_llm_command_input_file_whitespace_only_flag_fails_open_to_stdin(
+    monkeypatch, caplog
+):
+    # A flag that strips to empty is the empty-flag case in disguise.
+    import logging
+
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "file:   ")
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.config"):
+        assert config.llm_command_input() == "stdin"
+
+
 def test_hung_after_seconds_default(monkeypatch):
     monkeypatch.delenv("DAIMON_HUNG_AFTER", raising=False)
     assert config.hung_after_seconds() == 1800

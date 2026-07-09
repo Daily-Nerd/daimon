@@ -260,7 +260,13 @@ def _apply_input_spec(argv, prompt_text, input_spec, cwd):
             )
         return [*argv, prompt_text], ""
     if input_spec.startswith("file:"):
-        flag = input_spec[len("file:"):]
+        # config.llm_command_input() already normalizes the flag, but strip
+        # again here so a spec that reaches this boundary directly (tests,
+        # future callers) can't smuggle whitespace padding into argv — a
+        # silent misconfiguration most CLIs won't match.
+        flag = input_spec[len("file:"):].strip()
+        if not flag:  # empty-flag spec is unusable — same treatment as stdin
+            return argv, prompt_text
         path = os.path.join(cwd, "prompt.txt")
         with open(path, "w", encoding="utf-8") as f:
             f.write(prompt_text)
