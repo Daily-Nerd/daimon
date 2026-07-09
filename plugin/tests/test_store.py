@@ -1031,6 +1031,25 @@ def test_resolutions_equal_timestamp_same_class_tie_is_order_independent(tmp_che
     assert winner_ab == winner_ba
 
 
+def test_resolutions_skips_unstamped_nondict_and_refless_events(tmp_checkpoint_dir):
+    # An unstamped event must never displace a stamped one, and non-dict or
+    # item_ref-less lines ride through without poisoning the fold.
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    lines = (
+        '{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a", "status": "resolved"}\n'
+        '{"ts": "not-a-timestamp", "item_ref": "o-a", "status": "reopened"}\n'
+        '"just a string"\n'
+        '{"ts": "2026-07-07T11:00:00Z", "status": "reopened"}\n'
+    )
+    (d / "events.jsonl").write_text(lines)
+    out = store.resolutions(project_dir="/p/A")
+    assert out["o-a"]["status"] == "resolved"  # unstamped reopen didn't displace
+    assert list(out) == ["o-a"]
+
+
 def test_resolutions_invalid_utf8_bytes_return_empty(tmp_checkpoint_dir):
     # A corrupt log (invalid UTF-8) must fail open like a missing file, never
     # raise UnicodeDecodeError out of the read path — a reader can never let
