@@ -766,6 +766,9 @@ def append_event(item_ref: str, status: str, note: str = "",
     try:
         note, _ = redact.redact_text(note)
         item_text, _ = redact.redact_text(item_text)
+        # status is free-form by design (readers prefix-match, never enum) —
+        # so it can carry a secret-shaped value and must be scrubbed too (#141).
+        status, _ = redact.redact_text(status)
         path.parent.mkdir(parents=True, exist_ok=True)
         evt = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "kind": kind, "item_ref": item_ref, "status": status,

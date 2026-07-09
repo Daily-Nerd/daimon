@@ -1143,6 +1143,21 @@ def test_append_event_redacts_note_and_item_text(tmp_checkpoint_dir):
     assert "[redacted:aws-key]" in raw
 
 
+def test_append_event_redacts_status(tmp_checkpoint_dir):
+    # #141: note and item_text were scrubbed but status was written raw —
+    # status is free-form by design, so a secret-shaped value carried in it
+    # must not escape to events.jsonl.
+    from daimon_briefing import store
+    store.append_event("o-a", "blocked-on:AKIAIOSFODNN7EXAMPLE",
+                       project_dir="/p/A")
+    slug = store.project_slug("/p/A")
+    raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text()
+    assert "AKIAIOSFODNN7EXAMPLE" not in raw
+    # Resolution readers prefix-match status (resolved/reopen/...): redaction
+    # must scrub the payload without disturbing the prefix.
+    assert '"blocked-on:[redacted:aws-key]"' in raw
+
+
 def test_is_resolved_supersede_candidate_is_live():
     from daimon_briefing import store
     assert store.is_resolved({"status": "supersede-candidate:r-9f2c1a"}) is False
