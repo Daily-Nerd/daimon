@@ -626,6 +626,51 @@ def test_id_bearing_item_never_fuzzy_withheld():
     assert candidates == []
 
 
+def test_live_idless_item_survives_id_bearing_resolved_overlap():
+    # #145: the resolved loop carries a REAL stamped id (kind initial + hex,
+    # store._stamp_item_ids shape) — exact id match already covers it fully,
+    # so its text must not sit in the fuzzy pool where a live id-less legacy
+    # item that merely resembles it would be silently withheld.
+    cp = {"working_context": {"open_questions": [
+        {"text": "release pipeline approval step still awaiting manual gate"}]}}  # no id
+    ev = _res_evt("o-3f2a9c", text="release pipeline manual approval gate awaiting")
+    filtered, withheld, candidates = briefing.withhold(cp, {"o-3f2a9c": ev})
+    assert withheld == []
+    assert candidates == []
+    assert filtered["working_context"]["open_questions"] == \
+        cp["working_context"]["open_questions"]
+
+
+def test_idless_resolution_still_fuzzy_suppresses_among_id_bearing_ones():
+    # #145 pin: restricting the fuzzy pool to id-less resolutions must not
+    # break genuine legacy suppression — a resolved item whose OWN ref is not
+    # id-shaped still fuzzy-binds its id-less live twin, even when id-bearing
+    # resolutions sit alongside it in the same resolutions fold.
+    cp = {"working_context": {"open_questions": [
+        {"text": "release pipeline approval step still awaiting manual gate"}]}}  # no id
+    legacy_ev = _res_evt("pipeline gate loop",  # legacy ref: not id-shaped
+                         text="release pipeline manual approval gate awaiting")
+    id_ev = _res_evt("o-9bd41e", text="gateway retry budget confirmed stable")
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {"pipeline gate loop": legacy_ev, "o-9bd41e": id_ev})
+    assert filtered["working_context"]["open_questions"] == []
+    assert len(withheld) == 1
+    assert withheld[0][2] is legacy_ev  # bound to the legacy event, not the id one
+    assert candidates == []
+
+
+def test_exact_id_suppression_unchanged_by_fuzzy_pool_restriction():
+    # #145 pin: excluding an id-bearing resolution from the FUZZY pool must
+    # not weaken its EXACT suppression — the item carrying that id still drops.
+    cp = {"working_context": {"open_questions": [
+        {"text": "release pipeline manual approval gate awaiting", "id": "o-3f2a9c"}]}}
+    ev = _res_evt("o-3f2a9c", text="release pipeline manual approval gate awaiting")
+    filtered, withheld, candidates = briefing.withhold(cp, {"o-3f2a9c": ev})
+    assert filtered["working_context"]["open_questions"] == []
+    assert len(withheld) == 1
+    assert candidates == []
+
+
 def test_no_resolved_events_returns_input_unchanged():
     cp = {"working_context": {"open_questions": [{"text": "x", "id": "o-a"}]}}
     filtered, withheld, candidates = briefing.withhold(cp, {})
