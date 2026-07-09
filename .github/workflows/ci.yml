@@ -39,7 +39,7 @@ jobs:
           HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q --cov=daimon_briefing --cov-report=xml --junitxml=junit.xml
 
       - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
+        if: ${{ matrix.python-version == '3.13' && !cancelled() }}
         uses: codecov/test-results-action@v1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -47,6 +47,7 @@ jobs:
           flags: py${{ matrix.python-version }}
 
       - name: Upload coverage to Codecov
+        if: ${{ matrix.python-version == '3.13' && !cancelled() }}
         # Reporting only — no coverage threshold gates the build yet. The
         # upload no-ops gracefully when CODECOV_TOKEN is unset, so a missing
         # secret never turns CI red.

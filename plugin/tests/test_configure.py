@@ -1,4 +1,4 @@
-import stat
+import os
 
 import pytest
 
@@ -143,6 +143,34 @@ def test_write_env_empty_updates_no_file(tmp_path, monkeypatch):
     out = configure.write_env({})
     assert not env_file.exists()  # nothing to persist -> no empty file created
     assert out == env_file
+
+
+def test_write_env_fsyncs_temp_file_before_replace(tmp_path, monkeypatch):
+    # Durability: without an fsync before os.replace, a power cut can leave a
+    # truncated/empty env file — silently unconfiguring the backend on next boot.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def spy_fsync(fd):
+        events.append("fsync")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst):
+        events.append("replace")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(configure.os, "fsync", spy_fsync)
+    monkeypatch.setattr(configure.os, "replace", spy_replace)
+
+    configure.write_env({"DAIMON_LLM_API_KEY": "sk-1"})
+
+    assert "fsync" in events, "temp file must be fsynced before it replaces the env file"
+    assert "replace" in events
+    assert events.index("fsync") < events.index("replace")
+    assert env_file.read_text(encoding="utf-8") == "DAIMON_LLM_API_KEY=sk-1\n"
 
 
 def test_write_env_sorted_lines(tmp_path, monkeypatch):

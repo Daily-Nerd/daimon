@@ -56,7 +56,7 @@ def write_env(updates: dict) -> Path:
     sorted KEY=VALUE lines, preserving unrelated pre-existing keys.
 
     The file is machine-managed: comments/order are NOT preserved (normalized).
-    Written atomically (temp + os.replace) and chmod 600 — it holds API keys.
+    Written atomically (temp + fsync + os.replace) and chmod 600 — it holds API keys.
     Empty merge result -> no file is created (the claude zero-config case writes
     nothing). Returns the target path either way.
     """
@@ -70,6 +70,9 @@ def write_env(updates: dict) -> Path:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(body)
+            f.flush()
+            os.fsync(f.fileno())  # durable before replace: a power cut must
+            # never leave a truncated env file (it holds the backend config)
         os.replace(tmp, path)
     except BaseException:
         try:

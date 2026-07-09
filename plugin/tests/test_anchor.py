@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from daimon_briefing import anchor
 
 _SRC = '''
@@ -119,6 +117,67 @@ def test_drifted_does_not_raise_on_malformed_anchor(tmp_path):
     out = anchor.drifted(checkpoint, tmp_path)  # must not raise
     assert [d["item"]["text"] for d in out] == ["broken"]
     assert out[0]["kind"] == "hard"
+
+
+# ---- target file with syntax errors (hot path: drift scan runs on every brief) ----
+
+_BROKEN_SRC = "def foo(:\n    return x + 1\n"  # unparseable on any Python version
+
+
+def test_check_hard_when_target_file_has_syntax_error(tmp_path):
+    # An anchored file that no longer parses is unverifiable — degrade to "hard"
+    # (fail toward verify-before-trusting), never raise.
+    _write(tmp_path, "m.py", _SRC)
+    a = anchor.resolve(tmp_path, "m.py", "foo")
+    _write(tmp_path, "m.py", _BROKEN_SRC)
+    assert anchor.check(a, tmp_path) == "hard"
+
+
+def test_body_hash_of_returns_none_on_syntax_error():
+    assert anchor.body_hash_of(_BROKEN_SRC, "foo") is None
+
+
+def test_drifted_degrades_on_syntax_error_file(tmp_path):
+    _write(tmp_path, "m.py", _SRC)
+    a = anchor.resolve(tmp_path, "m.py", "foo")
+    _write(tmp_path, "m.py", _BROKEN_SRC)
+    checkpoint = {
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [
+                {"text": "q-broken-file", "trust": "inferred", "anchored_to": a}
+            ],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }
+    out = anchor.drifted(checkpoint, tmp_path)  # must not raise
+    assert [(d["item"]["text"], d["kind"]) for d in out] == [("q-broken-file", "hard")]
+
+
+def test_brief_render_survives_syntax_error_in_anchored_file(tmp_path, capsys):
+    # End-to-end pin: brief render over a drift scan that hit an unparseable
+    # file must not traceback — the item surfaces as GONE drift.
+    from daimon_briefing import render
+
+    _write(tmp_path, "m.py", _SRC)
+    a = anchor.resolve(tmp_path, "m.py", "foo")
+    _write(tmp_path, "m.py", _BROKEN_SRC)
+    checkpoint = {
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [
+                {"text": "q-broken-file", "trust": "inferred", "anchored_to": a}
+            ],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }
+    drift = anchor.drifted(checkpoint, tmp_path)
+    render.render_brief(checkpoint, drift=drift)  # must not raise
+    out = capsys.readouterr().out
+    assert "CODE DRIFT" in out
+    assert "[GONE] q-broken-file" in out
 
 
 def test_drifted_collects_soft_drift(tmp_path):
