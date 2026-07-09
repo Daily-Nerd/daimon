@@ -34,6 +34,52 @@ _GENERIC_DF = 3     # a term shared by >=3 items of one kind is that kind's
                     # per kind per merge — no static stoplist, so carry stays
                     # language-neutral (es i18n just shipped).
 
+# Quantity-conflict guard (#173): spelled number-words, normalized to the
+# digit they name. `salient_terms` drops bare digits (<3 chars) and never
+# stems, so "ten" and "10" would otherwise never be recognized as the same
+# value — this table is what makes them equivalent.
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100,
+}
+_NUMBER_WORD_RE = re.compile(
+    r"\b(" + "|".join(_NUMBER_WORDS) + r")\b", re.IGNORECASE)
+_DIGIT_RE = re.compile(r"\b\d+\b")
+
+
+def _quantity_tokens(text: str) -> frozenset:
+    """Digit and spelled-number tokens in `text`, normalized to int values.
+    A hyphenated compound like "ten-week" still yields {10}: `\\b` sits on
+    the letter/hyphen boundary same as on whitespace, so the word inside
+    survives untouched by the tokenizer split `salient_terms` would apply."""
+    values = {int(m.group(0)) for m in _DIGIT_RE.finditer(text)}
+    values.update(_NUMBER_WORDS[m.group(0).lower()]
+                  for m in _NUMBER_WORD_RE.finditer(text))
+    return frozenset(values)
+
+
+def _quantity_conflict(a_text: str, b_text: str) -> bool:
+    """Structural evidence two texts are DISTINCT items regardless of term
+    overlap (#173): both carry quantity tokens, and neither's value set is a
+    subset of the other's — a two-sided numeric mismatch (the live specimen:
+    {10, 6} vs {6, 3}, "10" and "3" each appear on only one side).
+
+    Two deliberate non-fires, both to avoid re-breaking #22:
+      - either text has NO quantity tokens -> no conflict. A restatement can
+        drop every number; that must stay mergeable.
+      - one set is a SUBSET of the other ({6} vs {3, 6}) -> no conflict. A
+        restatement that drops SOME numbers but introduces no new, differing
+        one is still the same item reworded, not an update."""
+    a = _quantity_tokens(a_text)
+    b = _quantity_tokens(b_text)
+    if not a or not b:
+        return False
+    return not (a <= b or b <= a)
+
 
 def _generic_terms(texts, k: int = _GENERIC_DF) -> frozenset:
     """Salient terms appearing in >= k DISTINCT texts of one kind — that kind's
@@ -58,7 +104,14 @@ def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
     bias is deliberate and asymmetric: a false merge erases a loop and forges
     its birth stamp, while a false non-merge only costs a duplicate item — so
     tie-break toward NOT merging. The exact-text guard still catches identical
-    items regardless."""
+    items regardless.
+
+    Quantity-conflict guard (#173) runs FIRST and short-circuits term overlap
+    entirely: two texts stating different numbers are structurally distinct
+    even when they share enough subject vocabulary to clear the thresholds
+    below (an UPDATE's shared frame, not a reworded twin)."""
+    if _quantity_conflict(a_text, b_text):
+        return False
     a = set(recall.salient_terms(a_text)) - generic
     b = set(recall.salient_terms(b_text)) - generic
     if len(a) < 2 or len(b) < 2:

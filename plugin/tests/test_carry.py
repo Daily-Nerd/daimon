@@ -752,3 +752,87 @@ def test_freeze_copies_prev_quote_verified_with_quote():
     q = out["working_context"]["open_questions"][0]
     assert q["quote"] == _VERB_QUOTE
     assert q["quote_verified"] is True
+
+
+# --- quantity-conflict guard on unlinked twin false merge (#173) ------------
+# A native item that UPDATES a prior verbatim decision (not a re-statement,
+# not an explicit #167 reversal) can share enough subject vocabulary to
+# twin-match under _same_item's term-overlap rule alone. When the two texts
+# state DIFFERENT numbers, that is structural evidence they are distinct
+# items, not a reworded twin — the guard must block the match regardless of
+# term overlap, so the #22 freeze never fires and the update survives.
+
+_QTY_PREV = ("Study commitment: target exam X with a ten-week plan at 6 "
+             "hours per week")
+_QTY_PREV_QUOTE = "ten-week plan at 6 hours per week"
+_QTY_NATIVE = ("Maintain 6 hours per week study commitment, compressed "
+               "into 3 weeks")
+
+
+def test_quantity_conflict_blocks_twin_merge_native_update_survives():
+    # #173 live specimen: {ten, 6} vs {6, 3} — neither is a subset of the
+    # other, a genuine two-sided numeric mismatch. RED today: term overlap
+    # ({study, commitment, week, hours}) alone twin-matches them and the #22
+    # freeze overwrites the native update's text+quote with the prev
+    # decision's, silently losing the "compressed into 3 weeks" change.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _QTY_PREV, trust="verbatim", quote=_QTY_PREV_QUOTE, days=10)])
+    new = _cp("S-new", 0, decisions=[_item(_QTY_NATIVE, days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    native = next(d for d in ds if not d.get("carried_from"))
+    assert native["text"] == _QTY_NATIVE          # update text intact
+    assert native.get("trust") != "verbatim"       # never frozen
+    assert "carried_from" not in native
+    carried = next(d for d in ds if d.get("carried_from"))
+    assert carried["text"] == _QTY_PREV            # prev survives separately
+    assert carried["quote"] == _QTY_PREV_QUOTE
+    assert carried["trust"] == "verbatim"
+    assert len(ds) == 2
+
+
+def test_quantity_equivalence_number_word_and_digit_still_freezes():
+    # GUARD against over-firing: "ten"/"six" and "10"/"6" normalize to the
+    # SAME value set -> no conflict -> the #22 freeze still applies exactly
+    # as before the guard existed.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        "Study commitment: target exam Y with a ten week plan at six hours "
+        "per week", trust="verbatim",
+        quote="ten week plan at six hours per week", days=45)])
+    new = _cp("S-new", 0, decisions=[_item(
+        "Study commitment: maintaining a 10 week plan at 6 hours per week",
+        days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["trust"] == "verbatim"
+    assert "ten week plan" in ds[0]["text"]         # frozen original won
+
+
+def test_quantity_subset_drop_still_freezes_restatement():
+    # DESIGN CHOICE: a restatement that DROPS one number but keeps the other
+    # ({10, 6} -> {6}) is a subset, not a conflict — #22's "restatement drops
+    # detail" behavior must still freeze it. Only a two-sided mismatch (#173
+    # specimen above) counts as conflict.
+    prev = _cp("S-prev", 1, decisions=[_item(
+        _QTY_PREV, trust="verbatim", quote=_QTY_PREV_QUOTE, days=45)])
+    new = _cp("S-new", 0, decisions=[_item(
+        "Study commitment still on at 6 hours per week", days=0)])
+    out = carry.merge(new, prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 1
+    assert ds[0]["trust"] == "verbatim"
+    assert ds[0]["text"] == _QTY_PREV               # frozen original won
+
+
+def test_quantity_conflict_dedup_path_prev_items_carry_separately():
+    # Same guard on the plain dedup path (#31 item 9's carry-once): two PREV
+    # items reworded-twins of each other on term overlap alone, but stating
+    # CONFLICTING quantities, must both carry rather than collapsing into one.
+    prev = _cp("S-prev", 1, decisions=[
+        _item("study commitment ten week plan six hours weekly", days=5),
+        _item("study commitment three week plan six hours weekly", days=3),
+    ])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    ds = out["working_context"]["recent_decisions"]
+    assert len(ds) == 2
