@@ -8,6 +8,7 @@ which is non-TTY — always renders plain.
 
 import os
 import sys
+from contextlib import contextmanager
 
 from . import briefing, config, serializer
 
@@ -36,6 +37,24 @@ def supports_rich() -> bool:
 
 
 _TRUST_STYLE = {"verbatim": "bold green", "inferred": "yellow", "untagged": "dim"}
+
+
+@contextmanager
+def working(message: str):
+    """Live 'this is running' indicator around a slow call (#182).
+
+    Rich + TTY: an animated status spinner for the duration of the body —
+    the first thing a new user runs (`configure --test`) is a ~15s silent
+    LLM roundtrip, and dead terminal at that moment reads as hung. Plain
+    path prints the message once and returns (hook/log-safe, exact-format
+    testable). Body exceptions propagate untouched either way."""
+    if not supports_rich():
+        print(f"{message}...", flush=True)
+        yield
+        return
+    from rich.console import Console
+    with Console().status(f"{message}..."):
+        yield
 
 
 def _trust_key(item) -> str:

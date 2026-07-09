@@ -864,3 +864,36 @@ def test_render_heal_abort_rich_smoke(monkeypatch, capsys):
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     render.render_heal_abort(["heal aborted: transcript for S-1 vanished"])
     assert "heal aborted" in capsys.readouterr().out
+
+
+# ---- working(): live progress indicator around a slow call (#182) ----------
+
+
+def test_working_plain_prints_message_once_and_runs_body(capsys):
+    ran = []
+    with render.working("testing backend"):
+        ran.append(True)
+    assert ran == [True]
+    assert capsys.readouterr().out == "testing backend...\n"
+
+
+def test_working_rich_smoke_runs_body(monkeypatch, capsys):
+    # rich Status animates on a live console; content-only smoke per house
+    # rule — body must run and nothing may raise with the spinner active.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    ran = []
+    with render.working("testing backend"):
+        ran.append(True)
+    assert ran == [True]
+
+
+def test_working_plain_body_exception_propagates(capsys):
+    class Boom(RuntimeError):
+        pass
+    try:
+        with render.working("testing backend"):
+            raise Boom()
+    except Boom:
+        pass
+    else:  # pragma: no cover - the assert below documents intent
+        raise AssertionError("working() swallowed the body's exception")
