@@ -35,6 +35,7 @@ sidecar directory.
 """
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -60,12 +61,34 @@ class TeamError(Exception):
     failure. Everything else in sync degrades gracefully to rc 0."""
 
 
+def _run_git(argv, timeout) -> subprocess.CompletedProcess:
+    """Run a git argv NON-INTERACTIVELY and never raise, whatever git does.
+
+    - GIT_TERMINAL_PROMPT=0 + stdin=DEVNULL turn a missing-credential remote
+      into a fast rc != 0 instead of a blocked interactive credential prompt
+      that hangs until the timeout fires.
+    - A TimeoutExpired (a SubprocessError, NOT an OSError — so it would slip
+      past every caller's OSError catch) is converted into a synthetic FAILED
+      CompletedProcess (rc 124, the shell timeout convention). Every caller
+      already maps rc != 0 to the right outcome (offline for sync, TeamError
+      for init/clone), so the documented "never raises" contract holds
+      uniformly under a hung remote, not just under a clean rc != 0."""
+    try:
+        return subprocess.run(
+            argv,
+            capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            argv, 124, stdout="", stderr=f"git timed out after {timeout}s",
+        )
+
+
 def _git(cwd, *args, timeout=GIT_TIMEOUT) -> subprocess.CompletedProcess:
-    """One git call, cwd pinned to the sidecar, never raises on rc != 0."""
-    return subprocess.run(
-        ["git", "-C", str(cwd), *args],
-        capture_output=True, text=True, timeout=timeout,
-    )
+    """One git call, cwd pinned to the sidecar, never raises (rc != 0 or timeout)."""
+    return _run_git(["git", "-C", str(cwd), *args], timeout)
 
 
 def _last_line(text: str) -> str:
@@ -132,9 +155,9 @@ def _identity_extra(sidecar) -> list[str]:
 
 
 def _commit(sidecar, message) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    return _run_git(
         ["git", "-C", str(sidecar), *_identity_extra(sidecar), "commit", "-m", message],
-        capture_output=True, text=True, timeout=GIT_TIMEOUT,
+        GIT_TIMEOUT,
     )
 
 
@@ -172,10 +195,7 @@ def init(url: str) -> Path:
             "run `daimon team sync`, or remove the directory to re-clone"
         )
     root.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        ["git", "clone", "--", url, str(dest)],
-        capture_output=True, text=True, timeout=NET_TIMEOUT,
-    )
+    proc = _run_git(["git", "clone", "--", url, str(dest)], NET_TIMEOUT)
     if proc.returncode != 0:
         raise TeamError(f"git clone failed: {_last_line(proc.stderr)}")
     if _head(dest) is None:  # unborn branch: the remote was empty
