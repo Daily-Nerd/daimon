@@ -29,21 +29,22 @@ from pathlib import Path
 from . import anchor, briefing, carry, config, configure, harvest, llm, recall, render, serializer, store, teamsync, transcript
 from . import __version__
 
-# The serialize.log ledger subsystem lives in ledger.py (#147, pure move).
-# EVERY moved name is re-imported here — including the ones cli.py no longer
-# calls itself — because `cli.<name>` is a stable seam: tests and host hooks
-# resolve the ledger through this module.
+# The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
+# moves). EVERY moved name is re-imported here — including the ones cli.py no
+# longer calls itself — because `cli.<name>` is a stable seam: tests and host
+# hooks resolve the ledger through this module.
 from .ledger import (
     _HEAL_SKIP_REASON,  # noqa: F401 — re-exported for compat
     _HEAL_TRANSCRIPT_RE,  # noqa: F401 — re-exported for compat
     _LEDGER_OK_RE,  # noqa: F401 — re-exported for compat
     _LEDGER_PROJECT_RE,  # noqa: F401 — re-exported for compat
-    _LEDGER_SKIP_RE,
+    _LEDGER_SKIP_RE,  # noqa: F401 — re-exported for compat
     _LEDGER_SPAWN_TRANSCRIPT_RE,  # noqa: F401 — re-exported for compat
-    _RESULT_ERR_RE,
-    _RESULT_OK_RE,
+    _RESULT_ERR_RE,  # noqa: F401 — re-exported for compat
+    _RESULT_OK_RE,  # noqa: F401 — re-exported for compat
     _SPAWN_RE,  # noqa: F401 — re-exported for compat
-    _STATS_HOST_RE,
+    _STATS_HOST_RE,  # noqa: F401 — re-exported for compat
+    _USAGE_STAMP_FMT,  # noqa: F401 — re-exported for compat
     _append_retry_log,
     _append_serialize_log,
     _compute_outstanding,
@@ -51,7 +52,10 @@ from .ledger import (
     _heal_plan,
     _outstanding_failures,  # noqa: F401 — re-exported for compat
     _parse_serialize_log,
+    _parse_stamp,
     _session_ledger,
+    _spawns_in_window,
+    _stats_capture,
 )
 
 # Module-level seam so tests can inject a fake LLM client.
@@ -1277,38 +1281,6 @@ def _stats_usage() -> dict:
     return counts
 
 
-def _stats_capture() -> dict:
-    """serialize.log -> aggregate counters. Tallies EVERY line (scar #9: no
-    last-of-kind collapse — a buried failure still counts)."""
-    out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
-           "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0}
-    try:
-        text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
-    except OSError:
-        return out
-    for line in text.splitlines():
-        line = line.strip()
-        m = _RESULT_OK_RE.match(line)
-        if m:
-            out["success"] += 1
-            took = int(m.group(1))
-            out["max_serialize_seconds"] = max(out["max_serialize_seconds"], took)
-            out["total_serialize_seconds"] += took
-            if "[fallback backend]" in line:
-                out["fallback_serializes"] += 1
-            continue
-        if _LEDGER_SKIP_RE.match(line):
-            out["skipped"] += 1
-            continue
-        if _RESULT_ERR_RE.match(line):
-            out["errors"] += 1
-            continue
-        hm = _STATS_HOST_RE.match(line)
-        if hm:
-            out["hosts"][hm.group(1)] = out["hosts"].get(hm.group(1), 0) + 1
-    return out
-
-
 def _stats_store() -> dict:
     """Checkpoint store -> counts by kind and trust class + carried items.
     Reuses recall's section map so a new cognitive kind shows up here for free."""
@@ -1350,32 +1322,7 @@ def _stats_store() -> dict:
     return out
 
 
-_USAGE_STAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _RETENTION_WINDOW_DAYS = 14
-
-
-def _parse_stamp(token: str):
-    try:
-        return datetime.strptime(token, _USAGE_STAMP_FMT).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
-def _spawns_in_window(cutoff) -> bool:
-    """True when serialize.log shows any hook-spawned capture inside the
-    window — i.e. sessions ARE happening on this machine."""
-    try:
-        text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    for line in text.splitlines():
-        line = line.strip()
-        if not _STATS_HOST_RE.match(line):
-            continue
-        stamp = _parse_stamp(line.split()[0])
-        if stamp is not None and stamp >= cutoff:
-            return True
-    return False
 
 
 def _stats_retention(now=None) -> dict:

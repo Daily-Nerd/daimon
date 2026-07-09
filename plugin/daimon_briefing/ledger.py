@@ -8,6 +8,11 @@ _append_retry_log), the line-format regexes, the last-of-each-kind tail view
 classifier (_outstanding_failures / _compute_outstanding), and the heal decision
 (_heal_plan). Every regex here is a load-bearing contract with the lines the
 hooks and _run_serialize write; change them together or not at all.
+
+The stats fold over the same log lives here too (#162, second pure-move
+slice): the every-line tally (_stats_capture) and the in-window spawn probe
+(_spawns_in_window) with its stamp parser (_parse_stamp), so the
+"new prefix -> update the parser" rule has a single home.
 """
 
 import re
@@ -297,3 +302,62 @@ _STATS_HOST_RE = re.compile(
     r"^\S+ (gemini-session-end|session-end|codex-stop|windsurf-cascade): "
     r"spawned serialize for "
 )
+
+
+def _stats_capture() -> dict:
+    """serialize.log -> aggregate counters. Tallies EVERY line (scar #9: no
+    last-of-kind collapse — a buried failure still counts)."""
+    out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
+           "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0}
+    try:
+        text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        m = _RESULT_OK_RE.match(line)
+        if m:
+            out["success"] += 1
+            took = int(m.group(1))
+            out["max_serialize_seconds"] = max(out["max_serialize_seconds"], took)
+            out["total_serialize_seconds"] += took
+            if "[fallback backend]" in line:
+                out["fallback_serializes"] += 1
+            continue
+        if _LEDGER_SKIP_RE.match(line):
+            out["skipped"] += 1
+            continue
+        if _RESULT_ERR_RE.match(line):
+            out["errors"] += 1
+            continue
+        hm = _STATS_HOST_RE.match(line)
+        if hm:
+            out["hosts"][hm.group(1)] = out["hosts"].get(hm.group(1), 0) + 1
+    return out
+
+
+_USAGE_STAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _parse_stamp(token: str):
+    try:
+        return datetime.strptime(token, _USAGE_STAMP_FMT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _spawns_in_window(cutoff) -> bool:
+    """True when serialize.log shows any hook-spawned capture inside the
+    window — i.e. sessions ARE happening on this machine."""
+    try:
+        text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        line = line.strip()
+        if not _STATS_HOST_RE.match(line):
+            continue
+        stamp = _parse_stamp(line.split()[0])
+        if stamp is not None and stamp >= cutoff:
+            return True
+    return False

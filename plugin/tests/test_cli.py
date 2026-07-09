@@ -3382,6 +3382,22 @@ def test_retention_no_warning_without_spawns(tmp_log_dir):
     assert r["stale_hook_warning"] is False
 
 
+def test_spawns_in_window_skips_garbage_and_stale_spawns(tmp_log_dir):
+    # Non-spawn lines are skipped, an unparseable stamp is not a crash, and a
+    # spawn older than the window reports False rather than a stale True.
+    from daimon_briefing import ledger
+
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    old = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        "totally unrelated line\n"
+        f"{old} session-end: spawned serialize for S-old (pid 1)\n"
+    )
+    assert ledger._spawns_in_window(now - timedelta(days=14)) is False
+    assert ledger._parse_stamp("not-a-stamp") is None
+
+
 def test_stats_json_includes_retention(tmp_checkpoint_dir, tmp_log_dir,
                                        sample_checkpoint, capsys):
     from daimon_briefing import store
