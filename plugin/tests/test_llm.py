@@ -331,6 +331,18 @@ def test_chat_command_file_mode_writes_0600_tempfile_inside_call_cwd(monkeypatch
     assert seen["argv"][:2] == ["devin", "-p"]
 
 
+def test_apply_input_spec_file_flag_stripping_to_empty_degrades_to_stdin(tmp_path):
+    # Defensive boundary: config.llm_command_input() normalizes
+    # "file:<whitespace>" to "stdin" before _apply_input_spec ever sees it,
+    # but a spec reaching this function directly (tests, future callers)
+    # with a flag that strips to empty must degrade to stdin behavior —
+    # argv untouched, prompt piped — not append an empty flag to argv.
+    argv, stdin_text = llm._apply_input_spec(
+        ["mycli", "-p"], "PROMPT", "file:   ", str(tmp_path))
+    assert argv == ["mycli", "-p"]
+    assert stdin_text == "PROMPT"
+
+
 def test_chat_command_file_mode_strips_whitespace_around_flag(monkeypatch):
     # "file:  --prompt-file  " must not smuggle the padding into argv as
     # "  --prompt-file" — not an injection risk, but a silent misconfiguration
