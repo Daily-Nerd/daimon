@@ -228,7 +228,7 @@ def test_brief_hook_no_team_sync_without_remote(tmp_path, tmp_checkpoint_dir):
         extra_env={"PATH": str(fake_bin), "DAIMON_TEAM_DIR": str(empty_team)},
     )
     assert proc.returncode == 0
-    content = _wait_for_text(capture, "invoked heal")  # hook ran to completion
+    _wait_for_text(capture, "invoked heal")  # hook ran to completion
     time.sleep(0.3)  # give a (wrongly) spawned sync a chance to record
     assert "invoked team" not in capture.read_text()
 
@@ -642,7 +642,7 @@ def test_windsurf_probe_scan_vscdb_finds_trajectory_key(tmp_path):
     # ItemTable). The scan mode must report which key holds a given trajectory
     # WITHOUT shipping whole conversation blobs — key names, sizes, and a
     # small head of the matching value only.
-    import sqlite3, subprocess
+    import sqlite3
     probe = Path(__file__).resolve().parents[2] / "hook" / "daimon-windsurf-probe.py"
     db = tmp_path / "state.vscdb"
     conn = sqlite3.connect(str(db))

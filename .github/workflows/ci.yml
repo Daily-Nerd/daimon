@@ -60,6 +60,8 @@ jobs:
           fail_ci_if_error: false
 
   lint:
+    # Intended state: this job is a required status check in branch
+    # protection (repo settings — maintainer action, not configurable here).
     name: lint (ruff + mypy)
     runs-on: ubuntu-latest
     defaults:
@@ -77,8 +79,10 @@ jobs:
 
       # Blocking: ruff and mypy are version-pinned in the dev extra so the
       # gate is reproducible.
+      # Same paths as .pre-commit-config.yaml — keep the two in sync so the
+      # local hook and CI can never disagree about what is lint-clean.
       - name: ruff check
-        run: uv run --extra dev ruff check daimon_briefing
+        run: uv run --extra dev ruff check daimon_briefing tests ../scripts
 
       # Non-blocking: mypy currently reports pre-existing errors that are a
       # deliberate follow-up. continue-on-error keeps them visible in the log

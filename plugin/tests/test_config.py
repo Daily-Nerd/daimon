@@ -1,4 +1,8 @@
-from daimon_briefing import config
+import getpass
+import subprocess
+from pathlib import Path
+
+from daimon_briefing import config, store
 
 
 def test_checkpoint_dir_from_env(monkeypatch, tmp_path):
@@ -191,12 +195,6 @@ def test_hung_after_seconds_malformed_falls_back(monkeypatch):
 
 # ---- resolve_project_root: normalize a subdir session to its git toplevel (#74) ----
 
-import subprocess
-
-from pathlib import Path
-
-from daimon_briefing import store
-
 
 def _init_git_repo(path: Path) -> None:
     """Init a bare-minimum git repo. `rev-parse --show-toplevel` works right after
@@ -316,8 +314,6 @@ def test_checkpoint_keep_noninteger_falls_back(monkeypatch):
 
 
 # ---- team memory (#111): opt-in dual-write, team dir, author identity ----
-
-import getpass
 
 
 def test_team_enabled_opt_in(monkeypatch):

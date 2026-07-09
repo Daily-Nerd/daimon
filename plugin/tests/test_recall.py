@@ -765,7 +765,6 @@ def test_suggest_db_error_writes_breadcrumb(tmp_checkpoint_dir, monkeypatch):
                                  "trust": "inferred"}]),
         project_dir="/repo/x",
     )
-    real_connect = sq.connect
     def bad_connect(*a, **k):
         raise sq.OperationalError("database is locked")
     monkeypatch.setattr(recall.sqlite3, "connect", bad_connect)

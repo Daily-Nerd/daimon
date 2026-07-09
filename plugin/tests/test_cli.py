@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1593,7 +1594,7 @@ def test_cmd_status_json_has_health_and_siblings(tmp_checkpoint_dir, capsys, mon
     class A:
         project = root
         json = True
-    rc = cli._cmd_status(A())
+    cli._cmd_status(A())
     out = json.loads(capsys.readouterr().out)
     assert "health" in out and "siblings" in out
     assert out["project"]["slug"] == slug
@@ -2049,7 +2050,7 @@ def test_cli_recall_flags_superseded(tmp_checkpoint_dir, capsys, monkeypatch, tm
         project_dir=proj)
     rc = cli.main(["recall", "meerkat", "--project", proj])
     assert rc == 0
-    lines = [l for l in capsys.readouterr().out.splitlines() if "meerkat" in l]
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "meerkat" in ln]
     assert len(lines) == 2
     assert "superseded" not in lines[0]  # live item first
     assert "superseded by S-new" in lines[1]
@@ -2982,7 +2983,7 @@ def test_status_json_reports_disabled(tmp_checkpoint_dir, sample_checkpoint, cap
     from daimon_briefing import store
     store.write_checkpoint("S1", sample_checkpoint)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
-    rc = cli.main(["status", "--json"])
+    cli.main(["status", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert data["disabled"] is True
 
@@ -3010,7 +3011,7 @@ def test_status_counts_recent_skipped_sessions(
 def test_status_no_skip_line_when_none(tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
     store.write_checkpoint("S1", sample_checkpoint)
-    rc = cli.main(["status"])
+    cli.main(["status"])
     assert "skipped" not in capsys.readouterr().out
 
 
@@ -3316,8 +3317,6 @@ def test_stats_events_scoped_to_current_project(
 
 
 # ---- retention: hook briefings vs deliberate re-reads ----
-
-from datetime import datetime, timedelta, timezone
 
 
 def _usage_line(days_ago, cmd, now):

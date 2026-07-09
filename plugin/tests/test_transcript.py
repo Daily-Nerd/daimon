@@ -1,3 +1,4 @@
+import json as _json
 from pathlib import Path
 
 from daimon_briefing import transcript
@@ -220,8 +221,6 @@ def test_from_session_uses_db_when_available(monkeypatch):
 
 
 # ---- last_timestamp: session-end stamp for heal/serialize routing (#123) ----
-
-import json as _json
 
 
 def _jsonl(tmp_path, rows, name="s.jsonl"):

@@ -1,3 +1,5 @@
+import time as _time
+
 from daimon_briefing import briefing
 
 
@@ -298,8 +300,6 @@ def test_render_plain_handles_missing_overflow_key():
 
 
 # ---- #78: decay/recency ordering inside briefing sections ----
-
-import time as _time
 
 _NOW78 = 1_800_000_000.0
 
