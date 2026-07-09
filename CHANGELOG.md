@@ -5,6 +5,28 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1](https://github.com/Daily-Nerd/daimon/compare/v0.12.0...v0.12.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **anchor:** derive the drift-scan item walk from the shared schema ([#163](https://github.com/Daily-Nerd/daimon/issues/163)) ([75b0466](https://github.com/Daily-Nerd/daimon/commit/75b04664ae09f17970f3309b29e77405308fc8e1))
+* **briefing:** stop fuzzy-withholding live items against id-bearing closed loops ([#156](https://github.com/Daily-Nerd/daimon/issues/156)) ([4977578](https://github.com/Daily-Nerd/daimon/commit/4977578b3bb06f4b17e4ebda3c442d572baf771a))
+* **briefing:** validate active_topic quotes in the LLM-render gate ([#164](https://github.com/Daily-Nerd/daimon/issues/164)) ([7e08d30](https://github.com/Daily-Nerd/daimon/commit/7e08d30e6a32ff601e203a1b94694a0cd4aaeae8))
+* **carry:** exclude verified reversals from twin candidacy so the freeze cannot erase them ([#169](https://github.com/Daily-Nerd/daimon/issues/169)) ([887b0ed](https://github.com/Daily-Nerd/daimon/commit/887b0ed5f5eacaaf53ec4be11579a1ecafda3134)), closes [#167](https://github.com/Daily-Nerd/daimon/issues/167)
+* **carry:** full-vocabulary fallback for link targets that generic subtraction strips ([#170](https://github.com/Daily-Nerd/daimon/issues/170)) ([fce854a](https://github.com/Daily-Nerd/daimon/commit/fce854aa5b3e1ce13a6c602baa189bdf07d6b2ac)), closes [#168](https://github.com/Daily-Nerd/daimon/issues/168)
+* **hooks:** ledger in-process capture failures so status and heal see them ([#157](https://github.com/Daily-Nerd/daimon/issues/157)) ([25598d5](https://github.com/Daily-Nerd/daimon/commit/25598d58fc84443f7ff41e2bd93445d41071044d))
+* **redact:** close plaintext log seams outside the redaction choke point ([#153](https://github.com/Daily-Nerd/daimon/issues/153)) ([06ac859](https://github.com/Daily-Nerd/daimon/commit/06ac8598441671f30f0e1de2d5bd9f4c611a2dab))
+* **store:** make same-second resolution ties content-deterministic ([#154](https://github.com/Daily-Nerd/daimon/issues/154)) ([77d0f3a](https://github.com/Daily-Nerd/daimon/commit/77d0f3a45348b4b30f80857c2cccb65186cd4113))
+* **store:** stop cross-project first_seen bleed and tolerate corrupt checkpoint pointers ([#140](https://github.com/Daily-Nerd/daimon/issues/140)) ([77988aa](https://github.com/Daily-Nerd/daimon/commit/77988aa525bd501ee98e99253d51e84dc5653f5d))
+* **teamsync:** guard git timeouts into offline degradation + non-interactive credential handling ([#137](https://github.com/Daily-Nerd/daimon/issues/137)) ([d9c3c03](https://github.com/Daily-Nerd/daimon/commit/d9c3c03377729f2d2e378933b21a79e754afc63c))
+* **teamsync:** scope sync commit to the author's own directory ([#152](https://github.com/Daily-Nerd/daimon/issues/152)) ([38dbc8a](https://github.com/Daily-Nerd/daimon/commit/38dbc8ab72ccaafa185e185f21e9b2b5168c59fb))
+
+
+### Documentation
+
+* **readme:** add a recorded demo of the trust loop ([#172](https://github.com/Daily-Nerd/daimon/issues/172)) ([b84fbde](https://github.com/Daily-Nerd/daimon/commit/b84fbde56f59f3354213b620e5686a58b6fa00e5)), closes [#171](https://github.com/Daily-Nerd/daimon/issues/171)
+
 ## [0.12.0](https://github.com/Daily-Nerd/daimon/compare/v0.11.1...v0.12.0) (2026-07-08)
 
 

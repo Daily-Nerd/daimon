@@ -161,7 +161,7 @@ toml = [
 
 [[package]]
 name = "daimon-briefing"
-version = "0.12.0"
+version = "0.12.1"
 source = { editable = "." }
 
 [package.optional-dependencies]
