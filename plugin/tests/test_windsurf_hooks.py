@@ -465,15 +465,51 @@ def test_finalizer_respects_kill_switch(tmp_path):
 
 
 def test_pre_user_prompt_does_not_arm_finalizer(tmp_path):
-    # Only serialize-capable post events arm — a user prompt is the START of
-    # activity, not a candidate session tail.
+    # A user prompt is trajectory ACTIVITY (it must touch the stamp) but not a
+    # candidate session tail (it must NOT arm a sleeper): if the session dies
+    # between prompt and response, the lone unanswered prompt isn't worth a
+    # finalizer — the response's post event arms as usual.
     payload = {"agent_action_name": "pre_user_prompt", "trajectory_id": TRAJ,
                "tool_info": {"prompt": "hola"}}
     proc, capture = _run(payload, tmp_path,
                          extra_env={"DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.1"})
     assert proc.returncode == 0
+    assert _activity_stamp(tmp_path).exists()  # touched: a prompt is activity
+    time.sleep(0.4)  # quiet elapsed, stamp unchanged — an armed sleeper WOULD fire
+    assert not capture.exists() or "serialize" not in capture.read_text()
+    log = tmp_path / ".daimon" / "logs" / "serialize.log"
+    assert "windsurf-finalizer:" not in (
+        log.read_text(encoding="utf-8") if log.exists() else "")
+
+
+def test_pre_user_prompt_quiet_zero_touches_nothing(tmp_path):
+    # With the finalizer disabled, the prompt-side touch stays inert too — no
+    # stamp file appears.
+    payload = {"agent_action_name": "pre_user_prompt", "trajectory_id": TRAJ,
+               "tool_info": {"prompt": "hola"}}
+    proc, _ = _run(payload, tmp_path,
+                   extra_env={"DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0"})
+    assert proc.returncode == 0
     assert not _activity_stamp(tmp_path).exists()
-    time.sleep(0.4)
+
+
+def test_pre_user_prompt_defuses_previously_armed_sleeper(tmp_path):
+    # A prompt arriving inside the quiet window means the assistant is still
+    # generating a response — the sleeper armed by the PREVIOUS post event
+    # must see the refreshed stamp at wake and exit without serializing a
+    # mid-generation transcript state.
+    _preload_throttle_marker(tmp_path)
+    extra = {"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "3600",
+             "DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.6"}
+    proc, capture = _run(_post_payload("previous response"), tmp_path, extra_env=extra)
+    assert proc.returncode == 0
+    assert _activity_stamp(tmp_path).exists()  # armed
+    prompt = {"agent_action_name": "pre_user_prompt", "trajectory_id": TRAJ,
+              "tool_info": {"prompt": "follow-up question"}}
+    proc, _ = _run(prompt, tmp_path, extra_env=extra)  # inside the quiet window
+    assert proc.returncode == 0
+    time.sleep(1.2)  # quiet period elapsed with margin
+    assert not capture.exists() or "serialize" not in capture.read_text()
     log = tmp_path / ".daimon" / "logs" / "serialize.log"
     assert "windsurf-finalizer:" not in (
         log.read_text(encoding="utf-8") if log.exists() else "")

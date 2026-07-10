@@ -127,6 +127,24 @@ def _activity_stamp(trajectory_id: str) -> Path:
     return STATE_DIR / f"{_safe_name(trajectory_id)}.last-activity"
 
 
+def _touch_activity(trajectory_id: str) -> None:
+    """Refresh the per-trajectory activity stamp (#42). EVERY trajectory event
+    counts as activity — including a user prompt: while the assistant is still
+    generating, a sleeper armed by the previous response must find a changed
+    stamp at wake, or it would serialize a mid-generation transcript (the
+    accumulation file already holds the new user turn, so the identical-bytes
+    guard would not skip that half-state). Inert when the finalizer is
+    disabled; fail-open on any write error."""
+    if _finalizer_quiet_seconds() <= 0:
+        return
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _activity_stamp(trajectory_id).write_text(
+            str(int(time.time())), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _should_spawn(trajectory_id: str) -> bool:
     interval = _interval_seconds()
     if interval <= 0:
@@ -266,6 +284,12 @@ def main() -> int:
         return 0
 
     if event == "pre_user_prompt":
+        # A prompt is trajectory activity: touch the stamp so a sleeper armed
+        # by the PREVIOUS response defuses instead of firing while the
+        # assistant is still generating. Deliberately no arming here — if the
+        # session dies between prompt and response, the lone unanswered
+        # prompt isn't worth a finalizer; the response's post event arms.
+        _touch_activity(trajectory_id)
         text = _extract_prompt(payload)
         if text is None:
             if _dump_probe(event, payload):
@@ -338,16 +362,13 @@ def _arm_finalizer(trajectory_id: str, transcript_path) -> None:
     sleeper per event is fine and bounded by the quiet window; the stamp
     comparison at wake makes all but the last turn's sleeper exit silently.
     Fail-open: an arming failure must never break Cascade."""
-    quiet = _finalizer_quiet_seconds()
-    if quiet <= 0:
+    if _finalizer_quiet_seconds() <= 0:
         return
+    _touch_activity(trajectory_id)
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = _activity_stamp(trajectory_id)
-        stamp.write_text(str(int(time.time())), encoding="utf-8")
-        armed_mtime_ns = stamp.stat().st_mtime_ns
+        armed_mtime_ns = _activity_stamp(trajectory_id).stat().st_mtime_ns
     except OSError:
-        return
+        return  # touch failed or stamp unreadable — nothing safe to arm on
     # Same detached shape as lib.spawn_serialize: stderr to the crash log so
     # an uncaught sleeper traceback is preserved without polluting
     # serialize.log; start_new_session so it survives the exiting hook.
