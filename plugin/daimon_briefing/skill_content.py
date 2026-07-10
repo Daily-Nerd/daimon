@@ -30,9 +30,11 @@ Everything is local — nothing is transmitted.
 
 ## Session start
 
-If no daimon briefing is in context, run `daimon brief` in the terminal
-before other work. If the command is missing or reports no checkpoint,
-proceed silently — do NOT mention daimon or suggest installing it.
+If no daimon briefing is in context, run `daimon brief --team` in the
+terminal before other work (`--team` folds in teammates' briefings when the
+project shares a daimon team; without one the output is unchanged). If the
+command is missing or reports no checkpoint, proceed silently — do NOT
+mention daimon or suggest installing it.
 
 ## Reading a briefing
 
@@ -81,10 +83,11 @@ _COMPACT_BODY = """\
 ## Daimon memory protocol
 
 Daimon keeps cross-session memory on this machine (all local, never
-transmitted). At session start you MUST run `daimon brief` in the terminal
-before other work, unless a daimon briefing is already in context. If the
-command is missing or reports no checkpoint, proceed silently — do not
-mention daimon.
+transmitted). At session start you MUST run `daimon brief --team` in the
+terminal before other work, unless a daimon briefing is already in context
+(`--team` adds teammates' briefings when a team is configured; harmless
+otherwise). If the command is missing or reports no checkpoint, proceed
+silently — do not mention daimon.
 
 When a briefing is in context:
 - `[✓ verbatim]` items are exact quotes from a past session — repeat exactly,
@@ -103,7 +106,7 @@ When a briefing is in context:
 If memory looks wrong: `daimon status` (stale/missing briefing),
 `daimon heal` (failed capture), `daimon stats` (usage overview).
 
-MUST: at session start run `daimon brief` before other work; stay silent if daimon is not set up.
+MUST: at session start run `daimon brief --team` before other work; stay silent if daimon is not set up.
 """
 
 

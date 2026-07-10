@@ -41,8 +41,25 @@ def test_compact_repeats_must_win_rule_at_end():
     # session-start rule must occur at least twice (top protocol + MUST line).
     # Count the backtick-delimited command, not the bare substring "daimon
     # brief" — that also matches "daimon briefing" and would pass on a
-    # confounded count.
-    assert body.count("run `daimon brief`") >= 2
+    # confounded count. The command carries --team since #214.
+    assert body.count("run `daimon brief --team`") >= 2
+
+
+def test_session_start_pull_covers_team_variant():
+    # #214: on hosts without briefing injection (Windsurf Cascade has no
+    # session-start event — a permanent host constraint) the skill IS the
+    # briefing delivery path. `daimon brief --team` supersets `daimon brief`:
+    # pure file-ops, and byte-identical output when no team is configured —
+    # so every session-start rule teaches the team-inclusive command
+    # unconditionally instead of a condition an agent cannot evaluate (the
+    # team config lives in the machine-level sidecar, not the project).
+    full = skill_content.render_full()
+    session_start = full.split("## Session start")[1].split("\n## ")[0]
+    assert "`daimon brief --team`" in session_start
+    compact = skill_content.render_compact()
+    # Top protocol block AND the later-wins MUST line both carry the flag.
+    assert compact.count("run `daimon brief --team`") >= 2
+    assert "--team" in compact.strip().splitlines()[-1]
 
 
 def test_compact_has_concrete_example():
