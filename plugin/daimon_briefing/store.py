@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, redact, schema, serializer, teamproject
+from . import config, receipts, redact, schema, serializer, teamproject
 
 _LATEST = "latest.json"
 # Rotation pointers, not per-session checkpoints. Anything else ending in .json in
@@ -490,6 +490,16 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # project is UNKNOWN, the global pointer IS this stream's own prior
     # checkpoint, so the fallback stays on (same-stream carry, #126 legacy).
     _stamp_first_seen(checkpoint, read_latest(project_dir, fallback=not slug))
+    # Signed provenance receipt (#204): decide + prep key material BEFORE the blob
+    # is serialized, so the `receipts` era marker rides INSIDE the signed bytes
+    # (outputs_hash covers the exact blob). plan_mint returns None (and stamps
+    # nothing) when the feature is off or a receipt can't be produced — gate off,
+    # no transcript_hash, no CLI/openssl/seed — so serialize proceeds receiptless.
+    # The sidecar itself is written AFTER the checkpoint file succeeds (below).
+    # setdefault: a re-write of an already-marked checkpoint keeps its marker.
+    receipt_plan = receipts.plan_mint(checkpoint)
+    if receipt_plan is not None:
+        checkpoint.setdefault("receipts", True)
     blob = json.dumps(checkpoint, indent=2, ensure_ascii=False)
     history = config.checkpoint_history()
     _atomic_write(path, blob)
@@ -514,6 +524,12 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
             if not _pointer_regresses(pdir, new_epoch):
                 _rotate_pointers(pdir, history)
                 _atomic_write(pdir / _LATEST, blob)
+    # Mint the receipt now that the checkpoint file is durably on disk (#204):
+    # outputs_hash covers those exact bytes. Best-effort and self-contained —
+    # receipts.mint swallows every failure — so it can never affect the write /
+    # pointers / GC above, nor this function's rc.
+    if receipt_plan is not None:
+        receipts.mint(receipt_plan, checkpoint, blob, path)
     # Opportunistic retention: serialize already succeeded, so pruning old
     # per-session files here never touches the read/briefing hot path (#92).
     _gc_checkpoints(d, config.checkpoint_keep())

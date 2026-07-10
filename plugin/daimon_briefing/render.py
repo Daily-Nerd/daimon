@@ -106,10 +106,13 @@ def render_brief(checkpoint, drift=None, teammates=None) -> None:
             _print_drift(drift)
             _print_teammates(teammates)
             return
+    # #204: degrade verbatim labels when the receipt can't be locally confirmed.
+    # Cheap check (sidecar + byte match), computed once for both render paths.
+    degraded = briefing.receipt_degraded(checkpoint)
     if not supports_rich():
-        print(briefing.render_plain(b))
+        print(briefing.render_plain(b, degraded))
     else:
-        _rich_brief(b)
+        _rich_brief(b, degraded)
     _print_drift(drift)
     _print_teammates(teammates)
 
@@ -142,13 +145,16 @@ def _print_drift(drift) -> None:
     )
 
 
-def _rich_brief(b: dict) -> None:
+def _rich_brief(b: dict, degraded: bool = False) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
 
     console = Console()
     console.print(Text("While you were away — here's where we left off.", style="bold"))
+    if degraded:
+        # One header note (#204), parity with the plain path's embedded note.
+        console.print(Text(briefing.DEGRADE_NOTE, style="bold red"))
     for key, title, style in _SECTIONS:
         items = b.get(key) or []
         if not items:
@@ -156,7 +162,11 @@ def _rich_brief(b: dict) -> None:
         body = Text()
         for i in items:
             trust = _trust_key(i)
-            body.append(f"• {i.get('text', '').strip()}\n", style=_TRUST_STYLE[trust])
+            # Degrade a verbatim item's confident green — its integrity is
+            # unverified (#204). Inferred/untagged never claimed it, so untouched.
+            item_style = "bold red" if (degraded and trust == "verbatim") \
+                else _TRUST_STYLE[trust]
+            body.append(f"• {i.get('text', '').strip()}\n", style=item_style)
             quote = i.get("quote", "").strip()
             if quote:
                 body.append(f'    "{quote}"\n', style="dim italic")
@@ -387,6 +397,8 @@ def _plain_status(data: dict) -> None:
             print(f"  ⚠ {w}")
     if data.get("team"):
         print(data["team"])  # one objective line; absent when team unused (#113)
+    if data.get("receipts"):
+        print(data["receipts"])  # #204: one line, only when receipts are on
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -449,6 +461,8 @@ def _rich_status(data: dict) -> None:
             console.print(f"  ⚠ {w}")
     if data.get("team"):
         console.print(data["team"])  # one objective line; absent when team unused (#113)
+    if data.get("receipts"):
+        console.print(data["receipts"])  # #204: one line, only when receipts are on
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

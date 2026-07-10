@@ -673,8 +673,9 @@ def test_cli_status_json_shape(
     data = json.loads(capsys.readouterr().out)
     assert set(data) == {"project", "global", "last_serialize", "outstanding",
                          "siblings", "health", "team", "crash", "disabled",
-                         "skipped_recent", "recall_error"}
+                         "skipped_recent", "recall_error", "receipts"}
     assert data["team"] is None  # no team remote configured -> explicit null (#113)
+    assert data["receipts"] is None  # #204 feature off -> explicit null
     assert data["project"]["exists"] is True
     assert data["project"]["session_id"] == "S-prev"
     assert data["project"]["dir"] == "/p/A"

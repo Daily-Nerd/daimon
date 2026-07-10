@@ -261,6 +261,34 @@ def author() -> str:
     return name or "unknown"
 
 
+# ---- signed provenance receipts (#204): opt-in vitni local-binding receipts ----
+
+
+def receipts_enabled() -> bool:
+    """Opt-in (DAIMON_RECEIPTS=1, default OFF): mint a vitni `local`-binding
+    receipt beside each checkpoint so a post-hoc edit to the artifact is
+    detectable. Gates the mint path only; every step is fail-open — a receipts
+    failure must never block or fail a serialize/brief (#204)."""
+    return _flag("DAIMON_RECEIPTS")
+
+
+def vitni_cli() -> str:
+    """The vitni verifier CLI (#204). DAIMON_VITNI_CLI overrides; default
+    'vitni-verify' resolved on PATH. Contract: `<cli> <command>` with one JSON
+    object on stdin and one JSON line on stdout."""
+    return (_get("DAIMON_VITNI_CLI") or "").strip() or "vitni-verify"
+
+
+def keys_dir() -> Path:
+    """Where the #204 Ed25519 signing seed (signing.seed, 0600) and cached
+    public key (signing.pub.json) live. Default ~/.daimon/keys; DAIMON_KEYS_DIR
+    overrides (tests point it under tmp so no test can touch real keys)."""
+    raw = _get("DAIMON_KEYS_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".daimon" / "keys"
+
+
 def log_dir() -> Path:
     """Where the session-end hook writes serialize.log. The hook hardcodes
     ~/.daimon/logs; this override exists so the CLI (and tests) can point

@@ -29,7 +29,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, carry, config, configure, harvest, llm, recall, render, serializer, store, teamsync, transcript
+from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, serializer, store, teamsync, transcript
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -1025,6 +1025,25 @@ def _print_suppressed(project) -> int:
     return 0
 
 
+def _cmd_verify_receipt(args) -> int:
+    """Verify a checkpoint's signed provenance receipt (#204). Default target is
+    the current project's latest checkpoint; a session id can be passed
+    explicitly. rc 0 verified / 1 failed / 2 unable (see receipts.verify_receipt)."""
+    _note_usage("verify-receipt")
+    session_id = getattr(args, "session_id", None)
+    if not session_id:
+        project = _resolve_project(args.project)
+        checkpoint = store.read_latest(project_dir=project)
+        if not isinstance(checkpoint, dict) or not checkpoint.get("session_id"):
+            print("no checkpoint for this project yet — nothing to verify")
+            return 2
+        session_id = checkpoint["session_id"]
+    rc, lines = receipts.verify_receipt(str(session_id))
+    for line in lines:
+        print(line)
+    return rc
+
+
 def _cmd_status(args) -> int:
     _note_usage("status")
     project = _resolve_project(args.project)
@@ -1058,6 +1077,9 @@ def _cmd_status(args) -> int:
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()
+    # One receipts line, only when the feature is on (#204) — mirrors the team
+    # line's "no line when unused" rule so status stays quiet by default.
+    receipts_line = receipts.status_line(project)
     identity = {
         "cwd": str(Path(args.project or ".").expanduser().resolve()),
         "git_root": project,
@@ -1073,7 +1095,8 @@ def _cmd_status(args) -> int:
             {"project": proj, "global": glob, "last_serialize": last,
              "outstanding": outstanding, "siblings": siblings, "health": health,
              "team": team, "crash": crash, "disabled": disabled,
-             "skipped_recent": skipped_recent, "recall_error": recall_error},
+             "skipped_recent": skipped_recent, "recall_error": recall_error,
+             "receipts": receipts_line},
             indent=2,
         ))
         return rc
@@ -1082,7 +1105,7 @@ def _cmd_status(args) -> int:
         "project": project, "proj": proj, "glob": glob, "same": same, "last": last,
         "outstanding": outstanding, "identity": identity, "health": health,
         "team": team, "crash": crash, "skipped_recent": skipped_recent,
-        "recall_error": recall_error,
+        "recall_error": recall_error, "receipts": receipts_line,
     })
     return rc
 
@@ -1858,6 +1881,20 @@ def main(argv=None) -> int:
         help="list items withheld from the briefing as resolved (#103)",
     )
     p_status.set_defaults(func=_cmd_status)
+
+    p_vr = sub.add_parser(
+        "verify-receipt",
+        help="verify a checkpoint's signed provenance receipt via the vitni CLI (#204)",
+        epilog="Examples:\n"
+               "  daimon verify-receipt\n"
+               "  daimon verify-receipt <session-id>\n",
+    )
+    p_vr.add_argument(
+        "session_id", nargs="?",
+        help="session id to verify (default: this project's latest checkpoint)")
+    p_vr.add_argument(
+        "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_vr.set_defaults(func=_cmd_verify_receipt)
 
     p_audit = sub.add_parser(
         "audit-quotes",
