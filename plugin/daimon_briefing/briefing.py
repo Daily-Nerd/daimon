@@ -19,34 +19,53 @@ import time
 # store/carry import graph checked (#103): neither store, carry, recall, nor
 # scoring imports briefing — no cycle, so this stays a normal module-level
 # import (contrast carry.py's own local-import notes, which don't apply here).
-from . import carry, config, llm, schema, scoring, store
+from . import carry, config, llm, receipts, schema, scoring, store
 
 log = logging.getLogger("daimon.briefing")
 
 _VERBATIM_MARK = "✓ verbatim"
 _INFERRED_MARK = "~ inferred"
 _UNTAGGED_MARK = "? untagged"
+# #204: when a receipt-era checkpoint's provenance can't be locally confirmed at
+# brief time, a `verbatim` label has NOT earned its checkmark — the stored bytes
+# may have been edited. Degrade it visibly rather than assert integrity we can't
+# prove. Inferred/untagged never claimed integrity, so they never degrade.
+_DEGRADED_MARK = "⚠ unverified (verbatim)"
+DEGRADE_NOTE = (
+    "⚠ RECEIPT UNVERIFIED — this checkpoint claims signed provenance, but its "
+    "receipt is missing or no longer matches the stored bytes. The 'verbatim' "
+    "quotes below are shown UNVERIFIED (run `daimon verify-receipt`).")
 
 
-def _mark(item) -> str:
+def receipt_degraded(checkpoint) -> bool:
+    """Cheap brief-time provenance check (#204), fail-open. Delegates to
+    receipts.verbatim_degraded — sidecar presence + outputs_hash byte match only,
+    never the vitni CLI (full crypto is `daimon verify-receipt`)."""
+    try:
+        return receipts.verbatim_degraded(checkpoint)
+    except Exception:
+        return False
+
+
+def _mark(item, degraded: bool = False) -> str:
     # A missing/empty trust class renders as "untagged", never as a confident
     # "inferred" the item never earned (#30) — the recall CLI already agrees.
     trust = item.get("trust")
     if trust == "verbatim":
-        return _VERBATIM_MARK
+        return _DEGRADED_MARK if degraded else _VERBATIM_MARK
     if trust:
         return _INFERRED_MARK
     return _UNTAGGED_MARK
 
 
-def _line(item) -> str:
+def _line(item, degraded: bool = False) -> str:
     # #134: dict.get returns the stored None for a present-but-null key (the
     # default only fires for an ABSENT key), so a torn/legacy checkpoint could
     # crash the whole render here. Use the codebase's str(x or "") idiom
     # (store.py, carry.py) — tolerant of null, same as iter_items' stance.
     text = str(item.get("text") or "").strip()
     quote = str(item.get("quote") or "").strip()
-    base = f'- [{_mark(item)}] {text}'
+    base = f'- [{_mark(item, degraded)}] {text}'
     if item.get("carried_from"):
         # Epistemic honesty, same philosophy as trust marks: a loop carried
         # from an older session must not read as fresh context (#33 Phase 2).
@@ -323,13 +342,14 @@ _DROP_ORDER = (("beliefs", "tail"), ("uncertainties", "tail"),
                ("decisions", "head"), ("open_loops", "tail"))
 
 
-def render_plain(b: dict) -> str:
+def render_plain(b: dict, degraded: bool = False) -> str:
     """The deterministic briefing text. Under the #79 budget this is
     BYTE-IDENTICAL to the legacy render(); over it, long items truncate
     (sections preserved) and then whole items drop, lowest value first,
-    each cut announced with a trim note."""
+    each cut announced with a trim note. `degraded` (#204) downgrades every
+    verbatim label and adds one header note when the receipt is unverifiable."""
     budget = config.brief_max_tokens()
-    text = _render_parts(b, {})
+    text = _render_parts(b, {}, degraded)
     if not budget or estimate_tokens(text) <= budget:
         return text
 
@@ -347,7 +367,7 @@ def render_plain(b: dict) -> str:
             for i in (b.get(key) or [])
         ]
     trimmed = {key: 0 for key, _ in _DROP_ORDER}
-    text = _render_parts(b, trimmed)
+    text = _render_parts(b, trimmed, degraded)
 
     # Stage 2: drop whole items, least valuable first, until the budget holds
     # or only the skeleton remains.
@@ -357,14 +377,19 @@ def render_plain(b: dict) -> str:
             items.pop(-1 if end == "tail" else 0)
             b[key] = items
             trimmed[key] += 1
-            text = _render_parts(b, trimmed)
+            text = _render_parts(b, trimmed, degraded)
         if estimate_tokens(text) <= budget:
             break
     return text
 
 
-def _render_parts(b: dict, trimmed: dict) -> str:
+def _render_parts(b: dict, trimmed: dict, degraded: bool = False) -> str:
     parts = ["While you were away — here's where we left off."]
+    if degraded:
+        # One header note (#204), embedded in the text so the hook-injected
+        # briefing carries it too — not just the human-facing CLI render.
+        parts.append("")
+        parts.append(DEGRADE_NOTE)
 
     def _section(header: str, key: str) -> None:
         items = b.get(key) or []
@@ -373,7 +398,7 @@ def _render_parts(b: dict, trimmed: dict) -> str:
             return
         parts.append("")
         parts.append(header)
-        parts.extend(_line(i) for i in items)
+        parts.extend(_line(i, degraded) for i in items)
         if key == "decisions":
             overflow = _overflow_note(b.get("decisions_overflow", 0))
             if overflow:
@@ -384,7 +409,7 @@ def _render_parts(b: dict, trimmed: dict) -> str:
     if b["external"]:
         parts.append("")
         parts.append("VERIFY BEFORE TRUSTING (state may have changed outside this session):")
-        parts.extend(_line(i) for i in b["external"])
+        parts.extend(_line(i, degraded) for i in b["external"])
 
     _section("Open loops:", "open_loops")
     _section("Decisions made:", "decisions")
@@ -401,7 +426,7 @@ def _render_parts(b: dict, trimmed: dict) -> str:
     if b.get("contradictions"):
         parts.append("")
         parts.append("Contradictions flagged:")
-        parts.extend(_line(i) for i in b["contradictions"])
+        parts.extend(_line(i, degraded) for i in b["contradictions"])
 
     return "\n".join(parts)
 
@@ -439,14 +464,17 @@ def render(checkpoint) -> str | None:
     b = build(checkpoint)
     if b is None:
         return None
+    degraded = receipt_degraded(checkpoint)
     if config.llm_briefing():
         rendered = _render_llm(checkpoint)
         if rendered:
             if _validate_llm_render(rendered, checkpoint):
-                return rendered
+                # The LLM render carries no per-item marks to degrade; prepend the
+                # one header note so an unverifiable receipt still fails loud (#204).
+                return f"{DEGRADE_NOTE}\n\n{rendered}" if degraded else rendered
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
-    return render_plain(b)
+    return render_plain(b, degraded)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

@@ -83,6 +83,28 @@ Opt-in shared-memory mirror. See [docs/team.md](./team.md) for the full workflow
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path for this machine's sessions (relative, e.g. `core/api-gateway`). Overrides the sidecar's `daimon-team.toml` mapping and the origin-derived fallback when routing checkpoints under `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Read-time age window: teammates' checkpoints older than this many days are skipped when reading. `0` = keep all. Never physically deletes from the shared append-only branch. |
 
+## Receipts
+
+Opt-in signed provenance receipts (#204). When enabled, each checkpoint is
+paired with a [vitni](https://github.com/Daily-Nerd/vitni) `local`-binding
+receipt: an Ed25519-signed statement that binds the checkpoint's exact on-disk
+bytes (`outputs_hash`) to its source transcript (`inputs_hash`), written to a
+`<session>.receipt` sidecar. This makes a post-hoc edit to a checkpoint file
+detectable. Receipts are fully valid offline — nothing leaves the machine.
+
+Every step is **fail-open**: a missing CLI, missing openssl, timeout, or bad
+output logs one line to `serialize.log` and proceeds without a receipt — a
+receipts failure never blocks or fails a serialize or a briefing. Verify a
+checkpoint on demand with `daimon verify-receipt [session]`; at briefing time a
+receipt-era checkpoint whose receipt is missing or no longer matches its bytes
+has its `✓ verbatim` labels degraded with a visible note.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DAIMON_RECEIPTS` | off | When truthy, mint a signed receipt beside each checkpoint. Default off — a new subprocess per serialize is opt-in. |
+| `DAIMON_VITNI_CLI` | `vitni-verify` (on PATH) | The vitni verifier CLI used to sign/verify. A path or a name resolved on PATH. Contract: `<cli> <command>` with one JSON object on stdin and one JSON line on stdout. |
+| `DAIMON_KEYS_DIR` | `~/.daimon/keys` | Where the Ed25519 signing seed (`signing.seed`, mode 0600, auto-created on first mint) and cached public key (`signing.pub.json`) live. |
+
 ## Host hooks
 
 Serialize-throttle knobs for hosts that lack a clean session-end event. See
