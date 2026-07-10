@@ -180,6 +180,18 @@ def test_derive_pubkey_openssl_absent_returns_none(monkeypatch):
     assert receipts._derive_pubkey_x(_SEED) is None
 
 
+@pytest.mark.parametrize("rc,stdout", [(1, b""), (0, b"short")])
+def test_derive_pubkey_openssl_rejects_returns_none(monkeypatch, rc, stdout):
+    # The LibreSSL-shaped failure (rc!=0 "unable to load key") and a
+    # truncated-SPKI output both fail open. Monkeypatched so the branch is
+    # walked deterministically — real openssl only enters it on Ed25519-less
+    # builds, which CI's OpenSSL 3.x is not.
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, rc, stdout=stdout, stderr=b"err")
+    monkeypatch.setattr(receipts.subprocess, "run", fake_run)
+    assert receipts._derive_pubkey_x(_SEED) is None
+
+
 def test_ensure_seed_creates_0600(tmp_path, monkeypatch):
     kdir = tmp_path / "keys"
     monkeypatch.setenv("DAIMON_KEYS_DIR", str(kdir))
