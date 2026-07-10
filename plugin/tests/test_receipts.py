@@ -30,6 +30,17 @@ _SEED_B64 = base64.b64encode(_SEED).decode("ascii")
 _PUB_X = "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
 _SPKI_HEX = ("302a300506032b657003210003a107bff3ce10be1d70dd18e74bc09967"
              "e4d6309ba50d5f1ddc8664125531b8")
+# vitni keygen (#206) RFC 8032 TEST 1 probe vector.
+_PROBE_SEED_B64 = "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A="
+_PROBE_X = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+
+
+@pytest.fixture(autouse=True)
+def _reset_keygen_probe(monkeypatch):
+    # The keygen probe verdict is cached per (process, CLI path) (#206); reset it
+    # before each test so a probe outcome can't leak across tests. monkeypatch
+    # auto-restores.
+    monkeypatch.setattr(receipts, "_keygen_probe_cache", {})
 
 # A real sha256 hex digest (of b"") for transcript_hash wiring.
 _TSCRIPT_HEX = hashlib.sha256(b"hello transcript").hexdigest()
@@ -67,6 +78,27 @@ elif cmd == "verify":
         print(json.dumps({"valid": True, "reason": "ok"}))
     else:
         print(json.dumps({"valid": False, "reason": verdict}))
+elif cmd == "keygen":
+    kmode = os.environ.get("FAKE_VITNI_KEYGEN_MODE", "ok")
+    if kmode == "unknown":          # simulate an old CLI without keygen
+        print(json.dumps({"error": "unknown_command"})); sys.exit(0)
+    if kmode == "error":            # {"error"} on exit 0 — never rc
+        print(json.dumps({"error": "invalid_seed"})); sys.exit(0)
+    if kmode == "nojwk":            # malformed output shape
+        print(json.dumps({"private_key_b64": data.get("seed_b64", "")})); sys.exit(0)
+    seed = data.get("seed_b64")
+    if seed == "":                 # present-but-empty != absent -> invalid_seed
+        print(json.dumps({"error": "invalid_seed"})); sys.exit(0)
+    PROBE = "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A="
+    PROBE_X = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+    if seed == PROBE:
+        x = os.environ.get("FAKE_VITNI_PROBE_X", PROBE_X)
+    else:
+        x = os.environ.get("FAKE_VITNI_KEYGEN_X",
+                           "Kg2fakeKEYGENxKg2fakeKEYGENxKg2fakeKEYGENxK")
+    print(json.dumps({"jwk": {"alg": "EdDSA", "crv": "Ed25519", "kty": "OKP",
+                              "status": "active", "x": x},
+                      "private_key_b64": seed}))
 else:
     print(json.dumps({"error": "unknown_command"}))
 sys.exit(0)
@@ -97,6 +129,18 @@ def keys_ready(tmp_path, monkeypatch):
     (kdir / "signing.pub.json").write_text(json.dumps(
         {"kty": "OKP", "crv": "Ed25519", "x": _PUB_X, "alg": "EdDSA",
          "status": "active"}))
+    monkeypatch.setenv("DAIMON_KEYS_DIR", str(kdir))
+    return kdir
+
+
+@pytest.fixture
+def keys_seed_only(tmp_path, monkeypatch):
+    """Keys dir with only the seed file (verbatim _SEED_B64) — NO cached pubkey,
+    so derivation actually runs. For exercising the #206 keygen path."""
+    kdir = tmp_path / "keys"
+    kdir.mkdir()
+    (kdir / "signing.seed").write_text(_SEED_B64)
+    (kdir / "signing.seed").chmod(0o600)
     monkeypatch.setenv("DAIMON_KEYS_DIR", str(kdir))
     return kdir
 
@@ -840,3 +884,164 @@ def test_rich_status_prints_receipts_line(monkeypatch, capsys):
 def test_keys_dir_default_when_unset(monkeypatch):
     monkeypatch.delenv("DAIMON_KEYS_DIR", raising=False)
     assert config.keys_dir() == Path.home() / ".daimon" / "keys"
+
+
+# ---- #206: vitni keygen preferred over openssl --------------------------------
+
+
+def _no_openssl(monkeypatch):
+    """Trip _derive_pubkey_x (openssl) into a recorder so a test can assert the
+    fallback was NOT taken. Returns the call list."""
+    calls = []
+    monkeypatch.setattr(receipts, "_derive_pubkey_x",
+                        lambda seed: calls.append(seed) or None)
+    return calls
+
+
+def test_pubkey_via_keygen_openssl_not_invoked(keys_seed_only, fake_cli, monkeypatch):
+    monkeypatch.setenv("FAKE_VITNI_KEYGEN_X", "ZZkeygenXZZkeygenXZZkeygenXZZkeygenXZZkeygX")
+    openssl_calls = _no_openssl(monkeypatch)
+    jwk = receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    assert jwk["x"] == "ZZkeygenXZZkeygenXZZkeygenXZZkeygenXZZkeygX"  # verbatim
+    assert openssl_calls == []  # keygen worked -> openssl never called
+
+
+def test_keygen_real_seed_receives_verbatim_string(keys_seed_only, fake_cli, monkeypatch):
+    _no_openssl(monkeypatch)
+    receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    keygen_calls = [x for x in _capture_lines(fake_cli) if x["cmd"] == "keygen"]
+    # two calls: the probe (probe seed) then the real derive (our seed verbatim)
+    seeds = [json.loads(c["stdin"])["seed_b64"] for c in keygen_calls]
+    assert _PROBE_SEED_B64 in seeds
+    assert _SEED_B64 in seeds  # exact stored string, not decode/re-encode
+
+
+def test_read_seed_str_unreadable_returns_none(tmp_path):
+    assert receipts._read_seed_str(tmp_path / "absent.seed") is None
+
+
+def test_keygen_probe_passes_but_real_derive_fails(keys_seed_only, monkeypatch,
+                                                   caplog):
+    # Probe succeeds, then the real-seed call comes back unusable — must log
+    # the "probe passed but real-seed derive failed" line and fall back.
+    def selective(cli, command, stdin_json):
+        if json.loads(stdin_json).get("seed_b64") == _PROBE_SEED_B64:
+            return {"jwk": {"x": _PROBE_X}}
+        return None
+    monkeypatch.setattr(receipts, "_run_cli", selective)
+    monkeypatch.setattr(receipts, "_resolve_cli", lambda: "fake-cli")
+    monkeypatch.setattr(receipts, "_derive_pubkey_x", lambda seed: "OPENSSLX")
+    with caplog.at_level("INFO"):
+        assert receipts._derive_pubkey(_SEED, _SEED_B64) == "OPENSSLX"
+    assert any("real-seed derive" in r.message for r in caplog.records)
+
+
+def test_keygen_probe_wrong_x_falls_back_to_openssl(keys_seed_only, fake_cli,
+                                                    monkeypatch, caplog):
+    monkeypatch.setenv("FAKE_VITNI_PROBE_X", "WRONGxWRONGxWRONGxWRONGxWRONGxWRONGxWRONGxW")
+    monkeypatch.setattr(receipts, "_derive_pubkey_x", lambda seed: "OPENSSLDERIVEDX")
+    with caplog.at_level("INFO"):
+        jwk = receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    assert jwk["x"] == "OPENSSLDERIVEDX"  # openssl fallback produced the key
+    assert any("probe failed" in r.message for r in caplog.records)
+
+
+def test_keygen_error_payload_exit0_falls_back(keys_seed_only, fake_cli, monkeypatch):
+    # {"error"} on exit 0 must fail the probe -> proves we never rely on rc.
+    monkeypatch.setenv("FAKE_VITNI_KEYGEN_MODE", "error")
+    monkeypatch.setattr(receipts, "_derive_pubkey_x", lambda seed: "OPENSSLX")
+    jwk = receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    assert jwk["x"] == "OPENSSLX"
+
+
+def test_keygen_missing_command_falls_back(keys_seed_only, fake_cli, monkeypatch):
+    monkeypatch.setenv("FAKE_VITNI_KEYGEN_MODE", "unknown")  # old CLI, no keygen
+    monkeypatch.setattr(receipts, "_derive_pubkey_x", lambda seed: "OPENSSLX")
+    jwk = receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    assert jwk["x"] == "OPENSSLX"
+
+
+def test_keygen_malformed_jwk_falls_back(keys_seed_only, fake_cli, monkeypatch):
+    monkeypatch.setenv("FAKE_VITNI_KEYGEN_MODE", "nojwk")
+    monkeypatch.setattr(receipts, "_derive_pubkey_x", lambda seed: "OPENSSLX")
+    jwk = receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    assert jwk["x"] == "OPENSSLX"
+
+
+def test_keygen_no_cli_falls_back(keys_seed_only, monkeypatch):
+    monkeypatch.setenv("DAIMON_VITNI_CLI", "definitely-not-on-path-xyz")
+    monkeypatch.setattr(receipts, "_derive_pubkey_x", lambda seed: "OPENSSLX")
+    jwk = receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    assert jwk["x"] == "OPENSSLX"
+
+
+def test_keygen_derives_and_caches_once(keys_seed_only, fake_cli, monkeypatch):
+    monkeypatch.setenv("FAKE_VITNI_KEYGEN_X", "CACHEDkeygenXCACHEDkeygenXCACHEDkeygenXCACH")
+    _no_openssl(monkeypatch)
+    kdir = config.keys_dir()
+    jwk = receipts._ensure_pubkey(kdir, _SEED, _SEED_B64)
+    assert (kdir / "signing.pub.json").exists()
+    cached = json.loads((kdir / "signing.pub.json").read_text())
+    assert cached["x"] == jwk["x"] == "CACHEDkeygenXCACHEDkeygenXCACHEDkeygenXCACH"
+    # second call reads the cache, no re-derivation (probe count unchanged)
+    before = len([x for x in _capture_lines(fake_cli) if x["cmd"] == "keygen"])
+    receipts._ensure_pubkey(kdir, _SEED, _SEED_B64)
+    after = len([x for x in _capture_lines(fake_cli) if x["cmd"] == "keygen"])
+    assert before == after
+
+
+def test_keygen_logs_which_path(keys_seed_only, fake_cli, monkeypatch, caplog):
+    _no_openssl(monkeypatch)
+    with caplog.at_level("INFO"):
+        receipts._ensure_pubkey(config.keys_dir(), _SEED, _SEED_B64)
+    assert any("via vitni keygen" in r.message for r in caplog.records)
+
+
+def test_plan_mint_uses_keygen_end_to_end(tmp_checkpoint_dir, keys_seed_only,
+                                          fake_cli, monkeypatch):
+    # macOS-without-Ed25519-openssl scenario: keygen alone lets receipts work.
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(receipts, "_derive_pubkey_x",
+                        lambda seed: pytest.fail("openssl must not be used when keygen works"))
+    cp = {"session_id": "S-kg", "transcript_hash": _TSCRIPT_HEX,
+          "created": "2026-07-10T00:00:00Z"}
+    path = store.write_checkpoint("S-kg", cp)
+    assert path.with_suffix(".receipt").exists()  # minted via keygen-derived key
+    assert json.loads(path.read_text())["receipts"] is True
+
+
+def test_probe_runs_once_per_process(keys_seed_only, fake_cli, monkeypatch):
+    _no_openssl(monkeypatch)
+    receipts._derive_pubkey(_SEED, _SEED_B64)
+    receipts._derive_pubkey(_SEED, _SEED_B64)
+    probe_calls = [c for c in _capture_lines(fake_cli)
+                   if c["cmd"] == "keygen"
+                   and json.loads(c["stdin"])["seed_b64"] == _PROBE_SEED_B64]
+    assert len(probe_calls) == 1  # cached after first probe
+
+
+def test_probe_cache_is_per_cli_binary(tmp_path, keys_seed_only, monkeypatch):
+    # A verdict belongs to the binary that earned it: after CLI A passes the
+    # probe, repointing DAIMON_VITNI_CLI at binary B must re-probe B — a bad B
+    # must NOT inherit A's pass and be trusted with the real seed.
+    good = tmp_path / "cli-good"
+    good.write_text(_FAKE_CLI_SRC)
+    good.chmod(0o755)
+    bad = tmp_path / "cli-bad"
+    bad.write_text(_FAKE_CLI_SRC)
+    bad.chmod(0o755)
+    capture = tmp_path / "cap.jsonl"
+    monkeypatch.setenv("FAKE_VITNI_CAPTURE", str(capture))
+    _no_openssl(monkeypatch)
+
+    monkeypatch.setenv("DAIMON_VITNI_CLI", str(good))
+    assert receipts._derive_pubkey(_SEED, _SEED_B64) is not None
+
+    monkeypatch.setenv("DAIMON_VITNI_CLI", str(bad))
+    monkeypatch.setenv("FAKE_VITNI_PROBE_X", "WRONGxWRONGxWRONGxWRONGxWRONGxWRONGxWRONGxW")
+    assert receipts._derive_pubkey(_SEED, _SEED_B64) is None  # B re-probed, failed
+
+    probes = [c for c in _capture_lines(capture)
+              if c["cmd"] == "keygen"
+              and json.loads(c["stdin"])["seed_b64"] == _PROBE_SEED_B64]
+    assert len(probes) == 2  # one probe per binary, no inherited verdict
