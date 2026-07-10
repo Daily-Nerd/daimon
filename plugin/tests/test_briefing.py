@@ -885,6 +885,13 @@ def test_stale_carried_not_stale_when_within_threshold():
     assert stale == []
 
 
+def test_stale_carried_non_dict_checkpoint_returns_empty():
+    # Fail-open guard: a torn/absent checkpoint (None, junk) yields [] —
+    # the staleness budget must never be the thing that breaks a brief.
+    assert briefing.stale_carried(None, {}, _NOW215, threshold_days=7.0) == []
+    assert briefing.stale_carried("junk", {}, _NOW215, threshold_days=7.0) == []
+
+
 def test_stale_carried_fresh_last_verified_overrides_old_first_seen():
     cp = _cp215([{"text": "old but re-verified", "id": "o-verif",
                   "carried_from": "S-prev", "first_seen": _ts215(30),

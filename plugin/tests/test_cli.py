@@ -3015,6 +3015,25 @@ def test_brief_no_stale_note_when_nothing_stale(
     assert "world-check" not in out
 
 
+def test_brief_fails_open_when_stale_carried_raises(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #215 fail-open: a broken stale_carried must never take the briefing
+    # down with it — the brief still renders and exits clean, just without
+    # the budget line.
+    from daimon_briefing import briefing, store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(briefing, "stale_carried", _boom)
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "While you were away" in out
+    assert "world-check" not in out
+
+
 def test_brief_fails_open_when_resolutions_raises(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     # #103: withhold machinery must never take the briefing down with it —
