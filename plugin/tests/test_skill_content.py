@@ -80,3 +80,13 @@ def test_variants_use_real_trust_tag_literals():
 def test_both_variants_state_silence_guard():
     for text in (skill_content.render_full(), skill_content.render_compact()):
         assert "silent" in text.lower()
+
+
+def test_full_body_teaches_staleness_world_check():
+    # #215: the staleness-budget warning ("N carried item(s) unverified for
+    # >N days") is new surface in the brief — the skill must teach agents to
+    # world-check a carried claim before repeating it as true, not just note
+    # it "may be stale" as the pre-#215 [carried] guidance already does.
+    full = skill_content.render_full()
+    reading = full.split("## Reading a briefing")[1].split("\n## ")[0]
+    assert "world-check" in reading.lower()

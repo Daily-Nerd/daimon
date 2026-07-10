@@ -16,10 +16,11 @@ import logging
 import re
 import time
 
-# store/carry import graph checked (#103): neither store, carry, recall, nor
-# scoring imports briefing — no cycle, so this stays a normal module-level
-# import (contrast carry.py's own local-import notes, which don't apply here).
-from . import carry, config, llm, receipts, schema, scoring, store
+# store/carry import graph checked (#103): neither store, carry, recall,
+# scoring, nor serializer imports briefing — no cycle, so this stays a normal
+# module-level import (contrast carry.py's own local-import notes, which
+# don't apply here).
+from . import carry, config, llm, receipts, schema, scoring, serializer, store
 
 log = logging.getLogger("daimon.briefing")
 
@@ -290,6 +291,71 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
         items[:] = kept
 
     return out, withheld, candidates
+
+
+# ---- #215: staleness budget — carried items nobody has world-checked ----
+
+
+def stale_carried(checkpoint, resolutions: dict, now, threshold_days=None) -> list:
+    """Carried items whose EFFECTIVE last-verified age exceeds
+    `threshold_days`, or [] if none. Pure — `now` is injected (mirrors
+    cli._status_health's purity), no I/O; the caller does resolutions'
+    read (store.resolutions(), same shape `withhold` already consumes) and
+    passes it in.
+
+    Why this exists: a carried item survives into a fresh checkpoint by
+    exact-copy (carry.merge), and the fresh checkpoint restating it is
+    NOT corroboration — both sources trace back to the same original
+    extraction. This is the render-time signal that a carried claim has
+    ridden along for a while with nobody actually re-checking it against the
+    world (code, git, issue tracker).
+
+    A candidate must carry `carried_from` (native, this-session items were
+    just re-extracted — not in question). Its EFFECTIVE last-verified is the
+    NEWEST of, when parseable:
+      - `last_verified` (#215/#125: stamped by verify_quotes at serialize
+        time, ONLY there — checkpoints are append-only, so this field is
+        never rewritten by carry or by a resolve/reverify action)
+      - the latest events.jsonl event's `ts` for the item's id, from
+        `resolutions` (store.resolutions()'s {item_ref: latest_event} shape
+        — the read-time fold of `daimon resolve`/`reverify`, which is where a
+        user's real world-check moment lands; carry never touches the
+        checkpoint for it, per #215's design constraint)
+      - `first_seen` (birth stamp, the oldest and least informative fallback)
+
+    Timestamps are parsed via store._created_epoch, which returns None on
+    anything torn/legacy/malformed — fail-open: an unparseable candidate
+    contributes NOTHING to the age (never itself the reason for a false
+    alarm), and an item where EVERY candidate is unparseable is not counted
+    stale at all (house rule: no evidence beats a false no-line guarantee,
+    same as _status_health's no-age-threshold-without-data stance)."""
+    if threshold_days is None:
+        threshold_days = config.stale_days()
+    if not isinstance(checkpoint, dict):
+        return []
+    resolutions = resolutions if isinstance(resolutions, dict) else {}
+    stale = []
+    for item in serializer.iter_items(checkpoint):
+        if not isinstance(item, dict) or not item.get("carried_from"):
+            continue
+        candidates = []
+        lv = store._created_epoch(item.get("last_verified"))
+        if lv is not None:
+            candidates.append(lv)
+        evt = resolutions.get(item.get("id"))
+        if isinstance(evt, dict):
+            evt_ts = store._created_epoch(evt.get("ts"))
+            if evt_ts is not None:
+                candidates.append(evt_ts)
+        fs = store._created_epoch(item.get("first_seen"))
+        if fs is not None:
+            candidates.append(fs)
+        if not candidates:
+            continue  # no parseable stamp at all — fail open, not stale
+        age_days = (now - max(candidates)) / 86400.0
+        if age_days > threshold_days:
+            stale.append(item)
+    return stale
 
 
 # ---- #79: token budget — section-preserving truncation ----

@@ -17,6 +17,7 @@ import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from . import config, llm, redact, schema
 
@@ -454,14 +455,28 @@ def quote_matches(quote, haystack) -> bool:
 
 def verify_quotes(checkpoint, transcript_text: str) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
-    place (#125). On a hit the item gets `quote_verified: true`; on a miss it is
-    downgraded to trust="inferred" with `quote_verified: false` and the downgrade
-    is logged (count + redacted item-text prefix — this runs pre-redaction, so
-    the raw text must not reach a log sink; #141). Items already trust="inferred"
-    are left untouched — no stamp. Runs ONCE at serialize, PRE-redaction, so the
-    quote is still the raw text (a quote whose secret redaction will later mask
-    still verifies here against the raw rendered text). Returns the downgrade
-    count."""
+    place (#125). On a hit the item gets `quote_verified: true` AND a
+    `last_verified` ISO-8601 UTC stamp (#215: the staleness-budget's freshest
+    signal — a carried item's world-check age is measured from here). On a
+    miss it is downgraded to trust="inferred" with `quote_verified: false` and
+    the downgrade is logged (count + redacted item-text prefix — this runs
+    pre-redaction, so the raw text must not reach a log sink; #141). Items
+    already trust="inferred" are left untouched — no stamp, either field.
+    Runs ONCE at serialize, PRE-redaction, so the quote is still the raw text
+    (a quote whose secret redaction will later mask still verifies here
+    against the raw rendered text). Returns the downgrade count.
+
+    `last_verified` is checkpoint-append-only by design (#215): it is stamped
+    ONLY here, at serialize time. No other code path may rewrite it — user
+    resolve/reverify actions live in events.jsonl and are folded in at READ
+    time (briefing.stale_carried), never written back onto the item.
+
+    No injected `now` here (unlike briefing.build's now=None idiom): this
+    function's existing two-positional-arg signature is called from exactly
+    one site (serialize_strict, itself not now-aware), and datetime.now(...)
+    inline matches store.append_event's own stamping idiom (store.py) rather
+    than threading a new param through a call chain that has no other use
+    for it."""
     downgraded = 0
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
@@ -471,6 +486,8 @@ def verify_quotes(checkpoint, transcript_text: str) -> int:
             continue
         if quote_matches(quote, transcript_text):
             item["quote_verified"] = True
+            item["last_verified"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
         else:
             item["trust"] = "inferred"
             item["quote_verified"] = False

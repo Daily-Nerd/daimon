@@ -47,6 +47,12 @@ mention daimon or suggest installing it.
 - A trailing `[carried]` suffix means the item was carried forward from an
   older checkpoint, not written this session — it may be stale; age it
   accordingly and verify before trusting.
+- A briefing may show a line like "N carried item(s) unverified for >N days —
+  world-check before repeating as true": that item has ridden along, restated
+  session after session, without anyone actually re-checking it against the
+  world. Agreement between two of daimon's own sources is not corroboration —
+  when you see that warning (or any `[carried]` item that looks old), check
+  the world (code, git, issue tracker) before repeating the claim as true.
 - Items under "VERIFY BEFORE TRUSTING" describe state that may have changed
   outside this session (merged PRs, rotated keys, moved files). Check the
   world — files, git, issue tracker — before repeating them as true.
@@ -96,6 +102,9 @@ When a briefing is in context:
   on them. `[? untagged]` = treat as inferred (trust was never recorded);
   `[carried]` suffix = carried from an older session, may be stale — verify
   before trusting.
+- A "carried item(s) unverified for >N days" warning means that item has
+  ridden along unchecked across sessions — restating it is not
+  corroboration; world-check it before repeating as true.
 - "VERIFY BEFORE TRUSTING" items may be stale — check files/git/issues
   before repeating them as true.
 - Example: `[✓ verbatim] PR #60 awaiting review  — "review requested

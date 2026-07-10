@@ -289,6 +289,20 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                     cur = store._created_epoch(twin["first_seen"])
                     if old is not None and (cur is None or old < cur):
                         twin["first_seen"] = item["first_seen"]
+                # last_verified (#215): the OPPOSITE bias from first_seen —
+                # NEWER wins, not older. first_seen is a birth stamp (age must
+                # never reset); last_verified is a world-check stamp. A native
+                # twin's own last_verified, when present, is ALWAYS freshest
+                # by construction — it can only have been stamped by THIS
+                # session's #125 verify_quotes run (carry folds prev into a
+                # checkpoint that already went through verify_quotes), so it
+                # is never overwritten. Only when the twin carries no stamp of
+                # its own does prev's older one propagate (still better than
+                # nothing). Checkpoints are append-only: this is carry's one
+                # READ of last_verified, never a write-back onto prev — prev's
+                # own copy is left untouched.
+                if item.get("last_verified") and not twin.get("last_verified"):
+                    twin["last_verified"] = item["last_verified"]
                 # Identity rides the same rail as first_seen (#102): the prev
                 # item's id lands on the reworded native twin, so a resolution
                 # recorded against the old id still binds after re-extraction.

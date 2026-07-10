@@ -522,6 +522,7 @@ def _cmd_brief(args) -> int:
         render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
                                   "checkpoint (fallback), possibly another project's."])
     withheld = []
+    events = {}
     if checkpoint:
         # Withhold (#103): render-time derivation, fail-open — a briefing
         # must never die over suppression machinery. #14: candidates ride
@@ -534,6 +535,7 @@ def _cmd_brief(args) -> int:
             checkpoint, withheld, _candidates = briefing.withhold(checkpoint, events)
         except Exception:
             withheld = []
+            events = {}
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -547,6 +549,21 @@ def _cmd_brief(args) -> int:
         render.render_brief_note([
             f"{len(withheld)} resolved item(s) withheld — "
             "`daimon status --suppressed` to list"])
+    # Staleness budget (#215): reuses the SAME resolutions fold `withhold`
+    # already did above — no re-read of events.jsonl. Fail-open, same shape
+    # as the withhold try/except; a broken stale_carried must never take the
+    # briefing down with it. House rule: zero stale items -> NO line at all,
+    # never a false alarm.
+    if checkpoint:
+        try:
+            stale_items = briefing.stale_carried(checkpoint, events, time.time())
+        except Exception:
+            stale_items = []
+        if stale_items:
+            render.render_brief_note([
+                f"⚠ {len(stale_items)} carried item(s) unverified for "
+                f">{config.stale_days():g} days — world-check before "
+                "repeating as true"])
     return 0
 
 

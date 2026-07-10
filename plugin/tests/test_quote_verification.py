@@ -240,6 +240,37 @@ def test_verify_quotes_leaves_inferred_items_unstamped():
     assert "quote_verified" not in cp["working_context"]["recent_decisions"][0]
 
 
+# ---- #215: last_verified stamp on a verify hit ----
+
+def test_verify_quotes_stamps_last_verified_iso_on_hit():
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt"}]})
+    serializer.verify_quotes(cp, "assistant: adopt the D-007 prompt today")
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["quote_verified"] is True
+    # Parseable by the same ISO-8601 UTC stamp store.py's `created`/`ts` use.
+    import datetime as dt
+    parsed = dt.datetime.strptime(item["last_verified"], "%Y-%m-%dT%H:%M:%SZ")
+    assert parsed.tzinfo is None  # naive per strptime; the format IS UTC (Z)
+
+
+def test_verify_quotes_does_not_stamp_last_verified_on_miss():
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "a fabricated decision line", "trust": "verbatim",
+         "quote": "this exact sentence is nowhere in the transcript at all"}]})
+    serializer.verify_quotes(cp, "assistant: something entirely unrelated")
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["quote_verified"] is False
+    assert "last_verified" not in item
+
+
+def test_verify_quotes_does_not_stamp_last_verified_for_inferred_items():
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "inferred", "quote": ""}]})
+    serializer.verify_quotes(cp, "assistant: anything")
+    assert "last_verified" not in cp["working_context"]["recent_decisions"][0]
+
+
 # ---- Unit C: serialize_strict integration ----
 
 def _script(items):

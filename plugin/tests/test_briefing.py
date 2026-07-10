@@ -836,3 +836,112 @@ def test_reopen_clears_candidate_flag():
     assert candidates == []
     kept = filtered["working_context"]["recent_decisions"]
     assert "_supersede_candidate" not in kept[0]
+
+
+# ---- #215: staleness budget — stale_carried() ----
+#
+# Agreement between agent-written sources (a fresh checkpoint restating a
+# carried item) is not corroboration. stale_carried flags carried items whose
+# EFFECTIVE last-verified age — max of last_verified, the latest resolutions
+# event ts, first_seen (fallback, in that priority) — exceeds threshold_days.
+# Pure: now and threshold_days injected, no I/O (mirrors _status_health).
+
+_NOW215 = 1_900_000_000  # whole seconds — round-trips exactly through the
+                        # ISO-8601 stamp format (no sub-second precision).
+
+
+def _ts215_secs(seconds_before_now):
+    return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_NOW215 - seconds_before_now))
+
+
+def _ts215(days_before_now):
+    return _ts215_secs(days_before_now * 86400)
+
+
+def _cp215(open_qs):
+    return {
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": open_qs,
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }
+
+
+def test_stale_carried_flags_old_carried_item_by_first_seen():
+    cp = _cp215([{"text": "old carried loop", "id": "o-old1",
+                  "carried_from": "S-prev", "first_seen": _ts215(10)}])
+    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    assert len(stale) == 1
+    assert stale[0]["id"] == "o-old1"
+
+
+def test_stale_carried_not_stale_when_within_threshold():
+    cp = _cp215([{"text": "recent carried loop", "id": "o-recent",
+                  "carried_from": "S-prev", "first_seen": _ts215(2)}])
+    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    assert stale == []
+
+
+def test_stale_carried_non_dict_checkpoint_returns_empty():
+    # Fail-open guard: a torn/absent checkpoint (None, junk) yields [] —
+    # the staleness budget must never be the thing that breaks a brief.
+    assert briefing.stale_carried(None, {}, _NOW215, threshold_days=7.0) == []
+    assert briefing.stale_carried("junk", {}, _NOW215, threshold_days=7.0) == []
+
+
+def test_stale_carried_fresh_last_verified_overrides_old_first_seen():
+    cp = _cp215([{"text": "old but re-verified", "id": "o-verif",
+                  "carried_from": "S-prev", "first_seen": _ts215(30),
+                  "last_verified": _ts215(1)}])
+    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    assert stale == []
+
+
+def test_stale_carried_recent_resolution_event_overrides_old_first_seen():
+    cp = _cp215([{"text": "old but recently resolved", "id": "o-res",
+                  "carried_from": "S-prev", "first_seen": _ts215(30)}])
+    resolutions = {"o-res": {"ts": _ts215(1), "status": "resolved"}}
+    stale = briefing.stale_carried(cp, resolutions, _NOW215, threshold_days=7.0)
+    assert stale == []
+
+
+def test_stale_carried_ignores_non_carried_items():
+    cp = _cp215([{"text": "native old item", "id": "o-native",
+                  "first_seen": _ts215(30)}])  # no carried_from
+    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    assert stale == []
+
+
+def test_stale_carried_unparseable_stamps_fail_open_not_stale():
+    cp = _cp215([{"text": "torn stamp", "id": "o-torn",
+                  "carried_from": "S-prev", "first_seen": "not-a-date"}])
+    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    assert stale == []
+
+
+def test_stale_carried_threshold_boundary_exact_is_not_stale():
+    # Exactly at the threshold: NOT stale — only STRICTLY over triggers.
+    cp = _cp215([{"text": "exactly at threshold", "id": "o-edge",
+                  "carried_from": "S-prev", "first_seen": _ts215(7.0)}])
+    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    assert stale == []
+
+
+def test_stale_carried_threshold_boundary_just_over_is_stale():
+    cp = _cp215([{"text": "just over threshold", "id": "o-over",
+                  "carried_from": "S-prev",
+                  "first_seen": _ts215_secs(7 * 86400 + 3600)}])
+    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    assert len(stale) == 1
+
+
+def test_stale_carried_default_threshold_reads_config():
+    # No threshold_days passed -> falls back to config.stale_days() (#215
+    # env knob), same "None -> config default" shape as other pure builders.
+    cp = _cp215([{"text": "old carried loop", "id": "o-old2",
+                  "carried_from": "S-prev", "first_seen": _ts215(10)}])
+    stale = briefing.stale_carried(cp, {}, _NOW215)
+    assert len(stale) == 1  # default 7.0 days < 10 days old

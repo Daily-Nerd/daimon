@@ -447,6 +447,17 @@ def test_carry_max_default_clamp_malformed(monkeypatch):
     assert config.carry_max() == 8
     monkeypatch.setenv("DAIMON_CARRY_MAX", "3")
     assert config.carry_max() == 3
+
+
+def test_stale_days_default_override_malformed(monkeypatch):
+    # #215: staleness-budget threshold. Default 7.0; garbage falls back
+    # (fail-open), same try/except-float shape as carry_floor.
+    monkeypatch.delenv("DAIMON_STALE_DAYS", raising=False)
+    assert config.stale_days() == 7.0
+    monkeypatch.setenv("DAIMON_STALE_DAYS", "3.5")
+    assert config.stale_days() == 3.5
+    monkeypatch.setenv("DAIMON_STALE_DAYS", "garbage")
+    assert config.stale_days() == 7.0
     monkeypatch.setenv("DAIMON_CARRY_MAX", "0")
     assert config.carry_max() == 1
     monkeypatch.setenv("DAIMON_CARRY_MAX", "x")

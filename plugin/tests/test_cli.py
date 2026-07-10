@@ -2976,6 +2976,64 @@ def test_brief_withholds_resolved_item_and_notes_suppression(
     assert "--suppressed" in out
 
 
+def test_brief_warns_on_stale_carried_item(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #215: a carried item whose effective last-verified age exceeds the
+    # staleness budget gets a visible warning line — agreement between two
+    # agent-written sources (the carried item + the fresh checkpoint restating
+    # it) is not corroboration.
+    from daimon_briefing import store
+    import time as _time
+    monkeypatch.setenv("DAIMON_STALE_DAYS", "7")
+    stale_iso = _time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_time.time() - 10 * 86400))
+    cp = dict(sample_checkpoint)
+    cp["working_context"] = dict(cp["working_context"])
+    cp["working_context"]["open_questions"] = [{
+        "text": "an old carried loop nobody rechecked",
+        "trust": "inferred", "carried_from": "S-prev",
+        "first_seen": stale_iso,
+    }]
+    store.write_checkpoint("S-mine", cp, project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "carried item(s) unverified for >7 days" in out
+    assert "world-check before repeating as true" in out
+
+
+def test_brief_no_stale_note_when_nothing_stale(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # House rule: no line, no false alarms — a briefing with no stale carried
+    # items must emit NOTHING about staleness.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "unverified for" not in out
+    assert "world-check" not in out
+
+
+def test_brief_fails_open_when_stale_carried_raises(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #215 fail-open: a broken stale_carried must never take the briefing
+    # down with it — the brief still renders and exits clean, just without
+    # the budget line.
+    from daimon_briefing import briefing, store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(briefing, "stale_carried", _boom)
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "While you were away" in out
+    assert "world-check" not in out
+
+
 def test_brief_fails_open_when_resolutions_raises(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     # #103: withhold machinery must never take the briefing down with it —
