@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, redact, schema, serializer
+from . import config, redact, schema, serializer, teamproject
 
 _LATEST = "latest.json"
 # Rotation pointers, not per-session checkpoints. Anything else ending in .json in
@@ -663,7 +663,9 @@ def _team_write_slug() -> str:
 
 def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
     """Mirror a just-written checkpoint into the shared team dir (opt-in, #111):
-        <team_dir>/<remote-slug>/authors/<author-slug>/<session_id>.json
+        <team_dir>/<remote-slug>/projects/<seg…>/authors/<author-slug>/<sid>.json
+    under the #200 logical project path when one resolves, else the legacy flat
+        <team_dir>/<remote-slug>/authors/<author-slug>/<sid>.json
     where <remote-slug> is the single synced remote when one exists, else
     'local' (see _team_write_slug). Immutable append — NO pointers are EVER
     written here (the multi-writer git spike verdict: mutable pointers don't
@@ -672,7 +674,8 @@ def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
     succeeded.
 
     Stamps `project_slug` onto a COPY of the checkpoint so read_team can filter by
-    project without a pointer; the local blob is left clean (no project routing of
+    project without a pointer, plus `team_project` (the "/"-joined logical path,
+    #200) on nested writes; the local blob is left clean (no project routing of
     its own)."""
     try:
         # Full project_slug munging, NOT _safe_name: _safe_name maps "a/b" and
@@ -681,12 +684,21 @@ def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
         # non-word char to '-'. Post-munge collisions ("a b" vs "a-b") remain a
         # documented edge — distinct humans colliding there is unrealistic.
         author_slug = project_slug(config.author()) or "unknown"
-        d = config.team_dir() / _team_write_slug() / "authors" / author_slug
+        base = config.team_dir() / _team_write_slug()
+        # #200: env/config/origin-derived logical path (segments are munged in
+        # teamproject and can never escape the sidecar); None = flat era.
+        segs = teamproject.resolve(project_dir)
+        if segs:
+            d = base.joinpath("projects", *segs, "authors", author_slug)
+        else:
+            d = base / "authors" / author_slug
         d.mkdir(parents=True, exist_ok=True)
         # Shallow copy is deliberate and sufficient: only top-level keys are
         # stamped below; nested structures are never mutated on this path.
         blob = dict(checkpoint)
         blob.setdefault("project_slug", project_slug(project_dir))
+        if segs:
+            blob.setdefault("team_project", "/".join(segs))
         _atomic_write(d / f"{_safe_name(session_id)}.json",
                       json.dumps(blob, indent=2, ensure_ascii=False))
     except OSError:
@@ -702,17 +714,47 @@ def team_retention_cutoff() -> float | None:
     return (time.time() - days * 86400) if days > 0 else None
 
 
+def _team_author_dirs(remote: Path) -> list[Path]:
+    """Every authors/<author-slug> dir under one remote, BOTH eras (#200):
+    legacy flat authors/* plus nested projects/**/authors/* at any depth.
+    Descent stops at each authors/ dir — author dirs hold only checkpoint
+    files, never further layout. Pure file-ops, never raises."""
+    out: list[Path] = []
+    try:
+        out.extend(p for p in (remote / "authors").iterdir() if p.is_dir())
+    except OSError:
+        pass
+    for cur, dirnames, _files in os.walk(remote / "projects"):
+        if Path(cur).name == "authors":
+            out.extend(Path(cur) / name for name in sorted(dirnames))
+            dirnames[:] = []
+    return out
+
+
 def read_team(project_dir=None) -> list[tuple[str, dict]]:
     """Newest checkpoint per author in the shared team dir, for the given project.
 
-    Fan-in across every remote-slug: <team_dir>/*/authors/<author-slug>/*.json.
+    Fan-in across every remote-slug, BOTH layout eras (#200) combined:
+      - projects/<candidate…>/authors/* — the logical-path era, for EVERY
+        candidate path (teamproject.read_candidates: the winning tier PLUS the
+        lower tiers' paths when they differ — a repo mapped or env-overridden
+        AFTER it synced keeps its earlier nested history readable, never
+        orphaned). The path IS the project filter, so no stamp check is needed
+        (and several repos mapped to one logical project share one read pool
+        by construction).
+      - authors/*                       — the legacy flat era, filtered by the
+        stamped `project_slug` as always ("old flat sidecars stay readable
+        forever; no migration")
+    When no logical path resolves (teamproject tier 4), only the legacy era is
+    read — exactly the pre-#200 behavior.
+
     Derive-at-read — there are no pointers to trust: the newest checkpoint per
     author is chosen by the #93 `created` stamp (file mtime fallback, via
     _file_recency), exactly as the local GC ranks files. Returns
     [(author, checkpoint), ...] newest-first by each author's newest checkpoint.
 
-    Project filter: only checkpoints whose stamped `project_slug` matches this
-    project's slug. When the project is unknown (slug None) no filter is applied.
+    Legacy project filter: only checkpoints whose stamped `project_slug` matches
+    this project's slug. When the project is unknown (slug None) no filter applies.
 
     Retention (#113): checkpoints older than DAIMON_TEAM_RETENTION_DAYS (by the
     same _file_recency the ranking uses; 0 = keep all) are skipped AT READ TIME
@@ -723,38 +765,54 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     root = config.team_dir()
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
+    candidates = teamproject.read_candidates(project_dir)
     # author-slug (dir identity, one per author) -> (recency, author, checkpoint)
     best: dict[str, tuple[float, str, dict]] = {}
+
+    def _consider(adir: Path, check_stamp: bool) -> None:
+        try:
+            files = [p for p in adir.iterdir()
+                     if p.is_file() and p.suffix == ".json"]
+        except OSError:
+            return
+        for p in files:
+            try:
+                cp = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue  # torn/foreign file — skip, never crash the fan-in
+            if not isinstance(cp, dict):
+                continue
+            if check_stamp and want_slug is not None \
+                    and cp.get("project_slug") != want_slug:
+                continue
+            rec = _file_recency(p)
+            if cutoff is not None and rec < cutoff:
+                continue  # aged out of the read window; file stays on disk
+            key = adir.name
+            if key not in best or rec > best[key][0]:
+                best[key] = (rec, cp.get("author") or adir.name, cp)
+
     try:
         remotes = list(root.iterdir())
     except OSError:
         return []
     for remote in remotes:
+        # Nested era (#200): only THIS project's subtrees — every candidate
+        # path (winner + prior-tier locations); the paths filter.
+        for segs in candidates:
+            nested = remote.joinpath("projects", *segs, "authors")
+            try:
+                for adir in nested.iterdir():
+                    _consider(adir, check_stamp=False)
+            except OSError:
+                pass  # no such subtree in this remote (yet)
+        # Legacy flat era: stamp-filtered, readable forever.
         try:
             author_dirs = list((remote / "authors").iterdir())
         except OSError:
             continue  # not a remote-shaped dir; skip
         for adir in author_dirs:
-            try:
-                files = [p for p in adir.iterdir()
-                         if p.is_file() and p.suffix == ".json"]
-            except OSError:
-                continue
-            for p in files:
-                try:
-                    cp = json.loads(p.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    continue  # torn/foreign file — skip, never crash the fan-in
-                if not isinstance(cp, dict):
-                    continue
-                if want_slug is not None and cp.get("project_slug") != want_slug:
-                    continue
-                rec = _file_recency(p)
-                if cutoff is not None and rec < cutoff:
-                    continue  # aged out of the read window; file stays on disk
-                key = adir.name
-                if key not in best or rec > best[key][0]:
-                    best[key] = (rec, cp.get("author") or adir.name, cp)
+            _consider(adir, check_stamp=True)
     ordered = sorted(best.values(), key=lambda t: t[0], reverse=True)
     return [(author, cp) for _rec, author, cp in ordered]
 

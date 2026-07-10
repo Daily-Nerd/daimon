@@ -88,17 +88,78 @@ A sync pass does three things, in order:
   mismatch, so a no-op sync costs one lightweight network round-trip.
 - Leaves everything else alone.
 
-Only immutable per-author checkpoint files ever sync. On disk they live at
-`~/.daimon/team/<remote-slug>/authors/<author-slug>/<session_id>.json`; inside
-the shared repo the path is `authors/<author-slug>/<session_id>.json`. No mutable
-pointers are ever written to the sidecar — because every author appends to a
-disjoint path and nothing is ever rewritten, merges are conflict-free by
-construction. Your local "latest checkpoint" pointers stay private on your
-machine and never sync.
+Only immutable per-author checkpoint files ever sync. On disk they live under
+`~/.daimon/team/<remote-slug>/`; inside the shared repo the path is
+`projects/<logical/path>/authors/<author-slug>/<session_id>.json` (see the
+project layout section below), or `authors/<author-slug>/<session_id>.json`
+when no project identity resolves. No mutable pointers are ever written to the
+sidecar — because every author appends to a disjoint path and nothing is ever
+rewritten, merges are conflict-free by construction. Your local "latest
+checkpoint" pointers stay private on your machine and never sync.
 
 `DAIMON_TEAM=1` gates **writes only**. With it unset, your checkpoints are not
 mirrored into the sidecar — but reads of the team directory are always on, so you
 can still see teammates' memory even before you start contributing your own.
+
+## Project layout: the architect-authored squad tree
+
+Checkpoints in the sidecar are grouped by **logical project**, so several repos
+can share one memory pool and the same repo maps to the same pool on every
+teammate's machine. The hierarchy is organizational, not forge-derived: a team
+architect authors `daimon-team.toml` at the sidecar root — the squad tree with
+repos mapped into it — and commits it like any other file. **Daimon only reads
+this file; humans write and commit it.**
+
+```toml
+# daimon-team.toml — at the sidecar repo root, written by your team architect.
+#
+# One table per logical project. The key is the project's path in the squad
+# tree (any depth); `repos` lists every repo that feeds that project's pool.
+# ssh/https/scp spellings of the same repo are equivalent — the origin URL is
+# normalized (scheme, credentials, `.git`, case) before matching.
+
+[projects."core/cosmo/dusters/finance-1"]
+repos = [
+  "git@github.com:org/finance-svc.git",    # several repos → ONE shared pool
+  "https://github.com/org/finance-web",
+]
+
+[projects."core/api-gateway"]
+repos = ["git@github.com:org/gateway.git"]
+```
+
+On disk, a mapped repo's checkpoints land at
+`projects/core/cosmo/dusters/finance-1/authors/<author-slug>/<session_id>.json`
+— every path segment is munged filesystem-safe, so a config key can never
+escape the sidecar.
+
+A session's logical project is resolved in this order:
+
+1. **`DAIMON_TEAM_PROJECT`** — a relative path like `core/api-gateway`, set
+   per machine. Explicit local intent; beats the config file.
+2. **The `daimon-team.toml` mapping** — the session repo's `origin` URL is
+   normalized and matched against every project's `repos`.
+3. **Origin-derived fallback** — the origin URL's path without the host
+   (`git@github.com:org/repo.git` → `projects/org/repo/…`). Unmapped repos
+   still get portable identity, so the config file is optional and
+   incremental — add mappings as the squad tree takes shape.
+4. **No origin at all** (no git, no remote) — the checkpoint files directly
+   under `authors/<author-slug>/`, exactly as before this layout existed.
+
+The config file is optional and can be added or changed at any time — unmapped
+repos sync under their origin-derived path from day one. Remapping a repo never
+orphans its earlier history: reads cover the previous location too, so
+checkpoints already sitting under the old path stay visible after the move.
+
+A broken or unparseable `daimon-team.toml` never blocks a write: the mapping
+is treated as absent (resolution falls through to the origin-derived
+fallback) and the parse error is surfaced as a warning in `daimon team
+status`.
+
+**Legacy note:** sidecars written before this layout keep their flat
+`authors/<author-slug>/` files. That era stays readable forever — reads fan in
+across both layouts and there is no migration; new checkpoints simply start
+landing under `projects/` once a project identity resolves.
 
 ## Reading teammates
 
@@ -122,6 +183,7 @@ shared branch.
 | `DAIMON_TEAM` | unset (off) | Set to `1` to mirror your checkpoints into the team dir. Gates writes only; reads are always on. |
 | `DAIMON_AUTHOR` | `git config user.name` → OS username → `unknown` | The author name your checkpoints are filed under. |
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Root of the local team mirror (one subdirectory per sidecar clone). |
+| `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path (e.g. `core/api-gateway`) for this machine's sessions. Beats the `daimon-team.toml` mapping and the origin-derived fallback. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Read-time age window for teammates' checkpoints; `0` = keep all. |
 
 See [docs/configuration.md](./configuration.md) for the full environment

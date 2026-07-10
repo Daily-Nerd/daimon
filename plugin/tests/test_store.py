@@ -649,6 +649,109 @@ def test_read_team_retention_default_is_generous(tmp_checkpoint_dir, sample_chec
     assert [a for a, _ in store.read_team(project_dir="/repo/x")] == ["ada"]
 
 
+# ---- project-first team layout (#200): nested writes + both-era reads ----
+# DAIMON_TEAM_PROJECT (tier 1) drives resolution here — no git repos needed;
+# the git-backed tiers are exercised in test_teamproject.py.
+
+
+def _nested_author_dir(logical: str, author_slug: str) -> Path:
+    return (config.team_dir() / "local" / "projects"
+            ).joinpath(*logical.split("/")) / "authors" / author_slug
+
+
+def test_dual_write_nested_under_resolved_project(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api gateway")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x")
+    path = _nested_author_dir("core/api-gateway", "ada") / "S-a.json"
+    assert path.exists()
+    blob = json.loads(path.read_text(encoding="utf-8"))
+    # `team_project` = the "/"-joined logical path, ALONGSIDE the legacy stamp.
+    assert blob["team_project"] == "core/api-gateway"
+    assert blob["project_slug"] == store.project_slug("/repo/x")
+    # No flat-era copy: the nested path replaced it, not duplicated it.
+    assert not (_team_author_dir("ada") / "S-a.json").exists()
+
+
+def test_dual_write_flat_when_unresolved(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # No env, /repo/x is not a git repo → tier 4 → TODAY'S flat behavior exactly.
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x")
+    path = _team_author_dir("ada") / "S-a.json"
+    assert path.exists()
+    blob = json.loads(path.read_text(encoding="utf-8"))
+    assert "team_project" not in blob
+    assert not (config.team_dir() / "local" / "projects").exists()
+
+
+def test_read_team_merges_both_eras_newest_wins(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    # Legacy flat era: ada's OLD checkpoint (stamp filter must admit it).
+    store.write_checkpoint("a-flat", _stamped(sample_checkpoint, "a-flat", 100),
+                           project_dir="/repo/x")
+    # Nested era: ada's NEWER checkpoint under the resolved project.
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
+    store.write_checkpoint("a-nested", _stamped(sample_checkpoint, "a-nested", 10),
+                           project_dir="/repo/x")
+    # grace only ever wrote in the flat era.
+    monkeypatch.delenv("DAIMON_TEAM_PROJECT")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-flat", _stamped(sample_checkpoint, "g-flat", 50),
+                           project_dir="/repo/x")
+
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
+    team = store.read_team(project_dir="/repo/x")
+    by_author = {author: cp for author, cp in team}
+    assert set(by_author) == {"ada", "grace"}  # both eras fan in
+    assert by_author["ada"]["session_id"] == "a-nested"  # newest across eras
+
+
+def test_read_team_none_resolution_reads_legacy_only(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
+    store.write_checkpoint("a-nested", _stamped(sample_checkpoint, "a-nested", 10),
+                           project_dir="/repo/x")
+    monkeypatch.delenv("DAIMON_TEAM_PROJECT")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-flat", _stamped(sample_checkpoint, "g-flat", 5),
+                           project_dir="/repo/x")
+    # Resolution now yields None (/repo/x is not a repo, no env) → legacy only.
+    team = store.read_team(project_dir="/repo/x")
+    assert [a for a, _ in team] == ["grace"]
+
+
+def test_read_team_nested_needs_no_stamp_filter(tmp_checkpoint_dir, monkeypatch):
+    # In the nested era the PATH is the project filter — a blob without any
+    # project_slug stamp still belongs to the pool it physically lives in.
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
+    d = _nested_author_dir("core/api", "grace")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "S-g.json").write_text(
+        json.dumps({"session_id": "S-g", "author": "grace"}), encoding="utf-8")
+    team = store.read_team(project_dir="/repo/x")
+    assert [a for a, _ in team] == ["grace"]
+
+
+def test_read_team_nested_retention_applies(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_TEAM_RETENTION_DAYS", "30")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("a-old", _stamped(sample_checkpoint, "a-old", 40),
+                           project_dir="/repo/x")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-new", _stamped(sample_checkpoint, "g-new", 1),
+                           project_dir="/repo/x")
+    team = store.read_team(project_dir="/repo/x")
+    assert [a for a, _ in team] == ["grace"]  # ada aged out of the READ window
+    # NO physical deletes — the nested era is append-only too.
+    assert (_nested_author_dir("core/api", "ada") / "a-old.json").exists()
+
+
 # ---- latest-pointer regression guard: heal of an old session must not steal
 # ---- "latest" from a newer one (#123) ----
 

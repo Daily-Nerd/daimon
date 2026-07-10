@@ -172,6 +172,47 @@ def test_sync_commit_excludes_prestaged_unrelated_paths(bare_remote, monkeypatch
     assert staged == ["notes.txt"]    # pre-staged entry survives untouched
 
 
+def _write_nested_team_file(sidecar, logical, author_slug, name, payload=None):
+    """Lay down a #200 nested-era file: projects/<logical…>/authors/<slug>/<name>."""
+    d = sidecar.joinpath("projects", *logical.split("/"), "authors", author_slug)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(
+        json.dumps(payload or {"session_id": name, "author": author_slug}),
+        encoding="utf-8",
+    )
+
+
+def test_sync_stages_own_files_in_both_eras(bare_remote, monkeypatch):
+    # #200: own files land flat (legacy era) AND nested at any depth under
+    # projects/ — sync must commit both, and never another author's files.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    _write_nested_team_file(sidecar, "core/api", "Ada", "S2.json")
+    _write_nested_team_file(sidecar, "core/cosmo/dusters/finance-1", "Ada", "S3.json")
+    _write_nested_team_file(sidecar, "core/api", "Bob", "S9.json")
+    r = teamsync.sync_remote(sidecar)
+    assert r["committed"] == 3
+    published = _bare_files(bare_remote)
+    assert "authors/Ada/S1.json" in published
+    assert "projects/core/api/authors/Ada/S2.json" in published
+    assert "projects/core/cosmo/dusters/finance-1/authors/Ada/S3.json" in published
+    # Bob's nested file was neither committed nor pushed — still untracked.
+    status = _git(sidecar, "status", "--porcelain").stdout
+    assert "?? projects/core/api/authors/Bob/" in status
+    assert "projects/core/api/authors/Bob/S9.json" not in published
+
+
+def test_sync_nested_only_no_flat_dir(bare_remote, monkeypatch):
+    # A sidecar born after #200 may have NO flat authors/ dir at all.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_nested_team_file(sidecar, "core/api", "Ada", "S1.json")
+    r = teamsync.sync_remote(sidecar)
+    assert r["committed"] == 1
+    assert "projects/core/api/authors/Ada/S1.json" in _bare_files(bare_remote)
+
+
 def test_sync_failed_add_aborts_commit(bare_remote, monkeypatch):
     # #144: if staging the own dir fails, committing would publish whatever
     # stale state the index happens to hold — abort instead.
@@ -403,6 +444,41 @@ def test_cli_team_status_freshness_unpushed_authors(bare_remote, monkeypatch, ca
     assert "fresh" in out              # ls-remote hash matches tracking ref
     assert "1 unpushed" in out
     assert "Ada" in out
+
+
+def test_status_authors_seen_includes_nested(bare_remote, monkeypatch):
+    # #200: authors who only ever wrote in the nested era must still count.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    _write_nested_team_file(sidecar, "core/api", "Bob", "S2.json")
+    rows = teamsync.team_status()
+    assert rows[0]["authors"] == ["Ada", "Bob"]
+
+
+def test_team_status_warns_on_broken_config(bare_remote, monkeypatch, capsys):
+    # #200: a broken daimon-team.toml fails open (config treated as absent),
+    # but the parse error must surface in `daimon team status`.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    (sidecar / "daimon-team.toml").write_text("[projects.\nbroken", encoding="utf-8")
+    rows = teamsync.team_status()
+    assert rows[0]["config_warning"]
+    assert cli.main(["team", "status"]) == 0
+    assert "daimon-team.toml" in capsys.readouterr().out
+
+
+def test_team_status_no_warning_on_valid_or_missing_config(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    rows = teamsync.team_status()
+    assert rows[0]["config_warning"] is None  # missing file: no false alarm
+    (sidecar / "daimon-team.toml").write_text(
+        '[projects."core/x"]\nrepos = ["https://github.com/org/x"]\n',
+        encoding="utf-8",
+    )
+    rows = teamsync.team_status()
+    assert rows[0]["config_warning"] is None
 
 
 def test_cli_team_status_no_remote(capsys):

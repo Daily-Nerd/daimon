@@ -5,6 +5,7 @@ by scanning the same files everything else reads:
 
     local flat store   <checkpoint_dir>/<session_id>.json   (pointers excluded)
     team dir           <team_dir>/*/authors/<author>/*.json (all remotes, #111)
+                       <team_dir>/*/projects/**/authors/<author>/*.json (#200)
 
 Any doubt about the db — missing, corrupt, foreign schema, stale fingerprint —
 resolves to a full rebuild. Rebuild is a linear scan of at most a few hundred
@@ -166,10 +167,9 @@ def _scan_sources():
     except OSError:
         remotes = []
     for remote in remotes:
-        try:
-            author_dirs = list((remote / "authors").iterdir())
-        except OSError:
-            continue  # not a remote-shaped dir
+        # Both layout eras (#200): legacy flat authors/* plus nested
+        # projects/**/authors/* — same walker read_team's fan-in rests on.
+        author_dirs = store._team_author_dirs(remote)
         for adir in author_dirs:
             try:
                 files = [p for p in adir.iterdir()
