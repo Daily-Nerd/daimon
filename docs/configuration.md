@@ -99,6 +99,11 @@ checkpoint on demand with `daimon verify-receipt [session]`; at briefing time a
 receipt-era checkpoint whose receipt is missing or no longer matches its bytes
 has its `✓ verbatim` labels degraded with a visible note.
 
+Public-key derivation prefers the vitni CLI's `keygen` command (vitni 0.5.0+) and
+falls back to openssl on older CLIs or a failed probe — so on macOS, where Apple's
+LibreSSL has no Ed25519 in `openssl pkey`, receipts work once vitni ≥ 0.5.0 is
+installed, with no openssl-with-Ed25519 required.
+
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_RECEIPTS` | off | When truthy, mint a signed receipt beside each checkpoint. Default off — a new subprocess per serialize is opt-in. |

@@ -49,6 +49,16 @@ _PUB_FILE = "signing.pub.json"
 _CLI_TIMEOUT = 10                   # seconds; a signer that hangs must not hang us
 _SIDECAR_SUFFIX = ".receipt"        # NOT .json — see _sidecar_path
 
+# vitni keygen (0.5.0+) derive-only probe (#206): the RFC 8032 TEST 1 vector.
+# An EXACT match is the only signal that the resolved CLI's keygen is trustworthy;
+# a wrong x, an {"error"} payload, or a missing command all fall back to openssl.
+_KEYGEN_PROBE_SEED_B64 = "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A="
+_KEYGEN_PROBE_X = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+# Per-process probe cache, keyed by the RESOLVED CLI path: a verdict belongs to
+# the binary that earned it, not the process — a DAIMON_VITNI_CLI repoint
+# mid-process (tests, heal) must re-probe the new binary, never inherit.
+_keygen_probe_cache: dict[str, bool] = {}
+
 
 # ---- hashes (pure stdlib) --------------------------------------------------
 
@@ -95,6 +105,20 @@ def _read_seed(seed_path: Path) -> bytes | None:
     return raw if len(raw) == 32 else None
 
 
+def _read_seed_str(seed_path: Path) -> str | None:
+    """The seed file's base64 text VERBATIM (stripped), or None. #206 consumer
+    rule: the stored string is handed to keygen/sign stdin UNTOUCHED — never
+    decode→re-encode, since a flexible base64 decoder can silently canonicalize a
+    non-canonical string into a *different* one. Daimon writes its own seed padded,
+    so verbatim == canonical here; passing the string verbatim honors the contract
+    regardless of who wrote the file."""
+    try:
+        raw = seed_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return raw or None
+
+
 def _ensure_seed(keys_dir: Path) -> bytes | None:
     """Load the Ed25519 seed, creating it (32 CSPRNG bytes, base64, mode 0600) on
     first mint. O_EXCL so two racing first-mints can never write divergent seeds
@@ -120,11 +144,70 @@ def _ensure_seed(keys_dir: Path) -> bytes | None:
         return None
 
 
+def _jwk_x(out) -> str | None:
+    """The non-empty string `jwk.x` from a keygen result, or None. Consumed
+    VERBATIM (#206) — the emitted string is never decoded/re-encoded."""
+    if not isinstance(out, dict):
+        return None
+    jwk = out.get("jwk")
+    if not isinstance(jwk, dict):
+        return None
+    x = jwk.get("x")
+    return x if isinstance(x, str) and x else None
+
+
+def _keygen_probe(cli: str) -> bool:
+    """Once per process, prove the resolved CLI's keygen derives the RFC 8032
+    TEST 1 vector EXACTLY. A wrong x, an {"error"} payload (which vitni emits on
+    exit 0), a missing command, or garbage all fail the probe → openssl fallback.
+    Never asserts on the return code — _run_cli already folds {"error"}, nonzero
+    rc, and non-JSON uniformly into None (#206)."""
+    if cli not in _keygen_probe_cache:
+        x = _jwk_x(_run_cli(cli, "keygen",
+                            json.dumps({"seed_b64": _KEYGEN_PROBE_SEED_B64})))
+        _keygen_probe_cache[cli] = x == _KEYGEN_PROBE_X
+        if not _keygen_probe_cache[cli]:
+            log.info("daimon receipts: vitni keygen probe failed (got x=%r); "
+                     "using openssl", x)
+    return _keygen_probe_cache[cli]
+
+
+def _keygen_derive_x(seed_b64: str) -> str | None:
+    """Derive the public x via vitni keygen (0.5.0+), or None to fall back to
+    openssl. Probes the CLI once; only an exact probe match trusts keygen for the
+    real seed, which is passed VERBATIM (#206). Returns the emitted x untouched."""
+    cli = _resolve_cli()
+    if cli is None or not _keygen_probe(cli):
+        return None
+    x = _jwk_x(_run_cli(cli, "keygen", json.dumps({"seed_b64": seed_b64})))
+    if x is None:
+        log.info("daimon receipts: keygen probe passed but real-seed derive "
+                 "failed; using openssl")
+    return x
+
+
+def _derive_pubkey(seed: bytes, seed_b64: str | None) -> str | None:
+    """Public x for the seed, preferring vitni keygen over openssl (#206). keygen
+    (0.5.0+) works on stock macOS, where Apple's LibreSSL has no Ed25519 in
+    `openssl pkey`; the openssl DER slice remains the fallback for older CLIs or
+    any probe deviation. Logs which path produced the key. None when both fail."""
+    if seed_b64:
+        x = _keygen_derive_x(seed_b64)
+        if x is not None:
+            log.info("daimon receipts: pubkey derived via vitni keygen")
+            return x
+    x = _derive_pubkey_x(seed)
+    if x is not None:
+        log.info("daimon receipts: pubkey derived via openssl")
+    return x
+
+
 def _derive_pubkey_x(seed: bytes) -> str | None:
-    """Raw Ed25519 public key (base64url, no pad) for `seed`, via openssl. The
-    seed is wrapped into a PKCS8 DER, `openssl pkey -pubout` emits the 44-byte
-    SPKI DER whose last 32 bytes ARE the raw public key. None on any failure —
-    e.g. macOS LibreSSL lacks Ed25519 in `openssl pkey` (fail-open to no receipt)."""
+    """Raw Ed25519 public key (base64url, no pad) for `seed`, via openssl — the
+    #206 fallback beneath vitni keygen. The seed is wrapped into a PKCS8 DER,
+    `openssl pkey -pubout` emits the 44-byte SPKI DER whose last 32 bytes ARE the
+    raw public key. None on any failure — e.g. macOS LibreSSL lacks Ed25519 in
+    `openssl pkey` (fail-open to no receipt)."""
     der = _PKCS8_ED25519_PREFIX + seed
     try:
         proc = subprocess.run(
@@ -145,9 +228,12 @@ def _pubkey_jwk(x: str) -> dict:
     return {"kty": "OKP", "crv": "Ed25519", "x": x, "alg": "EdDSA", "status": "active"}
 
 
-def _ensure_pubkey(keys_dir: Path, seed: bytes) -> dict | None:
+def _ensure_pubkey(keys_dir: Path, seed: bytes,
+                   seed_b64: str | None = None) -> dict | None:
     """Load the cached public JWK, deriving + caching it once on first mint.
-    None when derivation is impossible (no openssl) — no receipt this run."""
+    Derivation prefers vitni keygen and falls back to openssl (#206); `seed_b64`
+    is the seed file's VERBATIM string for the keygen path (None → openssl only).
+    None when both derivation paths fail — no receipt this run."""
     pub_path = keys_dir / _PUB_FILE
     try:
         jwk = json.loads(pub_path.read_text(encoding="utf-8"))
@@ -155,7 +241,7 @@ def _ensure_pubkey(keys_dir: Path, seed: bytes) -> dict | None:
             return jwk
     except (OSError, json.JSONDecodeError):
         pass
-    x = _derive_pubkey_x(seed)
+    x = _derive_pubkey(seed, seed_b64)
     if not x:
         return None
     jwk = _pubkey_jwk(x)
@@ -260,11 +346,17 @@ def plan_mint(checkpoint: dict) -> dict | None:
     seed = _ensure_seed(keys_dir)
     if seed is None:
         return None
-    if _ensure_pubkey(keys_dir, seed) is None:
+    # #206 consumer rule: the seed's stored string goes to keygen/sign stdin
+    # VERBATIM — never decode→re-encode. _ensure_seed just wrote/read the file, so
+    # the read succeeds; the b64encode(seed) fallback only covers a torn file (a
+    # seed we generated re-encodes identically anyway).
+    seed_b64 = (_read_seed_str(keys_dir / _SEED_FILE)
+                or base64.b64encode(seed).decode("ascii"))
+    if _ensure_pubkey(keys_dir, seed, seed_b64) is None:
         return None
     return {
         "cli": cli,
-        "seed_b64": base64.b64encode(seed).decode("ascii"),
+        "seed_b64": seed_b64,
         "inputs_hash": inputs_hash,
         "performer_id": str(checkpoint.get("author") or "unknown"),
     }
