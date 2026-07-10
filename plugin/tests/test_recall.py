@@ -80,6 +80,38 @@ def test_rebuild_indexes_team_items(tmp_checkpoint_dir, monkeypatch):
     assert hits[0]["kind"] == "belief"
 
 
+def _write_nested_team_file(logical, author_slug, sid, cp, project_dir=None):
+    """A #200 nested-era teammate blob: projects/<logical…>/authors/<slug>/."""
+    d = (config.team_dir() / "local" / "projects").joinpath(
+        *logical.split("/")) / "authors" / author_slug
+    d.mkdir(parents=True, exist_ok=True)
+    blob = dict(cp)
+    blob.setdefault("author", author_slug)
+    blob.setdefault("team_project", logical)
+    if project_dir is not None:
+        blob["project_slug"] = store.project_slug(project_dir)
+    (d / f"{sid}.json").write_text(
+        json.dumps(blob, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_rebuild_indexes_nested_team_items(tmp_checkpoint_dir, monkeypatch):
+    # #200: blobs under projects/**/authors/* feed the index too.
+    _write_nested_team_file(
+        "core/cosmo/dusters/finance-1", "grace", "S-n",
+        _cp("S-n", beliefs=[{"text": "Nested capybara ledgers reconcile",
+                             "trust": "inferred"}]),
+        project_dir="/repo/x",
+    )
+    recall.rebuild()
+    hits = recall.search("capybara", all_projects=True)
+    assert len(hits) == 1
+    assert hits[0]["author"] == "grace"
+    # The project_slug stamp still scopes nested blobs to their project.
+    scoped = recall.search("capybara", project_dir="/repo/x")
+    assert len(scoped) == 1
+
+
 def test_search_matches_quote_text(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(

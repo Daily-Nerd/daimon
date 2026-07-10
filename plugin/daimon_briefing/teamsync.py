@@ -3,7 +3,11 @@
 Layout (extends the #111 team dir):
     <team_dir>/local/                    Phase 1 local-only mirror (no git)
     <team_dir>/<remote-slug>/            one git CLONE per team remote (sidecar)
-        authors/<author-slug>/*.json     immutable per-author checkpoint files
+        authors/<author-slug>/*.json     legacy flat era — readable forever
+        projects/<seg…>/authors/<author-slug>/*.json
+                                         #200 logical-project era (teamproject)
+        daimon-team.toml                 architect-authored mapping — humans
+                                         write and commit it; daimon only reads
 
 The multi-writer git spike verdict is LAW here:
   1. Only immutable per-author files are synced — NO mutable pointers ever land
@@ -42,7 +46,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import config, store
+from . import config, store, teamproject
 
 GIT_TIMEOUT = 15        # seconds — local plumbing calls
 NET_TIMEOUT = 60        # seconds — ls-remote / fetch / push / clone touch the network
@@ -154,15 +158,15 @@ def _identity_extra(sidecar) -> list[str]:
             "-c", f"user.email={store.project_slug(author)}@daimon.invalid"]
 
 
-def _commit(sidecar, message, pathspec) -> subprocess.CompletedProcess:
+def _commit(sidecar, message, pathspecs) -> subprocess.CompletedProcess:
     """Pathspec-scoped commit (#144). A bare `git commit` snapshots the WHOLE
     index — anything the user happened to have pre-staged in the sidecar would
-    be swept into the append-only team branch. The pathspec limits the commit
-    to the caller's own paths and leaves every other index entry exactly as it
+    be swept into the append-only team branch. The pathspecs limit the commit
+    to the caller's own paths and leave every other index entry exactly as it
     was (git's partial-commit semantics)."""
     return _run_git(
         ["git", "-C", str(sidecar), *_identity_extra(sidecar),
-         "commit", "-m", message, "--", pathspec],
+         "commit", "-m", message, "--", *pathspecs],
         GIT_TIMEOUT,
     )
 
@@ -207,7 +211,7 @@ def init(url: str) -> Path:
     if _head(dest) is None:  # unborn branch: the remote was empty
         (dest / "README.md").write_text(_STUB_README, encoding="utf-8")
         _git(dest, "add", "--", "README.md")
-        cp = _commit(dest, "sync: initialize team memory sidecar", "README.md")
+        cp = _commit(dest, "sync: initialize team memory sidecar", ["README.md"])
         if cp.returncode != 0:
             raise TeamError(f"could not seed root commit: {_last_line(cp.stderr or cp.stdout)}")
         push = _git(dest, "push", "-u", "origin", _branch(dest), timeout=NET_TIMEOUT)
@@ -236,25 +240,51 @@ def _ls_remote(sidecar, branch) -> tuple[str, str | None]:
     return ("ok", out.split()[0])
 
 
+def _own_pathspecs(sidecar: Path, own: str) -> list[str]:
+    """Own-author dirs in BOTH layout eras (#200): the legacy flat
+    authors/<own>/ plus every projects/**/authors/<own>/ at any depth. Found
+    by an explicit walk yielding explicit relative paths — exact by
+    construction, where a `projects/**/authors/<own>` glob pathspec would ride
+    on git's glob semantics. Descent stops at each authors/ dir (author dirs
+    hold only checkpoint files). Never raises (os.walk swallows errors)."""
+    specs = []
+    # Existence-gated: `git add` FAILS outright on a pathspec that matches
+    # nothing, so a nested-only sidecar must not carry a phantom flat spec
+    # (and vice versa). The nested specs come off the disk walk, so they
+    # exist by construction.
+    if (sidecar / "authors" / own).is_dir():
+        specs.append(f"authors/{own}")
+    for cur, dirnames, _files in os.walk(sidecar / "projects"):
+        cur_p = Path(cur)
+        if cur_p.name == "authors":
+            if own in dirnames:
+                specs.append((cur_p / own).relative_to(sidecar).as_posix())
+            dirnames[:] = []
+    return specs
+
+
 def _commit_own(sidecar, report) -> None:
-    """Stage + commit NEW files under authors/<own-author-slug>/ ONLY. The add
-    is path-scoped to the own-author dir, so other authors' paths (and any
-    stray junk in the sidecar) are never touched — disjoint append-only paths
-    are what make the whole scheme conflict-free."""
+    """Stage + commit NEW files under the own-author dirs ONLY — both eras
+    (#200): authors/<own>/ and projects/**/authors/<own>/. The add is
+    path-scoped to those dirs, so other authors' paths (and any stray junk in
+    the sidecar) are never touched — disjoint append-only paths are what make
+    the whole scheme conflict-free."""
     own = store.project_slug(config.author()) or "unknown"
-    own_dir = f"authors/{own}"
-    status = _git(sidecar, "status", "--porcelain", "--", own_dir)
+    own_dirs = _own_pathspecs(sidecar, own)
+    if not own_dirs:
+        return  # no own dir in either era: nothing of ours to stage
+    status = _git(sidecar, "status", "--porcelain", "--", *own_dirs)
     if status.returncode != 0 or not status.stdout.strip():
         return
-    if _git(sidecar, "add", "--", own_dir).returncode != 0:
+    if _git(sidecar, "add", "--", *own_dirs).returncode != 0:
         return
-    # Count scoped to the own dir (#144): the index may carry unrelated
+    # Count scoped to the own dirs (#144): the index may carry unrelated
     # pre-staged entries, and the commit below deliberately excludes them.
-    staged = _git(sidecar, "diff", "--cached", "--name-only", "--", own_dir)
+    staged = _git(sidecar, "diff", "--cached", "--name-only", "--", *own_dirs)
     n = len([ln for ln in staged.stdout.splitlines() if ln.strip()])
     if not n:
         return
-    cp = _commit(sidecar, f"sync: {config.author()} {n} checkpoint(s)", own_dir)
+    cp = _commit(sidecar, f"sync: {config.author()} {n} checkpoint(s)", own_dirs)
     if cp.returncode == 0:
         report["committed"] = n
     else:
@@ -280,7 +310,9 @@ def _check_author_mismatch(sidecar, old, new, report) -> None:
         return
     for path in diff.stdout.splitlines():
         path = path.strip()
-        if not re.fullmatch(r"authors/[^/]+/[^/]+\.json", path):
+        # Both layout eras (#200): flat authors/… and nested projects/**/authors/…
+        if not re.fullmatch(
+                r"(?:projects/(?:[^/]+/)+)?authors/[^/]+/[^/]+\.json", path):
             continue
         show = _git(sidecar, "show", f"{new}:{path}")
         if show.returncode != 0:
@@ -449,12 +481,9 @@ def git_available() -> bool:
 
 
 def _authors_seen(sidecar) -> list[str]:
-    try:
-        return sorted(
-            p.name for p in (sidecar / "authors").iterdir() if p.is_dir()
-        )
-    except OSError:
-        return []
+    # Both layout eras (#200): store's walker already fans in flat authors/*
+    # and nested projects/**/authors/*; one author in both counts once.
+    return sorted({p.name for p in store._team_author_dirs(sidecar)})
 
 
 def _unpushed_count(sidecar, branch) -> int:
@@ -491,6 +520,9 @@ def team_status() -> list[dict]:
             "freshness": freshness,
             "unpushed": _unpushed_count(sidecar, branch),
             "authors": _authors_seen(sidecar),
+            # #200: a broken daimon-team.toml fails open on the write path
+            # (mapping ignored) — status is where the parse error surfaces.
+            "config_warning": teamproject.config_error(sidecar),
         })
     return rows
 

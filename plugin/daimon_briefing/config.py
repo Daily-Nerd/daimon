@@ -205,6 +205,15 @@ def recall_seen_dir() -> Path:
     return Path.home() / ".daimon" / "recall_seen"
 
 
+def team_project() -> str | None:
+    """Explicit logical team-project path for this machine's sessions (#200):
+    a relative path like 'core/api-gateway'. Tier-1 override in teamproject's
+    resolution — explicit local intent beats the daimon-team.toml mapping and
+    the origin-derived fallback. Unset = resolve from git origin as usual."""
+    val = (_get("DAIMON_TEAM_PROJECT") or "").strip()
+    return val or None
+
+
 def team_retention_days() -> int:
     """Read-time age window for teammates' checkpoints (#113): read_team skips
     files older than this many days. 0 = keep all. Default 365 — deliberately

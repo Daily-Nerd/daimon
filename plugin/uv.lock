@@ -163,6 +163,9 @@ toml = [
 name = "daimon-briefing"
 version = "0.12.3"
 source = { editable = "." }
+dependencies = [
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+]
 
 [package.optional-dependencies]
 dev = [
@@ -170,7 +173,6 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 pretty = [
     { name = "rich" },
@@ -185,7 +187,7 @@ requires-dist = [
     { name = "rich", marker = "extra == 'pretty'", specifier = ">=13" },
     { name = "rich-argparse", marker = "extra == 'pretty'", specifier = ">=1.8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.20" },
-    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]
 provides-extras = ["dev", "pretty"]
 

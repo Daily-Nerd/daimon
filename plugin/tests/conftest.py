@@ -28,6 +28,12 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_RECALL_SEEN_DIR", str(home / "recall_seen"))
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
     monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
+    # #200: a host DAIMON_TEAM_PROJECT would nest every team write; and the
+    # resolver caches per (project_dir, team_dir, env) — clear it so no test
+    # can see another test's resolution.
+    monkeypatch.delenv("DAIMON_TEAM_PROJECT", raising=False)
+    from daimon_briefing import teamproject
+    teamproject._cache.clear()
     # Clear kill switch / overrides that may leak from the host env.
     monkeypatch.delenv("DAIMON_DISABLE", raising=False)
     monkeypatch.delenv("DAIMON_MIN_MESSAGES", raising=False)

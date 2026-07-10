@@ -1273,6 +1273,10 @@ def _cmd_team_status(args) -> int:
         authors = ", ".join(row["authors"]) or "none yet"
         lines.append(f"{row['slug']}: {row['freshness']} — "
                      f"{row['unpushed']} unpushed checkpoint(s), authors: {authors}")
+        # #200: a broken daimon-team.toml fails open (mapping ignored) on the
+        # write path — status is the one place the parse error surfaces.
+        if row.get("config_warning"):
+            lines.append(f"  warning: {row['config_warning']}")
     render.render_team_status(lines)
     return 0
 
