@@ -23,6 +23,12 @@ instead of a confident guess.
 Each item is marked `✓ verbatim` (pinned to an exact quote — trust it) or
 `~ inferred` (paraphrased — treat with appropriate caution).
 
+A briefing can also show a staleness warning: `N carried item(s) unverified
+for >N days — world-check before repeating as true`. A carried item that
+keeps getting restated session after session is not corroborated just
+because it agrees with itself — check the world (code, git, issue tracker)
+before treating it as current fact.
+
 ## Automatic behavior
 
 You do not need to invoke anything. The plugin wires the host's native session
@@ -63,7 +69,10 @@ backend, stdlib-only at runtime. The capabilities behind the briefing:
 - **Deterministic carry.** Unresolved open loops that still matter are carried
   forward into the next checkpoint by exact term overlap (no LLM in the carry
   step) and marked `[carried]` so you can see a loop survived from an earlier
-  session rather than being freshly observed.
+  session rather than being freshly observed. When a carried item goes too
+  long without anyone actually re-checking it against the world, the brief
+  surfaces a staleness warning naming how many days it's been riding
+  unverified.
 - **Proactive recall.** A per-prompt pointer to prior work when your current
   prompt overlaps an open loop (see *Automatic behavior*).
 - **Trust classing.** Every item is `✓ verbatim` (pinned to an exact quote) or

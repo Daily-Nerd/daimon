@@ -1009,3 +1009,59 @@ def test_chained_carry_false_stamp_stays_absent():
     assert "quote_verified" not in q
     assert q["quote"] == "retry loop still unresolved"
     assert q["carried_from"] == "S-a"
+
+
+# ---- #215: last_verified survives carry ----
+#
+# Checkpoints are append-only — last_verified is stamped ONLY at serialize
+# time (#125's verify_quotes). Carry must never rewrite or refresh it on its
+# own; the plain path is a straight deepcopy (nothing to prove but that no
+# strip was added), and the twin-freeze path applies a NEWER-wins rule since
+# a re-discussed-and-re-verified quote was just world-checked again.
+
+def test_plain_carry_preserves_last_verified_unchanged():
+    prev = _cp("S-prev", 1, questions=[_item(
+        "quorint gateway retry loop still unresolved", days=5,
+        last_verified=_iso(4))])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    q = out["working_context"]["open_questions"][0]
+    assert q["last_verified"] == _iso(4)  # byte-identical, never refreshed
+
+
+def test_plain_carry_with_no_last_verified_stays_absent():
+    prev = _cp("S-prev", 1, questions=[_item(
+        "quorint gateway retry loop still unresolved", days=5)])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    q = out["working_context"]["open_questions"][0]
+    assert "last_verified" not in q
+
+
+def test_twin_freeze_fresh_last_verified_wins_over_prev():
+    # Native twin was JUST re-verified this session (fresh, newer) — prev's
+    # older stamp must NOT overwrite it.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45,
+        last_verified=_iso(44))])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, days=0, last_verified=_iso(0))])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert qs[0]["last_verified"] == _iso(0)  # fresh kept, newer wins
+
+
+def test_twin_freeze_propagates_prev_last_verified_when_twin_has_none():
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45,
+        last_verified=_iso(44))])
+    new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])  # no stamp
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert qs[0]["last_verified"] == _iso(44)  # propagated from prev, only source
+
+
+def test_twin_freeze_neither_has_last_verified_stays_absent():
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])
+    out = carry.merge(new, prev, NOW)
+    assert "last_verified" not in out["working_context"]["open_questions"][0]

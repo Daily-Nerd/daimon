@@ -61,6 +61,7 @@ Deterministic cross-session carry-over of unresolved items.
 | `DAIMON_BRIEF_MAX_TOKENS` | `3000` | Token budget for the injected briefing, estimated at `len(text)//4` (no tokenizer dependency). `0` = unbounded. |
 | `DAIMON_MAX_BRIEFING_DECISIONS` | `10` | Cap on decisions shown in the briefing (render-time view only — the checkpoint keeps all of them). `0` = unbounded. |
 | `DAIMON_BRIEF_GLOBAL_FALLBACK` | header-only | Controls the cross-project global-pointer fallback when a project has no checkpoint of its own. Default shows a header only; set to `full` (or `1`) to inject the full foreign body. |
+| `DAIMON_STALE_DAYS` | `7.0` | Age threshold (days) past which a carried item's effective last-verified stamp (its `last_verified`, else the latest resolutions.jsonl event, else `first_seen`) is stale enough for `brief` to warn about it. `0` warns on every carried item. |
 | `DAIMON_PLAIN` | off | When truthy (case-insensitive), forces plain-text output — disables the rich tables/panels in `status`, `brief`, and `--help`. |
 | `NO_COLOR` | unset | Presence-based, per the [NO_COLOR convention](https://no-color.org/): if the variable is set to *any* value (even empty), rich output is disabled. |
 

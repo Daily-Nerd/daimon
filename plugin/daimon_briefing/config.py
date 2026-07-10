@@ -138,6 +138,21 @@ def gc_pin_importance() -> int:
         return 9
 
 
+def stale_days() -> float:
+    """Age threshold (days) before a carried item's EFFECTIVE last-verified
+    age (#215: last_verified stamp, else the latest resolutions.jsonl event
+    ts, else first_seen — in that priority) is stale enough for `daimon
+    brief` to warn about it. Agreement between two agent-written sources
+    (the checkpoint restating a carried item) is not corroboration — this is
+    the budget past which that agreement alone stops being enough. Default
+    7.0 days; DAIMON_STALE_DAYS overrides, garbage falls back to the default
+    (fail-open, same try/except-float shape as carry_floor)."""
+    try:
+        return max(0.0, float(_get("DAIMON_STALE_DAYS") or "7.0"))
+    except ValueError:
+        return 7.0
+
+
 def max_briefing_decisions() -> int:
     """Cap on decisions shown in the briefing (render-time view). Default 10; 0 =
     unbounded. The checkpoint keeps ALL decisions — this bounds only the injected
