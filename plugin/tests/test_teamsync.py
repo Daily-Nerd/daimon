@@ -444,6 +444,98 @@ def test_cli_team_status_freshness_unpushed_authors(bare_remote, monkeypatch, ca
     assert "fresh" in out              # ls-remote hash matches tracking ref
     assert "1 unpushed" in out
     assert "Ada" in out
+    assert "pending" not in out        # nothing uncommitted: wording unchanged
+
+
+# ---- pending checkpoints: uncommitted own-author files (#217) --------------
+#
+# #217: `_unpushed_count` only sees commits ahead of tracking. A checkpoint
+# JSON dual-written into the sidecar sits uncommitted (own-author files are
+# staged+committed later, by `_commit_own`) and was invisible to both `daimon
+# team status` and the `daimon status` team line — "fresh, 0 unpushed" while a
+# file sat on disk unaccounted for. `_pending_count` closes that gap by
+# counting `git status --porcelain` entries under the own-author dirs.
+
+
+def test_pending_count_zero_when_no_own_dir(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    assert teamsync._pending_count(sidecar) == 0
+
+
+def test_pending_count_counts_uncommitted_own_files(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    _write_team_file(sidecar, "Ada", "S2.json")
+    assert teamsync._pending_count(sidecar) == 2
+
+
+def test_pending_count_counts_nested_era_files(bare_remote, monkeypatch):
+    # #200: nested-era files (projects/**/authors/<own>/) count too.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_nested_team_file(sidecar, "core/api", "Ada", "S1.json")
+    assert teamsync._pending_count(sidecar) == 1
+
+
+def test_pending_count_ignores_other_authors_files(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Bob", "S9.json")
+    assert teamsync._pending_count(sidecar) == 0
+
+
+def test_pending_count_zero_after_commit(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    teamsync.sync_remote(sidecar)  # _commit_own lands it
+    assert teamsync._pending_count(sidecar) == 0
+
+
+def test_pending_count_fails_open_on_git_error(bare_remote, monkeypatch):
+    # Fail-open (matches the rest of the module's style): a git error must
+    # never surface as a crash or a false alarm.
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    real_git = teamsync._git
+
+    def failing_status(cwd, *args, **kwargs):
+        if args and args[0] == "status":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="status failed")
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(teamsync, "_git", failing_status)
+    assert teamsync._pending_count(sidecar) == 0
+
+
+def test_team_status_row_includes_pending(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    rows = teamsync.team_status()
+    assert rows[0]["pending"] == 1
+
+
+def test_status_line_includes_pending_only_when_nonzero(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    assert "pending" not in teamsync.status_line()
+    _write_team_file(sidecar, "Ada", "S1.json")
+    assert "1 pending" in teamsync.status_line()
+
+
+def test_cli_team_status_reports_pending_checkpoints(bare_remote, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")  # uncommitted: pending, not unpushed
+    assert cli.main(["team", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "0 unpushed" in out
+    assert "1 pending checkpoint(s)" in out
+    assert "daimon team sync" in out
 
 
 def test_status_authors_seen_includes_nested(bare_remote, monkeypatch):

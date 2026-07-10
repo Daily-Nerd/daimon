@@ -1294,8 +1294,16 @@ def _cmd_team_status(args) -> int:
     lines = []
     for row in rows:
         authors = ", ".join(row["authors"]) or "none yet"
+        # #217: uncommitted checkpoints (dual-written to disk, staged+committed
+        # only on the next sync) are invisible to `unpushed` alone — surface
+        # them and nudge a sync, but only when there's something to nudge
+        # about, so the common case's wording stays byte-identical.
+        pending = row.get("pending", 0)
+        pending_part = (f", {pending} pending checkpoint(s) — run "
+                        "`daimon team sync`") if pending > 0 else ""
         lines.append(f"{row['slug']}: {row['freshness']} — "
-                     f"{row['unpushed']} unpushed checkpoint(s), authors: {authors}")
+                     f"{row['unpushed']} unpushed checkpoint(s)"
+                     f"{pending_part}, authors: {authors}")
         # #200: a broken daimon-team.toml fails open (mapping ignored) on the
         # write path — status is the one place the parse error surfaces.
         if row.get("config_warning"):
