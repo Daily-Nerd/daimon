@@ -91,6 +91,87 @@ def test_empty_or_nonstring_quote_is_false():
     assert not serializer.quote_matches(None, "some haystack text here")
 
 
+# ---- Unicode punctuation folding + inline list markers (#208) ----
+
+def test_curly_apostrophe_in_transcript_matches_straight_in_quote():
+    # Real downgrade shape: transcript renders a curly apostrophe (U+2019),
+    # the model quotes the ASCII one — otherwise byte-faithful.
+    hay = "assistant: we don’t rotate the pointer before the write lands"
+    assert serializer.quote_matches(
+        "we don't rotate the pointer before the write lands", hay)
+
+
+def test_straight_apostrophe_in_transcript_matches_curly_in_quote():
+    hay = "assistant: we don't rotate the pointer before the write lands"
+    assert serializer.quote_matches(
+        "we don’t rotate the pointer before the write lands", hay)
+
+
+def test_curly_double_quotes_fold_to_straight():
+    hay = "user: call it “the pointer chain” in the docs"
+    assert serializer.quote_matches('call it "the pointer chain" in the docs', hay)
+
+
+def test_en_and_em_dash_fold_to_hyphen():
+    hay = ("assistant: retry windows are 3–5 seconds — "
+           "measured on the gateway")
+    assert serializer.quote_matches(
+        "retry windows are 3-5 seconds - measured on the gateway", hay)
+
+
+def test_nonbreaking_space_folds_to_space():
+    hay = "assistant: bump the limit to 1200 lines for chunking"
+    assert serializer.quote_matches(
+        "bump the limit to 1200 lines for chunking", hay)
+
+
+def test_unicode_ellipsis_still_splits_before_folding():
+    # U+2026 is an elision marker split on the RAW quote — punctuation folding
+    # must not eat it before quote_matches sees it.
+    hay = ("assistant: first we rotate the pointer chain, then much later "
+           "we write the new latest atomically")
+    assert serializer.quote_matches(
+        "first we rotate the pointer chain…write the new latest atomically",
+        hay)
+
+
+def test_inline_list_marker_in_quote_matches_line_anchored_haystack():
+    # Real downgrade shape: the haystack marker sits at a line start (which
+    # line-anchored stripping removes) while the quote reflows the same marker
+    # mid-string — stripping must be symmetric across both placements.
+    hay = ("assistant: PR up: **https://github.com/x/y/pull/11**\n"
+           "- Branch `feat/thing`")
+    assert serializer.quote_matches(
+        "PR up: **https://github.com/x/y/pull/11** - Branch `feat/thing`", hay)
+
+
+def test_inline_numbered_markers_match_numbered_list():
+    hay = "assistant: plan:\n1. rotate the pointer chain\n2. write the new latest"
+    assert serializer.quote_matches(
+        "1. rotate the pointer chain 2. write the new latest", hay)
+
+
+def test_hyphenated_words_survive_marker_stripping():
+    hay = "assistant: we must re-verify the foo-bar pointer chain now"
+    assert serializer.quote_matches(
+        "we must re-verify the foo-bar pointer chain now", hay)
+    # The hyphen is load-bearing: a de-hyphenated haystack must NOT match.
+    assert not serializer.quote_matches(
+        "we must re-verify the foo-bar pointer chain now",
+        "assistant: we must re verify the foo bar pointer chain now")
+
+
+def test_decimals_survive_marker_stripping():
+    hay = "assistant: the sampling constant stays at 3.14 for this run"
+    assert serializer.quote_matches(
+        "the sampling constant stays at 3.14 for this run", hay)
+    # `3. ` is a marker-shaped token only when space-delimited; the intact
+    # decimal in the quote must NOT match a haystack where it is broken up.
+    assert not serializer.quote_matches(
+        "the sampling constant stays at 3.14 for this run",
+        "assistant: the sampling constant stays at 3. 14 for this run")
+
+
 # ---- Unit B: verify_quotes (in-place mutation + logging) ----
 
 def _cp_with(items_by_kind):

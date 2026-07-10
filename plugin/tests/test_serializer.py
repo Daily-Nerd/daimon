@@ -618,13 +618,42 @@ def test_serialize_prompt_has_d008_fidelity_rules():
     assert "Omission is safer than fabrication" in sys
 
 
-def test_prompt_version_is_d012():
+def test_serialize_prompt_has_quote_discipline():
+    # #208: over half of real verbatim downgrades were light edits to the quote
+    # (substituted quote glyphs, an added/dropped word, lists reflowed to prose)
+    # or mid-quote elisions left unmarked. The copy-paste contract must be
+    # explicit in the prompt.
+    sys = serializer.SERIALIZE_SYS
+    assert "QUOTE DISCIPLINE" in sys
+    assert "COPY-PASTE" in sys
+    assert "contiguous" in sys
+    assert "mark the gap with `...`" in sys
+    assert "never add or drop a word" in sys
+    assert "Never stitch" in sys
+    assert "a correct inferred beats a downgraded verbatim" in sys
+
+
+def test_validation_retry_note_restates_copy_paste_contract(
+    fake_chat_factory, monkeypatch
+):
+    # #208: the schema-validation retry is a second chance at quote fidelity
+    # too — the nudge must restate exact copy-paste and `...`-marked elisions.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory([_invalid_checkpoint_json(), _valid_checkpoint_json("S1")])
+    serializer.serialize_strict("S1", make_messages(6), chat=chat)
+    second = chat.calls[1]["messages"][-1]["content"]
+    assert "copy-pasted exactly" in second
+    assert "elisions marked with `...`" in second
+
+
+def test_prompt_version_is_d013():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
     # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
-    # transcript-language preservation rule). Pre-bump checkpoints firing the
+    # transcript-language preservation rule). D-012 -> D-013 (#208: verbatim
+    # quote copy-paste discipline rule). Pre-bump checkpoints firing the
     # format_version mismatch warning (#93) is DESIRED behavior.
-    assert serializer.PROMPT_VERSION == "D-012"
+    assert serializer.PROMPT_VERSION == "D-013"
 
 
 def test_prompts_preserve_transcript_language():

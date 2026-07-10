@@ -27,10 +27,11 @@ log = logging.getLogger(__name__)
 
 # Serialize-prompt version. Bumped D-008 -> D-010 (#101: emotional_valence
 # dropped from the schema; D-009 is taken by the host-adapter decision).
+# D-012 -> D-013 (#208: quote copy-paste discipline rule).
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-012"
+PROMPT_VERSION = "D-013"
 
 
 class SerializeError(Exception):
@@ -65,7 +66,7 @@ RULES — follow every one exactly; this is the point of the exercise:
 1. Extract only what the transcript supports. Do NOT invent open questions, decisions, beliefs, or facts not actually present.
 
 2. For every item, set `trust`:
-   - "verbatim" -> directly supported by an explicit statement. You MUST include the exact `quote` from the transcript.
+   - "verbatim" -> directly supported by an explicit statement. You MUST copy the exact `quote` from the transcript (see rule 17: QUOTE DISCIPLINE).
    - "inferred" -> you are paraphrasing or synthesizing. Leave `quote` empty.
    Prefer "verbatim" wherever an explicit statement exists.
 
@@ -130,6 +131,16 @@ RULES — follow every one exactly; this is the point of the exercise:
     it out. NEVER attach a supersedes link from topic overlap or similarity alone; the
     replacement must be stated explicitly, not guessed. Omit `links` entirely when no such
     replacement applies — do not emit an empty array.
+
+17. QUOTE DISCIPLINE: a verbatim `quote` is a COPY-PASTE of ONE contiguous transcript span.
+    Copy the characters exactly — punctuation, quotation marks, apostrophes, word for word.
+    Never substitute quote characters, never add or drop a word, never reflow a list into
+    prose. To skip content inside a quote you MUST mark the gap with `...` — an unmarked gap
+    fails verification and the item loses verbatim status. Never stitch text from different
+    speakers or turns into one quote, and never add scaffolding such as "User:" or "A:"
+    labels inside a quote. If you cannot copy the exact characters of a contiguous span
+    (or spans joined by `...`), use trust="inferred" with an empty quote instead —
+    a correct inferred beats a downgraded verbatim.
 
 Schema shape:
 {
@@ -378,17 +389,37 @@ _REDACTED_RE = re.compile(r"\[redacted:[^\]]*\]")
 _LIST_MARKER_RE = re.compile(r"^[ \t]*(?:[-*+]\s+|\d+\.\s+)", re.MULTILINE)
 _MD_MARKER_RE = re.compile(r"[*`_~]")
 _WS_RE = re.compile(r"\s+")
+# Unicode punctuation folded to its ASCII look-alike before any stripping:
+# extraction models routinely swap curly/straight quote glyphs and dash widths
+# inside otherwise byte-faithful quotes (#208). U+2026 (…) is deliberately NOT
+# folded — quote_matches splits the RAW quote on it as an elision marker before
+# fragments reach this normalization.
+_PUNCT_FOLD = str.maketrans({
+    "‘": "'", "’": "'",   # curly single quotes / apostrophe
+    "“": '"', "”": '"',   # curly double quotes
+    "–": "-", "—": "-",   # en dash / em dash
+    "\u00a0": " ",             # non-breaking space (escaped: invisible in source)
+})
+# List markers that survive line-anchored stripping because they sit mid-string
+# (a quote reflowing "- item" list lines into one line, #208). After whitespace
+# folding, a marker token is one bounded by spaces (or string start) — bounding
+# keeps hyphenated words ("re-verify") and decimals ("3.14") intact.
+_INLINE_MARKER_RE = re.compile(r"(?:^|(?<= ))(?:[-*+]|\d+\.) ")
 
 
 def _normalize_for_match(text: str) -> str:
-    """Tier-f normalization shared by both sides of a quote match: strip markdown
-    markers (list markers + emphasis chars) BEFORE folding whitespace so
-    `**text**` equals `text`, then collapse whitespace and casefold. Applied
-    identically to quote and haystack, so symmetric stripping never manufactures
-    a match the raw text wouldn't support."""
+    """Tier-f normalization shared by both sides of a quote match: fold unicode
+    punctuation look-alikes to ASCII, strip markdown markers (list markers +
+    emphasis chars) BEFORE folding whitespace so `**text**` equals `text`, then
+    collapse whitespace, strip the space-bounded list markers the fold exposes
+    mid-string, and casefold. Applied identically to quote and haystack, so
+    symmetric folding/stripping never manufactures a match the raw text
+    wouldn't support under the same fold."""
+    text = text.translate(_PUNCT_FOLD)
     text = _LIST_MARKER_RE.sub("", text)
     text = _MD_MARKER_RE.sub("", text)
     text = _WS_RE.sub(" ", text).strip()
+    text = _INLINE_MARKER_RE.sub("", text)
     return text.casefold()
 
 
@@ -600,8 +631,9 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     _RETRY_NOTE = (
         "\n\nattempt 2: the previous output failed schema validation — "
         'every trust="verbatim" item MUST carry its exact transcript quote in '
-        "its `quote` field (never inlined into `text`). Re-emit the full "
-        "corrected JSON."
+        "its `quote` field (never inlined into `text`). The quote must be "
+        "copy-pasted exactly from the transcript, elisions marked with `...`. "
+        "Re-emit the full corrected JSON."
     )
     partials: list | None = None
 
