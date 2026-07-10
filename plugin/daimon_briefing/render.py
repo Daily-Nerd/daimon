@@ -251,6 +251,14 @@ def _rich_teammates(teammates) -> None:
                             border_style="white", title_align="left"))
 
 
+def render_teammates(teammates) -> None:
+    """Public entry point for the #223 header-only fallback path: `brief --team`
+    on a project with no checkpoint of its own still needs the Teammates
+    section, without reaching into the underscore-private `_print_teammates`
+    from cli.py. Delegates as-is — same no-op-on-empty contract."""
+    _print_teammates(teammates)
+
+
 def _explain(st: dict) -> str:
     """One-line human explanation of a configure.status() snapshot."""
     rb = st["resolved_backend"]

@@ -514,6 +514,14 @@ def _cmd_brief(args) -> int:
             "Use --global-fallback or DAIMON_BRIEF_GLOBAL_FALLBACK=full to "
             "view that checkpoint here.",
         ])
+        # #223: the foreign body is suppressed above, but --team still means
+        # --team — a fresh project with no checkpoint of its own is exactly
+        # the new-teammate case where reading the team's briefings matters
+        # most. Same unprotected exposure as the main :546 call site below
+        # (no new armor here); empty team -> render_teammates no-ops, so a
+        # team-less machine's output stays byte-identical to today.
+        if getattr(args, "team", False):
+            render.render_teammates(_team_briefings(project))
         return 0
     # Label the global-pointer fallback (#29): status calls the same situation
     # "global checkpoint (fallback)"; brief must not present another project's
