@@ -55,8 +55,10 @@ events:
   instead of another manual probe round.
 - **No briefing injection:** Cascade's hook set has no session-start-equivalent
   event, so unlike Claude Code/Codex/Gemini the briefing is not injected as
-  context — it's read via the terminal (`daimon brief`). This is a permanent
-  host constraint, not a bug.
+  context. This is a permanent host constraint, not a bug — the skill closes
+  the loop from the agent's side instead: it instructs Cascade to run
+  `daimon brief --team` at session start (see
+  [Teach the agent the protocol](#teach-the-agent-the-protocol)).
 - Fail-open everywhere; kill switch `DAIMON_DISABLE=1`.
 
 Windsurf has no session-end event, so serialization runs on the throttle
@@ -79,6 +81,13 @@ daimon skill install windsurf             # ~/.codeium/windsurf/skills/daimon/SK
 daimon skill install windsurf --project   # .windsurf/rules/daimon.md
 ```
 
+On Windsurf the skill is not just protocol etiquette — it is the briefing
+delivery path. Because Cascade has no session-start event to inject into,
+the skill instructs the agent to run `daimon brief --team` in the terminal
+before other work (teammates' briefings included when the project shares a
+daimon team; identical to `daimon brief` without one), and to proceed
+silently when daimon is not set up.
+
 Re-run install after upgrading `daimon` to refresh the content.
 
 ## Verify
@@ -89,4 +98,5 @@ daimon status
 
 Briefings are read with `daimon brief` in a terminal — not injected — so
 `daimon status` (rather than a session-start prompt) is the way to confirm a
-checkpoint was written after your last session.
+checkpoint was written after your last session. With the skill installed the
+agent runs the pull itself (`daimon brief --team`) at session start.
