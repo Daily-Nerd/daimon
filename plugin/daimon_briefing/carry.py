@@ -270,10 +270,15 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                         # quote_verified travels WITH the quote (#167): the
                         # native's verdict attested its own (now replaced)
                         # quote — keeping it would stamp "verified" on a quote
-                        # this session never checked. Prev's verdict rides
-                        # along; absent (pre-#125 checkpoint) means unknown.
-                        if "quote_verified" in item:
-                            twin["quote_verified"] = item["quote_verified"]
+                        # this session never checked. Only True rides along
+                        # (#209): False is a fresh-only signal (see the carry
+                        # path below), and post-#125 a verbatim item cannot
+                        # legally hold it — but pre-#125 and hand-edited
+                        # checkpoints exist, so anything but True (False,
+                        # malformed) collapses to absent = unknown, same as a
+                        # pre-#125 checkpoint.
+                        if item.get("quote_verified") is True:
+                            twin["quote_verified"] = True
                         else:
                             twin.pop("quote_verified", None)
                     twin["trust"] = "verbatim"
@@ -301,6 +306,16 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                    for c in carried):
                 continue
             kept = copy.deepcopy(item)
+            # quote_verified:false is a FRESH-ONLY signal (#209): it asserts
+            # THIS serialize's verify_quotes failed the item, which a carried
+            # copy never ran — inheriting it makes checkpoint-level metrics
+            # double-count one failure forever. Origin checkpoint keeps the
+            # stamp (and the retained quote/trust, untouched here) for
+            # forensics; the copy reverts to absent = unverified/unknown.
+            # `is False` only — never touch True (a real attestation, #167)
+            # or malformed values (not carry's mess to clean).
+            if kept.get("quote_verified") is False:
+                kept.pop("quote_verified")
             kept.setdefault("carried_from", prev_sid)
             carried.append(kept)
             native_texts.add(text)  # two identical prev items must carry once

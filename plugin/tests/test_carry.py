@@ -948,3 +948,64 @@ def test_quantity_conflict_guard_does_not_defeat_reversal_pipeline():
     native["id"] = "r-qty-new"  # what store._stamp_item_ids does pre-bind
     pairs = carry.bind_links(out, prev)
     assert pairs == [("r-qty001", "r-qty-new", _REV_QTY_PREV)]
+
+
+# --- quote_verified:false is a fresh-only signal (#209) ----------------------
+# A False stamp means THIS serialize's verify_quotes failed the item. The
+# origin checkpoint keeps it (forensics); a carried copy never re-ran the
+# check, so inheriting False makes checkpoint-level metrics double-count one
+# failure forever. Carry strips False on both paths; True (a real attestation
+# bound to the pinned quote) still travels.
+
+def test_plain_carry_strips_inherited_quote_verified_false():
+    # Downgraded-at-origin item (trust already inferred, quote retained for
+    # forensics, False stamp). Plain no-twin carry must drop ONLY the stamp.
+    prev = _cp("S-prev", 1, questions=[_item(
+        "quorint gateway retry loop still unresolved after downgrade",
+        quote="retry loop still unresolved", quote_verified=False, days=5)])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    q = out["working_context"]["open_questions"][0]
+    assert "quote_verified" not in q
+    assert q["quote"] == "retry loop still unresolved"  # forensics untouched
+    assert q["trust"] == "inferred"
+
+
+def test_plain_carry_keeps_true_attestation():
+    # Regression guard: True is a real attestation and must keep traveling.
+    prev = _cp("S-prev", 1, questions=[_item(
+        "quorint gateway retry loop still unresolved verbatim",
+        trust="verbatim", quote="retry loop still unresolved",
+        quote_verified=True, days=5)])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    q = out["working_context"]["open_questions"][0]
+    assert q["quote_verified"] is True
+    assert q["trust"] == "verbatim"
+
+
+def test_freeze_pops_illegal_prev_quote_verified_false():
+    # Post-#125 a verbatim item cannot legally carry False (the downgrade
+    # strips trust), but pre-#125 and hand-edited checkpoints exist. The twin
+    # freeze must treat anything but True as absent, not copy it.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE,
+        quote_verified=False, days=45)])
+    new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])
+    out = carry.merge(new, prev, NOW)
+    q = out["working_context"]["open_questions"][0]
+    assert q["quote"] == _VERB_QUOTE
+    assert "quote_verified" not in q
+
+
+def test_chained_carry_false_stamp_stays_absent():
+    # The stamp is stripped on the FIRST carry; a second merge of the already
+    # -clean copy must not resurrect it (absence is the stable state).
+    cp_a = _cp("S-a", 2, questions=[_item(
+        "quorint gateway retry loop still unresolved after downgrade",
+        quote="retry loop still unresolved", quote_verified=False, days=5)])
+    hop1 = carry.merge(_cp("S-b", 1), cp_a, NOW)
+    assert "quote_verified" not in hop1["working_context"]["open_questions"][0]
+    hop2 = carry.merge(_cp("S-c", 0), hop1, NOW)
+    q = hop2["working_context"]["open_questions"][0]
+    assert "quote_verified" not in q
+    assert q["quote"] == "retry loop still unresolved"
+    assert q["carried_from"] == "S-a"
