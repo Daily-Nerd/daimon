@@ -2955,6 +2955,63 @@ def test_brief_fallback_full_via_env(
     assert "fallback" in out.lower()
 
 
+def test_brief_fallback_header_only_with_team_shows_teammates(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #223: the header-only fallback (#96) used to `return 0` before the
+    # teammate fan-in ever ran — `brief --team` silently dropped the flag on
+    # any machine with a global pointer but no own-project checkpoint, which
+    # is exactly the new-teammate case where reading the team matters most.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def _fake_read_team(project_dir=None):
+        assert project_dir == "/repo/some-other-project"
+        return [("grace", sample_checkpoint)]
+
+    monkeypatch.setattr(store, "read_team", _fake_read_team)
+    rc = cli.main(["brief", "--team", "--project", "/repo/some-other-project"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no briefing for this project yet" in out.lower()  # orient note kept
+    assert "Teammates" in out
+    assert "grace" in out
+    assert "Wiring the on_session_end hook" in out  # teammate's active topic
+
+
+def test_brief_fallback_header_only_without_team_flag_unchanged(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # Same setup as above, but no --team: output must stay byte-identical to
+    # the pre-#223 behavior — no teammate content, no regression of #96.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def _fake_read_team(project_dir=None):
+        return [("grace", sample_checkpoint)]
+
+    monkeypatch.setattr(store, "read_team", _fake_read_team)
+    rc = cli.main(["brief", "--project", "/repo/some-other-project"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no briefing for this project yet" in out.lower()
+    assert "Teammates" not in out
+    assert "grace" not in out
+
+
+def test_brief_fallback_header_only_with_team_empty_is_byte_identical(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # Empty team -> _print_teammates no-ops -> --team must not change a single
+    # byte of the header-only fallback note for a team-less machine.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    rc = cli.main(["brief", "--project", "/repo/some-other-project"])
+    plain = capsys.readouterr().out
+    rc2 = cli.main(["brief", "--team", "--project", "/repo/some-other-project"])
+    teamed = capsys.readouterr().out
+    assert rc == 0 and rc2 == 0
+    assert teamed == plain
+
+
 def test_brief_withholds_resolved_item_and_notes_suppression(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     # #103: a resolved item must not print in the brief, and the withheld
