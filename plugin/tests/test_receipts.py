@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import briefing, cli, config, receipts, store
+from daimon_briefing import briefing, cli, config, receipts, render, store
 
 _SEED = bytes(range(32))
 _SEED_B64 = base64.b64encode(_SEED).decode("ascii")
@@ -558,3 +558,273 @@ def test_cli_status_shows_receipts_line(tmp_checkpoint_dir, monkeypatch,
     cli.main(["status"])
     out = capsys.readouterr().out
     assert "receipts: on" in out
+
+
+def test_cli_verify_receipt_default_no_checkpoint(tmp_checkpoint_dir, capsys):
+    # No positional session id + empty store -> the default-latest branch.
+    rc = cli.main(["verify-receipt"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "nothing to verify" in out
+
+
+def test_cli_verify_receipt_default_uses_latest(tmp_checkpoint_dir, monkeypatch,
+                                                keys_ready, fake_cli, capsys):
+    _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
+                    session="S-cdef")
+    rc = cli.main(["verify-receipt"])  # no session -> resolves latest checkpoint
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "verified" in out
+
+
+# ---- fail-open seams: keys, CLI plumbing, mint --------------------------------
+
+
+def test_ensure_seed_race_reads_winner(tmp_path, monkeypatch):
+    # O_EXCL create loses the race (FileExistsError) -> re-read the winner's seed.
+    kdir = tmp_path / "k"
+    kdir.mkdir()
+    winner = bytes(range(32))
+    calls = {"n": 0}
+
+    def fake_read(path):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else winner  # miss fast-path, then win
+
+    monkeypatch.setattr(receipts, "_read_seed", fake_read)
+    monkeypatch.setattr(receipts.os, "open",
+                        lambda *a, **k: (_ for _ in ()).throw(FileExistsError()))
+    assert receipts._ensure_seed(kdir) == winner
+
+
+def test_ensure_seed_oserror_returns_none(tmp_path, monkeypatch):
+    kdir = tmp_path / "k"
+    monkeypatch.setattr(receipts.os, "open",
+                        lambda *a, **k: (_ for _ in ()).throw(PermissionError()))
+    assert receipts._ensure_seed(kdir) is None
+
+
+def test_ensure_pubkey_derives_and_caches(tmp_path, monkeypatch):
+    kdir = tmp_path / "k"
+    kdir.mkdir()
+
+    def fake_run(cmd, **kw):
+        assert cmd[0] == "openssl"
+        return subprocess.CompletedProcess(cmd, 0, stdout=bytes.fromhex(_SPKI_HEX),
+                                           stderr=b"")
+
+    monkeypatch.setattr(receipts.subprocess, "run", fake_run)
+    jwk = receipts._ensure_pubkey(kdir, _SEED)
+    assert jwk == {"kty": "OKP", "crv": "Ed25519", "x": _PUB_X, "alg": "EdDSA",
+                   "status": "active"}
+    assert (kdir / "signing.pub.json").exists()  # cached for next time
+
+
+def test_ensure_pubkey_cache_write_failure_still_returns_jwk(tmp_path, monkeypatch):
+    # Derivation succeeds but the cache write fails -> non-fatal, jwk still returned.
+    kdir = tmp_path / "k"
+    kdir.mkdir()
+    monkeypatch.setattr(receipts.subprocess, "run",
+                        lambda cmd, **kw: subprocess.CompletedProcess(
+                            cmd, 0, stdout=bytes.fromhex(_SPKI_HEX), stderr=b""))
+    monkeypatch.setattr(receipts, "_atomic_write_text",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("readonly")))
+    jwk = receipts._ensure_pubkey(kdir, _SEED)
+    assert jwk["x"] == _PUB_X
+    assert not (kdir / "signing.pub.json").exists()  # cache write was swallowed
+
+
+def test_load_pubkey_missing_returns_none(tmp_path):
+    assert receipts._load_pubkey(tmp_path / "nope") is None
+
+
+def test_load_pubkey_corrupt_returns_none(tmp_path):
+    (tmp_path / "signing.pub.json").write_text("not json{")
+    assert receipts._load_pubkey(tmp_path) is None
+
+
+def test_run_cli_spawn_error_returns_none(monkeypatch):
+    monkeypatch.setattr(receipts.subprocess, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("spawn")))
+    assert receipts._run_cli("x", "sign", "{}") is None
+
+
+def test_run_cli_error_output_returns_none(fake_cli):
+    # The fake CLI emits {"error":"unknown_command"} for an unknown command.
+    cli_path = receipts._resolve_cli()
+    assert receipts._run_cli(cli_path, "bogus-cmd", "{}") is None
+
+
+def test_plan_mint_none_when_seed_unavailable(keys_ready, fake_cli, monkeypatch):
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(receipts, "_ensure_seed", lambda kd: None)
+    cp = {"transcript_hash": _TSCRIPT_HEX, "author": "alice"}
+    assert receipts.plan_mint(cp) is None
+
+
+def test_mint_internal_exception_is_fail_open(tmp_path, monkeypatch):
+    # An exception INSIDE mint (here: the sign call) -> logged, False, no sidecar,
+    # never raised. Also walks the receipt-build lines (outputs_hash/nonce).
+    monkeypatch.setattr(receipts, "_run_cli",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    plan = {"cli": "x", "seed_b64": _SEED_B64,
+            "inputs_hash": receipts._wrap_hex_sha256(_TSCRIPT_HEX),
+            "performer_id": "alice"}
+    cp_path = tmp_path / "S.json"
+    cp_path.write_text("{}")
+    assert receipts.mint(plan, {"created": "2026-07-09T00:00:00Z"}, "{}", cp_path) is False
+    assert not cp_path.with_suffix(".receipt").exists()
+
+
+# ---- verify_receipt edge verdicts ---------------------------------------------
+
+
+def test_verify_receipt_outer_crash_returns_unable(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(receipts, "_verify_receipt",
+                        lambda sid: (_ for _ in ()).throw(RuntimeError("boom")))
+    rc, lines = receipts.verify_receipt("S-x")
+    assert rc == 2
+    assert any("unexpected error" in x for x in lines)
+
+
+def test_verify_receipt_corrupt_checkpoint_json(tmp_checkpoint_dir):
+    # Unparseable checkpoint file (torn) + no sidecar -> treated as {} -> pre-receipt.
+    d = config.checkpoint_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "S-torn.json").write_text("{not json")
+    rc, lines = receipts.verify_receipt("S-torn")
+    assert rc == 2
+    assert any("pre-receipt" in x for x in lines)
+
+
+def test_verify_receipt_corrupt_sidecar(tmp_checkpoint_dir):
+    store.write_checkpoint("S-badsc", {"session_id": "S-badsc"})
+    d = config.checkpoint_dir()
+    (d / "S-badsc.receipt").write_text("garbage{")
+    rc, lines = receipts.verify_receipt("S-badsc")
+    assert rc == 1
+    assert any("unreadable or corrupt" in x for x in lines)
+
+
+def test_verify_receipt_no_pubkey(tmp_checkpoint_dir, monkeypatch, keys_ready,
+                                  fake_cli):
+    _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
+                    session="S-nopub")
+    (keys_ready / "signing.pub.json").unlink()  # bytes match, CLI ok, no key
+    rc, lines = receipts.verify_receipt("S-nopub")
+    assert rc == 2
+    assert any("no local public key" in x for x in lines)
+
+
+def test_verify_receipt_missing_jws(tmp_checkpoint_dir, monkeypatch, keys_ready,
+                                    fake_cli):
+    path = _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
+                           session="S-nojws")
+    sidecar = path.with_suffix(".receipt")
+    sc = json.loads(sidecar.read_text())
+    sc["jws"] = ""  # keep receipt/outputs_hash so byte-match still passes
+    sidecar.write_text(json.dumps(sc))
+    rc, lines = receipts.verify_receipt("S-nojws")
+    assert rc == 1
+    assert any("missing its signature" in x for x in lines)
+
+
+def test_verify_receipt_cli_garbage_is_unable(tmp_checkpoint_dir, monkeypatch,
+                                              keys_ready, fake_cli):
+    _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
+                    session="S-vg")
+    monkeypatch.setenv("FAKE_VITNI_MODE", "garbage")  # verify -> non-JSON -> None
+    rc, lines = receipts.verify_receipt("S-vg")
+    assert rc == 2
+    assert any("did not return a usable result" in x for x in lines)
+
+
+# ---- verbatim_degraded edge branches ------------------------------------------
+
+
+def test_verbatim_degraded_false_without_session_id():
+    assert receipts.verbatim_degraded({"receipts": True}) is False
+
+
+def test_verbatim_degraded_false_on_corrupt_sidecar(tmp_checkpoint_dir, monkeypatch,
+                                                    keys_ready, fake_cli):
+    path = _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
+                           session="S-dc")
+    path.with_suffix(".receipt").write_text("garbage{")  # unreadable -> fail-open
+    cp = store.read_checkpoint("S-dc")
+    assert receipts.verbatim_degraded(cp) is False
+
+
+def test_verbatim_degraded_false_when_no_outputs_hash(tmp_checkpoint_dir, monkeypatch,
+                                                      keys_ready, fake_cli):
+    path = _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
+                           session="S-noh2")
+    sidecar = path.with_suffix(".receipt")
+    sidecar.write_text(json.dumps({"jws": "a.b.c", "receipt": {}}))  # no outputs_hash
+    cp = store.read_checkpoint("S-noh2")
+    assert receipts.verbatim_degraded(cp) is False
+
+
+def test_verbatim_degraded_outer_exception_is_false(monkeypatch):
+    monkeypatch.setattr(receipts, "_checkpoint_file",
+                        lambda sid: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert receipts.verbatim_degraded({"receipts": True, "session_id": "S"}) is False
+
+
+# ---- status_line variants -----------------------------------------------------
+
+
+def test_status_line_no_checkpoint(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    assert receipts.status_line() == "receipts: on — no checkpoint to sign yet"
+
+
+def test_status_line_marked_but_missing(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    # A receipt-era marker but no sidecar (mint failed) -> MISSING line.
+    store.write_checkpoint("S-sm", {"session_id": "S-sm", "receipts": True})
+    line = receipts.status_line()
+    assert "MISSING" in line
+
+
+def test_status_line_predates_receipts(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    store.write_checkpoint("S-pre2", {"session_id": "S-pre2"})  # no marker, no sidecar
+    line = receipts.status_line()
+    assert "predates receipts" in line
+
+
+# ---- cross-module #204 seams (briefing / render / config) ---------------------
+
+
+def test_briefing_receipt_degraded_swallows_exception(monkeypatch):
+    monkeypatch.setattr(receipts, "verbatim_degraded",
+                        lambda cp: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert briefing.receipt_degraded({"x": 1}) is False
+
+
+def test_rich_brief_prints_degrade_note(monkeypatch, sample_checkpoint, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setattr(briefing, "receipt_degraded", lambda cp: True)
+    render.render_brief(sample_checkpoint)
+    out = capsys.readouterr().out
+    assert "RECEIPT UNVERIFIED" in out
+
+
+def test_rich_status_prints_receipts_line(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = {
+        "project": "/p", "proj": {"exists": False}, "glob": {"exists": False},
+        "same": False, "last": None, "outstanding": [], "identity": None,
+        "health": None, "team": None,
+        "receipts": "receipts: on — latest checkpoint S is signed",
+    }
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "receipts: on" in out
+
+
+def test_keys_dir_default_when_unset(monkeypatch):
+    monkeypatch.delenv("DAIMON_KEYS_DIR", raising=False)
+    assert config.keys_dir() == Path.home() / ".daimon" / "keys"
