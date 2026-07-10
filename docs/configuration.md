@@ -120,6 +120,7 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_CODEX_SERIALIZE_ON_STOP` | on | Whether the Codex `Stop` hook serializes at all. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). |
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Codex serialize spawns. `0` serializes on every `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Windsurf serialize spawns (Windsurf has no session-end event, so capture runs on this throttle). `0` serializes every turn. |
+| `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
 
 ## Ops & diagnostics
 

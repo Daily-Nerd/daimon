@@ -48,12 +48,27 @@ gate the spawn per trajectory — the codex-stop pattern. Both events share the
 SAME per-trajectory marker, so registering both never double-spawns.
 Accumulation itself is never throttled.
 
+Debounced finalizer (#42): Windsurf has no session-end event, so a session
+whose last turns land inside the throttle window above would never be
+serialized again — the tail is lost. Every serialize-capable post event
+therefore (a) touches a per-trajectory activity stamp and (b) arms a detached
+one-shot sleeper (this script re-executed with `--finalize`) carrying the
+stamp mtime it just wrote. The sleeper waits
+DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS (default 600, fractional accepted,
+0 disables arming), then re-reads the stamp: changed (or gone) means a later
+turn owns finality and it exits silently; unchanged means this WAS the last
+turn, so it spawns the final serialize. Last-writer-wins by stamp equality —
+deliberately no lockfile (check-then-write claims race); if two sleepers read
+equal stamps and both fire, the second serialize hits the identical-bytes
+guard and skips.
+
 Fail-open everywhere: always exit 0; a broken daimon must never break
 Cascade. Kill switch: DAIMON_DISABLE=1.
 """
 
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -93,8 +108,41 @@ def _interval_seconds() -> int:
         return 300
 
 
+def _finalizer_quiet_seconds() -> float:
+    """Quiet period before the debounced finalizer fires (#42). Fractional
+    values are accepted (tests exercise sub-second windows); 0 disables the
+    finalizer entirely."""
+    raw = os.environ.get("DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS", "600").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 600.0
+
+
 def _safe_name(trajectory_id: str) -> str:
     return trajectory_id.replace("/", "_").replace("\\", "_").replace("..", "_")
+
+
+def _activity_stamp(trajectory_id: str) -> Path:
+    return STATE_DIR / f"{_safe_name(trajectory_id)}.last-activity"
+
+
+def _touch_activity(trajectory_id: str) -> None:
+    """Refresh the per-trajectory activity stamp (#42). EVERY trajectory event
+    counts as activity — including a user prompt: while the assistant is still
+    generating, a sleeper armed by the previous response must find a changed
+    stamp at wake, or it would serialize a mid-generation transcript (the
+    accumulation file already holds the new user turn, so the identical-bytes
+    guard would not skip that half-state). Inert when the finalizer is
+    disabled; fail-open on any write error."""
+    if _finalizer_quiet_seconds() <= 0:
+        return
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _activity_stamp(trajectory_id).write_text(
+            str(int(time.time())), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _should_spawn(trajectory_id: str) -> bool:
@@ -236,6 +284,12 @@ def main() -> int:
         return 0
 
     if event == "pre_user_prompt":
+        # A prompt is trajectory activity: touch the stamp so a sleeper armed
+        # by the PREVIOUS response defuses instead of firing while the
+        # assistant is still generating. Deliberately no arming here — if the
+        # session dies between prompt and response, the lone unanswered
+        # prompt isn't worth a finalizer; the response's post event arms.
+        _touch_activity(trajectory_id)
         text = _extract_prompt(payload)
         if text is None:
             if _dump_probe(event, payload):
@@ -258,6 +312,7 @@ def main() -> int:
             return 0
         _spawn_serialize_for(trajectory_id, native_path,
                              f"native transcript: {native_path}")
+        _arm_finalizer(trajectory_id, native_path)
         return 0
 
     if event != "post_cascade_response":
@@ -276,6 +331,7 @@ def main() -> int:
 
     _spawn_serialize_for(trajectory_id, transcript_path,
                          f"transcript: {transcript_path}")
+    _arm_finalizer(trajectory_id, transcript_path)
     return 0
 
 
@@ -300,8 +356,80 @@ def _spawn_serialize_for(trajectory_id: str, transcript_path, detail: str) -> No
         lib.log(f"windsurf-cascade: spawn failed ({type(exc).__name__}: {exc})")
 
 
+def _arm_finalizer(trajectory_id: str, transcript_path) -> None:
+    """Touch the per-trajectory activity stamp and arm one detached finalizer
+    sleeper for it (#42). Called on EVERY serialize-capable post event — one
+    sleeper per event is fine and bounded by the quiet window; the stamp
+    comparison at wake makes all but the last turn's sleeper exit silently.
+    Fail-open: an arming failure must never break Cascade."""
+    if _finalizer_quiet_seconds() <= 0:
+        return
+    _touch_activity(trajectory_id)
+    try:
+        armed_mtime_ns = _activity_stamp(trajectory_id).stat().st_mtime_ns
+    except OSError:
+        return  # touch failed or stamp unreadable — nothing safe to arm on
+    # Same detached shape as lib.spawn_serialize: stderr to the crash log so
+    # an uncaught sleeper traceback is preserved without polluting
+    # serialize.log; start_new_session so it survives the exiting hook.
+    try:
+        log_dir = Path.home() / ".daimon" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (log_dir / "serialize-crash.log").open("a", encoding="utf-8") as crashf:
+            subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "--finalize",
+                 trajectory_id, str(transcript_path), str(armed_mtime_ns)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=crashf,
+                start_new_session=True,  # survive the exiting parent
+                env=os.environ.copy(),
+            )
+    except OSError:
+        pass
+
+
+def _finalize(trajectory_id: str, transcript_path: str, armed_mtime_ns: str) -> int:
+    """Finalizer-sleeper mode (#42): sleep the quiet period, then serialize the
+    session tail ONLY if this sleeper's arming turn is still the trajectory's
+    last activity. Ownership is decided by stamp mtime equality, never a
+    lockfile — a lockfile's check-then-write would just move the race, while
+    a duplicate fire is harmless (the serialize child's identical-bytes guard
+    skips it). Transcript contents are never parsed here — only the path,
+    captured at arm time, is passed through."""
+    if lib is None or lib.disabled():
+        return 0
+    try:
+        armed_ns = int(armed_mtime_ns)
+    except ValueError:
+        return 0  # malformed arm argument — nothing safe to own
+    time.sleep(_finalizer_quiet_seconds())
+    try:
+        current_ns = _activity_stamp(trajectory_id).stat().st_mtime_ns
+    except OSError:
+        return 0  # stamp gone — nothing left to finalize
+    if current_ns != armed_ns:
+        return 0  # a later turn refreshed activity; its sleeper owns finality
+    cli = lib.resolve_cli()
+    if cli is None:
+        lib.log("windsurf-finalizer: `daimon` CLI not found — final flush skipped")
+        return 0
+    cwd = _project_cwd()
+    try:
+        lib.spawn_serialize(cli, transcript_path, lib.project_env(cwd))
+        # Logged at FIRE time, not arm time: an arm-time spawn line would sit
+        # unresolved for the whole quiet period and read as hung to the ledger.
+        lib.log(f"windsurf-finalizer: spawned serialize for {trajectory_id} "
+                f"(project: {cwd or '?'}) (transcript: {transcript_path})")
+    except OSError as exc:
+        lib.log(f"windsurf-finalizer: spawn failed ({type(exc).__name__}: {exc})")
+    return 0
+
+
 if __name__ == "__main__":
     try:
+        if len(sys.argv) >= 5 and sys.argv[1] == "--finalize":
+            sys.exit(_finalize(sys.argv[2], sys.argv[3], sys.argv[4]))
         sys.exit(main())
     except Exception as exc:  # fail-open, but leave a trace
         if lib is not None:

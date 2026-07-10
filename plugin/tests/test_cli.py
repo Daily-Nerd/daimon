@@ -3635,6 +3635,29 @@ def test_spawn_re_recognizes_windsurf_cascade_prefix():
     assert led["T-1"]["project"] == "/p/A"
 
 
+def test_spawn_re_recognizes_windsurf_finalizer_prefix():
+    # #42: the debounced finalizer spawns serializes of its own. Same hard
+    # rule as any host adapter — its prefix must be in _SPAWN_RE or those
+    # spawns are invisible to status/hung detection/heal.
+    text = ("2026-07-10T23:00:00Z windsurf-finalizer: spawned serialize for T-2 "
+            "(project: /p/A) (transcript: /t/T-2.md)")
+    led = cli._session_ledger(text, now=0.0)
+    assert led["T-2"]["spawned"] is True
+    assert led["T-2"]["transcript"] == "/t/T-2.md"
+    assert led["T-2"]["project"] == "/p/A"
+
+
+def test_stats_host_re_counts_windsurf_finalizer(tmp_log_dir):
+    # #42: _STATS_HOST_RE is deliberately the same alternation as _SPAWN_RE —
+    # the finalizer's fires must show up in per-host capture counts too.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "2026-07-10T11:00:00Z windsurf-finalizer: spawned serialize for W2 "
+        "(project: /p/B) (transcript: /t/W2.md)",
+    ])
+    assert ledger._stats_capture()["hosts"]["windsurf-finalizer"] == 1
+
+
 # ---- #49: heal crash on hung targets + preflight-error attribution ----
 
 
