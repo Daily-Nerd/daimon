@@ -916,6 +916,26 @@ def test_keygen_real_seed_receives_verbatim_string(keys_seed_only, fake_cli, mon
     assert _SEED_B64 in seeds  # exact stored string, not decode/re-encode
 
 
+def test_read_seed_str_unreadable_returns_none(tmp_path):
+    assert receipts._read_seed_str(tmp_path / "absent.seed") is None
+
+
+def test_keygen_probe_passes_but_real_derive_fails(keys_seed_only, monkeypatch,
+                                                   caplog):
+    # Probe succeeds, then the real-seed call comes back unusable — must log
+    # the "probe passed but real-seed derive failed" line and fall back.
+    def selective(cli, command, stdin_json):
+        if json.loads(stdin_json).get("seed_b64") == _PROBE_SEED_B64:
+            return {"jwk": {"x": _PROBE_X}}
+        return None
+    monkeypatch.setattr(receipts, "_run_cli", selective)
+    monkeypatch.setattr(receipts, "_resolve_cli", lambda: "fake-cli")
+    monkeypatch.setattr(receipts, "_derive_pubkey_x", lambda seed: "OPENSSLX")
+    with caplog.at_level("INFO"):
+        assert receipts._derive_pubkey(_SEED, _SEED_B64) == "OPENSSLX"
+    assert any("real-seed derive" in r.message for r in caplog.records)
+
+
 def test_keygen_probe_wrong_x_falls_back_to_openssl(keys_seed_only, fake_cli,
                                                     monkeypatch, caplog):
     monkeypatch.setenv("FAKE_VITNI_PROBE_X", "WRONGxWRONGxWRONGxWRONGxWRONGxWRONGxWRONGxW")
