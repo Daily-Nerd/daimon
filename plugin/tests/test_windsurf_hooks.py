@@ -353,6 +353,132 @@ def test_redaction_unavailable_skips_and_persists_no_raw_text(tmp_path):
             assert _STRIPE not in p.read_text(encoding="utf-8", errors="replace")
 
 
+# ---- #42: debounced finalizer — flush the session tail after a quiet period ----
+#
+# Windsurf has no session-end event; a session whose last turns land inside the
+# serialize throttle window would otherwise never be serialized again. Every
+# post event arms a detached one-shot sleeper; the LAST turn's sleeper (the only
+# one whose activity stamp is still unchanged at wake) fires the final serialize.
+
+
+def _activity_stamp(tmp_path):
+    return tmp_path / ".daimon" / "windsurf" / f"{TRAJ}.last-activity"
+
+
+def _preload_throttle_marker(tmp_path):
+    """Pre-date the per-trajectory throttle marker so the IMMEDIATE spawn path
+    is throttled — any serialize the fake CLI then records came from the
+    finalizer, not from the turn itself."""
+    state = tmp_path / ".daimon" / "windsurf"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / f"{TRAJ}.last-serialize").write_text(str(int(time.time())), encoding="utf-8")
+
+
+def _wait_for_log(tmp_path, needle, timeout=10.0) -> str:
+    """Poll serialize.log for a line — finalizer children are detached."""
+    log = tmp_path / ".daimon" / "logs" / "serialize.log"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if log.exists():
+            text = log.read_text(encoding="utf-8")
+            if needle in text:
+                return text
+        time.sleep(0.05)
+    raise AssertionError(f"{needle!r} never appeared in {log}")
+
+
+def test_finalizer_fires_after_quiet_period_with_accumulation_path(tmp_path):
+    # The last turn of a session lands inside the throttle window (immediate
+    # spawn skipped); after the quiet period the finalizer must serialize the
+    # ACCUMULATED .md transcript and leave a ledger-shaped spawn line.
+    _preload_throttle_marker(tmp_path)
+    extra = {"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "3600",
+             "DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.2"}
+    proc, capture = _run(_post_payload("tail turn"), tmp_path, extra_env=extra)
+    assert proc.returncode == 0
+    assert _activity_stamp(tmp_path).exists()  # armed
+    calls = _wait_for_capture(capture)
+    assert "serialize" in calls
+    assert str(_transcript(tmp_path)) in calls
+    log = _wait_for_log(tmp_path, f"windsurf-finalizer: spawned serialize for {TRAJ}")
+    assert "(transcript:" in log
+
+
+def test_finalizer_with_transcript_event_arms_native_path(tmp_path):
+    # A with_transcript tail turn must arm the finalizer with the NATIVE
+    # .jsonl path — the source of truth for that trajectory.
+    _preload_throttle_marker(tmp_path)
+    native = tmp_path / "native-transcript.jsonl"
+    native.write_text('{"type": "user_input", "status": "done", '
+                      '"user_input": {"user_response": "hola"}}\n',
+                      encoding="utf-8")
+    extra = {"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "3600",
+             "DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.2"}
+    proc, capture = _run(_with_transcript_payload(native), tmp_path, extra_env=extra)
+    assert proc.returncode == 0
+    calls = _wait_for_capture(capture)
+    assert str(native) in calls
+    _wait_for_log(tmp_path, f"windsurf-finalizer: spawned serialize for {TRAJ}")
+
+
+def test_finalizer_stays_quiet_when_a_later_turn_refreshes_activity(tmp_path):
+    # Last-writer-wins: refreshing the activity stamp after arming means a
+    # later turn owns finality — the armed sleeper must wake and exit silently.
+    _preload_throttle_marker(tmp_path)
+    extra = {"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "3600",
+             "DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.6"}
+    proc, capture = _run(_post_payload("not the tail"), tmp_path, extra_env=extra)
+    assert proc.returncode == 0
+    stamp = _activity_stamp(tmp_path)
+    assert stamp.exists()
+    os.utime(stamp)  # simulate a later turn touching the stamp
+    time.sleep(1.2)  # quiet period elapsed with margin
+    assert not capture.exists() or "serialize" not in capture.read_text()
+    log = tmp_path / ".daimon" / "logs" / "serialize.log"
+    assert "windsurf-finalizer:" not in (
+        log.read_text(encoding="utf-8") if log.exists() else "")
+
+
+def test_finalizer_quiet_zero_disables_arming(tmp_path):
+    extra = {"DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL": "0",
+             "DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0"}
+    proc, capture = _run(_post_payload(), tmp_path, extra_env=extra)
+    assert proc.returncode == 0
+    _wait_for_capture(capture)  # the immediate (unthrottled) spawn still runs
+    assert not _activity_stamp(tmp_path).exists()
+    time.sleep(0.4)
+    assert capture.read_text().count("serialize") == 1
+    log = tmp_path / ".daimon" / "logs" / "serialize.log"
+    assert "windsurf-finalizer:" not in (
+        log.read_text(encoding="utf-8") if log.exists() else "")
+
+
+def test_finalizer_respects_kill_switch(tmp_path):
+    proc, capture = _run(
+        _post_payload(), tmp_path,
+        extra_env={"DAIMON_DISABLE": "1",
+                   "DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.1"})
+    assert proc.returncode == 0
+    assert not _activity_stamp(tmp_path).exists()
+    time.sleep(0.4)
+    assert not capture.exists() or "serialize" not in capture.read_text()
+
+
+def test_pre_user_prompt_does_not_arm_finalizer(tmp_path):
+    # Only serialize-capable post events arm — a user prompt is the START of
+    # activity, not a candidate session tail.
+    payload = {"agent_action_name": "pre_user_prompt", "trajectory_id": TRAJ,
+               "tool_info": {"prompt": "hola"}}
+    proc, capture = _run(payload, tmp_path,
+                         extra_env={"DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.1"})
+    assert proc.returncode == 0
+    assert not _activity_stamp(tmp_path).exists()
+    time.sleep(0.4)
+    log = tmp_path / ".daimon" / "logs" / "serialize.log"
+    assert "windsurf-finalizer:" not in (
+        log.read_text(encoding="utf-8") if log.exists() else "")
+
+
 def test_pre_user_prompt_docs_shape_appends_user_turn(tmp_path):
     # Documented shape (docs.devin.ai/desktop/cascade/hooks): text lives in
     # tool_info.user_prompt. Regression guard — passes on the current

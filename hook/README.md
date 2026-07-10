@@ -33,7 +33,15 @@ A host adapter is one or two scripts against the same host-boundary events:
 Hosts without a clean session-end event (Codex, Windsurf) serialize
 opportunistically on a throttled turn-scoped event instead
 (`DAIMON_CODEX_MIN_SERIALIZE_INTERVAL`,
-`DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL`).
+`DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL`). The Windsurf adapter additionally
+arms a **debounced finalizer** on every serialize-capable event: a detached
+sleeper (the hook script re-executed in `--finalize` mode) waits
+`DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` (default 600, `0` disables) and
+serializes the trajectory's final transcript state only if no later turn
+refreshed the per-trajectory activity stamp — last-writer-wins by stamp
+mtime equality, no lockfile, so a session whose last turns land inside the
+throttle window is still captured. Duplicate fires are tolerated by design:
+the serialize child's identical-bytes guard skips them.
 
 Per-host lifecycle managers (`daimon-hooks.py`, `codex-hooks.py`,
 `gemini-hooks.py`) install/uninstall/status their host's script(s) into the

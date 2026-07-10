@@ -44,6 +44,11 @@ events:
   `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` (default 300s, `0` = every turn)
   gates the spawn per trajectory, sharing one marker so registering both
   events never double-spawns.
+- **Debounced finalizer:** every serialize-capable event also arms a detached
+  one-shot sleeper; after `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` (default
+  600s, `0` disables) with no further activity for the trajectory, the last
+  turn's sleeper serializes the final transcript state — so a session whose
+  last turns landed inside the throttle window still gets captured.
 - **Self-probing:** any payload shape the adapter can't handle is dumped to
   `~/.daimon/windsurf/unparsed-<event>-<stamp>.json` (at most one dump per
   event name), so the next adapter iteration has real evidence to work from
@@ -55,11 +60,16 @@ events:
 - Fail-open everywhere; kill switch `DAIMON_DISABLE=1`.
 
 Windsurf has no session-end event, so serialization runs on the throttle
-above. Two knobs worth setting for your first week:
+above, with a debounced finalizer covering the session tail: a session whose
+last turns land inside the throttle window is serialized once
+`DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` (default 600) passes with no new
+activity, instead of losing those turns. Set the knob to `0` to disable the
+finalizer. `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL=0` remains the zero-delay
+stopgap — it serializes every turn (one LLM call per turn), so nothing ever
+waits on the quiet period. A knob worth setting for your first week:
 
 ```sh
-echo 'DAIMON_MIN_MESSAGES=4' >> ~/.daimon/env                      # don't skip short first sessions
-echo 'DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL=0' >> ~/.daimon/env   # no tail loss while you evaluate
+echo 'DAIMON_MIN_MESSAGES=4' >> ~/.daimon/env   # don't skip short first sessions
 ```
 
 ## Teach the agent the protocol
