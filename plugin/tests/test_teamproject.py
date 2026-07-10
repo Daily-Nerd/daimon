@@ -415,3 +415,80 @@ def test_mapped_repos_share_one_team_pool(tmp_path, monkeypatch):
     team = store.read_team(project_dir=web)
     assert [a for a, _ in team] == ["ada"]
     assert team[0][1]["session_id"] == "S-svc"
+
+
+# ---- #202: the defensive seams codecov flagged unexercised on #201 ----
+
+
+def test_tomli_import_fallback():
+    # py3.10 has no stdlib tomllib; the module must fall back to the tomli
+    # runtime dep (#202). Simulated on every version: block tomllib, stub
+    # tomli, reload — manual restore so the module is ALWAYS reloaded clean
+    # even when the assertion fails.
+    import builtins
+    import importlib
+    import sys
+    import types
+
+    real_import = builtins.__import__
+    stub = types.ModuleType("tomli")
+    stub.loads = lambda s: {}
+
+    def blocking(name, *args, **kwargs):
+        if name == "tomllib":
+            raise ModuleNotFoundError("No module named 'tomllib'")
+        if name == "tomli":
+            return stub
+        return real_import(name, *args, **kwargs)
+
+    saved_tomllib = sys.modules.pop("tomllib", None)
+    saved_tomli = sys.modules.pop("tomli", None)
+    builtins.__import__ = blocking
+    try:
+        importlib.reload(teamproject)
+        assert teamproject.tomllib is stub
+    finally:
+        builtins.__import__ = real_import
+        if saved_tomllib is not None:
+            sys.modules["tomllib"] = saved_tomllib
+        if saved_tomli is not None:
+            sys.modules["tomli"] = saved_tomli
+        importlib.reload(teamproject)
+
+
+def test_logical_segments_empty_inputs():
+    assert teamproject.logical_segments(None) == ()
+    assert teamproject.logical_segments("") == ()
+
+
+def test_config_entry_with_non_list_repos_is_skipped(tmp_path):
+    # A malformed entry (repos = string, not list) is dropped, so resolution
+    # falls through to the tier-3 origin-derived path.
+    _write_config(
+        '[projects."core/x"]\n'
+        'repos = "git@github.com:org/a.git"\n'
+    )
+    repo = _repo(tmp_path, "a", "git@github.com:org/a.git")
+    assert teamproject.read_candidates(repo)[0] == ("org", "a")
+
+
+def test_git_probe_failure_resolves_to_flat_era(tmp_path, monkeypatch):
+    # The origin probe raising (timeout, git missing) must degrade to tier 4
+    # (legacy flat era), never propagate into a write.
+    repo = _repo(tmp_path, "a", "git@github.com:org/a.git")
+
+    def boom(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=5)
+
+    monkeypatch.setattr(teamproject.subprocess, "run", boom)
+    assert teamproject.read_candidates(repo) == []
+
+
+def test_read_candidates_swallows_resolver_bugs(tmp_path, monkeypatch):
+    # Belt-and-braces: an unexpected resolver exception yields [] (flat era),
+    # never a broken serialize.
+    def buggy(project_dir):
+        raise RuntimeError("resolver bug")
+
+    monkeypatch.setattr(teamproject, "_candidates", buggy)
+    assert teamproject.read_candidates(tmp_path) == []
