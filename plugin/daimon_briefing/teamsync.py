@@ -499,6 +499,29 @@ def _unpushed_count(sidecar, branch) -> int:
         return 0
 
 
+def _pending_count(sidecar) -> int:
+    """Count uncommitted files under the own-author dirs (#217): checkpoints
+    are dual-written straight to disk and only staged+committed later, by
+    `_commit_own`, on the next sync pass. Between write and sync, those files
+    are invisible to `_unpushed_count` (commits-ahead-of-tracking only) — this
+    closes that blind spot so `daimon team status` and the `daimon status`
+    team line stop reporting "fresh" while a checkpoint sits uncommitted.
+    Same own-dir resolution `_commit_own` uses; fails open (0) on git error,
+    matching the rest of this module."""
+    own = store.project_slug(config.author()) or "unknown"
+    own_dirs = _own_pathspecs(sidecar, own)
+    if not own_dirs:
+        return 0
+    # --untracked-files=all: without it, git collapses an untracked directory
+    # holding several new checkpoint files into ONE "?? authors/<own>/" line —
+    # undercounting exactly the case this helper exists to catch.
+    status = _git(sidecar, "status", "--porcelain", "--untracked-files=all",
+                  "--", *own_dirs)
+    if status.returncode != 0:
+        return 0
+    return len([ln for ln in status.stdout.splitlines() if ln.strip()])
+
+
 def team_status() -> list[dict]:
     """Per-remote view for `daimon team status`: freshness (ls-remote when
     online, 'as of last sync' when offline), own unpushed count, authors seen.
@@ -519,6 +542,7 @@ def team_status() -> list[dict]:
             "branch": branch,
             "freshness": freshness,
             "unpushed": _unpushed_count(sidecar, branch),
+            "pending": _pending_count(sidecar),
             "authors": _authors_seen(sidecar),
             # #200: a broken daimon-team.toml fails open on the write path
             # (mapping ignored) — status is where the parse error surfaces.
@@ -538,8 +562,10 @@ def status_line() -> str | None:
     for sidecar in remotes:
         branch = _branch(sidecar)
         unpushed = _unpushed_count(sidecar, branch)
+        pending = _pending_count(sidecar)
         authors = len(_authors_seen(sidecar))
-        parts.append(f"{sidecar.name}: {unpushed} unpushed, "
+        pending_part = f"{pending} pending, " if pending > 0 else ""
+        parts.append(f"{sidecar.name}: {unpushed} unpushed, {pending_part}"
                      f"{authors} author{'s' if authors != 1 else ''} seen")
     return f"team: {len(remotes)} remote{'s' if len(remotes) != 1 else ''} — " \
            + "; ".join(parts)
