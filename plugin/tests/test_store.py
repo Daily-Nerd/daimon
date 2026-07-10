@@ -591,13 +591,36 @@ def test_read_team_newest_per_author_for_project(tmp_checkpoint_dir, sample_chec
 def test_read_team_filters_by_project(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-x", sample_checkpoint, project_dir="/repo/x")
-    store.write_checkpoint("a-y", sample_checkpoint, project_dir="/repo/y")
+    # Fresh dict per write (#202): write_checkpoint stamps project_slug on the
+    # caller's dict via setdefault, so a REUSED dict carries the first write's
+    # slug into the second — both blobs stamped /repo/x and the filter below
+    # never exercised. Production builds a fresh dict per serialize.
+    store.write_checkpoint("a-x", {**sample_checkpoint}, project_dir="/repo/x")
+    store.write_checkpoint("a-y", {**sample_checkpoint}, project_dir="/repo/y")
     team = store.read_team(project_dir="/repo/x")
     authors = [a for a, _ in team]
     assert authors == ["ada"]
     # only the /repo/x checkpoint is returned for ada
     assert team[0][1]["project_slug"] == store.project_slug("/repo/x")
+    assert team[0][1]["session_id"] == sample_checkpoint["session_id"]
+
+
+def test_read_team_skips_unlistable_author_entry(tmp_checkpoint_dir):
+    # A stray FILE where an author dir belongs (half-synced sidecar, foreign
+    # junk) makes iterdir raise — the fan-in must skip it, not crash (#202).
+    authors = _team_author_dir("ada").parent
+    authors.mkdir(parents=True, exist_ok=True)
+    (authors / "not-a-dir").write_text("junk", encoding="utf-8")
+    assert store.read_team(project_dir="/repo/x") == []
+
+
+def test_read_team_skips_non_dict_checkpoint(tmp_checkpoint_dir):
+    # Valid JSON that isn't an object (a list, a string) is foreign data,
+    # skipped like a torn file (#202).
+    d = _team_author_dir("ada")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "weird.json").write_text('[1, 2]', encoding="utf-8")
+    assert store.read_team(project_dir="/repo/x") == []
 
 
 def test_read_team_never_raises_on_garbage(tmp_checkpoint_dir, monkeypatch):
