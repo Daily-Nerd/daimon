@@ -5,6 +5,32 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/Daily-Nerd/daimon/compare/v0.12.3...v0.13.0) (2026-07-10)
+
+
+### Features
+
+* **configure:** live progress indicator while --test runs the backend roundtrip ([#183](https://github.com/Daily-Nerd/daimon/issues/183)) ([b857851](https://github.com/Daily-Nerd/daimon/commit/b857851a0b0160678ea2fd551c35dc715a3f1c1a)), closes [#182](https://github.com/Daily-Nerd/daimon/issues/182)
+* **heal:** add --force to override the one-retry-ever cap ([#191](https://github.com/Daily-Nerd/daimon/issues/191)) ([2e7c1d6](https://github.com/Daily-Nerd/daimon/commit/2e7c1d6efc50b0a3ae83dd7397b1e33c34f4dd20))
+* **hosts:** port the orphan catch-up sweep to Codex session-start ([#189](https://github.com/Daily-Nerd/daimon/issues/189)) ([394e22d](https://github.com/Daily-Nerd/daimon/commit/394e22d0f988cca0a2f2a10b8eb15a64c7011d2e))
+* **llm:** command-backend input spec — arg/file prompt delivery ([#190](https://github.com/Daily-Nerd/daimon/issues/190)) ([1382b78](https://github.com/Daily-Nerd/daimon/commit/1382b78aaa3bdffce097ba11678637b43f623f98)), closes [#58](https://github.com/Daily-Nerd/daimon/issues/58)
+* **receipts:** prefer vitni keygen for public-key derivation, openssl fallback ([#207](https://github.com/Daily-Nerd/daimon/issues/207)) ([d246c25](https://github.com/Daily-Nerd/daimon/commit/d246c25880392428bc5f024ccc17d3077b764b77))
+* **receipts:** signed provenance receipts for checkpoints via vitni (opt-in) ([#205](https://github.com/Daily-Nerd/daimon/issues/205)) ([afa2b92](https://github.com/Daily-Nerd/daimon/commit/afa2b92a49d114f52ff7b3ca35f380505239e810))
+* **team:** architect-authored project layout for the team sidecar ([#201](https://github.com/Daily-Nerd/daimon/issues/201)) ([b34811b](https://github.com/Daily-Nerd/daimon/commit/b34811bb4a7b516236f00f8d81e80116e2872195))
+
+
+### Bug Fixes
+
+* **carry:** add quantity-conflict guard to stop unlinked twin false merge ([#187](https://github.com/Daily-Nerd/daimon/issues/187)) ([8c5939a](https://github.com/Daily-Nerd/daimon/commit/8c5939adc39f91f5aa4ba2d71df01a25363c3f69)), closes [#173](https://github.com/Daily-Nerd/daimon/issues/173)
+* **cli:** stop status misreporting quote-verification warnings as a serialize crash ([#195](https://github.com/Daily-Nerd/daimon/issues/195)) ([c8d22ac](https://github.com/Daily-Nerd/daimon/commit/c8d22ac6753d182117fd1bcd558b3771b08ecd0a))
+* **hooks:** close the claude --resume capture gap ([#186](https://github.com/Daily-Nerd/daimon/issues/186)) ([c354c7e](https://github.com/Daily-Nerd/daimon/commit/c354c7e193beeb2ae5ff55f117eaf6b189ece7e2)), closes [#185](https://github.com/Daily-Nerd/daimon/issues/185)
+
+
+### Documentation
+
+* add environment-variable reference ([#198](https://github.com/Daily-Nerd/daimon/issues/198)) ([a3da832](https://github.com/Daily-Nerd/daimon/commit/a3da83258218ec0fe8008816749f0fac6627411c))
+* add team memory setup guide ([#199](https://github.com/Daily-Nerd/daimon/issues/199)) ([71d6a70](https://github.com/Daily-Nerd/daimon/commit/71d6a70044904dec6e2fcb8753044ee7cc50295f))
+
 ## [0.12.3](https://github.com/Daily-Nerd/daimon/compare/v0.12.2...v0.12.3) (2026-07-09)
 
 
