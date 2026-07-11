@@ -1089,6 +1089,9 @@ def _cmd_status(args) -> int:
     outstanding = _compute_outstanding(_ledger_text, now)
     crash = _crash_log_info(config.log_dir() / "serialize-crash.log", now)
     recall_error = _tail_log_info(config.log_dir() / "recall-error.log", now)
+    # #233: dark-matter visibility — read-only peek at the existing index;
+    # None (absent/corrupt db) simply drops the line, never triggers a rebuild.
+    recall_index = recall.index_attribution()
     disabled = config.is_disabled()
     # Skips are terminal by design (too-short sessions), but invisible skips
     # read as captured sessions (#28) — count them for display.
@@ -1121,7 +1124,7 @@ def _cmd_status(args) -> int:
              "outstanding": outstanding, "siblings": siblings, "health": health,
              "team": team, "crash": crash, "disabled": disabled,
              "skipped_recent": skipped_recent, "recall_error": recall_error,
-             "receipts": receipts_line},
+             "recall_index": recall_index, "receipts": receipts_line},
             indent=2,
         ))
         return rc
@@ -1130,7 +1133,8 @@ def _cmd_status(args) -> int:
         "project": project, "proj": proj, "glob": glob, "same": same, "last": last,
         "outstanding": outstanding, "identity": identity, "health": health,
         "team": team, "crash": crash, "skipped_recent": skipped_recent,
-        "recall_error": recall_error, "receipts": receipts_line,
+        "recall_error": recall_error, "recall_index": recall_index,
+        "receipts": receipts_line,
     })
     return rc
 

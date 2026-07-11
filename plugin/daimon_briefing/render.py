@@ -370,6 +370,19 @@ def _print_recall_error_plain(err) -> None:
     print(f"last recall error: {err['age']} ago — {err['last_line']}")
 
 
+def _recall_index_line(att) -> str | None:
+    """One line of index attribution (#233), or None when there is no index.
+    The unattributed clause appears only when dark matter exists — silence
+    stays the default for a fully-stamped store."""
+    if not att:
+        return None
+    if att["unattributed"]:
+        return (f"recall index: {att['items']} items "
+                f"({att['unattributed']} unattributed — reachable only via "
+                f"recall --all-projects)")
+    return f"recall index: {att['items']} items"
+
+
 def _outstanding_lines(outstanding) -> list:
     """Human lines for lost sessions; empty list when nothing is outstanding."""
     lines = []
@@ -436,6 +449,9 @@ def _plain_status(data: dict) -> None:
         print("last serialize: no serialize history")
         _print_crash_plain(data.get("crash"))
         _print_recall_error_plain(data.get("recall_error"))
+        idx = _recall_index_line(data.get("recall_index"))
+        if idx:
+            print(idx)
         _print_skips_plain(data.get("skipped_recent"))
         return
     if last["result"]:
@@ -450,6 +466,9 @@ def _plain_status(data: dict) -> None:
         print("last serialize spawn: none logged yet")
     _print_crash_plain(data.get("crash"))
     _print_recall_error_plain(data.get("recall_error"))
+    idx = _recall_index_line(data.get("recall_index"))
+    if idx:
+        print(idx)
     _print_skips_plain(data.get("skipped_recent"))
 
     outstanding = data.get("outstanding") or []
@@ -522,6 +541,9 @@ def _rich_status(data: dict) -> None:
     if recall_err:
         console.print(f"[red]last recall error:[/red] {recall_err['age']} ago — "
                       f"{recall_err['last_line']}")
+    idx = _recall_index_line(data.get("recall_index"))
+    if idx:
+        console.print(f"[dim]{idx}[/dim]")
     if data.get("skipped_recent"):
         console.print(f"[dim]recent sessions skipped (too short to serialize): "
                       f"{data['skipped_recent']}[/dim]")

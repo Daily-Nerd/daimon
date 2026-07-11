@@ -915,3 +915,39 @@ def test_supersession_same_second_tie_breaks_deterministically(tmp_checkpoint_di
             conn.close()
         assert old == [("S-zzz",)]
         assert new == [(None,)]
+
+
+# ---- #233: index_attribution — dark-matter visibility, read-only ----
+
+
+def test_index_attribution_counts_unattributed_items(tmp_checkpoint_dir):
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": "keep sqlite", "trust": "inferred"}]),
+        project_dir="/repo/x",
+    )
+    # A stampless, pointerless flat file — exactly the legacy shape that
+    # indexes with project_slug NULL (rotated-out pre-stamp session).
+    (config.checkpoint_dir() / "S2.json").write_text(
+        json.dumps(_cp("S2", decisions=[{"text": "orphan decision",
+                                         "trust": "inferred"}])),
+        encoding="utf-8",
+    )
+    recall.rebuild()
+    att = recall.index_attribution()
+    assert att is not None
+    assert att["items"] == 4          # 2 topics + 2 decisions
+    assert att["unattributed"] == 2   # S2's topic + decision
+
+
+def test_index_attribution_none_when_db_missing(tmp_checkpoint_dir):
+    # Read-only contract: no db -> None, and importantly NO rebuild happens
+    # (status must never pay the rebuild cost).
+    assert not config.recall_db().exists()
+    assert recall.index_attribution() is None
+    assert not config.recall_db().exists()
+
+
+def test_index_attribution_none_on_corrupt_db(tmp_checkpoint_dir):
+    config.recall_db().parent.mkdir(parents=True, exist_ok=True)
+    config.recall_db().write_bytes(b"not a sqlite file at all")
+    assert recall.index_attribution() is None
