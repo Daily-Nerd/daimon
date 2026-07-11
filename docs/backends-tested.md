@@ -27,6 +27,9 @@ collected automatically. Add your combination with the recipe below.
 sampled checkpoint is known to come from that exact (model, backend) pair. Until
 checkpoints carry a serializer stamp, that means "the backend did not change during
 the sample window" — verify before counting, or your row blends combinations.
+0.15.0+ checkpoints carry that stamp directly: `llm_backend` (and `llm_model`,
+when config actually knows one) is recorded at serialize time, so attribution
+no longer has to be reconstructed from memory of when the backend changed.
 
 Reading the numbers: a downgrade is the **verifier catching a misquote**, not data
 loss — the item survives as `[~ inferred]` with the failed-check stamp. Lower is
@@ -39,10 +42,15 @@ The downgrade rate is stamped on every fresh checkpoint: `verify_quotes` marks e
 fresh verbatim claim `quote_verified: true` (hit) or downgrades it to
 `trust: "inferred"` + `quote_verified: false` (miss). Count both on your newest
 checkpoints — note the filter is on the *stamp*, not on `trust` (downgraded items
-are no longer `verbatim`, which is exactly why filtering by trust would hide them):
+are no longer `verbatim`, which is exactly why filtering by trust would hide them).
+Group by the `(llm_backend, llm_model)` stamp pair (0.15.0+) so a mixed batch of
+checkpoints can never blend combinations by accident — pre-0.15.0 checkpoints
+carry no stamp at all and fall into an `(unstamped)` bucket, which is a signal to
+verify attribution by hand rather than a combination you can cite in a row:
 
 ```python
 import json, sys
+from collections import defaultdict
 
 def items(c):
     w, e = c.get("working_context", {}), c.get("epistemic_snapshot", {})
@@ -53,17 +61,25 @@ def items(c):
     for k in ("strong_beliefs", "uncertainties", "contradictions_flagged"):
         yield from (e.get(k) or [])
 
+groups = defaultdict(lambda: [0, 0])  # (backend, model) -> [claims, downgraded]
 for path in sys.argv[1:]:
     cp = json.load(open(path))
+    key = (cp.get("llm_backend") or "(unstamped)", cp.get("llm_model") or "(no model)")
     fresh = [i for i in items(cp) if isinstance(i, dict)
              and not i.get("carried_from") and i.get("quote_verified") is not None]
     bad = sum(1 for i in fresh if i["quote_verified"] is False)
-    print(f"{path}: {len(fresh)} claims, {bad} downgraded")
+    g = groups[key]
+    g[0] += len(fresh)
+    g[1] += bad
+
+for (backend, model), (claims, bad) in sorted(groups.items()):
+    print(f"{backend}/{model}: {claims} claims, {bad} downgraded")
 ```
 
 Run it over `~/.daimon/checkpoints/<project>/latest.json` and the `prev-*.json`
 siblings, sum across several sessions (single sessions are too noisy), and open a
-PR with the row. Only checkpoints from 0.13.0+ carry trustworthy per-checkpoint
+PR with the row — one row per printed group, never a hand-merged total across
+groups. Only checkpoints from 0.13.0+ carry trustworthy per-checkpoint quote
 stamps (`quote_verified: false` became a fresh-only signal then; older carried
 items can hold stale stamps).
 
