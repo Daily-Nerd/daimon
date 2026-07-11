@@ -5,6 +5,32 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0](https://github.com/Daily-Nerd/daimon/compare/v0.13.0...v0.14.0) (2026-07-11)
+
+
+### Features
+
+* **briefing:** staleness budget for carried items — last_verified stamp + age-aware brief warning ([#220](https://github.com/Daily-Nerd/daimon/issues/220)) ([08c463a](https://github.com/Daily-Nerd/daimon/commit/08c463ab40ed4987c763ce42e54613535a4798b5))
+* **heal:** live progress indicator during re-serialize ([#227](https://github.com/Daily-Nerd/daimon/issues/227)) ([6bc1a93](https://github.com/Daily-Nerd/daimon/commit/6bc1a93377dfb10b858ebe7799a3de548e67c0f3))
+* **hosts:** debounced finalizer flushes windsurf session tails after quiet period ([#212](https://github.com/Daily-Nerd/daimon/issues/212)) ([8be2f40](https://github.com/Daily-Nerd/daimon/commit/8be2f403559e8be2935c4de82aa13d51a405470a))
+* **serializer:** stamp checkpoints with the resolved backend and model ([#231](https://github.com/Daily-Nerd/daimon/issues/231)) ([276aa70](https://github.com/Daily-Nerd/daimon/commit/276aa706198936e166abbda19ca02195ace30905))
+* **skill:** session-start brief pull covers team briefings — closes the windsurf injection gap ([#216](https://github.com/Daily-Nerd/daimon/issues/216)) ([46947b2](https://github.com/Daily-Nerd/daimon/commit/46947b27dbffe36ad85be01d46f429b2dca24f52))
+* **store:** stamp checkpoints with the git branch at capture time ([#228](https://github.com/Daily-Nerd/daimon/issues/228)) ([323cb10](https://github.com/Daily-Nerd/daimon/commit/323cb104e63945ee5b813bf8fc469f848087d509))
+
+
+### Bug Fixes
+
+* **carry:** stop inheriting quote_verified:false — failed-check stamps are fresh-only signals ([#213](https://github.com/Daily-Nerd/daimon/issues/213)) ([2f0c5ee](https://github.com/Daily-Nerd/daimon/commit/2f0c5eee883a40954642ed41af7b105e6ffcb84a))
+* **cli:** brief --team renders teammates from the header-only fallback path ([#224](https://github.com/Daily-Nerd/daimon/issues/224)) ([97ddf46](https://github.com/Daily-Nerd/daimon/commit/97ddf46a05fc9cba3143013803b114a655d1a6e7))
+* **llm:** log stderr on command-backend empty output and retry it like an empty response ([#226](https://github.com/Daily-Nerd/daimon/issues/226)) ([935f6fe](https://github.com/Daily-Nerd/daimon/commit/935f6fe2782dda92d596dacb0b1e928df492fc09))
+* **serializer:** copy-paste quote discipline + unicode punctuation folding in tier-f verify ([#210](https://github.com/Daily-Nerd/daimon/issues/210)) ([9dc646e](https://github.com/Daily-Nerd/daimon/commit/9dc646eff0eb4e6b5ae3b3f14121507c85c7e66a))
+* **teamsync:** surface uncommitted pending checkpoints in team status ([#218](https://github.com/Daily-Nerd/daimon/issues/218)) ([fab7ae3](https://github.com/Daily-Nerd/daimon/commit/fab7ae323fc00d4987eb4afc33984b56f56335a1))
+
+
+### Documentation
+
+* field-tested backend/model matrix — measured, dated, versioned ([#229](https://github.com/Daily-Nerd/daimon/issues/229)) ([0f4b80e](https://github.com/Daily-Nerd/daimon/commit/0f4b80e9061850ed9b7de737e4ea1ca9440d4171))
+
 ## [0.13.0](https://github.com/Daily-Nerd/daimon/compare/v0.12.3...v0.13.0) (2026-07-10)
 
 
