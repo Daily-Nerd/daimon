@@ -951,3 +951,34 @@ def test_index_attribution_none_on_corrupt_db(tmp_checkpoint_dir):
     config.recall_db().parent.mkdir(parents=True, exist_ok=True)
     config.recall_db().write_bytes(b"not a sqlite file at all")
     assert recall.index_attribution() is None
+
+
+# ---- #240: stamped checkpoints outrank stampless in the supersession frontier ----
+
+
+def test_stamped_checkpoint_outranks_stampless_legacy_in_newest_map(
+        tmp_checkpoint_dir, monkeypatch):
+    """The #240 inversion: a legacy stampless file competes with its mtime —
+    which records when the file was touched (migration, copy), not when the
+    session happened — and outranks the REAL latest, flagging live context
+    superseded by an older session. Stamped must always beat stampless."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-new",
+        _cp("S-new", decisions=[{"text": "the real latest decision",
+                                 "trust": "inferred"}],
+            created="2026-06-19T20:52:44Z"),
+        project_dir="/repo/x",
+    )
+    # Legacy pre-stamp file: attributed via embedded slug, no `created` —
+    # recency falls back to file mtime, which is NOW (newer than S-new's stamp).
+    legacy = _cp("S-legacy", decisions=[{"text": "an old legacy decision",
+                                         "trust": "inferred"}])
+    legacy["project_slug"] = store.project_slug("/repo/x")
+    (config.checkpoint_dir() / "S-legacy.json").write_text(
+        json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    recall.rebuild()
+    rows = {r["session_id"]: r["superseded_by"]
+            for r in recall.search("decision", all_projects=True, limit=20)}
+    assert rows["S-new"] is None          # the stamped latest IS the frontier
+    assert rows["S-legacy"] == "S-new"    # legacy superseded, not the reverse
