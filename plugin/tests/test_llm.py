@@ -625,3 +625,66 @@ def test_empty_output_error_is_a_chat_error():
     # Callers that catch the broad ChatError (e.g. llm.chat's own fallback
     # logic) must keep working unmodified.
     assert issubclass(llm.EmptyOutputError, llm.ChatError)
+
+
+# ---- #250: CLIs that report errors on STDOUT (claude does) must not leave an
+# empty breadcrumb — the failure log carries both streams, labeled ----
+
+
+def test_command_backend_failure_logs_stdout_too(monkeypatch, tmp_path):
+    # the live claude shape: "Not logged in · Please run /login" on stdout,
+    # stderr empty, rc 1
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "claude-like")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (1, "Not logged in · Please run /login", ""))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "hola"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert "Not logged in" in text
+    assert "stdout" in text  # labeled, so the reader knows which stream spoke
+
+
+def test_command_backend_empty_output_logs_stdout_when_stderr_silent(monkeypatch, tmp_path):
+    # the zero-config claude preset shape: rc 0, json:result output spec, an
+    # empty result field — but the raw stdout envelope carries the actual
+    # error details. Empty stderr made the old log a bare header (#250).
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "claude-like")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_OUTPUT", "json:result")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    envelope = '{"result": "", "is_error": true, "subtype": "error_during_execution"}'
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (0, envelope, ""))
+    with pytest.raises(llm.EmptyOutputError):
+        llm.chat([{"role": "user", "content": "hola"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert "error_during_execution" in text
+
+
+def test_command_backend_stdout_in_log_is_redacted(monkeypatch, tmp_path):
+    # same #141 argument as stderr: stdout can echo prompt fragments
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "leaky-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (1, f"echoing key {secret}", ""))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "hola"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert secret not in text
+    assert "[redacted:aws-key]" in text
+
+
+def test_command_backend_stderr_stays_first_when_both_streams_speak(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "noisy-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (2, "partial body", "the real panic"))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "hola"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert text.index("the real panic") < text.index("partial body")
