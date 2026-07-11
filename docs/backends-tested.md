@@ -20,8 +20,13 @@ collected automatically. Add your combination with the recipe below.
 
 | Model | Backend path | daimon | Downgrade rate (sample) | Date | Notes |
 |-------|--------------|--------|-------------------------|------|-------|
-| claude-haiku-4-5 | openai-compatible (litellm proxy) | 0.13.0 | 29% of 51 fresh verbatim claims, 3 sessions — per-session range 6%–77% | 2026-07-10 | maintainer dev box; high per-session variance, small per-session samples; serialize itself reliable |
+| MIXED — claude-haiku-4-5 (litellm proxy) + claude-cli sessions, per-session attribution lost | see notes | 0.13.0 | 29% of 51 fresh verbatim claims, 3 sessions — per-session range 6%–77% | 2026-07-10 | maintainer dev box. The backend changed between these sessions and checkpoints don't record which one serialized them, so this row CANNOT be split — kept as a worked example of why unattributed samples are near-useless and why the serializer needs a backend/model stamp. Replace with attributed rows once stamping ships. |
 | _your model_ | _anthropic / openai-compatible / claude-cli / command_ | | | | |
+
+**Attribution rule (learned filling the first row):** a row is only valid if every
+sampled checkpoint is known to come from that exact (model, backend) pair. Until
+checkpoints carry a serializer stamp, that means "the backend did not change during
+the sample window" — verify before counting, or your row blends combinations.
 
 Reading the numbers: a downgrade is the **verifier catching a misquote**, not data
 loss — the item survives as `[~ inferred]` with the failed-check stamp. Lower is
