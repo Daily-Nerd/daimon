@@ -4820,3 +4820,67 @@ def test_team_sync_warms_index(tmp_checkpoint_dir, capsys, monkeypatch):
     calls = _count_warm(monkeypatch)
     assert cli.main(["team", "sync"]) == 0
     assert calls == [1]
+
+
+# ---- #259: zero-match scoped recall reports WHERE matches exist (counts only) ----
+
+
+def test_recall_zero_match_teases_other_projects(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    from daimon_briefing import store
+
+    proj_a = str((tmp_path / "proj-a").resolve())
+    proj_b = str((tmp_path / "proj-b").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-b1", _recall_checkpoint("S-b1", "homeauto wiring notes"),
+                           project_dir=proj_b)
+
+    rc = cli.main(["recall", "homeauto", "--project", proj_a])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no matches in this project" in out
+    assert store.project_slug(proj_b) in out
+    assert "(1)" in out
+    assert "--all-projects" in out
+    # counts only — the foreign item's content must NOT appear
+    assert "homeauto wiring notes" not in out
+
+
+def test_recall_zero_match_everywhere_stays_plain_no_matches(tmp_checkpoint_dir, capsys, tmp_path):
+    proj = str((tmp_path / "proj").resolve())
+    rc = cli.main(["recall", "nonexistentword", "--project", proj])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.strip() == "no matches"
+
+
+def test_recall_zero_match_json_contract_untouched(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    from daimon_briefing import store
+
+    proj_a = str((tmp_path / "proj-a").resolve())
+    proj_b = str((tmp_path / "proj-b").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-b2", _recall_checkpoint("S-b2", "homeauto wiring notes"),
+                           project_dir=proj_b)
+    rc = cli.main(["recall", "homeauto", "--project", proj_a, "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_recall_zero_match_no_tease_under_explicit_scope(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # --all-projects already searched everything; --slug was an explicit
+    # target — neither gets a second-guess teaser
+    from daimon_briefing import store
+
+    proj_b = str((tmp_path / "proj-b").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-b3", _recall_checkpoint("S-b3", "homeauto wiring notes"),
+                           project_dir=proj_b)
+    rc = cli.main(["recall", "zebrafish", "--all-projects"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "no matches"
+    rc = cli.main(["recall", "homeauto", "--slug", "-p-empty"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "no matches"
