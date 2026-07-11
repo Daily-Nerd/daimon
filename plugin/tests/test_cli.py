@@ -4884,3 +4884,23 @@ def test_recall_zero_match_no_tease_under_explicit_scope(tmp_checkpoint_dir, cap
     rc = cli.main(["recall", "homeauto", "--slug", "-p-empty"])
     assert rc == 0
     assert capsys.readouterr().out.strip() == "no matches"
+
+
+def test_recall_zero_match_teaser_fails_open_on_recall_error(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # the widening probe is best-effort: if the unscoped rerun dies (e.g.
+    # FTS5 vanished between calls), the plain no-matches line still prints
+    from daimon_briefing import recall as recall_mod
+
+    real_search = recall_mod.search
+
+    def flaky(query, project_dir=None, all_projects=False, limit=20, slug=None):
+        if all_projects:
+            raise recall_mod.RecallError("no FTS5")
+        return real_search(query, project_dir=project_dir,
+                           all_projects=all_projects, limit=limit, slug=slug)
+
+    monkeypatch.setattr(cli.recall, "search", flaky)
+    proj = str((tmp_path / "proj").resolve())
+    rc = cli.main(["recall", "nonexistentword", "--project", proj])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "no matches"
