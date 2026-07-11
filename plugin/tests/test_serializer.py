@@ -1017,3 +1017,81 @@ def test_merge_sys_preserves_links():
     assert "LINKS PRESERVATION" in sys_prompt
     assert "verbatim" in sys_prompt
     assert "union" in sys_prompt.lower()
+
+
+# ---- #230: llm_backend / llm_model provenance stamp ----
+
+
+def test_serialize_stamps_backend_and_model_for_http_style_config(fake_chat_factory, monkeypatch):
+    # auto backend + an API key resolves to "litellm" — same resolution
+    # configure.resolved_backend() promises to mirror from llm.chat().
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "test-model")
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_backend"] == "litellm"
+    assert ckpt["llm_model"] == "test-model"
+
+
+def test_serialize_leaves_model_absent_when_config_has_no_model_string(fake_chat_factory, monkeypatch):
+    # No API key, no DAIMON_LLM_MODEL, but an explicit command resolves —
+    # auto picks "command". The command backend's model (if any) lives in
+    # the command string itself, not a config key the stamp can cheaply
+    # read, so llm_model must be ABSENT — never guessed.
+    monkeypatch.delenv("DAIMON_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("DAIMON_LLM_MODEL", raising=False)
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "echo hi")
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_backend"] == "command"
+    assert "llm_model" not in ckpt
+
+
+def test_serialize_overwrites_model_authored_llm_backend_field(fake_chat_factory, monkeypatch):
+    # A checkpoint whose extracted JSON already carries an `llm_backend` key
+    # (model-authored, whether hallucinated or adversarially spoofed) must
+    # have it stomped by the resolved truth — direct assignment, not
+    # setdefault (deliberate contrast with git_branch, #222).
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "test-model")
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    spoofed["llm_backend"] = "totally-fake-backend-the-model-made-up"
+    chat = fake_chat_factory(json.dumps(spoofed))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_backend"] == "litellm"
+
+
+def test_serialize_reserialize_after_backend_switch_stamps_fresh_values(fake_chat_factory, monkeypatch):
+    # Heal-style re-serialize: a fresh LLM run recorded with whatever backend
+    # resolves THIS TIME, not whatever an earlier attempt saw.
+    monkeypatch.delenv("DAIMON_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "echo hi")
+    chat1 = fake_chat_factory(_valid_checkpoint_json("S1"))
+    first = serializer.serialize("S1", make_messages(20), chat=chat1)
+    assert first["llm_backend"] == "command"
+
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "test-model")
+    chat2 = fake_chat_factory(_valid_checkpoint_json("S1"))
+    second = serializer.serialize("S1", make_messages(20), chat=chat2)
+    assert second["llm_backend"] == "litellm"
+    assert second["llm_model"] == "test-model"
+
+
+def test_serialize_completes_when_backend_resolver_raises(fake_chat_factory, monkeypatch):
+    # Fail-open: a broken resolver must never sink an otherwise-successful
+    # serialize. Both provenance fields are simply left absent.
+    from daimon_briefing import configure
+
+    def _boom():
+        raise RuntimeError("resolver exploded")
+
+    monkeypatch.setattr(configure, "resolved_backend", _boom)
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert "llm_backend" not in ckpt
+    assert "llm_model" not in ckpt

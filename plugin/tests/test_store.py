@@ -265,6 +265,25 @@ def test_git_branch_survives_redaction(tmp_checkpoint_dir, tmp_path, monkeypatch
     assert "redactions" in on_disk  # sanity: redaction actually ran
 
 
+# ---- #230: llm_backend / llm_model stamp survives the write pipeline ----
+
+
+def test_llm_backend_and_model_survive_write_and_read_back(tmp_checkpoint_dir, sample_checkpoint):
+    # The serializer stamps these BEFORE write_checkpoint ever sees the
+    # checkpoint (assignment, not a store-side setdefault, #230) — the write
+    # pipeline audit from #222 found nothing strips top-level keys, but this
+    # is a contract, not an assumption: verify the round trip to disk.
+    stamped = {**sample_checkpoint, "llm_backend": "litellm", "llm_model": "test-model"}
+    store.write_checkpoint("S1", stamped)
+    on_disk = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert on_disk["llm_backend"] == "litellm"
+    assert on_disk["llm_model"] == "test-model"
+
+    loaded = store.read_checkpoint("S1")
+    assert loaded["llm_backend"] == "litellm"
+    assert loaded["llm_model"] == "test-model"
+
+
 def test_write_project_latest_is_atomic(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     import os
 

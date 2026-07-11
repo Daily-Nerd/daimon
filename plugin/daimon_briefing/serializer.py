@@ -19,7 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from . import config, llm, redact, schema
+from . import config, configure, llm, redact, schema
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -629,6 +629,50 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
     return partials[0]
 
 
+def _stamp_llm_provenance(checkpoint: dict) -> None:
+    """Stamp which backend/model actually produced this checkpoint (#230).
+
+    `llm_backend` is resolved via configure.resolved_backend() — the EXACT
+    function llm.chat()'s `auto` branch mirrors (configure.py's own docstring
+    promise) — so this can never disagree with what the serialize actually
+    ran on. Not re-derived here with separate logic that could drift.
+
+    `llm_model` is stamped only when config actually knows a model string
+    (DAIMON_LLM_MODEL/LITELLM_MODEL — an HTTP backend's model, or whatever a
+    command/claude-cli setup has explicitly configured). The claude-cli
+    preset's hardcoded `--model haiku` isn't config-known, so a bare
+    command/claude-cli backend with no explicit model setting leaves
+    `llm_model` ABSENT rather than guessing one.
+
+    Direct ASSIGNMENT, not setdefault — deliberate contrast with
+    git_branch's setdefault in store.py (#222):
+    (a) a heal/re-serialize is a fresh LLM run, and the backend that ran
+        THIS TIME is the fact worth recording — overwriting a stale stamp
+        from a prior attempt is correct, not a bug;
+    (b) setdefault would let a model that happens to emit a field named
+        `llm_backend` in its extracted JSON spoof its own provenance —
+        assignment always stomps any model-authored value with the
+        resolved truth.
+
+    Fail-open: called right before the checkpoint is handed off to
+    store/write, so a resolver exception must never fail an otherwise-
+    successful serialize. Both fields are simply left absent.
+    """
+    try:
+        backend = configure.resolved_backend()
+    except Exception:
+        log.warning("llm provenance stamp: resolved_backend() raised — "
+                    "leaving llm_backend/llm_model absent")
+        return
+    checkpoint["llm_backend"] = backend
+    try:
+        model = config.llm_model()
+    except Exception:
+        model = None
+    if model:
+        checkpoint["llm_model"] = model
+
+
 def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dict:
     """Transcript -> validated checkpoint, or a named SerializeError.
 
@@ -722,6 +766,10 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     # otherwise mass-downgrade legitimate quotes it had masked). Verify once,
     # stamp the verdict — the briefing never re-greps.
     verify_quotes(checkpoint, transcript_text)
+    # #230: stamp provenance last, immediately before hand-off to store/write —
+    # after validation/verification so it can never influence either, and
+    # last so nothing downstream re-derives or clobbers it.
+    _stamp_llm_provenance(checkpoint)
     return checkpoint
 
 
