@@ -554,6 +554,31 @@ def test_command_backend_failure_writes_stderr_log(monkeypatch, tmp_path):
     assert "exit 101" in log.read_text()
 
 
+def test_command_backend_failure_writes_stdout_log(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (1, "Not logged in · Please run /login", ""))
+    with pytest.raises(llm.ChatError) as exc:
+        llm.chat([{"role": "user", "content": "hola"}])
+    assert "Not logged in" not in str(exc.value)
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert "--- stdout ---\nNot logged in · Please run /login" in text
+
+
+def test_command_backend_failure_log_labels_both_streams(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (1, "stdout detail", "stderr detail"))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "hola"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert "stderr detail\n--- stdout ---\nstdout detail" in text
+
+
 def test_command_backend_stderr_log_redacts_secret(monkeypatch, tmp_path):
     # #141: CLI backends can echo prompt fragments (transcript text) into
     # stderr on failure — the local stderr log is a disk artifact and must be
@@ -571,18 +596,40 @@ def test_command_backend_stderr_log_redacts_secret(monkeypatch, tmp_path):
     assert "[redacted:aws-key]" in text
 
 
+def test_command_backend_failure_log_redacts_both_streams(monkeypatch, tmp_path):
+    aws_secret = "AKIAIOSFODNN7EXAMPLE"
+    github_secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn"
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(
+        llm, "_run_command",
+        lambda *a, **k: (1, f"stdout token {github_secret}",
+                          f"stderr key {aws_secret}"))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "hola"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert aws_secret not in text
+    assert github_secret not in text
+    assert "[redacted:aws-key]" in text
+    assert "[redacted:github-token]" in text
+
+
 def test_command_backend_stderr_log_truncates_per_run(monkeypatch, tmp_path):
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
     monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (1, "", "first"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (1, "first stdout", "first stderr"))
     with pytest.raises(llm.ChatError):
         llm.chat([{"role": "user", "content": "x"}])
-    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (1, "", "second"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (1, "second stdout", "second stderr"))
     with pytest.raises(llm.ChatError):
         llm.chat([{"role": "user", "content": "x"}])
     text = (tmp_path / "logs" / "backend-stderr.log").read_text()
-    assert "second" in text and "first" not in text
+    assert "second stdout" in text and "second stderr" in text
+    assert "first stdout" not in text and "first stderr" not in text
 
 
 # ---- #225: rc=0 + empty stdout gets the same local diagnostics as a non-zero
@@ -602,6 +649,7 @@ def test_command_backend_empty_output_writes_stderr_log(monkeypatch, tmp_path):
     assert "suppressed" not in str(exc.value)
     log = tmp_path / "logs" / "backend-stderr.log"
     assert "warming up model..." in log.read_text()
+    assert "--- stdout ---\n   \n" in log.read_text()
     assert "empty output" in log.read_text()
 
 

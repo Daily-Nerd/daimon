@@ -285,8 +285,8 @@ def _apply_input_spec(argv, prompt_text, input_spec, cwd):
     return argv, prompt_text
 
 
-def _log_backend_stderr(argv0, err, header) -> str:
-    """Write redacted command-backend stderr to backend-stderr.log (truncate-
+def _log_backend_stderr(argv0, err, out, header) -> str:
+    """Write redacted command-backend streams to backend-stderr.log (truncate-
     per-run — the log is "the last failure", not an archive, #56) and return a
     hint embeddable in a ChatError message: the log path on success, "stderr
     suppressed" on any OSError — logging must never mask the real failure
@@ -296,10 +296,14 @@ def _log_backend_stderr(argv0, err, header) -> str:
         d = config.log_dir()
         d.mkdir(parents=True, exist_ok=True)
         p = d / "backend-stderr.log"
-        # CLI backends can echo prompt fragments (transcript text) into
-        # stderr — scrub before it persists (#141).
+        # CLI backends can echo prompt fragments (transcript text) into either
+        # stream — scrub both before they persist (#141, #250).
         err_logged, _ = redact.redact_text(err or "")
-        p.write_text(f"{header}\n{err_logged}\n", encoding="utf-8")
+        out_logged, _ = redact.redact_text(out or "")
+        p.write_text(
+            f"{header}\n{err_logged}\n--- stdout ---\n{out_logged}\n",
+            encoding="utf-8",
+        )
         hint = f"stderr: {p}"
     except OSError:
         pass
@@ -340,7 +344,8 @@ def _chat_command(messages, deadline):
             # 101 in the field with zero diagnostics). Truncate-per-run: the
             # log is "the last failure", not an archive.
             hint = _log_backend_stderr(
-                argv[0], err, f"command backend exit {rc} (argv0: {argv[0]})")
+                argv[0], err, out,
+                f"command backend exit {rc} (argv0: {argv[0]})")
             raise ChatError(f"command backend exited {rc} ({hint})")
         try:
             text = _extract_output(out, output_spec)
@@ -353,7 +358,8 @@ def _chat_command(messages, deadline):
             # log, a distinguishable header, and a distinguishable exception
             # type so the serializer can retry it like an empty HTTP 200 body.
             hint = _log_backend_stderr(
-                argv[0], err, f"command backend empty output (argv0: {argv[0]})")
+                argv[0], err, out,
+                f"command backend empty output (argv0: {argv[0]})")
             raise EmptyOutputError(f"command backend returned empty output ({hint})")
         log.info("LLM command backend ok argv0=%s", argv[0])
         return text
