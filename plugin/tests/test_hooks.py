@@ -705,3 +705,20 @@ def test_on_session_end_never_raises_when_ledger_write_fails(
 
 def test_hooks_docstring_no_stale_project_name():
     assert "hermes" not in (hooks.__doc__ or "").lower()
+
+
+def test_on_session_end_warms_index_after_write(tmp_checkpoint_dir, fake_chat_factory, monkeypatch):
+    # #246: the SessionEnd hook is the background home of the rebuild — the
+    # next session's first-prompt recall-inject must find the index fresh.
+    from daimon_briefing import recall, transcript
+
+    chat = fake_chat_factory(_valid_json("S-warm"))
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+    calls = []
+    monkeypatch.setattr(recall, "warm", lambda: calls.append(1))
+
+    hooks.on_session_end(
+        session_id="S-warm", completed=True, interrupted=False, model="m", platform="cli"
+    )
+    assert calls == [1]

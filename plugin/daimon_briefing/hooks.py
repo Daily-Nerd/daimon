@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import briefing, config, harvest, llm, serializer, store, transcript
+from . import briefing, config, harvest, llm, recall, serializer, store, transcript
 
 log = logging.getLogger("daimon_briefing")
 
@@ -108,6 +108,13 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
             session_id,
             int(time.monotonic() - start),
         )
+        # #246: the write staled the recall index. This hook runs after the
+        # session ends — the one place a full rebuild costs nobody anything —
+        # so the NEXT session's first-prompt recall-inject finds it fresh
+        # instead of paying the rebuild on the user's critical path. warm()
+        # never raises (and the outer except would ledger a lie: the
+        # checkpoint IS written by this point).
+        recall.warm()
         if config.scar_harvest_enabled():
             try:
                 harvest.run(messages, project_root=root, session_id=session_id)

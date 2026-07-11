@@ -4770,3 +4770,53 @@ def test_main_defaults_to_sys_argv(tmp_checkpoint_dir, capsys, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["daimon", "projects"])
     assert cli.main() == 0
     assert "no project" in capsys.readouterr().out.lower()
+
+
+# ---- #246: eager index warm at write time ----
+
+
+def _count_warm(monkeypatch):
+    from daimon_briefing import recall
+    calls = []
+    monkeypatch.setattr(recall, "warm", lambda: calls.append(1))
+    return calls
+
+
+def test_serialize_warms_index_after_write(tmp_checkpoint_dir, fake_chat_factory, capsys, monkeypatch):
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    calls = _count_warm(monkeypatch)
+    assert cli.main(["serialize", str(FIXTURES / "sample_transcript.md")]) == 0
+    assert calls == [1]
+    # the byte-identical result contract is untouched
+    assert "wrote checkpoint:" in capsys.readouterr().out
+
+
+def test_write_checkpoint_cmd_warms_index(tmp_checkpoint_dir, capsys, monkeypatch):
+    calls = _count_warm(monkeypatch)
+    _stdin(monkeypatch, _valid_json("S-wc"))
+    assert cli.main(["write-checkpoint", "--project", "/p/A"]) == 0
+    assert calls == [1]
+
+
+def test_anchor_attach_warms_index(tmp_checkpoint_dir, tmp_path, capsys, monkeypatch):
+    from daimon_briefing import store
+    src = tmp_path / "mod.py"
+    src.write_text("def fn():\n    return 1\n")
+    cp = {"session_id": "S-anchor", "working_context": {"open_questions": [
+        {"text": "anchor target item", "trust": "inferred"}]}}
+    store.write_checkpoint("S-anchor", cp, project_dir=str(tmp_path))
+    calls = _count_warm(monkeypatch)
+    rc = cli.main(["anchor", "mod.py", "fn", "--project", str(tmp_path),
+                   "--attach", "anchor target"])
+    assert rc == 0
+    assert calls == [1]
+
+
+def test_team_sync_warms_index(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import teamsync
+    monkeypatch.setattr(teamsync, "sync", lambda: [])
+    calls = _count_warm(monkeypatch)
+    assert cli.main(["team", "sync"]) == 0
+    assert calls == [1]

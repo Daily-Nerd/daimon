@@ -310,6 +310,11 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
         msg += " [fallback backend]"
     print(msg)
     _append_serialize_log(msg)
+    # #246: the write above staled the recall index; freshen it HERE, where
+    # nobody is waiting, instead of on the next session's first-prompt
+    # recall-inject. After the print/log so the byte-identical result
+    # contract above is untouched; warm() itself never raises.
+    recall.warm()
     # Opt-in scar-candidate harvest (#100), mirroring the hermes host wiring
     # (hooks.on_session_end). It runs AFTER the result line is printed AND logged,
     # and ANY failure is swallowed here — the harvest must never change this
@@ -420,6 +425,7 @@ def _cmd_write_checkpoint(args) -> int:
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))
     render.render_write_checkpoint([f"wrote checkpoint: {out} (source: {args.source})"])
+    recall.warm()  # #246: freshen off the read path; never raises
     return 0
 
 
@@ -466,6 +472,7 @@ def _cmd_anchor(args) -> int:
     item["anchored_to"] = a
     store.write_checkpoint(session_id, checkpoint, project_dir=project)
     render.render_anchor_attach([f"attached {a['qualified_name']} to: {item.get('text')}"])
+    recall.warm()  # #246: the re-write staled the index; freshen off the read path
     return 0
 
 
@@ -1413,6 +1420,12 @@ def _cmd_team_sync(args) -> int:
         render.render_team_sync(["daimon team: git not found on PATH — sync skipped"])
         return 0
     reports = teamsync.sync()
+    # #246: fetched teammate files are fingerprint input — freshen here (the
+    # SessionStart hook spawns sync detached, off the prompt path) so the
+    # first recall after a fetch doesn't pay the rebuild. Unconditional on
+    # purpose: a no-op sync warms in ~ms, and any staleness left by other
+    # writers gets healed opportunistically.
+    recall.warm()
     if not reports:
         render.render_team_sync([
             "daimon team: no team remote configured — nothing to sync "
