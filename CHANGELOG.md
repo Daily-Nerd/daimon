@@ -5,6 +5,22 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0](https://github.com/Daily-Nerd/daimon/compare/v0.14.0...v0.15.0) (2026-07-11)
+
+
+### Features
+
+* **cli:** cross-project context switching — daimon projects + --slug on brief/recall ([#244](https://github.com/Daily-Nerd/daimon/issues/244)) ([fbdf461](https://github.com/Daily-Nerd/daimon/commit/fbdf461eddec2495ef0beac4cc2320be8a440704))
+* **recall:** item-level supersession from typed links — recency stops crying wolf ([#242](https://github.com/Daily-Nerd/daimon/issues/242)) ([0437f85](https://github.com/Daily-Nerd/daimon/commit/0437f858247415a50eb8ca1d353e2e53139a42c4)), closes [#234](https://github.com/Daily-Nerd/daimon/issues/234)
+* **status:** surface unattributed recall items — dark matter made visible ([#239](https://github.com/Daily-Nerd/daimon/issues/239)) ([c2047a0](https://github.com/Daily-Nerd/daimon/commit/c2047a0ed1a39277a9851c8eaa7a3684c2c884a9))
+
+
+### Bug Fixes
+
+* **recall:** stamped checkpoints outrank stampless in the supersession frontier ([#241](https://github.com/Daily-Nerd/daimon/issues/241)) ([7b030ad](https://github.com/Daily-Nerd/daimon/commit/7b030ad4147d711b600b305261b6b56e686eb68a))
+* **stats:** count status as ops polling, not a deliberate re-read ([#236](https://github.com/Daily-Nerd/daimon/issues/236)) ([e47d0b3](https://github.com/Daily-Nerd/daimon/commit/e47d0b3ed95044f26555b706308cb78897539a83))
+* **stats:** reclassify too-short error lines as skips at fold time ([#238](https://github.com/Daily-Nerd/daimon/issues/238)) ([5e1be74](https://github.com/Daily-Nerd/daimon/commit/5e1be746acda6c04e393d6ebb539b78d59675070))
+
 ## [0.14.0](https://github.com/Daily-Nerd/daimon/compare/v0.13.0...v0.14.0) (2026-07-11)
 
 
