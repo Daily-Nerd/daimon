@@ -150,3 +150,16 @@ the `DAIMON_*` form is unset.
 | `DAIMON_LLM_COMMAND` | unset | Full CLI invocation for the `command` backend (binary + model + flags). |
 | `DAIMON_LLM_COMMAND_OUTPUT` | unset | How to extract assistant text from the command's stdout: `text` (raw stdout) or `json:<key>` (parse JSON, read `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | How the prompt reaches the command backend: `stdin` (piped), `arg` (appended as the final argv element), or `file:<flag>` (written to a tempfile, then `<flag> <path>` appended). An unrecognized value logs a warning and falls back to `stdin`. |
+
+## Serializer chunking
+
+Long sessions are serialized in overlapping chunks whose partial checkpoints
+are merged hierarchically. The defaults come from field measurements; they
+only matter if your sessions routinely run very long.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DAIMON_CHUNK_LINES` | `1200` | Rendered-transcript line count above which serialization switches to chunked mode. |
+| `DAIMON_CHUNK_OVERLAP` | `100` | Lines of overlap between adjacent chunks, so an item straddling a boundary is seen whole by at least one chunk. |
+| `DAIMON_CHUNK_CONCURRENCY` | `4` | Parallel chunk-serialize LLM calls. Minimum 1 (sequential). |
+| `DAIMON_MERGE_GROUP_SIZE` | `3` | Max partial checkpoints merged per hierarchical merge call. Minimum 2. Lower to `2` if merge calls die on a gateway with a server-side request ceiling (reasoning models generating 3-way merges can exceed it; raising `DAIMON_TIMEOUT` won't help — the kill is server-side). |
