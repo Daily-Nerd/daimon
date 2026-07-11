@@ -205,10 +205,13 @@ def test_local_and_team_copies_not_double_indexed(tmp_checkpoint_dir, monkeypatc
     assert len(hits) == 1
 
 
-# ---- supersession: whole-checkpoint recency per (author, project) ----
+# ---- supersession v3 (#234): item-level evidence flags, recency only ranks ----
 
 
-def test_supersession_flags_older_checkpoint_items(tmp_checkpoint_dir, monkeypatch):
+def test_recency_alone_never_sets_the_superseded_flag(tmp_checkpoint_dir, monkeypatch):
+    # v3 (#234): the old whole-checkpoint flag measured at coin-flip
+    # precision. Mere recency now populates `frontier` (a silent rank
+    # tiebreak) and NEVER superseded_by.
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-old", _cp(
         "S-old", decisions=[{"text": "narwhal decision v1", "trust": "inferred"}],
@@ -218,11 +221,140 @@ def test_supersession_flags_older_checkpoint_items(tmp_checkpoint_dir, monkeypat
         created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
     hits = recall.search("narwhal", all_projects=True)
     by_sid = {h["session_id"]: h for h in hits}
-    assert by_sid["S-old"]["superseded_by"] == "S-new"
+    assert by_sid["S-old"]["superseded_by"] is None
     assert by_sid["S-new"]["superseded_by"] is None
-    # superseded items are ranked DOWN, not hidden
+    assert by_sid["S-new"]["frontier"] == 1
+    assert by_sid["S-old"]["frontier"] == 0
+    # frontier tiebreak: the newest checkpoint's row edges out the older one
     assert hits[0]["session_id"] == "S-new"
     assert hits[-1]["session_id"] == "S-old"
+
+
+def test_typed_link_text_target_sets_superseded_flag(tmp_checkpoint_dir, monkeypatch):
+    # #234 tier 1: a supersedes link with a free-text target resolves to the
+    # unique older same-kind item sharing >= 3 salient terms — that item (and
+    # only that item) gets the flag.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old",
+        decisions=[
+            {"text": "adopt the pelican cache eviction strategy for briefings",
+             "trust": "inferred"},
+            {"text": "unrelated walrus formatting choice", "trust": "inferred"},
+        ],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-new", _cp(
+        "S-new",
+        decisions=[{
+            "text": "reversed: drop pelican cache eviction, it thrashed",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pelican cache eviction strategy briefings"}],
+        }],
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+    hits = recall.search("pelican OR walrus", all_projects=True, limit=10)
+    by_text = {h["text"]: h for h in hits}
+    assert by_text["adopt the pelican cache eviction strategy for briefings"][
+        "superseded_by"] == "S-new"
+    assert by_text["unrelated walrus formatting choice"]["superseded_by"] is None
+    assert by_text["reversed: drop pelican cache eviction, it thrashed"][
+        "superseded_by"] is None
+
+
+def test_typed_link_ambiguous_text_target_never_guesses(tmp_checkpoint_dir, monkeypatch):
+    # Two distinct older texts match the target -> nobody gets flagged
+    # (a wrong supersession fabricates staleness; same bias as bind_links).
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old",
+        decisions=[
+            {"text": "toucan retry budget applies to gateway calls",
+             "trust": "inferred"},
+            {"text": "toucan retry budget applies to serializer calls",
+             "trust": "inferred"},
+        ],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-new", _cp(
+        "S-new",
+        decisions=[{
+            "text": "dropped the toucan retry budget entirely",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "toucan retry budget applies"}],
+        }],
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+    hits = recall.search("toucan", all_projects=True, limit=10)
+    assert all(h["superseded_by"] is None for h in hits)
+
+
+def test_typed_link_id_target_sets_superseded_flag(tmp_checkpoint_dir, monkeypatch):
+    # A bound (id-shape) target marks the carrying rows directly.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    old = _cp("S-old", decisions=[{"text": "ibis pagination decision",
+                                   "trust": "inferred", "id": "r-abc123"}],
+              created="2021-01-01T00:00:00Z")
+    store.write_checkpoint("S-old", old, project_dir="/repo/x")
+    store.write_checkpoint("S-new", _cp(
+        "S-new",
+        decisions=[{
+            "text": "replaced ibis pagination with cursors",
+            "trust": "inferred",
+            "links": [{"type": "supersedes", "target": "r-abc123"}],
+        }],
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+    hits = recall.search("ibis", all_projects=True, limit=10)
+    by_text = {h["text"]: h for h in hits}
+    assert by_text["ibis pagination decision"]["superseded_by"] == "S-new"
+    assert by_text["replaced ibis pagination with cursors"]["superseded_by"] is None
+
+
+def test_event_resolution_sets_superseded_flag(tmp_checkpoint_dir, monkeypatch):
+    # #234 tier 1b: a logged resolution marks the item; a strictly newer
+    # reopen un-marks it (ties stay unmarked — never guess).
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old", questions=[
+            {"text": "should the gannet exporter batch writes",
+             "trust": "inferred", "id": "o-111aaa"},
+            {"text": "does the gannet importer need locks",
+             "trust": "inferred", "id": "o-222bbb"},
+        ],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    slug = store.project_slug("/repo/x")
+    ev = config.checkpoint_dir() / slug / "events.jsonl"
+    ev.parent.mkdir(parents=True, exist_ok=True)
+    ev.write_text(
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "o-111aaa", "status": "resolved", "source": "cli"}\n'
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "o-222bbb", "status": "resolved", "source": "cli"}\n'
+        '{"ts": "2026-01-02T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "o-222bbb", "status": "reopened", "source": "cli"}\n',
+        encoding="utf-8")
+    hits = recall.search("gannet", all_projects=True, limit=10)
+    by_text = {h["text"]: h for h in hits}
+    assert by_text["should the gannet exporter batch writes"][
+        "superseded_by"] == "resolved"
+    assert by_text["does the gannet importer need locks"]["superseded_by"] is None
+
+
+def test_supersede_candidate_status_never_marks(tmp_checkpoint_dir, monkeypatch):
+    # Candidates are the UNCONFIRMED tier (#111) — only a confirmed
+    # resolution may flag.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old", questions=[{"text": "heron cache warmup open question",
+                             "trust": "inferred", "id": "o-333ccc"}],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    slug = store.project_slug("/repo/x")
+    ev = config.checkpoint_dir() / slug / "events.jsonl"
+    ev.parent.mkdir(parents=True, exist_ok=True)
+    ev.write_text(
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "o-333ccc", "status": "supersede-candidate:r-abc123",'
+        ' "source": "serializer"}\n', encoding="utf-8")
+    hits = recall.search("heron", all_projects=True, limit=10)
+    assert hits and all(h["superseded_by"] is None for h in hits)
 
 
 def test_supersession_is_per_author(tmp_checkpoint_dir, monkeypatch):
@@ -680,10 +812,11 @@ def test_suggest_short_prompt_is_silent(tmp_checkpoint_dir, monkeypatch):
     assert recall.suggest("ok", project_dir="/repo/x", current_session="S-now") == []
 
 
-def test_suggest_includes_superseded_flagged_not_hidden(tmp_checkpoint_dir, monkeypatch):
-    # Supersession v1 is whole-checkpoint per (author, project): PRIOR WORK is
-    # superseded almost by definition. Hiding it would leave only the latest
-    # checkpoint — which the briefing already covered. Flag, never hide (#112).
+def test_suggest_surfaces_older_work_unflagged_without_evidence(
+        tmp_checkpoint_dir, monkeypatch):
+    # v3 (#234): prior work from an older checkpoint is NOT flagged by mere
+    # recency — it surfaces clean. Only item-level evidence may flag (and
+    # flagged items still surface, ranked down — flag, never hide, #112).
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     _seed_history()
     store.write_checkpoint(
@@ -695,7 +828,37 @@ def test_suggest_includes_superseded_flagged_not_hidden(tmp_checkpoint_dir, monk
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now")
     assert out and out[0]["session_id"] == "S-old"
-    assert out[0]["superseded_by"] == "S-newer"
+    assert out[0]["superseded_by"] is None
+
+
+def test_suggest_flags_and_demotes_typed_superseded_item(
+        tmp_checkpoint_dir, monkeypatch):
+    # A typed supersedes link flags the old item in suggestions too —
+    # included, demoted, never hidden (#112). Same-kind fixture: links bind
+    # within a kind, mirroring carry.bind_links.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+            "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the litellm gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pin litellm gateway cache bad responses"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out
+    flagged = [r for r in out if r["superseded_by"] == "S-newer"]
+    assert flagged and flagged[0]["session_id"] == "S-old"
 
 
 def test_suggest_matches_accented_spanish_content(tmp_checkpoint_dir, monkeypatch):
@@ -887,10 +1050,10 @@ def test_unattributed_sessions_never_supersede_each_other(tmp_checkpoint_dir, mo
     assert rows == [(None,)], f"unattributed session was superseded: {rows}"
 
 
-def test_supersession_same_second_tie_breaks_deterministically(tmp_checkpoint_dir, monkeypatch):
-    # #31 item 7: newest-per-(author, slug) tie-broke by arbitrary scan order
-    # on same-second recency — nondeterministic superseded flags across
-    # rebuilds. Ties must break on session_id (greater wins), stable always.
+def test_frontier_same_second_tie_breaks_deterministically(tmp_checkpoint_dir, monkeypatch):
+    # #31 item 7 (v3: the winner is now `frontier`, not a flag): newest-per-
+    # (author, slug) tie-broke by arbitrary scan order on same-second recency.
+    # Ties must break on session_id (greater wins), stable across rebuilds.
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     same = "2026-06-20T00:00:00Z"
     # S-aaa written FIRST: pre-fix, the first-scanned session won ties, so
@@ -907,14 +1070,14 @@ def test_supersession_same_second_tie_breaks_deterministically(tmp_checkpoint_di
         recall.rebuild()
         conn = sqlite3.connect(str(config.recall_db()))
         try:
-            old = conn.execute("SELECT DISTINCT superseded_by FROM items"
+            old = conn.execute("SELECT DISTINCT frontier FROM items"
                                " WHERE session_id = 'S-aaa'").fetchall()
-            new = conn.execute("SELECT DISTINCT superseded_by FROM items"
+            new = conn.execute("SELECT DISTINCT frontier FROM items"
                                " WHERE session_id = 'S-zzz'").fetchall()
         finally:
             conn.close()
-        assert old == [("S-zzz",)]
-        assert new == [(None,)]
+        assert old == [(0,)]
+        assert new == [(1,)]
 
 
 # ---- #233: index_attribution — dark-matter visibility, read-only ----
@@ -978,7 +1141,80 @@ def test_stamped_checkpoint_outranks_stampless_legacy_in_newest_map(
     (config.checkpoint_dir() / "S-legacy.json").write_text(
         json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
     recall.rebuild()
-    rows = {r["session_id"]: r["superseded_by"]
+    rows = {r["session_id"]: r["frontier"]
             for r in recall.search("decision", all_projects=True, limit=20)}
-    assert rows["S-new"] is None          # the stamped latest IS the frontier
-    assert rows["S-legacy"] == "S-new"    # legacy superseded, not the reverse
+    assert rows["S-new"] == 1     # the stamped latest IS the frontier
+    assert rows["S-legacy"] == 0  # the mtime-newer legacy file is not
+
+
+def test_link_shared_floor_stays_in_sync_with_carry():
+    # recall._MIN_LINK_SHARED mirrors carry._MIN_SHARED (import would be
+    # circular) — rebuild-side text resolution must not drift looser or
+    # stricter than carry-time binding.
+    from daimon_briefing import carry
+    assert recall._MIN_LINK_SHARED == carry._MIN_SHARED
+
+
+def test_typed_link_stopword_target_never_matches(tmp_checkpoint_dir, monkeypatch):
+    # A target with no salient terms can identify nothing — skipped outright.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old", decisions=[{"text": "keep the flamingo exporter synchronous",
+                             "trust": "inferred"}],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-new", _cp(
+        "S-new", decisions=[{
+            "text": "made the flamingo exporter async after all",
+            "trust": "inferred",
+            "links": [{"type": "supersedes", "target": "the one about it"}],
+        }],
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+    hits = recall.search("flamingo", all_projects=True, limit=10)
+    assert all(h["superseded_by"] is None for h in hits)
+
+
+def test_typed_link_never_matches_own_carried_copy(tmp_checkpoint_dir, monkeypatch):
+    # Self/twin guard: the superseding item's own carried copy in an older
+    # checkpoint shares the target's vocabulary by construction — it must
+    # never be treated as the thing being superseded.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    reversal = {
+        "text": "dropped condor batching for the exporter queue",
+        "trust": "inferred", "id": "r-fff999",
+        "links": [{"type": "supersedes",
+                   "target": "condor batching exporter queue"}],
+    }
+    # Older checkpoint holds the carried copy of the reversal itself — and
+    # nothing else matching — so a match here could only be the self-twin.
+    store.write_checkpoint("S-old", _cp(
+        "S-old", decisions=[dict(reversal)],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-new", _cp(
+        "S-new", decisions=[dict(reversal)],
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+    hits = recall.search("condor", all_projects=True, limit=10)
+    assert all(h["superseded_by"] is None for h in hits)
+
+
+def test_event_fold_tolerates_hostile_lines(tmp_checkpoint_dir, monkeypatch):
+    # The events fold must skip torn JSON, note-kind lines, and ref-less
+    # resolutions without dropping the valid mark that follows them.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old", questions=[{"text": "does the skua poller need jitter",
+                             "trust": "inferred", "id": "o-444ddd"}],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    slug = store.project_slug("/repo/x")
+    ev = config.checkpoint_dir() / slug / "events.jsonl"
+    ev.parent.mkdir(parents=True, exist_ok=True)
+    ev.write_text(
+        'not json at all{{{\n'
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "note", "note": "hi"}\n'
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "", "status": "resolved"}\n'
+        '{"kind": "resolution", "item_ref": "o-444ddd", "status": "resolved"}\n'
+        '{"ts": "2026-01-02T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "o-444ddd", "status": "superseded-by:r-abc123"}\n',
+        encoding="utf-8")
+    hits = recall.search("skua", all_projects=True, limit=10)
+    assert hits and hits[0]["superseded_by"] == "r-abc123"
