@@ -1,4 +1,5 @@
 import getpass
+import os
 import subprocess
 from pathlib import Path
 
@@ -320,6 +321,83 @@ def test_scar_harvest_opt_in(monkeypatch):
     assert config.scar_harvest_enabled() is False
     monkeypatch.setenv("DAIMON_SCAR_HARVEST", "1")
     assert config.scar_harvest_enabled() is True
+
+
+# ---- git_branch: current branch stamp at capture time (#222) ----
+
+
+def _init_git_repo_with_commit(path: Path, monkeypatch, branch: str = "main") -> None:
+    """A real local repo with ONE commit on `branch` — `rev-parse --abbrev-ref
+    HEAD` needs a born HEAD (an empty `git init` repo is unborn and rev-parse
+    fails, see test below), so callers that need a resolvable branch name go
+    through this instead of the bare `_init_git_repo` helper above."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)],
+                   check=True, capture_output=True, timeout=30)
+    (path / "f.txt").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "f.txt"],
+                   check=True, capture_output=True, timeout=30)
+    subprocess.run(
+        ["git", "-C", str(path), "-c", "user.name=Test", "-c", "user.email=test@x",
+         "commit", "-q", "-m", "init"],
+        check=True, capture_output=True, timeout=30,
+    )
+
+
+def test_git_branch_returns_branch_name(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo_with_commit(repo, monkeypatch, branch="feat/thing")
+    assert config.git_branch(str(repo)) == "feat/thing"
+
+
+def test_git_branch_none_for_non_git_dir(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert config.git_branch(str(plain)) is None
+
+
+def test_git_branch_none_for_unborn_head(tmp_path):
+    # `git init` with zero commits: HEAD is a symbolic ref to an unborn branch —
+    # rev-parse --abbrev-ref HEAD fails (ambiguous argument), not a name.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    assert config.git_branch(str(repo)) is None
+
+
+def test_git_branch_none_for_detached_head(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo_with_commit(repo, monkeypatch)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--detach"],
+                   check=True, capture_output=True, timeout=30)
+    # rev-parse --abbrev-ref HEAD returns the literal string "HEAD" for a
+    # detached checkout — treated as absent, never as a branch named "HEAD".
+    assert config.git_branch(str(repo)) is None
+
+
+def test_git_branch_none_when_git_binary_missing(tmp_path, monkeypatch):
+    def _no_git(*_a, **_k):
+        raise FileNotFoundError("git: command not found")
+
+    monkeypatch.setattr(subprocess, "run", _no_git)
+    assert config.git_branch(str(tmp_path)) is None
+
+
+def test_git_branch_none_on_timeout(tmp_path, monkeypatch):
+    def _timeout(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=2)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+    assert config.git_branch(str(tmp_path)) is None
+
+
+def test_git_branch_none_and_empty_passthrough():
+    assert config.git_branch(None) is None
+    assert config.git_branch("") is None
 
 
 def test_max_briefing_decisions_default(monkeypatch):

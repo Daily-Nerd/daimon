@@ -481,6 +481,16 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     slug = project_slug(project_dir)
     if slug:
         checkpoint.setdefault("project_slug", slug)
+    # Stamp the git branch at capture time (#222), same idempotent setdefault
+    # shape. Capture-side only — read-side filtering is a follow-up. Resolved
+    # from `project_dir` (the session's OWN project), never os.getcwd(): heal
+    # re-serializes from the FAILED session's project on purpose
+    # (cli._run_serialize routes to it deliberately, not the heal-time cwd).
+    # Absent (never None/empty) when project_dir is None, isn't a git repo, or
+    # HEAD is detached — absent field = unknown, same convention as project_slug.
+    branch = config.git_branch(project_dir)
+    if branch:
+        checkpoint.setdefault("git_branch", branch)
     # Birth stamps (#126) need the previous latest BEFORE this write moves it.
     # read_latest never raises (returns None on absent/torn pointers). When the
     # project is KNOWN, suppress the global fallback (#139): _stamp_first_seen

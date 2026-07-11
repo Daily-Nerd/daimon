@@ -367,6 +367,38 @@ def resolve_project_root(raw: str | None) -> str | None:
     return top or raw
 
 
+def git_branch(project_dir) -> str | None:
+    """Current branch name for a project working dir at capture time (#222), or
+    None on ANY failure/ambiguity — never raises, never returns an empty string:
+    not a project dir (falsy input), not a git repo, git binary missing,
+    timeout, an unborn HEAD (a fresh `git init` with no commits — rev-parse
+    fails "ambiguous argument"), or a DETACHED HEAD (rev-parse --abbrev-ref
+    prints the literal "HEAD" for that case, which is not a branch name).
+
+    Lives here, not in store.py: store stays free of the git/subprocess
+    dependency (the same reasoning `resolve_project_root` above documents).
+    Short timeout — this runs on every checkpoint write, including from hooks
+    on session end, which must never block on a slow/hung git.
+    """
+    if not project_dir:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_dir), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    if not branch or branch == "HEAD":
+        return None
+    return branch
+
+
 def min_messages() -> int:
     try:
         return int(_get("DAIMON_MIN_MESSAGES") or "10")
