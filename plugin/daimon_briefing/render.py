@@ -47,7 +47,15 @@ def working(message: str):
     the first thing a new user runs (`configure --test`) is a ~15s silent
     LLM roundtrip, and dead terminal at that moment reads as hung. Plain
     path prints the message once and returns (hook/log-safe, exact-format
-    testable). Body exceptions propagate untouched either way."""
+    testable). Body exceptions propagate untouched either way.
+
+    #219: `daimon heal`'s re-serialize is the second call site, and unlike
+    `configure --test` its body (`_run_serialize`) prints its own result line
+    from inside the `with`, not after. That's safe here — rich's Status is a
+    Live display with stdout redirection enabled, so a plain `print()` during
+    the spinner is captured and rendered cleanly above the live line rather
+    than garbling it (verified with a manual check: `Console(force_terminal=
+    True).status(...)` wrapping a body that calls `print()` mid-spin)."""
     if not supports_rich():
         print(f"{message}...", flush=True)
         yield

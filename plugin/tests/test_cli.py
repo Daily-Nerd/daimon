@@ -984,6 +984,79 @@ def test_cli_heal_noop_when_no_log(tmp_checkpoint_dir, tmp_log_dir, fake_chat_fa
     assert chat.calls == []
 
 
+# ---- #219: live progress indicator (render.working) around heal's re-serialize ----
+
+
+def test_cli_heal_shows_working_indicator_before_result(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, capsys, monkeypatch
+):
+    # A real target: the plain (non-TTY, as in tests) working() line must
+    # print exactly once, BEFORE _run_serialize's own result line — a house
+    # spinner that fires after the result would be silently useless.
+    stem = "sample_transcript"
+    transcript = FIXTURES / "sample_transcript.md"
+    _write_log(
+        tmp_log_dir,
+        [
+            f"2026-06-10T12:00:00Z session-end: spawned serialize for {stem} (reason: exit, project: /p/A)",
+            f"error: LLM call failed: bad temperature (transcript: {transcript}) after 1s",
+        ],
+    )
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+
+    rc = cli.main(["heal"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    working_line = f"healing {stem} — re-serializing transcript...\n"
+    assert out.count(working_line) == 1
+    working_at = out.index(working_line)
+    result_at = out.index("wrote checkpoint:")
+    assert working_at < result_at  # spinner line precedes the result line
+
+
+def test_cli_heal_dry_run_has_no_working_indicator(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, capsys, monkeypatch
+):
+    # --dry-run never touches _run_serialize — nothing slow happens, so no
+    # spinner/line should appear alongside the "would heal" explanation.
+    stem = "sample_transcript"
+    transcript = FIXTURES / "sample_transcript.md"
+    _write_log(
+        tmp_log_dir,
+        [
+            f"2026-06-10T12:00:00Z session-end: spawned serialize for {stem} (reason: exit, project: /p/A)",
+            f"error: LLM call failed: bad temperature (transcript: {transcript}) after 1s",
+        ],
+    )
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+
+    rc = cli.main(["heal", "--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"would heal {stem}" in out
+    assert "re-serializing transcript" not in out
+    assert chat.calls == []
+
+
+def test_cli_heal_no_target_has_no_working_indicator(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, capsys, monkeypatch
+):
+    # No serialize.log -> no healable target -> nothing slow happens -> no
+    # working() line, only the plan's "nothing to heal" note.
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+
+    rc = cli.main(["heal"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "re-serializing transcript" not in out
+    assert chat.calls == []
+
+
 # ---- #15: `heal --force` — explicit escape hatch past the one-retry-ever cap ----
 
 

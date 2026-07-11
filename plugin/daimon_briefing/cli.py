@@ -1226,7 +1226,24 @@ def _cmd_heal(args) -> int:
     Every no-op returns 0 (a no-op heal is never an error). `--dry-run` explains
     without serializing. `--force` (#15) ignores a prior retry marker so a
     retry-exhausted session becomes healable again — the default one-retry-ever
-    policy is unchanged when --force is absent."""
+    policy is unchanged when --force is absent.
+
+    #219: a real target means `_run_serialize` runs next — the same ~15s-2min
+    silent LLM roundtrip `configure --test` already covers with the house
+    `render.working()` spinner (#182/#183). Unlike that call site, which wraps
+    only the LLM call and prints its verdict AFTER the `with` exits,
+    `_run_serialize` prints its own byte-identical result line (the
+    `_RESULT_OK_RE`/`_RESULT_ERR_RE` contract, see its docstring) from deep
+    inside its own body — hoisting that print out would touch the layering
+    shared with `_run_serialize`'s other, non-interactive callers (the hook
+    path and the `serialize` command), which must stay untouched. A manual
+    check (rich `Console().status(...)` wrapping a body that calls plain
+    `print()`) confirmed Rich's Live-backed Status intercepts stdout writes
+    cleanly during the spinner: the printed line lands undisturbed between
+    spinner frames and the spinner's own line is cleared before the `with`
+    exits, both on the rich/TTY path and the plain path (which never touches
+    Live at all). So the whole `_run_serialize` call — print included — is
+    wrapped directly; no restructuring of `_run_serialize` needed."""
     dry_run = getattr(args, "dry_run", False)
     force = getattr(args, "force", False)
     try:
@@ -1247,7 +1264,8 @@ def _cmd_heal(args) -> int:
     # sessions healable) — the retry marker still needs a prior (#49).
     prior = (t["line"] or "hung: spawned, no result").split(" (transcript:")[0]
     _append_retry_log(t["sid"], prior)
-    return _run_serialize(transcript_path, t["project"])
+    with render.working(f"healing {t['sid']} — re-serializing transcript"):
+        return _run_serialize(transcript_path, t["project"])
 
 
 # ---- team: sidecar private-repo sync (#113) ----
