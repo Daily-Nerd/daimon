@@ -513,7 +513,13 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
     parse_retries re-calls when the response parses to nothing: reasoning
     models behind gateways intermittently return an empty or prose 200, which
     chat()'s transport retries (timeout/5xx/connection) never see. Chat
-    failures are NOT retried here — chat() owns transport retries.
+    failures are NOT retried here — chat() owns transport retries. The one
+    exception is llm.EmptyOutputError (#225): the command backend's rc=0 +
+    empty-stdout case is functionally the same "the backend said nothing" as
+    an empty HTTP 200 body, so it gets the same cache-buster retry treatment
+    instead of failing on attempt 1. Every OTHER ChatError (transport
+    failures) keeps failing immediately here — those are chat()'s own retry
+    domain.
 
     Retries are never byte-identical: gateway response caches replay the same
     garbage for an identical request (H1 attempt 5 — LiteLLM returned the
@@ -528,6 +534,13 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 f"\n\n(retry attempt {attempt} — the previous response was "
                 f"unparseable; output ONLY the JSON object, no prose, no reasoning)"
             )
+
+        def _can_retry(_attempt=attempt):
+            # A dead deadline makes a re-call pointless — fail now, named.
+            return _attempt < attempts and (
+                deadline is None or deadline - time.monotonic() > 0
+            )
+
         try:
             raw = chat(
                 [
@@ -539,14 +552,14 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 # overrides for upstreams that reject non-default values).
                 deadline=deadline,
             )
+        except llm.EmptyOutputError as exc:
+            if _can_retry():
+                log.warning("empty output on %s (attempt %d/%d), "
+                            "retrying with cache-buster", what, attempt, attempts)
+                continue
+            raise LLMCallError(f"LLM call failed on {what}: {type(exc).__name__}: {exc}") from exc
         except Exception as exc:
             raise LLMCallError(f"LLM call failed on {what}: {type(exc).__name__}: {exc}") from exc
-
-        def _can_retry():
-            # A dead deadline makes a re-call pointless — fail now, named.
-            return attempt < attempts and (
-                deadline is None or deadline - time.monotonic() > 0
-            )
 
         try:
             parsed = llm.extract_json(raw)

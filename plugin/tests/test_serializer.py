@@ -586,6 +586,82 @@ def test_serialize_parse_retry_skipped_when_deadline_exhausted():
     assert len(calls) == 1  # no second call once the deadline is gone
 
 
+# --- #225: command-backend empty output retries like an empty 200 body ------
+
+
+def test_call_and_parse_retries_empty_output_error_once(fake_chat_factory, caplog):
+    # rc=0 + empty stdout raises llm.EmptyOutputError instead of parsing to
+    # nothing — it must get the SAME cache-buster retry treatment as an
+    # unparseable HTTP response, not an immediate LLMCallError.
+    import logging
+
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory([llm.EmptyOutputError("command backend returned empty "
+                                                     "output (stderr: /tmp/x.log)"),
+                              _valid_checkpoint_json("S1")])
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.serializer"):
+        ckpt = serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert len(chat.calls) == 2
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "empty output" in msg
+    assert "retrying with cache-buster" in msg
+    first_user = chat.calls[0]["messages"][1]["content"]
+    retry_user = chat.calls[1]["messages"][1]["content"]
+    assert "retry attempt 2" in retry_user
+    assert retry_user.startswith(first_user)
+
+
+def test_call_and_parse_empty_output_error_every_attempt_raises_llm_call_error(fake_chat_factory):
+    from daimon_briefing import llm
+
+    err = llm.EmptyOutputError("command backend returned empty output (stderr: "
+                               "/tmp/x.log)")
+    chat = fake_chat_factory([err, err])
+    with pytest.raises(serializer.LLMCallError,
+                       match="command backend returned empty output"):
+        serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert len(chat.calls) == 2  # 1 + parse_retries(=1), then give up
+
+
+def test_call_and_parse_plain_chat_error_still_fails_immediately(fake_chat_factory):
+    # Regression guard: non-empty-output ChatErrors (transport failures) are
+    # chat()'s own retry domain — _call_and_parse must NOT retry them.
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(llm.ChatError("command backend exited 1 (stderr: /tmp/x.log)"))
+    with pytest.raises(serializer.LLMCallError):
+        serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert len(chat.calls) == 1  # no retry regression
+
+
+def test_call_and_parse_empty_output_error_skipped_when_deadline_exhausted():
+    # Same guard as the parse-retry path: a dead deadline must not burn a
+    # second call even though EmptyOutputError is otherwise retryable.
+    import time
+
+    from daimon_briefing import llm
+
+    calls = []
+
+    def slow_empty_chat(chat_messages, **kwargs):
+        calls.append(chat_messages)
+        time.sleep(0.15)
+        raise llm.EmptyOutputError("command backend returned empty output "
+                                   "(stderr: /tmp/x.log)")
+
+    deadline = time.monotonic() + 0.05  # alive at entry, dead when the call returns
+    with pytest.raises(serializer.LLMCallError,
+                       match="command backend returned empty output"):
+        serializer.serialize_strict(
+            "S1", make_messages(20), chat=slow_empty_chat, deadline=deadline
+        )
+    assert len(calls) == 1  # no second call once the deadline is gone
+
+
 # --- Live progress logging (40-min runs need a heartbeat) --------------------
 
 
