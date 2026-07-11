@@ -351,7 +351,14 @@ def _stats_capture() -> dict:
             out["skipped"] += 1
             continue
         if _RESULT_ERR_RE.match(line):
-            out["errors"] += 1
+            # #235: too-short is a policy skip, not a failure. The write side
+            # has emitted it as a skip line since e2eb989; older logs carry it
+            # in error shape, so the fold reclassifies retroactively — `errors`
+            # stays "capture should have worked and didn't".
+            if "transcript too short" in line:
+                out["skipped"] += 1
+            else:
+                out["errors"] += 1
             continue
         hm = _STATS_HOST_RE.match(line)
         if hm:

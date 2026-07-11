@@ -3846,6 +3846,24 @@ def test_stats_host_re_counts_windsurf_finalizer(tmp_log_dir):
     assert ledger._stats_capture()["hosts"]["windsurf-finalizer"] == 1
 
 
+def test_stats_capture_too_short_error_lines_count_as_skipped(tmp_log_dir):
+    # #235: pre-0.2.0 logs carry too-short outcomes in error shape (the write
+    # side skips them since e2eb989). The fold reclassifies retroactively so
+    # `errors` means "capture should have worked and didn't" — nothing else.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "error: transcript too short (2 < 10 messages) "
+        "(transcript: /t/S1.jsonl) after 0s",
+        "error: transcript too short (0 < 10 messages)",
+        "error: LLM call failed on transcript: ChatError: unreachable "
+        "(transcript: /t/S2.jsonl) after 12s",
+        "skipped serialize for S3: transcript too short (4 < 10 messages)",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["errors"] == 1        # only the LLM failure
+    assert cap["skipped"] == 3       # both fossils join the real skip line
+
+
 # ---- #49: heal crash on hung targets + preflight-error attribution ----
 
 
