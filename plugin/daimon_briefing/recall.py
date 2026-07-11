@@ -552,11 +552,15 @@ def _match_expr(query: str, join: str = " ") -> str | None:
 
 
 def search(query: str, project_dir=None, all_projects: bool = False,
-           limit: int = 20) -> list[dict]:
+           limit: int = 20, slug: str | None = None) -> list[dict]:
     """FTS5 MATCH over the (auto-refreshed) index. Live items first, then by
     bm25 rank, newest checkpoint first within equal rank. Scope: project_dir's
     slug unless all_projects (or the project is unknown — no filter then,
-    matching read_team's semantics). Never raises on hostile query text;
+    matching read_team's semantics). An explicit `slug` IS the scope (#243):
+    it addresses a bucket by its stored identity — the slug is lossy, so this
+    is the only route to buckets whose source path is gone (other machine,
+    deleted dir) — and overrides both project_dir and all_projects (callers
+    guard the flag conflict at the CLI). Never raises on hostile query text;
     raises RecallError only when FTS5 itself is unavailable.
 
     AND is primary; when a multi-term query matches nothing, the same quoted
@@ -570,7 +574,8 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         _ensure_fresh()
     except (OSError, sqlite3.Error) as exc:
         _note_error("search.refresh", exc)  # then try the query on what exists
-    want = None if all_projects else store.project_slug(project_dir)
+    want = slug if slug else (None if all_projects
+                              else store.project_slug(project_dir))
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"

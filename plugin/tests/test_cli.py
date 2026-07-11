@@ -4581,3 +4581,173 @@ def test_reverify_still_refuses_resolved_item_without_evidence(tmp_checkpoint_di
     assert cli.main(["reverify", iid]) == 1
     out = capsys.readouterr().out
     assert "without evidence" in out
+
+
+# ---- daimon projects: cross-project bucket list (#243) ----
+
+
+def _write_bucket(d, slug, session_id, created, branch=None, topic=None):
+    bucket = d / slug
+    bucket.mkdir(parents=True, exist_ok=True)
+    cp = {"session_id": session_id, "project_slug": slug, "created": created}
+    if branch:
+        cp["git_branch"] = branch
+    if topic:
+        cp["working_context"] = {"active_topic": {"text": topic, "trust": "inferred"}}
+    (bucket / "latest.json").write_text(json.dumps(cp))
+
+
+def test_projects_lists_buckets_newest_first(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_bucket(tmp_checkpoint_dir, "-p-old", "S-old", "2026-07-01T00:00:00Z",
+                  branch="main", topic="old work")
+    _write_bucket(tmp_checkpoint_dir, "-p-new", "S-new", "2026-07-11T00:00:00Z",
+                  branch="feat-x", topic="new work")
+    assert cli.main(["projects"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("-p-new") < out.index("-p-old")
+    assert "feat-x" in out
+    assert "new work" in out
+
+
+def test_projects_marks_current_project(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    _write_bucket(tmp_checkpoint_dir, slug, "S-me", "2026-07-11T00:00:00Z")
+    _write_bucket(tmp_checkpoint_dir, "-p-other", "S-o", "2026-07-10T00:00:00Z")
+    assert cli.main(["projects"]) == 0
+    out = capsys.readouterr().out
+    me = next(ln for ln in out.splitlines() if slug in ln)
+    other = next(ln for ln in out.splitlines() if "-p-other" in ln)
+    assert "*" in me and "*" not in other
+
+
+def test_projects_json_shape(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_bucket(tmp_checkpoint_dir, "-p-b", "S-1", "2026-07-11T00:00:00Z",
+                  branch="main", topic="topic text")
+    assert cli.main(["projects", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows == [{
+        "slug": "-p-b", "session_id": "S-1", "created": "2026-07-11T00:00:00Z",
+        "git_branch": "main", "topic": "topic text", "current": False,
+    }]
+
+
+def test_projects_torn_bucket_listed_with_unknowns(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    torn = tmp_checkpoint_dir / "-p-torn"
+    torn.mkdir(parents=True)
+    (torn / "latest.json").write_text("{not json")
+    assert cli.main(["projects"]) == 0
+    assert "-p-torn" in capsys.readouterr().out
+
+
+def test_projects_empty_store_says_so(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    assert cli.main(["projects"]) == 0
+    assert "no project" in capsys.readouterr().out.lower()
+
+
+# ---- recall --slug: bucket-identity scoping (#243) ----
+
+
+def test_cli_recall_slug_scopes_by_bucket_identity(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    from daimon_briefing import store
+
+    proj_a = str((tmp_path / "proj-a").resolve())
+    proj_b = str((tmp_path / "proj-b").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-a", _recall_checkpoint("S-a", "marmot work in a"),
+                           project_dir=proj_a)
+    store.write_checkpoint("S-b", _recall_checkpoint("S-b", "marmot work in b"),
+                           project_dir=proj_b)
+
+    # run from proj_a's scope, target proj_b by slug — no path involved
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", proj_a)
+    rc = cli.main(["recall", "marmot", "--slug", store.project_slug(proj_b)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "marmot work in b" in out
+    assert "marmot work in a" not in out
+
+
+def test_cli_recall_slug_conflicts_with_project(tmp_checkpoint_dir, capsys, tmp_path):
+    rc = cli.main(["recall", "x", "--slug", "-p-b", "--project", str(tmp_path)])
+    assert rc == 2
+    assert "--slug" in capsys.readouterr().err
+
+
+def test_cli_recall_slug_conflicts_with_all_projects(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["recall", "x", "--slug", "-p-b", "--all-projects"])
+    assert rc == 2
+    assert "--slug" in capsys.readouterr().err
+
+
+# ---- brief --slug: deliberate cross-project briefing (#243) ----
+
+
+def test_cli_brief_slug_renders_target_bucket(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+
+    other = json.loads(json.dumps(sample_checkpoint))
+    other["session_id"] = "S-other"
+    other["working_context"]["open_questions"][0]["text"] = "PR #99 state — project B loop"
+    store.write_checkpoint("S-other", other, project_dir="/p/B")
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    slug = store.project_slug("/p/B")
+    rc = cli.main(["brief", "--slug", slug])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "PR #99" in out
+    # provenance header: a cross-project briefing must name its origin
+    assert slug in out
+
+
+def test_cli_brief_slug_missing_bucket_never_falls_back(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+
+    # a global pointer exists — an implicit fallback would leak it
+    store.write_checkpoint("S-global", sample_checkpoint)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    rc = cli.main(["brief", "--slug", "-p-nonexistent"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "daimon projects" in out
+    assert "PR #6" not in out  # sample_checkpoint body must not render
+
+
+def test_cli_brief_slug_conflicts_with_project(tmp_checkpoint_dir, capsys, tmp_path):
+    rc = cli.main(["brief", "--slug", "-p-b", "--project", str(tmp_path)])
+    assert rc == 2
+    assert "--slug" in capsys.readouterr().err
+
+
+def test_cli_brief_slug_conflicts_with_team(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["brief", "--slug", "-p-b", "--team"])
+    assert rc == 2
+    assert "--slug" in capsys.readouterr().err
+
+
+def test_cli_brief_slug_withholds_resolved_items(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # the events ledger is slug-routed, so lifecycle folding must survive the
+    # path-less read
+    from daimon_briefing import store
+
+    cp = json.loads(json.dumps(sample_checkpoint))
+    cp["session_id"] = "S-b"
+    store.write_checkpoint("S-b", cp, project_dir="/p/B")
+    written = store.read_latest(project_dir="/p/B", fallback=False)
+    iid = written["working_context"]["open_questions"][0]["id"]
+    q_text = written["working_context"]["open_questions"][0]["text"]
+    store.append_event(iid, "resolved", project_dir="/p/B")
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    rc = cli.main(["brief", "--slug", store.project_slug("/p/B")])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert q_text not in out
+    assert "withheld" in out

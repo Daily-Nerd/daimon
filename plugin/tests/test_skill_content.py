@@ -90,3 +90,16 @@ def test_full_body_teaches_staleness_world_check():
     full = skill_content.render_full()
     reading = full.split("## Reading a briefing")[1].split("\n## ")[0]
     assert "world-check" in reading.lower()
+
+
+def test_full_teaches_context_switching():
+    # #243: the cross-project verbs must be taught, or the feature is invisible.
+    full = skill_content.render_full()
+    assert "daimon projects" in full
+    assert "--slug" in full
+
+
+def test_compact_teaches_context_switching():
+    body = skill_content.render_compact()
+    assert "daimon projects" in body
+    assert "--slug" in body

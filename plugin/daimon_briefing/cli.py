@@ -489,8 +489,84 @@ def _team_briefings(project) -> list:
     return out
 
 
+def _render_briefing_body(checkpoint, route, *, drift_project, teammates) -> int:
+    """Shared tail of `brief` and `brief --slug`: withhold, drift, render,
+    footnotes. `route` is whatever the events ledger should be keyed by — a
+    project dir on the normal path, a bare slug on the --slug path (the store's
+    slug munging is idempotent, so a slug rides through project_dir-shaped
+    APIs unchanged; guarded by test_project_slug_is_idempotent_on_slugs).
+    `drift_project=None` skips the anchor drift check: anchor paths are
+    relative to the origin project's root, which a slug cannot recover."""
+    withheld = []
+    events = {}
+    if checkpoint:
+        # Withhold (#103): render-time derivation, fail-open — a briefing
+        # must never die over suppression machinery. #14: candidates ride
+        # along stamped on `checkpoint` itself — the deterministic path
+        # (render_plain via briefing._line) picks up the annotation; the
+        # opt-in LLM briefing path does not surface it (same pre-existing
+        # scope as [carried]), so nothing further is done with them here.
+        try:
+            events = store.resolutions(project_dir=route)
+            checkpoint, withheld, _candidates = briefing.withhold(checkpoint, events)
+        except Exception:
+            withheld = []
+            events = {}
+    # NOTE: drift is checked against the resolved project root. If read_latest fell
+    # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
+    # are relative to a different root and may report spurious "hard" drift. Acceptable
+    # for v1 (degrades safely); origin-project gating is future work (#60 follow-up).
+    drift = (anchor.drifted(checkpoint, drift_project)
+             if checkpoint and drift_project else [])
+    render.render_brief(checkpoint, drift=drift, teammates=teammates)
+    if withheld:
+        render.render_brief_note([
+            f"{len(withheld)} resolved item(s) withheld — "
+            "`daimon status --suppressed` to list"])
+    # Staleness budget (#215): reuses the SAME resolutions fold `withhold`
+    # already did above — no re-read of events.jsonl. Fail-open, same shape
+    # as the withhold try/except; a broken stale_carried must never take the
+    # briefing down with it. House rule: zero stale items -> NO line at all,
+    # never a false alarm.
+    if checkpoint:
+        try:
+            stale_items = briefing.stale_carried(checkpoint, events, time.time())
+        except Exception:
+            stale_items = []
+        if stale_items:
+            render.render_brief_note([
+                f"⚠ {len(stale_items)} carried item(s) unverified for "
+                f">{config.stale_days():g} days — world-check before "
+                "repeating as true"])
+    return 0
+
+
 def _cmd_brief(args) -> int:
     _note_usage("brief:auto" if getattr(args, "auto", False) else "brief")
+    slug = getattr(args, "slug", None)
+    if slug:
+        # Deliberate cross-project read (#243). Explicit-never-automatic is
+        # the #94/#95 lesson, so: no global-pointer fallback (the target was
+        # named — somebody else's checkpoint is never an answer), no --team
+        # (fan-in routes by path), and a provenance header so this can never
+        # masquerade as the current project's briefing.
+        if args.project:
+            print("error: --slug and --project are two answers to \"which "
+                  "bucket\" — pass one", file=sys.stderr)
+            return 2
+        if getattr(args, "team", False):
+            print("error: --team routes by project path and cannot combine "
+                  "with --slug", file=sys.stderr)
+            return 2
+        checkpoint = store.read_latest(project_dir=slug, fallback=False)
+        if not isinstance(checkpoint, dict):
+            render.render_brief_note([
+                f"no checkpoint bucket for slug {slug} — "
+                "`daimon projects` lists what exists"])
+            return 1
+        render.render_brief_note([f"cross-project briefing — project: {slug}"])
+        return _render_briefing_body(checkpoint, slug,
+                                     drift_project=None, teammates=None)
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
@@ -529,50 +605,11 @@ def _cmd_brief(args) -> int:
     if fallback_used:
         render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
                                   "checkpoint (fallback), possibly another project's."])
-    withheld = []
-    events = {}
-    if checkpoint:
-        # Withhold (#103): render-time derivation, fail-open — a briefing
-        # must never die over suppression machinery. #14: candidates ride
-        # along stamped on `checkpoint` itself — the deterministic path
-        # (render_plain via briefing._line) picks up the annotation; the
-        # opt-in LLM briefing path does not surface it (same pre-existing
-        # scope as [carried]), so nothing further is done with them here.
-        try:
-            events = store.resolutions(project_dir=project)
-            checkpoint, withheld, _candidates = briefing.withhold(checkpoint, events)
-        except Exception:
-            withheld = []
-            events = {}
-    # NOTE: drift is checked against the resolved project root. If read_latest fell
-    # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
-    # are relative to a different root and may report spurious "hard" drift. Acceptable
-    # for v1 (degrades safely); origin-project gating is future work (#60 follow-up).
-    drift = anchor.drifted(checkpoint, project) if checkpoint else []
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
     teammates = _team_briefings(project) if getattr(args, "team", False) else None
-    render.render_brief(checkpoint, drift=drift, teammates=teammates)
-    if withheld:
-        render.render_brief_note([
-            f"{len(withheld)} resolved item(s) withheld — "
-            "`daimon status --suppressed` to list"])
-    # Staleness budget (#215): reuses the SAME resolutions fold `withhold`
-    # already did above — no re-read of events.jsonl. Fail-open, same shape
-    # as the withhold try/except; a broken stale_carried must never take the
-    # briefing down with it. House rule: zero stale items -> NO line at all,
-    # never a false alarm.
-    if checkpoint:
-        try:
-            stale_items = briefing.stale_carried(checkpoint, events, time.time())
-        except Exception:
-            stale_items = []
-        if stale_items:
-            render.render_brief_note([
-                f"⚠ {len(stale_items)} carried item(s) unverified for "
-                f">{config.stale_days():g} days — world-check before "
-                "repeating as true"])
-    return 0
+    return _render_briefing_body(checkpoint, project,
+                                 drift_project=project, teammates=teammates)
 
 
 # ---- recall: FTS search over local + team checkpoint history (#112) ----
@@ -587,9 +624,18 @@ def _cmd_recall(args) -> int:
     if args.limit < 1:
         print(f"error: --limit must be >= 1 (got {args.limit})", file=sys.stderr)
         return 2
+    slug = getattr(args, "slug", None)
+    if slug and args.project:
+        print("error: --slug and --project are two answers to \"which bucket\" "
+              "— pass one", file=sys.stderr)
+        return 2
+    if slug and args.all_projects:
+        print("error: --slug scopes to one project; drop it or drop "
+              "--all-projects", file=sys.stderr)
+        return 2
     project = _resolve_project(args.project)
     try:
-        results = recall.search(query, project_dir=project,
+        results = recall.search(query, project_dir=project, slug=slug,
                                 all_projects=args.all_projects, limit=args.limit)
     except recall.RecallError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -612,6 +658,63 @@ def _cmd_recall(args) -> int:
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}] {r['text']} "
                      f"({r['session_id']}, {age} ago){superseded}")
     render.render_recall_lines(lines)
+    return 0
+
+
+# ---- projects: cross-project bucket list (#243) ----
+
+
+_TOPIC_TEASER_CHARS = 60
+
+
+def _cmd_projects(args) -> int:
+    """One row per checkpoint bucket: which projects daimon knows about, and
+    what each was last doing. Read-only orientation for context switching —
+    the crossing itself stays explicit (`brief --slug` / `recall --slug`),
+    the #94/#95 lesson. Torn buckets show with unknown fields rather than
+    vanish: hiding one would read as "no such project"."""
+    _note_usage("projects")
+    cur_slug = store.project_slug(_resolve_project(getattr(args, "project", None)))
+    rows = []
+    for b in store.list_buckets():
+        cp = b["checkpoint"] or {}
+        created = cp.get("created")
+        topic = ((cp.get("working_context") or {}).get("active_topic") or {})
+        rows.append({
+            "slug": b["slug"],
+            "session_id": cp.get("session_id"),
+            "created": created if isinstance(created, str) else None,
+            "git_branch": cp.get("git_branch"),
+            "topic": topic.get("text") if isinstance(topic, dict) else None,
+            "current": b["slug"] == cur_slug,
+            # display sort key only, never emitted: created stamp when the
+            # pointer has one, pointer mtime for torn/stampless buckets
+            "_epoch": store._created_epoch(created) or b["mtime"],
+        })
+    rows.sort(key=lambda r: r["_epoch"], reverse=True)
+    for r in rows:
+        del r["_epoch"]
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+    if not rows:
+        render.render_recall_lines(
+            ["no project buckets yet — the first serialized session creates one"])
+        return 0
+    now = time.time()
+    display = []
+    for r in rows:
+        epoch = store._created_epoch(r["created"])
+        age = f"{_format_age(now - epoch)} ago" if epoch else "?"
+        topic = (r["topic"] or "").strip()
+        if len(topic) > _TOPIC_TEASER_CHARS:
+            topic = topic[:_TOPIC_TEASER_CHARS - 1] + "…"
+        display.append({
+            "mark": "*" if r["current"] else " ",
+            "slug": r["slug"], "age": age,
+            "branch": r["git_branch"] or "—", "topic": topic or "?",
+        })
+    render.render_projects(display)
     return 0
 
 
@@ -1830,6 +1933,12 @@ def main(argv=None) -> int:
              "recent decisions from the shared team memory (#111)",
     )
     p_brief.add_argument(
+        "--slug", metavar="SLUG",
+        help="brief another project's bucket by its slug (see `daimon "
+             "projects`) — deliberate cross-project read, provenance-labeled, "
+             "no fallback (#243)",
+    )
+    p_brief.add_argument(
         "--global-fallback", action="store_true",
         help="when this project has no checkpoint, render the full global "
              "checkpoint (possibly another project's) instead of the "
@@ -1879,12 +1988,31 @@ def main(argv=None) -> int:
         help="search across every project (lifts the project scope)",
     )
     p_recall.add_argument(
+        "--slug", metavar="SLUG",
+        help="scope to a project bucket by its slug (see `daimon projects`) — "
+             "reaches buckets whose source path no longer exists (#243)",
+    )
+    p_recall.add_argument(
         "--json", action="store_true", help="machine-readable output"
     )
     p_recall.add_argument(
         "--limit", type=int, default=20, help="max results (default: 20)"
     )
     p_recall.set_defaults(func=_cmd_recall)
+
+    p_projects = sub.add_parser(
+        "projects", help="list every project daimon has a checkpoint for",
+        epilog="Examples:\n  daimon projects\n  daimon projects --json\n",
+    )
+    p_projects.add_argument(
+        "--project",
+        help="project directory the current-project mark is computed against "
+             "(default: DAIMON_PROJECT_DIR, then cwd)",
+    )
+    p_projects.add_argument(
+        "--json", action="store_true", help="machine-readable output"
+    )
+    p_projects.set_defaults(func=_cmd_projects)
 
     p_resolve = sub.add_parser(
         "resolve", help="mark a checkpoint item resolved — append-only event, "
@@ -2101,6 +2229,18 @@ def main(argv=None) -> int:
     ps_uninstall.add_argument("host")
     ps_uninstall.add_argument("--project", action="store_true")
     ps_uninstall.set_defaults(func=_cmd_skill_uninstall)
+
+    # Slugs are munged absolute paths, so they START with "-" ("/Users/x" ->
+    # "-Users-x") — argparse reads `--slug -Users-x` as a missing argument and
+    # only accepts the `=` form. Fuse the pair pre-parse so both spellings
+    # work; a trailing bare `--slug` is left for argparse to reject normally.
+    if argv is None:
+        argv = sys.argv[1:]
+    argv = list(argv)
+    for i, tok in enumerate(argv[:-1]):
+        if tok == "--slug":
+            argv[i:i + 2] = [f"--slug={argv[i + 1]}"]
+            break
 
     args = parser.parse_args(argv)
     return args.func(args)

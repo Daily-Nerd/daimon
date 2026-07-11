@@ -595,6 +595,36 @@ def sibling_buckets(project_dir) -> list[dict]:
     return out
 
 
+def list_buckets() -> list[dict]:
+    """Every per-project bucket in the checkpoint dir, for `daimon projects`
+    (#243): [{slug, checkpoint, mtime}], unsorted — ordering is a display
+    concern. A bucket is any subdir holding a latest.json; flat per-session
+    files and the global pointer are not buckets. Torn/corrupt pointers are
+    listed with checkpoint=None (the bucket exists — hiding it would read as
+    "no such project"), matching the module's tolerant readers. Pure file-ops,
+    never raises."""
+    d = config.checkpoint_dir()
+    try:
+        entries = sorted(d.iterdir())
+    except OSError:
+        return []
+    out: list[dict] = []
+    for child in entries:
+        latest = child / _LATEST
+        try:
+            mtime = latest.stat().st_mtime
+        except OSError:
+            continue  # not a dir, or a bucket that never got a pointer
+        try:
+            cp = json.loads(latest.read_text(encoding="utf-8"))
+            if not isinstance(cp, dict):
+                cp = None
+        except (OSError, json.JSONDecodeError):
+            cp = None
+        out.append({"slug": child.name, "checkpoint": cp, "mtime": mtime})
+    return out
+
+
 def transcript_unchanged(session_id: str, transcript_hash: str | None) -> bool:
     """True when `transcript_hash` matches the `transcript_hash` already stamped
     on the PER-SESSION checkpoint for `session_id` (#185): the identical-bytes

@@ -1218,3 +1218,28 @@ def test_event_fold_tolerates_hostile_lines(tmp_checkpoint_dir, monkeypatch):
         encoding="utf-8")
     hits = recall.search("skua", all_projects=True, limit=10)
     assert hits and hits[0]["superseded_by"] == "r-abc123"
+
+
+# ---- --slug: address a bucket by its real identity (#243) ----
+
+
+def test_search_slug_scopes_without_a_path(tmp_checkpoint_dir, monkeypatch):
+    _write_team_file("grace", "S-x", _cp("S-x", decisions=[
+        {"text": "toucan decision in x", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    _write_team_file("grace", "S-y", _cp("S-y", decisions=[
+        {"text": "toucan decision in y", "trust": "inferred"}]),
+        project_dir="/repo/y")
+    hits = recall.search("toucan", slug=store.project_slug("/repo/y"))
+    assert [h["text"] for h in hits] == ["toucan decision in y"]
+
+
+def test_search_slug_wins_over_project_dir(tmp_checkpoint_dir, monkeypatch):
+    # Callers guard the conflict at the CLI; the library keeps one rule: an
+    # explicit slug IS the scope.
+    _write_team_file("grace", "S-x", _cp("S-x", decisions=[
+        {"text": "ibis decision in x", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    hits = recall.search("ibis", project_dir="/repo/y",
+                         slug=store.project_slug("/repo/x"))
+    assert [h["text"] for h in hits] == ["ibis decision in x"]
