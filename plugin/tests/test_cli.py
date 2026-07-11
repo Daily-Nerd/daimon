@@ -2439,23 +2439,30 @@ def test_cli_recall_multiword_query(tmp_checkpoint_dir, capsys, monkeypatch, tmp
     assert "pangolin caching" in capsys.readouterr().out
 
 
-def test_cli_recall_flags_superseded(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+def test_cli_recall_flags_typed_supersession_only(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # v3 (#234): recency alone renders NO flag; a typed supersedes link does.
     from daimon_briefing import store
 
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
-        "S-old", _recall_checkpoint("S-old", "meerkat plan v1", "2021-01-01T00:00:00Z"),
+        "S-old", _recall_checkpoint(
+            "S-old", "meerkat burrow mapping plan for the colony",
+            "2021-01-01T00:00:00Z"),
         project_dir=proj)
-    store.write_checkpoint(
-        "S-new", _recall_checkpoint("S-new", "meerkat plan v2", "2025-01-01T00:00:00Z"),
-        project_dir=proj)
+    newer = _recall_checkpoint(
+        "S-new", "abandoned meerkat burrow mapping plan colony too unstable",
+        "2025-01-01T00:00:00Z")
+    newer["working_context"]["recent_decisions"][0]["links"] = [
+        {"type": "supersedes", "target": "meerkat burrow mapping plan colony"}]
+    store.write_checkpoint("S-new", newer, project_dir=proj)
     rc = cli.main(["recall", "meerkat", "--project", proj])
     assert rc == 0
     lines = [ln for ln in capsys.readouterr().out.splitlines() if "meerkat" in ln]
     assert len(lines) == 2
-    assert "superseded" not in lines[0]  # live item first
-    assert "superseded by S-new" in lines[1]
+    assert "superseded" not in lines[0]  # live item first, no recency flag
+    assert "superseded by S-new" in lines[1]  # link evidence renders
 
 
 def test_cli_recall_json(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):

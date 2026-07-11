@@ -17,10 +17,13 @@ project_slug/session_id/created), plus two Graphiti-inspired interval slots:
 no logic yet; future contradiction intervals). A contentless FTS5 table indexes
 text + quote for MATCH; rows join back to `items` by rowid.
 
-Supersession v1 is whole-checkpoint recency per (author, project): items from
-any checkpoint that is not its author's newest for that project get
-`superseded_by = <newest session_id>`. Ranked down in results and flagged —
-never hidden (an old decision is still evidence).
+Supersession v3 (#234) is ITEM-LEVEL evidence only: `superseded_by` is set by
+typed `supersedes` links (#14) — id-bound directly, free-text via never-guess
+unique salient-term resolution — and by events.jsonl resolutions. Whole-
+checkpoint recency (the v1 flag, measured at coin-flip precision) now only
+populates `frontier`, a silent rank input: newest-checkpoint items tiebreak
+above older ones, no label. Flagged items rank down but are never hidden
+(an old decision is still evidence).
 
 Project attribution: team copies carry a stamped `project_slug` (#111), and
 write_checkpoint stamps local flat files the same way — pointer rotation
@@ -63,9 +66,12 @@ def _note_error(where: str, exc: BaseException) -> None:
     except OSError:
         pass
 
-# v2 (#125): items grew importance + first_seen for suggest()'s ranking; the
-# version bump makes _ensure_fresh discard any v1 db and rebuild.
-_SCHEMA_VERSION = "2"
+# v2 (#125): items grew importance + first_seen for suggest()'s ranking.
+# v3 (#234): items grew item_id + frontier, and superseded_by changed MEANING —
+# it now carries only item-level evidence (typed supersedes links, events.jsonl
+# resolutions), never whole-checkpoint recency; recency lives in `frontier` as
+# a silent rank input. The version bump makes _ensure_fresh discard old dbs.
+_SCHEMA_VERSION = "3"
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -92,10 +98,12 @@ def _load(path: Path) -> dict | None:
 
 
 def _items(cp: dict):
-    """Yield (kind, text, trust, quote, importance, first_seen) for every
-    cognitive item in a checkpoint. Tolerant of shape drift: bare strings become
-    text-only items; anything without usable text is skipped (an index row with
-    no text matches nothing). importance/first_seen are None on pre-D-011 items."""
+    """Yield (kind, text, trust, quote, importance, first_seen, item_id,
+    supersede_targets) for every cognitive item in a checkpoint. Tolerant of
+    shape drift: bare strings become text-only items; anything without usable
+    text is skipped (an index row with no text matches nothing). importance/
+    first_seen/item_id are None on pre-D-011 items. supersede_targets is the
+    item's `supersedes` link target strings (#234) — usually empty."""
     for section, key, kind in _KIND_SOURCES:
         block = cp.get(section)
         if not isinstance(block, dict):
@@ -119,8 +127,20 @@ def _items(cp: dict):
             fs = item.get("first_seen")
             if not isinstance(fs, str):
                 fs = None
+            item_id = item.get("id")
+            if not isinstance(item_id, str) or not item_id.strip():
+                item_id = None
+            targets = []
+            links = item.get("links")
+            if isinstance(links, list):
+                for link in links:
+                    if (isinstance(link, dict)
+                            and link.get("type") == "supersedes"
+                            and isinstance(link.get("target"), str)
+                            and link["target"].strip()):
+                        targets.append(link["target"].strip())
             yield (kind, text, str(item.get("trust") or ""),
-                   str(item.get("quote") or ""), imp, fs)
+                   str(item.get("quote") or ""), imp, fs, item_id, targets)
 
 
 def _bucket_slugs(d: Path) -> dict[str, str]:
@@ -277,7 +297,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 superseded_by TEXT,
                 invalidated_by TEXT,
                 importance INTEGER,
-                first_seen TEXT
+                first_seen TEXT,
+                item_id TEXT,
+                frontier INTEGER NOT NULL DEFAULT 0
             );
             CREATE VIRTUAL TABLE items_fts USING fts5(text, quote, content='');
             """
@@ -286,6 +308,113 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         if "fts5" in str(exc).lower():
             raise RecallError(_FTS5_MISSING_MSG) from exc
         raise
+
+
+# Same floor as carry._MIN_SHARED (kept in sync by test): a text link target
+# must share >= this many salient terms with exactly ONE distinct prior text.
+_MIN_LINK_SHARED = 3
+
+# The #14 item-id shape — twin of carry._ID_SHAPE (import would be circular:
+# carry imports recall).
+_ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,}(-\d+)?")
+
+
+def _apply_typed_supersession(conn: sqlite3.Connection, links: list) -> None:
+    """Mark link targets superseded (#234). Two target shapes:
+
+    id-shape — direct item_id match (bind_links already resolved it).
+    free text — field reality: carry-time binding rarely lands, so the
+      rebuild resolves text targets itself with bind_links' never-guess
+      semantics: same (author, project, kind), strictly older sessions,
+      >= _MIN_LINK_SHARED shared salient terms, and exactly ONE distinct
+      matching text — an item carried across N checkpoints is N rows of one
+      logical item, so uniqueness is by text, and every row of the matched
+      text is marked. Zero or several distinct matches -> leave unmarked
+      (a wrong supersession fabricates staleness; a missed one just stays
+      quiet, same bias as carry.bind_links)."""
+    for (author, slug, kind, owner_sid, owner_recency,
+         owner_item_id, owner_text, target) in links:
+        if _ID_SHAPE.fullmatch(target):
+            conn.execute(
+                "UPDATE items SET superseded_by = ?"
+                " WHERE item_id = ? AND author = ? AND project_slug IS ?"
+                " AND session_id != ?",
+                (owner_sid, target, author, slug, owner_sid),
+            )
+            continue
+        want = set(salient_terms(target))
+        if not want:
+            continue
+        rows = conn.execute(
+            "SELECT id, text, item_id FROM items"
+            " WHERE author = ? AND project_slug IS ? AND kind = ?"
+            " AND session_id != ? AND created < ?",
+            (author, slug, kind, owner_sid, owner_recency),
+        ).fetchall()
+        by_text: dict[str, list] = {}
+        for rowid, text, item_id in rows:
+            # Self/twin guard (mirrors bind_links): carried copies of the
+            # superseding item itself must never match its own target.
+            if (owner_item_id and item_id == owner_item_id) \
+                    or text == owner_text:
+                continue
+            if len(want & set(salient_terms(text))) >= _MIN_LINK_SHARED:
+                by_text.setdefault(text, []).append(rowid)
+        if len(by_text) != 1:
+            continue  # unbound or ambiguous — never guess
+        (rowids,) = by_text.values()
+        conn.executemany(
+            "UPDATE items SET superseded_by = ? WHERE id = ?",
+            [(owner_sid, rid) for rid in rowids],
+        )
+
+
+def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
+    """Fold each project bucket's events.jsonl into superseded_by (#234).
+    Conservative: an item_ref is marked only when its newest resolving event
+    ("resolved" or "superseded-by:<id>") is STRICTLY newer than any reopen —
+    ties stay unmarked (never-guess). "supersede-candidate:*" never marks:
+    candidates are the unconfirmed tier by design (#111). The stored value is
+    the superseding item id when the status names one, else "resolved"."""
+    try:
+        buckets = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
+    except OSError:
+        return
+    for bucket in buckets:
+        path = bucket / "events.jsonl"
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        marks: dict[str, tuple[str, str]] = {}  # ref -> (resolve_ts, value)
+        reopens: dict[str, str] = {}            # ref -> newest reopen ts
+        for line in lines:
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(e, dict) or e.get("kind") != "resolution":
+                continue
+            ref = str(e.get("item_ref") or "")
+            ts = str(e.get("ts") or "")
+            status = str(e.get("status") or "")
+            if not ref or not ts:
+                continue
+            if status == "reopened":
+                if ts > reopens.get(ref, ""):
+                    reopens[ref] = ts
+            elif status == "resolved" or status.startswith("superseded-by:"):
+                value = status.split(":", 1)[1] if ":" in status else "resolved"
+                if ts > marks.get(ref, ("", ""))[0]:
+                    marks[ref] = (ts, value)
+        for ref, (ts, value) in marks.items():
+            if ts <= reopens.get(ref, ""):
+                continue  # reopened at/after the resolve — stays live
+            conn.execute(
+                "UPDATE items SET superseded_by = ?"
+                " WHERE item_id = ? AND project_slug IS ?",
+                (value, ref, bucket.name),
+            )
 
 
 def rebuild() -> int:
@@ -312,6 +441,9 @@ def rebuild() -> int:
         # scan order is readdir order, which is unspecified — without a stable
         # secondary key the superseded flags flip across rebuilds.
         newest: dict[tuple, tuple[int, float, str]] = {}
+        # (author, slug, kind, owner_sid, owner_recency, owner_item_id,
+        #  owner_text, target) per supersedes link (#234).
+        links: list[tuple] = []
         for sid, author, slug, recency, cp in _scan_sources():
             # Unattributed sessions never supersede each other (#31 item 6):
             # NULL slugs are UNRELATED projects sharing a non-identity, not
@@ -321,27 +453,38 @@ def rebuild() -> int:
                 stamped = int(store._created_epoch(cp.get("created")) is not None)
                 if key not in newest or (stamped, recency, sid) > newest[key]:
                     newest[key] = (stamped, recency, sid)
-            for kind, text, trust, quote, importance, first_seen in _items(cp):
+            for (kind, text, trust, quote, importance, first_seen,
+                 item_id, targets) in _items(cp):
                 cur = conn.execute(
                     "INSERT INTO items"
                     " (text, quote, trust, kind, author, project_slug,"
-                    "  session_id, created, importance, first_seen)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  session_id, created, importance, first_seen, item_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (text, quote, trust, kind, author, slug, sid, recency,
-                     importance, first_seen),
+                     importance, first_seen, item_id),
                 )
                 conn.execute(
                     "INSERT INTO items_fts(rowid, text, quote) VALUES (?, ?, ?)",
                     (cur.lastrowid, text, quote),
                 )
                 count += 1
-        # Supersession v1: whole-checkpoint recency per (author, project).
+                if slug is not None:
+                    for target in targets:
+                        links.append((author, slug, kind, sid, recency,
+                                      item_id, text, target))
+        # Whole-checkpoint recency (#234 v3): a silent rank input, NEVER a
+        # label. Measured precision of the old recency-derived flag was
+        # indistinguishable from a coin flip; only item-level evidence below
+        # may set superseded_by. #240's stamped-over-stampless ordering is
+        # preserved in the newest map above.
         for (author, slug), (_stamped, _recency, sid) in newest.items():
             conn.execute(
-                "UPDATE items SET superseded_by = ?"
-                " WHERE author = ? AND project_slug IS ? AND session_id != ?",
-                (sid, author, slug, sid),
+                "UPDATE items SET frontier = 1"
+                " WHERE author = ? AND project_slug IS ? AND session_id = ?",
+                (author, slug, sid),
             )
+        _apply_typed_supersession(conn, links)
+        _apply_event_resolutions(conn)
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
                      (_SCHEMA_VERSION,))
         conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
@@ -432,15 +575,17 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
         " i.session_id, i.created, i.superseded_by, i.invalidated_by,"
-        " i.importance, i.first_seen,"
+        " i.importance, i.first_seen, i.frontier,"
         " bm25(items_fts) AS rank"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"
     )
     if want is not None:
         sql += " AND i.project_slug = ?"
+    # frontier is a TIEBREAK after relevance (#234): equally-relevant rows
+    # from the newest checkpoint edge out older ones — silently, no label.
     sql += (" ORDER BY (i.superseded_by IS NOT NULL) ASC, rank ASC,"
-            " i.created DESC LIMIT ?")
+            " i.frontier DESC, i.created DESC LIMIT ?")
 
     def _run(match_expr: str) -> list[dict]:
         params: list = [match_expr]
@@ -574,10 +719,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
       - at most `limit` results, one per session, ranked by
         FTS5 relevance x #78 effective_weight
 
-    Superseded items are INCLUDED, ranked down and flagged — supersession v1
-    is whole-checkpoint per (author, project), so "prior work" is superseded
-    almost by definition; excluding it would leave nothing but the latest
-    checkpoint, which the briefing already covered. Flag, never hide (#112).
+    Superseded items are INCLUDED, ranked down and flagged — since v3 the
+    flag means item-level evidence (a typed supersedes link or a logged
+    resolution, #234), so it is rare and load-bearing; it still never hides
+    a result (an overturned decision is still evidence, #112).
     """
     slug = store.project_slug(project_dir)
     if slug is None:

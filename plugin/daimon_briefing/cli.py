@@ -604,7 +604,10 @@ def _cmd_recall(args) -> int:
     lines = []
     for r in results:
         age = _format_age(now - r["created"]) if r.get("created") else "?"
-        superseded = f" [superseded by {r['superseded_by']}]" if r.get("superseded_by") else ""
+        sup = r.get("superseded_by")
+        superseded = ("" if not sup
+                      else " [resolved]" if sup == "resolved"
+                      else f" [superseded by {sup}]")
         trust = r.get("trust") or "untagged"
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}] {r['text']} "
                      f"({r['session_id']}, {age} ago){superseded}")
@@ -787,7 +790,12 @@ def _suggest_line(r: dict, terms, now: float) -> str:
     age = _format_age(now - r["created"]) if r.get("created") else "?"
     trust = r.get("trust") or "untagged"
     text = r["text"] if len(r["text"]) <= 160 else r["text"][:157] + "..."
-    superseded = " (superseded — newer checkpoint exists)" if r.get("superseded_by") else ""
+    # v3 (#234): the flag is item-level evidence — a typed supersedes link
+    # or a logged resolution — not the old whole-checkpoint recency.
+    sup = r.get("superseded_by")
+    superseded = ("" if not sup
+                  else " (resolved)" if sup == "resolved"
+                  else " (superseded by later work)")
     more = " ".join(terms[:3])
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "
             f"({age} ago): \"{text}\" [{trust}]{superseded}. "
