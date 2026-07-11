@@ -366,6 +366,30 @@ def _ensure_fresh() -> None:
         rebuild()
 
 
+def index_attribution() -> dict | None:
+    """Attribution counts from the EXISTING index, read-only (#233): never
+    rebuilds — status must not pay the rebuild cost, and a missing index is
+    not an error. Returns {"items": N, "unattributed": M} (M = project_slug
+    NULL rows: legacy stampless sessions, reachable only under
+    --all-projects), or None when the db is absent/corrupt/foreign."""
+    path = config.recall_db()
+    if not path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            row = conn.execute(
+                "SELECT count(*), count(*) - count(project_slug) FROM items"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    return {"items": int(row[0]), "unattributed": int(row[1])}
+
+
 def _match_expr(query: str, join: str = " ") -> str | None:
     """User text -> a safe FTS5 MATCH expression: every whitespace token becomes
     a quoted phrase (internal quotes doubled), joined by implicit AND (or the

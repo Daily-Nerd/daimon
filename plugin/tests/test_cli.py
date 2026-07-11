@@ -673,7 +673,8 @@ def test_cli_status_json_shape(
     data = json.loads(capsys.readouterr().out)
     assert set(data) == {"project", "global", "last_serialize", "outstanding",
                          "siblings", "health", "team", "crash", "disabled",
-                         "skipped_recent", "recall_error", "receipts"}
+                         "skipped_recent", "recall_error", "recall_index",
+                         "receipts"}
     assert data["team"] is None  # no team remote configured -> explicit null (#113)
     assert data["receipts"] is None  # #204 feature off -> explicit null
     assert data["project"]["exists"] is True
@@ -3528,6 +3529,41 @@ def test_status_plain_shows_crash_line(tmp_checkpoint_dir, sample_checkpoint, ca
     out = capsys.readouterr().out
     assert "last serialize crash" in out.lower()
     assert "RuntimeError: child exploded" in out
+
+
+def test_status_plain_shows_recall_index_attribution(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #233: dark matter must be visible — a stampless legacy flat file indexes
+    # with project_slug NULL and only status can tell the user it exists.
+    from daimon_briefing import config, recall, store
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    (config.checkpoint_dir() / "S9.json").write_text(json.dumps({
+        "session_id": "S9",
+        "working_context": {
+            "active_topic": {"text": "orphaned prior work", "trust": "inferred"},
+            "open_questions": [], "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }), encoding="utf-8")
+    recall.rebuild()
+    capsys.readouterr()
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "recall index:" in out
+    assert "unattributed — reachable only via recall --all-projects" in out
+
+
+def test_status_plain_no_recall_index_line_without_db(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # No index on disk -> no line, and status must NOT build one as a side
+    # effect (the helper is read-only by contract).
+    from daimon_briefing import config, store
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "recall index:" not in out
+    assert not config.recall_db().exists()
 
 
 def test_status_plain_no_crash_line_for_warnings_only_log(
