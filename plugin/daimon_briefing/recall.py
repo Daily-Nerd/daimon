@@ -254,8 +254,13 @@ def _fingerprint() -> str:
             if e.is_file() and e.suffix == ".json":
                 paths.append(e)  # pointers included: rotation moves attribution
             elif e.is_dir():
+                # events.jsonl is index CONTENT (_apply_event_resolutions folds
+                # it into superseded_by), so it must be fingerprint INPUT too —
+                # else a resolve/reopen serves stale rows until an unrelated
+                # checkpoint write happens to invalidate the db (#245).
                 paths.extend(p for p in e.iterdir()
-                             if p.is_file() and p.suffix == ".json")
+                             if p.is_file() and (p.suffix == ".json"
+                                                 or p.name == "events.jsonl"))
     except OSError:
         pass
     try:
