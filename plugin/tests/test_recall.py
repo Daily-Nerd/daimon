@@ -1277,3 +1277,43 @@ def test_reopen_event_revives_item_without_manual_rebuild(tmp_checkpoint_dir, mo
     store.append_event(iid, "reopened", project_dir="/repo/x")
     hits = recall.search("narwhal", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
+
+
+# ---- warm(): eager freshness at write time (#246) ----
+
+
+def test_warm_rebuilds_stale_index_so_search_pays_nothing(tmp_checkpoint_dir, monkeypatch):
+    store.write_checkpoint("S-warm", _cp("S-warm", decisions=[
+        {"text": "quokka decision", "trust": "inferred"}]), project_dir="/repo/x")
+    calls = []
+    real = recall.rebuild
+    monkeypatch.setattr(recall, "rebuild", lambda: (calls.append(1), real())[1])
+    recall.warm()
+    assert calls == [1]  # stale after the write -> warm rebuilt
+    hits = recall.search("quokka", project_dir="/repo/x")
+    assert [h["text"] for h in hits] == ["quokka decision"]
+    assert calls == [1]  # read side found it fresh: no second rebuild
+
+
+def test_warm_is_noop_when_already_fresh(tmp_checkpoint_dir, monkeypatch):
+    store.write_checkpoint("S-warm2", _cp("S-warm2", decisions=[
+        {"text": "axolotl decision", "trust": "inferred"}]), project_dir="/repo/x")
+    recall.warm()
+    calls = []
+    monkeypatch.setattr(recall, "rebuild", lambda: calls.append(1))
+    recall.warm()
+    assert calls == []
+
+
+def test_warm_never_raises(tmp_checkpoint_dir, monkeypatch):
+    def boom():
+        raise RuntimeError("index exploded")
+    monkeypatch.setattr(recall, "_ensure_fresh", boom)
+    recall.warm()  # must swallow — a write must never fail over its index
+
+
+def test_warm_swallows_fts5_missing(tmp_checkpoint_dir, monkeypatch):
+    def no_fts5():
+        raise recall.RecallError("no FTS5")
+    monkeypatch.setattr(recall, "_ensure_fresh", no_fts5)
+    recall.warm()

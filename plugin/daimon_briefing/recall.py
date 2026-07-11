@@ -521,6 +521,25 @@ def _ensure_fresh() -> None:
         rebuild()
 
 
+def warm() -> None:
+    """Eagerly freshen the index at write time (#246). Staleness is CREATED
+    where files change (serialize, team sync, checkpoint re-writes) but the
+    lazy _ensure_fresh pays for it on the READ side — and the first reader
+    after a serialize is recall-inject on the user's next prompt, putting a
+    full rebuild (~800ms on a real corpus) on the per-prompt critical path.
+    Call sites are all off that path, so the rebuild happens where nobody is
+    waiting; the read side then finds a matching fingerprint and no-ops.
+
+    Idempotent (~ms when already fresh) and fail-open: a broken or FTS5-less
+    rebuild must never fail the write that triggered it — swallowed with the
+    standard breadcrumb, and the lazy read-side path stays as the safety
+    net."""
+    try:
+        _ensure_fresh()
+    except Exception as exc:  # noqa: BLE001 — see docstring: never fail a write
+        _note_error("warm", exc)
+
+
 def index_attribution() -> dict | None:
     """Attribution counts from the EXISTING index, read-only (#233): never
     rebuilds — status must not pay the rebuild cost, and a missing index is
