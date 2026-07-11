@@ -1095,3 +1095,22 @@ def test_serialize_completes_when_backend_resolver_raises(fake_chat_factory, mon
     assert ckpt is not None
     assert "llm_backend" not in ckpt
     assert "llm_model" not in ckpt
+
+
+def test_serialize_stamps_backend_when_model_lookup_raises(
+        fake_chat_factory, monkeypatch):
+    # Fail-open, per-field: config.llm_model() blowing up costs only the
+    # model stamp — the resolved backend (already in hand) still lands.
+    from daimon_briefing import config, configure
+
+    monkeypatch.setattr(configure, "resolved_backend", lambda: "litellm")
+
+    def _boom():
+        raise RuntimeError("model lookup exploded")
+
+    monkeypatch.setattr(config, "llm_model", _boom)
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_backend"] == "litellm"
+    assert "llm_model" not in ckpt
