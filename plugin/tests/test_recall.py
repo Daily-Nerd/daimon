@@ -1243,3 +1243,37 @@ def test_search_slug_wins_over_project_dir(tmp_checkpoint_dir, monkeypatch):
     hits = recall.search("ibis", project_dir="/repo/y",
                          slug=store.project_slug("/repo/x"))
     assert [h["text"] for h in hits] == ["ibis decision in x"]
+
+
+# ---- #245: events.jsonl is index content, so it must be fingerprint input ----
+
+
+def test_resolve_event_invalidates_index_without_manual_rebuild(tmp_checkpoint_dir, monkeypatch):
+    cp = {"working_context": {"open_questions": [
+        {"text": "walrus question pending", "trust": "inferred"}]}}
+    store.write_checkpoint("S-fp", cp, project_dir="/repo/x")
+    hits = recall.search("walrus", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] is None  # indexed live
+
+    iid = store.read_latest(project_dir="/repo/x", fallback=False)[
+        "working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/repo/x")
+
+    # NO manual rebuild: the event append alone must stale the fingerprint
+    hits = recall.search("walrus", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] == "resolved"
+
+
+def test_reopen_event_revives_item_without_manual_rebuild(tmp_checkpoint_dir, monkeypatch):
+    cp = {"working_context": {"open_questions": [
+        {"text": "narwhal question pending", "trust": "inferred"}]}}
+    store.write_checkpoint("S-fp2", cp, project_dir="/repo/x")
+    iid = store.read_latest(project_dir="/repo/x", fallback=False)[
+        "working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/repo/x")
+    hits = recall.search("narwhal", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] == "resolved"
+
+    store.append_event(iid, "reopened", project_dir="/repo/x")
+    hits = recall.search("narwhal", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] is None
