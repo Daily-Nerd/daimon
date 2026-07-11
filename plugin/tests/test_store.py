@@ -1570,3 +1570,13 @@ def test_project_slug_is_idempotent_on_slugs():
     for raw in ("/Users/me/proj.x", "/a/b c/d", "C:\\work\\repo"):
         slug = store.project_slug(raw)
         assert store.project_slug(slug) == slug
+
+
+def test_list_buckets_non_dict_pointer_yields_none_checkpoint(tmp_checkpoint_dir):
+    # valid JSON that is not an object is as unusable as torn bytes
+    d = tmp_checkpoint_dir / "-Users-me-array"
+    d.mkdir(parents=True)
+    (d / "latest.json").write_text("[1, 2]")
+    buckets = store.list_buckets()
+    assert len(buckets) == 1
+    assert buckets[0]["checkpoint"] is None

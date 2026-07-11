@@ -4751,3 +4751,22 @@ def test_cli_brief_slug_withholds_resolved_items(tmp_checkpoint_dir, sample_chec
     out = capsys.readouterr().out
     assert q_text not in out
     assert "withheld" in out
+
+
+def test_projects_truncates_long_topic(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    long_topic = "x" * 200
+    _write_bucket(tmp_checkpoint_dir, "-p-long", "S-1", "2026-07-11T00:00:00Z",
+                  topic=long_topic)
+    assert cli.main(["projects"]) == 0
+    out = capsys.readouterr().out
+    assert "…" in out
+    assert long_topic not in out
+
+
+def test_main_defaults_to_sys_argv(tmp_checkpoint_dir, capsys, monkeypatch):
+    # the --slug pre-parse fuse reads sys.argv when main() gets no argv —
+    # the installed console_script path
+    monkeypatch.setattr(sys, "argv", ["daimon", "projects"])
+    assert cli.main() == 0
+    assert "no project" in capsys.readouterr().out.lower()
