@@ -1531,16 +1531,21 @@ _RETENTION_WINDOW_DAYS = 14
 
 def _stats_retention(now=None) -> dict:
     """usage.log -> hook-driven briefings (`brief:auto`) vs deliberate
-    re-reads, over the last _RETENTION_WINDOW_DAYS. Plain `brief` lines
-    stamped before the first `brief:auto` ever logged predate the flag and
-    are reported as untagged — ambiguous, never guessed (#54 honesty rule).
+    re-reads, over the last _RETENTION_WINDOW_DAYS. Re-reads are memory
+    reads only (`brief`, `recall`); `status` is ops polling and counts
+    apart, outside the total and the ratio (#232 — a debugging session
+    must not read as retention). Plain `brief` lines stamped before the
+    first `brief:auto` ever logged predate the flag and are reported as
+    untagged — ambiguous, never guessed (#54 honesty rule).
     stale_hook_warning: sessions were captured in the window but zero
     auto-briefings were logged — the SessionStart hook likely predates
     --auto."""
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=_RETENTION_WINDOW_DAYS)
     out = {"window_days": _RETENTION_WINDOW_DAYS, "hook_briefs": 0,
-           "rereads": {"brief": 0, "status": 0, "recall": 0},
+           # status is ops polling (serializer health, pending counts), not a
+           # memory read (#232): counted apart, never in the total or ratio.
+           "rereads": {"brief": 0, "recall": 0}, "status_checks": 0,
            "rereads_total": 0, "rereads_per_hook_brief": None,
            "untagged_briefs": 0, "stale_hook_warning": False}
     try:
@@ -1564,6 +1569,8 @@ def _stats_retention(now=None) -> dict:
             continue
         if cmd == "brief:auto":
             out["hook_briefs"] += 1
+        elif cmd == "status":
+            out["status_checks"] += 1
         elif cmd in out["rereads"]:
             out["rereads"][cmd] += 1
     out["rereads_total"] = sum(out["rereads"].values())
