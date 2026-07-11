@@ -1153,3 +1153,68 @@ def test_link_shared_floor_stays_in_sync_with_carry():
     # stricter than carry-time binding.
     from daimon_briefing import carry
     assert recall._MIN_LINK_SHARED == carry._MIN_SHARED
+
+
+def test_typed_link_stopword_target_never_matches(tmp_checkpoint_dir, monkeypatch):
+    # A target with no salient terms can identify nothing — skipped outright.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old", decisions=[{"text": "keep the flamingo exporter synchronous",
+                             "trust": "inferred"}],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-new", _cp(
+        "S-new", decisions=[{
+            "text": "made the flamingo exporter async after all",
+            "trust": "inferred",
+            "links": [{"type": "supersedes", "target": "the one about it"}],
+        }],
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+    hits = recall.search("flamingo", all_projects=True, limit=10)
+    assert all(h["superseded_by"] is None for h in hits)
+
+
+def test_typed_link_never_matches_own_carried_copy(tmp_checkpoint_dir, monkeypatch):
+    # Self/twin guard: the superseding item's own carried copy in an older
+    # checkpoint shares the target's vocabulary by construction — it must
+    # never be treated as the thing being superseded.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    reversal = {
+        "text": "dropped condor batching for the exporter queue",
+        "trust": "inferred", "id": "r-fff999",
+        "links": [{"type": "supersedes",
+                   "target": "condor batching exporter queue"}],
+    }
+    # Older checkpoint holds the carried copy of the reversal itself — and
+    # nothing else matching — so a match here could only be the self-twin.
+    store.write_checkpoint("S-old", _cp(
+        "S-old", decisions=[dict(reversal)],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-new", _cp(
+        "S-new", decisions=[dict(reversal)],
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+    hits = recall.search("condor", all_projects=True, limit=10)
+    assert all(h["superseded_by"] is None for h in hits)
+
+
+def test_event_fold_tolerates_hostile_lines(tmp_checkpoint_dir, monkeypatch):
+    # The events fold must skip torn JSON, note-kind lines, and ref-less
+    # resolutions without dropping the valid mark that follows them.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old", questions=[{"text": "does the skua poller need jitter",
+                             "trust": "inferred", "id": "o-444ddd"}],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+    slug = store.project_slug("/repo/x")
+    ev = config.checkpoint_dir() / slug / "events.jsonl"
+    ev.parent.mkdir(parents=True, exist_ok=True)
+    ev.write_text(
+        'not json at all{{{\n'
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "note", "note": "hi"}\n'
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "", "status": "resolved"}\n'
+        '{"kind": "resolution", "item_ref": "o-444ddd", "status": "resolved"}\n'
+        '{"ts": "2026-01-02T00:00:00Z", "kind": "resolution",'
+        ' "item_ref": "o-444ddd", "status": "superseded-by:r-abc123"}\n',
+        encoding="utf-8")
+    hits = recall.search("skua", all_projects=True, limit=10)
+    assert hits and hits[0]["superseded_by"] == "r-abc123"
