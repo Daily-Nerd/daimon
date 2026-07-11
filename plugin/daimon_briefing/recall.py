@@ -301,19 +301,26 @@ def rebuild() -> int:
     try:
         _init_schema(conn)
         count = 0
-        # (author, project_slug) -> (recency, session_id) of the newest checkpoint.
-        # session_id is the same-second tie-break (#31 item 7): scan order is
-        # readdir order, which is unspecified — without a stable secondary key
-        # the superseded flags flip across rebuilds. Tuple compare gives it.
-        newest: dict[tuple, tuple[float, str]] = {}
+        # (author, project_slug) -> (stamped, recency, session_id) of the newest
+        # checkpoint. `stamped` leads the tuple (#240): a stampless legacy file's
+        # recency is its mtime — when the file was last TOUCHED (migration,
+        # copy, GC), not when the session happened — so letting it compete with
+        # real `created` stamps inverts the frontier and flags the true latest
+        # as superseded by an older session. A stamped checkpoint always
+        # outranks a stampless one; mtime ordering applies among stampless
+        # peers only. session_id is the same-second tie-break (#31 item 7):
+        # scan order is readdir order, which is unspecified — without a stable
+        # secondary key the superseded flags flip across rebuilds.
+        newest: dict[tuple, tuple[int, float, str]] = {}
         for sid, author, slug, recency, cp in _scan_sources():
             # Unattributed sessions never supersede each other (#31 item 6):
             # NULL slugs are UNRELATED projects sharing a non-identity, not
             # one project's history — they stay out of the newest map entirely.
             if slug is not None:
                 key = (author, slug)
-                if key not in newest or (recency, sid) > newest[key]:
-                    newest[key] = (recency, sid)
+                stamped = int(store._created_epoch(cp.get("created")) is not None)
+                if key not in newest or (stamped, recency, sid) > newest[key]:
+                    newest[key] = (stamped, recency, sid)
             for kind, text, trust, quote, importance, first_seen in _items(cp):
                 cur = conn.execute(
                     "INSERT INTO items"
@@ -329,7 +336,7 @@ def rebuild() -> int:
                 )
                 count += 1
         # Supersession v1: whole-checkpoint recency per (author, project).
-        for (author, slug), (_recency, sid) in newest.items():
+        for (author, slug), (_stamped, _recency, sid) in newest.items():
             conn.execute(
                 "UPDATE items SET superseded_by = ?"
                 " WHERE author = ? AND project_slug IS ? AND session_id != ?",
