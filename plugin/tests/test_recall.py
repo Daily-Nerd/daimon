@@ -1317,3 +1317,57 @@ def test_warm_swallows_fts5_missing(tmp_checkpoint_dir, monkeypatch):
         raise recall.RecallError("no FTS5")
     monkeypatch.setattr(recall, "_ensure_fresh", no_fts5)
     recall.warm()
+
+
+# ---- #255: ONE liveness rule — the index fold reuses store.is_resolved ----
+
+
+def _one_question_bucket(text, sid, project="/repo/x"):
+    cp = {"working_context": {"open_questions": [
+        {"text": text, "trust": "inferred"}]}}
+    store.write_checkpoint(sid, cp, project_dir=project)
+    return store.read_latest(project_dir=project, fallback=False)[
+        "working_context"]["open_questions"][0]["id"]
+
+
+def test_free_form_resolving_status_marks_resolved(tmp_checkpoint_dir):
+    # store.is_resolved: unknown statuses resolve ("the writer bothered to
+    # record a lifecycle fact") — the --status help's own example must not
+    # diverge between brief and recall
+    iid = _one_question_bucket("wombat question pending", "S-lv1")
+    store.append_event(iid, "shipped in 0.9", project_dir="/repo/x")
+    hits = recall.search("wombat", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] == "resolved"
+
+
+def test_reopen_prefix_status_revives(tmp_checkpoint_dir):
+    # help text: "a status starting with 'reopen' revives the item"
+    iid = _one_question_bucket("gecko question pending", "S-lv2")
+    store.append_event(iid, "resolved", project_dir="/repo/x")
+    store.append_event(iid, "reopen-was-wrong", project_dir="/repo/x")
+    hits = recall.search("gecko", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] is None
+
+
+def test_reopen_status_is_case_insensitive(tmp_checkpoint_dir):
+    iid = _one_question_bucket("heron question pending", "S-lv3")
+    store.append_event(iid, "resolved", project_dir="/repo/x")
+    store.append_event(iid, "Reopened", project_dir="/repo/x")
+    hits = recall.search("heron", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] is None
+
+
+def test_superseded_by_status_still_carries_target_id(tmp_checkpoint_dir):
+    iid = _one_question_bucket("osprey question pending", "S-lv4")
+    store.append_event(iid, "superseded-by:o-9f3a2b", project_dir="/repo/x")
+    hits = recall.search("osprey", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] == "o-9f3a2b"
+
+
+def test_supersede_candidate_never_marks(tmp_checkpoint_dir):
+    # unconfirmed tier by design — a machine guess must never suppress
+    iid = _one_question_bucket("bittern question pending", "S-lv5")
+    store.append_event(iid, "supersede-candidate:o-9f3a2b",
+                       source="serializer", project_dir="/repo/x")
+    hits = recall.search("bittern", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] is None

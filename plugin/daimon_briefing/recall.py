@@ -376,45 +376,31 @@ def _apply_typed_supersession(conn: sqlite3.Connection, links: list) -> None:
 
 def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
     """Fold each project bucket's events.jsonl into superseded_by (#234).
-    Conservative: an item_ref is marked only when its newest resolving event
-    ("resolved" or "superseded-by:<id>") is STRICTLY newer than any reopen —
-    ties stay unmarked (never-guess). "supersede-candidate:*" never marks:
-    candidates are the unconfirmed tier by design (#111). The stored value is
-    the superseding item id when the status names one, else "resolved"."""
+
+    The liveness rule is store.is_resolved over the store.resolutions fold —
+    the SAME rule and fold brief/withhold/carry use, not a re-implementation
+    (#255: the hand-rolled exact-match copy here silently disagreed with the
+    briefing on every free-form status and on reopen-prefix revivals). That
+    inherits the whole contract: free-form statuses resolve, reopen* revives
+    (case-insensitive), supersede-candidate:* never marks (a machine guess
+    must never suppress, #111), and same-second ties break on content (#143;
+    reopen wins a tie → unmarked, never-guess). The stored value is the
+    superseding item id when the status names one, else "resolved"."""
     try:
         buckets = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
     except OSError:
         return
     for bucket in buckets:
-        path = bucket / "events.jsonl"
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            continue
-        marks: dict[str, tuple[str, str]] = {}  # ref -> (resolve_ts, value)
-        reopens: dict[str, str] = {}            # ref -> newest reopen ts
-        for line in lines:
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
+        # The bucket dir NAME is the slug, and slug munging is idempotent
+        # (guarded by test_project_slug_is_idempotent_on_slugs), so it routes
+        # store.resolutions exactly like a project dir.
+        for ref, evt in store.resolutions(project_dir=bucket.name).items():
+            if not store.is_resolved(evt):
                 continue
-            if not isinstance(e, dict) or e.get("kind") != "resolution":
-                continue
-            ref = str(e.get("item_ref") or "")
-            ts = str(e.get("ts") or "")
-            status = str(e.get("status") or "")
-            if not ref or not ts:
-                continue
-            if status == "reopened":
-                if ts > reopens.get(ref, ""):
-                    reopens[ref] = ts
-            elif status == "resolved" or status.startswith("superseded-by:"):
-                value = status.split(":", 1)[1] if ":" in status else "resolved"
-                if ts > marks.get(ref, ("", ""))[0]:
-                    marks[ref] = (ts, value)
-        for ref, (ts, value) in marks.items():
-            if ts <= reopens.get(ref, ""):
-                continue  # reopened at/after the resolve — stays live
+            status = str(evt.get("status") or "")
+            value = "resolved"
+            if status.lower().startswith("superseded-by:"):
+                value = status.split(":", 1)[1].strip() or "resolved"
             conn.execute(
                 "UPDATE items SET superseded_by = ?"
                 " WHERE item_id = ? AND project_slug IS ?",
