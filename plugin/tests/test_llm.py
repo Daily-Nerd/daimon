@@ -583,3 +583,45 @@ def test_command_backend_stderr_log_truncates_per_run(monkeypatch, tmp_path):
         llm.chat([{"role": "user", "content": "x"}])
     text = (tmp_path / "logs" / "backend-stderr.log").read_text()
     assert "second" in text and "first" not in text
+
+
+# ---- #225: rc=0 + empty stdout gets the same local diagnostics as a non-zero
+# exit, and is raised as a distinguishable EmptyOutputError so the serializer's
+# parse-retry can treat it like an empty HTTP 200 body ----
+
+
+def test_command_backend_empty_output_writes_stderr_log(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "quiet-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda *a, **k: (0, "   \n", "warming up model..."))
+    with pytest.raises(llm.EmptyOutputError) as exc:
+        llm.chat([{"role": "user", "content": "hola"}])
+    assert "backend-stderr.log" in str(exc.value)
+    assert "suppressed" not in str(exc.value)
+    log = tmp_path / "logs" / "backend-stderr.log"
+    assert "warming up model..." in log.read_text()
+    assert "empty output" in log.read_text()
+
+
+def test_command_backend_empty_output_log_write_fails_open(monkeypatch, tmp_path):
+    # A broken log dir (disk full, permissions, ...) must never mask the real
+    # empty-output failure — fail-open on the logging seam.
+    from pathlib import Path
+
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "quiet-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (0, "", "some stderr"))
+    monkeypatch.setattr(Path, "mkdir",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(llm.EmptyOutputError) as exc:
+        llm.chat([{"role": "user", "content": "hola"}])
+    assert "stderr suppressed" in str(exc.value)
+
+
+def test_empty_output_error_is_a_chat_error():
+    # Callers that catch the broad ChatError (e.g. llm.chat's own fallback
+    # logic) must keep working unmodified.
+    assert issubclass(llm.EmptyOutputError, llm.ChatError)

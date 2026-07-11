@@ -33,6 +33,16 @@ class ChatError(RuntimeError):
     """A chat call failed after retries. Callers catch this to give up gracefully."""
 
 
+class EmptyOutputError(ChatError):
+    """The command backend returned rc=0 with empty (or whitespace-only) stdout.
+
+    A ChatError subclass so existing `except ChatError` callers (llm.chat's
+    litellm->command fallback) are unaffected, but distinguishable so the
+    serializer's parse-retry loop can treat it like an empty HTTP 200 body
+    from a gateway — both are "the backend said nothing", not a transport
+    failure (#225)."""
+
+
 def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """POST /v1/chat/completions. Returns the assistant message content (str).
 
@@ -275,6 +285,27 @@ def _apply_input_spec(argv, prompt_text, input_spec, cwd):
     return argv, prompt_text
 
 
+def _log_backend_stderr(argv0, err, header) -> str:
+    """Write redacted command-backend stderr to backend-stderr.log (truncate-
+    per-run — the log is "the last failure", not an archive, #56) and return a
+    hint embeddable in a ChatError message: the log path on success, "stderr
+    suppressed" on any OSError — logging must never mask the real failure
+    (fail-open on the logging seam, #225)."""
+    hint = "stderr suppressed"
+    try:
+        d = config.log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / "backend-stderr.log"
+        # CLI backends can echo prompt fragments (transcript text) into
+        # stderr — scrub before it persists (#141).
+        err_logged, _ = redact.redact_text(err or "")
+        p.write_text(f"{header}\n{err_logged}\n", encoding="utf-8")
+        hint = f"stderr: {p}"
+    except OSError:
+        pass
+    return hint
+
+
 def _chat_command(messages, deadline):
     """Serialize via a headless LLM CLI. Prompt reaches it per the resolved
     input spec — stdin by default, or arg/file:<flag> for CLIs that don't
@@ -308,27 +339,22 @@ def _chat_command(messages, deadline):
             # locally turned every backend failure into guesswork (#56, exit
             # 101 in the field with zero diagnostics). Truncate-per-run: the
             # log is "the last failure", not an archive.
-            hint = "stderr suppressed"
-            try:
-                d = config.log_dir()
-                d.mkdir(parents=True, exist_ok=True)
-                p = d / "backend-stderr.log"
-                # CLI backends can echo prompt fragments (transcript text)
-                # into stderr — scrub before it persists (#141).
-                err_logged, _ = redact.redact_text(err or "")
-                p.write_text(
-                    f"command backend exit {rc} (argv0: {argv[0]})\n{err_logged}\n",
-                    encoding="utf-8")
-                hint = f"stderr: {p}"
-            except OSError:
-                pass
+            hint = _log_backend_stderr(
+                argv[0], err, f"command backend exit {rc} (argv0: {argv[0]})")
             raise ChatError(f"command backend exited {rc} ({hint})")
         try:
             text = _extract_output(out, output_spec)
         except (json.JSONDecodeError, KeyError, TypeError):
             raise ChatError("command backend output unparseable (body suppressed)")
         if not text or not text.strip():
-            raise ChatError("command backend returned empty output")
+            # rc=0 with nothing to show for it (#225, field incident: 4+ full
+            # serialize runs died on this with zero diagnostics — same
+            # blind spot #56 fixed for non-zero exits). Same local stderr
+            # log, a distinguishable header, and a distinguishable exception
+            # type so the serializer can retry it like an empty HTTP 200 body.
+            hint = _log_backend_stderr(
+                argv[0], err, f"command backend empty output (argv0: {argv[0]})")
+            raise EmptyOutputError(f"command backend returned empty output ({hint})")
         log.info("LLM command backend ok argv0=%s", argv[0])
         return text
     finally:
