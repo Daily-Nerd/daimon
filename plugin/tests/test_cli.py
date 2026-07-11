@@ -3554,6 +3554,44 @@ def test_status_plain_shows_recall_index_attribution(
     assert "unattributed — reachable only via recall --all-projects" in out
 
 
+def test_status_plain_recall_index_clause_drops_when_fully_attributed(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # Silence stays the default: a fully-stamped store shows the count with
+    # no dark-matter clause.
+    from daimon_briefing import recall, store
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    recall.rebuild()
+    capsys.readouterr()
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "recall index:" in out
+    assert "unattributed" not in out
+
+
+def test_status_rich_shows_recall_index_attribution(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #29 mirror rule: the rich path must state the same fact as plain.
+    pytest.importorskip("rich")
+    from daimon_briefing import config, recall, render, store
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    (config.checkpoint_dir() / "S9.json").write_text(json.dumps({
+        "session_id": "S9",
+        "working_context": {
+            "active_topic": {"text": "orphaned prior work", "trust": "inferred"},
+            "open_questions": [], "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }), encoding="utf-8")
+    recall.rebuild()
+    capsys.readouterr()
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "recall index:" in out
+    assert "unattributed" in out
+
+
 def test_status_plain_no_recall_index_line_without_db(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     # No index on disk -> no line, and status must NOT build one as a side

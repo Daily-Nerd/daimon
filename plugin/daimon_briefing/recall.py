@@ -385,8 +385,7 @@ def index_attribution() -> dict | None:
             conn.close()
     except sqlite3.Error:
         return None
-    if row is None:
-        return None
+    # fetchone on an aggregate SELECT always yields exactly one row.
     return {"items": int(row[0]), "unattributed": int(row[1])}
 
 
