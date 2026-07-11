@@ -103,3 +103,34 @@ def test_compact_teaches_context_switching():
     body = skill_content.render_compact()
     assert "daimon projects" in body
     assert "--slug" in body
+
+
+# ---- #257: the skill teaches USING memory, not just reading it ----
+
+
+def test_full_teaches_recall_for_current_project():
+    full = skill_content.render_full()
+    # recall must be taught OUTSIDE the cross-project section: the trigger
+    # description promises search-on-reference, the body must deliver it
+    assert "Searching memory" in full
+    assert "daimon recall <salient terms>" in full
+
+
+def test_full_teaches_closing_loops_with_resolve():
+    full = skill_content.render_full()
+    assert "Closing loops" in full
+    assert "daimon resolve" in full
+    assert "--note" in full
+
+
+def test_compact_teaches_recall_and_resolve():
+    body = skill_content.render_compact()
+    assert "daimon recall" in body
+    assert "daimon resolve" in body
+
+
+def test_compact_must_rule_stays_last():
+    # rules hosts resolve conflicts later-wins — the MUST line must stay the
+    # final line no matter what sections are added above it
+    body = skill_content.render_compact().strip()
+    assert body.splitlines()[-1].startswith("MUST:")
