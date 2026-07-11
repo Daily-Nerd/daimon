@@ -187,6 +187,84 @@ def test_write_does_not_overwrite_existing_project_slug(tmp_checkpoint_dir, samp
     assert blob["project_slug"] == "-original-home"
 
 
+# ---- git_branch: capture-time branch stamp (#222, capture side only) ----
+
+
+def _init_git_repo_with_commit(path, monkeypatch, branch: str = "main") -> None:
+    """A real local repo with one commit on `branch` — mirrors the
+    test_config.py helper (rev-parse --abbrev-ref HEAD needs a born HEAD)."""
+    import os
+    import subprocess
+
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)],
+                   check=True, capture_output=True, timeout=30)
+    (path / "f.txt").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "f.txt"],
+                   check=True, capture_output=True, timeout=30)
+    subprocess.run(
+        ["git", "-C", str(path), "-c", "user.name=Test", "-c", "user.email=test@x",
+         "commit", "-q", "-m", "init"],
+        check=True, capture_output=True, timeout=30,
+    )
+
+
+def test_write_stamps_git_branch_when_project_dir_is_a_repo(
+        tmp_checkpoint_dir, sample_checkpoint, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo_with_commit(repo, monkeypatch, branch="feat/222-git-branch-stamp")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir=str(repo))
+    blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert blob["git_branch"] == "feat/222-git-branch-stamp"
+
+
+def test_write_no_git_branch_stamp_for_non_repo_project_dir(
+        tmp_checkpoint_dir, sample_checkpoint, tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    store.write_checkpoint("S1", sample_checkpoint, project_dir=str(plain))
+    blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert "git_branch" not in blob
+
+
+def test_write_no_git_branch_stamp_when_project_dir_is_none(
+        tmp_checkpoint_dir, sample_checkpoint):
+    store.write_checkpoint("S1", sample_checkpoint)
+    blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert "git_branch" not in blob
+
+
+def test_write_does_not_overwrite_existing_git_branch(
+        tmp_checkpoint_dir, sample_checkpoint, tmp_path, monkeypatch):
+    # setdefault semantics: a heal re-serialize of a session that already
+    # carries a git_branch stamp (e.g. hand-edited, or re-written from a repo
+    # that has since switched branches) must keep the ORIGINAL value.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo_with_commit(repo, monkeypatch, branch="main")
+    pre = {**sample_checkpoint, "git_branch": "feat/original"}
+    store.write_checkpoint("S1", pre, project_dir=str(repo))
+    blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert blob["git_branch"] == "feat/original"
+
+
+def test_git_branch_survives_redaction(tmp_checkpoint_dir, tmp_path, monkeypatch):
+    # The stamp must survive the write pipeline end to end, including the
+    # in-place _redact_checkpoint pass that runs before it.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo_with_commit(repo, monkeypatch, branch="feat/222-git-branch-stamp")
+    cp = {"working_context": {"open_questions": [
+        {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?"}]}}
+    store.write_checkpoint("S1", cp, project_dir=str(repo))
+    on_disk = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert on_disk["git_branch"] == "feat/222-git-branch-stamp"
+    assert "redactions" in on_disk  # sanity: redaction actually ran
+
+
 def test_write_project_latest_is_atomic(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     import os
 
