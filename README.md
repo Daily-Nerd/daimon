@@ -76,7 +76,7 @@ Or any headless CLI that reads a prompt on stdin and prints the response:
 daimon configure --backend command --command '<your-llm-cli>' --output text
 ```
 
-Config lives in `~/.daimon/env` (hooks run with the host's inherited env, not your shell profile). Kill switch: `DAIMON_DISABLE=1`. Every tunable variable — checkpoint retention, carry, briefing budget, team memory, backend selection — is listed in [docs/configuration.md](./docs/configuration.md).
+Config lives in `~/.daimon/env` (hooks run with the host's inherited env, not your shell profile). Kill switch: `DAIMON_DISABLE=1`. Every tunable variable — checkpoint retention, carry, briefing budget, team memory, backend selection — is listed in [docs/configuration.md](./docs/configuration.md). Wondering which model to point it at? [docs/backends-tested.md](./docs/backends-tested.md) is the field-measured matrix — and your combination is a welcome PR.
 
 ### Hook up your host
 
