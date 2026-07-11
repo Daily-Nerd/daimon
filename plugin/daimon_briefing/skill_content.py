@@ -66,6 +66,20 @@ Example:
 Correct handling: run `gh pr view 60` (or equivalent) before repeating it —
 the PR may have merged since the checkpoint was written.
 
+## Context switching (other projects)
+
+Memory is per-project. To deliberately read another project's memory:
+
+- `daimon projects` — list every project daimon knows, with age, branch,
+  and last topic. The current project is marked `*`.
+- `daimon brief --slug <slug>` — that project's briefing (slugs come from
+  `daimon projects`). Output is labeled with its origin project; treat it
+  as foreign context, never as this project's state.
+- `daimon recall <query> --slug <slug>` — search one other project;
+  `--all-projects` when you don't know which project has the answer.
+
+Never present cross-project content as the current project's memory.
+
 ## When memory looks wrong
 
 | Symptom | Command |
@@ -114,6 +128,8 @@ When a briefing is in context:
 
 If memory looks wrong: `daimon status` (stale/missing briefing),
 `daimon heal` (failed capture), `daimon stats` (usage overview).
+Other projects: `daimon projects` lists them; `brief --slug <slug>` /
+`recall <q> --slug <slug>` read one deliberately — label output as foreign.
 
 MUST: at session start run `daimon brief --team` before other work; stay silent if daimon is not set up.
 """

@@ -1521,3 +1521,62 @@ def test_transcript_unchanged_false_when_new_hash_is_none(tmp_checkpoint_dir, sa
     ck = {**sample_checkpoint, "session_id": "S-hash2", "transcript_hash": "abc123"}
     store.write_checkpoint("S-hash2", ck)
     assert store.transcript_unchanged("S-hash2", None) is False
+
+
+# ---- list_buckets: every project bucket, for `daimon projects` (#243) ----
+
+
+def test_list_buckets_enumerates_all_project_buckets(tmp_checkpoint_dir):
+    d = tmp_checkpoint_dir
+    for slug, sid in (("-Users-me-proj-a", "A"), ("-Users-me-proj-b", "B")):
+        (d / slug).mkdir(parents=True)
+        (d / slug / "latest.json").write_text(
+            json.dumps({"session_id": sid, "project_slug": slug}))
+    buckets = store.list_buckets()
+    assert {b["slug"] for b in buckets} == {"-Users-me-proj-a", "-Users-me-proj-b"}
+    by_slug = {b["slug"]: b for b in buckets}
+    assert by_slug["-Users-me-proj-a"]["checkpoint"]["session_id"] == "A"
+    assert all(isinstance(b["mtime"], float) for b in buckets)
+
+
+def test_list_buckets_ignores_flat_files_and_pointerless_dirs(tmp_checkpoint_dir):
+    d = tmp_checkpoint_dir
+    d.mkdir(parents=True)
+    (d / "S-flat.json").write_text('{"session_id": "S-flat"}')  # per-session file
+    (d / "latest.json").write_text('{"session_id": "S-flat"}')  # global pointer
+    (d / "-Users-me-empty").mkdir()  # bucket dir without a latest.json
+    assert store.list_buckets() == []
+
+
+def test_list_buckets_torn_pointer_yields_none_checkpoint(tmp_checkpoint_dir):
+    d = tmp_checkpoint_dir / "-Users-me-torn"
+    d.mkdir(parents=True)
+    (d / "latest.json").write_text("{not json")
+    buckets = store.list_buckets()
+    assert len(buckets) == 1
+    assert buckets[0]["slug"] == "-Users-me-torn"
+    assert buckets[0]["checkpoint"] is None
+
+
+def test_list_buckets_empty_when_no_dir(tmp_checkpoint_dir):
+    assert store.list_buckets() == []
+
+
+def test_project_slug_is_idempotent_on_slugs():
+    """Load-bearing for --slug (#243): brief/recall pass a SLUG through
+    project_dir-shaped APIs (read_latest, resolutions), relying on
+    project_slug(slug) == slug. If the munging scheme ever changes, this
+    must fail before the feature silently misroutes."""
+    for raw in ("/Users/me/proj.x", "/a/b c/d", "C:\\work\\repo"):
+        slug = store.project_slug(raw)
+        assert store.project_slug(slug) == slug
+
+
+def test_list_buckets_non_dict_pointer_yields_none_checkpoint(tmp_checkpoint_dir):
+    # valid JSON that is not an object is as unusable as torn bytes
+    d = tmp_checkpoint_dir / "-Users-me-array"
+    d.mkdir(parents=True)
+    (d / "latest.json").write_text("[1, 2]")
+    buckets = store.list_buckets()
+    assert len(buckets) == 1
+    assert buckets[0]["checkpoint"] is None

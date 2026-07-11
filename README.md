@@ -143,6 +143,7 @@ skill owns it outright. Re-run install after upgrading to refresh the content.
 ## What you get beyond the briefing
 
 - **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled). Multi-term queries degrade to ranked partial matches instead of returning nothing.
+- **Context switching** — `daimon projects` lists every project daimon remembers (age, branch, last topic); `daimon brief --slug <slug>` and `daimon recall <terms> --slug <slug>` read one other project deliberately, provenance-labeled — crossing projects is always explicit, never automatic.
 - **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it ("you worked on this before"), in English or Spanish — accented text is a first-class citizen.
 - **Code anchors** — `daimon anchor <file> <symbol>` pins a belief to a code symbol; if that code changes or disappears, the next briefing flags the item under **CODE DRIFT — verify before trusting**. Offline, stdlib `ast`.
 - **Team memory (opt-in)** — `daimon team init <remote>` mirrors checkpoints through a git remote; teammates' active topics and decisions appear in your briefing, clearly attributed, never merged into your own sections. See the [team memory setup guide](./docs/team.md) — start with its privacy boundary, because the shared repo must be private.
@@ -159,7 +160,7 @@ skill owns it outright. Re-run install after upgrading to refresh the content.
 | Surface | State |
 |---------|-------|
 | Claude Code plugin + hooks | live-validated daily |
-| CLI (`brief`, `status`, `recall`, `heal`, `anchor`, `configure`, `hooks`, `skill`) | stable, on PyPI |
+| CLI (`brief`, `status`, `recall`, `projects`, `heal`, `anchor`, `configure`, `hooks`, `skill`) | stable, on PyPI |
 | Windsurf adapter | shipped, in live validation |
 | Codex adapter | shipped, awaiting first live run |
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
