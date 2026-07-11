@@ -690,8 +690,9 @@ def _plain_stats(data: dict) -> None:
         print(f"retention (last {r['window_days']}d):")
         print(f"  hook briefings: {r['hook_briefs']}")
         rr = r["rereads"]
-        print(f"  deliberate re-reads: brief {rr['brief']}, status {rr['status']}, "
+        print(f"  deliberate re-reads: brief {rr['brief']}, "
               f"recall {rr['recall']}  (total {r['rereads_total']})")
+        print(f"  status checks: {r['status_checks']}  (ops, not counted)")
         ratio = r["rereads_per_hook_brief"]
         print(f"  re-reads per hook briefing: "
               f"{ratio if ratio is not None else 'n/a'}")
@@ -752,8 +753,10 @@ def _rich_stats(data: dict) -> None:
         ret_table.add_row("hook briefings", str(r["hook_briefs"]))
         rr = r["rereads"]
         ret_table.add_row("deliberate re-reads",
-                          f"brief {rr['brief']}, status {rr['status']}, "
+                          f"brief {rr['brief']}, "
                           f"recall {rr['recall']} (total {r['rereads_total']})")
+        ret_table.add_row("status checks (ops, not counted)",
+                          str(r["status_checks"]))
         ratio = r["rereads_per_hook_brief"]
         ret_table.add_row("re-reads per hook briefing",
                           "n/a" if ratio is None else str(ratio))

@@ -4109,9 +4109,12 @@ def test_retention_counts_hook_briefs_and_rereads_in_window(tmp_log_dir):
     r = cli._stats_retention(now=now)
     assert r["window_days"] == 14
     assert r["hook_briefs"] == 2
-    assert r["rereads"] == {"brief": 1, "status": 1, "recall": 1}
-    assert r["rereads_total"] == 3
-    assert r["rereads_per_hook_brief"] == 1.5
+    # status is ops polling, not a memory re-read (#232): tracked separately,
+    # never in the total or the ratio.
+    assert r["rereads"] == {"brief": 1, "recall": 1}
+    assert r["status_checks"] == 1
+    assert r["rereads_total"] == 2
+    assert r["rereads_per_hook_brief"] == 1.0
     assert r["untagged_briefs"] == 1
     assert r["stale_hook_warning"] is False
 
@@ -4123,6 +4126,23 @@ def test_retention_zero_hook_briefs_ratio_is_none(tmp_log_dir):
     r = cli._stats_retention(now=now)
     assert r["hook_briefs"] == 0
     assert r["rereads_per_hook_brief"] is None
+
+
+def test_retention_status_alone_never_moves_the_value_signal(tmp_log_dir):
+    """A pure debugging session (#232): status polling plus hook briefings,
+    zero memory reads. The ratio must read 0.0, not climb with ops noise."""
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(5, "brief:auto", now)
+        + _usage_line(3, "status", now)
+        + _usage_line(2, "status", now)
+        + _usage_line(1, "status", now)
+    )
+    r = cli._stats_retention(now=now)
+    assert r["status_checks"] == 3
+    assert r["rereads_total"] == 0
+    assert r["rereads_per_hook_brief"] == 0.0
 
 
 def test_retention_all_briefs_untagged_when_no_auto_ever(tmp_log_dir):
@@ -4175,7 +4195,8 @@ def test_stats_json_includes_retention(tmp_checkpoint_dir, tmp_log_dir,
     data = json.loads(capsys.readouterr().out)
     assert "retention" in data
     assert set(data["retention"]) >= {"window_days", "hook_briefs", "rereads",
-                                      "rereads_total", "rereads_per_hook_brief",
+                                      "status_checks", "rereads_total",
+                                      "rereads_per_hook_brief",
                                       "untagged_briefs", "stale_hook_warning"}
 
 
@@ -4192,7 +4213,9 @@ def test_stats_plain_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
     out = capsys.readouterr().out
     assert "retention (last 14d):" in out
     assert "hook briefings: 1" in out
-    assert "re-reads per hook briefing: 1.0" in out
+    # the lone status poll is ops, not retention (#232)
+    assert "status checks: 1  (ops, not counted)" in out
+    assert "re-reads per hook briefing: 0.0" in out
 
 
 def test_stats_rich_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
@@ -4209,7 +4232,8 @@ def test_stats_rich_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
     out = capsys.readouterr().out
     assert "retention (last 14d)" in out
     assert "hook briefings" in out
-    assert "1.0" in out  # re-reads per hook briefing ratio
+    assert "status checks (ops, not counted)" in out
+    assert "0.0" in out  # ratio: the status poll counts apart (#232)
 
 
 def test_stats_plain_warns_on_stale_hook(tmp_checkpoint_dir, tmp_log_dir,
