@@ -250,3 +250,47 @@ def test_hook_drift_present_never_raises(tmp_path, monkeypatch):
     # status must never crash on a weird hooks tree — the probe swallows errors.
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli._hook_drift_present() is False
+
+
+def test_hook_drift_present_swallows_report_errors(monkeypatch):
+    # If the report itself blows up (unreadable packaged copies, etc.) the status
+    # probe reports no drift rather than crashing the whole `daimon status`.
+    monkeypatch.setattr(cli, "_hooks_status_report",
+                        lambda home: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert cli._hook_drift_present() is False
+
+
+def test_hook_file_status_unreadable_path_is_missing(tmp_path):
+    # A path that exists but cannot be read as bytes (here: a directory in the
+    # file's place) reads as MISSING, not a crash.
+    from importlib import resources
+
+    pkg = resources.files("daimon_briefing._hooks")
+    (tmp_path / "redact.py").mkdir()
+    assert cli._hook_file_status(pkg, tmp_path, "redact.py") == "MISSING"
+
+
+def test_codex_registration_status_handles_non_dict_hooks(tmp_path, monkeypatch):
+    # A hooks.json whose "hooks" is not an object must not crash the audit.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    codex = tmp_path / ".codex"
+    codex.mkdir()
+    (codex / "hooks.json").write_text(json.dumps({"hooks": "not-an-object"}))
+    assert cli._codex_registration_status(tmp_path) == "UNREGISTERED"
+
+
+def test_render_hooks_status_rich_drift_pointer(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_status({
+        "project": "/p/A",
+        "proj": {"exists": False},
+        "glob": {"exists": False},
+        "last": None,
+        "hook_drift": True,
+    })
+    assert "out of date" in capsys.readouterr().out
+
+
+def test_render_hooks_status_empty_report(capsys):
+    render.render_hooks_status([])
+    assert "no packaged hook hosts" in capsys.readouterr().out
