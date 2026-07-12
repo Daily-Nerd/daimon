@@ -651,6 +651,34 @@ def _cmd_recall(args) -> int:
         print(json.dumps(results, indent=2, ensure_ascii=False))
         return 0
     if not results:
+        # #259: a zero-match SCOPED search is a signpost, not a dead end —
+        # rerun the same query unscoped (one extra FTS query, same index)
+        # and report COUNTS by project, never content: crossing projects
+        # stays user-invoked (#94/#95), the system just stops hiding that
+        # crossing would pay. Explicit scopes (--all-projects already
+        # searched everything; --slug named its target) get no second-guess.
+        # Same doctrine as the AND->OR retry (#25): a narrower scope must
+        # never mean a silent dead end.
+        if not args.all_projects and not slug:
+            try:
+                wide = recall.search(query, all_projects=True, limit=50)
+            except recall.RecallError:
+                wide = []
+            counts: dict = {}
+            here = store.project_slug(project)
+            for r in wide:
+                s = r.get("project_slug")
+                if s and s != here:
+                    counts[s] = counts.get(s, 0) + 1
+            if counts:
+                lines = [f"no matches in this project — "
+                         f"{sum(counts.values())} match(es) elsewhere:"]
+                lines += [f"  {s} ({n})" for s, n in
+                          sorted(counts.items(), key=lambda kv: -kv[1])]
+                lines.append("rerun with --all-projects, or --slug <slug> "
+                             "for one project")
+                render.render_recall_lines(lines)
+                return 0
         render.render_recall_lines(["no matches"])
         return 0
     now = time.time()
