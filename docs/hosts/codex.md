@@ -5,26 +5,38 @@ recorded live sessions — the adapter and installer ship, but no logbook entry
 documents a real Codex session completing the capture -> inject loop yet.
 Treat "runs on Codex" as inferred until one is on record.
 
-## Install (manual, from a clone)
+## Install
 
-Adds Daimon's capture -> inject loop to Codex:
+Adds Daimon's capture -> inject loop to Codex from the released package (no repo
+clone needed):
 
 ```sh
-python3 hook/codex-hooks.py install   [--dry-run]
-python3 hook/codex-hooks.py uninstall [--dry-run]
-python3 hook/codex-hooks.py status
+daimon hooks install codex
 ```
 
-Install copies both hook scripts to `~/.codex/hooks/` and registers them in
-`~/.codex/hooks.json`. After installing, open `/hooks` in Codex to review and
-trust the hook definitions — Codex skips untrusted hook definitions until you
-do.
+This copies both hook scripts and their shared helper to `~/.codex/hooks/` and
+registers `SessionStart` and `Stop` in `~/.codex/hooks.json`, preserving any
+unrelated entries already there. It is idempotent — re-run it after every
+`uv tool upgrade daimon-briefing` to refresh the scripts to match the installed
+CLI. After installing, open `/hooks` in Codex to review and trust the hook
+definitions — Codex skips untrusted hook definitions until you do.
 
 Requires the `daimon` CLI on `PATH` (the deprecated `daimon-briefing` alias
 also works as a fallback):
 
 ```sh
 uv tool install ./plugin
+```
+
+### Manual install (from a clone)
+
+Working from a source checkout, the standalone lifecycle manager offers the same
+integration plus `uninstall` and `status`:
+
+```sh
+python3 hook/codex-hooks.py install   [--dry-run]
+python3 hook/codex-hooks.py uninstall [--dry-run]
+python3 hook/codex-hooks.py status
 ```
 
 ## What each script does
