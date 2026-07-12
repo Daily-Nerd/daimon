@@ -161,6 +161,20 @@ def test_hooks_install_codex_preserves_unrelated_entries(tmp_path, monkeypatch):
     assert cfg["PreToolUse"][0]["hooks"][0]["command"] == "echo hi"  # unrelated event kept
 
 
+def test_hooks_install_codex_recovers_corrupt_hooks_json(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    codex = tmp_path / ".codex"
+    codex.mkdir()
+    (codex / "hooks.json").write_text("{not json", encoding="utf-8")
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    cfg = json.loads((codex / "hooks.json").read_text())["hooks"]
+    assert any("daimon-codex-session-start.py" in h["command"]
+               for g in cfg["SessionStart"] for h in g["hooks"])
+    # the corrupt original is preserved as a backup, not silently destroyed
+    backups = list(codex.glob("hooks.json.daimon-backup-*"))
+    assert backups and backups[0].read_text(encoding="utf-8") == "{not json"
+
+
 def test_hooks_install_codex_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli.main(["hooks", "install", "codex"]) == 0
