@@ -21,6 +21,12 @@ unrelated entries already there. It is idempotent — re-run it after every
 CLI. After installing, open `/hooks` in Codex to review and trust the hook
 definitions — Codex skips untrusted hook definitions until you do.
 
+A stale installed copy keeps *working* on old behavior, so drift is invisible.
+Run `daimon hooks status` to audit the installed copies against the packaged
+versions (CURRENT/STALE/MISSING, plus the `hooks.json` registration state); it
+exits non-zero when anything drifted, and `daimon hooks install codex` refreshes
+it in place.
+
 Requires the `daimon` CLI on `PATH` (the deprecated `daimon-briefing` alias
 also works as a fallback):
 

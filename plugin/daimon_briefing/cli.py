@@ -21,6 +21,7 @@
 import argparse
 import functools
 import getpass
+import hashlib
 import json
 import logging
 import os
@@ -1284,6 +1285,9 @@ def _cmd_status(args) -> int:
     # window. A FAIL payload (or None) renders at the very TOP of status — a
     # class of failure that otherwise hides until a briefing turns up empty.
     capture_alarm = _capture_alarm(now)
+    # One-line pointer only when installed hook copies have drifted (#266);
+    # silent on a clean machine. Cheap: hashes a handful of small files.
+    hook_drift = _hook_drift_present()
     health = _status_health(proj, glob, outstanding, siblings, now=now,
                             disabled=disabled)
     # ONE objective team line (#113), only when a team remote exists — the #84
@@ -1309,7 +1313,7 @@ def _cmd_status(args) -> int:
              "team": team, "crash": crash, "disabled": disabled,
              "skipped_recent": skipped_recent, "recall_error": recall_error,
              "recall_index": recall_index, "receipts": receipts_line,
-             "capture_alarm": capture_alarm},
+             "capture_alarm": capture_alarm, "hook_drift": hook_drift},
             indent=2,
         ))
         return rc
@@ -1320,6 +1324,7 @@ def _cmd_status(args) -> int:
         "team": team, "crash": crash, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
+        "hook_drift": hook_drift,
     })
     return rc
 
@@ -1908,6 +1913,105 @@ def _cmd_hooks_install(args) -> int:
     return 0
 
 
+# ---- hooks status: audit installed copies against the packaged bytes (#266) ----
+#
+# A stale hook copy keeps *working* on old behavior after an upgrade, so drift is
+# invisible until a briefing turns up wrong. `daimon hooks status` hashes the
+# packaged bytes against what is installed and reports it, per host, per file.
+
+
+def _host_install_dir(spec, home: Path) -> Path:
+    """Where a host's hook files live. Codex owns ~/.codex/hooks/ (it registers
+    the scripts there itself); everyone else shares the stable ~/.daimon/hooks/
+    that `hooks install` writes to."""
+    if spec.get("register") == "codex":
+        return home / ".codex" / "hooks"
+    return home / ".daimon" / "hooks"
+
+
+def _hook_file_status(pkg, install_dir: Path, name: str) -> str:
+    """CURRENT / STALE / MISSING for one installed file vs its packaged copy.
+    ``exists()`` and ``read_bytes()`` both follow symlinks, so a symlinked
+    install is judged by the bytes it points at (a broken link → MISSING)."""
+    dest = install_dir / name
+    if not dest.exists():
+        return "MISSING"
+    try:
+        installed = dest.read_bytes()
+    except OSError:
+        return "MISSING"
+    packaged = (pkg / name).read_bytes()
+    match = hashlib.sha256(installed).digest() == hashlib.sha256(packaged).digest()
+    return "CURRENT" if match else "STALE"
+
+
+def _codex_registration_status(home: Path) -> str:
+    """REGISTERED / PARTIAL / UNREGISTERED for the ~/.codex/hooks.json entries.
+    Reuses codex_hooks' own loader and ownership check so this verdict can never
+    drift from what `hooks install codex` writes."""
+    from . import codex_hooks
+
+    settings = codex_hooks._load(home / ".codex" / "hooks.json")
+    cfg = settings.get("hooks", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    found = sum(
+        1 for hspec in codex_hooks.HOOKS
+        if any(codex_hooks._is_ours(g, hspec["script"])
+               for g in cfg.get(hspec["event"], []) if isinstance(g, dict))
+    )
+    if found == 0:
+        return "UNREGISTERED"
+    return "REGISTERED" if found == len(codex_hooks.HOOKS) else "PARTIAL"
+
+
+def _host_status_entry(host: str, spec, pkg, home: Path) -> dict:
+    install_dir = _host_install_dir(spec, home)
+    reg = _codex_registration_status(home) if spec.get("register") == "codex" else None
+    installed = any((install_dir / n).exists() for n in spec["files"])
+    if spec.get("register") == "codex":
+        # Codex counts as installed if its hooks dir OR any of our registration
+        # entries exist — either alone is a setup we must audit, not ignore.
+        installed = installed or install_dir.exists() or reg != "UNREGISTERED"
+    entry = {"host": host, "dir": str(install_dir), "installed": installed,
+             "registration": reg, "files": [], "drift": False}
+    if not installed:
+        return entry
+    entry["files"] = [{"name": n, "status": _hook_file_status(pkg, install_dir, n)}
+                      for n in spec["files"]]
+    file_drift = any(f["status"] in ("STALE", "MISSING") for f in entry["files"])
+    reg_drift = reg is not None and reg != "REGISTERED"
+    entry["drift"] = file_drift or reg_drift
+    return entry
+
+
+def _hooks_status_report(home: Path) -> list[dict]:
+    from importlib import resources
+
+    pkg = resources.files("daimon_briefing._hooks")
+    return [_host_status_entry(host, spec, pkg, home)
+            for host, spec in sorted(_HOOK_HOSTS.items())]
+
+
+def _hook_drift_present() -> bool:
+    """Cheap yes/no for the `daimon status` pointer — hashes a handful of small
+    files. Swallows every error: status must never crash on a weird hooks tree,
+    and a probe that cannot read the packaged copies simply reports no drift."""
+    try:
+        return any(h["drift"] for h in _hooks_status_report(Path.home()))
+    except Exception:
+        return False
+
+
+def _cmd_hooks_status(args) -> int:
+    report = _hooks_status_report(Path.home())
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+    else:
+        render.render_hooks_status(report)
+    return 1 if any(h["drift"] for h in report) else 0
+
+
 # ---- skill: ship the portable agent skill from the package (#66) ----
 
 def _resolve_project_cwd() -> Path:
@@ -2298,12 +2402,19 @@ def main(argv=None) -> int:
 
     p_hooks = sub.add_parser(
         "hooks",
-        help="ship host hook scripts from the package (#43): list, install",
+        help="ship host hook scripts from the package (#43): list, install, status",
     )
     hooks_sub = p_hooks.add_subparsers(dest="hooks_cmd", required=True)
     hooks_sub.add_parser = functools.partial(hooks_sub.add_parser, formatter_class=fmt)
     ph_list = hooks_sub.add_parser("list", help="hosts with packaged hook scripts")
     ph_list.set_defaults(func=_cmd_hooks_list)
+    ph_status = hooks_sub.add_parser(
+        "status",
+        help="audit installed hook copies against the packaged versions "
+             "(CURRENT/STALE/MISSING/NOT INSTALLED); non-zero exit on drift",
+    )
+    ph_status.add_argument("--json", action="store_true", help="machine-readable output")
+    ph_status.set_defaults(func=_cmd_hooks_status)
     ph_install = hooks_sub.add_parser(
         "install",
         help="copy a host's hook script(s) to the stable path ~/.daimon/hooks/ "
