@@ -1792,6 +1792,16 @@ _HOOK_HOSTS = {
         "events": ("pre_user_prompt", "post_cascade_response",
                    "post_cascade_response_with_transcript"),
     },
+    # Codex needs two distinct scripts under two events plus a real hooks.json
+    # registration, so it carries `register: "codex"` and the install command
+    # delegates the whole flow to codex_hooks.install (#262). `files`/`events`
+    # here drive `hooks list` only; codex_hooks owns the copy + registration.
+    "codex": {
+        "files": ("daimon-codex-session-start.py", "daimon-codex-stop.py",
+                  "_daimon_hook_lib.py"),
+        "events": ("SessionStart", "Stop"),
+        "register": "codex",
+    },
 }
 
 
@@ -1799,8 +1809,17 @@ def _hooks_target_dir() -> Path:
     return Path.home() / ".daimon" / "hooks"
 
 
+def _host_scripts(spec) -> str:
+    """Display label of a host's hook script(s): the single `entry` when the
+    host has one, else the registered scripts (everything but shared helpers)."""
+    if spec.get("entry"):
+        return spec["entry"]
+    return ", ".join(n for n in spec["files"]
+                     if n not in ("_daimon_hook_lib.py", "redact.py"))
+
+
 def _cmd_hooks_list(args) -> int:
-    lines = [f"{host}  ({spec['entry']}; events: {', '.join(spec['events'])})"
+    lines = [f"{host}  ({_host_scripts(spec)}; events: {', '.join(spec['events'])})"
              for host, spec in sorted(_HOOK_HOSTS.items())]
     render.render_hooks_list(lines)
     return 0
@@ -1818,9 +1837,16 @@ def _cmd_hooks_install(args) -> int:
         known = ", ".join(sorted(_HOOK_HOSTS))
         print(f"error: unknown host '{args.host}' (known: {known})", file=sys.stderr)
         return 2
+    pkg = resources.files("daimon_briefing._hooks")
+    if spec.get("register") == "codex":
+        # Codex owns its own install path: two scripts registered under two
+        # events straight into ~/.codex/hooks.json (#262), not a printed snippet.
+        from . import codex_hooks
+
+        render.render_hooks_install(codex_hooks.install(pkg, Path.home()))
+        return 0
     target = _hooks_target_dir()
     target.mkdir(parents=True, exist_ok=True)
-    pkg = resources.files("daimon_briefing._hooks")
     for name in spec["files"]:
         data = (pkg / name).read_bytes()
         dest = target / name
