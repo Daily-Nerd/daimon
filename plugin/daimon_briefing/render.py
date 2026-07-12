@@ -415,7 +415,27 @@ def _outstanding_lines(outstanding) -> list:
     return lines
 
 
+def _capture_alarm_lines(alarm: dict) -> list[str]:
+    """The silent-capture FAIL banner (#265), shared verbatim by the plain and
+    rich renderers (#29): a headline plus the three concrete fix hints. Rendered
+    at the very TOP of status because it flags a class of failure — hooks firing
+    but zero checkpoints landing — that otherwise stays invisible until a
+    briefing turns up empty."""
+    n, days = alarm["spawns"], alarm["window_days"]
+    return [
+        f"FAIL — silent capture failure: {n} session{'s' if n != 1 else ''} "
+        f"observed in the last {days} days, 0 checkpoints written",
+        "  → run `daimon heal` to recover the most recent lost session",
+        "  → inspect serialize.log for the underlying error",
+        "  → run `daimon configure --test` to verify the serialize backend",
+    ]
+
+
 def _plain_status(data: dict) -> None:
+    alarm = data.get("capture_alarm")
+    if alarm:
+        for line in _capture_alarm_lines(alarm):
+            print(line)
     ident = data.get("identity")
     if ident:
         print(f"identity: {ident['cwd']}  →  git-root {ident['git_root']}  →  bucket {ident['slug']}")
@@ -485,6 +505,12 @@ def _rich_status(data: dict) -> None:
     from rich.table import Table
 
     console = Console()
+    alarm = data.get("capture_alarm")
+    if alarm:
+        lines = _capture_alarm_lines(alarm)
+        console.print(f"[bold red]{lines[0]}[/bold red]")
+        for line in lines[1:]:
+            console.print(f"[red]{line}[/red]")
     ident = data.get("identity")
     if ident:
         console.print(f"identity: {ident['cwd']}  →  git-root {ident['git_root']}  →  bucket {ident['slug']}")

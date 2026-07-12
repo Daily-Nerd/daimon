@@ -233,6 +233,28 @@ def _session_files(d: Path) -> list[Path]:
     ]
 
 
+def checkpoints_written_since(cutoff: float) -> int:
+    """How many per-session checkpoints were WRITTEN since `cutoff` (epoch
+    seconds), counted by file mtime — the write-side signal for the silent-
+    capture alarm (#265). Pointers and in-flight *.tmp writes are excluded
+    (via _session_files), so this is checkpoints actually landed, not rotations.
+    Fails open to 0 when the store dir is absent or unreadable — no store yet is
+    zero writes, never a crash."""
+    d = config.checkpoint_dir()
+    try:
+        files = _session_files(d)
+    except OSError:
+        return 0
+    count = 0
+    for p in files:
+        try:
+            if p.stat().st_mtime >= cutoff:
+                count += 1
+        except OSError:
+            continue
+    return count
+
+
 def _pointer_stems(d: Path) -> set[str] | None:
     """File stems of every per-session checkpoint a LIVE pointer still references —
     latest.json / prev-N.json in the flat dir AND in every per-project bucket. GC

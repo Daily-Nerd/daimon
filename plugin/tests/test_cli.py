@@ -674,7 +674,8 @@ def test_cli_status_json_shape(
     assert set(data) == {"project", "global", "last_serialize", "outstanding",
                          "siblings", "health", "team", "crash", "disabled",
                          "skipped_recent", "recall_error", "recall_index",
-                         "receipts"}
+                         "receipts", "capture_alarm"}
+    assert data["capture_alarm"] is None  # #265 FAIL-only probe silent by default
     assert data["team"] is None  # no team remote configured -> explicit null (#113)
     assert data["receipts"] is None  # #204 feature off -> explicit null
     assert data["project"]["exists"] is True
@@ -4284,6 +4285,128 @@ def test_spawns_in_window_skips_garbage_and_stale_spawns(tmp_log_dir):
     )
     assert ledger._spawns_in_window(now - timedelta(days=14)) is False
     assert ledger._parse_stamp("not-a-stamp") is None
+
+
+def test_spawns_in_window_count_tallies_in_window_only(tmp_log_dir):
+    # The FAIL-alarm's read side (#265): count every hook spawn inside the
+    # window, skip stale ones and non-spawn noise. The boolean probe is just
+    # count > 0, so both stay in lockstep on one regex.
+    from daimon_briefing import ledger
+
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    recent = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    old = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        "not a spawn line\n"
+        f"{recent} session-end: spawned serialize for S1 (pid 1)\n"
+        f"{recent} codex-stop: spawned serialize for S2 (pid 2)\n"
+        f"{old} session-end: spawned serialize for S-old (pid 3)\n"
+    )
+    cutoff = now - timedelta(days=14)
+    assert ledger._spawns_in_window_count(cutoff) == 2
+    assert ledger._spawns_in_window(cutoff) is True
+
+
+# ---- capture alarm: silent-capture FAIL tier (#265) ----
+
+
+def _spawn_line(days_ago, sid, now_epoch):
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_epoch - days_ago * 86400))
+    return f"{stamp} session-end: spawned serialize for {sid} (reason: exit, project: /p/A)\n"
+
+
+def test_capture_alarm_fails_on_spawns_without_checkpoints(tmp_log_dir, tmp_checkpoint_dir):
+    now = time.time()
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _spawn_line(2, "S1", now) + _spawn_line(3, "S2", now) + _spawn_line(4, "S3", now))
+    alarm = cli._capture_alarm(now)
+    assert alarm is not None
+    assert alarm["verdict"] == "fail"
+    assert alarm["spawns"] == 3
+    assert alarm["checkpoints"] == 0
+    assert alarm["window_days"] == 14
+
+
+def test_capture_alarm_silent_below_min_sessions(tmp_log_dir, tmp_checkpoint_dir):
+    # Two spawns, zero checkpoints — still below the guard, so NO verdict at all:
+    # silence, never a false FAIL on a low-activity machine.
+    now = time.time()
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _spawn_line(1, "S1", now) + _spawn_line(2, "S2", now))
+    assert cli._capture_alarm(now) is None
+
+
+def test_capture_alarm_silent_when_checkpoints_landing(
+    tmp_log_dir, tmp_checkpoint_dir, sample_checkpoint
+):
+    from daimon_briefing import store
+
+    now = time.time()
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _spawn_line(2, "S1", now) + _spawn_line(3, "S2", now) + _spawn_line(4, "S3", now))
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"})
+    assert cli._capture_alarm(now) is None
+
+
+def test_capture_alarm_stale_spawns_dont_count(tmp_log_dir, tmp_checkpoint_dir):
+    # Three spawns but all older than the window → below the in-window guard → silence.
+    now = time.time()
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _spawn_line(20, "S1", now) + _spawn_line(21, "S2", now) + _spawn_line(22, "S3", now))
+    assert cli._capture_alarm(now) is None
+
+
+def test_status_shows_capture_fail_at_top(tmp_log_dir, tmp_checkpoint_dir, capsys, monkeypatch):
+    now = time.time()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _spawn_line(1, "S1", now) + _spawn_line(2, "S2", now)
+        + _spawn_line(3, "S3", now) + _spawn_line(4, "S4", now))
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    first = out.strip().splitlines()[0]
+    assert "FAIL" in first and "silent capture" in first.lower()
+    # Every fix hint the operator needs, unmissable near the top.
+    assert "daimon heal" in out
+    assert "serialize.log" in out
+    assert "daimon configure --test" in out
+
+
+def test_status_json_includes_capture_alarm(tmp_log_dir, tmp_checkpoint_dir, capsys, monkeypatch):
+    now = time.time()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _spawn_line(1, "S1", now) + _spawn_line(2, "S2", now) + _spawn_line(3, "S3", now))
+    cli.main(["status", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data["capture_alarm"]["verdict"] == "fail"
+    assert data["capture_alarm"]["spawns"] == 3
+
+
+def test_status_no_capture_alarm_when_healthy(
+    tmp_log_dir, tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch
+):
+    from daimon_briefing import store
+
+    now = time.time()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _spawn_line(1, "S1", now) + _spawn_line(2, "S2", now) + _spawn_line(3, "S3", now))
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A")
+    cli.main(["status"])
+    assert "silent capture" not in capsys.readouterr().out.lower()
+    cli.main(["status", "--json"])
+    assert json.loads(capsys.readouterr().out)["capture_alarm"] is None
 
 
 def test_stats_json_includes_retention(tmp_checkpoint_dir, tmp_log_dir,

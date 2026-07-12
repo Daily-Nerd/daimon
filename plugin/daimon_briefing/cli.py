@@ -58,6 +58,7 @@ from .ledger import (
     _parse_stamp,
     _session_ledger,
     _spawns_in_window,
+    _spawns_in_window_count,
     _stats_capture,
 )
 
@@ -1215,6 +1216,39 @@ def _cmd_verify_receipt(args) -> int:
     return rc
 
 
+# The silent-capture alarm (#265) ships the FAIL tier ONLY: sessions were
+# observed but ZERO checkpoints landed. The issue also describes a WARN "capture
+# ratio low" tier — deferred until the ratio threshold is calibrated against real
+# capture distributions. An uncalibrated cutoff false-alarms on low-activity
+# projects (this repo's overlap thresholds did exactly that), so below
+# _CAPTURE_MIN_SESSIONS spawns the probe stays SILENT — too little signal to
+# judge — rather than guessing OK. 3 is the smallest count that reads as a
+# pattern rather than a one-off, and matches the retention-window scope.
+_CAPTURE_MIN_SESSIONS = 3
+
+
+def _capture_alarm(now: float) -> dict | None:
+    """Silent-capture probe (#265): compare hook spawns OBSERVED against
+    checkpoints WRITTEN over the retention window, machine-wide (serialize.log
+    and the checkpoint store are per-machine, not per-project). Returns a FAIL
+    payload only when >= _CAPTURE_MIN_SESSIONS sessions spawned but ZERO
+    checkpoints landed in the window; otherwise None (no verdict — the WARN
+    ratio tier is deferred, see _CAPTURE_MIN_SESSIONS). Reuses the same in-window
+    spawn logic as the stats stale-hook warning. `now` is epoch seconds; both
+    the ledger (tz-aware) and store (epoch) cutoffs derive from it for a single
+    deterministic window edge."""
+    cutoff_epoch = now - _RETENTION_WINDOW_DAYS * 86400
+    cutoff_dt = datetime.fromtimestamp(cutoff_epoch, tz=timezone.utc)
+    spawns = _spawns_in_window_count(cutoff_dt)
+    if spawns < _CAPTURE_MIN_SESSIONS:
+        return None
+    checkpoints = store.checkpoints_written_since(cutoff_epoch)
+    if checkpoints > 0:
+        return None
+    return {"verdict": "fail", "spawns": spawns, "checkpoints": checkpoints,
+            "window_days": _RETENTION_WINDOW_DAYS}
+
+
 def _cmd_status(args) -> int:
     _note_usage("status")
     project = _resolve_project(args.project)
@@ -1246,6 +1280,10 @@ def _cmd_status(args) -> int:
         if e["result_kind"] == "skipped"
     )
     siblings = store.sibling_buckets(project)
+    # Silent-capture alarm (#265): machine-wide spawns-vs-checkpoints over the
+    # window. A FAIL payload (or None) renders at the very TOP of status — a
+    # class of failure that otherwise hides until a briefing turns up empty.
+    capture_alarm = _capture_alarm(now)
     health = _status_health(proj, glob, outstanding, siblings, now=now,
                             disabled=disabled)
     # ONE objective team line (#113), only when a team remote exists — the #84
@@ -1270,7 +1308,8 @@ def _cmd_status(args) -> int:
              "outstanding": outstanding, "siblings": siblings, "health": health,
              "team": team, "crash": crash, "disabled": disabled,
              "skipped_recent": skipped_recent, "recall_error": recall_error,
-             "recall_index": recall_index, "receipts": receipts_line},
+             "recall_index": recall_index, "receipts": receipts_line,
+             "capture_alarm": capture_alarm},
             indent=2,
         ))
         return rc
@@ -1280,7 +1319,7 @@ def _cmd_status(args) -> int:
         "outstanding": outstanding, "identity": identity, "health": health,
         "team": team, "crash": crash, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
-        "receipts": receipts_line,
+        "receipts": receipts_line, "capture_alarm": capture_alarm,
     })
     return rc
 

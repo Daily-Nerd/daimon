@@ -376,18 +376,29 @@ def _parse_stamp(token: str):
         return None
 
 
-def _spawns_in_window(cutoff) -> bool:
-    """True when serialize.log shows any hook-spawned capture inside the
-    window — i.e. sessions ARE happening on this machine."""
+def _spawns_in_window_count(cutoff) -> int:
+    """How many hook-spawned captures serialize.log shows inside the window —
+    i.e. how many sessions the hooks OBSERVED on this machine since `cutoff`.
+    The silent-capture alarm (#265) reads this against checkpoints WRITTEN in the
+    same window: spawns without writes is a silent capture failure. Fails open to
+    0 when the log is absent."""
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
-        return False
+        return 0
+    count = 0
     for line in text.splitlines():
         line = line.strip()
         if not _STATS_HOST_RE.match(line):
             continue
         stamp = _parse_stamp(line.split()[0])
         if stamp is not None and stamp >= cutoff:
-            return True
-    return False
+            count += 1
+    return count
+
+
+def _spawns_in_window(cutoff) -> bool:
+    """True when serialize.log shows any hook-spawned capture inside the
+    window — i.e. sessions ARE happening on this machine. The count and the
+    boolean share one regex so they can never drift on a new host prefix."""
+    return _spawns_in_window_count(cutoff) > 0
