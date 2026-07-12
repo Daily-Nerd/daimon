@@ -1580,3 +1580,30 @@ def test_list_buckets_non_dict_pointer_yields_none_checkpoint(tmp_checkpoint_dir
     buckets = store.list_buckets()
     assert len(buckets) == 1
     assert buckets[0]["checkpoint"] is None
+
+
+# ---- checkpoints_written_since: the silent-capture alarm's write-side count (#265) ----
+
+
+def test_checkpoints_written_since_counts_recent_only(tmp_checkpoint_dir, sample_checkpoint):
+    import os
+
+    now = _time.time()
+    store.write_checkpoint("S-fresh", {**sample_checkpoint, "session_id": "S-fresh"})
+    old = store.write_checkpoint("S-old", {**sample_checkpoint, "session_id": "S-old"})
+    os.utime(old, (now - 20 * 86400, now - 20 * 86400))  # aged out of a 14d window
+    cutoff = now - 14 * 86400
+    # Only the fresh session file counts; the aged one is outside the window.
+    assert store.checkpoints_written_since(cutoff) == 1
+
+
+def test_checkpoints_written_since_ignores_pointers(tmp_checkpoint_dir, sample_checkpoint):
+    # A write lands one session file plus latest.json (and per-project pointers);
+    # only the per-session checkpoint is a "checkpoint written", never a pointer.
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A")
+    assert store.checkpoints_written_since(_time.time() - 14 * 86400) == 1
+
+
+def test_checkpoints_written_since_fails_open_when_dir_absent(tmp_checkpoint_dir):
+    # No checkpoint dir yet (nothing ever written) → zero, never a crash.
+    assert store.checkpoints_written_since(_time.time() - 14 * 86400) == 0
