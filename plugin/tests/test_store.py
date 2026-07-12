@@ -1607,3 +1607,15 @@ def test_checkpoints_written_since_ignores_pointers(tmp_checkpoint_dir, sample_c
 def test_checkpoints_written_since_fails_open_when_dir_absent(tmp_checkpoint_dir):
     # No checkpoint dir yet (nothing ever written) → zero, never a crash.
     assert store.checkpoints_written_since(_time.time() - 14 * 86400) == 0
+
+
+def test_checkpoints_written_since_skips_unstattable_file(monkeypatch):
+    # A file that vanishes/errors mid-stat (raced against GC) is skipped, not fatal.
+    class _Ghost:
+        name = "ghost.json"
+
+        def stat(self):
+            raise OSError("stat failed")
+
+    monkeypatch.setattr(store, "_session_files", lambda d: [_Ghost()])
+    assert store.checkpoints_written_since(_time.time() - 14 * 86400) == 0

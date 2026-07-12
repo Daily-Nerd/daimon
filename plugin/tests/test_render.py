@@ -192,6 +192,34 @@ def test_render_status_rich_smoke(monkeypatch, capsys):
     assert "success" in out
 
 
+def test_render_status_capture_alarm_plain_at_top(capsys):
+    # The #265 FAIL banner leads the output and carries all three fix hints.
+    data = _status_data()
+    data["capture_alarm"] = {"verdict": "fail", "spawns": 4, "checkpoints": 0,
+                             "window_days": 14}
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == (
+        "FAIL — silent capture failure: 4 sessions observed in the last 14 days, "
+        "0 checkpoints written")
+    assert "run `daimon heal`" in out
+    assert "inspect serialize.log" in out
+    assert "run `daimon configure --test`" in out
+
+
+def test_render_status_capture_alarm_rich_smoke(monkeypatch, capsys):
+    # Rich path renders the same banner (content-only, styling stripped).
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = _status_data()
+    data["capture_alarm"] = {"verdict": "fail", "spawns": 1, "checkpoints": 0,
+                             "window_days": 14}
+    render.render_status(data)
+    out = capsys.readouterr().out
+    # Singular session wording, plus the fix hints.
+    assert "1 session observed" in out
+    assert "daimon configure --test" in out
+
+
 def _outstanding_sample():
     return [
         {"sid": "S-A", "kind": "error", "class": "healable", "age": 180,
