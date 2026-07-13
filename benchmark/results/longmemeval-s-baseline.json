@@ -1,0 +1,134 @@
+{
+  "config": {
+    "harness_version": "1.0.0",
+    "suite": "longmemeval-s",
+    "generated_at": "2026-07-12T23:56:00Z",
+    "git_commit": "889d1ee",
+    "backend": "litellm",
+    "backend_configured": "auto",
+    "model": "claude-haiku-4-5-via-meridian",
+    "prompt_version": "D-013",
+    "seed": 0,
+    "sample": 5,
+    "k": 5,
+    "recall_depth": 50,
+    "min_messages": "2",
+    "carry": "off",
+    "workers": 6,
+    "dataset_file": "longmemeval_s_cleaned.json",
+    "dataset_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
+  },
+  "metrics": {
+    "k": 5,
+    "questions_total": 5,
+    "questions_scored": 5,
+    "questions_abstention": 0,
+    "recall_at_5": 0.8,
+    "hit_at_5": 1.0,
+    "mrr": 0.85,
+    "avg_injected_tokens": 149.6
+  },
+  "cost": {
+    "llm_serialize_calls": 192,
+    "cache_hits": 51,
+    "cache_misses": 193,
+    "wall_seconds": 3337.3
+  },
+  "per_question": [
+    {
+      "question_id": "1c549ce4",
+      "question_type": "multi-session",
+      "abstention": false,
+      "n_haystack": 45,
+      "n_gold": 2,
+      "serialize": {
+        "serialized": 45,
+        "cached": 0,
+        "too_short": 0,
+        "failed": 0,
+        "indexed": 45
+      },
+      "n_retrieved_sessions": 21,
+      "recall_at_5": 1.0,
+      "hit_at_5": true,
+      "mrr": 1.0,
+      "injected_tokens": 111
+    },
+    {
+      "question_id": "55241a1f",
+      "question_type": "multi-session",
+      "abstention": false,
+      "n_haystack": 49,
+      "n_gold": 2,
+      "serialize": {
+        "serialized": 49,
+        "cached": 0,
+        "too_short": 0,
+        "failed": 0,
+        "indexed": 49
+      },
+      "n_retrieved_sessions": 26,
+      "recall_at_5": 1.0,
+      "hit_at_5": true,
+      "mrr": 1.0,
+      "injected_tokens": 205
+    },
+    {
+      "question_id": "5a4f22c0",
+      "question_type": "knowledge-update",
+      "abstention": false,
+      "n_haystack": 49,
+      "n_gold": 2,
+      "serialize": {
+        "serialized": 49,
+        "cached": 0,
+        "too_short": 0,
+        "failed": 0,
+        "indexed": 49
+      },
+      "n_retrieved_sessions": 25,
+      "recall_at_5": 0.5,
+      "hit_at_5": true,
+      "mrr": 1.0,
+      "injected_tokens": 142
+    },
+    {
+      "question_id": "5c40ec5b",
+      "question_type": "knowledge-update",
+      "abstention": false,
+      "n_haystack": 51,
+      "n_gold": 2,
+      "serialize": {
+        "serialized": 0,
+        "cached": 51,
+        "too_short": 0,
+        "failed": 0,
+        "indexed": 51
+      },
+      "n_retrieved_sessions": 31,
+      "recall_at_5": 0.5,
+      "hit_at_5": true,
+      "mrr": 0.25,
+      "injected_tokens": 152
+    },
+    {
+      "question_id": "fea54f57",
+      "question_type": "single-session-assistant",
+      "abstention": false,
+      "n_haystack": 50,
+      "n_gold": 1,
+      "serialize": {
+        "serialized": 49,
+        "cached": 0,
+        "too_short": 1,
+        "failed": 0,
+        "indexed": 49
+      },
+      "n_retrieved_sessions": 25,
+      "recall_at_5": 1.0,
+      "hit_at_5": true,
+      "mrr": 1.0,
+      "injected_tokens": 138
+    }
+  ]
+}

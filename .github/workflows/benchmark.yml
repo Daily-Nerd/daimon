@@ -1,0 +1,65 @@
+name: benchmark
+
+# Manual only — the LongMemEval harness serializes many sessions through an LLM
+# backend, which costs real money and minutes. Never on push/PR. Run it to
+# refresh a baseline (e.g. around a release) and download the result artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "Questions to run (<=0 = full 500)"
+        required: false
+        default: "50"
+      seed:
+        description: "Sampling seed"
+        required: false
+        default: "0"
+      workers:
+        description: "Concurrent serialize calls per question"
+        required: false
+        default: "6"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    env:
+      # Backend is read from daimon's own config env vars. Set these as repo
+      # secrets; the harness records the model but never writes the key/URL.
+      DAIMON_LLM_API_KEY: ${{ secrets.DAIMON_LLM_API_KEY }}
+      DAIMON_LLM_MODEL: ${{ secrets.DAIMON_LLM_MODEL }}
+      DAIMON_LLM_BASE_URL: ${{ secrets.DAIMON_LLM_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugin/uv.lock
+
+      - name: Guard — backend must be configured
+        run: |
+          if [ -z "$DAIMON_LLM_API_KEY" ]; then
+            echo "::error::DAIMON_LLM_API_KEY secret is not set — cannot run the benchmark"
+            exit 1
+          fi
+
+      - name: Run LongMemEval-S harness
+        run: |
+          uv run --extra dev python -m tests.bench.run \
+            --suite longmemeval-s \
+            --sample "${{ github.event.inputs.sample }}" \
+            --seed "${{ github.event.inputs.seed }}" \
+            --workers "${{ github.event.inputs.workers }}"
+
+      - name: Upload result artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: longmemeval-s-result
+          path: benchmark/results/*.json
+          if-no-files-found: warn
