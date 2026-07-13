@@ -1,0 +1,5 @@
+# Downloaded dataset (~277 MB) — fetched on demand, never vendored (#267).
+.data/
+# Serialized-checkpoint cache and per-question scratch stores.
+.cache/
+.work/
