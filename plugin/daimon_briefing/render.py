@@ -444,6 +444,8 @@ def _plain_status(data: dict) -> None:
         print(health["verdict"])
         for w in health["warnings"][1:]:
             print(f"  ⚠ {w}")
+    if data.get("hook_drift"):
+        print("⚠ installed hooks out of date — run daimon hooks status")
     if data.get("team"):
         print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
@@ -520,6 +522,9 @@ def _rich_status(data: dict) -> None:
         console.print(f"[{style}]{health['verdict']}[/{style}]")
         for w in health["warnings"][1:]:
             console.print(f"  ⚠ {w}")
+    if data.get("hook_drift"):
+        console.print("[red]⚠ installed hooks out of date — "
+                      "run daimon hooks status[/red]")
     if data.get("team"):
         console.print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
@@ -695,6 +700,27 @@ def render_hooks_list(lines) -> None:
 
 
 def render_hooks_install(lines) -> None:
+    _render_lines(lines)
+
+
+def render_hooks_status(report) -> None:
+    """Per-host, per-file drift audit (#266). NOT INSTALLED hosts get one line;
+    installed hosts list each file's verdict, the registration state where the
+    host uses one, and a single fix hint when anything drifted."""
+    lines: list[str] = []
+    for h in report:
+        if not h["installed"]:
+            lines.append(f"{h['host']}: NOT INSTALLED")
+            continue
+        lines.append(f"{h['host']}  ({h['dir']})")
+        for f in h["files"]:
+            lines.append(f"  {f['status']:<8} {f['name']}")
+        if h["registration"] is not None:
+            lines.append(f"  registration: {h['registration']}")
+        if h["drift"]:
+            lines.append(f"  → fix: daimon hooks install {h['host']}")
+    if not lines:
+        lines.append("no packaged hook hosts")
     _render_lines(lines)
 
 

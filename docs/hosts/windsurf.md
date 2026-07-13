@@ -20,7 +20,9 @@ so a standalone host adapter can scrub secrets at its own write sites
 venv-only `daimon_briefing` package — a test keeps this copy byte-identical
 to the canonical `plugin/daimon_briefing/redact.py`. Re-run `daimon hooks
 install windsurf` after every `daimon` upgrade so the installed scripts (and
-the bundled `redact.py`) stay in sync with the installed CLI.
+the bundled `redact.py`) stay in sync with the installed CLI. To check whether
+they have drifted, run `daimon hooks status` — it reports each installed copy as
+CURRENT/STALE/MISSING against the packaged version and exits non-zero on drift.
 
 Point Windsurf's Cascade hooks config (user-level JSON — see
 [the Cascade hooks docs](https://docs.windsurf.com/windsurf/cascade/hooks))
