@@ -31,3 +31,8 @@ Thumbs.db
 
 # scar false-positive telemetry — local-only, narrates private sessions by construction
 .scars/candidates/fp-log.txt
+
+# local brand exploration — not ready for the public repo
+logos/
+
+.codex/
