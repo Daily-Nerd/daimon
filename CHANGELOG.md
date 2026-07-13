@@ -5,6 +5,30 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0](https://github.com/Daily-Nerd/daimon/compare/v0.15.0...v0.16.0) (2026-07-13)
+
+
+### Features
+
+* **hooks:** daimon hooks status — detect stale installed hook copies ([#271](https://github.com/Daily-Nerd/daimon/issues/271)) ([917b731](https://github.com/Daily-Nerd/daimon/commit/917b731d0ec8e526d57d22aa3dee0762c0cb86b9))
+* **recall:** warm the index at write time — rebuild off the first-prompt path ([#248](https://github.com/Daily-Nerd/daimon/issues/248)) ([1f05f46](https://github.com/Daily-Nerd/daimon/commit/1f05f46bdd557a297728aef86c0a08446bedc318))
+* **recall:** zero-match scoped search reports where matches exist ([#260](https://github.com/Daily-Nerd/daimon/issues/260)) ([8a169cb](https://github.com/Daily-Nerd/daimon/commit/8a169cb78ca4c9b5bf62799d7458375fb44c0d1b))
+* **skill:** teach agents to use memory — recall on reference, resolve to close loops ([#258](https://github.com/Daily-Nerd/daimon/issues/258)) ([8b6da55](https://github.com/Daily-Nerd/daimon/commit/8b6da55801d94b05f6a3fb09ffef7fa9e96d00d7))
+* **status:** silent-capture alarm — sessions observed vs checkpoints written ([#270](https://github.com/Daily-Nerd/daimon/issues/270)) ([889d1ee](https://github.com/Daily-Nerd/daimon/commit/889d1ee0e77947fc5b699cd6448c5bf51c15d1d0))
+
+
+### Bug Fixes
+
+* **hooks:** package Codex lifecycle hooks in `daimon hooks install` ([#263](https://github.com/Daily-Nerd/daimon/issues/263)) ([2b57c2a](https://github.com/Daily-Nerd/daimon/commit/2b57c2a8fba2df63906040eac5a429b2cdf3e521)), closes [#262](https://github.com/Daily-Nerd/daimon/issues/262)
+* **llm:** backend failure log carries stdout too — CLIs that error on stdout no longer leave a bare header ([#251](https://github.com/Daily-Nerd/daimon/issues/251)) ([9af0559](https://github.com/Daily-Nerd/daimon/commit/9af055973e2e5aa610114a923a5b3d2136c792b8))
+* **recall:** index liveness fold reuses store.is_resolved — one rule, no drift ([#256](https://github.com/Daily-Nerd/daimon/issues/256)) ([e63c068](https://github.com/Daily-Nerd/daimon/commit/e63c068fdc619b323953c52d9af1c5ee61ef266f))
+* **recall:** resolve events invalidate the index — events.jsonl joins the fingerprint ([#247](https://github.com/Daily-Nerd/daimon/issues/247)) ([ed66be2](https://github.com/Daily-Nerd/daimon/commit/ed66be27db8728a6fa2f00ee354a75cc4cd5d29a))
+
+
+### Documentation
+
+* document serializer chunking knobs in configuration.md ([#253](https://github.com/Daily-Nerd/daimon/issues/253)) ([da93321](https://github.com/Daily-Nerd/daimon/commit/da93321d4b321040a989e2e8f5abd8463459d226))
+
 ## [0.15.0](https://github.com/Daily-Nerd/daimon/compare/v0.14.0...v0.15.0) (2026-07-11)
 
 
