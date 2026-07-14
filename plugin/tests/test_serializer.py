@@ -722,14 +722,15 @@ def test_validation_retry_note_restates_copy_paste_contract(
     assert "elisions marked with `...`" in second
 
 
-def test_prompt_version_is_d013():
+def test_prompt_version_is_d014():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
     # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
     # transcript-language preservation rule). D-012 -> D-013 (#208: verbatim
-    # quote copy-paste discipline rule). Pre-bump checkpoints firing the
+    # quote copy-paste discipline rule). D-013 -> D-014 (#287: external-
+    # artifact identifier rule). Pre-bump checkpoints firing the
     # format_version mismatch warning (#93) is DESIRED behavior.
-    assert serializer.PROMPT_VERSION == "D-013"
+    assert serializer.PROMPT_VERSION == "D-014"
 
 
 def test_prompts_preserve_transcript_language():
@@ -1114,3 +1115,16 @@ def test_serialize_stamps_backend_when_model_lookup_raises(
     assert ckpt is not None
     assert ckpt["llm_backend"] == "litellm"
     assert "llm_model" not in ckpt
+
+
+def test_serialize_prompt_has_external_artifact_identifier_rule():
+    # #287: a briefing carried a fix perfectly but not the upstream repo's
+    # name — "issue #5" without a repo is half a pointer a future session
+    # cannot resolve. The serializer must pull an artifact's most specific
+    # identifier from anywhere in the transcript into the item text, and
+    # never invent one the transcript does not contain.
+    sys = serializer.SERIALIZE_SYS
+    assert "EXTERNAL ARTIFACT IDENTIFIERS" in sys
+    assert "MOST SPECIFIC identifier" in sys
+    assert "half a pointer" in sys
+    assert "Never invent an identifier" in sys

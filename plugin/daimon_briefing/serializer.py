@@ -29,10 +29,13 @@ log = logging.getLogger(__name__)
 # Serialize-prompt version. Bumped D-008 -> D-010 (#101: emotional_valence
 # dropped from the schema; D-009 is taken by the host-adapter decision).
 # D-012 -> D-013 (#208: quote copy-paste discipline rule).
+# D-013 -> D-014 (#287: external-artifact identifier rule — "issue #5"
+# without a repo is half a pointer; capture the most specific identifier
+# the transcript states, never invent one).
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-013"
+PROMPT_VERSION = "D-014"
 
 
 class SerializeError(Exception):
@@ -142,6 +145,16 @@ RULES — follow every one exactly; this is the point of the exercise:
     labels inside a quote. If you cannot copy the exact characters of a contiguous span
     (or spans joined by `...`), use trust="inferred" with an empty quote instead —
     a correct inferred beats a downgraded verbatim.
+
+18. EXTERNAL ARTIFACT IDENTIFIERS: when an item references an external artifact — a repo,
+    issue, PR, package, ticket, deploy target — include that artifact's MOST SPECIFIC identifier
+    stated anywhere in the transcript in the item's `text`: repo slug (owner/name), issue/PR as
+    owner/name#123 or its full URL, package name with version, ticket key. "File issue #5
+    upstream" is half a pointer — a future session cannot resolve which repo it means; "file
+    issue #5 in acme/widget-lib" is whole. The identifier may come from a DIFFERENT part of the
+    transcript than the sentence you are extracting (the quote rules still apply to `quote`;
+    this rule is about `text`). Never invent an identifier the transcript does not contain;
+    if only a vague name was ever stated, keep the vague name.
 
 Schema shape:
 {
