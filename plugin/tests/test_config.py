@@ -44,6 +44,11 @@ def test_timeout_default_and_override(monkeypatch):
     assert config.timeout_seconds() == 45
 
 
+def test_timeout_garbage_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("DAIMON_TIMEOUT", "not-an-int")
+    assert config.timeout_seconds() == 420
+
+
 def test_llm_env_falls_back_to_litellm(monkeypatch):
     monkeypatch.delenv("DAIMON_LLM_BASE_URL", raising=False)
     monkeypatch.setenv("LITELLM_BASE_URL", "http://fallback:4000")
