@@ -35,8 +35,11 @@ def test_min_messages_default_and_override(monkeypatch):
 
 
 def test_timeout_default_and_override(monkeypatch):
+    # #284: default must cover the measured production range of the
+    # zero-config claude backend (74s-25min observed; 120s killed real
+    # first-serialize calls). 420 is the field-derived floor.
     monkeypatch.delenv("DAIMON_TIMEOUT", raising=False)
-    assert config.timeout_seconds() == 120
+    assert config.timeout_seconds() == 420
     monkeypatch.setenv("DAIMON_TIMEOUT", "45")
     assert config.timeout_seconds() == 45
 
