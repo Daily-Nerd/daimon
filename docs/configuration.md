@@ -32,7 +32,7 @@ defaults calibrated against measured behavior, not user-facing configuration.
 | `DAIMON_ENV_FILE` | `~/.daimon/env` | Path to the env file that backs every other variable. Read from the process env only (it names the file, so it can't live inside it). |
 | `DAIMON_PROJECT_DIR` | unset | Working directory of the session being briefed or serialized, used to route per-project checkpoints. Hooks pass the host's cwd through it; unset means the project is unknown and daimon falls back to the global pointer. |
 | `DAIMON_MIN_MESSAGES` | `10` | Minimum message count before a session is worth serializing. Shorter sessions are skipped. |
-| `DAIMON_TIMEOUT` | `120` | Seconds a serialize subprocess may run before it is timed out. |
+| `DAIMON_TIMEOUT` | `420` | Total serialize budget in seconds, shared across retry attempts (per-attempt socket timeouts are capped to the remaining budget). Real serialize/merge calls on gateway and CLI backends run 74s–25min; keep ≥420 or slow calls and retries cannot fit. |
 | `DAIMON_HUNG_AFTER` | `1800` | Seconds past which a serialize spawn that produced no result line is treated as hung/killed rather than still running. Default 30 min sits safely beyond a slow run (production serializes take 4–25 min). |
 
 ## Checkpoint store & GC

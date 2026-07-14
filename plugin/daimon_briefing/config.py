@@ -407,10 +407,15 @@ def min_messages() -> int:
 
 
 def timeout_seconds() -> int:
+    """Total serialize budget (seconds) — shared across retry attempts, with
+    per-attempt socket timeouts capped to the remaining budget. Real serialize
+    and merge calls on the zero-config claude backend run 74s-25min in
+    production (#284); 420 is the field-derived floor — a lower budget cannot
+    fit even one slow call, let alone a retry."""
     try:
-        return int(_get("DAIMON_TIMEOUT") or "120")
+        return int(_get("DAIMON_TIMEOUT") or "420")
     except ValueError:
-        return 120
+        return 420
 
 
 def hung_after_seconds() -> int:
