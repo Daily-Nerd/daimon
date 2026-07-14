@@ -154,12 +154,47 @@ checkpoints already sitting under the old path stay visible after the move.
 A broken or unparseable `daimon-team.toml` never blocks a write: the mapping
 is treated as absent (resolution falls through to the origin-derived
 fallback) and the parse error is surfaced as a warning in `daimon team
-status`.
+status`. Membership (below) is the one exception — it fails **closed**, so a
+paste error can never open the remote to the whole machine.
 
 **Legacy note:** sidecars written before this layout keep their flat
 `authors/<author-slug>/` files. That era stays readable forever — reads fan in
 across both layouts and there is no migration; new checkpoints simply start
 landing under `projects/` once a project identity resolves.
+
+## Which projects sync: the scope allowlist (default-closed)
+
+`DAIMON_TEAM=1` is machine-global, but a synced remote only accepts
+checkpoints from projects it has **granted membership**. Everything else stays
+in the machine-local mirror (`<team_dir>/local/`) — withheld from the remote,
+never lost. Without this gate, one enabled remote would receive every project
+on the machine, including personal ones.
+
+A project is in scope for a remote when any of these holds:
+
+1. Its origin URL is listed under the sidecar's top-level `[scope]` table:
+
+   ```toml
+   [scope]
+   repos = ["git@github.com:org/finance-svc.git"]
+   ```
+
+2. Its origin URL is mapped under any `[projects.*]` table — a repo the
+   architect placed in the squad tree is a member, so existing mapped
+   sidecars keep syncing with no new configuration.
+3. `DAIMON_TEAM_PROJECT` is set on the machine — explicit local intent.
+
+`daimon team init` seeds a fresh (empty) remote with a `daimon-team.toml`
+scoping the team to the project you ran it from, so new setups need no extra
+step. Joining an established remote never writes config — the architect owns
+the file after birth.
+
+**Migrating an existing sidecar** (created before scoping existed): add the
+`[scope]` block above — one line per repo that should sync — commit, and
+push. Until then `daimon team status` shows `scope: none — this remote
+receives no checkpoints`. If foreign project trees already accumulated under
+`projects/`, remove them with plain `git rm -r projects/<path>` + push
+(history rewrite optional; the files remain in git history without it).
 
 ## Reading teammates
 
@@ -169,7 +204,8 @@ landing under `projects/` once a project identity resolves.
 - **`daimon recall <query>`** — full-text (SQLite FTS5) search over your local
   history *and* the team's.
 - **`daimon team status`** — per-remote freshness, your own unpushed checkpoint
-  count, and the authors seen in the sidecar.
+  count, the authors seen in the sidecar, and the scope allowlist (which
+  repos may sync into each remote).
 
 Teammates' checkpoints are shown within a read-time age window controlled by
 `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0` means keep everything). Aging out

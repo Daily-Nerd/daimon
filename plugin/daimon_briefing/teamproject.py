@@ -86,22 +86,32 @@ def normalize_repo_url(url) -> str | None:
     return s.strip("/").lower() or None
 
 
-def _parse_config(path: Path) -> tuple[list[tuple[tuple[str, ...], set[str]]], str | None]:
-    """One config file -> ([(logical segments, normalized repo urls)], error).
+def _parse_config(
+    path: Path,
+) -> tuple[list[tuple[tuple[str, ...], set[str]]], set[str], str | None]:
+    """One config file -> ([(logical segments, normalized repo urls)],
+    normalized [scope] repos, error).
 
-    Absent file = ([], None). Broken TOML or an unreadable file = ([], message)
-    — the config is treated as absent (fail open) but the error is surfaced.
-    Junk shapes inside valid TOML are skipped entry-by-entry, never fatal."""
+    Absent file = ([], set(), None). Broken TOML or an unreadable file =
+    ([], set(), message) — the config is treated as absent (fail open for
+    path resolution, fail CLOSED for scope — see in_scope) but the error is
+    surfaced. Junk shapes inside valid TOML are skipped entry-by-entry,
+    never fatal."""
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return [], None
+        return [], set(), None
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        return [], f"{CONFIG_NAME} unreadable ({exc}) — mapping ignored"
+        return [], set(), f"{CONFIG_NAME} unreadable ({exc}) — mapping ignored"
+    # #279: top-level [scope] repos — the per-remote membership allowlist.
+    scope: set[str] = set()
+    scope_table = data.get("scope")
+    if isinstance(scope_table, dict) and isinstance(scope_table.get("repos"), list):
+        scope = {n for n in (normalize_repo_url(r) for r in scope_table["repos"]) if n}
     entries: list[tuple[tuple[str, ...], set[str]]] = []
     projects = data.get("projects")
     if not isinstance(projects, dict):
-        return [], None
+        return [], scope, None
     for logical, table in projects.items():
         segs = logical_segments(logical)
         repos = table.get("repos") if isinstance(table, dict) else None
@@ -110,14 +120,14 @@ def _parse_config(path: Path) -> tuple[list[tuple[tuple[str, ...], set[str]]], s
         normalized = {n for n in (normalize_repo_url(r) for r in repos) if n}
         if normalized:
             entries.append((segs, normalized))
-    return entries, None
+    return entries, scope, None
 
 
 def config_error(sidecar: Path) -> str | None:
     """Parse error for a sidecar's daimon-team.toml, or None (missing/valid).
     `daimon team status` surfaces this — a broken mapping fails open silently
     on the write path and must not stay invisible."""
-    _entries, err = _parse_config(Path(sidecar) / CONFIG_NAME)
+    _entries, _scope, err = _parse_config(Path(sidecar) / CONFIG_NAME)
     return err
 
 
@@ -131,7 +141,7 @@ def _config_entries() -> list[tuple[tuple[str, ...], set[str]]]:
     except OSError:
         return []
     for d in subdirs:
-        rows, _err = _parse_config(d / CONFIG_NAME)
+        rows, _scope, _err = _parse_config(d / CONFIG_NAME)
         entries.extend(rows)
     return entries
 
@@ -207,3 +217,57 @@ def _candidates(project_dir) -> list[tuple[str, ...]]:
     # Tier 4: nothing resolved → [] → flat era. Dedupe preserves tier order.
     seen: set[tuple[str, ...]] = set()
     return [s for s in out if not (s in seen or seen.add(s))]
+
+
+# ---- #279: per-remote scope — default-closed membership for synced remotes ----
+
+# origin probes are bounded but not free; one per (project, process) is the
+# same budget the read_candidates cache already grants the resolver.
+_origin_cache: dict[str, str | None] = {}
+
+
+def _cached_origin(project_dir) -> str | None:
+    key = str(project_dir or "")
+    if key not in _origin_cache:
+        _origin_cache[key] = normalize_repo_url(_origin_url(project_dir)) \
+            if project_dir else None
+    return _origin_cache[key]
+
+
+def _membership(sidecar) -> set[str]:
+    """The normalized repo allowlist ONE sidecar grants: its [scope] repos
+    plus every repo the architect mapped in [projects.*] (a mapped repo IS a
+    member — established sidecars keep syncing with zero new config)."""
+    entries, scope, _err = _parse_config(Path(sidecar) / CONFIG_NAME)
+    allowed = set(scope)
+    for _segs, repos in entries:
+        allowed |= repos
+    return allowed
+
+
+def in_scope(project_dir, sidecar) -> bool:
+    """May this project's checkpoints enter this synced remote? Default
+    CLOSED: membership must be granted by the sidecar's daimon-team.toml
+    ([scope] repos or a [projects.*] mapping) or stated explicitly on the
+    machine via DAIMON_TEAM_PROJECT. Broken/absent config, no origin,
+    unlisted origin — all deny. Never raises; the write path degrades to the
+    local mirror, so a deny withholds, it never loses."""
+    try:
+        if config.team_project():
+            return True
+        allowed = _membership(sidecar)
+        if not allowed:
+            return False
+        origin = _cached_origin(project_dir)
+        return origin is not None and origin in allowed
+    except Exception:  # membership bugs must deny, never leak or break writes
+        return False
+
+
+def scope_entries(sidecar) -> list[str]:
+    """Sorted normalized repo allowlist for `daimon team status` — the one
+    place a human can see which projects a remote accepts. Never raises."""
+    try:
+        return sorted(_membership(sidecar))
+    except Exception:
+        return []
