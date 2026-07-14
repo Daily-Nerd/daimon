@@ -16,9 +16,36 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 HOOK_DIR = Path(__file__).parents[2] / "hook"
 HOOK = HOOK_DIR / "daimon-windsurf-hooks.py"
 VENV_BIN = Path(sys.executable).parent
+
+
+def _lingering_finalizers():
+    """Command lines of any live detached `--finalize` sleepers of this hook."""
+    out = subprocess.run(["ps", "-eo", "command"], capture_output=True, text=True)
+    return [line for line in out.stdout.splitlines()
+            if "daimon-windsurf-hooks.py" in line and "--finalize" in line]
+
+
+@pytest.fixture(autouse=True)
+def _no_finalizer_leak():
+    """#275 sentinel: no test may leave a detached `--finalize` sleeper behind.
+
+    The sleeper is spawned with start_new_session, so it survives both the hook
+    process AND pytest — a test that arms one with the default 600s quiet
+    period leaves it running long after the tmp transcript it points at is
+    gone. Finalizer tests use sub-second quiet periods; the grace poll below
+    only absorbs a just-woken child finishing its exit."""
+    yield
+    deadline = time.monotonic() + 5.0
+    leaked = _lingering_finalizers()
+    while leaked and time.monotonic() < deadline:
+        time.sleep(0.1)
+        leaked = _lingering_finalizers()
+    assert not leaked, "leaked --finalize processes:\n" + "\n".join(leaked)
 
 
 def _load_hook_module():
@@ -62,6 +89,11 @@ def _run(payload, tmp_path, extra_env=None, cwd=None):
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}",
         "HOME": str(tmp_path),
+        # Finalizer disabled by default (#275): a post event otherwise arms a
+        # DETACHED sleeper with the production 600s quiet period — it outlives
+        # the test, pytest, and the tmp transcript it points at. Tests that
+        # exercise the finalizer opt back in with an explicit sub-second value.
+        "DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0",
     }
     if extra_env:
         env.update(extra_env)
@@ -513,6 +545,80 @@ def test_pre_user_prompt_defuses_previously_armed_sleeper(tmp_path):
     log = tmp_path / ".daimon" / "logs" / "serialize.log"
     assert "windsurf-finalizer:" not in (
         log.read_text(encoding="utf-8") if log.exists() else "")
+
+
+# ---- #275: a sleeper whose transcript vanished must exit fast and quietly ----
+#
+# The transcript path is captured at arm time; if it is gone by the time the
+# sleeper looks (session state cleaned up, tmp dir removed), nothing can ever
+# be serialized from it. The sleeper must not hold its full quiet period — the
+# production default is 600s — pointing at a dead path.
+
+
+def _finalize_env(tmp_path, fake_bin, extra=None):
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(tmp_path),
+    }
+    if extra:
+        env.update(extra)
+    return env
+
+
+def _serialize_log_lines(tmp_path):
+    log = tmp_path / ".daimon" / "logs" / "serialize.log"
+    if not log.exists():
+        return []
+    return [ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def test_finalize_missing_transcript_exits_fast_with_single_line(tmp_path):
+    # Deliberately NO quiet-period override: the production default is 600s,
+    # so returning within the subprocess timeout proves the sleeper bailed
+    # out BEFORE the sleep instead of holding a dead path for 10 minutes.
+    fake_bin, capture = _fake_cli(tmp_path)
+    missing = tmp_path / "already-gone.md"
+    proc = subprocess.run(
+        [sys.executable, str(HOOK), "--finalize", TRAJ, str(missing), "12345"],
+        capture_output=True, text=True,
+        env=_finalize_env(tmp_path, fake_bin), timeout=30,
+    )
+    assert proc.returncode == 0
+    lines = _serialize_log_lines(tmp_path)
+    assert len(lines) == 1
+    assert "windsurf-finalizer: transcript gone" in lines[0]
+    assert TRAJ in lines[0] and str(missing) in lines[0]
+    assert not capture.exists() or "serialize" not in capture.read_text()
+
+
+def test_finalize_transcript_deleted_mid_sleep_exits_with_single_line(tmp_path):
+    # The suite-leak shape: teardown removes the transcript WHILE the sleeper
+    # is inside its quiet period. At wake — still owning the stamp — it must
+    # log its one line and exit instead of serializing a dead path.
+    fake_bin, capture = _fake_cli(tmp_path)
+    transcript = tmp_path / "mid-sleep.md"
+    transcript.write_text("**user**: hola\n\n", encoding="utf-8")
+    state = tmp_path / ".daimon" / "windsurf"
+    state.mkdir(parents=True)
+    stamp = state / f"{TRAJ}.last-activity"
+    stamp.write_text(str(int(time.time())), encoding="utf-8")
+    armed_ns = stamp.stat().st_mtime_ns  # this sleeper owns finality at wake
+    proc = subprocess.Popen(
+        [sys.executable, str(HOOK), "--finalize", TRAJ,
+         str(transcript), str(armed_ns)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env=_finalize_env(
+            tmp_path, fake_bin,
+            {"DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS": "0.6"}),
+    )
+    time.sleep(0.2)  # inside the quiet period — past the pre-sleep check
+    transcript.unlink()
+    assert proc.wait(timeout=30) == 0
+    lines = _serialize_log_lines(tmp_path)
+    assert len(lines) == 1
+    assert "windsurf-finalizer: transcript gone" in lines[0]
+    assert not capture.exists() or "serialize" not in capture.read_text()
 
 
 def test_pre_user_prompt_docs_shape_appends_user_turn(tmp_path):
