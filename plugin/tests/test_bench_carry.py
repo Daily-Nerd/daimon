@@ -173,11 +173,12 @@ class TestScoringRule:
             metrics.ranked_sessions(rows)
 
     def test_end_to_end_no_double_count_of_the_gold_session(self, tmp_path):
-        """The live double-counting hazard: the later session's checkpoint hosts
+        """The live attribution hazard: the later session's checkpoint hosts
         a verbatim carried copy of the gold item, indexed under the LATER
-        session's id — and it outranks gold's own row (frontier + recency
-        tiebreaks). Naive scoring credits the wrong session; the attribution
-        rule credits the origin, once."""
+        session's id — and since #288 dedupe (newest occurrence wins) that
+        carried copy is the item's SOLE surviving row. Naive scoring credits
+        the wrong session and gold is entirely invisible to it; only the
+        attribution rule credits the origin."""
         q = _question(["goldmarker", "coffeemarker"])
         env = adapter._question_env(tmp_path / "runs", q["question_id"], "2",
                                     carry_on=True)
@@ -197,10 +198,11 @@ class TestScoringRule:
                    if i.get("carried_from")]
         assert [i["carried_from"] for i in carried] == ["sess_gold"]
         assert carried[0]["text"] == _OQ["goldmarker"]
-        # naive scoring ranks the HOSTING session first (the hazard is real)
+        # naive scoring credits only the HOSTING session: #288 dedupe keeps
+        # the newest occurrence, so the carried copy is the item's sole row
+        # and gold never appears under its own id (the hazard got stronger)
         naive = metrics.ranked_sessions(results)
-        assert naive[0] == "sess_coffee"
-        assert "sess_gold" in naive
+        assert naive == ["sess_coffee"]
         # honest scoring: the carried copy is attributable to gold — gold ranks
         # first, once, and the host earns nothing for gold's evidence
         honest = metrics.attributed_sessions(results, attribution)
