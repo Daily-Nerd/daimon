@@ -561,6 +561,30 @@ def _match_expr(query: str, join: str = " ") -> str | None:
     return join.join(parts) or None
 
 
+def _dedupe_rows(rows: list[dict], want_n: int) -> list[dict]:
+    """#288: one result per distinct item. Key (kind, author, text) — the
+    same words from two authors is attribution, not duplication. Among
+    duplicates the NEWEST row (max created) supplies the result: its
+    supersession/frontier stamps are the current state. Position is the
+    group's best-ranked appearance, so relevance order survives. The
+    replace branch matters when the newest copy sorts BELOW an older one
+    (e.g. the newest is superseded and the superseded-last ordering demotes
+    it) — content still comes from the newest, position from the best."""
+    by_key: dict[tuple, int] = {}
+    out: list[dict] = []
+    for row in rows:
+        key = (row.get("kind"), row.get("author"),
+               " ".join(str(row.get("text") or "").split()))
+        slot = by_key.get(key)
+        if slot is not None:
+            if (row.get("created") or 0) > (out[slot].get("created") or 0):
+                out[slot] = row
+            continue
+        by_key[key] = len(out)
+        out.append(row)
+    return out[:want_n]
+
+
 def search(query: str, project_dir=None, all_projects: bool = False,
            limit: int = 20, slug: str | None = None) -> list[dict]:
     """FTS5 MATCH over the (auto-refreshed) index. Live items first, then by
@@ -622,33 +646,13 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         finally:
             conn.close()
 
-    def _dedupe(rows: list[dict]) -> list[dict]:
-        """#288: one result per distinct item. Key (kind, author, text) —
-        the same words from two authors is attribution, not duplication.
-        Among duplicates the NEWEST row (max created) supplies the result:
-        its supersession/frontier stamps are the current state. Position is
-        the group's best-ranked appearance, so relevance order survives."""
-        by_key: dict[tuple, int] = {}
-        out: list[dict] = []
-        for row in rows:
-            key = (row.get("kind"), row.get("author"),
-                   " ".join(str(row.get("text") or "").split()))
-            slot = by_key.get(key)
-            if slot is not None:
-                if (row.get("created") or 0) > (out[slot].get("created") or 0):
-                    out[slot] = row
-                continue
-            by_key[key] = len(out)
-            out.append(row)
-        return out[:want_n]
-
     def _query() -> list[dict]:
         rows = _run(expr)
         if not rows:
             or_expr = _match_expr(query, " OR ")
             if or_expr != expr:  # differs only when there are >=2 tokens
                 rows = _run(or_expr)
-        return _dedupe(rows)
+        return _dedupe_rows(rows, want_n)
 
     try:
         return _query()

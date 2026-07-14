@@ -1429,3 +1429,35 @@ def test_search_dedupe_backfills_to_limit(tmp_checkpoint_dir, monkeypatch):
     hits = recall.search("numbat retries", all_projects=True, limit=2)
     assert len(hits) == 2
     assert len({h["text"] for h in hits}) == 2
+
+
+def test_dedupe_rows_replace_branch_newest_arrives_later():
+    # The newest copy can sort BELOW an older one (superseded-last ordering
+    # demotes a superseded newest copy) — the survivor must still be the
+    # newest row's content, sitting at the older row's (better) position.
+    older = {"kind": "decision", "author": "ada", "text": "gecko retry policy",
+             "created": 100.0, "session_id": "S-old"}
+    newer = {"kind": "decision", "author": "ada", "text": "gecko retry policy",
+             "created": 200.0, "session_id": "S-new"}
+    other = {"kind": "decision", "author": "ada", "text": "gecko cache policy",
+             "created": 150.0, "session_id": "S-mid"}
+    out = recall._dedupe_rows([older, other, newer], want_n=10)
+    assert [r["session_id"] for r in out] == ["S-new", "S-mid"]  # position kept
+
+
+def test_dedupe_rows_older_duplicate_is_skipped():
+    newer = {"kind": "decision", "author": "ada", "text": "gecko retry policy",
+             "created": 200.0, "session_id": "S-new"}
+    older = {"kind": "decision", "author": "ada", "text": "gecko retry policy",
+             "created": 100.0, "session_id": "S-old"}
+    out = recall._dedupe_rows([newer, older], want_n=10)
+    assert [r["session_id"] for r in out] == ["S-new"]
+
+
+def test_dedupe_rows_missing_created_treated_as_oldest():
+    stamped = {"kind": "q", "author": "a", "text": "t", "created": 1.0,
+               "session_id": "S-stamped"}
+    unstamped = {"kind": "q", "author": "a", "text": "t",
+                 "session_id": "S-unstamped"}
+    out = recall._dedupe_rows([unstamped, stamped], want_n=10)
+    assert out[0]["session_id"] == "S-stamped"
