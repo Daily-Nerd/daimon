@@ -389,6 +389,15 @@ def _arm_finalizer(trajectory_id: str, transcript_path) -> None:
         pass
 
 
+def _log_transcript_gone(trajectory_id: str, transcript_path: str) -> None:
+    """The single trace line a sleeper leaves when its transcript vanished
+    (#275). A missing transcript is TERMINAL: nothing can ever be serialized
+    from a path that no longer exists, so the sleeper must not hold its full
+    quiet period (or spawn serialize) pointing at a dead file."""
+    lib.log(f"windsurf-finalizer: transcript gone for {trajectory_id} "
+            f"— nothing to flush (transcript: {transcript_path})")
+
+
 def _finalize(trajectory_id: str, transcript_path: str, armed_mtime_ns: str) -> int:
     """Finalizer-sleeper mode (#42): sleep the quiet period, then serialize the
     session tail ONLY if this sleeper's arming turn is still the trajectory's
@@ -396,13 +405,22 @@ def _finalize(trajectory_id: str, transcript_path: str, armed_mtime_ns: str) -> 
     lockfile — a lockfile's check-then-write would just move the race, while
     a duplicate fire is harmless (the serialize child's identical-bytes guard
     skips it). Transcript contents are never parsed here — only the path,
-    captured at arm time, is passed through."""
+    captured at arm time, is passed through.
+
+    A transcript that no longer exists is a terminal condition (#275): the
+    sleeper exits fast with one logged line instead of sleeping out the quiet
+    period (checked before the sleep) or spawning serialize on a dead path
+    (re-checked after it). Real sessions keep their transcript on disk, so
+    this changes nothing for a live finalize."""
     if lib is None or lib.disabled():
         return 0
     try:
         armed_ns = int(armed_mtime_ns)
     except ValueError:
         return 0  # malformed arm argument — nothing safe to own
+    if not Path(transcript_path).exists():
+        _log_transcript_gone(trajectory_id, transcript_path)
+        return 0
     time.sleep(_finalizer_quiet_seconds())
     try:
         current_ns = _activity_stamp(trajectory_id).stat().st_mtime_ns
@@ -410,6 +428,9 @@ def _finalize(trajectory_id: str, transcript_path: str, armed_mtime_ns: str) -> 
         return 0  # stamp gone — nothing left to finalize
     if current_ns != armed_ns:
         return 0  # a later turn refreshed activity; its sleeper owns finality
+    if not Path(transcript_path).exists():
+        _log_transcript_gone(trajectory_id, transcript_path)  # deleted mid-sleep
+        return 0
     cli = lib.resolve_cli()
     if cli is None:
         lib.log("windsurf-finalizer: `daimon` CLI not found — final flush skipped")
