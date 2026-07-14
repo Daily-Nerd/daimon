@@ -32,10 +32,19 @@ daimon brief --project demo-project        # stale decision withheld
 ```
 
 Serialization is an LLM pass, so item ids and exact wording vary between runs —
-read the ⚠ line for the two ids to plug into `daimon resolve`. Occasionally the
-model omits the supersession link on the pivot decision; rerun session 2 if the
-flag doesn't appear (`DAIMON_LLM_NO_CACHE=1` forces a fresh generation behind a
-caching gateway).
+read the ⚠ line for the two ids to plug into `daimon resolve`. The model
+sometimes omits the supersession link on the pivot decision, or emits a target
+too vague to bind (binding never guesses) — expect the flag to take a rerun or
+two of session 2. Rerunning needs two things:
+
+```sh
+# 1. delete the session-2 checkpoint — daimon refuses to re-serialize an
+#    unchanged transcript (identical-bytes guard), so a plain rerun is skipped
+rm demo-store/session2-gcp-pivot.json
+
+# 2. force a fresh generation (busts any caching gateway in front of the LLM)
+DAIMON_LLM_NO_CACHE=1 daimon serialize --project demo-project session2-gcp-pivot.md
+```
 
 ## Ask the agent instead
 
