@@ -46,6 +46,37 @@ def ranked_sessions(recall_results: list[dict]) -> list[str]:
     return out
 
 
+def attributed_sessions(recall_results: list[dict],
+                        attribution: dict[tuple[str, str], str]) -> list[str]:
+    """Ranked sessions with carried copies credited to their ORIGIN session.
+
+    Scoring rule for carry-on runs (#274): a retrieval counts for a session only
+    when it is ATTRIBUTABLE to that session — the session that first produced
+    the item. With carry on, a later checkpoint hosts verbatim copies of earlier
+    sessions' unresolved items, and the recall index knows only the hosting
+    checkpoint's session_id; scoring the hosting session would credit a non-gold
+    session for gold evidence (or rank gold below its own carried copy). So each
+    retrieved row is mapped through `attribution` — (hosting session_id, item
+    text) -> origin session, built by the adapter from `carried_from` at write
+    time — and falls back to the hosting session when unmapped (native items,
+    carry-off runs). First-occurrence dedup then guarantees a session is
+    credited at most once: gold surfaced both natively and as a carried copy
+    counts once, at its best rank, and never double-counts.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in recall_results:
+        sid = row.get("session_id")
+        if not sid:
+            continue
+        sid = attribution.get((sid, str(row.get("text") or "")), sid)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        out.append(sid)
+    return out
+
+
 def recall_at_k(ranked: list[str], gold: set[str], k: int) -> float | None:
     """Fraction of gold sessions present in the top-k. None when gold is empty."""
     if not gold:

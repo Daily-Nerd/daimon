@@ -4,6 +4,7 @@ Usage (from the plugin/ directory, uv-managed env):
 
     uv run python -m tests.bench.run --suite longmemeval-s --sample 50
     uv run python -m tests.bench.run --suite longmemeval-s --sample 5 --workers 8
+    uv run python -m tests.bench.run --suite longmemeval-s --sample 50 --carry
 
 Downloads the dataset on demand (checksum-pinned, never vendored), serializes each
 sampled question's haystack through daimon's real pipeline, answers via recall, and
@@ -102,7 +103,9 @@ def _build_config_stamp(args, dataset_path: Path) -> dict:
         "k": args.k,
         "recall_depth": args.depth,
         "min_messages": args.min_messages,
-        "carry": "off",
+        # Cross-session carry (#274) is a separate retrieval axis: recorded
+        # truthfully so carry-on and carry-off numbers are never conflated.
+        "carry": "on" if args.carry else "off",
         "workers": args.workers,
         "dataset_file": dataset_path.name,
         "dataset_sha256": dataset.sha256_of(dataset_path),
@@ -117,7 +120,7 @@ def run(args) -> dict:
 
     stamp = _build_config_stamp(args, dataset_path)
     print(f"suite={args.suite} sample={len(questions)} backend={stamp['backend']} "
-          f"model={stamp['model']} workers={args.workers}")
+          f"model={stamp['model']} workers={args.workers} carry={stamp['carry']}")
 
     per_question: list[dict] = []
     t0 = time.monotonic()
@@ -127,7 +130,7 @@ def run(args) -> dict:
             q, chat=chat, cache=cache, backend=stamp["backend"],
             model=stamp["model"] or "unknown", root=Path(args.work_dir),
             k=args.k, depth=args.depth, min_messages=args.min_messages,
-            workers=args.workers,
+            workers=args.workers, carry_on=args.carry,
         )
         per_question.append(result)
         print(f"[{i}/{len(questions)}] {result['question_id']} "
@@ -179,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="recall results fetched per question (MRR sees this depth)")
     p.add_argument("--workers", type=int, default=4,
                    help="concurrent LLM serialize calls per question")
+    p.add_argument("--carry", action="store_true",
+                   help="fold prior checkpoints forward (cross-session carry, "
+                        "#274) — a separate retrieval axis; recorded in the "
+                        "config stamp and cached under separate keys")
     p.add_argument("--min-messages", default=adapter.BENCH_MIN_MESSAGES,
                    help="serialize floor for the benchmark (product default is 10)")
     p.add_argument("--dataset-path", help="use a local dataset file (skip download)")

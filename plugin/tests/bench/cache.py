@@ -20,15 +20,25 @@ from pathlib import Path
 
 
 def cache_key(messages: list[dict], *, backend: str, model: str,
-              prompt_version: str) -> str:
-    """Stable content hash over (turns, backend, model, prompt_version).
+              prompt_version: str, carry: str = "off") -> str:
+    """Stable content hash over (turns, backend, model, prompt_version, carry).
 
     Turns are hashed in order and by role — a reordered transcript is a different
     session. Only role/content are hashed (the fields the serializer reads), so an
     incidental metadata field on a turn does not bust the cache.
+
+    `carry` (#274) namespaces the run mode: a carry-on run must never read a
+    carry-off entry, or vice versa. The separation is deliberately defensive —
+    today the cached blob is the raw pre-carry `serialize_strict` output (the
+    fold happens downstream, at store-write time), but the cache must stay
+    correct even if serialization ever becomes mode-sensitive. Carry-off keys
+    are byte-identical to pre-#274 keys, so the existing cache (minutes of LLM
+    per entry) stays valid for carry-off runs.
     """
     h = hashlib.sha256()
     h.update(f"v1\x00{backend}\x00{model}\x00{prompt_version}\x00".encode())
+    if carry != "off":
+        h.update(f"carry\x00{carry}\x00".encode())
     for m in messages:
         role = str(m.get("role") or "")
         content = str(m.get("content") or "")

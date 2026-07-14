@@ -52,9 +52,18 @@ zero.
   enter the index. The product's live default is **10**; in production, sessions
   shorter than that are skipped. This is a real limitation, surfaced here rather
   than hidden — the run config records the value used.
-- **Carry is off.** Each session's checkpoint stands alone, giving a clean
-  session→id mapping for scoring. Cross-session carry (a real product feature) is
-  a separate axis to benchmark later.
+- **Carry is a separate axis.** By default carry is off: each session's
+  checkpoint stands alone, giving a clean session→id mapping for scoring.
+  `--carry` turns on cross-session carry (a real product feature: prior
+  unresolved items fold forward into later checkpoints), recorded as
+  `carry: "on"` in the config stamp and cached under separate keys, so carry-on
+  vs carry-off Recall@k / MRR are comparable on the same sample and backend.
+  Scoring stays honest under carry: a retrieved carried copy is credited to the
+  session that *originated* the item (its `carried_from`), never to the later
+  session hosting the copy, and each session counts at most once — no
+  double-counting a gold session. The fold is applied in listed-session order
+  (the exact state the product sees), so carry-on runs stay deterministic at any
+  `--workers` value.
 - **Determinism** holds given the seed and a pinned backend. Backends with
   non-zero temperature introduce serializer variance; the configured temperature
   rides in daimon's own config.
