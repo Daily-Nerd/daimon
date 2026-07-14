@@ -1371,3 +1371,61 @@ def test_supersede_candidate_never_marks(tmp_checkpoint_dir):
                        source="serializer", project_dir="/repo/x")
     hits = recall.search("bittern", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
+
+
+# ---- #288: the same carried item must not surface once per checkpoint ----
+
+
+def test_search_dedupes_same_item_across_checkpoints(tmp_checkpoint_dir, monkeypatch):
+    # A carried item lives in every checkpoint that carries it; recall must
+    # return it once, sourced from the newest checkpoint (its supersession /
+    # frontier state is the current one).
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    item = {"text": "Quokka panel unregister fix shipped", "trust": "verbatim",
+            "quote": "the quokka panel fix is in"}
+    store.write_checkpoint("S1", _cp("S1", decisions=[dict(item)]),
+                           project_dir="/repo/x")
+    store.write_checkpoint("S2", _cp("S2", decisions=[dict(item)]),
+                           project_dir="/repo/x")
+    hits = recall.search("quokka", all_projects=True)
+    assert len(hits) == 1
+    assert hits[0]["session_id"] == "S2"  # newest occurrence wins
+
+
+def test_search_dedupe_keeps_distinct_items_sharing_words(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": "Wombat cache invalidation uses hashes", "trust": "inferred"},
+        {"text": "Wombat cache warming happens at write", "trust": "inferred"},
+    ]), project_dir="/repo/x")
+    hits = recall.search("wombat cache", all_projects=True)
+    assert len(hits) == 2  # different content, no merge
+
+
+def test_search_dedupe_preserves_distinct_authors(tmp_checkpoint_dir, monkeypatch):
+    # Two humans stating the same thing is attribution, not duplication.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    text = "Axolotl deploys are frozen on Fridays"
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": text, "trust": "inferred"}]), project_dir="/repo/x")
+    _write_team_file("grace", "S-g", _cp("S-g", decisions=[
+        {"text": text, "trust": "inferred"}]))
+    hits = recall.search("axolotl", all_projects=True)
+    assert len(hits) == 2
+    assert {h["author"] for h in hits} == {"ada", "grace"}
+
+
+def test_search_dedupe_backfills_to_limit(tmp_checkpoint_dir, monkeypatch):
+    # Dedupe must not under-fill: with limit=2, one duplicated item plus two
+    # distinct ones still yields 2 DISTINCT results, not a dup-padded list.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    dup = {"text": "Numbat retries use exponential backoff", "trust": "inferred"}
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        dict(dup),
+        {"text": "Numbat retries cap at five attempts", "trust": "inferred"},
+    ]), project_dir="/repo/x")
+    store.write_checkpoint("S2", _cp("S2", decisions=[dict(dup)]),
+                           project_dir="/repo/x")
+    hits = recall.search("numbat retries", all_projects=True, limit=2)
+    assert len(hits) == 2
+    assert len({h["text"] for h in hits}) == 2
