@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from daimon_briefing import cli, config, store, teamsync
+from daimon_briefing import cli, config, store, teamproject, teamsync
 
 
 def _git(cwd, *args) -> subprocess.CompletedProcess:
@@ -403,9 +403,12 @@ def _checkpoint(session_id):
 def test_dual_write_routes_into_single_remote_sidecar(bare_remote, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     monkeypatch.setenv("DAIMON_TEAM", "1")
+    # #279: membership is default-closed — explicit DAIMON_TEAM_PROJECT intent
+    # grants it (and, as tier-1 resolution, also names the nested path).
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "repo-x")
     sidecar = teamsync.init(str(bare_remote))
     store.write_checkpoint("S-r", _checkpoint("S-r"), project_dir="/repo/x")
-    assert (sidecar / "authors" / "Ada" / "S-r.json").exists()
+    assert (sidecar / "projects" / "repo-x" / "authors" / "Ada" / "S-r.json").exists()
     assert not (config.team_dir() / "local").exists()
 
 
@@ -757,3 +760,80 @@ def test_merge_works_without_any_git_identity(bare_remote, tmp_path, monkeypatch
         json.dumps({"session_id": "S1", "author": "ada"}), encoding="utf-8")
     report = teamsync.sync_remote(ada)
     assert report["pushed"] is True, report
+
+
+# ---- #279: init seeds the scope config; team status surfaces scope ----
+
+
+def _project_with_origin(tmp_path, origin):
+    proj = tmp_path / "proj"
+    proj.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(proj)],
+                   check=True, capture_output=True, timeout=30)
+    if origin:
+        subprocess.run(["git", "-C", str(proj), "remote", "add", "origin", origin],
+                       check=True, capture_output=True, timeout=30)
+    return proj
+
+
+def test_init_seeds_scope_config_from_project_origin(bare_remote, tmp_path):
+    # A FRESH team (empty remote) is born scoped to the project that ran
+    # `daimon team init` — new setups stay zero-touch under default-closed.
+    proj = _project_with_origin(tmp_path, "https://github.com/org/alpha")
+    dest = teamsync.init(str(bare_remote), project_dir=proj)
+    toml_path = dest / teamproject.CONFIG_NAME
+    assert toml_path.exists()
+    assert "github.com/org/alpha" in toml_path.read_text(encoding="utf-8").lower()
+    assert teamproject.CONFIG_NAME in _bare_files(bare_remote)  # rode the seed push
+
+
+def test_init_without_origin_seeds_scope_template(bare_remote, tmp_path):
+    proj = tmp_path / "no-origin-proj"
+    proj.mkdir()
+    dest = teamsync.init(str(bare_remote), project_dir=proj)
+    text = (dest / teamproject.CONFIG_NAME).read_text(encoding="utf-8")
+    assert "[scope]" in text  # template — the human fills repos in
+
+
+def test_init_established_remote_keeps_architect_config(bare_remote, tmp_path):
+    # Joining an ESTABLISHED sidecar must never overwrite (or add) config —
+    # the architect owns daimon-team.toml after birth.
+    seed = tmp_path / "seed-clone2"
+    subprocess.run(["git", "clone", str(bare_remote), str(seed)],
+                   check=True, capture_output=True, timeout=30)
+    (seed / teamproject.CONFIG_NAME).write_text(
+        '[scope]\nrepos = ["https://github.com/org/established"]\n',
+        encoding="utf-8")
+    _git(seed, "add", teamproject.CONFIG_NAME)
+    _git(seed, "-c", "user.name=Arch", "-c", "user.email=a@x", "commit", "-m", "cfg")
+    _git(seed, "push", "origin", "HEAD")
+    proj = _project_with_origin(tmp_path, "https://github.com/me/other")
+    dest = teamsync.init(str(bare_remote), project_dir=proj)
+    text = (dest / teamproject.CONFIG_NAME).read_text(encoding="utf-8")
+    assert "org/established" in text
+    assert "me/other" not in text
+
+
+def test_team_status_row_includes_scope(bare_remote, monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    proj = _project_with_origin(tmp_path, "https://github.com/org/alpha")
+    teamsync.init(str(bare_remote), project_dir=proj)
+    rows = teamsync.team_status()
+    assert rows[0]["scope"] == ["github.com/org/alpha"]
+
+
+def test_cli_team_status_warns_when_scope_empty(bare_remote, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    teamsync.init(str(bare_remote))  # no project: template config, empty scope
+    assert cli.main(["team", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "scope" in out
+    assert "receives no checkpoints" in out
+
+
+def test_cli_team_status_lists_scope_repos(bare_remote, monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    proj = _project_with_origin(tmp_path, "https://github.com/org/alpha")
+    teamsync.init(str(bare_remote), project_dir=proj)
+    assert cli.main(["team", "status"]) == 0
+    assert "github.com/org/alpha" in capsys.readouterr().out

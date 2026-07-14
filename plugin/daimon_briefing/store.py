@@ -762,7 +762,17 @@ def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
         # non-word char to '-'. Post-munge collisions ("a b" vs "a-b") remain a
         # documented edge — distinct humans colliding there is unrealistic.
         author_slug = project_slug(config.author()) or "unknown"
-        base = config.team_dir() / _team_write_slug()
+        slug = _team_write_slug()
+        # #279 default-closed scope gate: a synced clone accepts a project's
+        # checkpoints only when its daimon-team.toml (or DAIMON_TEAM_PROJECT)
+        # grants membership — DAIMON_TEAM is machine-global, and without this
+        # check the single clone would receive EVERY project on the machine
+        # and push it to teammates. Out-of-scope writes degrade to the local
+        # mirror: withheld from the remote, never lost.
+        if slug != _TEAM_LOCAL_REMOTE and not teamproject.in_scope(
+                project_dir, config.team_dir() / slug):
+            slug = _TEAM_LOCAL_REMOTE
+        base = config.team_dir() / slug
         # #200: env/config/origin-derived logical path (segments are munged in
         # teamproject and can never escape the sidecar); None = flat era.
         segs = teamproject.resolve(project_dir)

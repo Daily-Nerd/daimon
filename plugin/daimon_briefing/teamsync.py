@@ -188,11 +188,37 @@ def _validate_remote_url(url: str) -> None:
         raise TeamError(f"unsupported remote transport: {url!r}")
 
 
-def init(url: str) -> Path:
+def _seed_scope_toml(project_dir) -> str:
+    """The daimon-team.toml a FRESH team is born with (#279): scoped to the
+    project that ran `daimon team init` when its origin resolves, else an
+    empty template the human fills in. Written once, at sidecar birth, on the
+    unborn-branch path only — after that the file belongs to the humans."""
+    origin = teamproject._origin_url(project_dir) if project_dir else None
+    if origin:
+        # json.dumps: a JSON string is a valid TOML basic string — quotes and
+        # backslashes in exotic origins can't break the seed file.
+        repos_line = f"repos = [{json.dumps(origin)}]"
+    else:
+        repos_line = ('repos = []  # add repo URLs that may sync here, '
+                      'e.g. "git@github.com:org/x.git"')
+    return (
+        "# daimon team sidecar config — humans edit and commit; daimon only reads.\n"
+        "# [scope] repos is the membership allowlist: ONLY these repos'\n"
+        "# checkpoints sync into this remote. Repos mapped under [projects.*]\n"
+        "# are members too. Everything else stays in the machine-local mirror.\n"
+        "[scope]\n"
+        f"{repos_line}\n"
+    )
+
+
+def init(url: str, project_dir=None) -> Path:
     """`daimon team init <remote-url>`: clone the private sidecar into
     <team_dir>/<remote-slug>/. An EMPTY remote is fine — the unborn branch is
-    seeded with a README-stub root commit and pushed, so every later sync has a
-    branch to ls-remote against. Raises TeamError on real user errors."""
+    seeded with a README-stub root commit (plus a daimon-team.toml scoping the
+    team to the initiating project, #279) and pushed, so every later sync has a
+    branch to ls-remote against. Joining an ESTABLISHED remote never writes
+    config — the architect owns daimon-team.toml after birth. Raises TeamError
+    on real user errors."""
     _validate_remote_url(url)
     slug = remote_slug(url)
     if shutil.which("git") is None:
@@ -210,8 +236,13 @@ def init(url: str) -> Path:
         raise TeamError(f"git clone failed: {_last_line(proc.stderr)}")
     if _head(dest) is None:  # unborn branch: the remote was empty
         (dest / "README.md").write_text(_STUB_README, encoding="utf-8")
-        _git(dest, "add", "--", "README.md")
-        cp = _commit(dest, "sync: initialize team memory sidecar", ["README.md"])
+        seeds = ["README.md"]
+        if not (dest / teamproject.CONFIG_NAME).exists():
+            (dest / teamproject.CONFIG_NAME).write_text(
+                _seed_scope_toml(project_dir), encoding="utf-8")
+            seeds.append(teamproject.CONFIG_NAME)
+        _git(dest, "add", "--", *seeds)
+        cp = _commit(dest, "sync: initialize team memory sidecar", seeds)
         if cp.returncode != 0:
             raise TeamError(f"could not seed root commit: {_last_line(cp.stderr or cp.stdout)}")
         push = _git(dest, "push", "-u", "origin", _branch(dest), timeout=NET_TIMEOUT)
@@ -547,6 +578,9 @@ def team_status() -> list[dict]:
             # #200: a broken daimon-team.toml fails open on the write path
             # (mapping ignored) — status is where the parse error surfaces.
             "config_warning": teamproject.config_error(sidecar),
+            # #279: the membership allowlist — which repos may sync here.
+            # Empty = default-closed: the remote receives no checkpoints.
+            "scope": teamproject.scope_entries(sidecar),
         })
     return rows
 

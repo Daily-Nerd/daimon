@@ -1467,7 +1467,8 @@ def _cmd_heal(args) -> int:
 
 def _cmd_team_init(args) -> int:
     try:
-        dest = teamsync.init(args.remote_url)
+        # #279: a fresh team is born scoped to the project init ran from.
+        dest = teamsync.init(args.remote_url, project_dir=Path.cwd())
     except teamsync.TeamError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1551,6 +1552,17 @@ def _cmd_team_status(args) -> int:
         # write path — status is the one place the parse error surfaces.
         if row.get("config_warning"):
             lines.append(f"  warning: {row['config_warning']}")
+        # #279: scope is default-closed — an empty allowlist means the remote
+        # receives nothing, which must be visible, not a silent surprise.
+        scope = row.get("scope") or []
+        if scope:
+            lines.append(f"  scope: {', '.join(scope)}")
+        elif config.team_project():
+            lines.append("  scope: none configured — DAIMON_TEAM_PROJECT "
+                         "grants this machine's sessions")
+        else:
+            lines.append("  scope: none — this remote receives no checkpoints "
+                         "(add [scope] repos to daimon-team.toml)")
     render.render_team_status(lines)
     return 0
 

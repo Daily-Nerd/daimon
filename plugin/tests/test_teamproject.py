@@ -492,3 +492,141 @@ def test_read_candidates_swallows_resolver_bugs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(teamproject, "_candidates", buggy)
     assert teamproject.read_candidates(tmp_path) == []
+
+
+# ---- #279: per-remote scope — default-closed membership for synced remotes ----
+#
+# DAIMON_TEAM=1 is machine-global; without a membership gate the single
+# sidecar clone receives EVERY project on the machine — a privacy leak the
+# tidy tier-3 origin-derived layout actively masks. A synced remote accepts a
+# project's checkpoints only when the sidecar's daimon-team.toml grants it
+# ([scope] repos, or an architect [projects.*] mapping) or the machine states
+# explicit intent via DAIMON_TEAM_PROJECT. Everything else falls back to the
+# Phase-1 local mirror: withheld from the clone, never lost.
+
+
+def _remote_clone(name="team-mem"):
+    """A dir store._team_write_slug treats as a real synced remote (.git present)."""
+    d = config.team_dir() / name
+    (d / ".git").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def test_in_scope_when_repo_listed_in_scope_table(tmp_path):
+    repo = _repo(tmp_path, "alpha", "git@github.com:Org/Alpha.git")
+    sidecar = _remote_clone()
+    _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
+                  remote="team-mem")
+    assert teamproject.in_scope(repo, sidecar) is True
+
+
+def test_in_scope_when_repo_mapped_in_projects_table(tmp_path):
+    # Grandfathering: an architect-mapped repo IS a member — existing mapped
+    # sidecars keep syncing with zero new configuration.
+    repo = _repo(tmp_path, "beta", "https://github.com/org/beta")
+    sidecar = _remote_clone()
+    _write_config('[projects."core/beta"]\nrepos = ["https://github.com/org/beta"]\n',
+                  remote="team-mem")
+    assert teamproject.in_scope(repo, sidecar) is True
+
+
+def test_in_scope_env_project_is_explicit_intent(tmp_path, monkeypatch):
+    repo = _repo(tmp_path, "gamma", "https://github.com/org/gamma")
+    sidecar = _remote_clone()  # no config at all
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/gamma")
+    assert teamproject.in_scope(repo, sidecar) is True
+
+
+def test_out_of_scope_when_repo_unlisted(tmp_path):
+    repo = _repo(tmp_path, "intruder", "https://github.com/me/personal-notes")
+    sidecar = _remote_clone()
+    _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
+                  remote="team-mem")
+    assert teamproject.in_scope(repo, sidecar) is False
+
+
+def test_default_closed_when_no_config(tmp_path):
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    assert teamproject.in_scope(repo, _remote_clone()) is False
+
+
+def test_default_closed_when_config_broken(tmp_path):
+    # Path resolution fails OPEN on broken TOML (#200); membership fails
+    # CLOSED — a paste error must not open the remote to the whole machine.
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    sidecar = _remote_clone()
+    _write_config("[scope\nbroken", remote="team-mem")
+    assert teamproject.in_scope(repo, sidecar) is False
+
+
+def test_default_closed_when_project_has_no_origin(tmp_path):
+    repo = _repo(tmp_path, "no-origin")  # git repo, no origin remote
+    sidecar = _remote_clone()
+    _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
+                  remote="team-mem")
+    assert teamproject.in_scope(repo, sidecar) is False
+
+
+def test_scope_entries_union_normalized_sorted(tmp_path):
+    sidecar = _remote_clone()
+    _write_config(
+        '[scope]\nrepos = ["git@github.com:Org/Zeta.git"]\n'
+        '[projects."core/beta"]\nrepos = ["https://github.com/org/beta"]\n',
+        remote="team-mem",
+    )
+    assert teamproject.scope_entries(sidecar) == \
+        ["github.com/org/beta", "github.com/org/zeta"]
+
+
+def test_scope_entries_empty_when_no_config():
+    assert teamproject.scope_entries(_remote_clone()) == []
+
+
+# ---- #279 acceptance: an out-of-scope project never dual-writes into a remote ----
+
+
+def test_dual_write_scoped_remote_receives_only_member_project(
+        tmp_path, sample_checkpoint, monkeypatch):
+    # THE leak test: two local projects, one scoped remote — only the member
+    # project's checkpoints reach the sidecar clone; the foreign project's
+    # fall back to the local mirror and are never staged for a push.
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    member = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    foreign = _repo(tmp_path, "personal", "https://github.com/me/personal-notes")
+    sidecar = _remote_clone()
+    _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
+                  remote="team-mem")
+    store.write_checkpoint("S-in", {**sample_checkpoint, "session_id": "S-in"},
+                           project_dir=member)
+    store.write_checkpoint("S-out", {**sample_checkpoint, "session_id": "S-out"},
+                           project_dir=foreign)
+    clone_files = {p.name for p in sidecar.rglob("*.json")}
+    assert "S-in.json" in clone_files
+    assert "S-out.json" not in clone_files  # nothing foreign enters the clone
+    local_files = {p.name for p in (config.team_dir() / "local").rglob("*.json")}
+    assert "S-out.json" in local_files      # withheld, not lost
+
+
+def test_dual_write_unscoped_remote_default_closed(
+        tmp_path, sample_checkpoint, monkeypatch):
+    # A sidecar with NO daimon-team.toml grants nothing: writes fall back to
+    # the local mirror (default-closed; migration is one [scope] line).
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    sidecar = _remote_clone()
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=repo)
+    assert not any(sidecar.rglob("*.json"))
+    assert any((config.team_dir() / "local").rglob("*.json"))
+
+
+def test_dual_write_env_project_reaches_remote(
+        tmp_path, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/alpha")
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    sidecar = _remote_clone()  # no config: env intent alone grants membership
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=repo)
+    assert any(sidecar.rglob("*.json"))
