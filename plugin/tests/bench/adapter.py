@@ -54,7 +54,7 @@ _ENV_KEYS = (
     "DAIMON_RECALL_SEEN_DIR", "DAIMON_TEAM_DIR", "DAIMON_PROJECT_DIR",
     "DAIMON_CARRY", "DAIMON_CARRY_FLOOR", "DAIMON_CARRY_MAX",
     "DAIMON_MIN_MESSAGES", "DAIMON_TEAM", "DAIMON_DISABLE",
-    "DAIMON_RECEIPTS", "DAIMON_SCAR_HARVEST", "DAIMON_BENCH",
+    "DAIMON_RECEIPTS", "DAIMON_SCAR_HARVEST",
 )
 
 
@@ -82,13 +82,6 @@ def _question_env(root: Path, qid: str, min_messages: str,
         "DAIMON_DISABLE": "0",
         "DAIMON_RECEIPTS": "0",          # receipts add cost, not retrieval signal
         "DAIMON_SCAR_HARVEST": "0",
-        # #303: recall_question below calls recall.search() directly, never
-        # cli._cmd_recall, so this flag is inert for the harness itself today
-        # — set anyway so a CLI invocation made under this isolated env (a
-        # manual `daimon recall` run while developing/debugging a question,
-        # or a future subprocess-based variant of this harness) tags itself
-        # `recall:bench` instead of inflating the adoption counter.
-        "DAIMON_BENCH": "1",
     }
 
 

@@ -4778,31 +4778,6 @@ def test_existing_usage_counters_unaffected_by_resolve_instrumentation(
     assert "resolve" not in data["usage"]
 
 
-def test_recall_tags_bench_origin_via_env(
-        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
-    # #303: the LongMemEval harness (tests/bench) inflates the global `recall`
-    # counter with per-question calls that have nothing to do with adoption.
-    # DAIMON_BENCH=1 tags those calls distinctly, mirroring brief:auto vs brief.
-    from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
-    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    monkeypatch.setenv("DAIMON_BENCH", "1")
-    assert cli.main(["recall", "chunk"]) == 0
-    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
-    assert lines[0].split()[1] == "recall:bench"
-
-
-def test_recall_without_bench_env_logs_plain_recall(
-        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
-    from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
-    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    monkeypatch.delenv("DAIMON_BENCH", raising=False)
-    assert cli.main(["recall", "chunk"]) == 0
-    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
-    assert lines[0].split()[1] == "recall"
-
-
 def test_log_appends_freeform_event(tmp_checkpoint_dir, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")

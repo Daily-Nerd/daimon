@@ -638,10 +638,7 @@ def _cmd_recall(args) -> int:
     """Lexical search over the derived recall index. The index is disposable —
     recall.search auto-(re)builds it — so the only hard failure surfaced here is
     an FTS5-less sqlite3 (rc 1, named); everything else degrades to no matches."""
-    # #303: DAIMON_BENCH=1 (set by the LongMemEval harness under tests/bench)
-    # tags harness-driven calls apart from deliberate use — mirrors brief:auto
-    # vs brief — so a benchmark run can no longer read as adoption in `stats`.
-    _note_usage("recall:bench" if config.bench_mode() else "recall")
+    _note_usage("recall")
     query = " ".join(args.query)
     if args.limit < 1:
         print(f"error: --limit must be >= 1 (got {args.limit})", file=sys.stderr)
