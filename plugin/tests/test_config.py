@@ -548,3 +548,18 @@ def test_stale_days_default_override_malformed(monkeypatch):
     assert config.carry_max() == 1
     monkeypatch.setenv("DAIMON_CARRY_MAX", "x")
     assert config.carry_max() == 8
+
+
+# ---- #303: recall origin tag, opt-in DAIMON_BENCH ----
+
+
+def test_bench_mode_default_off(monkeypatch):
+    monkeypatch.delenv("DAIMON_BENCH", raising=False)
+    assert config.bench_mode() is False
+
+
+def test_bench_mode_opt_in(monkeypatch):
+    monkeypatch.setenv("DAIMON_BENCH", "1")
+    assert config.bench_mode() is True
+    monkeypatch.setenv("DAIMON_BENCH", "0")
+    assert config.bench_mode() is False

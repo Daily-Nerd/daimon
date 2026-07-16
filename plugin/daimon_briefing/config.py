@@ -63,6 +63,15 @@ def is_disabled() -> bool:
     return _flag("DAIMON_DISABLE")
 
 
+def bench_mode() -> bool:
+    """Opt-in (DAIMON_BENCH=1, default OFF) origin tag for `recall` (#303):
+    the LongMemEval harness (tests/bench) calls recall once per question,
+    which has nothing to do with adoption — mirrors the brief:auto vs brief
+    split so a benchmark run can no longer be mistaken for deliberate re-reads
+    in `daimon stats`."""
+    return _flag("DAIMON_BENCH")
+
+
 def checkpoint_dir() -> Path:
     raw = _get("DAIMON_CHECKPOINT_DIR")
     if raw:

@@ -638,7 +638,10 @@ def _cmd_recall(args) -> int:
     """Lexical search over the derived recall index. The index is disposable —
     recall.search auto-(re)builds it — so the only hard failure surfaced here is
     an FTS5-less sqlite3 (rc 1, named); everything else degrades to no matches."""
-    _note_usage("recall")
+    # #303: DAIMON_BENCH=1 (set by the LongMemEval harness under tests/bench)
+    # tags harness-driven calls apart from deliberate use — mirrors brief:auto
+    # vs brief — so a benchmark run can no longer read as adoption in `stats`.
+    _note_usage("recall:bench" if config.bench_mode() else "recall")
     query = " ".join(args.query)
     if args.limit < 1:
         print(f"error: --limit must be >= 1 (got {args.limit})", file=sys.stderr)
@@ -792,6 +795,11 @@ def _cmd_resolve(args) -> int:
         if len(hits) == 1:
             target = hits[0][1]
         else:
+            # #303: a refused attempt must leave its own trace — otherwise
+            # "no agent ever tried resolve" and "an agent tried and was
+            # refused" are indistinguishable in `daimon stats`, and the two
+            # have opposite fixes (teaching vs UX).
+            _note_usage("resolve:no-match" if not hits else "resolve:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
             print(f"{label} {args.target!r}; candidates:")
             listing = hits or items
@@ -804,6 +812,7 @@ def _cmd_resolve(args) -> int:
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
+    _note_usage("resolve")
     print(f"resolved {target['id']}: {target.get('text', '')} [{args.status}]")
     return 0
 

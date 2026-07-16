@@ -71,6 +71,7 @@ Deterministic cross-session carry-over of unresolved items.
 |---|---|---|
 | `DAIMON_RECALL_DB` | `~/.daimon/recall.db` | Location of the derived recall index (SQLite FTS). Never a source of truth — safe to delete at any time; recall rebuilds it by scanning the checkpoint and team dirs. |
 | `DAIMON_RECALL_SEEN_DIR` | `~/.daimon/recall_seen` | Per-session suggestion-cooldown state so a repeated topic never re-injects. Disposable — deleting it only resets cooldowns. |
+| `DAIMON_BENCH` | off | When truthy, `recall` logs its usage line as `recall:bench` instead of `recall` — keeps benchmark/eval-driven recall calls out of the adoption signal `daimon stats` reports. |
 
 ## Team memory
 
