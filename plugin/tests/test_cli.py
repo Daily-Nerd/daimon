@@ -1405,6 +1405,30 @@ def test_cli_write_checkpoint_no_session_id(tmp_checkpoint_dir, monkeypatch, cap
     assert "session_id" in capsys.readouterr().err.lower()
 
 
+def test_cli_write_checkpoint_strips_model_supplied_code_owned_keys(
+        tmp_checkpoint_dir, monkeypatch):
+    # #292: the introspection path (#23) pipes a MODEL-authored checkpoint
+    # straight to store.write_checkpoint after serializer.validate — which
+    # never inspects top-level keys. Without a strip here, the same spoofing
+    # the fresh-serialize paths were fixed against is still open on the one
+    # path where the model is most schema-aware (it is deliberately authoring
+    # schema-shaped JSON).
+    from daimon_briefing import serializer, store
+
+    spoofed_version = serializer.PROMPT_VERSION + "-bogus"
+    spoofed = json.loads(_valid_json("S-intro"))
+    spoofed["format_version"] = spoofed_version
+    spoofed["author"] = "not-the-real-author"
+    spoofed["created"] = "1999-01-01T00:00:00Z"
+    _stdin(monkeypatch, json.dumps(spoofed))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest(project_dir="/p/A")
+    assert ck["format_version"] == serializer.PROMPT_VERSION
+    assert ck["author"] != "not-the-real-author"
+    assert ck["created"] != "1999-01-01T00:00:00Z"
+
+
 def test_top_level_help_has_examples(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])
@@ -1609,6 +1633,35 @@ def test_cli_anchor_attach_missing_session_id_exits_nonzero(
                    "--project", str(proj)])
     assert rc != 0
     assert "session_id" in capsys.readouterr().err
+
+
+def test_cli_anchor_attach_preserves_existing_code_owned_stamps(
+    tmp_checkpoint_dir, capsys, monkeypatch, tmp_path, sample_checkpoint
+):
+    # #292 asymmetry lock: --attach reads an EXISTING checkpoint (already
+    # carrying real stamps) and re-writes it through the normal store path.
+    # Stripping code-owned keys here would erase those real stamps and let
+    # store.write_checkpoint's setdefault silently re-date `created` and jump
+    # `format_version` to whatever PROMPT_VERSION is now — the opposite of a
+    # fresh-serialize spoof, but just as wrong. Only paths where the MODEL
+    # authored the dict get stripped; a dict that came off disk never does.
+    from daimon_briefing import serializer, store
+
+    proj = _anchor_proj(tmp_path, monkeypatch)
+    stamped = {**sample_checkpoint, "format_version": "D-000",
+               "created": "2020-01-01T00:00:00Z", "author": "ada"}
+    store.write_checkpoint("S-prev", stamped, project_dir=proj)
+    capsys.readouterr()
+
+    rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "PINNING",
+                   "--project", str(proj)])
+    assert rc == 0
+
+    latest = store.read_latest(project_dir=proj)
+    assert latest["format_version"] == "D-000"
+    assert latest["format_version"] != serializer.PROMPT_VERSION
+    assert latest["created"] == "2020-01-01T00:00:00Z"
+    assert latest["author"] == "ada"
 
 
 def test_cli_anchor_without_attach_writes_nothing(
@@ -1845,6 +1898,51 @@ def test_status_health_version_mismatch_on_global_fallback():
     h = cli._status_health(_proj(exists=False), glob, [], [], now=1000.0)
     assert h["ok"] is False
     assert any("format" in w.lower() for w in h["warnings"])
+
+
+def test_status_health_older_checkpoint_suggests_reserialize():
+    # #294: checkpoint OLDER than the running code is routine drift (#93) —
+    # the existing wording, remedy included, still fires.
+    proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+            "format_version": "D-000"}
+    h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+    assert any("re-serialize" in w.lower() for w in h["warnings"])
+
+
+def test_status_health_newer_checkpoint_flags_impossible_stamp(monkeypatch):
+    # #294: checkpoint NEWER than the running code cannot happen by construction —
+    # PROMPT_VERSION is a source constant. Distinct wording, and NOT "re-serialize".
+    from daimon_briefing import serializer
+    monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-013")
+    proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+            "format_version": "D-014"}
+    h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+    assert h["ok"] is False
+    assert any("D-014" in w and "D-013" in w for w in h["warnings"])
+    assert not any("re-serialize" in w.lower() for w in h["warnings"])
+
+
+def test_status_health_unparseable_format_version_falls_back():
+    # #294: fail soft — a status check must never raise, and a garbage stamp
+    # falls back to the existing (older-style) wording rather than crashing.
+    for garbage in ("banana", "D-", "", "D-1x"):
+        proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+                "format_version": garbage}
+        h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+        assert any("re-serialize" in w.lower() for w in h["warnings"]), garbage
+
+
+def test_status_health_version_ordering_uses_integers_not_strings(monkeypatch):
+    # #294: naive string comparison gets "D-10" vs "D-9" backwards ('1' < '9'
+    # lexically). Checkpoint D-10 against current D-9 is numerically NEWER
+    # (impossible) — a string-compare bug would misreport it as older/routine.
+    from daimon_briefing import serializer
+    monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-9")
+    proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+            "format_version": "D-10"}
+    h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+    assert not any("re-serialize" in w.lower() for w in h["warnings"])
+    assert any("D-10" in w and "D-9" in w for w in h["warnings"])
 
 
 def test_cmd_status_json_has_health_and_siblings(tmp_checkpoint_dir, capsys, monkeypatch):
