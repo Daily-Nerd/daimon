@@ -4678,6 +4678,106 @@ def test_resolve_no_match_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
     assert store.resolutions(project_dir="/p/A") == {}
 
 
+# ---- #303: resolve has no usage counter, and refusals leave no trace ----
+
+
+def test_resolve_success_records_usage_event(tmp_checkpoint_dir, tmp_log_dir,
+                                             capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid]) == 0
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve"
+
+
+def test_resolve_ambiguous_records_distinct_usage_event(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "gateway retry budget for serializer chunks"},
+        {"text": "serializer chunk retry budget unclear"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    assert cli.main(["resolve", "serializer chunk retry budget"]) == 1
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve:ambiguous"
+    # a refused attempt must never also count as a successful resolve
+    assert all(line.split()[1] != "resolve" for line in lines)
+
+
+def test_resolve_no_match_records_distinct_usage_event(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["resolve", "completely unrelated nonsense query"]) == 1
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve:no-match"
+    assert all(line.split()[1] != "resolve" for line in lines)
+
+
+def test_resolve_usage_write_failure_does_not_break_resolve(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #303 constraint: _note_usage must never break the command it instruments.
+    # Force the write to fail by putting a FILE where the log dir must be a
+    # directory — mkdir(parents=True, exist_ok=True) then raises OSError, which
+    # _note_usage already swallows; resolve itself must still succeed.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    tmp_log_dir.parent.mkdir(parents=True, exist_ok=True)
+    tmp_log_dir.write_text("not a directory", encoding="utf-8")
+    assert cli.main(["resolve", iid]) == 0
+    r = store.resolutions(project_dir="/p/A")
+    assert store.is_resolved(r[iid])
+
+
+def test_stats_surfaces_resolve_usage_counters(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid]) == 0
+    assert cli.main(["resolve", "completely unrelated nonsense query"]) == 1
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/B")
+    cp2 = {"working_context": {"open_questions": [
+        {"text": "gateway retry budget for serializer chunks"},
+        {"text": "serializer chunk retry budget unclear"},
+    ]}}
+    store.write_checkpoint("S2", cp2, project_dir="/p/B")
+    assert cli.main(["resolve", "serializer chunk retry budget"]) == 1
+
+    capsys.readouterr()
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["resolve"] == 1
+    assert data["usage"]["resolve:no-match"] == 1
+    assert data["usage"]["resolve:ambiguous"] == 1
+
+
+def test_existing_usage_counters_unaffected_by_resolve_instrumentation(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    assert cli.main(["brief"]) == 0
+    assert cli.main(["recall", "chunk"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["brief"] == 1
+    assert data["usage"]["recall"] == 1
+    assert "resolve" not in data["usage"]
+
+
 def test_log_appends_freeform_event(tmp_checkpoint_dir, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")

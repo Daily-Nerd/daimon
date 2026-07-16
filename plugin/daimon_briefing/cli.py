@@ -792,6 +792,11 @@ def _cmd_resolve(args) -> int:
         if len(hits) == 1:
             target = hits[0][1]
         else:
+            # #303: a refused attempt must leave its own trace — otherwise
+            # "no agent ever tried resolve" and "an agent tried and was
+            # refused" are indistinguishable in `daimon stats`, and the two
+            # have opposite fixes (teaching vs UX).
+            _note_usage("resolve:no-match" if not hits else "resolve:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
             print(f"{label} {args.target!r}; candidates:")
             listing = hits or items
@@ -804,6 +809,7 @@ def _cmd_resolve(args) -> int:
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
+    _note_usage("resolve")
     print(f"resolved {target['id']}: {target.get('text', '')} [{args.status}]")
     return 0
 
