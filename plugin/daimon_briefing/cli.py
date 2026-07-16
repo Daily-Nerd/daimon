@@ -247,8 +247,13 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     # in production and was invisible before this.
     llm.reset_fallback()  # #28: detect a silent backend downgrade during THIS run
     start = time.monotonic()
+    # Same total budget as the hook path (hooks.py:73) — this entry point had
+    # none at all, so a manual `daimon serialize` had no bound even in
+    # principle while the SessionEnd hook did (#298).
+    deadline = start + config.timeout_seconds()
     try:
-        checkpoint = serializer.serialize_strict(session_id, messages, chat=_chat)
+        checkpoint = serializer.serialize_strict(
+            session_id, messages, chat=_chat, deadline=deadline)
     except serializer.TooShortError as exc:
         msg = f"skipped serialize for {session_id}: {exc}"
         print(msg)

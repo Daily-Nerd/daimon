@@ -1,7 +1,9 @@
+import http.server
 import io
 import json
 import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -161,6 +163,108 @@ def test_chat_attempt_timeout_capped_by_deadline(llm_env, monkeypatch):
             deadline=time.monotonic() + 5,
         )
     assert seen["timeout"] <= 5
+
+
+# ---- #298: urlopen's `timeout=` bounds a single blocking socket op, not the
+# call as a whole — a response that keeps delivering bytes never trips it, so
+# a single call can run past `deadline` while returning "success". These three
+# tests use a REAL socket (no mocked urlopen): the bug lives in the socket
+# layer, so a fake chat callable can't exercise it.
+
+
+class _TrickleHandler(http.server.BaseHTTPRequestHandler):
+    """Drips a chunked HTTP/1.1 body a few bytes at a time, each gap well
+    under the per-call socket timeout the test passes — proving any total
+    bound comes from `deadline`, not from urlopen's own `timeout=`."""
+
+    protocol_version = "HTTP/1.1"
+    body = b""
+    chunk_size = 1
+    gap = 0.05
+
+    def do_POST(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        for i in range(0, len(self.body), self.chunk_size):
+            piece = self.body[i:i + self.chunk_size]
+            time.sleep(self.gap)
+            self.wfile.write(f"{len(piece):x}\r\n".encode() + piece + b"\r\n")
+            self.wfile.flush()
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+
+    def log_message(self, *a):
+        pass
+
+
+def _start_trickle_server(body: bytes, chunk_size: int = 1, gap: float = 0.05):
+    handler = type("_Handler", (_TrickleHandler,), {
+        "body": body, "chunk_size": chunk_size, "gap": gap,
+    })
+    srv = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_chat_mid_response_deadline_raises_before_trickle_completes(llm_env, monkeypatch):
+    # 30 chunks x 0.05s gap = ~1.5s to fully drain, each gap far under the 5s
+    # socket timeout below, so urlopen's own timeout never fires. A 0.15s
+    # deadline must still cut this off well short of the full trickle.
+    srv = _start_trickle_server(b"x" * 30, chunk_size=1, gap=0.05)
+    try:
+        monkeypatch.setenv(
+            "DAIMON_LLM_BASE_URL", f"http://127.0.0.1:{srv.server_address[1]}")
+        start = time.monotonic()
+        with pytest.raises(llm.ChatError) as exc:
+            llm.chat(
+                [{"role": "user", "content": "hi"}],
+                timeout=5,
+                retries=1,
+                deadline=time.monotonic() + 0.15,
+            )
+        elapsed = time.monotonic() - start
+        assert "deadline" in str(exc.value).lower()
+        assert elapsed < 1.0, (
+            f"took {elapsed:.2f}s — deadline did not bound an in-flight response")
+    finally:
+        srv.shutdown()
+
+
+def test_chat_response_completing_inside_deadline_still_succeeds(llm_env, monkeypatch):
+    # Same trickling transport, but the deadline comfortably outlives it —
+    # the chunked read must still reassemble the body correctly and return
+    # the parsed content, unchanged from a single-shot read.
+    payload = json.dumps(
+        {"choices": [{"message": {"content": "trickled-ok"}}]}).encode()
+    srv = _start_trickle_server(payload, chunk_size=4, gap=0.02)
+    try:
+        monkeypatch.setenv(
+            "DAIMON_LLM_BASE_URL", f"http://127.0.0.1:{srv.server_address[1]}")
+        result = llm.chat(
+            [{"role": "user", "content": "hi"}],
+            timeout=5,
+            deadline=time.monotonic() + 5,
+        )
+        assert result == "trickled-ok"
+    finally:
+        srv.shutdown()
+
+
+def test_chat_no_deadline_reads_slow_response_to_completion(llm_env, monkeypatch):
+    # deadline=None must keep meaning "no total budget" — a slow-but-finite
+    # response is still read fully and returned, never cut short mid-flight.
+    payload = json.dumps(
+        {"choices": [{"message": {"content": "no-deadline-ok"}}]}).encode()
+    srv = _start_trickle_server(payload, chunk_size=4, gap=0.02)
+    try:
+        monkeypatch.setenv(
+            "DAIMON_LLM_BASE_URL", f"http://127.0.0.1:{srv.server_address[1]}")
+        result = llm.chat([{"role": "user", "content": "hi"}], timeout=5)
+        assert result == "no-deadline-ok"
+    finally:
+        srv.shutdown()
 
 
 def test_chat_5xx_retries_log_warnings_without_body(llm_env, monkeypatch, caplog):
