@@ -4068,6 +4068,106 @@ def test_stats_capture_too_short_error_lines_count_as_skipped(tmp_log_dir):
     assert cap["skipped"] == 3       # both fossils join the real skip line
 
 
+# ---- #300: adjacent-identical result lines are one serialize, logged twice ----
+
+
+def test_stats_capture_collapses_adjacent_duplicate_result_lines(tmp_log_dir):
+    # #300: a hook that redirected the child's stdout into serialize.log wrote
+    # every result line twice — the CLI prints it AND logs it first-class
+    # (cli.py: print + _append_serialize_log). The write side is fixed
+    # (spawn_serialize sets stdout=DEVNULL), but historical logs carry the
+    # doubles forever, and this fold is what `status` reports. One serialize
+    # must count once, and its duration must not be counted twice.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "2026-07-12T01:12:35Z codex-stop: spawned serialize for A (project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 114s)",
+        "wrote checkpoint: /c/A.json (took 114s)",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["success"] == 1
+    assert cap["total_serialize_seconds"] == 114
+    assert cap["max_serialize_seconds"] == 114
+
+
+def test_stats_capture_keeps_non_adjacent_identical_results(tmp_log_dir):
+    # The dedupe key is ADJACENCY, not payload equality. Two genuine serializes
+    # of one session are separated by their own spawn lines, and an immediate
+    # genuine re-run is short-circuited to a `skipped` line by the
+    # transcript_unchanged guard (#185/#296) — so identical payloads that are
+    # NOT neighbours are real repeats and must both count.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "2026-07-12T01:12:35Z codex-stop: spawned serialize for A (project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 114s)",
+        "2026-07-12T01:19:36Z codex-stop: spawned serialize for A (project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 114s)",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["success"] == 2
+    assert cap["total_serialize_seconds"] == 228
+
+
+def test_stats_capture_collapses_adjacent_duplicate_error_and_skip_lines(tmp_log_dir):
+    # The doubling rides on the print+log path, which every result line shares —
+    # errors and skips double exactly like successes.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "error: LLM call failed on transcript: ChatError: unreachable "
+        "(transcript: /t/S2.jsonl) after 12s",
+        "error: LLM call failed on transcript: ChatError: unreachable "
+        "(transcript: /t/S2.jsonl) after 12s",
+        "skipped serialize for S3: transcript too short (4 < 10 messages)",
+        "skipped serialize for S3: transcript too short (4 < 10 messages)",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["errors"] == 1
+    assert cap["skipped"] == 1
+
+
+def test_stats_capture_dedupe_does_not_inflate_fallback_count(tmp_log_dir):
+    # #28's [fallback backend] marker is a suffix on the success line, so a
+    # doubled success doubled the downgrade count too.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "wrote checkpoint: /c/A.json (took 9s) [fallback backend]",
+        "wrote checkpoint: /c/A.json (took 9s) [fallback backend]",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["success"] == 1
+    assert cap["fallback_serializes"] == 1
+
+
+def test_stats_capture_does_not_dedupe_spawn_lines(tmp_log_dir):
+    # Deliberately NOT deduped: spawn lines are timestamped and written only by
+    # the hook (lib.log), never by the CLI's print+log path, so they cannot
+    # double via #300's mechanism. Two spawns that genuinely land in the same
+    # second are real captures, and _spawns_in_window_count feeds the #265
+    # silent-capture alarm — collapsing them would hide a real capture.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "2026-07-12T01:12:35Z codex-stop: spawned serialize for A (project: /p/A)",
+        "2026-07-12T01:12:35Z codex-stop: spawned serialize for A (project: /p/A)",
+    ])
+    assert ledger._stats_capture()["hosts"]["codex-stop"] == 2
+
+
+def test_stats_capture_dedupe_does_not_mask_a_buried_failure(tmp_log_dir):
+    # scar #9 guard: the dedupe must stay adjacency-scoped. A failure separated
+    # from a later success by other sessions' lines still counts — this is NOT
+    # last-of-kind collapse.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "error: LLM call failed on transcript: ChatError: boom "
+        "(transcript: /t/A.jsonl) after 12s",
+        "2026-07-12T01:19:36Z session-end: spawned serialize for B (project: /p/B)",
+        "wrote checkpoint: /c/B.json (took 20s)",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["errors"] == 1
+    assert cap["success"] == 1
+
+
 # ---- #49: heal crash on hung targets + preflight-error attribution ----
 
 
