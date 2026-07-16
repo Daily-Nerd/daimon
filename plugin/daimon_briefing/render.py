@@ -10,7 +10,7 @@ import os
 import sys
 from contextlib import contextmanager
 
-from . import briefing, config, serializer
+from . import briefing, config, schema, serializer
 
 _TRUTHY = ("1", "true", "yes", "on")
 
@@ -85,10 +85,25 @@ _SECTIONS = [
 
 def _print_version_note(checkpoint) -> None:
     """Note when the checkpoint's format_version differs from the current serialize
-    prompt: the schema changed under it, so sections may render partially. Legacy
-    checkpoints (no format_version) render silently — nothing to compare (#93)."""
+    prompt. Legacy checkpoints (no format_version) render silently — nothing to
+    compare (#93). #294: older-than-code is routine schema drift (#93); newer-
+    than-code is impossible by construction (PROMPT_VERSION is a source constant)
+    and gets distinct wording — see cli._status_health's sibling check for the
+    full reasoning. Unparseable versions fail soft into the older-style wording."""
     fv = (checkpoint or {}).get("format_version")
-    if fv and fv != serializer.PROMPT_VERSION:
+    # `is not None`, not truthy: an absent key (legacy checkpoint, #93) stays
+    # silent, but an explicitly stamped "" is a garbage value that still
+    # deserves the fail-soft fallback wording below (#294).
+    if fv is None or fv == serializer.PROMPT_VERSION:
+        return
+    order = schema.compare_format_versions(fv, serializer.PROMPT_VERSION)
+    if order is not None and order > 0:
+        print(f"⚠ checkpoint format {fv} claims a version newer than this "
+              f"daimon's {serializer.PROMPT_VERSION} — a checkpoint cannot be "
+              f"newer than the code that wrote it, so the stamp is unreliable "
+              f"(check for a second daimon install writing to this checkpoint "
+              f"dir, or a downgraded install).")
+    else:
         print(f"⚠ checkpoint format {fv} != current {serializer.PROMPT_VERSION} — "
               f"schema changed; some sections may render partially.")
 
