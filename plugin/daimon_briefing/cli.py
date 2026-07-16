@@ -423,6 +423,11 @@ def _cmd_write_checkpoint(args) -> int:
             file=sys.stderr,
         )
         return 1
+    # #292: this dict was just authored by a model on the other end of the
+    # pipe (the docstring's "live session emits its own cognitive state") —
+    # same spoofing risk serialize_strict guards against, since validate()
+    # never inspects top-level keys.
+    serializer.strip_code_owned_keys(checkpoint)
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))
