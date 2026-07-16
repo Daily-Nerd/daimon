@@ -43,6 +43,31 @@ class EmptyOutputError(ChatError):
     failure (#225)."""
 
 
+# Read granularity for _read_within_deadline (#298): urlopen's `timeout=`
+# bounds a single blocking socket read, not the call as a whole — a response
+# that keeps delivering bytes never trips it, so a single r.read() can run
+# past `deadline` while every individual read stays under attempt_timeout.
+# read1() returns after at most one such read, so checking `deadline` between
+# calls bounds total elapsed to roughly deadline + one attempt_timeout instead
+# of leaving it unbounded.
+_READ_CHUNK_BYTES = 65536
+
+
+def _read_within_deadline(r, deadline, attempt, last):
+    """Read `r` (an HTTPResponse) to EOF via read1(), checking `deadline`
+    between reads so a slow-but-live response can't run past the total
+    budget the way one blocking r.read() does (#298)."""
+    chunks = []
+    while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ChatError(f"LLM deadline exhausted after {attempt} tries: {last}")
+        chunk = r.read1(_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """POST /v1/chat/completions. Returns the assistant message content (str).
 
@@ -53,9 +78,12 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
     `temperature=None` (the default) resolves config.llm_temperature()
     (DAIMON_LLM_TEMPERATURE, default 0.0). An explicit argument always wins.
 
-    `deadline` (time.monotonic() seconds) is a TOTAL budget across all attempts:
-    each attempt's socket timeout is capped to the remaining time, and retrying
-    stops once the deadline would be exceeded.
+    `deadline` (time.monotonic() seconds) is a TOTAL budget across all attempts
+    AND within a single in-flight call: each attempt's socket timeout is capped
+    to the remaining time, retrying stops once the deadline would be exceeded,
+    and the response body is read in a loop that re-checks the deadline
+    between reads — a single call that keeps delivering bytes cannot outrun
+    the budget the way one blocking read() could (#298).
 
     Error messages NEVER include the HTTP response body — error payloads can echo
     request contents/secrets, and hooks log these messages.
@@ -95,7 +123,7 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
         )
         try:
             with urllib.request.urlopen(req, timeout=attempt_timeout) as r:
-                data = json.loads(r.read())
+                data = json.loads(_read_within_deadline(r, deadline, attempt, last))
             # Surface token cost — the serializer discards the rest of the
             # response, so this log line is the only record of per-call spend.
             usage = data.get("usage") or {}
