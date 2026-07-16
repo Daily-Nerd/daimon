@@ -327,17 +327,52 @@ _STATS_HOST_RE = re.compile(
 )
 
 
+def _is_result_line(line: str) -> bool:
+    """A line the CLI both prints AND logs first-class (_run_serialize's
+    print + _append_serialize_log pair) — success, skip, or error. Spawn/host
+    lines are hook-written and timestamped, so they are NOT result lines."""
+    return bool(_RESULT_OK_RE.match(line) or _LEDGER_SKIP_RE.match(line)
+                or _RESULT_ERR_RE.match(line))
+
+
 def _stats_capture() -> dict:
     """serialize.log -> aggregate counters. Tallies EVERY line (scar #9: no
-    last-of-kind collapse — a buried failure still counts)."""
+    last-of-kind collapse — a buried failure still counts), except an
+    ADJACENT-identical repeat of a result line (#300).
+
+    #300: every result line is built once, printed to stdout, AND logged
+    first-class by _run_serialize. Any spawn path that redirected the child's
+    stdout into this log therefore wrote it twice — adjacent, byte-identical,
+    untimestamped. The write side is fixed (all spawn_serialize sites set
+    stdout=DEVNULL) but historical logs carry the doubles permanently, and this
+    fold is what `status` reports, so they are collapsed on READ. Diagnosed
+    cosmetic, not double spend: doubled pairs carry exactly one LLM token
+    record between them.
+
+    ADJACENCY is the dedupe key, never payload equality: two genuine serializes
+    of one session are separated by their own spawn lines, and an immediate
+    genuine re-run is short-circuited to a `skipped` line by the
+    transcript_unchanged guard (#185/#296) rather than writing a second
+    identical success. Scoped to result lines for the same reason — spawn lines
+    cannot double via this mechanism, and collapsing two same-second spawns
+    would hide a real capture from the #265 silent-capture alarm.
+
+    This is NOT the last-of-kind collapse scar #9 forbids: it never reaches
+    across sessions, so a failure buried under a later session's success still
+    counts."""
     out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
            "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0}
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
         return out
+    prev = None
     for line in text.splitlines():
         line = line.strip()
+        doubled = line == prev and _is_result_line(line)
+        prev = line
+        if doubled:
+            continue
         m = _RESULT_OK_RE.match(line)
         if m:
             out["success"] += 1
