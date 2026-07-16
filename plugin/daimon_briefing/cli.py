@@ -772,7 +772,15 @@ def _cmd_resolve(args) -> int:
     """Append a resolution event for ONE checkpoint item (#102). Exact id
     first; else a fuzzy query that must match uniquely — an ambiguous bind
     is refused with candidates listed, because a wrong bind silently
-    suppresses a live memory (the false-merge lesson, #13)."""
+    suppresses a live memory (the false-merge lesson, #13).
+
+    `--dry-run` runs this SAME bind and stops right before the event write
+    (#304) — the matcher a preview would use is otherwise inherently
+    different from the one doing the write (recall: FTS5 over history
+    across checkpoints; resolve: carry._same_item over this checkpoint
+    only), and a preview that disagrees with the writer is worse than none.
+    Ambiguous/no-match refusals return before this point either way, so
+    their output is identical with or without the flag."""
     project = _resolve_project(args.project)
     checkpoint = store.read_latest(project_dir=project, fallback=False)
     if not isinstance(checkpoint, dict):
@@ -804,6 +812,15 @@ def _cmd_resolve(args) -> int:
                 print(f"  {it['id']}  [{key}] {it.get('text', '')}")
             print("resolve by exact id: daimon resolve <id>")
             return 1
+    if getattr(args, "dry_run", False):
+        # A distinct tag, not "resolve": nothing was written, so folding this
+        # into the success counter would inflate it with attempts that never
+        # touched the ledger — corrupting the exact refusal-rate signal #303
+        # exists to expose. Not silent either: the tag still shows up in
+        # `daimon stats` usage counts, just apart from resolve/resolve:*.
+        _note_usage("resolve:dry-run")
+        print(f"would resolve {target['id']}: {target.get('text', '')} [{args.status}]")
+        return 0
     ok = store.append_event(target["id"], args.status, note=args.note or "",
                             project_dir=project, item_text=str(target.get("text") or ""))
     if not ok:
@@ -2285,6 +2302,9 @@ def main(argv=None) -> int:
                                 "a status starting with 'reopen' revives the item)")
     p_resolve.add_argument("--note", help="optional context recorded on the event")
     p_resolve.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_resolve.add_argument(
+        "--dry-run", action="store_true",
+        help="show what would resolve without writing an event — look before the write (#304)")
     p_resolve.set_defaults(func=_cmd_resolve)
 
     p_reverify = sub.add_parser(
