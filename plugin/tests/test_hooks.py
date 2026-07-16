@@ -191,6 +191,32 @@ def test_on_session_end_proceeds_when_transcript_hash_differs(
     assert store.read_checkpoint("S-end") is not None
 
 
+def test_on_session_end_proceeds_when_format_version_is_stale(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    # #293: bytes match but the checkpoint predates a PROMPT_VERSION bump —
+    # the hooks path must get the same version-aware behavior as cli._run_serialize.
+    from daimon_briefing import store, transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text('{"role": "user", "content": "hi"}\n')
+    sha = transcript_mod.file_sha256(tpath)
+    store.write_checkpoint(
+        "S-end",
+        {**json.loads(_valid_json("S-end")), "transcript_hash": sha, "format_version": "D-000"},
+    )
+
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
+    )
+    assert len(chat.calls) == 1
+
+
 def test_on_session_end_proceeds_when_no_transcript_path_given(
     tmp_checkpoint_dir, fake_chat_factory, monkeypatch
 ):

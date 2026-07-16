@@ -2095,6 +2095,30 @@ def test_run_serialize_proceeds_when_transcript_hash_differs(
     assert "skipped" not in out
 
 
+def test_run_serialize_proceeds_when_format_version_is_stale(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    # #293: bytes match but the checkpoint predates a PROMPT_VERSION bump — the
+    # guard must not skip, since re-serializing is the only way to refresh it.
+    from daimon_briefing import store, transcript
+
+    tp = FIXTURES / "sample_transcript.md"
+    sid = tp.stem
+    sha = transcript.file_sha256(tp)
+    store.write_checkpoint(
+        sid,
+        {**json.loads(_valid_json(sid)), "transcript_hash": sha, "format_version": "D-000"},
+    )
+
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json(sid)))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli._run_serialize(tp, "/p")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wrote checkpoint" in out
+    assert "skipped" not in out
+
+
 def test_run_serialize_proceeds_when_no_existing_checkpoint(
     tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
 ):
