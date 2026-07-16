@@ -527,6 +527,87 @@ def test_sweep_orphans_ignores_transcripts_older_than_14_days(tmp_path, monkeypa
     assert calls == []
 
 
+def test_sweep_orphans_skips_transcript_with_recorded_failure(tmp_path, monkeypatch):
+    # #299: a transcript that already FAILED to serialize is heal's job (capped
+    # at one retry, #15/#26), not an un-attempted orphan — the sweep must not
+    # re-spawn it just because no checkpoint landed.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    log_dir = tmp_path / "logs"
+    monkeypatch.setattr(lib, "LOG_DIR", log_dir)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    failed = transcripts / "S-failed.jsonl"
+    failed.write_text("{}\n")
+    _age(failed, 3600)  # no checkpoint -> would look like an orphan candidate
+
+    log_dir.mkdir(parents=True)
+    (log_dir / "serialize.log").write_text(
+        "2026-07-09T18:00:00Z session-start: spawned serialize for S-failed "
+        f"(reason: catch-up-orphan, project: /p/A) (transcript: {failed})\n"
+        f"error: boom (transcript: {failed}) after 12s\n",
+        encoding="utf-8",
+    )
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == []
+
+
+def test_sweep_orphans_still_sweeps_transcript_absent_from_ledger(tmp_path, monkeypatch):
+    # #185/#188 recovery must survive the #299 fix: a transcript with NO ledger
+    # entry at all (genuinely never attempted) is still swept, even when the
+    # log has unrelated entries for other sessions.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    log_dir = tmp_path / "logs"
+    monkeypatch.setattr(lib, "LOG_DIR", log_dir)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    log_dir.mkdir(parents=True)
+    (log_dir / "serialize.log").write_text(
+        "2026-07-01T00:00:00Z session-end: spawned serialize for S-unrelated "
+        "(reason: exit, project: /p/B) (transcript: /tmp/S-unrelated.jsonl)\n"
+        "wrote checkpoint: /home/u/.daimon/checkpoints/S-unrelated.json (took 5s)\n",
+        encoding="utf-8",
+    )
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == [str(orphan)]
+
+
+def test_sweep_orphans_still_sweeps_when_ledger_read_raises(tmp_path, monkeypatch):
+    # Fail-open contract: a broken ledger (unreadable serialize.log) must not
+    # disable the genuine #185/#188 recovery path.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    log_dir = tmp_path / "logs"
+    monkeypatch.setattr(lib, "LOG_DIR", log_dir)
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    log_dir.mkdir(parents=True)
+    (log_dir / "serialize.log").mkdir()  # a directory where a file is expected -> read raises
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))  # must not raise
+    assert calls == [str(orphan)]
+
+
 def test_sweep_orphans_logs_breadcrumb_on_spawn(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
     # _daimon_hook_lib.LOG_DIR is a module-level constant (Path.home()-derived,
