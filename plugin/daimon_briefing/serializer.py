@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -534,18 +535,30 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
     failures) keeps failing immediately here — those are chat()'s own retry
     domain.
 
-    Retries are never byte-identical: gateway response caches replay the same
-    garbage for an identical request (H1 attempt 5 — LiteLLM returned the
-    cached empty body in <1s). Each retry appends a per-attempt marker to the
-    user content, making it a distinct request.
+    Retries are never byte-identical — not within a run, and not ACROSS runs:
+    gateway response caches replay the same garbage for an identical request
+    (H1 attempt 5 — LiteLLM returned the cached empty body in <1s). The retry
+    marker carries the attempt number AND a per-invocation nonce, because
+    attempt numbers restart every invocation: without the nonce, a re-heal's
+    retries were byte-identical to the failed run's and ate the same pinned
+    bad response in 0s, forever (#312).
+
+    Attempt 1 stays pristine ON PURPOSE — no marker, no nonce. A gateway
+    replaying a COMPLETED good response for the clean request is a feature:
+    it is what let a deadline-killed chunked serialize recover its paid-for
+    chunks and merge in 0s on the next heal (#314's partial-loss case). If
+    attempt 1 replays pinned garbage instead, it costs milliseconds and the
+    nonce'd attempt 2 goes to a real model.
     """
     attempts = 1 + parse_retries
+    run_nonce = uuid.uuid4().hex[:12]
     for attempt in range(1, attempts + 1):
         content = user_content
         if attempt > 1:
             content += (
-                f"\n\n(retry attempt {attempt} — the previous response was "
-                f"unparseable; output ONLY the JSON object, no prose, no reasoning)"
+                f"\n\n(retry attempt {attempt} [{run_nonce}] — the previous "
+                f"response was unparseable; output ONLY the JSON object, "
+                f"no prose, no reasoning)"
             )
 
         def _can_retry(_attempt=attempt):

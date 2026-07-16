@@ -553,6 +553,36 @@ def test_serialize_first_try_success_has_no_retry_marker(fake_chat_factory):
     assert "retry attempt" not in chat.calls[0]["messages"][1]["content"]
 
 
+def test_serialize_retry_marker_differs_across_runs(fake_chat_factory):
+    # #312: gateway response caches replay a pinned bad response for a
+    # byte-identical request. The per-attempt marker de-dupes retries WITHIN a
+    # run, but attempt numbers restart on every invocation — so a re-heal sent
+    # byte-identical retries and got the same cached garbage back in 0s,
+    # forever. A per-run nonce makes every retry gateway-fresh.
+    chat1 = fake_chat_factory(["", _valid_checkpoint_json("S1")])
+    assert serializer.serialize_strict("S1", make_messages(20), chat=chat1) is not None
+    chat2 = fake_chat_factory(["", _valid_checkpoint_json("S1")])
+    assert serializer.serialize_strict("S1", make_messages(20), chat=chat2) is not None
+    retry1 = chat1.calls[1]["messages"][1]["content"]
+    retry2 = chat2.calls[1]["messages"][1]["content"]
+    assert "retry attempt 2" in retry1 and "retry attempt 2" in retry2
+    assert retry1 != retry2
+
+
+def test_serialize_first_attempt_stays_byte_identical_across_runs(fake_chat_factory):
+    # Deliberate scope limit on #312: attempt 1 carries NO nonce. Replaying a
+    # COMPLETED good response from a gateway cache is a feature, not a bug —
+    # it is exactly what healed a deadline-killed session in the field (the
+    # chunks and merge replayed in 0s on the next heal). Busting attempt 1
+    # would re-buy completed work on every heal (#314's amplification).
+    chat1 = fake_chat_factory(_valid_checkpoint_json("S1"))
+    assert serializer.serialize_strict("S1", make_messages(20), chat=chat1) is not None
+    chat2 = fake_chat_factory(_valid_checkpoint_json("S1"))
+    assert serializer.serialize_strict("S1", make_messages(20), chat=chat2) is not None
+    assert (chat1.calls[0]["messages"][1]["content"]
+            == chat2.calls[0]["messages"][1]["content"])
+
+
 def test_serialize_persistent_prose_raises_after_two_attempts(fake_chat_factory):
     # Non-list FakeChat response: every call (initial + retry) gets the same prose.
     chat = fake_chat_factory("still prose, not JSON")
