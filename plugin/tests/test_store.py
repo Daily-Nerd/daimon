@@ -1523,6 +1523,52 @@ def test_transcript_unchanged_false_when_new_hash_is_none(tmp_checkpoint_dir, sa
     assert store.transcript_unchanged("S-hash2", None) is False
 
 
+# ---- #293: transcript_unchanged is version-aware ----
+
+
+def test_transcript_unchanged_true_when_format_version_matches_current(
+    tmp_checkpoint_dir, sample_checkpoint
+):
+    # #185's original contract: identical bytes AND identical prompt version
+    # still skips. Must not regress.
+    ck = {
+        **sample_checkpoint,
+        "session_id": "S-samever",
+        "transcript_hash": "abc123",
+        "format_version": serializer.PROMPT_VERSION,
+    }
+    store.write_checkpoint("S-samever", ck)
+    assert store.transcript_unchanged("S-samever", "abc123") is True
+
+
+def test_transcript_unchanged_false_when_format_version_is_stale(
+    tmp_checkpoint_dir, sample_checkpoint
+):
+    # #293: a PROMPT_VERSION bump means identical bytes no longer imply an
+    # identical prompt, so a stale-format checkpoint must not be skipped.
+    ck = {
+        **sample_checkpoint,
+        "session_id": "S-stalever",
+        "transcript_hash": "abc123",
+        "format_version": "D-000",
+    }
+    store.write_checkpoint("S-stalever", ck)
+    assert store.transcript_unchanged("S-stalever", "abc123") is False
+
+
+def test_transcript_unchanged_false_when_checkpoint_is_legacy_no_format_version(
+    tmp_checkpoint_dir,
+):
+    # A pre-#93 checkpoint on disk carries no format_version at all (hand-written
+    # here to bypass write_checkpoint's own setdefault stamping). We can't confirm
+    # it came from the current prompt, so — consistent with this guard's existing
+    # fail-open stance on every other uncertain edge — it does not skip.
+    ck = {"session_id": "S-legacyver", "transcript_hash": "abc123"}
+    (tmp_checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    (tmp_checkpoint_dir / "S-legacyver.json").write_text(json.dumps(ck), encoding="utf-8")
+    assert store.transcript_unchanged("S-legacyver", "abc123") is False
+
+
 # ---- list_buckets: every project bucket, for `daimon projects` (#243) ----
 
 

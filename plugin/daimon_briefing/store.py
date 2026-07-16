@@ -657,7 +657,17 @@ def transcript_unchanged(session_id: str, transcript_hash: str | None) -> bool:
     checkpoint. Fail-open on every edge — no fresh hash, no existing checkpoint,
     or a missing/malformed stored hash all return False (proceed with a normal
     serialize); only an exact hex-digest match, computed the same way
-    (transcript.file_sha256, over raw pre-render bytes — #125), justifies a skip."""
+    (transcript.file_sha256, over raw pre-render bytes — #125), justifies a skip.
+
+    #293: identical bytes alone are not enough — the guard's own rationale is
+    "identical bytes AND identical prompt ⇒ identical output ⇒ skip", and it
+    never checked the second half. A checkpoint stamped under an older
+    `serializer.PROMPT_VERSION` cannot be reproduced by the current prompt, so
+    it is stale, not a duplicate-SessionEnd case, and must not be skipped — this
+    is what makes the format-drift warning's "re-serialize to refresh" remedy
+    actually work. A legacy checkpoint with no `format_version` at all (pre-#93)
+    can't be confirmed to match the current prompt either, so — consistent with
+    every other uncertain edge here — it also fails open (no skip)."""
     if not transcript_hash:
         return False
     existing = read_checkpoint(session_id)
@@ -665,6 +675,8 @@ def transcript_unchanged(session_id: str, transcript_hash: str | None) -> bool:
         return False
     stored = existing.get("transcript_hash")
     if not isinstance(stored, str) or not stored:
+        return False
+    if existing.get("format_version") != serializer.PROMPT_VERSION:
         return False
     return stored == transcript_hash
 
