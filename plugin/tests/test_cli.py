@@ -1405,6 +1405,30 @@ def test_cli_write_checkpoint_no_session_id(tmp_checkpoint_dir, monkeypatch, cap
     assert "session_id" in capsys.readouterr().err.lower()
 
 
+def test_cli_write_checkpoint_strips_model_supplied_code_owned_keys(
+        tmp_checkpoint_dir, monkeypatch):
+    # #292: the introspection path (#23) pipes a MODEL-authored checkpoint
+    # straight to store.write_checkpoint after serializer.validate — which
+    # never inspects top-level keys. Without a strip here, the same spoofing
+    # the fresh-serialize paths were fixed against is still open on the one
+    # path where the model is most schema-aware (it is deliberately authoring
+    # schema-shaped JSON).
+    from daimon_briefing import serializer, store
+
+    spoofed_version = serializer.PROMPT_VERSION + "-bogus"
+    spoofed = json.loads(_valid_json("S-intro"))
+    spoofed["format_version"] = spoofed_version
+    spoofed["author"] = "not-the-real-author"
+    spoofed["created"] = "1999-01-01T00:00:00Z"
+    _stdin(monkeypatch, json.dumps(spoofed))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest(project_dir="/p/A")
+    assert ck["format_version"] == serializer.PROMPT_VERSION
+    assert ck["author"] != "not-the-real-author"
+    assert ck["created"] != "1999-01-01T00:00:00Z"
+
+
 def test_top_level_help_has_examples(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])
@@ -1609,6 +1633,35 @@ def test_cli_anchor_attach_missing_session_id_exits_nonzero(
                    "--project", str(proj)])
     assert rc != 0
     assert "session_id" in capsys.readouterr().err
+
+
+def test_cli_anchor_attach_preserves_existing_code_owned_stamps(
+    tmp_checkpoint_dir, capsys, monkeypatch, tmp_path, sample_checkpoint
+):
+    # #292 asymmetry lock: --attach reads an EXISTING checkpoint (already
+    # carrying real stamps) and re-writes it through the normal store path.
+    # Stripping code-owned keys here would erase those real stamps and let
+    # store.write_checkpoint's setdefault silently re-date `created` and jump
+    # `format_version` to whatever PROMPT_VERSION is now — the opposite of a
+    # fresh-serialize spoof, but just as wrong. Only paths where the MODEL
+    # authored the dict get stripped; a dict that came off disk never does.
+    from daimon_briefing import serializer, store
+
+    proj = _anchor_proj(tmp_path, monkeypatch)
+    stamped = {**sample_checkpoint, "format_version": "D-000",
+               "created": "2020-01-01T00:00:00Z", "author": "ada"}
+    store.write_checkpoint("S-prev", stamped, project_dir=proj)
+    capsys.readouterr()
+
+    rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "PINNING",
+                   "--project", str(proj)])
+    assert rc == 0
+
+    latest = store.read_latest(project_dir=proj)
+    assert latest["format_version"] == "D-000"
+    assert latest["format_version"] != serializer.PROMPT_VERSION
+    assert latest["created"] == "2020-01-01T00:00:00Z"
+    assert latest["author"] == "ada"
 
 
 def test_cli_anchor_without_attach_writes_nothing(
