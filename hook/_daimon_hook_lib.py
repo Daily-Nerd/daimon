@@ -236,6 +236,44 @@ def spawn_team_sync(cli, cwd) -> None:
 
 _ORPHAN_MAX_AGE_SECONDS = 14 * 24 * 3600  # 14 days — bounds the sweep's directory scan
 
+# Duplicated from daimon_briefing.ledger's _RESULT_ERR_RE / _HEAL_TRANSCRIPT_RE /
+# _LEDGER_OK_RE (this module is stdlib-only and cannot import the package — see
+# module docstring). Keep in sync with ledger.py if those line shapes change.
+_LOG_RESULT_OK_RE = re.compile(r"^wrote checkpoint: (.+?) \(took \d+s\)")
+_LOG_RESULT_ERR_RE = re.compile(r"^error: .*?(?: after (\d+)s)?$")
+_LOG_ERR_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)(?: after \d+s|$)")
+
+
+def _failed_session_stems() -> set:
+    """Transcript stems (session ids) whose LATEST serialize.log outcome is a
+    recorded failure — a lightweight, read-only echo of
+    daimon_briefing.ledger._session_ledger's error/success fold, scoped to just
+    what sweep_orphans needs (#299): a transcript that was ATTEMPTED and FAILED
+    belongs to `heal` (already capped at one retry, #15/#26), not to this sweep,
+    which owns only the never-attempted case (#185/#188). A later success for
+    the same stem clears the failure, matching the ledger's own fold.
+
+    Fails open to an empty set on any read/parse error, so a broken or missing
+    ledger never blocks the genuine #185/#188 recovery sweep — it just leaves
+    the sweep unable to tell 'failed' from 'never attempted', which is exactly
+    today's behavior without this check."""
+    try:
+        text = (LOG_DIR / "serialize.log").read_text(encoding="utf-8")
+        state = {}
+        for line in text.splitlines()[-200:]:  # tail is plenty; matches ledger.py
+            line = line.strip()
+            m = _LOG_RESULT_OK_RE.match(line)
+            if m:
+                state[Path(m.group(1)).stem] = "success"
+                continue
+            if _LOG_RESULT_ERR_RE.match(line):
+                tm = _LOG_ERR_TRANSCRIPT_RE.search(line)
+                if tm:
+                    state[Path(tm.group(1)).stem] = "error"
+        return {stem for stem, outcome in state.items() if outcome == "error"}
+    except Exception:  # noqa: BLE001 — fail-open, see docstring
+        return set()
+
 
 def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
     """Catch-up sweep for a transcript that was never captured because the
@@ -259,8 +297,12 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
     siblings are every other session ever run against this project) for the
     most recently modified transcript that looks uncaptured: no checkpoint on
     disk for it at all, or a checkpoint OLDER than the transcript (written
-    before the session actually ended). Spawns AT MOST ONE detached serialize
-    per session start — the newest candidate — the exact same way
+    before the session actually ended) — EXCLUDING any candidate the ledger
+    already shows as attempted-and-failed (#299, via _failed_session_stems):
+    that transcript is heal's territory now (capped at one retry, #15/#26),
+    not an un-attempted orphan, so the sweep must not re-spawn it every
+    session start for up to 14 days. Spawns AT MOST ONE detached serialize per
+    session start — the newest remaining candidate — the exact same way
     `daimon-session-end.py` does.
 
     Idempotent by construction, so the mtime heuristic alone is enough: the
@@ -277,6 +319,7 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
             return
         cutoff = time.time() - _ORPHAN_MAX_AGE_SECONDS
         ckpt_dir = checkpoint_dir()
+        failed_stems = _failed_session_stems()
         best_path = None
         best_mtime = None
         for candidate in directory.glob("*.jsonl"):
@@ -288,6 +331,8 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
                 continue
             if mtime < cutoff:
                 continue  # outside the bounded scan window
+            if candidate.stem in failed_stems:
+                continue  # attempted and failed -> heal's job, not an orphan (#299)
             ckpt_path = ckpt_dir / f"{candidate.stem}.json"
             try:
                 if ckpt_path.stat().st_mtime >= mtime:
