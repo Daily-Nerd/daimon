@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, serializer, store, teamsync, transcript
+from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, schema, serializer, store, teamsync, transcript
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -1053,13 +1053,34 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
     # global fallback): a stored format_version that differs from the current one
     # means the schema changed under it, so the briefing may render partially.
     # Legacy checkpoints (no format_version) are silent — nothing to compare (#93).
+    #
+    # #294: the two directions are different events. Older-than-code is routine
+    # drift (#93) — expected after a version bump, cleared by re-serializing.
+    # Newer-than-code is impossible by construction (PROMPT_VERSION is a source
+    # constant; code that stamps it must contain it) — a second install writing
+    # to the same checkpoint dir, a downgraded install, or a corrupted/forged
+    # stamp (#292), never a schema change. Unparseable versions fail soft into
+    # the older-style wording rather than raising.
     active = proj if proj.get("exists") else glob
     fv = active.get("format_version")
-    if fv and fv != serializer.PROMPT_VERSION:
-        warnings.append(
-            f"checkpoint format {fv} != current {serializer.PROMPT_VERSION} — "
-            f"schema changed; briefing may render partially (re-serialize to refresh)"
-        )
+    # `is not None`, not truthy: an absent key (legacy checkpoint, #93) stays
+    # silent, but an explicitly stamped "" is a garbage value that still
+    # deserves the fail-soft fallback wording below (#294).
+    if fv is not None and fv != serializer.PROMPT_VERSION:
+        order = schema.compare_format_versions(fv, serializer.PROMPT_VERSION)
+        if order is not None and order > 0:
+            warnings.append(
+                f"checkpoint format {fv} claims a version newer than this "
+                f"daimon's {serializer.PROMPT_VERSION} — a checkpoint cannot be "
+                f"newer than the code that wrote it, so the stamp is unreliable "
+                f"(check for a second daimon install writing to this checkpoint "
+                f"dir, or a downgraded install)"
+            )
+        else:
+            warnings.append(
+                f"checkpoint format {fv} != current {serializer.PROMPT_VERSION} — "
+                f"schema changed; briefing may render partially (re-serialize to refresh)"
+            )
 
     if outstanding:
         n = len(outstanding)

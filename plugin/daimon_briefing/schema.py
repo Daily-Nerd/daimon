@@ -10,9 +10,12 @@ its view from ITEM_FIELDS below; a field added here propagates to all of them
 
 Deliberately import-free: store imports serializer, recall imports store,
 carry imports recall — this module sits below the whole chain so any of them
-can import it without a cycle.
+can import it without a cycle. compare_format_versions lives here for the same
+reason: cli's status check and render's brief note (#294) both need it, and
+neither one imports the other.
 """
 
+import re
 from typing import NamedTuple
 
 
@@ -63,3 +66,18 @@ CARRIED_KINDS: tuple[tuple[str, str, str], ...] = tuple(
 # dedicated rules (contradiction) are absent; lookups .get their own default.
 KIND_TO_TYPE: dict[str, str] = {
     f.kind: f.scoring_type for f in ITEM_FIELDS if f.scoring_type}
+
+_FORMAT_VERSION_RE = re.compile(r"D-(\d+)")
+
+
+def compare_format_versions(a: str, b: str) -> int | None:
+    """Order-compare two PROMPT_VERSION-shaped strings ("D-NNN") by their integer
+    suffix — a plain string compare gets multi-digit versions wrong (#294:
+    "D-9" > "D-10" lexically, backwards). Returns a positive int if `a` is newer
+    than `b`, negative if older, 0 if equal, or None if either side isn't a
+    parseable D-NNN — callers fail soft on None rather than raising."""
+    ma = _FORMAT_VERSION_RE.fullmatch(a) if isinstance(a, str) else None
+    mb = _FORMAT_VERSION_RE.fullmatch(b) if isinstance(b, str) else None
+    if ma is None or mb is None:
+        return None
+    return int(ma.group(1)) - int(mb.group(1))

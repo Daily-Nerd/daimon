@@ -1900,6 +1900,51 @@ def test_status_health_version_mismatch_on_global_fallback():
     assert any("format" in w.lower() for w in h["warnings"])
 
 
+def test_status_health_older_checkpoint_suggests_reserialize():
+    # #294: checkpoint OLDER than the running code is routine drift (#93) —
+    # the existing wording, remedy included, still fires.
+    proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+            "format_version": "D-000"}
+    h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+    assert any("re-serialize" in w.lower() for w in h["warnings"])
+
+
+def test_status_health_newer_checkpoint_flags_impossible_stamp(monkeypatch):
+    # #294: checkpoint NEWER than the running code cannot happen by construction —
+    # PROMPT_VERSION is a source constant. Distinct wording, and NOT "re-serialize".
+    from daimon_briefing import serializer
+    monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-013")
+    proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+            "format_version": "D-014"}
+    h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+    assert h["ok"] is False
+    assert any("D-014" in w and "D-013" in w for w in h["warnings"])
+    assert not any("re-serialize" in w.lower() for w in h["warnings"])
+
+
+def test_status_health_unparseable_format_version_falls_back():
+    # #294: fail soft — a status check must never raise, and a garbage stamp
+    # falls back to the existing (older-style) wording rather than crashing.
+    for garbage in ("banana", "D-", "", "D-1x"):
+        proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+                "format_version": garbage}
+        h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+        assert any("re-serialize" in w.lower() for w in h["warnings"]), garbage
+
+
+def test_status_health_version_ordering_uses_integers_not_strings(monkeypatch):
+    # #294: naive string comparison gets "D-10" vs "D-9" backwards ('1' < '9'
+    # lexically). Checkpoint D-10 against current D-9 is numerically NEWER
+    # (impossible) — a string-compare bug would misreport it as older/routine.
+    from daimon_briefing import serializer
+    monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-9")
+    proj = {"exists": True, "session_id": "P", "age_seconds": 100, "age": "1m",
+            "format_version": "D-10"}
+    h = cli._status_health(proj, {"exists": True}, [], [], now=1000.0)
+    assert not any("re-serialize" in w.lower() for w in h["warnings"])
+    assert any("D-10" in w and "D-9" in w for w in h["warnings"])
+
+
 def test_cmd_status_json_has_health_and_siblings(tmp_checkpoint_dir, capsys, monkeypatch):
     from daimon_briefing import store
     # a project checkpoint + a newer sibling bucket

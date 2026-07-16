@@ -145,6 +145,46 @@ def test_render_brief_no_note_for_legacy_checkpoint(sample_checkpoint, capsys):
     assert "format" not in out.lower()
 
 
+def test_render_brief_older_checkpoint_suggests_reserialize(sample_checkpoint, capsys):
+    # #294: checkpoint OLDER than the running code is routine drift (#93) —
+    # existing wording (still framed as a schema change), unchanged.
+    render.render_brief({**sample_checkpoint, "format_version": "D-000"})
+    out = capsys.readouterr().out
+    assert "schema changed" in out.lower()
+
+
+def test_render_brief_newer_checkpoint_flags_impossible_stamp(
+        sample_checkpoint, capsys, monkeypatch):
+    # #294: checkpoint NEWER than the running code cannot happen by construction.
+    # Distinct wording — must NOT reuse "schema changed" or suggest re-serialize.
+    from daimon_briefing import serializer
+    monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-013")
+    render.render_brief({**sample_checkpoint, "format_version": "D-014"})
+    out = capsys.readouterr().out
+    assert "D-014" in out and "D-013" in out
+    assert "schema changed" not in out.lower()
+    assert "re-serialize" not in out.lower()
+
+
+def test_render_brief_unparseable_format_version_falls_back(sample_checkpoint, capsys):
+    # #294: fail soft — never raise, fall back to the existing wording.
+    render.render_brief({**sample_checkpoint, "format_version": "banana"})
+    out = capsys.readouterr().out
+    assert "schema changed" in out.lower()
+
+
+def test_render_brief_version_ordering_uses_integers_not_strings(
+        sample_checkpoint, capsys, monkeypatch):
+    # #294: naive string comparison gets "D-10" vs "D-9" backwards. Checkpoint
+    # D-10 against current D-9 is numerically NEWER (impossible).
+    from daimon_briefing import serializer
+    monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-9")
+    render.render_brief({**sample_checkpoint, "format_version": "D-10"})
+    out = capsys.readouterr().out
+    assert "schema changed" not in out.lower()
+    assert "D-10" in out and "D-9" in out
+
+
 def _status_data():
     return {
         "project": "/p/A",
