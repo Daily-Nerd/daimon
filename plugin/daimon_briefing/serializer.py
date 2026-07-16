@@ -642,6 +642,40 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
     return partials[0]
 
 
+# #292: keys the CODE asserts about a checkpoint's origin — never data the
+# extraction model should get a vote on. The serialize prompt never asks for
+# any of these, but a transcript that happens to discuss daimon's own schema
+# (the field report behind this: a transcript quoting daimon's own format-
+# drift warning banner) can make the model emit one anyway. Nothing else on
+# the write path catches it: `_valid_item` only validates item fields, and
+# store.write_checkpoint's setdefault stamps defer to whatever key is already
+# present — which is indistinguishable from a legitimate re-write of an
+# already-stamped checkpoint (#93/#123). `session_id` needs no entry here:
+# it's already reassigned by direct `=` right after every _produce() call,
+# below, which already stomps a model-supplied value the same way.
+_CODE_OWNED_KEYS = (
+    "format_version", "created", "author",
+    "transcript_hash", "project_slug", "git_branch", "receipts",
+)
+
+
+def _strip_code_owned_keys(checkpoint: dict) -> None:
+    """Discard any code-owned key the model emitted in its own output.
+
+    Fail-safe, not fail-fast: a model that names one of these fields is not
+    an error worth failing an otherwise-good serialize over — just a value
+    that must never be load-bearing. Runs on the raw parsed dict, before
+    session_id is assigned and before store.write_checkpoint ever sees it, so
+    its later setdefault stamps land on the code's own values (cli's own
+    `created`/`transcript_hash` assignments, store's format_version/author/
+    project_slug/git_branch/receipts) — never a model-supplied one.
+    """
+    for key in _CODE_OWNED_KEYS:
+        if key in checkpoint:
+            log.info("serialize: discarding model-supplied code-owned key %r", key)
+            del checkpoint[key]
+
+
 def _stamp_llm_provenance(checkpoint: dict) -> None:
     """Stamp which backend/model actually produced this checkpoint (#230).
 
@@ -763,10 +797,12 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
                                attempt_note=note)
 
     checkpoint = _produce("")
+    _strip_code_owned_keys(checkpoint)
     checkpoint["session_id"] = session_id
     if not validate(checkpoint):
         log.info("checkpoint failed validation — one resample with attempt nonce (#118)")
         checkpoint = _produce(_RETRY_NOTE)
+        _strip_code_owned_keys(checkpoint)
         checkpoint["session_id"] = session_id
     if not validate(checkpoint):
         raise SchemaValidationError(

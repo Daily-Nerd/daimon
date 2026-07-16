@@ -95,6 +95,29 @@ def test_on_session_end_writes_checkpoint(tmp_checkpoint_dir, fake_chat_factory,
     assert store.read_latest()["session_id"] == "S-end"
 
 
+def test_on_session_end_strips_model_supplied_format_version(
+        tmp_checkpoint_dir, fake_chat_factory, monkeypatch):
+    # #292: on_session_end never goes through cli._run_serialize, so the strip
+    # has to live where BOTH entry points call through — this proves it
+    # covers the hooks path too, not just cli.
+    from daimon_briefing import serializer, store, transcript
+
+    spoofed_version = serializer.PROMPT_VERSION + "-bogus"
+    spoofed = json.loads(_valid_json("S-end"))
+    spoofed["format_version"] = spoofed_version
+    chat = fake_chat_factory(json.dumps(spoofed))
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", chat)
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
+    )
+    on_disk = store.read_checkpoint("S-end")
+    assert on_disk is not None
+    assert on_disk["format_version"] == serializer.PROMPT_VERSION
+    assert on_disk["format_version"] != spoofed_version
+
+
 def test_on_session_end_disabled_noop(tmp_checkpoint_dir, fake_chat_factory, monkeypatch):
     from daimon_briefing import store, transcript
 

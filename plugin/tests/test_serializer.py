@@ -1128,3 +1128,74 @@ def test_serialize_prompt_has_external_artifact_identifier_rule():
     assert "MOST SPECIFIC identifier" in sys
     assert "half a pointer" in sys
     assert "Never invent an identifier" in sys
+
+
+# ---- #292: code-owned provenance keys stripped at the serializer boundary ----
+#
+# format_version/created/author/etc. are facts the CODE asserts about a
+# checkpoint's origin — never data the extraction model should get a vote on.
+# The serialize prompt never asks for these keys, but a transcript that
+# happens to discuss daimon's own schema (this bug's field report: the
+# transcript quoted daimon's own format-drift warning banner) can make the
+# model emit one anyway. Nothing else on the write path catches it —
+# `_valid_item` only validates item fields, and store.write_checkpoint's
+# setdefault stamps defer to whatever key is already present, which cannot
+# tell a fresh serialize from a legitimate re-write. Stripping right after
+# parse — before session_id is even assigned — means every serialize()
+# caller (cli, hooks) hands store a clean dict, so its setdefault stamps
+# land on the code's own values.
+
+
+@pytest.mark.parametrize("key,spoofed", [
+    ("format_version", "D-999"),
+    ("created", "1999-01-01T00:00:00Z"),
+    ("author", "not-the-real-author"),
+    ("transcript_hash", "deadbeef"),
+    ("project_slug", "some-other-project"),
+    ("git_branch", "not-the-real-branch"),
+    ("receipts", "not-a-real-receipt-marker"),
+])
+def test_serialize_strips_model_supplied_code_owned_key(fake_chat_factory, key, spoofed):
+    spoofed_ckpt = json.loads(_valid_checkpoint_json("S1"))
+    spoofed_ckpt[key] = spoofed
+    chat = fake_chat_factory(json.dumps(spoofed_ckpt))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert key not in ckpt  # stripped, not carried through as the model's value
+
+
+def test_serialize_strip_survives_the_validation_retry_pass(fake_chat_factory):
+    # A spoofed format_version alongside output that FAILS validation forces
+    # the #118 resample retry — the strip must apply to the retried output
+    # too, not just the first attempt.
+    bad = json.loads(_valid_checkpoint_json("S1"))
+    bad["working_context"]["recent_decisions"][0] = {"text": "d", "trust": "verbatim"}  # no quote -> invalid
+    bad["format_version"] = "D-999"
+    good = json.loads(_valid_checkpoint_json("S1"))
+    good["format_version"] = "D-999"
+    chat = fake_chat_factory([json.dumps(bad), json.dumps(good)])
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert "format_version" not in ckpt
+
+
+def test_regression_model_supplied_format_version_does_not_stamp_checkpoint(
+        tmp_checkpoint_dir, fake_chat_factory):
+    # The exact field report behind #292: a transcript quoting daimon's own
+    # format-drift banner (which cites a format_version string) made the
+    # model emit format_version in its extracted JSON. The checkpoint that
+    # reaches disk must carry the CODE's PROMPT_VERSION, never a model-
+    # supplied one — regardless of how plausible the spoofed value looks.
+    from daimon_briefing import store
+
+    spoofed_version = serializer.PROMPT_VERSION + "-bogus"
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    spoofed["format_version"] = spoofed_version
+    chat = fake_chat_factory(json.dumps(spoofed))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert "format_version" not in ckpt
+    path = store.write_checkpoint("S1", ckpt)
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["format_version"] == serializer.PROMPT_VERSION
+    assert on_disk["format_version"] != spoofed_version
