@@ -5,6 +5,25 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0](https://github.com/Daily-Nerd/daimon/compare/v0.16.1...v0.17.0) (2026-07-16)
+
+
+### Features
+
+* **cli:** add resolve --dry-run — look before the write ([#306](https://github.com/Daily-Nerd/daimon/issues/306)) ([4318911](https://github.com/Daily-Nerd/daimon/commit/43189112caa4cef395a5fd1fb9d8c0df015ce878)), closes [#304](https://github.com/Daily-Nerd/daimon/issues/304)
+* **serializer:** capture external-artifact identifiers verbatim (D-014) ([#290](https://github.com/Daily-Nerd/daimon/issues/290)) ([e4e7a1e](https://github.com/Daily-Nerd/daimon/commit/e4e7a1eb407612a08b5cb1e7a69c4a2a35c6cf32)), closes [#287](https://github.com/Daily-Nerd/daimon/issues/287)
+
+
+### Bug Fixes
+
+* **hooks:** skip sweep_orphans candidates the ledger already shows failed ([#301](https://github.com/Daily-Nerd/daimon/issues/301)) ([1574519](https://github.com/Daily-Nerd/daimon/commit/157451925a3f64c5c8576c9d3a34f8b3ec770649))
+* **llm:** enforce the total deadline mid-response, not just between calls ([#302](https://github.com/Daily-Nerd/daimon/issues/302)) ([c2e3d36](https://github.com/Daily-Nerd/daimon/commit/c2e3d36c2bd85e2f462dbad7b4710770dd06e515)), closes [#298](https://github.com/Daily-Nerd/daimon/issues/298)
+* **recall:** dedupe results by item content — one hit per distinct item, newest checkpoint wins ([#289](https://github.com/Daily-Nerd/daimon/issues/289)) ([b9afc5b](https://github.com/Daily-Nerd/daimon/commit/b9afc5b40a0a399597d2518215f3e4eb9c2f8db4)), closes [#288](https://github.com/Daily-Nerd/daimon/issues/288)
+* **serializer:** strip code-owned provenance keys at the parse boundary ([#295](https://github.com/Daily-Nerd/daimon/issues/295)) ([2ca8237](https://github.com/Daily-Nerd/daimon/commit/2ca8237bf201729a54a45b2dcd32ad457ea58505)), closes [#292](https://github.com/Daily-Nerd/daimon/issues/292)
+* **stats:** instrument resolve — usage counters for resolve, resolve:ambiguous, resolve:no-match ([#305](https://github.com/Daily-Nerd/daimon/issues/305)) ([e21633c](https://github.com/Daily-Nerd/daimon/commit/e21633c4794fd296667bac5bc0d45460a3d92b59)), closes [#303](https://github.com/Daily-Nerd/daimon/issues/303)
+* **status:** give the format-drift warning a direction sense ([#297](https://github.com/Daily-Nerd/daimon/issues/297)) ([e4bc89d](https://github.com/Daily-Nerd/daimon/commit/e4bc89db7c121bea35f6285a1fc9f8dcd3871e53)), closes [#294](https://github.com/Daily-Nerd/daimon/issues/294)
+* **store:** make transcript_unchanged version-aware ([#296](https://github.com/Daily-Nerd/daimon/issues/296)) ([d649371](https://github.com/Daily-Nerd/daimon/commit/d649371f960f0ff05b58ab354b9e9177c5a75a9a)), closes [#293](https://github.com/Daily-Nerd/daimon/issues/293)
+
 ## [0.16.1](https://github.com/Daily-Nerd/daimon/compare/v0.16.0...v0.16.1) (2026-07-14)
 
 
