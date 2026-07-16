@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from daimon_briefing import store
+from tests.conftest import FIXTURES
 
 HOOK_DIR = Path(__file__).parents[2] / "hook"
 BRIEF_HOOK = HOOK_DIR / "daimon-session-brief.py"
@@ -606,6 +607,52 @@ def test_sweep_orphans_still_sweeps_when_ledger_read_raises(tmp_path, monkeypatc
     monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
     lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))  # must not raise
     assert calls == [str(orphan)]
+
+
+def test_hook_lib_failure_regexes_stay_in_sync_with_ledger():
+    # #299: _daimon_hook_lib._failed_session_stems() duplicates three of
+    # ledger.py's line-shape regexes (this module is stdlib-only and cannot
+    # import the package). scripts/sync_hooks.py --check only enforces
+    # byte-identity between the TWO HOOK-LIB COPIES; nothing enforces this
+    # module against its ledger.py source. If ledger's shapes drift silently,
+    # _failed_session_stems() returns an empty set, sweep_orphans reverts to
+    # the exact unbounded retry #299 exists to fix, and no test fails — the
+    # fail-open design makes a drifted regex indistinguishable from a clean
+    # ledger. Lock the three duplicated patterns to their source of truth.
+    from daimon_briefing import ledger
+
+    assert lib._LOG_RESULT_ERR_RE.pattern == ledger._RESULT_ERR_RE.pattern
+    assert lib._LOG_RESULT_OK_RE.pattern == ledger._LEDGER_OK_RE.pattern
+    assert lib._LOG_ERR_TRANSCRIPT_RE.pattern == ledger._HEAL_TRANSCRIPT_RE.pattern
+
+
+def test_failed_session_stems_matches_real_serialize_failure_output(
+    tmp_path, monkeypatch, tmp_checkpoint_dir, fake_chat_factory
+):
+    # Belt to the pattern-lock test's suspenders: drive the ACTUAL cli.py
+    # writer path (not hand-built log strings) so this also catches a
+    # writer-format change that doesn't touch ledger's regexes directly.
+    # A genuinely failed `daimon serialize` must land the same session id in
+    # lib._failed_session_stems() as ledger._session_ledger() classifies as
+    # "error" — the two consumers of serialize.log must agree.
+    from daimon_briefing import cli, ledger
+
+    log_dir = tmp_path / ".daimon" / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log_dir))
+    monkeypatch.setattr(lib, "LOG_DIR", log_dir)  # hook lib's LOG_DIR has no env seam
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory("prose, definitely not JSON"))
+
+    transcript = FIXTURES / "sample_transcript.md"
+    rc = cli.main(["serialize", str(transcript)])
+    assert rc != 0
+
+    stems = lib._failed_session_stems()
+    assert transcript.stem in stems
+
+    log_text = (log_dir / "serialize.log").read_text(encoding="utf-8")
+    led = ledger._session_ledger(log_text, time.time())
+    assert led[transcript.stem]["result_kind"] == "error"
 
 
 def test_sweep_orphans_logs_breadcrumb_on_spawn(tmp_path, monkeypatch):
