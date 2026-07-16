@@ -2491,6 +2491,13 @@ def test_cli_brief_team_empty_is_byte_identical(tmp_checkpoint_dir, sample_check
     # DAIMON_TEAM off (fixture default) → nothing mirrored → empty team dir.
     store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
 
+    # #307 sweep: no rendered age on this path, but briefing.build defaults
+    # `now` to the live clock for #78 weight ordering, so byte-identity across
+    # two calls is still clock-coupled in principle. Frozen for the same
+    # reason as the fallback test: a diff must mean --team leaked, full stop.
+    frozen = time.time()
+    monkeypatch.setattr(time, "time", lambda: frozen)
+
     cli.main(["brief", "--project", proj])
     plain = capsys.readouterr().out
     cli.main(["brief", "--team", "--project", proj])
@@ -3202,11 +3209,19 @@ def test_brief_fallback_header_only_without_team_flag_unchanged(
 
 
 def test_brief_fallback_header_only_with_team_empty_is_byte_identical(
-        tmp_checkpoint_dir, sample_checkpoint, capsys):
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     # Empty team -> _print_teammates no-ops -> --team must not change a single
     # byte of the header-only fallback note for a team-less machine.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    # #307: the fallback header embeds a truncated relative age read from the
+    # live clock (cli's `_format_age(time.time() - epoch)`), so two calls
+    # straddling an integer-second boundary render `0s ago` vs `1s ago` and
+    # the byte-identity assertion fails on the clock, not the flag. Freeze the
+    # clock so any byte difference is attributable to --team and nothing else.
+    frozen = time.time()
+    monkeypatch.setattr(time, "time", lambda: frozen)
 
     rc = cli.main(["brief", "--project", "/repo/some-other-project"])
     plain = capsys.readouterr().out
