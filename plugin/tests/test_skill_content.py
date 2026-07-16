@@ -134,3 +134,21 @@ def test_compact_must_rule_stays_last():
     # final line no matter what sections are added above it
     body = skill_content.render_compact().strip()
     assert body.splitlines()[-1].startswith("MUST:")
+
+
+# ---- #304: closing loops teaches preview-before-write ----
+
+
+def test_full_teaches_dry_run_before_commit():
+    full = skill_content.render_full()
+    closing = full.split("## Closing loops")[1].split("\n## ")[0]
+    assert "--dry-run" in closing
+    assert "daimon resolve" in closing
+    assert "--note" in closing
+
+
+def test_compact_teaches_dry_run_before_commit():
+    body = skill_content.render_compact()
+    assert "--dry-run" in body
+    assert "daimon resolve" in body
+    assert "--note" in body

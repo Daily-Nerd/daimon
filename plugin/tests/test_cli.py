@@ -4778,6 +4778,120 @@ def test_existing_usage_counters_unaffected_by_resolve_instrumentation(
     assert "resolve" not in data["usage"]
 
 
+# ---- #304: resolve --dry-run — look before the write ----
+
+
+def test_resolve_dry_run_unique_match_prints_would_resolve_and_writes_no_event(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    rc = cli.main(["resolve", "release pipeline manual approval", "--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert iid in out
+    assert "release pipeline awaiting manual approval step" in out
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_resolve_dry_run_by_exact_id_writes_no_event(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid, "--dry-run"]) == 0
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_resolve_dry_run_ambiguous_output_identical_to_normal_run(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "gateway retry budget for serializer chunks"},
+        {"text": "serializer chunk retry budget unclear"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    rc_normal = cli.main(["resolve", "serializer chunk retry budget"])
+    out_normal = capsys.readouterr().out
+    rc_dry = cli.main(["resolve", "serializer chunk retry budget", "--dry-run"])
+    out_dry = capsys.readouterr().out
+    assert rc_normal == rc_dry == 1
+    assert out_normal == out_dry
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_resolve_dry_run_no_match_output_identical_to_normal_run(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    rc_normal = cli.main(["resolve", "completely unrelated nonsense query"])
+    out_normal = capsys.readouterr().out
+    rc_dry = cli.main(["resolve", "completely unrelated nonsense query", "--dry-run"])
+    out_dry = capsys.readouterr().out
+    assert rc_normal == rc_dry == 1
+    assert out_normal == out_dry
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_resolve_without_dry_run_still_writes_event(tmp_checkpoint_dir, capsys, monkeypatch):
+    # explicit regression guard: the default (no flag) path must be untouched.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid]) == 0
+    assert store.is_resolved(store.resolutions(project_dir="/p/A")[iid])
+
+
+def test_resolve_dry_run_records_distinct_usage_tag_not_success_or_refusal(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # A dry-run is an attempt, not a write: it must not inflate the "resolve"
+    # success counter (#305) nor collide with the refusal tags, or it would
+    # corrupt the very refusal-rate signal #303/#305 exist to expose.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", "release pipeline manual approval", "--dry-run"]) == 0
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    tags = [line.split()[1] for line in lines]
+    assert tags == ["resolve:dry-run"]
+    assert iid  # sanity: the fixture produced a real item id
+
+
+def test_stats_counts_resolve_dry_run_separately_from_resolve(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", "release pipeline manual approval", "--dry-run"]) == 0
+    assert cli.main(["resolve", iid]) == 0
+    capsys.readouterr()
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["resolve:dry-run"] == 1
+    assert data["usage"]["resolve"] == 1
+
+
+def test_resolve_argparser_has_dry_run_flag(monkeypatch):
+    # Mirrors test_heal_argparser_has_dry_run: stub _cmd_resolve to capture
+    # the parsed flag rather than exercising the full bind.
+    seen = {}
+    monkeypatch.setattr(cli, "_cmd_resolve",
+                         lambda args: seen.setdefault("dry_run", args.dry_run) or 0)
+    cli.main(["resolve", "some-id"])
+    assert seen["dry_run"] is False
+    seen.clear()
+    cli.main(["resolve", "some-id", "--dry-run"])
+    assert seen["dry_run"] is True
+
+
 def test_log_appends_freeform_event(tmp_checkpoint_dir, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
