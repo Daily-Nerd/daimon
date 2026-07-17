@@ -945,3 +945,25 @@ def test_stale_carried_default_threshold_reads_config():
                   "carried_from": "S-prev", "first_seen": _ts215(10)}])
     stale = briefing.stale_carried(cp, {}, _NOW215)
     assert len(stale) == 1  # default 7.0 days < 10 days old
+
+
+def test_render_never_prints_scene():
+    # #317: scenes exist for retrieval, not display — the briefing must not
+    # leak them into the rendered text
+    cp = {
+        "session_id": "S1",
+        "working_context": {
+            "active_topic": {"text": "wave plan", "trust": "inferred"},
+            "open_questions": [
+                {"text": "is the wave plan scaling right?", "trust": "inferred",
+                 "scene": "SCENE-MARKER-NEVER-RENDERED"}],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [],
+            "uncertainties": [],
+            "contradictions_flagged": [],
+        },
+    }
+    out = briefing.render(cp)
+    assert "SCENE-MARKER-NEVER-RENDERED" not in out

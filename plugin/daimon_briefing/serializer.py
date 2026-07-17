@@ -174,6 +174,44 @@ Schema shape:
   "worker_queue": []
 }"""
 
+# ---- #317: scene traces (opt-in experiment, DAIMON_SCENE_TRACES) ----
+#
+# Appended to BOTH system prompts when the flag is on; with the flag off the
+# prompts are byte-identical to the constants above (pinned by test — the
+# experiment must cost nothing until the LongMemEval harness says it earns
+# its bytes). Length cap bounds checkpoint growth; sanitize_scene enforces it
+# on whatever the model actually emits, flag or no flag.
+_SCENE_MAX_CHARS = 500
+
+_SCENE_SERIALIZE_ADDENDUM = """
+
+SCENE TRACES (optional field): every item MAY additionally carry a "scene" field —
+one or two sentences of episodic context: when in the session the item arose, what
+triggered it, and what it replaced or corrected. Narrative only, drawn from the
+transcript — never introduce a fact, name, or number that the transcript does not
+contain. "scene" never affects trust: it is always inferred narrative, and the
+rules for `text` and `quote` are unchanged. Item shapes gain one key:
+{"text": "", "trust": "", "quote": "", "scene": "", "importance": 0}"""
+
+_SCENE_MERGE_ADDENDUM = """
+
+SCENE TRACES: items may carry an optional "scene" field (episodic context). When
+merging duplicates, keep the fuller "scene"; never invent one for an item that has
+none, and never let a "scene" override the text/quote/trust rules above."""
+
+
+def _serialize_sys() -> str:
+    if config.scene_traces_enabled():
+        return SERIALIZE_SYS + _SCENE_SERIALIZE_ADDENDUM
+    return SERIALIZE_SYS
+
+
+def _merge_sys() -> str:
+    if config.scene_traces_enabled():
+        return MERGE_SYS + _SCENE_MERGE_ADDENDUM
+    return MERGE_SYS
+
+
 # Adapted from research/experiments/track-a/prompts/01c-merge-checkpoints.md (armC),
 # with two additions over the probe version: rule 9 (Q-STALE latest-state
 # preference, findings/03) and external_state preservation (rule 3 + schema),
@@ -352,6 +390,22 @@ def sanitize_importance(checkpoint) -> None:
             item["importance"] = min(10, max(1, v))
         else:
             del item["importance"]
+
+
+def sanitize_scene(checkpoint) -> None:
+    """Normalize LLM-emitted `scene` (#317) in place: strings are stripped and
+    capped at _SCENE_MAX_CHARS; anything else (lists, dicts, numbers, None,
+    empty/whitespace) is dropped. Same philosophy as sanitize_importance: a
+    malformed advisory field must NEVER fail a serialize — and it runs flag or
+    no flag, because a model can hallucinate the key without being asked."""
+    for item in iter_items(checkpoint):
+        if "scene" not in item:
+            continue
+        v = item["scene"]
+        if isinstance(v, str) and v.strip():
+            item["scene"] = v.strip()[:_SCENE_MAX_CHARS]
+        else:
+            del item["scene"]
 
 
 def validate(checkpoint) -> bool:
@@ -721,7 +775,7 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
                 return group[0]
             t0 = time.monotonic()
             merged = _call_and_parse(
-                chat, MERGE_SYS,
+                chat, _merge_sys(),
                 f"session_id: {session_id}\n\n"
                 f"PARTIAL CHECKPOINTS (JSON array, one per chunk, in chronological order):\n"
                 f"{json.dumps(group, ensure_ascii=False)}"
@@ -888,7 +942,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
         if len(chunks) == 1:
             log.info("single-pass serialize: %d lines", len(transcript_text.splitlines()))
             return _call_and_parse(
-                chat, SERIALIZE_SYS,
+                chat, _serialize_sys(),
                 f"session_id: {session_id}\n\nTRANSCRIPT:\n{transcript_text}{note}",
                 deadline, "transcript",
             )
@@ -912,7 +966,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
                     return key, cached
                 t0 = time.monotonic()
                 partial = _call_and_parse(
-                    chat, SERIALIZE_SYS,
+                    chat, _serialize_sys(),
                     f"session_id: {session_id}\n\n"
                     f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}",
                     deadline, f"chunk {i + 1} of {len(chunks)}",
@@ -947,6 +1001,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
             "class, or verbatim item without a quote)"
         )
     sanitize_importance(checkpoint)
+    sanitize_scene(checkpoint)
     # #125: verify verbatim quotes against the SAME rendered text the extractor
     # read, PRE-redaction (redaction runs later in write_checkpoint and would
     # otherwise mass-downgrade legitimate quotes it had masked). Verify once,

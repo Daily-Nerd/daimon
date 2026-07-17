@@ -1065,3 +1065,16 @@ def test_twin_freeze_neither_has_last_verified_stays_absent():
     new = _cp("S-new", 0, questions=[_item(_VERB_TWIN, days=0)])
     out = carry.merge(new, prev, NOW)
     assert "last_verified" not in out["working_context"]["open_questions"][0]
+
+
+def test_carry_preserves_scene(monkeypatch):
+    # #317: scene rides the item deepcopy — pin it so a future selective-copy
+    # refactor cannot silently drop episodic context
+    prev = _cp("S-old", questions=[{"text": "does the retry nonce land?",
+                                    "trust": "inferred",
+                                    "scene": "asked right after the gateway pinned a bad response"}])
+    new = _cp("S-new")
+    merged = carry.merge(new, prev, NOW)
+    carried = merged["working_context"]["open_questions"]
+    assert any(i.get("scene") == "asked right after the gateway pinned a bad response"
+               for i in carried)

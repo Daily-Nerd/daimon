@@ -473,6 +473,13 @@ def scar_harvest_enabled() -> bool:
     return _flag("DAIMON_SCAR_HARVEST")
 
 
+def scene_traces_enabled() -> bool:
+    """Opt-in experiment (#317): serializer asks for a per-item `scene` —
+    1-2 sentences of episodic context — gated on the LongMemEval harness
+    before it can become default."""
+    return _flag("DAIMON_SCENE_TRACES")
+
+
 def llm_no_cache() -> bool:
     """Per-request bypass of gateway response caching (LiteLLM `no-cache`) —
     needed when a cached bad response pins a failure or when runs must be
