@@ -71,7 +71,10 @@ def _note_error(where: str, exc: BaseException) -> None:
 # it now carries only item-level evidence (typed supersedes links, events.jsonl
 # resolutions), never whole-checkpoint recency; recency lives in `frontier` as
 # a silent rank input. The version bump makes _ensure_fresh discard old dbs.
-_SCHEMA_VERSION = "3"
+# v4 (#317): items + items_fts grew a scene column (episodic context traces);
+# an old db queried with the new column list would OperationalError, so the
+# bump forces the rebuild instead.
+_SCHEMA_VERSION = "4"
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -98,12 +101,13 @@ def _load(path: Path) -> dict | None:
 
 
 def _items(cp: dict):
-    """Yield (kind, text, trust, quote, importance, first_seen, item_id,
+    """Yield (kind, text, trust, quote, scene, importance, first_seen, item_id,
     supersede_targets) for every cognitive item in a checkpoint. Tolerant of
     shape drift: bare strings become text-only items; anything without usable
     text is skipped (an index row with no text matches nothing). importance/
-    first_seen/item_id are None on pre-D-011 items. supersede_targets is the
-    item's `supersedes` link target strings (#234) — usually empty."""
+    first_seen/item_id are None on pre-D-011 items; scene is "" on items
+    without one (#317). supersede_targets is the item's `supersedes` link
+    target strings (#234) — usually empty."""
     for section, key, kind in _KIND_SOURCES:
         block = cp.get(section)
         if not isinstance(block, dict):
@@ -140,7 +144,8 @@ def _items(cp: dict):
                             and link["target"].strip()):
                         targets.append(link["target"].strip())
             yield (kind, text, str(item.get("trust") or ""),
-                   str(item.get("quote") or ""), imp, fs, item_id, targets)
+                   str(item.get("quote") or ""), str(item.get("scene") or ""),
+                   imp, fs, item_id, targets)
 
 
 def _bucket_slugs(d: Path) -> dict[str, str]:
@@ -293,6 +298,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 id INTEGER PRIMARY KEY,
                 text TEXT NOT NULL,
                 quote TEXT,
+                scene TEXT,
                 trust TEXT,
                 kind TEXT,
                 author TEXT,
@@ -306,7 +312,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 item_id TEXT,
                 frontier INTEGER NOT NULL DEFAULT 0
             );
-            CREATE VIRTUAL TABLE items_fts USING fts5(text, quote, content='');
+            CREATE VIRTUAL TABLE items_fts USING fts5(text, quote, scene, content='');
             """
         )
     except sqlite3.OperationalError as exc:
@@ -444,19 +450,20 @@ def rebuild() -> int:
                 stamped = int(store._created_epoch(cp.get("created")) is not None)
                 if key not in newest or (stamped, recency, sid) > newest[key]:
                     newest[key] = (stamped, recency, sid)
-            for (kind, text, trust, quote, importance, first_seen,
+            for (kind, text, trust, quote, scene, importance, first_seen,
                  item_id, targets) in _items(cp):
                 cur = conn.execute(
                     "INSERT INTO items"
-                    " (text, quote, trust, kind, author, project_slug,"
+                    " (text, quote, scene, trust, kind, author, project_slug,"
                     "  session_id, created, importance, first_seen, item_id)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (text, quote, trust, kind, author, slug, sid, recency,
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (text, quote, scene, trust, kind, author, slug, sid, recency,
                      importance, first_seen, item_id),
                 )
                 conn.execute(
-                    "INSERT INTO items_fts(rowid, text, quote) VALUES (?, ?, ?)",
-                    (cur.lastrowid, text, quote),
+                    "INSERT INTO items_fts(rowid, text, quote, scene)"
+                    " VALUES (?, ?, ?, ?)",
+                    (cur.lastrowid, text, quote, scene),
                 )
                 count += 1
                 if slug is not None:

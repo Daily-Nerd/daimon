@@ -1461,3 +1461,27 @@ def test_dedupe_rows_missing_created_treated_as_oldest():
                  "session_id": "S-unstamped"}
     out = recall._dedupe_rows([unstamped, stamped], want_n=10)
     assert out[0]["session_id"] == "S-stamped"
+
+
+# ---- #317: scene traces indexed for retrieval ----
+
+
+def test_rebuild_indexes_scene_text(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": "Adopt sqlite for the recall index",
+                              "trust": "inferred",
+                              "scene": "chosen after the flatfile scan grew quadratic"}]),
+        project_dir="/repo/x",
+    )
+    recall.rebuild()
+    # "quadratic" appears ONLY in the scene — a hit proves scene is FTS-indexed
+    hits = recall.search("quadratic", all_projects=True)
+    assert any("recall index" in h["text"] for h in hits)
+
+
+def test_schema_version_bumped_for_scene_column():
+    # #317 added a scene column to items/items_fts — an old db must be discarded,
+    # not queried with the new column list
+    assert int(recall._SCHEMA_VERSION) >= 4

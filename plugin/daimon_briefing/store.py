@@ -416,6 +416,7 @@ def _redact_checkpoint(checkpoint: dict) -> None:
             if isinstance(item, dict):
                 _scrub(item, "text")
                 _scrub(item, "quote")
+                _scrub(item, "scene")
                 links = item.get("links")
                 if isinstance(links, list):
                     for link in links:
@@ -425,6 +426,7 @@ def _redact_checkpoint(checkpoint: dict) -> None:
     if isinstance(topic, dict):
         _scrub(topic, "text")
         _scrub(topic, "quote")
+        _scrub(topic, "scene")
     if counts:
         # MERGE, never overwrite: a re-write (anchor --attach reads, mutates,
         # writes the same dict) only re-matches NEW secrets — old markers don't

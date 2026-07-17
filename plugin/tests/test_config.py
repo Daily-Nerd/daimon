@@ -548,3 +548,16 @@ def test_stale_days_default_override_malformed(monkeypatch):
     assert config.carry_max() == 1
     monkeypatch.setenv("DAIMON_CARRY_MAX", "x")
     assert config.carry_max() == 8
+
+
+# ---- #317: scene traces flag ----
+
+
+def test_scene_traces_default_off(monkeypatch):
+    monkeypatch.delenv("DAIMON_SCENE_TRACES", raising=False)
+    assert config.scene_traces_enabled() is False
+
+
+def test_scene_traces_flag_on(monkeypatch):
+    monkeypatch.setenv("DAIMON_SCENE_TRACES", "1")
+    assert config.scene_traces_enabled() is True

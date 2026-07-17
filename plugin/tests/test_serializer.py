@@ -1456,3 +1456,67 @@ def test_clear_partials_survives_undeletable_entry(
     ckpt = serializer.serialize_strict("S1", messages, chat=chat2)
     assert ckpt is not None  # load failed -> recomputed; clear skipped the dirs
     assert len(chat2.calls) == n + 1
+
+
+# ---- #317: scene traces (encode-time episodic context, bench-gated experiment) ----
+
+
+def test_prompts_unchanged_when_scene_flag_off(monkeypatch):
+    monkeypatch.delenv("DAIMON_SCENE_TRACES", raising=False)
+    assert serializer._serialize_sys() == serializer.SERIALIZE_SYS
+    assert serializer._merge_sys() == serializer.MERGE_SYS
+    # the constants themselves must stay scene-free — flag off is byte-identical
+    assert "scene" not in serializer.SERIALIZE_SYS
+    assert "scene" not in serializer.MERGE_SYS
+
+
+def test_prompts_mention_scene_when_flag_on(monkeypatch):
+    monkeypatch.setenv("DAIMON_SCENE_TRACES", "1")
+    assert '"scene"' in serializer._serialize_sys()
+    assert '"scene"' in serializer._merge_sys()
+
+
+def test_serialize_sends_scene_prompt_when_flag_on(fake_chat_factory, monkeypatch):
+    monkeypatch.setenv("DAIMON_SCENE_TRACES", "1")
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    serializer.serialize("S1", make_messages(20), chat=chat)
+    assert '"scene"' in chat.calls[0]["messages"][0]["content"]
+
+
+def test_scene_preserved_and_trimmed_through_serialize(fake_chat_factory, monkeypatch):
+    monkeypatch.setenv("DAIMON_SCENE_TRACES", "1")
+    cp = json.loads(_valid_checkpoint_json("S1"))
+    cp["working_context"]["open_questions"][0]["scene"] = (
+        "  came up while debugging the retry path  ")
+    chat = fake_chat_factory(json.dumps(cp))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert (ckpt["working_context"]["open_questions"][0]["scene"]
+            == "came up while debugging the retry path")
+
+
+def test_sanitize_scene_drops_non_str_and_empty():
+    cp = json.loads(_valid_checkpoint_json("S1"))
+    cp["working_context"]["open_questions"][0]["scene"] = 42
+    cp["working_context"]["recent_decisions"][0]["scene"] = "   "
+    serializer.sanitize_scene(cp)
+    assert "scene" not in cp["working_context"]["open_questions"][0]
+    assert "scene" not in cp["working_context"]["recent_decisions"][0]
+
+
+def test_sanitize_scene_caps_length():
+    cp = json.loads(_valid_checkpoint_json("S1"))
+    cp["working_context"]["open_questions"][0]["scene"] = "x" * 2000
+    serializer.sanitize_scene(cp)
+    scene = cp["working_context"]["open_questions"][0]["scene"]
+    assert len(scene) == serializer._SCENE_MAX_CHARS
+
+
+def test_sanitize_scene_runs_even_with_flag_off(fake_chat_factory, monkeypatch):
+    # a model that hallucinates a malformed scene with the flag off must not
+    # write garbage to disk — sanitize always runs
+    monkeypatch.delenv("DAIMON_SCENE_TRACES", raising=False)
+    cp = json.loads(_valid_checkpoint_json("S1"))
+    cp["working_context"]["open_questions"][0]["scene"] = ["not", "a", "string"]
+    chat = fake_chat_factory(json.dumps(cp))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert "scene" not in ckpt["working_context"]["open_questions"][0]

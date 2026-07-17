@@ -1665,3 +1665,17 @@ def test_checkpoints_written_since_skips_unstattable_file(monkeypatch):
 
     monkeypatch.setattr(store, "_session_files", lambda d: [_Ghost()])
     assert store.checkpoints_written_since(_time.time() - 14 * 86400) == 0
+
+
+def test_write_checkpoint_redacts_scene(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    cp = {"working_context": {
+        "active_topic": {"text": "t",
+                         "scene": "was rotating DAIMON_LLM_API_KEY=sk-topicsecret99887766"},
+        "open_questions": [
+            {"text": "clean",
+             "scene": "arose pasting DAIMON_LLM_API_KEY=sk-scenesecret12345678"}]}}
+    store.write_checkpoint("S1", cp)
+    assert "sk-scenesecret12345678" not in cp["working_context"]["open_questions"][0]["scene"]
+    assert "sk-topicsecret99887766" not in cp["working_context"]["active_topic"]["scene"]
+    assert cp["redactions"]["api-key"] == 2
