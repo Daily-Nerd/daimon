@@ -194,30 +194,53 @@ def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadli
 
 
 def extract_json(text):
-    """Pull a JSON object/array out of a model response, tolerating ```json fences.
+    """Pull a JSON object/array out of a model response, tolerating ```json
+    fences ANYWHERE in the text — not only at the start (#311: a model that
+    continues the transcript as prose and buries the payload in a mid-response
+    fence still gets its JSON recovered).
+
+    Order: whole string, then each fenced block in order (first parseable
+    wins), then a raw_decode scan over every `{`/`[` start taking the LONGEST
+    parseable span. Longest — not first — because prose can carry tiny inline
+    objects, and first-{-to-last-} (the pre-#311 heuristic) dies whenever the
+    prose contains template braces ({{ jinja }}), which any transcript
+    touching templates or shell will produce.
 
     Raises json.JSONDecodeError when nothing parseable is found.
     """
     t = text.strip()
-    if t.startswith("```"):
-        t = t.split("```", 2)[1]
-        if t.startswith("json"):
-            t = t[4:]
-        t = t.strip()
     try:
         return json.loads(t)
     except json.JSONDecodeError:
         pass
-    candidates = []
-    for op, cl in (("[", "]"), ("{", "}")):
-        i, j = t.find(op), t.rfind(cl)
-        if i != -1 and j != -1 and j > i:
-            candidates.append((i, t[i:j + 1]))
-    for _, span in sorted(candidates):
+    # Every fenced block, wherever it sits. split("```") puts fence interiors
+    # at odd indices, including an unterminated trailing fence (old behavior
+    # for a leading ``` with no closer — kept).
+    parts = t.split("```")
+    for k in range(1, len(parts), 2):
+        block = parts[k]
+        if block[:4].lower() == "json":
+            block = block[4:]
         try:
-            return json.loads(span)
+            return json.loads(block.strip())
         except json.JSONDecodeError:
             continue
+    # Balanced scan: try a strict decode at every plausible start, keep the
+    # longest span that parses. raw_decode fails in O(1) on template braces.
+    decoder = json.JSONDecoder()
+    best = None
+    best_len = -1
+    for i, ch in enumerate(t):
+        if ch not in "{[":
+            continue
+        try:
+            obj, end = decoder.raw_decode(t, i)
+        except json.JSONDecodeError:
+            continue
+        if end - i > best_len:
+            best, best_len = obj, end - i
+    if best_len >= 0:
+        return best
     raise json.JSONDecodeError("no JSON object/array found in response", t, 0)
 
 
