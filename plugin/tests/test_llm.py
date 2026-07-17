@@ -792,3 +792,82 @@ def test_command_backend_stderr_stays_first_when_both_streams_speak(monkeypatch,
         llm.chat([{"role": "user", "content": "hola"}])
     text = (tmp_path / "logs" / "backend-stderr.log").read_text()
     assert text.index("the real panic") < text.index("partial body")
+
+
+# ---- #311: extract_json must reach fenced JSON embedded mid-prose ----
+
+
+def test_extract_json_bare_object():
+    assert llm.extract_json('{"a": 1}') == {"a": 1}
+
+
+def test_extract_json_leading_fence():
+    assert llm.extract_json('```json\n{"a": 1}\n```') == {"a": 1}
+
+
+def test_extract_json_leading_fence_no_tag():
+    assert llm.extract_json('```\n[1, 2]\n```') == [1, 2]
+
+
+def test_extract_json_object_with_trailing_prose():
+    # The pre-#311 span heuristic handled this shape; it must keep working.
+    assert llm.extract_json('{"a": 1}\n\nDone.') == {"a": 1}
+
+
+def test_extract_json_leading_prose_then_object():
+    assert llm.extract_json('Here it is:\n{"a": 1}') == {"a": 1}
+
+
+def test_extract_json_nothing_raises():
+    with pytest.raises(json.JSONDecodeError):
+        llm.extract_json("no json here at all")
+
+
+def test_extract_json_fence_mid_prose_with_template_braces():
+    # #311 field shape: the model continued the transcript as prose (which
+    # contained Jinja braces), emitted the checkpoint in a fence mid-response,
+    # then closed with more prose. The old first-{/last-} span started at a
+    # Jinja brace and could never parse; the fence was unreachable because the
+    # fence-strip branch only fired on a LEADING fence.
+    resp = (
+        "A: Task confirmed. Template uses {{ states('sensor.x') }} here.\n\n"
+        "Prose with {% if %} blocks too.\n\n"
+        '```json\n{"session_id": "S1", "worker_queue": []}\n```\n\n'
+        "**Session complete.** More prose."
+    )
+    assert llm.extract_json(resp) == {"session_id": "S1", "worker_queue": []}
+
+
+def test_extract_json_untagged_fence_mid_prose():
+    resp = 'intro {{ x }} prose\n```\n{"a": 1}\n```\nbye'
+    assert llm.extract_json(resp) == {"a": 1}
+
+
+def test_extract_json_skips_non_json_fence_takes_next():
+    # First fence is YAML, second is the payload — first parseable fence wins.
+    resp = (
+        "look:\n```yaml\nkey: value\n```\nthen\n"
+        '```json\n{"a": 2}\n```\n'
+    )
+    assert llm.extract_json(resp) == {"a": 2}
+
+
+def test_extract_json_unfenced_object_after_template_braces():
+    # No fence at all: the balanced scan must find the parseable object even
+    # though earlier prose contains { that can never start valid JSON.
+    resp = 'uses {{ jinja }} and then the payload {"a": 3, "b": [1]} end'
+    assert llm.extract_json(resp) == {"a": 3, "b": [1]}
+
+
+def test_extract_json_prefers_largest_parseable_span_over_prose_fragment():
+    # A tiny inline object in prose must not shadow the real payload when
+    # nothing is fenced — the scan prefers the longest parseable span.
+    resp = ('set {"debug": true} earlier, real output: '
+            '{"session_id": "S1", "working_context": {"open_questions": []}}')
+    assert llm.extract_json(resp) == {
+        "session_id": "S1", "working_context": {"open_questions": []}}
+
+
+def test_extract_json_unterminated_leading_fence():
+    # Old behavior: a leading fence with no closer still parsed. Keep it.
+    assert llm.extract_json('```json\n{"a": 4}') == {"a": 4}
