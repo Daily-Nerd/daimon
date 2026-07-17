@@ -12,6 +12,7 @@ pipeline from the D-007 probe: single-pass recall fell off a cliff ~1,400
 lines; chunking lifted long-session recall ~55% -> ~93% in probe runs.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -609,6 +610,89 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
         return parsed
 
 
+def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
+    """How many sequential LLM 'waves' a chunked serialize needs (#314).
+
+    Chunks run concurrently, so n_chunks costs ceil(n/workers) waves, not n.
+    Each merge level's non-singleton groups run concurrently too; singleton
+    groups pass through free. This is the multiplier for the total deadline:
+    DAIMON_TIMEOUT was field-derived as the floor for ONE slow call (#284),
+    so a plan of W waves gets W times that budget — otherwise the merge is
+    structurally guaranteed to start starved on slow gateways.
+
+    Per-call socket timeouts stay capped at the base budget (llm.py caps each
+    attempt to min(timeout, remaining)), so scaling the total never pushes a
+    single request past gateway kill ceilings (scar #17: ~815s)."""
+    if n_chunks <= 1:
+        return 1
+    w = max(1, workers)
+    waves = (n_chunks + w - 1) // w
+    m = n_chunks
+    while m > 1:
+        n_groups = (m + k - 1) // k
+        # Only the last group can be a singleton (when m % k == 1); it merges
+        # without an LLM call.
+        call_groups = n_groups - (1 if m % k == 1 else 0)
+        if call_groups > 0:
+            waves += (call_groups + w - 1) // w
+        m = n_groups
+    return waves
+
+
+# ---- #314: persisted chunk partials — a merge death must not re-buy chunks ----
+# Content-addressed by (session_id, chunk_text): a re-heal of an UNCHANGED
+# transcript reuses its paid-for chunk outputs and enters the merge with the
+# full budget; any transcript growth changes the chunk text and misses cleanly.
+# Same sensitivity as checkpoints (transcript-derived, pre-redaction), stored
+# under the same root. Everything here is best-effort: a broken cache must
+# never break a serialize — worst case is re-paying the chunk call.
+
+_PARTIAL_MAX_AGE_SECONDS = 14 * 24 * 3600  # crash leftovers; success clears its own
+
+
+def _partials_dir():
+    return config.checkpoint_dir() / ".partials"
+
+
+def _partial_key(session_id: str, chunk_text: str) -> str:
+    return hashlib.sha256(
+        f"{session_id}\x00{chunk_text}".encode("utf-8")).hexdigest()[:32]
+
+
+def _load_partial(key: str):
+    try:
+        obj = json.loads((_partials_dir() / f"{key}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _save_partial(key: str, partial: dict) -> None:
+    d = _partials_dir()
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        for stale in d.glob("*.json"):  # reap crash leftovers by age
+            try:
+                if now - stale.stat().st_mtime > _PARTIAL_MAX_AGE_SECONDS:
+                    stale.unlink()
+            except OSError:
+                continue
+        tmp = d / f".{key}.{uuid.uuid4().hex[:8]}.tmp"
+        tmp.write_text(json.dumps(partial, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(d / f"{key}.json")
+    except OSError:
+        pass
+
+
+def _clear_partials(keys) -> None:
+    for key in keys:
+        try:
+            (_partials_dir() / f"{key}.json").unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
 def _merge_partials(chat, session_id: str, partials: list, deadline,
                     attempt_note: str = "") -> dict:
     """Hierarchically merge partial checkpoints into one, K partials at a time.
@@ -747,8 +831,10 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     """Transcript -> validated checkpoint, or a named SerializeError.
 
     `chat` is an injectable callable (messages, **kwargs) -> str; defaults to the
-    real LLM client. `deadline` (time.monotonic() seconds) is the TOTAL remaining
-    budget across ALL LLM calls (every chunk + merge), forwarded to the client.
+    real LLM client. `deadline` (time.monotonic() seconds) is the caller's
+    budget for ONE wave of LLM work; chunked serializes scale it by the wave
+    plan (#314: chunk batches + merge levels) before forwarding to the client,
+    so the merge never starts starved by construction.
 
     Rendered transcripts over DAIMON_CHUNK_LINES go chunked (armC): per-chunk
     D-007 serialize -> 01c merge -> validate. Shorter ones stay single-pass.
@@ -766,6 +852,21 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     transcript_text = _render_transcript(messages)
     chunks = chunk_transcript(transcript_text, config.chunk_lines(), config.chunk_overlap())
 
+    # #314: DAIMON_TIMEOUT is the field-derived floor for ONE slow call (#284,
+    # scar #14) — but a chunked serialize is a PLAN of sequential waves (chunk
+    # batches + merge levels). Sharing one single-call budget across the plan
+    # guaranteed a starved merge on slow gateways, so scale the total by the
+    # wave count. Per-call socket timeouts stay capped at the base budget
+    # (llm.py), so no single request grows past gateway ceilings (scar #17).
+    if deadline is not None and len(chunks) > 1:
+        waves = _plan_waves(len(chunks), config.chunk_concurrency(),
+                            config.merge_group_size())
+        if waves > 1:
+            extra = (waves - 1) * config.timeout_seconds()
+            deadline += extra
+            log.info("chunked call plan: %d wave(s) — deadline extended by %ds (#314)",
+                     waves, extra)
+
     # Validation-failure retry note (#118): one resample with a non-identical
     # request. Occasional invalid output (the live case: quote inlined into a
     # verbatim item's text, `quote` field omitted) is ordinary model flakiness,
@@ -780,6 +881,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
         "Re-emit the full corrected JSON."
     )
     partials: list | None = None
+    partial_keys: list = []  # #314: cleared only after a fully validated write
 
     def _produce(note: str) -> dict:
         nonlocal partials
@@ -799,6 +901,15 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
             # session take chunk_count * minutes of wall-clock.
             def _one_chunk(item):
                 i, chunk_text = item
+                # #314: a merge death must not re-buy completed chunks — reuse
+                # the persisted partial when this exact (session, chunk text)
+                # was already paid for by a previous attempt.
+                key = _partial_key(session_id, chunk_text)
+                cached = _load_partial(key)
+                if cached is not None:
+                    log.info("chunk %d/%d reused persisted partial (#314)",
+                             i + 1, len(chunks))
+                    return key, cached
                 t0 = time.monotonic()
                 partial = _call_and_parse(
                     chat, SERIALIZE_SYS,
@@ -808,12 +919,15 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
                 )
                 log.info("chunk %d/%d done in %.0fs",
                          i + 1, len(chunks), time.monotonic() - t0)
-                return partial
+                _save_partial(key, partial)
+                return key, partial
 
             workers = min(config.chunk_concurrency(), len(chunks))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 # executor.map preserves input order, so partials stay chronological.
-                partials = list(pool.map(_one_chunk, enumerate(chunks)))
+                keyed = list(pool.map(_one_chunk, enumerate(chunks)))
+            partial_keys.extend(k for k, _ in keyed)
+            partials = [p for _, p in keyed]
         # Retry re-runs ONLY the merge (the final sampling that failed) — the
         # chunk partials are kept; they are the expensive calls.
         return _merge_partials(chat, session_id, list(partials), deadline,
@@ -842,6 +956,10 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.
     _stamp_llm_provenance(checkpoint)
+    # #314: success consumes the partial cache. Only here — any earlier exit
+    # (merge death, validation failure) leaves the paid-for chunks on disk for
+    # the next heal to reuse.
+    _clear_partials(partial_keys)
     return checkpoint
 
 
