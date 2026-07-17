@@ -20,8 +20,10 @@ from pathlib import Path
 
 
 def cache_key(messages: list[dict], *, backend: str, model: str,
-              prompt_version: str, carry: str = "off") -> str:
-    """Stable content hash over (turns, backend, model, prompt_version, carry).
+              prompt_version: str, carry: str = "off",
+              scene: str = "off") -> str:
+    """Stable content hash over (turns, backend, model, prompt_version, carry,
+    scene).
 
     Turns are hashed in order and by role — a reordered transcript is a different
     session. Only role/content are hashed (the fields the serializer reads), so an
@@ -34,11 +36,18 @@ def cache_key(messages: list[dict], *, backend: str, model: str,
     correct even if serialization ever becomes mode-sensitive. Carry-off keys
     are byte-identical to pre-#274 keys, so the existing cache (minutes of LLM
     per entry) stays valid for carry-off runs.
+
+    `scene` (#319) namespaces the scene-traces flag (#317): unlike carry, the
+    flag changes the serialize prompt itself, so a scene-on run reusing a
+    scene-off entry would measure the cache, not the flag. Scene-off keys are
+    byte-identical to pre-#319 keys, same preservation rule as carry.
     """
     h = hashlib.sha256()
     h.update(f"v1\x00{backend}\x00{model}\x00{prompt_version}\x00".encode())
     if carry != "off":
         h.update(f"carry\x00{carry}\x00".encode())
+    if scene != "off":
+        h.update(f"scene\x00{scene}\x00".encode())
     for m in messages:
         role = str(m.get("role") or "")
         content = str(m.get("content") or "")
