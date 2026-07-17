@@ -106,6 +106,9 @@ def _build_config_stamp(args, dataset_path: Path) -> dict:
         # Cross-session carry (#274) is a separate retrieval axis: recorded
         # truthfully so carry-on and carry-off numbers are never conflated.
         "carry": "on" if args.carry else "off",
+        # Scene traces (#317/#319): same conflation rule as carry — the flag
+        # changes the serialize prompt, so the mode is stamped and cache-keyed.
+        "scene": "on" if args.scene else "off",
         "workers": args.workers,
         "dataset_file": dataset_path.name,
         "dataset_sha256": dataset.sha256_of(dataset_path),
@@ -120,7 +123,8 @@ def run(args) -> dict:
 
     stamp = _build_config_stamp(args, dataset_path)
     print(f"suite={args.suite} sample={len(questions)} backend={stamp['backend']} "
-          f"model={stamp['model']} workers={args.workers} carry={stamp['carry']}")
+          f"model={stamp['model']} workers={args.workers} carry={stamp['carry']} "
+          f"scene={stamp['scene']}")
 
     per_question: list[dict] = []
     t0 = time.monotonic()
@@ -130,7 +134,7 @@ def run(args) -> dict:
             q, chat=chat, cache=cache, backend=stamp["backend"],
             model=stamp["model"] or "unknown", root=Path(args.work_dir),
             k=args.k, depth=args.depth, min_messages=args.min_messages,
-            workers=args.workers, carry_on=args.carry,
+            workers=args.workers, carry_on=args.carry, scene_on=args.scene,
         )
         per_question.append(result)
         print(f"[{i}/{len(questions)}] {result['question_id']} "
@@ -182,6 +186,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="recall results fetched per question (MRR sees this depth)")
     p.add_argument("--workers", type=int, default=4,
                    help="concurrent LLM serialize calls per question")
+    p.add_argument("--scene", action="store_true",
+                   help="serialize with scene traces (#317, DAIMON_SCENE_TRACES=1); "
+                        "stamped in the config and cached under separate keys")
     p.add_argument("--carry", action="store_true",
                    help="fold prior checkpoints forward (cross-session carry, "
                         "#274) — a separate retrieval axis; recorded in the "

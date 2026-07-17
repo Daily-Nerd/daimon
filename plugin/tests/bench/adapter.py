@@ -54,12 +54,13 @@ _ENV_KEYS = (
     "DAIMON_RECALL_SEEN_DIR", "DAIMON_TEAM_DIR", "DAIMON_PROJECT_DIR",
     "DAIMON_CARRY", "DAIMON_CARRY_FLOOR", "DAIMON_CARRY_MAX",
     "DAIMON_MIN_MESSAGES", "DAIMON_TEAM", "DAIMON_DISABLE",
-    "DAIMON_RECEIPTS", "DAIMON_SCAR_HARVEST",
+    "DAIMON_RECEIPTS", "DAIMON_SCAR_HARVEST", "DAIMON_SCENE_TRACES",
 )
 
 
 def _question_env(root: Path, qid: str, min_messages: str,
-                  carry_on: bool = False) -> dict[str, str]:
+                  carry_on: bool = False,
+                  scene_on: bool = False) -> dict[str, str]:
     """The DAIMON_* environment that isolates one question's store + index."""
     home = root / _safe(qid)
     project = home / "project"
@@ -82,6 +83,10 @@ def _question_env(root: Path, qid: str, min_messages: str,
         "DAIMON_DISABLE": "0",
         "DAIMON_RECEIPTS": "0",          # receipts add cost, not retrieval signal
         "DAIMON_SCAR_HARVEST": "0",
+        # #319: pinned explicitly — the host's env file may carry the #317
+        # field experiment's flag, and process env overrides it; an unpinned
+        # baseline would silently serialize with scenes.
+        "DAIMON_SCENE_TRACES": "1" if scene_on else "0",
     }
 
 
@@ -119,7 +124,8 @@ def _created_stamp(index: int) -> str:
 
 def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache,
                        backend: str, model: str, project_dir: str,
-                       workers: int, carry_on: bool = False) -> tuple[dict, dict]:
+                       workers: int, carry_on: bool = False,
+                       scene_on: bool = False) -> tuple[dict, dict]:
     """Serialize every haystack session into the (already isolated) store.
 
     Returns (tally, attribution):
@@ -133,11 +139,13 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
     sessions = dataset.sessions_of(question)
     cache_lock = threading.Lock()
     carry_mode = "on" if carry_on else "off"
+    scene_mode = "on" if scene_on else "off"
 
     def _produce(item):
         index, (sid, messages) = item
         key = cache_mod.cache_key(messages, backend=backend, model=model,
-                                  prompt_version=PROMPT_VERSION, carry=carry_mode)
+                                  prompt_version=PROMPT_VERSION, carry=carry_mode,
+                                  scene=scene_mode)
         with cache_lock:
             cached = cache.get(key)
         if cached is not None:
@@ -216,14 +224,16 @@ def recall_question(question: dict, *, project_dir: str, depth: int) -> list[dic
 def run_question(question: dict, *, chat, cache: cache_mod.CheckpointCache,
                  backend: str, model: str, root: Path, k: int, depth: int,
                  min_messages: str = BENCH_MIN_MESSAGES, workers: int = 1,
-                 carry_on: bool = False) -> dict:
+                 carry_on: bool = False, scene_on: bool = False) -> dict:
     """Full per-question pipeline: isolate → serialize haystack → recall → score."""
-    env = _question_env(root, question["question_id"], min_messages, carry_on)
+    env = _question_env(root, question["question_id"], min_messages, carry_on,
+                        scene_on)
     project_dir = env["DAIMON_PROJECT_DIR"]
     with _env(env):
         tally, attribution = serialize_question(
             question, chat=chat, cache=cache, backend=backend, model=model,
             project_dir=project_dir, workers=workers, carry_on=carry_on,
+            scene_on=scene_on,
         )
         results = recall_question(question, project_dir=project_dir, depth=depth)
 
