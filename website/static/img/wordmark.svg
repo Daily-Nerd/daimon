@@ -1,4 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="132" height="28" viewBox="0 0 132 28" role="img" aria-label="daimon">
-  <text x="0" y="21" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="20" font-weight="600" fill="currentColor" letter-spacing="-0.5">daimon</text>
-  <rect x="76" y="7" width="9" height="16" fill="#00d4aa"/>
+  <text x="0" y="21" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="20" font-weight="600" fill="#0f172a" letter-spacing="-0.5">daimon</text>
+  <rect x="76" y="7" width="9" height="16" fill="#0f766e"/>
 </svg>

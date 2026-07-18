@@ -78,6 +78,7 @@ const config: Config = {
       logo: {
         alt: 'daimon',
         src: 'img/wordmark.svg',
+        srcDark: 'img/wordmark-dark.svg',
       },
       items: [
         {
