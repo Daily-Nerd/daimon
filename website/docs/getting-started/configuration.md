@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # Configuration
 
 Daimon is configured entirely through environment variables. Every variable
