@@ -16,7 +16,7 @@ uv tool install 'daimon-briefing[pretty]'
 agrega tablas y paneles enriquecidos a `status` y `brief`; sin él, la salida
 es texto plano.
 
-## 2. Conecta un LLM
+## 2. Conecta un LLM {#2-connect-an-llm}
 
 La serialización — convertir una sesión terminada en un checkpoint — necesita
 un endpoint de LLM. Ejecuta:
