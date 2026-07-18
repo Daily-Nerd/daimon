@@ -35,12 +35,15 @@ jobs:
             echo "scars_only=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # `refs` links a staged issue (one issue, several sequential PRs) without
+      # GitHub's auto-close-on-merge; `closes`/`fixes`/`resolves` stay the verbs
+      # for a PR that finishes its issue.
       - name: Check Issue Reference
         if: steps.scars_only.outputs.scars_only != 'true'
         run: |
           body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
-          if ! grep -qiE '(closes|fixes|resolves) #[0-9]+' <<<"$body"; then
-            echo "::error::PR body must link an issue: Closes/Fixes/Resolves #N"
+          if ! grep -qiE '(closes|fixes|resolves|refs) #[0-9]+' <<<"$body"; then
+            echo "::error::PR body must link an issue: Closes/Fixes/Resolves/Refs #N"
             exit 1
           fi
 
@@ -48,7 +51,7 @@ jobs:
         if: steps.scars_only.outputs.scars_only != 'true'
         run: |
           body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
-          issue="$(grep -oiE '(closes|fixes|resolves) #[0-9]+' <<<"$body" | head -1 | grep -oE '[0-9]+')"
+          issue="$(grep -oiE '(closes|fixes|resolves|refs) #[0-9]+' <<<"$body" | head -1 | grep -oE '[0-9]+')"
           labels="$(gh issue view "$issue" --repo "$REPO" --json labels -q '.labels[].name')"
           if ! grep -qx 'status:approved' <<<"$labels"; then
             echo "::error::Linked issue #$issue lacks the status:approved label"
