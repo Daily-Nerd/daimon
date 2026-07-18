@@ -161,7 +161,7 @@ toml = [
 
 [[package]]
 name = "daimon-briefing"
-version = "0.17.0"
+version = "0.18.0"
 source = { editable = "." }
 dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },

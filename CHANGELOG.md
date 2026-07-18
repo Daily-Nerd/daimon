@@ -5,6 +5,22 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0](https://github.com/Daily-Nerd/daimon/compare/v0.17.0...v0.18.0) (2026-07-17)
+
+
+### Features
+
+* **serializer:** opt-in per-item scene traces, indexed for recall ([#318](https://github.com/Daily-Nerd/daimon/issues/318)) ([e85b181](https://github.com/Daily-Nerd/daimon/commit/e85b181fd991c402af13833c77d7fd3746c32f27))
+
+
+### Bug Fixes
+
+* **bench:** key and pin the scene-traces flag so runs never share cache lanes ([#320](https://github.com/Daily-Nerd/daimon/issues/320)) ([7e2fbd4](https://github.com/Daily-Nerd/daimon/commit/7e2fbd405934822d272999b685055b52d862aa21))
+* **llm:** extract fenced JSON from anywhere in a model response ([#313](https://github.com/Daily-Nerd/daimon/issues/313)) ([38cfb93](https://github.com/Daily-Nerd/daimon/commit/38cfb937150992c8426a1711f346e6e25276bac7))
+* **serializer:** add a per-run nonce to retry markers so gateway caches cannot pin a bad response through heal ([#315](https://github.com/Daily-Nerd/daimon/issues/315)) ([d756bfb](https://github.com/Daily-Nerd/daimon/commit/d756bfb994cbc62b4c418be99be8bb5dfec1f95f))
+* **serializer:** scale the deadline to the wave plan and persist chunk partials across heals ([#316](https://github.com/Daily-Nerd/daimon/issues/316)) ([6e18433](https://github.com/Daily-Nerd/daimon/commit/6e184332359f19ba0e48866d1827e667e1aab314))
+* **stats:** collapse adjacent-duplicate result lines in the capture fold ([#308](https://github.com/Daily-Nerd/daimon/issues/308)) ([a16c0f4](https://github.com/Daily-Nerd/daimon/commit/a16c0f4c3ff4ac107d4c5a8ac7b28865b2a2e47f))
+
 ## [0.17.0](https://github.com/Daily-Nerd/daimon/compare/v0.16.1...v0.17.0) (2026-07-16)
 
 
