@@ -78,7 +78,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 
 - **Trust-classed, quote-pinned memory** — every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, no server: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
 - **The briefing UX** — memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
-- **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (adapter shipped, in live validation), Codex (adapter shipped, awaiting first live run); other hosts are reachable via the same thin adapter shape.
+- **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (adapter shipped, awaiting first live run); other hosts are reachable via the same thin adapter shape.
 
 ## Status
 
@@ -86,7 +86,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 |---------|-------|
 | Claude Code plugin + hooks | live-validated daily |
 | CLI (`brief`, `status`, `recall`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
-| Windsurf adapter | shipped, in live validation |
+| Windsurf adapter | live-validated |
 | Codex adapter | shipped, awaiting first live run |
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
 | Team memory | shipped, opt-in, early |
