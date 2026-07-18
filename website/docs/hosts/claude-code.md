@@ -1,8 +1,9 @@
 # Claude Code
 
-Claude Code is the live-validated host: daily dogfood, full loop (serialize
--> carry -> brief -> recall), field incidents recorded in
-[research/LOGBOOK.md](https://github.com/Daily-Nerd/daimon/blob/main/research/README.md).
+Claude Code is the most deeply supported host: the full loop (serialize ->
+carry -> brief -> recall) runs on it in real daily use, and field incidents
+feed back into the code — the evidence trail lives in the
+[research logbook](https://github.com/Daily-Nerd/daimon/blob/main/research/README.md).
 
 ## Install (plugin — recommended)
 
@@ -22,10 +23,10 @@ hint instead of a briefing.
 > (double briefings, double serialize LLM calls). Switching from manual to
 > plugin: run `python3 hook/daimon-hooks.py uninstall` first.
 
-## Install (manual / dogfood hooks)
+## Install (manual, from a clone)
 
-For a repo clone without the plugin system, `hook/daimon-hooks.py` is a
-lifecycle manager (same shape as SCAR's `scar-hooks.py`):
+Working from a source checkout without the plugin system, `hook/daimon-hooks.py`
+is the lifecycle manager:
 
 ```sh
 python3 hook/daimon-hooks.py install   [--dry-run]
@@ -35,11 +36,11 @@ python3 hook/daimon-hooks.py status
 
 Install copies the hook scripts to `~/.claude/hooks/` and registers them
 under `SessionStart` / `SessionEnd` in `~/.claude/settings.json` (idempotent;
-settings backed up before every mutation). Requires the plugin CLI on PATH:
-`uv tool install ./plugin` (or equivalent) so `daimon` resolves (the hooks
-also accept the deprecated `daimon-briefing` alias as a fallback) — reinstall
-after updating `plugin/` so the CLI picks up `.jsonl` transcript support,
-which `SessionEnd` depends on.
+settings backed up before every mutation). Requires the `daimon` CLI on PATH —
+`uv tool install 'daimon-briefing[pretty]'`, see the
+[quickstart](../getting-started/quickstart.md) — and the hooks also accept the
+deprecated `daimon-briefing` alias as a fallback. After upgrading the CLI,
+re-run install so the hook scripts stay in sync.
 
 ## What each script does
 
@@ -73,8 +74,8 @@ registers them:
   (terminal closed, SIGKILL) — briefings can still be stale, which is why the
   `SessionStart` header shows checkpoint age.
 
-  LLM credentials come from `~/.daimon/env` (see the
-  [plugin README](https://github.com/Daily-Nerd/daimon/blob/main/plugin/README.md) Connect an LLM section) — hooks
+  LLM credentials come from `~/.daimon/env` (see
+  [Connect an LLM](../getting-started/quickstart.md#2-connect-an-llm)) — hooks
   inherit the host process environment, not your shell profile, so
   `DAIMON_LLM_API_KEY` / `DAIMON_LLM_MODEL` / `DAIMON_LLM_BASE_URL` belong in
   that file (chmod 600). Without it, serialize fails fast with a named error

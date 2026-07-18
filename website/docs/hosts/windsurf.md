@@ -1,8 +1,8 @@
 # Windsurf (Cascade)
 
 Windsurf's adapter is shipped and code-verified (native-transcript serialize,
-probe-hardened), live validation in progress. No logbook entry yet documents
-a complete dogfooded loop the way Claude Code's does — treat end-to-end "runs
+probe-hardened), live validation in progress. No recorded live session yet
+completes the full loop the way Claude Code's does — treat end-to-end "runs
 on Windsurf" as inferred from code + unit tests until one is on record.
 
 ## Install
@@ -15,14 +15,13 @@ daimon hooks list                # hosts with packaged hook scripts
 ```
 
 `daimon hooks install <host>` ships `redact.py` alongside the hook script(s)
-so a standalone host adapter can scrub secrets at its own write sites
-(transcript accumulation, checkpoint, event log) without importing the
-venv-only `daimon_briefing` package — a test keeps this copy byte-identical
-to the canonical `plugin/daimon_briefing/redact.py`. Re-run `daimon hooks
-install windsurf` after every `daimon` upgrade so the installed scripts (and
-the bundled `redact.py`) stay in sync with the installed CLI. To check whether
-they have drifted, run `daimon hooks status` — it reports each installed copy as
-CURRENT/STALE/MISSING against the packaged version and exits non-zero on drift.
+so the adapter scrubs secrets at every one of its own write sites (transcript
+accumulation, checkpoint, event log) — redaction does not depend on the full
+`daimon` package being importable from the hook. Re-run `daimon hooks install
+windsurf` after every `daimon` upgrade so the installed scripts stay in sync
+with the installed CLI. To check whether they have drifted, run `daimon hooks
+status` — it reports each installed copy as CURRENT/STALE/MISSING against the
+packaged version and exits non-zero on drift.
 
 Point Windsurf's Cascade hooks config (user-level JSON — see
 [the Cascade hooks docs](https://docs.windsurf.com/windsurf/cascade/hooks))

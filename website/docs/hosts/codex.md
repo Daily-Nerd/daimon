@@ -31,7 +31,7 @@ Requires the `daimon` CLI on `PATH` (the deprecated `daimon-briefing` alias
 also works as a fallback):
 
 ```sh
-uv tool install ./plugin
+uv tool install 'daimon-briefing[pretty]'
 ```
 
 ### Manual install (from a clone)

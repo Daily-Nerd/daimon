@@ -33,7 +33,7 @@ python3 hook/gemini-hooks.py status
 
 Install copies both scripts (plus `_daimon_hook_lib.py`) to `~/.gemini/hooks/`
 and registers them in `~/.gemini/settings.json` (user layer). Requires the
-`daimon` CLI on `PATH` (`uv tool install ./plugin` or equivalent).
+`daimon` CLI on `PATH` (`uv tool install 'daimon-briefing[pretty]'`).
 
 ## Teach the agent the protocol
 
