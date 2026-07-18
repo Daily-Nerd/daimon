@@ -1,8 +1,39 @@
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
-import CodeBlock from '@theme/CodeBlock';
 import Layout from '@theme/Layout';
+import {useEffect, useState} from 'react';
 import type {ReactNode} from 'react';
+
+const HOSTS = ['claude', 'codex', 'gemini', 'windsurf'];
+
+function InstallBlock(): ReactNode {
+  const [i, setI] = useState(0);
+  const [fading, setFading] = useState(false);
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return undefined;
+    }
+    const t = setInterval(() => {
+      setFading(true);
+      setTimeout(() => {
+        setI((n) => (n + 1) % HOSTS.length);
+        setFading(false);
+      }, 180);
+    }, 2200);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <pre className="installBlock">
+      <code>
+        {'uv tool install daimon-briefing\n'}
+        {'daimon hooks install '}
+        <span className={fading ? 'hostToken hostFade' : 'hostToken'}>
+          {HOSTS[i]}
+        </span>
+      </code>
+    </pre>
+  );
+}
 
 const features = [
   {
@@ -42,7 +73,7 @@ export default function Home(): ReactNode {
           classes, quotes verified against the transcript, and signed receipts.
         </p>
         <div className="install">
-          <CodeBlock language="bash">{`uv tool install daimon-briefing\ndaimon hooks install claude`}</CodeBlock>
+          <InstallBlock />
         </div>
         <div>
           <Link className="button button--primary" to="/docs/">
