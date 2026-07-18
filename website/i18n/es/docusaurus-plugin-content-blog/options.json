@@ -1,0 +1,10 @@
+{
+  "title": {
+    "message": "blog de daimon",
+    "description": "The title for the blog used in SEO"
+  },
+  "description": {
+    "message": "Releases, explicaciones de features e incidentes de campo construyendo memoria demostrable para agentes de IA.",
+    "description": "The description for the blog used in SEO"
+  }
+}
