@@ -73,7 +73,8 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
-                {
+                {type: 'localeDropdown', position: 'right'},
+        {
           href: 'https://github.com/Daily-Nerd/daimon',
           label: 'GitHub',
           position: 'right',
