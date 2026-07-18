@@ -56,11 +56,11 @@ export default function Home(): ReactNode {
         </div>
       </header>
       <main>
-        <blockquote className="quoteRow">
-          Re-explaining myself to agents every new session was time consuming
-          and overwhelming at times — with daimon that is gone.
-          <footer>— early user, unprompted</footer>
-        </blockquote>
+        <p className="quoteRow">
+          Stop re-explaining yourself every session. The next session opens
+          already knowing what you were doing, what you decided, and what is
+          still open — with the evidence to check it.
+        </p>
         <div className="featureGrid">
           {features.map((f) => (
             <div className="featureCard" key={f.title}>
