@@ -1,3 +1,7 @@
+---
+sidebar_position: 5
+---
+
 # Architecture Overview
 
 > ## ⚠️ SUPERSEDED — read this first
