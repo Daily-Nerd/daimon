@@ -5531,3 +5531,46 @@ def test_forget_dry_run_writes_nothing(tmp_checkpoint_dir, capsys, monkeypatch):
     assert store.resolutions(project_dir="/p/A") == {}
     after = store.read_latest(project_dir="/p/A", fallback=False)
     assert len(after["working_context"]["open_questions"]) == n_before
+
+
+def test_forget_without_checkpoint_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/EMPTY")
+    assert cli.main(["forget", "anything"]) == 1
+    assert "nothing to forget" in capsys.readouterr().out
+
+
+def test_forget_no_match_records_usage_and_exits_1(tmp_checkpoint_dir, tmp_log_dir,
+                                                   capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["forget", "zebra quantum harpsichord"]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_forget_missing_session_id_refuses_rewrite(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "orphan item without a session id", "trust": "inferred"}]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    # simulate a torn/legacy pointer whose session_id never landed
+    slug = store.project_slug("/p/A")
+    import json as _json
+    p = tmp_checkpoint_dir / slug / "latest.json"
+    blob = _json.loads(p.read_text())
+    blob.pop("session_id", None)
+    p.write_text(_json.dumps(blob))
+    iid = blob["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["forget", iid]) == 1
+    assert "cannot rewrite" in capsys.readouterr().out
+
+
+def test_forget_event_write_failure_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    monkeypatch.setattr(store, "append_event", lambda *a, **k: False)
+    assert cli.main(["forget", iid]) == 1
+    assert "not written" in capsys.readouterr().out
