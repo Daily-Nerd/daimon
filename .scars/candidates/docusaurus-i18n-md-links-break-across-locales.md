@@ -27,5 +27,9 @@ build time via `onBrokenLinks: 'throw'`, but only in the es locale pass.
 Rule: `.md`-relative links are safe only between pages on the SAME side of
 the translated/untranslated line. Anywhere the line is crossed, use URL-style
 links (no `.md`; category-index pages like `hosts/index.md` and
-`team/team.md` are `../hosts/`, `../team/`), and pin explicit heading ids
-(`{#english-anchor}`) on translated headings that English pages target.
+`team/team.md` are `../hosts/`, `../team/`). Do NOT try to fix cross-locale
+anchors with `{#custom-id}` heading syntax — in this site's MDX pipeline the
+brace block is parsed as a JSX expression and acorn fails the whole es build
+(third #334 failure, run of 2026-07-18T21:22Z). A fragment pointing at a
+heading that only exists in the other locale is a build WARNING
+(onBrokenAnchors default), which is acceptable; a broken page link is not.
