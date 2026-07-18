@@ -1,0 +1,22 @@
+{
+  "sidebar.tutorialSidebar.category.Getting Started": {
+    "message": "Primeros pasos",
+    "description": "Sidebar category label: Getting Started"
+  },
+  "sidebar.tutorialSidebar.category.Concepts": {
+    "message": "Conceptos",
+    "description": "Sidebar category label: Concepts"
+  },
+  "sidebar.tutorialSidebar.category.Hosts": {
+    "message": "Hosts",
+    "description": "Sidebar category label: Hosts"
+  },
+  "sidebar.tutorialSidebar.category.Team": {
+    "message": "Equipo",
+    "description": "Sidebar category label: Team"
+  },
+  "sidebar.tutorialSidebar.category.Reference": {
+    "message": "Referencia",
+    "description": "Sidebar category label: Reference"
+  }
+}

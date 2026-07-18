@@ -38,7 +38,7 @@ Install copies the hook scripts to `~/.claude/hooks/` and registers them
 under `SessionStart` / `SessionEnd` in `~/.claude/settings.json` (idempotent;
 settings backed up before every mutation). Requires the `daimon` CLI on PATH —
 `uv tool install 'daimon-briefing[pretty]'`, see the
-[quickstart](../getting-started/quickstart.md) — and the hooks also accept the
+[quickstart](../getting-started/quickstart) — and the hooks also accept the
 deprecated `daimon-briefing` alias as a fallback. After upgrading the CLI,
 re-run install so the hook scripts stay in sync.
 
@@ -75,7 +75,7 @@ registers them:
   `SessionStart` header shows checkpoint age.
 
   LLM credentials come from `~/.daimon/env` (see
-  [Connect an LLM](../getting-started/quickstart.md#2-connect-an-llm)) — hooks
+  [Connect an LLM](../getting-started/quickstart#2-connect-an-llm)) — hooks
   inherit the host process environment, not your shell profile, so
   `DAIMON_LLM_API_KEY` / `DAIMON_LLM_MODEL` / `DAIMON_LLM_BASE_URL` belong in
   that file (chmod 600). Without it, serialize fails fast with a named error
