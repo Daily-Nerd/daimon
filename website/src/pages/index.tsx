@@ -1,43 +1,74 @@
-import type {ReactNode} from 'react';
-import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import CodeBlock from '@theme/CodeBlock';
 import Layout from '@theme/Layout';
-import HomepageFeatures from '@site/src/components/HomepageFeatures';
-import Heading from '@theme/Heading';
+import type {ReactNode} from 'react';
 
-import styles from './index.module.css';
-
-function HomepageHeader() {
-  const {siteConfig} = useDocusaurusContext();
-  return (
-    <header className={clsx('hero hero--primary', styles.heroBanner)}>
-      <div className="container">
-        <Heading as="h1" className="hero__title">
-          {siteConfig.title}
-        </Heading>
-        <p className="hero__subtitle">{siteConfig.tagline}</p>
-        <div className={styles.buttons}>
-          <Link
-            className="button button--secondary button--lg"
-            to="/docs/">
-            Docusaurus Tutorial - 5min ⏱️
-          </Link>
-        </div>
-      </div>
-    </header>
-  );
-}
+const features = [
+  {
+    title: 'Briefings, not cold starts',
+    body: 'Every session ends in a checkpoint; the next one opens with what you were doing, what was decided, and what is still open.',
+  },
+  {
+    title: 'Trust classes on every item',
+    body: 'Verbatim items carry exact quotes verified against the transcript at serialize time. Inferred items say so. Stale carries get flagged for re-verification.',
+  },
+  {
+    title: 'Receipts you can verify offline',
+    body: 'Checkpoints are signed. A third party can check what a session knew, when, without trusting the machine that wrote it.',
+  },
+  {
+    title: 'Team memory over git',
+    body: 'Checkpoints sync through a plain git remote with a default-closed scope allowlist. No server, no accounts.',
+  },
+  {
+    title: 'Works with your host',
+    body: 'Claude Code, Codex, Gemini CLI, and Windsurf — installed as hooks, removed as easily.',
+  },
+  {
+    title: 'Local and zero-dependency',
+    body: 'Python stdlib only. Your transcripts never leave your machine unless you configure a team remote.',
+  },
+];
 
 export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
-    <Layout
-      title={`Hello from ${siteConfig.title}`}
-      description="Description will go into a meta tag in <head />">
-      <HomepageHeader />
+    <Layout description={siteConfig.tagline}>
+      <header className="hero--daimon text--center">
+        <h1>{siteConfig.title}</h1>
+        <p className="subtitle">
+          Session memory your coding agents can prove. Briefings with trust
+          classes, quotes verified against the transcript, and signed receipts.
+        </p>
+        <div className="install">
+          <CodeBlock language="bash">{`uv tool install daimon-briefing\ndaimon hooks install claude`}</CodeBlock>
+        </div>
+        <div>
+          <Link className="button button--primary" to="/docs/">
+            Get started
+          </Link>{' '}
+          <Link
+            className="button button--secondary"
+            href="https://github.com/Daily-Nerd/daimon">
+            GitHub
+          </Link>
+        </div>
+      </header>
       <main>
-        <HomepageFeatures />
+        <blockquote className="quoteRow">
+          Re-explaining myself to agents every new session was time consuming
+          and overwhelming at times — with daimon that is gone.
+          <footer>— early user, unprompted</footer>
+        </blockquote>
+        <div className="featureGrid">
+          {features.map((f) => (
+            <div className="featureCard" key={f.title}>
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </div>
+          ))}
+        </div>
       </main>
     </Layout>
   );

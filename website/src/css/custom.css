@@ -1,30 +1,69 @@
-/**
- * Any CSS included here will be global. The classic template
- * bundles Infima by default. Infima is a CSS framework designed to
- * work well for content-centric websites.
- */
+/* daimon docs — restrained, functional. One accent, calm neutrals. */
 
-/* You can override the default Infima variables here. */
 :root {
-  --ifm-color-primary: #2e8555;
-  --ifm-color-primary-dark: #29784c;
-  --ifm-color-primary-darker: #277148;
-  --ifm-color-primary-darkest: #205d3b;
-  --ifm-color-primary-light: #33925d;
-  --ifm-color-primary-lighter: #359962;
-  --ifm-color-primary-lightest: #3cad6e;
-  --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  --ifm-color-primary: #0f766e;
+  --ifm-color-primary-dark: #0d675f;
+  --ifm-color-primary-darker: #0c615a;
+  --ifm-color-primary-darkest: #0a504a;
+  --ifm-color-primary-light: #11847b;
+  --ifm-color-primary-lighter: #128a80;
+  --ifm-color-primary-lightest: #159b90;
+  --ifm-code-font-size: 90%;
+  --ifm-font-family-base: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --ifm-font-family-monospace: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --ifm-heading-font-weight: 600;
+  --ifm-global-radius: 8px;
+  --docusaurus-highlighted-code-line-bg: rgba(15, 118, 110, 0.08);
 }
 
-/* For readability concerns, you should choose a lighter palette in dark mode. */
 [data-theme='dark'] {
-  --ifm-color-primary: #25c2a0;
-  --ifm-color-primary-dark: #21af90;
-  --ifm-color-primary-darker: #1fa588;
-  --ifm-color-primary-darkest: #1a8870;
-  --ifm-color-primary-light: #29d5b0;
-  --ifm-color-primary-lighter: #32d8b4;
-  --ifm-color-primary-lightest: #4fddbf;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --ifm-color-primary: #00d4aa;
+  --ifm-color-primary-dark: #00bf99;
+  --ifm-color-primary-darker: #00b490;
+  --ifm-color-primary-darkest: #009477;
+  --ifm-color-primary-light: #00e9bb;
+  --ifm-color-primary-lighter: #04f4c4;
+  --ifm-color-primary-lightest: #2affd3;
+  --ifm-background-color: #0d1117;
+  --ifm-background-surface-color: #161b22;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 212, 170, 0.08);
 }
+
+.hero--daimon {
+  padding: 4.5rem 1rem 3.5rem;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+}
+.hero--daimon h1 {
+  font-size: 2.4rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.75rem;
+}
+.hero--daimon .subtitle {
+  font-size: 1.15rem;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 42rem;
+  margin: 0 auto 1.5rem;
+}
+.hero--daimon .install {
+  display: inline-block;
+  text-align: left;
+  margin-bottom: 1.5rem;
+}
+.quoteRow {
+  border-left: 3px solid var(--ifm-color-primary);
+  padding: 0.25rem 0 0.25rem 1rem;
+  max-width: 38rem;
+  margin: 2.5rem auto;
+  font-size: 1.05rem;
+  color: var(--ifm-color-emphasis-800);
+}
+.quoteRow footer { font-size: 0.85rem; color: var(--ifm-color-emphasis-600); margin-top: 0.4rem; }
+.featureGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; padding: 1rem; max-width: 1100px; margin: 0 auto 2rem; }
+.featureCard {
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 8px;
+  padding: 1.25rem;
+  background: var(--ifm-background-surface-color);
+}
+.featureCard h3 { font-size: 1rem; margin-bottom: 0.5rem; }
+.featureCard p { font-size: 0.9rem; color: var(--ifm-color-emphasis-700); margin: 0; }
