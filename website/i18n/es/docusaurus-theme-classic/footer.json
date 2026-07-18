@@ -1,0 +1,22 @@
+{
+  "link.item.label.Docs": {
+    "message": "Documentación",
+    "description": "The label of footer link with label=Docs"
+  },
+  "link.item.label.Blog": {
+    "message": "Blog",
+    "description": "The label of footer link with label=Blog"
+  },
+  "link.item.label.GitHub": {
+    "message": "GitHub",
+    "description": "The label of footer link with label=GitHub"
+  },
+  "link.item.label.PyPI": {
+    "message": "PyPI",
+    "description": "The label of footer link with label=PyPI"
+  },
+  "copyright": {
+    "message": "Licencia Apache-2.0. Construido con Docusaurus.",
+    "description": "The footer copyright"
+  }
+}

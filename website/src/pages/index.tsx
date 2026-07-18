@@ -1,4 +1,5 @@
 import Link from '@docusaurus/Link';
+import {translate} from '@docusaurus/Translate';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import {useEffect, useState} from 'react';
@@ -35,49 +36,97 @@ function InstallBlock(): ReactNode {
   );
 }
 
-const features = [
-  {
-    title: 'Briefings, not cold starts',
-    body: 'Every session ends in a checkpoint; the next one opens with what you were doing, what was decided, and what is still open.',
-  },
-  {
-    title: 'Trust classes on every item',
-    body: 'Verbatim items carry exact quotes verified against the transcript at serialize time. Inferred items say so. Stale carries get flagged for re-verification.',
-  },
-  {
-    title: 'Receipts you can verify offline',
-    body: 'Checkpoints are signed. A third party can check what a session knew, when, without trusting the machine that wrote it.',
-  },
-  {
-    title: 'Team memory over git',
-    body: 'Checkpoints sync through a plain git remote with a default-closed scope allowlist. No server, no accounts.',
-  },
-  {
-    title: 'Works with your host',
-    body: 'Claude Code, Codex, Gemini CLI, and Windsurf — installed as hooks, removed as easily.',
-  },
-  {
-    title: 'Local and zero-dependency',
-    body: 'Python stdlib only. Your transcripts never leave your machine unless you configure a team remote.',
-  },
-];
+function getFeatures() {
+  return [
+    {
+      title: translate({
+        id: 'landing.feature.briefings.title',
+        message: 'Briefings, not cold starts',
+      }),
+      body: translate({
+        id: 'landing.feature.briefings.body',
+        message:
+          'Every session ends in a checkpoint; the next one opens with what you were doing, what was decided, and what is still open.',
+      }),
+    },
+    {
+      title: translate({
+        id: 'landing.feature.trust.title',
+        message: 'Trust classes on every item',
+      }),
+      body: translate({
+        id: 'landing.feature.trust.body',
+        message:
+          'Verbatim items carry exact quotes verified against the transcript at serialize time. Inferred items say so. Stale carries get flagged for re-verification.',
+      }),
+    },
+    {
+      title: translate({
+        id: 'landing.feature.receipts.title',
+        message: 'Receipts you can verify offline',
+      }),
+      body: translate({
+        id: 'landing.feature.receipts.body',
+        message:
+          'Checkpoints are signed. A third party can check what a session knew, when, without trusting the machine that wrote it.',
+      }),
+    },
+    {
+      title: translate({
+        id: 'landing.feature.team.title',
+        message: 'Team memory over git',
+      }),
+      body: translate({
+        id: 'landing.feature.team.body',
+        message:
+          'Checkpoints sync through a plain git remote with a default-closed scope allowlist. No server, no accounts.',
+      }),
+    },
+    {
+      title: translate({
+        id: 'landing.feature.hosts.title',
+        message: 'Works with your host',
+      }),
+      body: translate({
+        id: 'landing.feature.hosts.body',
+        message:
+          'Claude Code, Codex, Gemini CLI, and Windsurf — installed as hooks, removed as easily.',
+      }),
+    },
+    {
+      title: translate({
+        id: 'landing.feature.local.title',
+        message: 'Local and zero-dependency',
+      }),
+      body: translate({
+        id: 'landing.feature.local.body',
+        message:
+          'Python stdlib only. Your transcripts never leave your machine unless you configure a team remote.',
+      }),
+    },
+  ];
+}
 
 export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
+  const features = getFeatures();
   return (
     <Layout description={siteConfig.tagline}>
       <header className="hero--daimon text--center">
         <h1>{siteConfig.title}</h1>
         <p className="subtitle">
-          Session memory your coding agents can prove. Briefings with trust
-          classes, quotes verified against the transcript, and signed receipts.
+          {translate({
+            id: 'landing.subtitle',
+            message:
+              'Session memory your coding agents can prove. Briefings with trust classes, quotes verified against the transcript, and signed receipts.',
+          })}
         </p>
         <div className="install">
           <InstallBlock />
         </div>
         <div>
           <Link className="button button--primary" to="/docs/">
-            Get started
+            {translate({id: 'landing.cta.start', message: 'Get started'})}
           </Link>{' '}
           <Link
             className="button button--secondary"
@@ -88,9 +137,11 @@ export default function Home(): ReactNode {
       </header>
       <main>
         <p className="quoteRow">
-          Stop re-explaining yourself every session. The next session opens
-          already knowing what you were doing, what you decided, and what is
-          still open — with the evidence to check it.
+          {translate({
+            id: 'landing.quote',
+            message:
+              'Stop re-explaining yourself every session. The next session opens already knowing what you were doing, what you decided, and what is still open — with the evidence to check it.',
+          })}
         </p>
         <div className="featureGrid">
           {features.map((f) => (

@@ -88,7 +88,7 @@ const config: Config = {
         {label: 'GitHub', href: 'https://github.com/Daily-Nerd/daimon'},
         {label: 'PyPI', href: 'https://pypi.org/project/daimon-briefing/'},
       ],
-      copyright: `MIT licensed. Built with Docusaurus.`,
+      copyright: `Apache-2.0 licensed. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,
