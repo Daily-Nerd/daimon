@@ -5574,3 +5574,16 @@ def test_forget_event_write_failure_exits_1(tmp_checkpoint_dir, capsys, monkeypa
     monkeypatch.setattr(store, "append_event", lambda *a, **k: False)
     assert cli.main(["forget", iid]) == 1
     assert "not written" in capsys.readouterr().out
+
+
+def test_forget_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["forget", "release pipeline manual approval",
+                     "--reason", "example"]) == 0
+    after = store.read_latest(project_dir="/p/A", fallback=False)
+    ids = [i.get("id") for i in after["working_context"]["open_questions"]]
+    assert iid not in ids
+    assert store.resolutions(project_dir="/p/A")[iid]["status"].startswith("forgotten:")
