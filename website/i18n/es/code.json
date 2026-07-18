@@ -1,0 +1,47 @@
+{
+  "landing.subtitle": {
+    "message": "Memoria de sesión que tus agentes de código pueden demostrar. Briefings con clases de confianza, citas verificadas contra el transcript, y receipts firmados."
+  },
+  "landing.cta.start": {
+    "message": "Empezar"
+  },
+  "landing.quote": {
+    "message": "Deja de re-explicarte en cada sesión. La siguiente sesión abre sabiendo ya en qué estabas, qué decidiste y qué sigue abierto — con la evidencia para comprobarlo."
+  },
+  "landing.feature.briefings.title": {
+    "message": "Briefings, no arranques en frío"
+  },
+  "landing.feature.briefings.body": {
+    "message": "Cada sesión termina en un checkpoint; la siguiente abre con lo que estabas haciendo, lo que se decidió y lo que sigue abierto."
+  },
+  "landing.feature.trust.title": {
+    "message": "Clases de confianza en cada ítem"
+  },
+  "landing.feature.trust.body": {
+    "message": "Los ítems verbatim llevan citas exactas verificadas contra el transcript al serializar. Los inferidos lo dicen. Los arrastres desactualizados se señalan para re-verificación."
+  },
+  "landing.feature.receipts.title": {
+    "message": "Receipts que puedes verificar offline"
+  },
+  "landing.feature.receipts.body": {
+    "message": "Los checkpoints van firmados. Un tercero puede comprobar qué sabía una sesión, y cuándo, sin confiar en la máquina que lo escribió."
+  },
+  "landing.feature.team.title": {
+    "message": "Memoria de equipo sobre git"
+  },
+  "landing.feature.team.body": {
+    "message": "Los checkpoints se sincronizan por un remoto git normal con una allowlist de alcance cerrada por defecto. Sin servidor, sin cuentas."
+  },
+  "landing.feature.hosts.title": {
+    "message": "Funciona con tu host"
+  },
+  "landing.feature.hosts.body": {
+    "message": "Claude Code, Codex, Gemini CLI y Windsurf — instalado como hooks, removido igual de fácil."
+  },
+  "landing.feature.local.title": {
+    "message": "Local y sin dependencias"
+  },
+  "landing.feature.local.body": {
+    "message": "Solo stdlib de Python. Tus transcripts nunca salen de tu máquina salvo que configures un remoto de equipo."
+  }
+}
