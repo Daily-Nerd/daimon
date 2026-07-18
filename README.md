@@ -4,6 +4,8 @@
 
 > A **dream-briefing** for your AI agent: a skimmable "while you were away / here's where we left off" artifact, shown when you resume a session.
 
+**Documentation: [daily-nerd.github.io/daimon](https://daily-nerd.github.io/daimon/)** — setup guides, configuration reference, concepts.
+
 Your agent forgets everything between sessions. Daimon writes a small cognitive checkpoint when a session ends and turns it into a briefing when the next one starts — so the agent resumes from a faithful prior state instead of a confident guess:
 
 ```
@@ -35,8 +37,6 @@ And because the briefing is injected automatically when a session starts, the ag
 
 ![headless Claude Code answers "where did we leave off?" from the injected briefing, calling out the stale pre-pivot items as superseded](docs/demo/claude-p.png)
 
-Ask it to show its work and it audits its own memory — verified quotes vs its own inferences, and the carried items that contradict each other: [see the full self-audit](docs/demo/claude-p-audit.png).
-
 Nothing here is mocked — the transcripts, the recording scripts, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
 
 The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings.
@@ -45,43 +45,13 @@ The name comes from the Greek *δαίμων* — a guiding spirit (distinct from
 
 ## Install
 
-The `daimon` CLI ships on PyPI:
-
 ```sh
-uv tool install 'daimon-briefing[pretty]'
-#   pipx works identically: pipx install 'daimon-briefing[pretty]'
-#   [pretty] adds rich tables/panels for status/brief; plain text without it
+uv tool install 'daimon-briefing[pretty]'   # pipx works identically
+# upgrading: uv tool upgrade daimon-briefing
+#   then `daimon hooks install <host>` to refresh installed hook scripts (non-plugin hosts)
 ```
 
-**Upgrading:**
-
-```sh
-uv tool upgrade daimon-briefing
-daimon hooks install <host>     # refresh installed hook scripts to match (non-plugin hosts)
-```
-
-### Connect an LLM (one time)
-
-Serialization needs an LLM endpoint. If the `claude` CLI is on your PATH you are **zero-config** — `daimon configure` prints `✓ ready` and you're done. Otherwise, any **OpenAI-compatible endpoint** works — for example a free-tier Gemini key:
-
-```sh
-daimon configure --backend litellm \
-  --base-url https://generativelanguage.googleapis.com/v1beta/openai \
-  --api-key <YOUR-KEY> --model gemini-2.5-flash
-```
-
-Or any headless CLI that reads a prompt on stdin and prints the response:
-
-```sh
-daimon configure --backend command --command '<your-llm-cli>' --output text
-```
-
-Config lives in `~/.daimon/env` (hooks run with the host's inherited env, not your shell profile). Kill switch: `DAIMON_DISABLE=1`. Every tunable variable — checkpoint retention, carry, briefing budget, team memory, backend selection — is listed in [docs/configuration.md](./docs/configuration.md). Wondering which model to point it at? [docs/backends-tested.md](./docs/backends-tested.md) is the field-measured matrix — and your combination is a welcome PR.
-
-### Hook up your host
-
-See [docs/hosts/](./docs/hosts/) for per-host setup guides (Claude Code,
-Codex, Gemini CLI, Windsurf). Quick version:
+Serialization needs an LLM endpoint. If the `claude` CLI is on your PATH you are **zero-config** — `daimon configure` prints `✓ ready` and you're done. Otherwise any OpenAI-compatible endpoint or headless CLI works: see [configuration](https://daily-nerd.github.io/daimon/docs/getting-started/configuration/).
 
 **Claude Code (plugin — recommended):**
 
@@ -90,68 +60,23 @@ Codex, Gemini CLI, Windsurf). Quick version:
 /plugin install daimon@daimon
 ```
 
-The plugin registers the `SessionStart`/`SessionEnd` hooks itself. Order doesn't matter: if the hooks land before the CLI, sessions start normally and the hook prints a one-line install hint instead of a briefing.
-
-> **Don't mix install paths.** Plugin users must **not** also run the manual hook installer below — both paths coexisting registers the hooks twice (double briefings, double serialize LLM calls). Switching from manual to plugin: run `python3 hook/daimon-hooks.py uninstall` first.
-
-**Windsurf:**
-
-```sh
-daimon hooks install windsurf
-```
-
-This copies the hook script to the stable path `~/.daimon/hooks/` and prints the registration snippet: point Windsurf's Cascade hooks config (user-level JSON — see [the Cascade hooks docs](https://docs.devin.ai/desktop/cascade/hooks)) at that script for all **three** events: `pre_user_prompt`, `post_cascade_response`, and `post_cascade_response_with_transcript` (the last makes Windsurf write a native transcript, which daimon prefers as its source of truth). Windsurf has no session-end event, so serialization runs on a throttle (`DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL`, default 300s; `0` serializes every turn). Briefings are read with `daimon brief` in a terminal — permanent on this host, not a gap: Cascade hooks have no channel into the agent's context (stdout, stderr, and the exit-2 block banner were each probed live; the agent sees none of them), so a session-start briefing injection is not possible on Windsurf. Two knobs worth setting for your first week:
-
-```sh
-echo 'DAIMON_MIN_MESSAGES=4' >> ~/.daimon/env                      # don't skip short first sessions
-echo 'DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL=0' >> ~/.daimon/env   # no tail loss while you evaluate
-```
-
-**Codex and other hosts (manual, from a clone):**
-
-```sh
-python3 hook/daimon-hooks.py install   # Claude Code without the plugin system
-#   Codex: see hook/CODEX.md
-```
+**Other hosts** (Windsurf, Codex, Gemini CLI) and the agent-side skill: per-host guides at [daily-nerd.github.io/daimon/docs/hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
 
 That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status` — it reports capture health honestly, including failures, skips, and crashes; a failed capture self-heals on the next start.
 
-### Teach your agent the protocol
+## Beyond the briefing
 
-Hooks capture your sessions; the skill teaches the agent on the other side
-how to use them — read the briefing at session start, treat `verbatim`
-items as immutable quotes, verify stale-looking claims before repeating them.
-
-```sh
-daimon skill install claude      # ~/.claude/skills/daimon/SKILL.md
-daimon skill install codex       # managed block in ~/.codex/AGENTS.md
-daimon skill install windsurf    # ~/.codeium/windsurf/skills/daimon/SKILL.md (or --project for .windsurf/rules/)
-daimon skill install cursor --project   # .cursor/rules/daimon.mdc (Cursor has no global rules file)
-daimon skill install gemini      # managed block in ~/.gemini/GEMINI.md
-```
-
-`daimon skill show` prints the skill content (hosts add a thin format
-wrapper — version markers or frontmatter — around it; add `--compact` for
-the rules-host variant). `daimon skill list` shows which scopes each host
-supports. On shared files (`AGENTS.md`, `GEMINI.md`)
-daimon only ever touches its own marker block — `daimon skill uninstall
-<host>` removes exactly that block, or the whole file for hosts where the
-skill owns it outright. Re-run install after upgrading to refresh the content.
-
----
-
-## What you get beyond the briefing
-
-- **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled). Multi-term queries degrade to ranked partial matches instead of returning nothing.
-- **Context switching** — `daimon projects` lists every project daimon remembers (age, branch, last topic); `daimon brief --slug <slug>` and `daimon recall <terms> --slug <slug>` read one other project deliberately, provenance-labeled — crossing projects is always explicit, never automatic.
-- **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it ("you worked on this before"), in English or Spanish — accented text is a first-class citizen.
-- **Code anchors** — `daimon anchor <file> <symbol>` pins a belief to a code symbol; if that code changes or disappears, the next briefing flags the item under **CODE DRIFT — verify before trusting**. Offline, stdlib `ast`.
-- **Team memory (opt-in)** — `daimon team init <remote>` mirrors checkpoints through a git remote; teammates' active topics and decisions appear in your briefing, clearly attributed, never merged into your own sections. See the [team memory setup guide](./docs/team.md) — start with its privacy boundary, because the shared repo must be private.
-- **Signed receipts (opt-in)** — with `DAIMON_RECEIPTS=1`, each checkpoint is paired with an offline [vitni](https://github.com/Daily-Nerd/vitni) signature binding its exact bytes to its source transcript, so a post-hoc edit is detectable; verify any checkpoint with `daimon verify-receipt`.
+- **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled).
+- **Context switching** — `daimon projects`, `daimon brief --slug <slug>`: read another project's memory deliberately, provenance-labeled — never automatic.
+- **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it, in English or Spanish.
+- **Code anchors** — `daimon anchor <file> <symbol>` pins a belief to a code symbol; drift is flagged in the next briefing. Offline, stdlib `ast`.
+- **Item lifecycle** — `daimon resolve` closes loops, `daimon forget` removes an item with a tombstone event; supersession is tracked, not silently overwritten.
+- **[Team memory](https://daily-nerd.github.io/daimon/docs/team/) (opt-in)** — checkpoints mirrored through a private git remote; teammates' topics and decisions appear clearly attributed, never merged into yours.
+- **Signed receipts (opt-in)** — `DAIMON_RECEIPTS=1` pairs each checkpoint with an offline [vitni](https://github.com/Daily-Nerd/vitni) signature binding its exact bytes to its source transcript; verify with `daimon verify-receipt`.
 
 ## What's net-new here
 
-- **Trust-classed, quote-pinned memory** — every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, no server: the store is per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
+- **Trust-classed, quote-pinned memory** — every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, no server: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
 - **The briefing UX** — memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
 - **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (adapter shipped, in live validation), Codex (adapter shipped, awaiting first live run); other hosts are reachable via the same thin adapter shape.
 
@@ -160,13 +85,13 @@ skill owns it outright. Re-run install after upgrading to refresh the content.
 | Surface | State |
 |---------|-------|
 | Claude Code plugin + hooks | live-validated daily |
-| CLI (`brief`, `status`, `recall`, `projects`, `heal`, `anchor`, `configure`, `hooks`, `skill`) | stable, on PyPI |
+| CLI (`brief`, `status`, `recall`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
 | Windsurf adapter | shipped, in live validation |
 | Codex adapter | shipped, awaiting first live run |
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
 | Team memory | shipped, opt-in, early |
 
-Daimon is self-contained at runtime — no external memory backend, no server. The full evidence trail behind every design decision (algorithms, findings, decision records, rejected alternatives) lives in [research/](./research/README.md); the architecture is documented in [docs/MVP-DREAM-BRIEFING.md](./docs/MVP-DREAM-BRIEFING.md).
+Daimon is self-contained at runtime — no external memory backend, no server. The full evidence trail behind every design decision lives in [research/](./research/README.md); the architecture is documented in [docs/MVP-DREAM-BRIEFING.md](./docs/MVP-DREAM-BRIEFING.md).
 
 **License:** Apache-2.0 · **Org:** [Daily-Nerd](https://github.com/Daily-Nerd) · This repository starts at v0.2.0 (earlier development happened in a private lab repo; the research trail ships in [research/](./research/README.md)).
 
@@ -174,11 +99,7 @@ Daimon is self-contained at runtime — no external memory backend, no server. T
 
 ## Docs
 
+- **[Documentation site](https://daily-nerd.github.io/daimon/)** — setup, hosts, configuration, concepts
 - [MVP — Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md) — authoritative architecture
-- [docs/hosts/](./docs/hosts/) — per-host setup guides (Claude Code, Codex, Gemini CLI, Windsurf)
-- [Configuration](./docs/configuration.md) — environment-variable reference
-- [Codex hooks](./hook/CODEX.md) — Codex adapter setup
-- [The Problem](./docs/PROBLEM.md) — the context-loss thesis
 - [Research Logbook](./research/README.md) — findings, decisions, evidence trail
 - [Contributing](./CONTRIBUTING.md) — dev setup, tests, lint, pre-commit hooks
-- Historical docs ([RFC](./docs/RFC.md), [Architecture](./docs/ARCHITECTURE.md), [Pitch](./docs/PITCH.md), [Validation Plan](./docs/VALIDATION.md)) are preserved with status banners — superseded ≠ deleted.
