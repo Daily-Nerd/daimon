@@ -43,8 +43,8 @@ daimon configure --test
 
 Esto envía un prompt mínimo por el backend resuelto y reporta si pasó o
 falló. La configuración se escribe en `~/.daimon/env` — mira
-[Configuración](./configuration.md) para todas las variables, y la
-[matriz de backends](../reference/backends-tested.md) para combinaciones de
+[Configuración](./configuration) para todas las variables, y la
+[matriz de backends](../reference/backends-tested) para combinaciones de
 modelos medidas en uso real.
 
 ## 3. Conecta tu host
@@ -58,7 +58,7 @@ plugin — registra los hooks de sesión por sí solo:
 ```
 
 Para Windsurf, Codex o Gemini CLI, sigue la página de tu host en
-[Hosts](../hosts/index.md) — cada host expone una superficie de hooks
+[Hosts](../hosts/) — cada host expone una superficie de hooks
 distinta, y las guías por host cubren los pasos exactos de registro y sus
 particularidades.
 
@@ -133,9 +133,9 @@ fallida se auto-repara al inicio de la siguiente sesión — o ejecuta
 
 ## Adónde seguir
 
-- [Configuración](./configuration.md) — todas las variables de entorno,
+- [Configuración](./configuration) — todas las variables de entorno,
   incluido el interruptor de apagado `DAIMON_DISABLE`.
-- [Hosts](../hosts/index.md) — detalle de configuración por host y
+- [Hosts](../hosts/) — detalle de configuración por host y
   limitaciones conocidas.
-- [Memoria de equipo](../team/team.md) — comparte checkpoints con tu equipo
+- [Memoria de equipo](../team/) — comparte checkpoints con tu equipo
   a través de un remoto git privado (opt-in).

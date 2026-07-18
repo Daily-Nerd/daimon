@@ -40,7 +40,7 @@ Los ítems sin cerrar no se acumulan para siempre:
   es la vía prevista de salida; el decaimiento es la red de seguridad.
 
 Todas las perillas están en la
-[referencia de configuración](../getting-started/configuration.md), incluido
+[referencia de configuración](../getting-started/configuration), incluido
 `DAIMON_CARRY` (interruptor maestro, encendido por defecto).
 
 ## La advertencia de desactualización
