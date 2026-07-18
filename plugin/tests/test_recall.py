@@ -1485,3 +1485,22 @@ def test_schema_version_bumped_for_scene_column():
     # #317 added a scene column to items/items_fts — an old db must be discarded,
     # not queried with the new column list
     assert int(recall._SCHEMA_VERSION) >= 4
+
+
+def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatch):
+    # #321: a forgotten item's content must leave the index entirely — old
+    # checkpoint copies included — not merely be marked superseded
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": "Adopt sqlite for the recall index",
+                              "trust": "inferred"}]),
+        project_dir="/repo/x",
+    )
+    cp = store.read_latest(project_dir="/repo/x", fallback=False)
+    iid = cp["working_context"]["recent_decisions"][0]["id"]
+    store.append_event(iid, "forgotten:deadbeef1234", kind="tombstone",
+                       project_dir="/repo/x")
+    recall.rebuild()
+    hits = recall.search("sqlite", all_projects=True)
+    assert not any("recall index" in h["text"] for h in hits)

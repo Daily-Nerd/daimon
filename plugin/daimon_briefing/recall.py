@@ -404,6 +404,26 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             if not store.is_resolved(evt):
                 continue
             status = str(evt.get("status") or "")
+            # #321: forgotten is removal, not resolution — the content must
+            # leave the index entirely, historical checkpoint copies included.
+            # Prefix-match like every other status reader; only the LATEST
+            # event counts (a later reopen un-hides history by design).
+            if status.lower().startswith("forgotten"):
+                rows = conn.execute(
+                    "SELECT id, text, quote, scene FROM items"
+                    " WHERE item_id = ? AND project_slug IS ?",
+                    (ref, bucket.name)).fetchall()
+                for rowid, text, quote, scene in rows:
+                    # contentless fts5: deletion is the special 'delete'
+                    # INSERT and must repeat the original column values
+                    conn.execute(
+                        "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
+                        " VALUES('delete', ?, ?, ?, ?)",
+                        (rowid, text, quote, scene))
+                conn.execute(
+                    "DELETE FROM items WHERE item_id = ? AND project_slug IS ?",
+                    (ref, bucket.name))
+                continue
             value = "resolved"
             if status.lower().startswith("superseded-by:"):
                 value = status.split(":", 1)[1].strip() or "resolved"

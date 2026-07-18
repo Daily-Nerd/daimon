@@ -4740,7 +4740,7 @@ def test_main_installs_crash_excepthook(monkeypatch):
 
 
 def _write_cp_with_ids(store, project="/p/A"):
-    cp = {"working_context": {"open_questions": [
+    cp = {"session_id": "S1", "working_context": {"open_questions": [
         {"text": "release pipeline awaiting manual approval step", "trust": "inferred"},
         {"text": "serializer chunk retry budget unclear", "trust": "inferred"},
     ]}}
@@ -5478,3 +5478,112 @@ def test_recall_zero_match_teaser_fails_open_on_recall_error(tmp_checkpoint_dir,
     rc = cli.main(["recall", "nonexistentword", "--project", proj])
     assert rc == 0
     assert capsys.readouterr().out.strip() == "no matches"
+
+
+# ---- #321: daimon forget — removal with tombstone event ----
+
+
+def test_forget_removes_item_from_live_checkpoint(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["forget", iid, "--reason", "user request"]) == 0
+    after = store.read_latest(project_dir="/p/A", fallback=False)
+    ids = [i.get("id") for i in after["working_context"]["open_questions"]]
+    assert iid not in ids
+
+
+def test_forget_event_carries_hash_never_text(tmp_checkpoint_dir, capsys, monkeypatch):
+    import hashlib
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    item = cp["working_context"]["open_questions"][0]
+    iid, text = item["id"], item["text"]
+    assert cli.main(["forget", iid]) == 0
+    evt = store.resolutions(project_dir="/p/A")[iid]
+    assert evt["status"].startswith("forgotten:")
+    assert hashlib.sha256(text.encode()).hexdigest()[:12] in evt["status"]
+    assert store.is_resolved(evt)  # rides withhold/carry suppression for free
+    raw = (tmp_checkpoint_dir / store.project_slug("/p/A") / "events.jsonl").read_text()
+    assert text not in raw  # removal means the content leaves the audit trail too
+
+
+def test_forget_ambiguous_refuses_without_write(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["forget", "the"]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+    before = store.read_latest(project_dir="/p/A", fallback=False)
+    assert len(before["working_context"]["open_questions"]) >= 1
+
+
+def test_forget_dry_run_writes_nothing(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    n_before = len(store.read_latest(project_dir="/p/A", fallback=False)
+                   ["working_context"]["open_questions"])
+    assert cli.main(["forget", iid, "--dry-run"]) == 0
+    assert store.resolutions(project_dir="/p/A") == {}
+    after = store.read_latest(project_dir="/p/A", fallback=False)
+    assert len(after["working_context"]["open_questions"]) == n_before
+
+
+def test_forget_without_checkpoint_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/EMPTY")
+    assert cli.main(["forget", "anything"]) == 1
+    assert "nothing to forget" in capsys.readouterr().out
+
+
+def test_forget_no_match_records_usage_and_exits_1(tmp_checkpoint_dir, tmp_log_dir,
+                                                   capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["forget", "zebra quantum harpsichord"]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_forget_missing_session_id_refuses_rewrite(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "orphan item without a session id", "trust": "inferred"}]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    # simulate a torn/legacy pointer whose session_id never landed
+    slug = store.project_slug("/p/A")
+    import json as _json
+    p = tmp_checkpoint_dir / slug / "latest.json"
+    blob = _json.loads(p.read_text())
+    blob.pop("session_id", None)
+    p.write_text(_json.dumps(blob))
+    iid = blob["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["forget", iid]) == 1
+    assert "cannot rewrite" in capsys.readouterr().out
+
+
+def test_forget_event_write_failure_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    monkeypatch.setattr(store, "append_event", lambda *a, **k: False)
+    assert cli.main(["forget", iid]) == 1
+    assert "not written" in capsys.readouterr().out
+
+
+def test_forget_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["forget", "release pipeline manual approval",
+                     "--reason", "example"]) == 0
+    after = store.read_latest(project_dir="/p/A", fallback=False)
+    ids = [i.get("id") for i in after["working_context"]["open_questions"]]
+    assert iid not in ids
+    assert store.resolutions(project_dir="/p/A")[iid]["status"].startswith("forgotten:")
