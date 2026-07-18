@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     paths: ['website/**']
+  pull_request:
+    paths: ['website/**']
   workflow_dispatch:
 
 permissions:
@@ -34,6 +36,7 @@ jobs:
           path: website/build
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
