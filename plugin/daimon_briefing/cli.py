@@ -831,6 +831,69 @@ def _cmd_resolve(args) -> int:
     return 0
 
 
+def _cmd_forget(args) -> int:
+    """Deliberate item removal (#321): delete the item from the live
+    checkpoint, then append a tombstone event whose status carries a content
+    HASH, never the text — removal means the content leaves the audit trail
+    too. Binding is _cmd_resolve's never-guess contract verbatim: exact id
+    first, else a fuzzy query that must match exactly one item. The tombstone
+    rides the resolutions fold, so withhold, carry suppression, and the
+    recall index deletion all inherit it with no new plumbing. The rewritten
+    checkpoint re-mints its receipt, so the post-removal state is signed."""
+    project = _resolve_project(args.project)
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    if not isinstance(checkpoint, dict):
+        print("no checkpoint for this project yet — nothing to forget")
+        return 1
+    items = []
+    for section, key in store._ITEM_LISTS:
+        for item in ((checkpoint.get(section) or {}).get(key) or []):
+            if isinstance(item, dict) and item.get("id"):
+                items.append((section, key, item))
+    target = next((it for _, _, it in items if it["id"] == args.target), None)
+    if target is None:
+        texts = [str(it.get("text") or "") for _, _, it in items]
+        generic = carry._generic_terms(texts)
+        hits = [(s, k, it) for s, k, it in items
+                if carry._same_item(args.target, str(it.get("text") or ""), generic)]
+        if len(hits) == 1:
+            target = hits[0][2]
+        else:
+            _note_usage("forget:no-match" if not hits else "forget:ambiguous")
+            label = "no item matches" if not hits else "ambiguous — matches"
+            print(f"{label} {args.target!r}; candidates:")
+            for _, key, it in (hits or items):
+                print(f"  {it['id']}  [{key}] {it.get('text', '')}")
+            print("forget by exact id: daimon forget <id>")
+            return 1
+    if getattr(args, "dry_run", False):
+        _note_usage("forget:dry-run")
+        print(f"would forget {target['id']}: {target.get('text', '')}")
+        return 0
+    content_hash = hashlib.sha256(
+        str(target.get("text") or "").encode("utf-8")).hexdigest()[:12]
+    for section, key in store._ITEM_LISTS:
+        lst = (checkpoint.get(section) or {}).get(key)
+        if isinstance(lst, list):
+            lst[:] = [i for i in lst
+                      if not (isinstance(i, dict) and i.get("id") == target["id"])]
+    sid = str(checkpoint.get("session_id") or "")
+    if not sid:
+        print("checkpoint has no session_id — cannot rewrite")
+        return 1
+    store.write_checkpoint(sid, checkpoint, project_dir=project)
+    ok = store.append_event(target["id"], f"forgotten:{content_hash}",
+                            note=args.reason or "", kind="tombstone",
+                            project_dir=project)
+    if not ok:
+        print("tombstone event not written (daimon disabled or project unknown)")
+        return 1
+    _note_usage("forget")
+    print(f"forgot {target['id']} (content hash {content_hash}) — "
+          "item removed from the live checkpoint; tombstone recorded")
+    return 0
+
+
 def _is_supersede_candidate(item_id: str, project) -> bool:
     """True when the item's LATEST lifecycle event is a serializer-authored
     supersede-candidate — an unconfirmed machine SUGGESTION (#14) that has
@@ -2306,6 +2369,21 @@ def main(argv=None) -> int:
         "--dry-run", action="store_true",
         help="show what would resolve without writing an event — look before the write (#304)")
     p_resolve.set_defaults(func=_cmd_resolve)
+
+    p_forget = sub.add_parser(
+        "forget", help="remove ONE item from the live checkpoint and record a "
+        "signed-state tombstone — content leaves disk and index; the event "
+        "carries only a hash (#321)",
+        epilog="Examples:\n  daimon forget o-3f8a2c --reason \"contains client name\"\n"
+               "  daimon forget \"wrong belief about retry nonce\" --dry-run\n",
+    )
+    p_forget.add_argument("target", help="item id (exact) or a query that must match exactly one item")
+    p_forget.add_argument("--reason", help="recorded on the tombstone event (redacted like any note)")
+    p_forget.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_forget.add_argument(
+        "--dry-run", action="store_true",
+        help="show what would be forgotten without writing — look before a destructive op")
+    p_forget.set_defaults(func=_cmd_forget)
 
     p_reverify = sub.add_parser(
         "reverify", help="evidence-gated reopen of a resolved item (#103) — "
