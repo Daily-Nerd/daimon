@@ -46,7 +46,19 @@ const config: Config = {
           editUrl:
             'https://github.com/Daily-Nerd/daimon/tree/main/website/',
         },
-        blog: false,
+        blog: {
+          blogTitle: 'daimon blog',
+          blogDescription:
+            'Releases, feature explainers, and field incidents from building provable memory for AI agents.',
+          showReadingTime: true,
+          feedOptions: {
+            type: ['rss', 'atom'],
+            description:
+              'daimon — releases, explainers, and field incidents.',
+          },
+          onInlineAuthors: 'throw',
+          onUntruncatedBlogPosts: 'throw',
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -73,6 +85,7 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
+        {to: '/blog', label: 'Blog', position: 'left'},
                 {type: 'localeDropdown', position: 'right'},
         {
           href: 'https://github.com/Daily-Nerd/daimon',
@@ -85,6 +98,7 @@ const config: Config = {
       style: 'dark',
       links: [
         {label: 'Docs', to: '/docs/'},
+        {label: 'Blog', to: '/blog'},
         {label: 'GitHub', href: 'https://github.com/Daily-Nerd/daimon'},
         {label: 'PyPI', href: 'https://pypi.org/project/daimon-briefing/'},
       ],
