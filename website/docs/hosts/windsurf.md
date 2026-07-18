@@ -1,9 +1,8 @@
 # Windsurf (Cascade)
 
-Windsurf's adapter is shipped and code-verified (native-transcript serialize,
-probe-hardened), live validation in progress. No recorded live session yet
-completes the full loop the way Claude Code's does — treat end-to-end "runs
-on Windsurf" as inferred from code + unit tests until one is on record.
+Windsurf's adapter is shipped and live-validated: the capture loop
+(native-transcript serialize, probe-hardened) has been tested end-to-end in
+real Windsurf use.
 
 ## Install
 
