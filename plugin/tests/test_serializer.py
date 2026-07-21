@@ -1331,6 +1331,18 @@ def test_chunk_cache_key_changes_with_config_dimensions(monkeypatch):
     assert serializer._chunk_cache_key("chunk text") != base
 
 
+def test_chunk_cache_key_survives_backend_resolution_failure(monkeypatch):
+    # A raising resolved_backend() must never break key computation — the
+    # cache degrades to an "unknown"-backend namespace, not an exception.
+    from daimon_briefing import configure as _configure
+    def boom():
+        raise RuntimeError("no backend configured")
+    monkeypatch.setattr(_configure, "resolved_backend", boom)
+    key = serializer._chunk_cache_key("chunk text")
+    assert key == serializer._chunk_cache_key("chunk text")
+    assert len(key) == 32
+
+
 def test_chunk_transcript_prefix_chunks_byte_stable_under_growth():
     # The property the whole cache rests on: full windows re-materialize
     # byte-identically when the transcript grows; only the tail changes.
