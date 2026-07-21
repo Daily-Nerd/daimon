@@ -1405,6 +1405,14 @@ def _cmd_status(args) -> int:
     # One-line pointer only when installed hook copies have drifted (#266);
     # silent on a clean machine. Cheap: hashes a handful of small files.
     hook_drift = _hook_drift_present()
+    # #341: a remote-gateway primary with no resolvable command backend has
+    # zero rescue coverage — surface it here, not in a post-mortem.
+    rescue_gap = bool(
+        config.llm_backend() in ("litellm", "auto")
+        and config.llm_api_key()
+        and config.llm_fallback()
+        and llm._resolve_command() is None
+    )
     health = _status_health(proj, glob, outstanding, siblings, now=now,
                             disabled=disabled)
     # ONE objective team line (#113), only when a team remote exists — the #84
@@ -1430,7 +1438,8 @@ def _cmd_status(args) -> int:
              "team": team, "crash": crash, "disabled": disabled,
              "skipped_recent": skipped_recent, "recall_error": recall_error,
              "recall_index": recall_index, "receipts": receipts_line,
-             "capture_alarm": capture_alarm, "hook_drift": hook_drift},
+             "capture_alarm": capture_alarm, "hook_drift": hook_drift,
+             "rescue_gap": rescue_gap},
             indent=2,
         ))
         return rc
@@ -1441,7 +1450,7 @@ def _cmd_status(args) -> int:
         "team": team, "crash": crash, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
-        "hook_drift": hook_drift,
+        "hook_drift": hook_drift, "rescue_gap": rescue_gap,
     })
     return rc
 

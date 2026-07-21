@@ -461,6 +461,10 @@ def _plain_status(data: dict) -> None:
             print(f"  ⚠ {w}")
     if data.get("hook_drift"):
         print("⚠ installed hooks out of date — run daimon hooks status")
+    if data.get("rescue_gap"):
+        print("⚠ primary is a remote gateway and no fallback backend resolves "
+              "— gateway failures won't be rescued (install claude or set "
+              "DAIMON_LLM_COMMAND)")
     if data.get("team"):
         print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
@@ -540,6 +544,10 @@ def _rich_status(data: dict) -> None:
     if data.get("hook_drift"):
         console.print("[red]⚠ installed hooks out of date — "
                       "run daimon hooks status[/red]")
+    if data.get("rescue_gap"):
+        console.print("[yellow]⚠ primary is a remote gateway and no fallback "
+                      "backend resolves — gateway failures won't be rescued "
+                      "(install claude or set DAIMON_LLM_COMMAND)[/yellow]")
     if data.get("team"):
         console.print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
@@ -823,7 +831,9 @@ def _plain_stats(data: dict) -> None:
                   "install` (or update the plugin)")
     print("capture:")
     print(f"  serialized: {c['success']}  skipped: {c['skipped']}  "
-          f"errors: {c['errors']}  via fallback backend: {c['fallback_serializes']}")
+          f"errors: {c['errors']}  fallback: "
+          f"attempted {c.get('fallback_attempts', 0)}, "
+          f"succeeded {c['fallback_serializes']}")
     if c["hosts"]:
         print("  spawns by host: " + ", ".join(
             f"{h}: {n}" for h, n in sorted(c["hosts"].items())))
@@ -895,7 +905,8 @@ def _rich_stats(data: dict) -> None:
     capture_table.add_row("serialized", str(c["success"]))
     capture_table.add_row("skipped", str(c["skipped"]))
     capture_table.add_row("errors", str(c["errors"]))
-    capture_table.add_row("via fallback backend", str(c["fallback_serializes"]))
+    capture_table.add_row("fallback", f"attempted {c.get('fallback_attempts', 0)}, "
+                                      f"succeeded {c['fallback_serializes']}")
     if c["hosts"]:
         capture_table.add_row("spawns by host", ", ".join(
             f"{h}: {n}" for h, n in sorted(c["hosts"].items())))

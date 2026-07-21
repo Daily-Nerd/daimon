@@ -189,6 +189,14 @@ def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadli
         if config.llm_fallback() and _resolve_command() is not None:
             log.warning("llm.fallback backend=command (litellm failed)")
             _fallback_used = True
+            if deadline is not None:
+                # #341: the primary just drained the shared budget retrying
+                # the failing gateway — handing the fallback the remainder
+                # kills it on arrival in exactly the outage it exists to
+                # rescue. Re-arm to at least the configured floor; a healthy
+                # remaining budget is never shrunk.
+                deadline = max(deadline,
+                               time.monotonic() + config.fallback_min_seconds())
             return _chat_command(messages, deadline)
         raise
 

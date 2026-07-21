@@ -561,3 +561,26 @@ def test_scene_traces_default_off(monkeypatch):
 def test_scene_traces_flag_on(monkeypatch):
     monkeypatch.setenv("DAIMON_SCENE_TRACES", "1")
     assert config.scene_traces_enabled() is True
+
+
+# ---- #341: DAIMON_FALLBACK_MIN_SECONDS ---------------------------------------
+
+
+def test_fallback_min_seconds_defaults_to_timeout(monkeypatch):
+    # Unset: the operator's DAIMON_TIMEOUT already declares "one backend call
+    # may take this long" — the fallback floor inherits that judgment.
+    monkeypatch.delenv("DAIMON_FALLBACK_MIN_SECONDS", raising=False)
+    monkeypatch.setenv("DAIMON_TIMEOUT", "111")
+    assert config.fallback_min_seconds() == 111
+
+
+def test_fallback_min_seconds_env_override(monkeypatch):
+    monkeypatch.setenv("DAIMON_TIMEOUT", "111")
+    monkeypatch.setenv("DAIMON_FALLBACK_MIN_SECONDS", "77")
+    assert config.fallback_min_seconds() == 77
+
+
+def test_fallback_min_seconds_bad_value_falls_back_to_timeout(monkeypatch):
+    monkeypatch.setenv("DAIMON_TIMEOUT", "222")
+    monkeypatch.setenv("DAIMON_FALLBACK_MIN_SECONDS", "not-a-number")
+    assert config.fallback_min_seconds() == 222

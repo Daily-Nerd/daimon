@@ -871,3 +871,68 @@ def test_extract_json_prefers_largest_parseable_span_over_prose_fragment():
 def test_extract_json_unterminated_leading_fence():
     # Old behavior: a leading fence with no closer still parsed. Keep it.
     assert llm.extract_json('```json\n{"a": 4}') == {"a": 4}
+
+
+# ---- #341: the fallback must get its own budget, not the drained remainder --
+
+
+def test_chat_fallback_extends_drained_deadline(monkeypatch):
+    # A dead/slow gateway drains the shared deadline BEFORE fallback runs —
+    # the exact failure fallback exists to rescue. Entry must re-arm the clock
+    # to at least fallback_min_seconds, or the rescue is dead on arrival
+    # (#341 field data: fallback entered 6+ times, killed by the inherited
+    # deadline every time, 0 rescues).
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setenv("DAIMON_FALLBACK_MIN_SECONDS", "300")
+    monkeypatch.setattr(llm, "_chat_litellm",
+                        lambda *a, **k: (_ for _ in ()).throw(llm.ChatError("down")))
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    seen = {}
+
+    def fake_command(messages, deadline):
+        seen["deadline"] = deadline
+        return "OK"
+
+    monkeypatch.setattr(llm, "_chat_command", fake_command)
+    drained = time.monotonic() - 1
+    assert llm.chat([{"role": "user", "content": "x"}], deadline=drained) == "OK"
+    assert seen["deadline"] >= time.monotonic() + 250
+
+
+def test_chat_fallback_keeps_larger_remaining_budget(monkeypatch):
+    # max(remaining, floor): a healthy remaining budget is never shrunk.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setenv("DAIMON_FALLBACK_MIN_SECONDS", "300")
+    monkeypatch.setattr(llm, "_chat_litellm",
+                        lambda *a, **k: (_ for _ in ()).throw(llm.ChatError("down")))
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    seen = {}
+
+    def fake_command(messages, deadline):
+        seen["deadline"] = deadline
+        return "OK"
+
+    monkeypatch.setattr(llm, "_chat_command", fake_command)
+    roomy = time.monotonic() + 10_000
+    assert llm.chat([{"role": "user", "content": "x"}], deadline=roomy) == "OK"
+    assert seen["deadline"] == roomy
+
+
+def test_chat_fallback_no_deadline_stays_none(monkeypatch):
+    # deadline=None means "no budget" — the floor must not invent one.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_chat_litellm",
+                        lambda *a, **k: (_ for _ in ()).throw(llm.ChatError("down")))
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    seen = {}
+
+    def fake_command(messages, deadline):
+        seen["deadline"] = deadline
+        return "OK"
+
+    monkeypatch.setattr(llm, "_chat_command", fake_command)
+    assert llm.chat([{"role": "user", "content": "x"}]) == "OK"
+    assert seen["deadline"] is None

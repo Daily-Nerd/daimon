@@ -123,6 +123,19 @@ def test_render_status_rich_and_plain_state_same_serialize_facts(monkeypatch, ca
         assert fact in plain and fact in rich_out
 
 
+def test_render_status_rescue_gap_same_warning_rich_and_plain(monkeypatch, capsys):
+    # #341: the rescue-gap warning must state the same fact regardless of
+    # `rich` — the plain branch was covered, the rich branch was not.
+    data = {**_status_data(), "rescue_gap": True}
+    render.render_status(data)
+    plain = capsys.readouterr().out
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_status(data)
+    rich_out = capsys.readouterr().out
+    for out in (plain, rich_out):
+        assert "no fallback backend resolves" in out
+
+
 def test_render_brief_notes_version_mismatch(sample_checkpoint, capsys):
     # #93: a checkpoint whose format_version differs from the current one gets a
     # note instead of silently rendering against a changed schema.
@@ -703,6 +716,7 @@ def _stats_sample():
         "usage": {"brief": 2},
         "capture": {
             "success": 2, "skipped": 1, "errors": 1, "fallback_serializes": 1,
+            "fallback_attempts": 2,
             "hosts": {"session-end": 1, "windsurf-cascade": 1},
             "max_serialize_seconds": 42, "total_serialize_seconds": 50,
         },
@@ -719,7 +733,8 @@ def _stats_empty():
     return {
         "usage": {},
         "capture": {"success": 0, "skipped": 0, "errors": 0,
-                    "fallback_serializes": 0, "hosts": {},
+                    "fallback_serializes": 0, "fallback_attempts": 0,
+                    "hosts": {},
                     "max_serialize_seconds": 0, "total_serialize_seconds": 0},
         "store": {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
                   "items_verbatim": 0, "items_inferred": 0, "items_untagged": 0,
@@ -734,7 +749,7 @@ def test_render_stats_plain_exact_format(capsys):
         "usage (local, never transmitted):\n"
         "  brief: 2\n"
         "capture:\n"
-        "  serialized: 2  skipped: 1  errors: 1  via fallback backend: 1\n"
+        "  serialized: 2  skipped: 1  errors: 1  fallback: attempted 2, succeeded 1\n"
         "  spawns by host: session-end: 1, windsurf-cascade: 1\n"
         "  serialize seconds: max 42, avg 25\n"
         "store:\n"
@@ -751,7 +766,7 @@ def test_render_stats_plain_empty_world(capsys):
         "usage (local, never transmitted):\n"
         "  none recorded yet\n"
         "capture:\n"
-        "  serialized: 0  skipped: 0  errors: 0  via fallback backend: 0\n"
+        "  serialized: 0  skipped: 0  errors: 0  fallback: attempted 0, succeeded 0\n"
         "store:\n"
         "  checkpoints: 0  project buckets: 0\n"
         "  trust: verbatim 0, inferred 0, untagged 0  (carried: 0)\n"
