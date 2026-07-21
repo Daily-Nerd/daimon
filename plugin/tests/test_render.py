@@ -123,6 +123,19 @@ def test_render_status_rich_and_plain_state_same_serialize_facts(monkeypatch, ca
         assert fact in plain and fact in rich_out
 
 
+def test_render_status_rescue_gap_same_warning_rich_and_plain(monkeypatch, capsys):
+    # #341: the rescue-gap warning must state the same fact regardless of
+    # `rich` — the plain branch was covered, the rich branch was not.
+    data = {**_status_data(), "rescue_gap": True}
+    render.render_status(data)
+    plain = capsys.readouterr().out
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_status(data)
+    rich_out = capsys.readouterr().out
+    for out in (plain, rich_out):
+        assert "no fallback backend resolves" in out
+
+
 def test_render_brief_notes_version_mismatch(sample_checkpoint, capsys):
     # #93: a checkpoint whose format_version differs from the current one gets a
     # note instead of silently rendering against a changed schema.
