@@ -5,6 +5,35 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0](https://github.com/Daily-Nerd/daimon/compare/v0.18.0...v0.19.0) (2026-07-21)
+
+
+### Features
+
+* **cli:** daimon forget — item removal with a tombstone event ([#322](https://github.com/Daily-Nerd/daimon/issues/322)) ([3fa223c](https://github.com/Daily-Nerd/daimon/commit/3fa223c9a1bb81e0d78220acb9ff2ff3c8418f21))
+* **docs:** Docusaurus documentation site with GitHub Pages deploy ([#325](https://github.com/Daily-Nerd/daimon/issues/325)) ([df6b8d2](https://github.com/Daily-Nerd/daimon/commit/df6b8d25fb0c50efbfe7d08ef2f272ebf595c9e1))
+* **mcp:** opt-in read-only MCP server over stdio ([#347](https://github.com/Daily-Nerd/daimon/issues/347)) ([1159f46](https://github.com/Daily-Nerd/daimon/commit/1159f46727b92268c1f2b3df5481da5ad9c9c6da))
+* **serializer:** content-addressed chunk-extraction cache ([#48](https://github.com/Daily-Nerd/daimon/issues/48) slice 1) ([#348](https://github.com/Daily-Nerd/daimon/issues/348)) ([0e5db26](https://github.com/Daily-Nerd/daimon/commit/0e5db263d1328f6a145cb5c7efa2e3db1cfaad06))
+* **site:** blog — canonical home for announcements, with bilingual inaugural post ([#338](https://github.com/Daily-Nerd/daimon/issues/338)) ([88740fa](https://github.com/Daily-Nerd/daimon/commit/88740fa944c6790efe37e538338717a9a85f165b))
+
+
+### Bug Fixes
+
+* **llm:** give the command fallback its own deadline budget ([#346](https://github.com/Daily-Nerd/daimon/issues/346)) ([fe89f79](https://github.com/Daily-Nerd/daimon/commit/fe89f797eca0de9e94a963186aced0539751e3aa))
+* **site:** Spanish landing page — wire translate() into custom index ([#340](https://github.com/Daily-Nerd/daimon/issues/340)) ([40268bb](https://github.com/Daily-Nerd/daimon/commit/40268bbf8d1ab192d65f073faaf2ff02a71d3b71))
+* **stats:** scope the stale-hook warning to auto-brief-capable hosts ([#350](https://github.com/Daily-Nerd/daimon/issues/350)) ([947cfd9](https://github.com/Daily-Nerd/daimon/commit/947cfd9da8d67167c41ab3a5245eae124d38e8ed))
+
+
+### Documentation
+
+* **readme:** slim README to pitch, install, and docs-site links ([#327](https://github.com/Daily-Nerd/daimon/issues/327)) ([3d87d4d](https://github.com/Daily-Nerd/daimon/commit/3d87d4d7820e8a0a74eb156d52e73507b7e1e0e3))
+* **site:** complete Spanish coverage — all remaining doc pages translated ([#336](https://github.com/Daily-Nerd/daimon/issues/336)) ([f0ba938](https://github.com/Daily-Nerd/daimon/commit/f0ba938d8b9d97f653db0c39554c255ddca6312f))
+* **site:** concepts pages — trust classes, carry, receipts, item lifecycle ([#329](https://github.com/Daily-Nerd/daimon/issues/329)) ([7fc22c8](https://github.com/Daily-Nerd/daimon/commit/7fc22c88a46814fa79f1b62415d12b2a9ce77bda))
+* **site:** curation — return internal-history pages to the repo ([#332](https://github.com/Daily-Nerd/daimon/issues/332)) ([5c22419](https://github.com/Daily-Nerd/daimon/commit/5c2241914da7dda72d4ff779584bdacc22fd16c0))
+* **site:** prose pass on host pages — user tone, no repo-internal references ([#333](https://github.com/Daily-Nerd/daimon/issues/333)) ([f545271](https://github.com/Daily-Nerd/daimon/commit/f545271345f0b36c9286adddab419652cb6b3dec))
+* **site:** quickstart — install to first briefing in one page ([#328](https://github.com/Daily-Nerd/daimon/issues/328)) ([4787e3a](https://github.com/Daily-Nerd/daimon/commit/4787e3a5be93a7a1b7ec7d7d037284ce91f2fa6d))
+* **site:** Spanish first pass — quickstart and concepts pages ([#334](https://github.com/Daily-Nerd/daimon/issues/334)) ([0285665](https://github.com/Daily-Nerd/daimon/commit/0285665bbbfb0b1c444fbd0161cfdf656caed432))
+
 ## [0.18.0](https://github.com/Daily-Nerd/daimon/compare/v0.17.0...v0.18.0) (2026-07-17)
 
 
