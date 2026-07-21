@@ -703,6 +703,7 @@ def _stats_sample():
         "usage": {"brief": 2},
         "capture": {
             "success": 2, "skipped": 1, "errors": 1, "fallback_serializes": 1,
+            "fallback_attempts": 2,
             "hosts": {"session-end": 1, "windsurf-cascade": 1},
             "max_serialize_seconds": 42, "total_serialize_seconds": 50,
         },
@@ -719,7 +720,8 @@ def _stats_empty():
     return {
         "usage": {},
         "capture": {"success": 0, "skipped": 0, "errors": 0,
-                    "fallback_serializes": 0, "hosts": {},
+                    "fallback_serializes": 0, "fallback_attempts": 0,
+                    "hosts": {},
                     "max_serialize_seconds": 0, "total_serialize_seconds": 0},
         "store": {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
                   "items_verbatim": 0, "items_inferred": 0, "items_untagged": 0,
@@ -734,7 +736,7 @@ def test_render_stats_plain_exact_format(capsys):
         "usage (local, never transmitted):\n"
         "  brief: 2\n"
         "capture:\n"
-        "  serialized: 2  skipped: 1  errors: 1  via fallback backend: 1\n"
+        "  serialized: 2  skipped: 1  errors: 1  fallback: attempted 2, succeeded 1\n"
         "  spawns by host: session-end: 1, windsurf-cascade: 1\n"
         "  serialize seconds: max 42, avg 25\n"
         "store:\n"
@@ -751,7 +753,7 @@ def test_render_stats_plain_empty_world(capsys):
         "usage (local, never transmitted):\n"
         "  none recorded yet\n"
         "capture:\n"
-        "  serialized: 0  skipped: 0  errors: 0  via fallback backend: 0\n"
+        "  serialized: 0  skipped: 0  errors: 0  fallback: attempted 0, succeeded 0\n"
         "store:\n"
         "  checkpoints: 0  project buckets: 0\n"
         "  trust: verbatim 0, inferred 0, untagged 0  (carried: 0)\n"

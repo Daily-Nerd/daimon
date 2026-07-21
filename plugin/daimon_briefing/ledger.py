@@ -361,6 +361,7 @@ def _stats_capture() -> dict:
     across sessions, so a failure buried under a later session's success still
     counts."""
     out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
+           "fallback_attempts": 0,
            "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0}
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
@@ -372,6 +373,12 @@ def _stats_capture() -> dict:
         doubled = line == prev and _is_result_line(line)
         prev = line
         if doubled:
+            continue
+        # #341: fallback_serializes counts successes only; the chat() entry
+        # warning is the attempt marker. Without it, a fallback that runs and
+        # dies is indistinguishable from one that never ran.
+        if "llm.fallback backend=command" in line:
+            out["fallback_attempts"] += 1
             continue
         m = _RESULT_OK_RE.match(line)
         if m:

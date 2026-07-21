@@ -525,6 +525,22 @@ def llm_fallback() -> bool:
     return (_get("DAIMON_LLM_FALLBACK") or "1").strip() in ("1", "true", "yes", "on")
 
 
+def fallback_min_seconds() -> int:
+    """#341: minimum budget the command fallback is guaranteed on entry.
+    The shared deadline is drained by the primary retrying the very gateway
+    failure the fallback exists to rescue — handing the fallback the
+    remainder made it dead on arrival (field data: entered 6+ times, rescued
+    0). Defaults to timeout_seconds(): the operator has already declared how
+    long one backend call may take. Override with DAIMON_FALLBACK_MIN_SECONDS."""
+    raw = _get("DAIMON_FALLBACK_MIN_SECONDS")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return timeout_seconds()
+
+
 def llm_command() -> str | None:
     """Full CLI invocation for the command backend (binary + model + flags).
     How the prompt reaches it is controlled separately by

@@ -674,7 +674,8 @@ def test_cli_status_json_shape(
     assert set(data) == {"project", "global", "last_serialize", "outstanding",
                          "siblings", "health", "team", "crash", "disabled",
                          "skipped_recent", "recall_error", "recall_index",
-                         "receipts", "capture_alarm", "hook_drift"}
+                         "receipts", "capture_alarm", "hook_drift",
+                         "rescue_gap"}
     assert data["capture_alarm"] is None  # #265 FAIL-only probe silent by default
     assert data["team"] is None  # no team remote configured -> explicit null (#113)
     assert data["receipts"] is None  # #204 feature off -> explicit null
@@ -4151,6 +4152,52 @@ def test_stats_capture_dedupe_does_not_inflate_fallback_count(tmp_log_dir):
     cap = ledger._stats_capture()
     assert cap["success"] == 1
     assert cap["fallback_serializes"] == 1
+
+
+def test_stats_capture_counts_fallback_attempts(tmp_log_dir):
+    # #341: fallback_serializes counts SUCCESSES only, so a fallback that
+    # runs and dies is invisible — exactly how 6+ dead-on-arrival entries hid
+    # in the field. The chat() entry warning line is the attempt marker.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "2026-07-16T01:00:00Z WARNING daimon_briefing.llm: "
+        "llm.fallback backend=command (litellm failed)",
+        "error: LLM deadline exhausted before command backend",
+        "2026-07-17T01:00:00Z WARNING daimon_briefing.llm: "
+        "llm.fallback backend=command (litellm failed)",
+        "wrote checkpoint: /c/A.json (took 9s) [fallback backend]",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["fallback_attempts"] == 2
+    assert cap["fallback_serializes"] == 1
+    assert cap["errors"] == 1
+
+
+def test_status_warns_when_gateway_has_no_rescue_backend(tmp_checkpoint_dir,
+                                                         monkeypatch, capsys):
+    # #341 item 4: a box whose primary is a remote gateway and where no
+    # command backend resolves has ZERO rescue coverage — status must say so
+    # instead of leaving it to a post-mortem.
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "k")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    cli.main(["status"])   # rc reflects checkpoint health, not this warning
+    out = capsys.readouterr().out
+    assert "no fallback backend resolves" in out
+
+
+def test_status_no_rescue_warning_when_command_resolves(tmp_checkpoint_dir,
+                                                        monkeypatch, capsys):
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "k")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    cli.main(["status"])   # rc reflects checkpoint health, not this warning
+    out = capsys.readouterr().out
+    assert "no fallback backend resolves" not in out
 
 
 def test_stats_capture_does_not_dedupe_spawn_lines(tmp_log_dir):
