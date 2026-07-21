@@ -693,58 +693,82 @@ def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
     return waves
 
 
-# ---- #314: persisted chunk partials — a merge death must not re-buy chunks ----
-# Content-addressed by (session_id, chunk_text): a re-heal of an UNCHANGED
-# transcript reuses its paid-for chunk outputs and enters the merge with the
-# full budget; any transcript growth changes the chunk text and misses cleanly.
-# Same sensitivity as checkpoints (transcript-derived, pre-redaction), stored
-# under the same root. Everything here is best-effort: a broken cache must
-# never break a serialize — worst case is re-paying the chunk call.
+# ---- #48: content-addressed chunk-extraction cache (generalizes #314) --------
+# Keyed on chunk TEXT plus every config dimension that shapes extraction
+# (backend, model, temperature, prompt version, and a hash of the actual
+# serialize system prompt — so an un-versioned prompt edit, like the #317
+# scene appendix, invalidates cleanly). session_id is deliberately NOT in the
+# key: prefix chunks of a grown or resume-forked transcript are byte-identical
+# and their paid-for outputs transfer (#48). The prompt embeds a positional
+# "chunk i of n" label that the key ignores — presentation metadata, not
+# extraction semantics.
+#
+# Entries persist across successful serializes (that IS the feature) and are
+# reaped by age. Cached output is PRE-redaction — forced by #125: quotes are
+# verified against the pre-redaction transcript, and caching redacted output
+# would mass-downgrade legitimate verbatim items on every hit. The rotation
+# window (config.chunk_cache_days, default 3) is therefore a privacy bound;
+# files are written 0600. Same sensitivity and root as checkpoints.
+# Everything here is best-effort: a broken cache must never break a
+# serialize — worst case is re-paying the chunk call.
 
-_PARTIAL_MAX_AGE_SECONDS = 14 * 24 * 3600  # crash leftovers; success clears its own
+
+def _chunk_cache_dir():
+    return config.checkpoint_dir() / ".chunk-cache"
 
 
-def _partials_dir():
-    return config.checkpoint_dir() / ".partials"
-
-
-def _partial_key(session_id: str, chunk_text: str) -> str:
-    return hashlib.sha256(
-        f"{session_id}\x00{chunk_text}".encode("utf-8")).hexdigest()[:32]
-
-
-def _load_partial(key: str):
+def _chunk_cache_key(chunk_text: str) -> str:
     try:
-        obj = json.loads((_partials_dir() / f"{key}.json").read_text(encoding="utf-8"))
+        backend = configure.resolved_backend()
+    except Exception:
+        backend = "unknown"
+    sys_hash = hashlib.sha256(_serialize_sys().encode("utf-8")).hexdigest()[:16]
+    stamp = (f"v1\x00{backend}\x00{config.llm_model() or ''}"
+             f"\x00{config.llm_temperature()}\x00{PROMPT_VERSION}"
+             f"\x00{sys_hash}\x00")
+    return hashlib.sha256(
+        stamp.encode("utf-8") + chunk_text.encode("utf-8")).hexdigest()[:32]
+
+
+def _load_chunk_cache(key: str):
+    # DAIMON_LLM_NO_CACHE is the gateway-cache bypass, but a user reaching for
+    # it means "no replayed LLM output" — honor the intent here too (reads
+    # only; writing a fresh result is still fine).
+    if not config.chunk_cache_enabled() or config.llm_no_cache():
+        return None
+    try:
+        obj = json.loads(
+            (_chunk_cache_dir() / f"{key}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return obj if isinstance(obj, dict) else None
 
 
-def _save_partial(key: str, partial: dict) -> None:
-    d = _partials_dir()
+def _save_chunk_cache(key: str, partial: dict) -> None:
+    if not config.chunk_cache_enabled():
+        return
+    if llm.fallback_used():
+        # #28/#343 lesson: once the weaker fallback backend has fired in this
+        # process, nothing from this run may be cached under the primary
+        # backend's key — that is exactly how caches get poisoned.
+        return
+    d = _chunk_cache_dir()
     try:
         d.mkdir(parents=True, exist_ok=True)
+        max_age = config.chunk_cache_days() * 24 * 3600
         now = time.time()
-        for stale in d.glob("*.json"):  # reap crash leftovers by age
+        for stale in d.glob("*.json"):  # reap by age on every write
             try:
-                if now - stale.stat().st_mtime > _PARTIAL_MAX_AGE_SECONDS:
+                if now - stale.stat().st_mtime > max_age:
                     stale.unlink()
             except OSError:
                 continue
         tmp = d / f".{key}.{uuid.uuid4().hex[:8]}.tmp"
         tmp.write_text(json.dumps(partial, ensure_ascii=False), encoding="utf-8")
+        tmp.chmod(0o600)
         tmp.replace(d / f"{key}.json")
     except OSError:
         pass
-
-
-def _clear_partials(keys) -> None:
-    for key in keys:
-        try:
-            (_partials_dir() / f"{key}.json").unlink(missing_ok=True)
-        except OSError:
-            continue
 
 
 def _merge_partials(chat, session_id: str, partials: list, deadline,
@@ -935,7 +959,6 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
         "Re-emit the full corrected JSON."
     )
     partials: list | None = None
-    partial_keys: list = []  # #314: cleared only after a fully validated write
 
     def _produce(note: str) -> dict:
         nonlocal partials
@@ -955,15 +978,16 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
             # session take chunk_count * minutes of wall-clock.
             def _one_chunk(item):
                 i, chunk_text = item
-                # #314: a merge death must not re-buy completed chunks — reuse
-                # the persisted partial when this exact (session, chunk text)
-                # was already paid for by a previous attempt.
-                key = _partial_key(session_id, chunk_text)
-                cached = _load_partial(key)
+                # #48: reuse any prior run's paid-for output for this exact
+                # chunk text under the current config — merge deaths, heals,
+                # resume forks, and grown transcripts all hit on their
+                # unchanged prefix chunks.
+                key = _chunk_cache_key(chunk_text)
+                cached = _load_chunk_cache(key)
                 if cached is not None:
-                    log.info("chunk %d/%d reused persisted partial (#314)",
+                    log.info("chunk %d/%d reused cached extraction (#48)",
                              i + 1, len(chunks))
-                    return key, cached
+                    return cached
                 t0 = time.monotonic()
                 partial = _call_and_parse(
                     chat, _serialize_sys(),
@@ -973,15 +997,13 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
                 )
                 log.info("chunk %d/%d done in %.0fs",
                          i + 1, len(chunks), time.monotonic() - t0)
-                _save_partial(key, partial)
-                return key, partial
+                _save_chunk_cache(key, partial)
+                return partial
 
             workers = min(config.chunk_concurrency(), len(chunks))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 # executor.map preserves input order, so partials stay chronological.
-                keyed = list(pool.map(_one_chunk, enumerate(chunks)))
-            partial_keys.extend(k for k, _ in keyed)
-            partials = [p for _, p in keyed]
+                partials = list(pool.map(_one_chunk, enumerate(chunks)))
         # Retry re-runs ONLY the merge (the final sampling that failed) — the
         # chunk partials are kept; they are the expensive calls.
         return _merge_partials(chat, session_id, list(partials), deadline,
@@ -1011,10 +1033,9 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.
     _stamp_llm_provenance(checkpoint)
-    # #314: success consumes the partial cache. Only here — any earlier exit
-    # (merge death, validation failure) leaves the paid-for chunks on disk for
-    # the next heal to reuse.
-    _clear_partials(partial_keys)
+    # #48: success does NOT consume the chunk cache — persistence across
+    # successful serializes is the feature (grown transcripts and resume
+    # forks reuse their prefix chunks). Age-based reaping bounds the store.
     return checkpoint
 
 

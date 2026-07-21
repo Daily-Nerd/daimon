@@ -1309,12 +1309,59 @@ def _force_two_chunks(monkeypatch):
     return messages, n
 
 
-def test_failed_merge_persists_partials_and_reheal_reuses_them(
+# ---- #48: content-addressed chunk cache (replaces the #314 partials store) ----
+
+
+def test_chunk_cache_key_changes_with_config_dimensions(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "m1")
+    monkeypatch.delenv("DAIMON_SCENE_TRACES", raising=False)
+    base = serializer._chunk_cache_key("chunk text")
+    assert base == serializer._chunk_cache_key("chunk text")  # stable
+    assert base != serializer._chunk_cache_key("other text")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "m2")
+    assert serializer._chunk_cache_key("chunk text") != base
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "m1")
+    monkeypatch.setenv("DAIMON_LLM_TEMPERATURE", "0.7")
+    assert serializer._chunk_cache_key("chunk text") != base
+    monkeypatch.delenv("DAIMON_LLM_TEMPERATURE", raising=False)
+    # scene flag reshapes the serialize prompt WITHOUT a PROMPT_VERSION bump —
+    # the key hashes the actual prompt text, so it must move (#319 trap class).
+    monkeypatch.setenv("DAIMON_SCENE_TRACES", "1")
+    assert serializer._chunk_cache_key("chunk text") != base
+
+
+def test_chunk_cache_key_survives_backend_resolution_failure(monkeypatch):
+    # A raising resolved_backend() must never break key computation — the
+    # cache degrades to an "unknown"-backend namespace, not an exception.
+    from daimon_briefing import configure as _configure
+    def boom():
+        raise RuntimeError("no backend configured")
+    monkeypatch.setattr(_configure, "resolved_backend", boom)
+    key = serializer._chunk_cache_key("chunk text")
+    assert key == serializer._chunk_cache_key("chunk text")
+    assert len(key) == 32
+
+
+def test_chunk_transcript_prefix_chunks_byte_stable_under_growth():
+    # The property the whole cache rests on: full windows re-materialize
+    # byte-identically when the transcript grows; only the tail changes.
+    lines = [f"line {i}" for i in range(40)]
+    grown = lines + [f"line {i}" for i in range(40, 64)]
+    old_chunks = serializer.chunk_transcript("\n".join(lines), 6, 1)
+    new_chunks = serializer.chunk_transcript("\n".join(grown), 6, 1)
+    # every FULL window of the old run reappears identically in the new run
+    full = [c for c in old_chunks if len(c.splitlines()) == 6]
+    assert full and all(c in new_chunks for c in full)
+    # threshold crossing: single-chunk fast path returns the raw text, which
+    # differs from the chunked rendering of the same region — crossing pays once
+    small = "\n".join(lines[:5])
+    assert serializer.chunk_transcript(small, 6, 1) == [small]
+
+
+def test_failed_merge_persists_chunks_and_reheal_reuses_them(
         fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
-    # #314 second defect: deadline death at merge discarded the paid-for chunk
-    # outputs; the next heal re-bought every chunk. Chunk partials now persist
-    # content-addressed under the checkpoint dir; a re-run of the unchanged
-    # transcript reuses them and enters the merge with the full budget.
+    # #314 guarantee, survived migration: a merge death must not re-buy chunks.
     from daimon_briefing import llm as _llm
     messages, n = _force_two_chunks(monkeypatch)
     responses = [_valid_checkpoint_json(f"c{i}") for i in range(n)]
@@ -1322,7 +1369,7 @@ def test_failed_merge_persists_partials_and_reheal_reuses_them(
     chat1 = fake_chat_factory(responses)
     with pytest.raises(serializer.LLMCallError):
         serializer.serialize_strict("S1", messages, chat=chat1)
-    saved = list((tmp_checkpoint_dir / ".partials").glob("*.json"))
+    saved = list((tmp_checkpoint_dir / ".chunk-cache").glob("*.json"))
     assert len(saved) == n  # every completed chunk survived the merge death
 
     chat2 = fake_chat_factory([_valid_checkpoint_json("merged")])
@@ -1331,7 +1378,93 @@ def test_failed_merge_persists_partials_and_reheal_reuses_them(
     assert len(chat2.calls) == 1  # merge only — no chunk was re-bought
 
 
-def test_partials_cleared_after_successful_serialize(
+def test_chunk_cache_survives_success_and_transfers_across_sessions(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
+    # #48 core: the cache persists after a fully successful serialize, and the
+    # key binds chunk TEXT + config, not session_id — a resume fork or a
+    # periodic re-serialize of the same content reuses every paid-for chunk.
+    messages, n = _force_two_chunks(monkeypatch)
+    chat1 = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat1) is not None
+    assert len(list((tmp_checkpoint_dir / ".chunk-cache").glob("*.json"))) == n
+
+    chat2 = fake_chat_factory([_valid_checkpoint_json("merged2")])
+    assert serializer.serialize_strict("S2", messages, chat=chat2) is not None
+    assert len(chat2.calls) == 1  # merge only — S2 reused S1's chunks
+
+
+def test_grown_transcript_pays_only_tail_chunks(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
+    from daimon_briefing import llm as _llm  # noqa: F401 (parity with siblings)
+    messages, n = _force_two_chunks(monkeypatch)
+    chat1 = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat1) is not None
+
+    grown = messages + make_messages(20)
+    rendered = serializer._render_transcript(grown)
+    n2 = len(serializer.chunk_transcript(rendered, 6, 1))
+    assert n2 > n
+    chat2 = fake_chat_factory(
+        [_valid_checkpoint_json(f"g{i}") for i in range(n2)]
+        + [_valid_checkpoint_json("merged2")])
+    assert serializer.serialize_strict("S1", grown, chat=chat2) is not None
+    # full prefix windows hit the cache; only new/changed tail windows + merge pay
+    paid = len(chat2.calls) - 1
+    assert 0 < paid < n2
+
+
+def test_fallback_poisoned_run_skips_cache_writes(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
+    # #343 lesson product-side: once the weaker fallback backend fired, this
+    # run's outputs must not be cached under the primary backend's key.
+    from daimon_briefing import llm as _llm
+    monkeypatch.setattr(_llm, "fallback_used", lambda: True)
+    messages, n = _force_two_chunks(monkeypatch)
+    chat = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat) is not None
+    assert not list((tmp_checkpoint_dir / ".chunk-cache").glob("*.json"))
+
+
+def test_chunk_cache_kill_switch_no_reads_no_writes(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
+    monkeypatch.setenv("DAIMON_CHUNK_CACHE", "0")
+    messages, n = _force_two_chunks(monkeypatch)
+    chat1 = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat1) is not None
+    assert not (tmp_checkpoint_dir / ".chunk-cache").exists()
+    chat2 = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat2) is not None
+    assert len(chat2.calls) == n + 1  # no reads either
+
+
+def test_llm_no_cache_skips_reads_but_still_writes(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
+    # DAIMON_LLM_NO_CACHE means "no replayed LLM output" — honor the intent:
+    # never serve a cached chunk, but caching THIS run's fresh output is fine.
+    messages, n = _force_two_chunks(monkeypatch)
+    chat1 = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat1) is not None
+    monkeypatch.setenv("DAIMON_LLM_NO_CACHE", "1")
+    chat2 = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat2) is not None
+    assert len(chat2.calls) == n + 1  # cache reads bypassed
+
+
+def test_corrupt_chunk_cache_entry_recomputed(
         fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
     from daimon_briefing import llm as _llm
     messages, n = _force_two_chunks(monkeypatch)
@@ -1340,58 +1473,26 @@ def test_partials_cleared_after_successful_serialize(
         + [_llm.ChatError("merge died")])
     with pytest.raises(serializer.LLMCallError):
         serializer.serialize_strict("S1", messages, chat=chat1)
-    chat2 = fake_chat_factory([_valid_checkpoint_json("merged")])
-    assert serializer.serialize_strict("S1", messages, chat=chat2) is not None
-    # Success consumes the cache — stale partials must not outlive their write.
-    assert list((tmp_checkpoint_dir / ".partials").glob("*.json")) == []
-
-
-def test_partial_cache_is_per_session(fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
-    # Same transcript text under a DIFFERENT session id must not reuse another
-    # session's partials — the key binds (session_id, chunk_text).
-    from daimon_briefing import llm as _llm
-    messages, n = _force_two_chunks(monkeypatch)
-    chat1 = fake_chat_factory(
-        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
-        + [_llm.ChatError("merge died")])
-    with pytest.raises(serializer.LLMCallError):
-        serializer.serialize_strict("S1", messages, chat=chat1)
-
-    chat2 = fake_chat_factory(
-        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
-        + [_valid_checkpoint_json("merged")])
-    assert serializer.serialize_strict("S2", messages, chat=chat2) is not None
-    assert len(chat2.calls) == n + 1  # S2 paid for its own chunks
-
-
-def test_corrupt_partial_recomputed(fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
-    from daimon_briefing import llm as _llm
-    messages, n = _force_two_chunks(monkeypatch)
-    chat1 = fake_chat_factory(
-        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
-        + [_llm.ChatError("merge died")])
-    with pytest.raises(serializer.LLMCallError):
-        serializer.serialize_strict("S1", messages, chat=chat1)
-    for p in (tmp_checkpoint_dir / ".partials").glob("*.json"):
+    for p in (tmp_checkpoint_dir / ".chunk-cache").glob("*.json"):
         p.write_text("not json{", encoding="utf-8")
     chat2 = fake_chat_factory(
         [_valid_checkpoint_json(f"c{i}") for i in range(n)]
         + [_valid_checkpoint_json("merged")])
-    # Corrupt cache entries are recomputed, never trusted or fatal.
     assert serializer.serialize_strict("S1", messages, chat=chat2) is not None
-    assert len(chat2.calls) == n + 1
+    assert len(chat2.calls) == n + 1  # corrupt entries recomputed, never fatal
 
 
-def test_partial_reap_removes_aged_leftovers(fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
-    # Crash leftovers older than the reap window are removed by the next save.
+def test_chunk_cache_reap_removes_aged_entries(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
     import os as _os
     import time as _t
+    from daimon_briefing import config as _config
     from daimon_briefing import llm as _llm
-    pdir = tmp_checkpoint_dir / ".partials"
-    pdir.mkdir(parents=True)
-    old = pdir / "deadbeef00.json"
+    cdir = tmp_checkpoint_dir / ".chunk-cache"
+    cdir.mkdir(parents=True)
+    old = cdir / "deadbeef00.json"
     old.write_text("{}", encoding="utf-8")
-    aged = _t.time() - serializer._PARTIAL_MAX_AGE_SECONDS - 3600
+    aged = _t.time() - _config.chunk_cache_days() * 24 * 3600 - 3600
     _os.utime(old, (aged, aged))
     messages, n = _force_two_chunks(monkeypatch)
     chat = fake_chat_factory(
@@ -1402,32 +1503,29 @@ def test_partial_reap_removes_aged_leftovers(fake_chat_factory, monkeypatch, tmp
     assert not old.exists()  # reaped by the first save
 
 
-def test_partial_reap_survives_unremovable_entry(fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
-    # A glob hit that cannot be unlinked (here: a DIRECTORY named *.json) must
-    # never break the save — best-effort means skip and move on.
+def test_chunk_cache_reap_survives_unremovable_entry(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
     import os as _os
     import time as _t
+    from daimon_briefing import config as _config
     from daimon_briefing import llm as _llm
-    pdir = tmp_checkpoint_dir / ".partials"
-    (pdir / "stuck.json").mkdir(parents=True)
-    aged = _t.time() - serializer._PARTIAL_MAX_AGE_SECONDS - 3600
-    _os.utime(pdir / "stuck.json", (aged, aged))
+    cdir = tmp_checkpoint_dir / ".chunk-cache"
+    (cdir / "stuck.json").mkdir(parents=True)
+    aged = _t.time() - _config.chunk_cache_days() * 24 * 3600 - 3600
+    _os.utime(cdir / "stuck.json", (aged, aged))
     messages, n = _force_two_chunks(monkeypatch)
     chat = fake_chat_factory(
         [_valid_checkpoint_json(f"c{i}") for i in range(n)]
         + [_llm.ChatError("merge died")])
     with pytest.raises(serializer.LLMCallError):
         serializer.serialize_strict("S1", messages, chat=chat)
-    # The real partials were still written around the stuck entry.
-    assert len(list(pdir.glob("*.json"))) == n + 1  # n saved + the stuck dir
+    assert len(list(cdir.glob("*.json"))) == n + 1  # n saved + the stuck dir
 
 
-def test_save_partial_survives_partials_dir_being_a_file(
+def test_save_chunk_cache_survives_dir_being_a_file(
         fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
-    # mkdir on a path occupied by a FILE raises — the save must swallow it and
-    # the serialize must complete untouched (worst case: nothing is cached).
-    (tmp_checkpoint_dir / ".partials").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_checkpoint_dir / ".partials").write_text("not a dir", encoding="utf-8")
+    (tmp_checkpoint_dir / ".chunk-cache").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_checkpoint_dir / ".chunk-cache").write_text("not a dir", encoding="utf-8")
     messages, n = _force_two_chunks(monkeypatch)
     chat = fake_chat_factory(
         [_valid_checkpoint_json(f"c{i}") for i in range(n)]
@@ -1435,27 +1533,18 @@ def test_save_partial_survives_partials_dir_being_a_file(
     assert serializer.serialize_strict("S1", messages, chat=chat) is not None
 
 
-def test_clear_partials_survives_undeletable_entry(
+def test_chunk_cache_files_written_0600(
         fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
-    # Success-path cleanup meeting an undeletable cache entry (a directory
-    # squatting the key's filename) skips it — never fails the checkpoint.
-    from daimon_briefing import llm as _llm
+    # Pre-redaction content on disk gets key-file permissions (env-file
+    # precedent) — the privacy half of the #48 design.
+    import stat as _stat
     messages, n = _force_two_chunks(monkeypatch)
-    chat1 = fake_chat_factory(
-        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
-        + [_llm.ChatError("merge died")])
-    with pytest.raises(serializer.LLMCallError):
-        serializer.serialize_strict("S1", messages, chat=chat1)
-    pdir = tmp_checkpoint_dir / ".partials"
-    for p in list(pdir.glob("*.json")):  # squat every key with a directory
-        p.unlink()
-        p.mkdir()
-    chat2 = fake_chat_factory(
+    chat = fake_chat_factory(
         [_valid_checkpoint_json(f"c{i}") for i in range(n)]
         + [_valid_checkpoint_json("merged")])
-    ckpt = serializer.serialize_strict("S1", messages, chat=chat2)
-    assert ckpt is not None  # load failed -> recomputed; clear skipped the dirs
-    assert len(chat2.calls) == n + 1
+    assert serializer.serialize_strict("S1", messages, chat=chat) is not None
+    for p in (tmp_checkpoint_dir / ".chunk-cache").glob("*.json"):
+        assert _stat.S_IMODE(p.stat().st_mode) == 0o600
 
 
 # ---- #317: scene traces (encode-time episodic context, bench-gated experiment) ----

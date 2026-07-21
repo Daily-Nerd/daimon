@@ -584,3 +584,12 @@ def test_fallback_min_seconds_bad_value_falls_back_to_timeout(monkeypatch):
     monkeypatch.setenv("DAIMON_TIMEOUT", "222")
     monkeypatch.setenv("DAIMON_FALLBACK_MIN_SECONDS", "not-a-number")
     assert config.fallback_min_seconds() == 222
+
+
+def test_chunk_cache_days_default_override_and_bad_value(monkeypatch):
+    monkeypatch.delenv("DAIMON_CHUNK_CACHE_DAYS", raising=False)
+    assert config.chunk_cache_days() == 3
+    monkeypatch.setenv("DAIMON_CHUNK_CACHE_DAYS", "7")
+    assert config.chunk_cache_days() == 7
+    monkeypatch.setenv("DAIMON_CHUNK_CACHE_DAYS", "not-a-number")
+    assert config.chunk_cache_days() == 3
