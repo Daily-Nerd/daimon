@@ -4173,6 +4173,55 @@ def test_stats_capture_counts_fallback_attempts(tmp_log_dir):
     assert cap["errors"] == 1
 
 
+def test_cli_mcp_serve_registered_and_honors_kill_switch(monkeypatch):
+    # #261: `daimon mcp serve` exists; disabled daimon refuses to serve but
+    # exits 0 — it must never break a host's MCP startup.
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert cli.main(["mcp", "serve"]) == 0
+
+
+def test_cli_mcp_help_lists_serve(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["mcp", "--help"])
+    assert "serve" in capsys.readouterr().out
+
+
+def test_status_payload_matches_status_json_output(
+    tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch
+):
+    # #261: the MCP status tool must serve byte-identical facts to
+    # `daimon status --json` — one payload assembler, two consumers.
+    from daimon_briefing import store
+
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_log(tmp_log_dir, [
+        "2026-06-10T12:00:00Z session-end: spawned serialize for S-prev "
+        "(reason: exit, project: /p/A)",
+        "wrote checkpoint: /tmp/ck/S-prev.json (took 7s)",
+    ])
+    rc = cli.main(["status", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    payload, prc = cli.status_payload(None)
+    assert payload == data
+    assert prc == rc
+
+
+def test_projects_rows_matches_projects_json_output(
+    tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch
+):
+    # #261: same single-assembler rule for the projects table.
+    from daimon_briefing import store
+
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    rc = cli.main(["projects", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert cli.projects_rows(None) == data
+
+
 def test_status_warns_when_gateway_has_no_rescue_backend(tmp_checkpoint_dir,
                                                          monkeypatch, capsys):
     # #341 item 4: a box whose primary is a remote gateway and where no
