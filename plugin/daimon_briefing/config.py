@@ -96,6 +96,24 @@ def carry_enabled() -> bool:
     return (_get("DAIMON_CARRY") or "1") != "0"
 
 
+def chunk_cache_enabled() -> bool:
+    """#48: content-addressed chunk-extraction cache. Default ON — same risk
+    class as the #314 partials it replaces (correctness fully keyed; failure
+    mode = re-pay the call). DAIMON_CHUNK_CACHE=0 is the kill switch."""
+    return (_get("DAIMON_CHUNK_CACHE") or "1") != "0"
+
+
+def chunk_cache_days() -> int:
+    """#48: chunk-cache rotation window, days. Cached chunk output is
+    PRE-redaction (forced by #125 quote verification ordering), so the window
+    is a privacy bound, not just a disk bound — 3 days covers the heal/retry
+    win while keeping exposure short. Override with DAIMON_CHUNK_CACHE_DAYS."""
+    try:
+        return int(_get("DAIMON_CHUNK_CACHE_DAYS") or "3")
+    except ValueError:
+        return 3
+
+
 def carry_floor() -> float:
     """Minimum #78 effective weight for a carried item to keep carrying.
     Default 0.05: decisions expire ~5-6 weeks (importance-graded), escalated
