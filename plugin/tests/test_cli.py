@@ -4604,6 +4604,33 @@ def test_retention_no_warning_without_spawns(tmp_log_dir):
     assert r["stale_hook_warning"] is False
 
 
+def test_retention_no_stale_warning_on_hookless_briefing_hosts(tmp_log_dir):
+    # #349: Windsurf (and Codex) have no SessionStart auto-brief hook, so a
+    # machine served only by them can NEVER log brief:auto — the warning was
+    # permanent and its advice (re-run hooks install) could not fix it.
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    stamp = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        f"{stamp} windsurf-cascade: spawned serialize for W1 (pid 1)\n"
+        f"{stamp} windsurf-finalizer: spawned serialize for W1 (pid 2)\n"
+        f"{stamp} codex-stop: spawned serialize for C1 (pid 3)\n")
+    r = cli._stats_retention(now=now)
+    assert r["stale_hook_warning"] is False
+
+
+def test_retention_stale_warning_still_fires_on_mixed_hosts(tmp_log_dir):
+    # One auto-brief-capable spawn among hookless ones keeps the warning live.
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    stamp = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        f"{stamp} windsurf-cascade: spawned serialize for W1 (pid 1)\n"
+        f"{stamp} session-end: spawned serialize for S1 (pid 2)\n")
+    r = cli._stats_retention(now=now)
+    assert r["stale_hook_warning"] is True
+
+
 def test_spawns_in_window_skips_garbage_and_stale_spawns(tmp_log_dir):
     # Non-spawn lines are skipped, an unparseable stamp is not a crash, and a
     # spawn older than the window reports False rather than a stale True.

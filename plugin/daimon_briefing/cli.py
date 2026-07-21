@@ -38,6 +38,7 @@ from . import __version__
 # longer calls itself — because `cli.<name>` is a stable seam: tests and host
 # hooks resolve the ledger through this module.
 from .ledger import (
+    AUTO_BRIEF_HOSTS,
     _HEAL_SKIP_REASON,  # noqa: F401 — re-exported for compat
     _HEAL_TRANSCRIPT_RE,  # noqa: F401 — re-exported for compat
     _LEDGER_OK_RE,  # noqa: F401 — re-exported for compat
@@ -1950,7 +1951,11 @@ def _stats_retention(now=None) -> dict:
     if out["hook_briefs"]:
         out["rereads_per_hook_brief"] = round(
             out["rereads_total"] / out["hook_briefs"], 2)
-    if out["hook_briefs"] == 0 and _spawns_in_window(cutoff):
+    # #349: only spawns from auto-brief-capable hosts count — a Windsurf- or
+    # Codex-only machine can never log brief:auto, and warning it to re-run
+    # `hooks install` is a permanent false positive.
+    if out["hook_briefs"] == 0 and _spawns_in_window(
+            cutoff, hosts=AUTO_BRIEF_HOSTS):
         out["stale_hook_warning"] = True
     return out
 
