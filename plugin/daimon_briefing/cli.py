@@ -714,14 +714,12 @@ def _cmd_recall(args) -> int:
 _TOPIC_TEASER_CHARS = 60
 
 
-def _cmd_projects(args) -> int:
-    """One row per checkpoint bucket: which projects daimon knows about, and
-    what each was last doing. Read-only orientation for context switching —
-    the crossing itself stays explicit (`brief --slug` / `recall --slug`),
-    the #94/#95 lesson. Torn buckets show with unknown fields rather than
-    vanish: hiding one would read as "no such project"."""
-    _note_usage("projects")
-    cur_slug = store.project_slug(_resolve_project(getattr(args, "project", None)))
+def projects_rows(project_arg=None) -> list:
+    """One JSON-ready row per checkpoint bucket, newest first. Single
+    assembler for `daimon projects --json` AND the MCP projects tool (#261) —
+    two consumers, one shape. Torn buckets show with unknown fields rather
+    than vanish: hiding one would read as "no such project"."""
+    cur_slug = store.project_slug(_resolve_project(project_arg))
     rows = []
     for b in store.list_buckets():
         cp = b["checkpoint"] or {}
@@ -741,6 +739,14 @@ def _cmd_projects(args) -> int:
     rows.sort(key=lambda r: r["_epoch"], reverse=True)
     for r in rows:
         del r["_epoch"]
+    return rows
+
+
+def _cmd_projects(args) -> int:
+    """Read-only orientation for context switching — the crossing itself
+    stays explicit (`brief --slug` / `recall --slug`), the #94/#95 lesson."""
+    _note_usage("projects")
+    rows = projects_rows(getattr(args, "project", None))
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
         return 0
@@ -1367,11 +1373,10 @@ def _capture_alarm(now: float) -> dict | None:
             "window_days": _RETENTION_WINDOW_DAYS}
 
 
-def _cmd_status(args) -> int:
-    _note_usage("status")
-    project = _resolve_project(args.project)
-    if getattr(args, "suppressed", False):
-        return _print_suppressed(project)
+def _status_world(project_arg=None) -> dict:
+    """Every status fact, computed once — the single source for the plain
+    render, `status --json`, and the MCP status tool (#261)."""
+    project = _resolve_project(project_arg)
     now = time.time()
     proj = _checkpoint_info(store.project_latest_path(project), now)
     glob = _checkpoint_info(store.global_latest_path(), now)
@@ -1422,37 +1427,67 @@ def _cmd_status(args) -> int:
     # line's "no line when unused" rule so status stays quiet by default.
     receipts_line = receipts.status_line(project)
     identity = {
-        "cwd": str(Path(args.project or ".").expanduser().resolve()),
+        "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
         "slug": store.project_slug(project),
     }
     # 0 = some checkpoint would back a briefing; 1 = neither pointer exists
     # (cheap existence test for scripts / the FR #23 hook guard).
     rc = 0 if (proj["exists"] or glob["exists"]) else 1
-
-    if args.json:
-        proj = {"dir": project, "slug": identity["slug"], **proj}
-        print(json.dumps(
-            {"project": proj, "global": glob, "last_serialize": last,
-             "outstanding": outstanding, "siblings": siblings, "health": health,
-             "team": team, "crash": crash, "disabled": disabled,
-             "skipped_recent": skipped_recent, "recall_error": recall_error,
-             "recall_index": recall_index, "receipts": receipts_line,
-             "capture_alarm": capture_alarm, "hook_drift": hook_drift,
-             "rescue_gap": rescue_gap},
-            indent=2,
-        ))
-        return rc
-
-    render.render_status({
-        "project": project, "proj": proj, "glob": glob, "same": same, "last": last,
-        "outstanding": outstanding, "identity": identity, "health": health,
-        "team": team, "crash": crash, "skipped_recent": skipped_recent,
+    return {
+        "project": project, "proj": proj, "glob": glob, "same": same,
+        "last": last, "outstanding": outstanding, "siblings": siblings,
+        "identity": identity, "health": health, "team": team, "crash": crash,
+        "disabled": disabled, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
-        "hook_drift": hook_drift, "rescue_gap": rescue_gap,
+        "hook_drift": hook_drift, "rescue_gap": rescue_gap, "rc": rc,
+    }
+
+
+def status_payload(project_arg=None) -> tuple:
+    """(json payload, rc) — byte-identical facts for `status --json` and the
+    MCP status tool. Payload key order is part of the --json contract."""
+    w = _status_world(project_arg)
+    proj = {"dir": w["project"], "slug": w["identity"]["slug"], **w["proj"]}
+    payload = {
+        "project": proj, "global": w["glob"], "last_serialize": w["last"],
+        "outstanding": w["outstanding"], "siblings": w["siblings"],
+        "health": w["health"], "team": w["team"], "crash": w["crash"],
+        "disabled": w["disabled"], "skipped_recent": w["skipped_recent"],
+        "recall_error": w["recall_error"], "recall_index": w["recall_index"],
+        "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
+        "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+    }
+    return payload, w["rc"]
+
+
+def _cmd_status(args) -> int:
+    _note_usage("status")
+    if getattr(args, "suppressed", False):
+        return _print_suppressed(_resolve_project(args.project))
+    if args.json:
+        payload, rc = status_payload(args.project)
+        print(json.dumps(payload, indent=2))
+        return rc
+    w = _status_world(args.project)
+    render.render_status({
+        "project": w["project"], "proj": w["proj"], "glob": w["glob"],
+        "same": w["same"], "last": w["last"], "outstanding": w["outstanding"],
+        "identity": w["identity"], "health": w["health"], "team": w["team"],
+        "crash": w["crash"], "skipped_recent": w["skipped_recent"],
+        "recall_error": w["recall_error"], "recall_index": w["recall_index"],
+        "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
+        "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
     })
-    return rc
+    return w["rc"]
+
+
+def _cmd_mcp_serve(args) -> int:
+    """#261: blocking stdio MCP server. No usage note here — each tool call
+    notes `mcp:<tool>` itself; serving is not reading."""
+    from . import mcp_server
+    return mcp_server.serve()
 
 
 def _find_audit_transcript(session_id: str, slug):
@@ -2602,6 +2637,18 @@ def main(argv=None) -> int:
     ps_uninstall.add_argument("host")
     ps_uninstall.add_argument("--project", action="store_true")
     ps_uninstall.set_defaults(func=_cmd_skill_uninstall)
+
+    p_mcp = sub.add_parser(
+        "mcp",
+        help="opt-in read-only MCP server (#261): recall/brief/projects/"
+             "status as a self-describing tool surface for MCP-capable hosts")
+    mcp_sub = p_mcp.add_subparsers(dest="mcp_cmd", required=True)
+    mcp_sub.add_parser = functools.partial(mcp_sub.add_parser, formatter_class=fmt)
+    pm_serve = mcp_sub.add_parser(
+        "serve",
+        help="serve MCP over stdio until EOF — reads only, never writes; "
+             "register in your host's MCP config (see the docs site)")
+    pm_serve.set_defaults(func=_cmd_mcp_serve)
 
     # Slugs are munged absolute paths, so they START with "-" ("/Users/x" ->
     # "-Users-x") — argparse reads `--slug -Users-x` as a missing argument and
