@@ -418,12 +418,22 @@ def _parse_stamp(token: str):
         return None
 
 
-def _spawns_in_window_count(cutoff) -> int:
+# #349: the hosts whose packaged integration runs an auto-briefing at session
+# start (and therefore logs `brief:auto`). ONLY these can satisfy the
+# stale-hook heuristic — a machine served exclusively by hosts without such a
+# hook (Windsurf, Codex today) can never log brief:auto, and warning about it
+# is a permanent false positive whose advice cannot fix anything. Add a host
+# here the day its integration gains an auto-brief.
+AUTO_BRIEF_HOSTS = ("session-end",)
+
+
+def _spawns_in_window_count(cutoff, hosts=None) -> int:
     """How many hook-spawned captures serialize.log shows inside the window —
     i.e. how many sessions the hooks OBSERVED on this machine since `cutoff`.
     The silent-capture alarm (#265) reads this against checkpoints WRITTEN in the
     same window: spawns without writes is a silent capture failure. Fails open to
-    0 when the log is absent."""
+    0 when the log is absent. `hosts` (#349) restricts the count to specific
+    host prefixes; None counts every host."""
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
@@ -431,7 +441,10 @@ def _spawns_in_window_count(cutoff) -> int:
     count = 0
     for line in text.splitlines():
         line = line.strip()
-        if not _STATS_HOST_RE.match(line):
+        m = _STATS_HOST_RE.match(line)
+        if not m:
+            continue
+        if hosts is not None and m.group(1) not in hosts:
             continue
         stamp = _parse_stamp(line.split()[0])
         if stamp is not None and stamp >= cutoff:
@@ -439,8 +452,8 @@ def _spawns_in_window_count(cutoff) -> int:
     return count
 
 
-def _spawns_in_window(cutoff) -> bool:
+def _spawns_in_window(cutoff, hosts=None) -> bool:
     """True when serialize.log shows any hook-spawned capture inside the
     window — i.e. sessions ARE happening on this machine. The count and the
     boolean share one regex so they can never drift on a new host prefix."""
-    return _spawns_in_window_count(cutoff) > 0
+    return _spawns_in_window_count(cutoff, hosts=hosts) > 0
