@@ -152,3 +152,46 @@ def test_compact_teaches_dry_run_before_commit():
     assert "--dry-run" in body
     assert "daimon resolve" in body
     assert "--note" in body
+
+
+# ---- #351: the MCP tool surface is a first-class alternative to the CLI ----
+
+
+def test_full_maps_mcp_tools_to_cli_commands():
+    # An MCP-registered host without shell access exposes exactly four
+    # read-only tools (mcp_server.py); the skill must map them to the CLI
+    # commands or its contract never reaches the tool surface.
+    full = skill_content.render_full()
+    mcp = full.split("## MCP")[1].split("\n## ")[0]
+    for tool in ("daimon_recall", "daimon_brief", "daimon_projects",
+                 "daimon_status"):
+        assert tool in mcp
+    # The load-bearing claim: same operations, same rules — not a parallel
+    # protocol the agent has to re-learn.
+    assert "same operations" in mcp
+    # Cross-project discipline carries over: the tools take a `slug`
+    # argument where the CLI takes --slug.
+    assert "slug" in mcp
+
+
+def test_full_states_mcp_write_asymmetry():
+    # resolve/forget/heal have NO tool equivalent (the MCP tier is read-only
+    # by design). On an MCP-only host a closed loop must be reported to the
+    # user — never faked as recorded.
+    full = skill_content.render_full()
+    mcp = full.split("## MCP")[1].split("\n## ")[0]
+    assert "read-only" in mcp
+    assert "resolve" in mcp
+    assert "tell the user" in mcp
+
+
+def test_compact_teaches_mcp_tools():
+    # Both variants stay in sync (#351): the compact body must carry the
+    # tool mapping, the read-only asymmetry, and the don't-fake-a-resolve
+    # rule inside the same brutal char budget.
+    body = skill_content.render_compact()
+    for tool in ("daimon_recall", "daimon_brief", "daimon_projects",
+                 "daimon_status"):
+        assert tool in body
+    assert "read-only" in body
+    assert "tell the user" in body
