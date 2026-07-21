@@ -218,6 +218,52 @@ def test_status_tool_matches_cli_payload(tmp_checkpoint_dir, sample_checkpoint,
     assert json.loads(text) == payload
 
 
+def test_blank_lines_between_messages_are_ignored():
+    fake_in = io.StringIO(json.dumps(_init()) + "\n\n   \n" +
+                          json.dumps({"jsonrpc": "2.0", "id": 2,
+                                      "method": "ping"}) + "\n")
+    fake_out = io.StringIO()
+    rc = mcp_server.serve(in_stream=fake_in, out_stream=fake_out)
+    assert rc == 0
+    assert len(fake_out.getvalue().splitlines()) == 2
+
+
+def test_non_object_json_line_yields_parse_error():
+    # Valid JSON, wrong shape — an array is not a JSON-RPC message here.
+    fake_in = io.StringIO('[1, 2, 3]\n')
+    fake_out = io.StringIO()
+    mcp_server.serve(in_stream=fake_in, out_stream=fake_out)
+    resp = json.loads(fake_out.getvalue().splitlines()[0])
+    assert resp["error"]["code"] == -32700
+
+
+def test_recall_tool_fts5_error_is_tool_error(tmp_checkpoint_dir, monkeypatch):
+    # RecallError (FTS5-less sqlite) must land as isError content the agent
+    # can read — never a crash, never a protocol error.
+    from daimon_briefing import recall
+    def boom(*a, **k):
+        raise recall.RecallError("sqlite3 lacks FTS5")
+    monkeypatch.setattr(recall, "search", boom)
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "x"}))
+    text, is_err = _result(out)
+    assert is_err is True
+    assert "FTS5" in text
+
+
+def test_brief_tool_empty_briefing_states_it(tmp_checkpoint_dir,
+                                             sample_checkpoint, monkeypatch):
+    # build() returning None means "nothing worth surfacing" — the tool says
+    # so instead of returning empty bytes.
+    from daimon_briefing import briefing, store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setattr(briefing, "build", lambda cp: None)
+    _, out = rpc(_init(), _call("daimon_brief", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert "nothing worth surfacing" in text
+
+
 # ---- usage logging + kill switch ----------------------------------------------
 
 
