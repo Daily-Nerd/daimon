@@ -323,6 +323,76 @@ Schema shape:
   "worker_queue": []
 }"""
 
+# ---- #360: perspective-diverse escalation (heal-path only) ----
+#
+# The default serialize is deliberately ONE shape: chunk fan-out under one
+# prompt, one merge pass. When it fails, heal used to retry that same shape —
+# same perspective, same blind spots, just again (now with cached chunks,
+# #48). Escalation is the heal tier: N extraction passes over the same
+# transcript from DISTINCT perspectives (stage 1), combined by the ordinary
+# merge pass (stage 2). The merge model is a PRODUCER, never a verifier
+# (scar #10): everything still crosses the existing deterministic gates —
+# sanitize_source_ids, verify_quotes, ground_outcomes, redaction downstream —
+# byte-for-byte unchanged.
+#
+# Each addendum is APPENDED to the full base prompt (composing with the #317
+# scene appendix), so every extraction rule — quote discipline, source
+# message ids, outcome grounding — stays in force in every pass. Triggered
+# only via serialize_strict(escalate=True), which only cli's heal path passes
+# (behind DAIMON_HEAL_ESCALATION): token cost scales with failure, never with
+# usage.
+
+ESCALATION_PERSPECTIVES = (
+    ("decisions-and-outcomes", """
+
+EXTRACTION PERSPECTIVE — DECISIONS AND OUTCOMES: this pass is one of several
+independent passes over the same transcript, each reading from a different
+angle; other passes cover open questions and artifacts in depth. YOUR angle:
+be EXHAUSTIVE on recent_decisions — explicit user choices, terse
+ratifications, [Fix]/[Diagnosis] items, implementation-level decisions — and
+on claims that assert an outcome (succeeded, failed, merged, deployed, tests
+green), each with its tool-result evidence cited per rule 20. Still populate
+every schema section (the shape is mandatory) and extract items outside your
+angle when they are clearly load-bearing, but spend your effort here. Every
+rule above stays in force."""),
+    ("open-loops-and-questions", """
+
+EXTRACTION PERSPECTIVE — OPEN LOOPS AND QUESTIONS: this pass is one of
+several independent passes over the same transcript, each reading from a
+different angle; other passes cover decisions and artifacts in depth. YOUR
+angle: be EXHAUSTIVE on open_questions and uncertainties — things left
+genuinely unresolved, work the assistant said it would do "next" or "after",
+verifications that never happened, optional follow-ups explicitly flagged,
+stated doubts, and anything whose answer may have changed outside the session
+(mark external_state per rule 10). Still populate every schema section (the
+shape is mandatory) and extract items outside your angle when they are
+clearly load-bearing, but spend your effort here. Every rule above stays in
+force."""),
+    ("artifacts-and-identifiers", """
+
+EXTRACTION PERSPECTIVE — ARTIFACTS AND IDENTIFIERS: this pass is one of
+several independent passes over the same transcript, each reading from a
+different angle; other passes cover decisions and open questions in depth.
+YOUR angle: be EXHAUSTIVE about concrete artifacts and their EXACT
+identifiers — repos as owner/name, issues/PRs as owner/name#123 or full
+URLs, file paths, function and symbol names, commit hashes, version numbers,
+package names with versions, ports, counts and ranges — copied exactly per
+rules 13 and 18 and attached to the items they belong to. Never invent an
+identifier the transcript does not contain. Still populate every schema
+section (the shape is mandatory) and extract items outside your angle when
+they are clearly load-bearing, but spend your effort here. Every rule above
+stays in force."""),
+)
+
+
+def escalation_systems() -> list[tuple[str, str]]:
+    """(name, full system prompt) per perspective — the base serialize prompt
+    (scene appendix included when flagged) plus that perspective's addendum,
+    so escalation composes with #317 instead of forking it."""
+    base = _serialize_sys()
+    return [(name, base + addendum) for name, addendum in ESCALATION_PERSPECTIVES]
+
+
 _TRUST_CLASSES = {"verbatim", "inferred"}
 
 
@@ -1049,12 +1119,19 @@ def _chunk_cache_dir():
     return config.checkpoint_dir() / ".chunk-cache"
 
 
-def _chunk_cache_key(chunk_text: str) -> str:
+def _chunk_cache_key(chunk_text: str, system: str | None = None) -> str:
+    # `system` (#360): the actual system prompt this extraction runs under;
+    # defaults to the plain serialize prompt. Escalation's perspective passes
+    # send DIFFERENT prompts over the same chunks — hashing the per-pass
+    # prompt gives each perspective its own cache lane (no cross-
+    # contamination) while a re-escalation reuses its own prior partials.
     try:
         backend = configure.resolved_backend()
     except Exception:
         backend = "unknown"
-    sys_hash = hashlib.sha256(_serialize_sys().encode("utf-8")).hexdigest()[:16]
+    if system is None:
+        system = _serialize_sys()
+    sys_hash = hashlib.sha256(system.encode("utf-8")).hexdigest()[:16]
     stamp = (f"v1\x00{backend}\x00{config.llm_model() or ''}"
              f"\x00{config.llm_temperature()}\x00{PROMPT_VERSION}"
              f"\x00{sys_hash}\x00")
@@ -1237,7 +1314,8 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
         checkpoint["llm_model"] = model
 
 
-def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dict:
+def serialize_strict(session_id: str, messages, chat=None, deadline=None,
+                     escalate=False) -> dict:
     """Transcript -> validated checkpoint, or a named SerializeError.
 
     `chat` is an injectable callable (messages, **kwargs) -> str; defaults to the
@@ -1248,6 +1326,13 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
 
     Rendered transcripts over DAIMON_CHUNK_LINES go chunked (armC): per-chunk
     D-007 serialize -> 01c merge -> validate. Shorter ones stay single-pass.
+
+    `escalate` (#360, heal-path only): run stage 1 as one extraction pass per
+    ESCALATION_PERSPECTIVES entry over every chunk (distinct prompts, own
+    #48 cache lanes), stage 2 as the ordinary merge, then the unchanged
+    deterministic gates. The wave plan counts every perspective pass, so the
+    deadline scales with the real call count (#314 machinery, no new budget).
+    Default False keeps this function byte-identical to today.
     """
     if chat is None:
         chat = llm.chat
@@ -1272,14 +1357,22 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     # guaranteed a starved merge on slow gateways, so scale the total by the
     # wave count. Per-call socket timeouts stay capped at the base budget
     # (llm.py), so no single request grows past gateway ceilings (scar #17).
-    if deadline is not None and len(chunks) > 1:
-        waves = _plan_waves(len(chunks), config.chunk_concurrency(),
+    # #360: an escalated run makes one call per (perspective x chunk) — the
+    # wave plan must count them all, or the merge starts starved exactly the
+    # way #314 fixed for chunks. Same machinery, no new budget dimension.
+    n_units = len(chunks) * (len(ESCALATION_PERSPECTIVES) if escalate else 1)
+    if deadline is not None and n_units > 1:
+        waves = _plan_waves(n_units, config.chunk_concurrency(),
                             config.merge_group_size())
         if waves > 1:
             extra = (waves - 1) * config.timeout_seconds()
             deadline += extra
-            log.info("chunked call plan: %d wave(s) — deadline extended by %ds (#314)",
-                     waves, extra)
+            if escalate:
+                log.info("escalated call plan (#360): %d wave(s) — deadline "
+                         "extended by %ds", waves, extra)
+            else:
+                log.info("chunked call plan: %d wave(s) — deadline extended by %ds (#314)",
+                         waves, extra)
 
     # Validation-failure retry note (#118): one resample with a non-identical
     # request. Occasional invalid output (the live case: quote inlined into a
@@ -1296,8 +1389,61 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     )
     partials: list | None = None
 
+    def _produce_escalated_partials() -> list:
+        # #360 stage 1: one extraction pass per (chunk, perspective). Jobs are
+        # CHUNK-MAJOR — a later chunk's passes sit later in the partial list —
+        # so MERGE_SYS's chronology rules (4/9, and the oldest-first
+        # recent_decisions order the briefing's decision cap depends on,
+        # scar #6) still see partials in session order.
+        systems = escalation_systems()
+        log.info("escalated serialize (#360): %d perspective(s) x %d chunk(s)",
+                 len(systems), len(chunks))
+        jobs = [(i, chunk_text, name, system)
+                for i, chunk_text in enumerate(chunks)
+                for name, system in systems]
+
+        def _one_pass(job):
+            i, chunk_text, name, system = job
+            # Own #48 cache lane per perspective (the key hashes the actual
+            # system prompt): a re-escalation reuses its prior paid-for
+            # passes; the default lane is never read or written here.
+            key = _chunk_cache_key(chunk_text, system)
+            cached = _load_chunk_cache(key)
+            if cached is not None:
+                log.info("perspective %s: chunk %d/%d reused cached extraction (#48)",
+                         name, i + 1, len(chunks))
+                return cached
+            if len(chunks) == 1:
+                body = f"TRANSCRIPT:\n{chunk_text}"
+            else:
+                body = f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
+            t0 = time.monotonic()
+            partial = _call_and_parse(
+                chat, system,
+                f"session_id: {session_id}\n\n{body}",
+                deadline, f"perspective {name}, chunk {i + 1} of {len(chunks)}",
+            )
+            log.info("perspective %s: chunk %d/%d done in %.0fs",
+                     name, i + 1, len(chunks), time.monotonic() - t0)
+            _save_chunk_cache(key, partial)
+            return partial
+
+        workers = min(config.chunk_concurrency(), len(jobs))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            # pool.map preserves input order — chunk-major stays chronological.
+            return list(pool.map(_one_pass, jobs))
+
     def _produce(note: str) -> dict:
         nonlocal partials
+        if escalate:
+            # #360 stage 2: the ordinary merge combines the perspective
+            # reports — a PRODUCER of one candidate checkpoint, never a
+            # verifier (scar #10); the deterministic gates below are the only
+            # judges. Retry (`note`) re-runs ONLY the merge, like chunked.
+            if partials is None:
+                partials = _produce_escalated_partials()
+            return _merge_partials(chat, session_id, list(partials), deadline,
+                                   attempt_note=note)
         if len(chunks) == 1:
             log.info("single-pass serialize: %d lines", len(transcript_text.splitlines()))
             return _call_and_parse(

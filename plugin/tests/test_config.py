@@ -563,6 +563,19 @@ def test_scene_traces_flag_on(monkeypatch):
     assert config.scene_traces_enabled() is True
 
 
+# ---- #360: heal escalation flag ----
+
+
+def test_heal_escalation_default_off(monkeypatch):
+    monkeypatch.delenv("DAIMON_HEAL_ESCALATION", raising=False)
+    assert config.heal_escalation_enabled() is False
+
+
+def test_heal_escalation_flag_on(monkeypatch):
+    monkeypatch.setenv("DAIMON_HEAL_ESCALATION", "1")
+    assert config.heal_escalation_enabled() is True
+
+
 # ---- #341: DAIMON_FALLBACK_MIN_SECONDS ---------------------------------------
 
 

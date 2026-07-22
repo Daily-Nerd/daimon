@@ -498,6 +498,17 @@ def scene_traces_enabled() -> bool:
     return _flag("DAIMON_SCENE_TRACES")
 
 
+def heal_escalation_enabled() -> bool:
+    """Opt-in (#360): `daimon heal` escalates its re-serialize to
+    perspective-diverse extraction — N passes over the transcript from
+    distinct perspectives, merged by the ordinary merge pass. Multiplies the
+    LLM token cost of a heal by ~the perspective count on the user's own
+    backend, so it ships default OFF (#318 flag precedent). Gates the HEAL
+    path only — the session-end default serialize never escalates, flag or
+    no flag."""
+    return _flag("DAIMON_HEAL_ESCALATION")
+
+
 def llm_no_cache() -> bool:
     """Per-request bypass of gateway response caching (LiteLLM `no-cache`) —
     needed when a cached bad response pins a failure or when runs must be

@@ -192,11 +192,17 @@ def _attach_serialize_log_handler() -> None:
     pkg_log.setLevel(logging.INFO)
 
 
-def _run_serialize(transcript_path: Path, project: str | None) -> int:
+def _run_serialize(transcript_path: Path, project: str | None,
+                   escalate: bool = False) -> int:
     """Serialize one transcript to a checkpoint routed to `project` (used AS-IS;
     None => global pointer only, NO cwd fallback). The caller decides routing —
     this never calls _resolve_project, so `heal` can route to the FAILED
     session's project rather than the heal-time cwd.
+
+    `escalate` (#360): forwarded to serialize_strict — perspective-diverse
+    extraction instead of the default single shape. Only `heal` may pass True
+    (behind DAIMON_HEAL_ESCALATION); the hook/`serialize` command paths never
+    do, so escalation cost scales with failure, not usage.
 
     Every result line is built once into `msg`, printed, AND logged via
     _append_serialize_log — the logged string is byte-identical to the printed
@@ -254,7 +260,8 @@ def _run_serialize(transcript_path: Path, project: str | None) -> int:
     deadline = start + config.timeout_seconds()
     try:
         checkpoint = serializer.serialize_strict(
-            session_id, messages, chat=_chat, deadline=deadline)
+            session_id, messages, chat=_chat, deadline=deadline,
+            escalate=escalate)
     except serializer.TooShortError as exc:
         msg = f"skipped serialize for {session_id}: {exc}"
         print(msg)
@@ -1639,8 +1646,13 @@ def _cmd_heal(args) -> int:
     # sessions healable) — the retry marker still needs a prior (#49).
     prior = (t["line"] or "hung: spawned, no result").split(" (transcript:")[0]
     _append_retry_log(t["sid"], prior)
+    # #360: the default retry re-runs the SAME extraction shape that already
+    # failed. Opt-in escalation (DAIMON_HEAL_ESCALATION) re-serializes from
+    # multiple perspectives instead — heal-path only, so the extra token cost
+    # scales with failure, never with usage.
+    escalate = config.heal_escalation_enabled()
     with render.working(f"healing {t['sid']} — re-serializing transcript"):
-        return _run_serialize(transcript_path, t["project"])
+        return _run_serialize(transcript_path, t["project"], escalate=escalate)
 
 
 # ---- team: sidecar private-repo sync (#113) ----

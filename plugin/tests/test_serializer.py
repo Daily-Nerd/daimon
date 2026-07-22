@@ -2026,3 +2026,184 @@ def test_serialize_strict_min_messages_ignores_tool_rows(
     chat = fake_chat_factory(_valid_checkpoint_json("S1"))
     assert serializer.serialize("S1", msgs, chat=chat) is None
     assert chat.calls == []
+
+
+# ---- #360: perspective-diverse escalation (heal-path only) ----
+#
+# Escalation is the heal tier for failed serializes: N extraction passes over
+# the same transcript from distinct perspectives, one ordinary merge, then the
+# UNCHANGED deterministic gates (sanitize_source_ids, verify_quotes,
+# ground_outcomes, redaction downstream). The merge model is a producer, never
+# a verifier (scar #10). Only serialize_strict(escalate=True) triggers it —
+# the session-end default path never escalates.
+
+
+def test_escalation_perspectives_are_three_distinct_lanes():
+    names = [name for name, _ in serializer.ESCALATION_PERSPECTIVES]
+    assert names == ["decisions-and-outcomes", "open-loops-and-questions",
+                     "artifacts-and-identifiers"]
+    systems = [system for _, system in serializer.escalation_systems()]
+    assert len(set(systems)) == 3
+    for system in systems:
+        # each pass keeps the FULL base prompt (all rules stay in force) and
+        # appends its perspective — never replaces the extraction contract
+        assert system.startswith(serializer.SERIALIZE_SYS)
+        assert "EXTRACTION PERSPECTIVE" in system
+
+
+def test_base_prompt_untouched_by_escalation():
+    # flag-off / non-escalated path must stay byte-identical: the perspective
+    # text lives only in the escalation addenda, never in the base constants.
+    assert "EXTRACTION PERSPECTIVE" not in serializer.SERIALIZE_SYS
+    assert "EXTRACTION PERSPECTIVE" not in serializer.MERGE_SYS
+
+
+def test_escalated_single_chunk_runs_one_pass_per_perspective_plus_merge(
+        fake_chat_factory, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    # scar #8: merge-call count is hierarchical — pin K so 3 partials = 1 merge
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    chat = fake_chat_factory(
+        [_valid_checkpoint_json(f"p{i}") for i in range(3)]
+        + [_valid_checkpoint_json("merged")])
+    ckpt = serializer.serialize_strict(
+        "S1", make_messages(20), chat=chat, escalate=True)
+    assert ckpt is not None and ckpt["session_id"] == "S1"
+    assert len(chat.calls) == 4
+    extraction_systems = [c["messages"][0]["content"] for c in chat.calls[:3]]
+    assert len(set(extraction_systems)) == 3  # three DISTINCT perspectives
+    for system in extraction_systems:
+        assert "EXTRACTION PERSPECTIVE" in system
+    # stage 2 is the ordinary merge — same MERGE_SYS producer, no new verifier
+    assert chat.calls[3]["messages"][0]["content"] == serializer.MERGE_SYS
+
+
+def test_serialize_strict_default_never_escalates(fake_chat_factory, monkeypatch):
+    # The session-end default path (no escalate arg) is byte-identical to
+    # today: one single-pass call under the plain serialize prompt.
+    monkeypatch.delenv("DAIMON_SCENE_TRACES", raising=False)
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    assert serializer.serialize_strict("S1", make_messages(20), chat=chat) is not None
+    assert len(chat.calls) == 1
+    assert chat.calls[0]["messages"][0]["content"] == serializer.SERIALIZE_SYS
+
+
+def test_escalated_result_still_crosses_deterministic_gates(
+        fake_chat_factory, monkeypatch):
+    # The merge model is a PRODUCER, never a verifier: a quote the transcript
+    # does not contain must still be downgraded by verify_quotes, exactly as
+    # on the default path.
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    merged = json.loads(_valid_checkpoint_json("S1"))
+    merged["working_context"]["recent_decisions"][0] = {
+        "text": "d", "trust": "verbatim",
+        "quote": "this sentence appears nowhere in the transcript"}
+    chat = fake_chat_factory(
+        [_valid_checkpoint_json(f"p{i}") for i in range(3)]
+        + [json.dumps(merged)])
+    ckpt = serializer.serialize_strict(
+        "S1", make_messages(20), chat=chat, escalate=True)
+    item = ckpt["working_context"]["recent_decisions"][0]
+    assert item["trust"] == "inferred"
+    assert item["quote_verified"] is False
+
+
+def test_escalated_strips_model_supplied_code_owned_keys(
+        fake_chat_factory, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    merged = json.loads(_valid_checkpoint_json("S1"))
+    merged["format_version"] = "D-999-spoofed"
+    chat = fake_chat_factory(
+        [_valid_checkpoint_json(f"p{i}") for i in range(3)]
+        + [json.dumps(merged)])
+    ckpt = serializer.serialize_strict(
+        "S1", make_messages(20), chat=chat, escalate=True)
+    assert "format_version" not in ckpt
+
+
+def test_escalated_too_short_still_skips(fake_chat_factory):
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    with pytest.raises(serializer.TooShortError):
+        serializer.serialize_strict("S1", make_messages(4), chat=chat,
+                                    escalate=True)
+    assert chat.calls == []
+
+
+def test_chunk_cache_key_gives_each_perspective_its_own_lane():
+    # #48 keying already hashes the system prompt; passing each perspective's
+    # actual prompt must yield distinct, stable lanes — and the default lane
+    # (no system arg) must be byte-identical to hashing the plain prompt.
+    base = serializer._chunk_cache_key("chunk text")
+    assert base == serializer._chunk_cache_key(
+        "chunk text", system=serializer._serialize_sys())
+    keys = [serializer._chunk_cache_key("chunk text", system=system)
+            for _, system in serializer.escalation_systems()]
+    assert len(set(keys)) == 3          # perspectives never cross-contaminate
+    assert base not in keys             # nor bleed into the default lane
+    assert keys == [serializer._chunk_cache_key("chunk text", system=system)
+                    for _, system in serializer.escalation_systems()]  # stable
+
+
+def test_escalated_reheal_reuses_own_cached_partials(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
+    # A re-escalation must reuse its OWN prior perspective partials (#48):
+    # second run pays only the merge.
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    messages = make_messages(20)
+    chat1 = fake_chat_factory(
+        [_valid_checkpoint_json(f"p{i}") for i in range(3)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict(
+        "S1", messages, chat=chat1, escalate=True) is not None
+    assert len(list((tmp_checkpoint_dir / ".chunk-cache").glob("*.json"))) == 3
+
+    chat2 = fake_chat_factory([_valid_checkpoint_json("merged2")])
+    assert serializer.serialize_strict(
+        "S1", messages, chat=chat2, escalate=True) is not None
+    assert len(chat2.calls) == 1  # merge only — every perspective pass reused
+
+
+def test_escalated_run_never_reuses_default_lane_chunks(
+        fake_chat_factory, monkeypatch, tmp_checkpoint_dir):
+    # A prior DEFAULT chunked run's cached extractions were produced under a
+    # different prompt — the escalated run must not consume them (and vice
+    # versa): perspective passes pay their own calls.
+    messages, n = _force_two_chunks(monkeypatch)
+    chat1 = fake_chat_factory(
+        [_valid_checkpoint_json(f"c{i}") for i in range(n)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict("S1", messages, chat=chat1) is not None
+    assert len(list((tmp_checkpoint_dir / ".chunk-cache").glob("*.json"))) == n
+
+    chat2 = fake_chat_factory(
+        [_valid_checkpoint_json(f"e{i}") for i in range(3 * n)]
+        + [_valid_checkpoint_json("merged2")])
+    assert serializer.serialize_strict(
+        "S1", messages, chat=chat2, escalate=True) is not None
+    assert len(chat2.calls) == 3 * n + 1  # no cross-lane reuse
+
+
+def test_escalated_deadline_scales_by_perspective_wave_plan(
+        fake_chat_factory, monkeypatch):
+    # An escalated run makes MORE calls — the wave plan must count every
+    # perspective pass (#314 machinery, no new budget): 1 chunk x 3
+    # perspectives at concurrency 1 = 3 chunk waves + 1 merge wave = 4 waves,
+    # so the deadline extends by (4-1) x DAIMON_TIMEOUT.
+    import time as _t
+    monkeypatch.setenv("DAIMON_TIMEOUT", "100")
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    chat = fake_chat_factory(
+        [_valid_checkpoint_json(f"p{i}") for i in range(3)]
+        + [_valid_checkpoint_json("merged")])
+    given = _t.monotonic() + 100
+    assert serializer.serialize_strict(
+        "S1", make_messages(20), chat=chat, escalate=True,
+        deadline=given) is not None
+    seen = {c["kwargs"].get("deadline") for c in chat.calls}
+    assert len(seen) == 1  # every call shares ONE scaled deadline
+    scaled = seen.pop()
+    assert scaled >= given + 250  # ~300s extension for 4 waves
