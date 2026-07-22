@@ -17,7 +17,7 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
       - id: rp
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           # config-file + manifest so extra-files keep plugin/pyproject.toml,
           # .claude-plugin/plugin.json and marketplace.json in version lock-step.
@@ -33,10 +33,10 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v9.0.0
       # the package lives in plugin/, not the repo root
       - run: uv build --project plugin -o dist
       - uses: pypa/gh-action-pypi-publish@release/v1
