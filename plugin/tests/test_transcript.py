@@ -242,6 +242,147 @@ def test_from_file_rows_without_usable_uuid_get_no_id_key(tmp_path):
     ]
 
 
+# ---- #359: tool-result rows surface as signal-bearing "tool" messages ----
+
+
+def test_from_file_claude_jsonl_surfaces_tool_result_rows(tmp_path):
+    # Pre-#359 the parser dropped tool_result rows as noise; a row carrying a
+    # stable uuid now surfaces as a "tool" message so outcome claims can
+    # ground in the concrete signal it holds (exit status, test summary).
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "u-1",
+         "message": {"role": "user", "content": "run the tests"}},
+        {"type": "assistant", "uuid": "a-2",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "running the suite"},
+             {"type": "tool_use", "name": "Bash", "input": {"command": "pytest"}}]}},
+        {"type": "user", "uuid": "t-3",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "content": "42 passed in 1.2s"}]},
+         "toolUseResult": {"stdout": "42 passed in 1.2s", "stderr": ""}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "user", "content": "run the tests", "id": "u-1"},
+        {"role": "assistant", "content": "running the suite", "id": "a-2"},
+        {"role": "tool", "content": "42 passed in 1.2s", "id": "t-3",
+         "tool_result": True},
+    ]
+
+
+def test_from_file_tool_result_error_rows_carry_the_error_flag(tmp_path):
+    # is_error is the closest thing Claude Code exposes to an exit status on
+    # every tool result — preserve it so the failure signal survives.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "u-1",
+         "message": {"role": "user", "content": "deploy it"}},
+        {"type": "user", "uuid": "t-2",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "is_error": True,
+              "content": "Exit code 1\nfatal: deploy failed"}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "user", "content": "deploy it", "id": "u-1"},
+        {"role": "tool", "content": "Exit code 1\nfatal: deploy failed",
+         "id": "t-2", "tool_result": True, "tool_error": True},
+    ]
+
+
+def test_from_file_tool_result_rows_without_uuid_stay_dropped(tmp_path):
+    # No uuid means no [mN] marker and no way to cite the row — grounding is
+    # pointer-based, so an id-less tool result stays dropped: byte-identical
+    # pre-#359 behavior for hosts without stable ids.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "message": {"role": "user", "content": "hi"}},
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "content": "198191d some output"}]}},
+    ])
+    assert transcript.from_file(p) == [{"role": "user", "content": "hi"}]
+
+
+def test_from_file_tool_result_flattens_block_lists_and_truncates(tmp_path):
+    # tool_result `content` can itself be a block list; flatten text blocks.
+    # Output is truncated to the cap — the signal (exit status, summary line)
+    # lives at the head, and full payloads would bloat the serialize prompt.
+    long_tail = "x" * 5000
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "t-1",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "content": [
+                 {"type": "text", "text": "head line"},
+                 {"type": "text", "text": long_tail}]}]}},
+    ])
+    msgs = transcript.from_file(p)
+    assert len(msgs) == 1
+    content = msgs[0]["content"]
+    assert content.startswith("head line")
+    assert len(content) <= transcript._TOOL_RESULT_MAX_CHARS
+    assert msgs[0]["tool_result"] is True
+
+
+def test_from_file_tool_result_empty_output_gets_placeholder(tmp_path):
+    # An empty stdout on success is still a signal ("ran, said nothing") —
+    # a placeholder keeps the row alive instead of dropping the signal.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "t-1",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "content": ""}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "tool", "content": "(no output)", "id": "t-1",
+         "tool_result": True},
+    ]
+
+
+def test_from_file_mixed_text_and_tool_result_row_keeps_text_only(tmp_path):
+    # A row carrying BOTH text and tool_result blocks keeps its pre-#359
+    # shape: the text wins, the tool payload is not split into a second
+    # message (live Claude Code rows are pure tool_result rows).
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "u-1",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "content": "198191d output"},
+             {"type": "text", "text": "build the SessionEnd hook"}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "user", "content": "build the SessionEnd hook", "id": "u-1"},
+    ]
+
+
+def test_from_file_uuid_rows_without_tool_results_stay_dropped(tmp_path):
+    # Rows that reach the tool-result probe (uuid present, no text) but carry
+    # no tool payload keep pre-#359 behavior — dropped, never surfaced as a
+    # phantom signal: whitespace-only string content is not a block list, and
+    # a block list with no tool_result blocks (image-only row) holds nothing
+    # an outcome claim could ground in.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "u-1",
+         "message": {"role": "user", "content": "real question"}},
+        {"type": "user", "uuid": "e-2",
+         "message": {"role": "user", "content": "   "}},
+        {"type": "user", "uuid": "i-3",
+         "message": {"role": "user", "content": [
+             {"type": "image", "source": {"type": "base64", "data": "AAAA"}}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "user", "content": "real question", "id": "u-1"},
+    ]
+
+
+def test_from_file_tool_result_row_skips_non_tool_blocks(tmp_path):
+    # A tool_result row can carry sibling non-tool blocks (an image attached
+    # to a screenshot result): they are skipped, the textual signal survives.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "t-1",
+         "message": {"role": "user", "content": [
+             {"type": "image", "source": {"type": "base64", "data": "AAAA"}},
+             {"type": "tool_result", "content": "deploy ok - exit code 0"}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "tool", "content": "deploy ok - exit code 0", "id": "t-1",
+         "tool_result": True},
+    ]
+
+
 def test_from_session_returns_empty_when_hermes_unavailable(monkeypatch):
     # Force the hermes import seam to fail; must degrade to [] not raise.
     monkeypatch.setattr(transcript, "_load_session_db", lambda: None)

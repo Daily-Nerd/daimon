@@ -13,6 +13,13 @@ native rows ({type, status, payload}, field-confirmed #70), the Codex event
 stream (payload is just {type, message}), hermes SessionDB, markdown/plain
 text — keep the exact two-key shape, and downstream quote verification falls
 back to whole-transcript scanning.
+
+#359: Claude Code rows whose only payload is tool_result blocks — previously
+dropped as noise — surface as {"role": "tool", "content": <capped output>,
+"id": uuid, "tool_result": True, ["tool_error": True]} so outcome claims can
+ground in the concrete signal (exit status, test summary) they carry. Claude
+Code only: it is the one host with BOTH stable ids and parseable tool
+results; the other hosts' output stays byte-identical.
 """
 
 import hashlib
@@ -56,7 +63,8 @@ def _text_of(content) -> str:
     """Flatten Claude Code message content to plain text.
 
     String content passes through; block arrays keep only `text` blocks —
-    thinking, tool_use, and tool_result blocks are noise for the serializer.
+    thinking, tool_use, and tool_result blocks are noise for the serializer
+    (tool_result rows get their own dedicated extraction, #359).
     """
     if isinstance(content, str):
         return content.strip()
@@ -65,6 +73,43 @@ def _text_of(content) -> str:
                  if isinstance(b, dict) and b.get("type") == "text"]
         return "\n".join(p for p in parts if p).strip()
     return ""
+
+
+# #359: rendered tool output is a SIGNAL (exit status, test summary, error
+# line), not conversation — the useful part lives at the head, and full
+# payloads (a Read of a 2000-line file) would bloat the serialize prompt for
+# nothing. Cap applies at parse time so every downstream consumer (chunking,
+# rendering, quote verification) sees the same bounded text.
+_TOOL_RESULT_MAX_CHARS = 500
+
+
+def _tool_result_of(obj: dict) -> tuple[str, bool] | None:
+    """(flattened text, is_error) for a row whose payload is tool_result
+    blocks, or None when the row carries none. `content` inside a block can be
+    a plain string or a nested block list — both flatten. Empty output is
+    still a signal ("ran, said nothing"), kept via a placeholder."""
+    msg = obj.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if not isinstance(content, list):
+        return None
+    parts: list[str] = []
+    is_error = False
+    found = False
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        found = True
+        if block.get("is_error"):
+            is_error = True
+        inner = block.get("content")
+        if isinstance(inner, str):
+            parts.append(inner.strip())
+        elif isinstance(inner, list):
+            parts.append(_text_of(inner))
+    if not found:
+        return None
+    text = "\n".join(p for p in parts if p).strip()[:_TOOL_RESULT_MAX_CHARS]
+    return (text or "(no output)", is_error)
 
 
 def _from_jsonl(text: str) -> list[dict]:
@@ -148,18 +193,38 @@ def _from_jsonl(text: str) -> list[dict]:
         role = _role_of(obj)
         if role is None:
             continue
+        # #358: Claude Code rows carry a stable per-message `uuid` —
+        # keep it as the message id so verbatim items can bind to the
+        # exact transcript entry their quote came from. A discriminating
+        # FIELD, not a row shape (deadend #20): rows without a usable
+        # string uuid keep the exact two-key shape.
+        raw_uuid = obj.get("uuid")
+        mid = (raw_uuid.strip()
+               if isinstance(raw_uuid, str) and raw_uuid.strip() else None)
         content = _content_of(obj)
         if content:
             msg = {"role": role, "content": content}
-            # #358: Claude Code rows carry a stable per-message `uuid` —
-            # keep it as the message id so verbatim items can bind to the
-            # exact transcript entry their quote came from. A discriminating
-            # FIELD, not a row shape (deadend #20): rows without a usable
-            # string uuid keep the exact two-key shape.
-            mid = obj.get("uuid")
-            if isinstance(mid, str) and mid.strip():
-                msg["id"] = mid.strip()
+            if mid is not None:
+                msg["id"] = mid
             messages.append(msg)
+            continue
+        # #359: a row whose ONLY payload is tool_result blocks used to be
+        # dropped as noise — surface it as a signal-bearing "tool" message so
+        # outcome claims can ground in the concrete evidence it holds (exit
+        # status, test summary, error line). Only rows with a usable uuid
+        # qualify: grounding is pointer-based ([mN] marker -> host id), and an
+        # id-less tool row cannot be cited — id-less hosts keep pre-#359
+        # output byte-identical. Discriminating FIELDS again (deadend #20):
+        # tool_result block type + uuid, never a row shape.
+        if mid is not None:
+            tool = _tool_result_of(obj)
+            if tool is not None:
+                text, is_error = tool
+                tool_msg: dict = {"role": "tool", "content": text, "id": mid,
+                                  "tool_result": True}
+                if is_error:
+                    tool_msg["tool_error"] = True
+                messages.append(tool_msg)
     return messages
 
 

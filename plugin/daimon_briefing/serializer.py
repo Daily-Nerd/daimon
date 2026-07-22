@@ -37,10 +37,14 @@ log = logging.getLogger(__name__)
 # D-014 -> D-015 (#358: verbatim items bind to source transcript message ids;
 # the bump also rotates the #48 chunk-cache key so pre-#358 cached
 # extractions, which carry no ids, can never satisfy a post-#358 request).
+# D-015 -> D-016 (#359: outcome claims ground in tool-result signals — rule
+# 20 asks for signal citations, and the bump rotates the #48 chunk-cache key
+# so pre-#359 cached extractions, whose chunks rendered no tool rows, can
+# never satisfy a post-#359 request).
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-015"
+PROMPT_VERSION = "D-016"
 
 
 class SerializeError(Exception):
@@ -165,9 +169,21 @@ RULES — follow every one exactly; this is the point of the exercise:
     [m12] identifying that message. For every trust="verbatim" item, add
     "source_message_ids": ["m12"] — the marker id(s) of the exact message(s) the `quote` was
     copied from, normally exactly one. Copy the id from the marker exactly, without the
-    brackets. Item shapes gain this one optional key; inferred items never carry it. If the
-    transcript shows no [mN] markers, or you cannot tell exactly which message the quote came
-    from, omit the field entirely — never guess or invent an id.
+    brackets. Item shapes gain this one optional key; inferred items carry it only in the
+    rule-20 outcome-signal case. If the transcript shows no [mN] markers, or you cannot tell
+    exactly which message the quote came from, omit the field entirely — never guess or
+    invent an id.
+
+20. OUTCOME GROUNDING: messages rendered as "tool:" (or "tool (error):") are TOOL RESULTS —
+    command output, exit status, test runs — evidence, not conversation. When an item's claim
+    asserts a concrete OUTCOME (something succeeded or failed, was merged, deployed,
+    released, tests passed or went green, a build completed), and a tool-result message in
+    this transcript actually SHOWS that outcome happening, add that message's [mN] marker id
+    to the item's "source_message_ids" — alongside the quote's own marker for verbatim items
+    (keep both). This is the one case where an inferred item carries "source_message_ids".
+    Cite only a tool-result message that genuinely evidences the outcome; never copy tool
+    output into `text` or `quote` because of this rule. If no tool-result message evidences
+    the outcome, add nothing — the absence is itself a signal.
 
 Schema shape:
 {
@@ -287,7 +303,9 @@ MERGE RULES — follow every one exactly:
 14. SOURCE MESSAGE IDS: an item's optional "source_message_ids" array travels WITH its quote:
     the canonical item keeps the ids of the version whose quote it keeps. Never invent ids,
     never alter them, and never move them onto an item with a different quote. Preserve them
-    like `links` — dropping them loses provenance.
+    like `links` — dropping them loses provenance. Ids may ALSO point at tool-result
+    messages that evidence an outcome claim (these can appear on inferred items too):
+    preserve those on the canonical item exactly the same way, even when it has no quote.
 
 Schema shape:
 {
@@ -351,6 +369,12 @@ def _render_transcript(messages) -> str:
     lines = []
     for i, m in enumerate(messages):
         role = m.get("role", "unknown")
+        # #359: a failed tool result renders its error status inline — the
+        # extractor must see WHICH way the signal points, not just that one
+        # exists. Only flagged tool rows (transcript.py's Claude Code branch)
+        # qualify; a markdown "tool:" role row renders exactly as before.
+        if m.get("tool_result") and m.get("tool_error"):
+            role = f"{role} (error)"
         content = _message_text(m)
         # #358: a bracketed [mN] marker names an identified message so the
         # extractor can cite where each verbatim quote came from. Id-less
@@ -385,6 +409,24 @@ def message_texts_by_id(messages) -> dict[str, str]:
         mid = _message_id(m)
         if mid is not None:
             out[mid] = _message_text(m)
+    return out
+
+
+def signal_message_ids(messages) -> set[str]:
+    """Host ids of signal-bearing messages: tool results (#359).
+
+    Keyed on the `tool_result` flag transcript.py sets, never on the role
+    string — a markdown transcript's "tool:" role row has no tool payload
+    behind it and must not count as evidence. Empty for hosts that surface
+    no tool rows (Windsurf, Codex, hermes, markdown): grounding degrades to
+    a no-op there."""
+    out: set[str] = set()
+    for m in messages or []:
+        if not (isinstance(m, dict) and m.get("tool_result")):
+            continue
+        mid = _message_id(m)
+        if mid is not None:
+            out.add(mid)
     return out
 
 
@@ -517,7 +559,7 @@ def validate(checkpoint) -> bool:
 SOURCE_IDS_KEY = "source_message_ids"
 
 
-def sanitize_source_ids(checkpoint, id_map) -> None:
+def sanitize_source_ids(checkpoint, id_map, signal_ids=frozenset()) -> None:
     """Validate model-emitted source message ids in place (#358).
 
     `id_map` maps rendered markers ("m3") to host message ids
@@ -529,8 +571,15 @@ def sanitize_source_ids(checkpoint, id_map) -> None:
     remains. Same never-fatal philosophy as sanitize_importance: an advisory
     field must never fail a serialize. Callers with no transcript to
     validate against (cli's #23 write-checkpoint path) pass {} — every
-    claimed binding drops."""
+    claimed binding drops.
+
+    #359 widens "bindable" by exactly one case: an id resolving into
+    `signal_ids` (host ids of tool-result messages, signal_message_ids) is a
+    SIGNAL pointer — an outcome claim's evidence — and is kept on ANY item,
+    inferred and quote-less included. Non-signal ids on inferred items still
+    drop: the quote-binding rule is unchanged."""
     id_map = id_map or {}
+    signal_ids = set(signal_ids or ())
     known_hosts = set(id_map.values())
     for item in iter_items(checkpoint):
         if SOURCE_IDS_KEY not in item:
@@ -542,7 +591,7 @@ def sanitize_source_ids(checkpoint, id_map) -> None:
         quote = item.get("quote")
         bindable = (item.get("trust") == "verbatim"
                     and isinstance(quote, str) and quote.strip())
-        if bindable and isinstance(raw, list):
+        if isinstance(raw, list):
             for entry in raw:
                 if not isinstance(entry, str):
                     continue
@@ -550,7 +599,9 @@ def sanitize_source_ids(checkpoint, id_map) -> None:
                 host = id_map.get(marker)
                 if host is None and entry.strip() in known_hosts:
                     host = entry.strip()
-                if host is not None and host not in out:
+                if host is None or host in out:
+                    continue
+                if bindable or host in signal_ids:
                     out.append(host)
         if out:
             item[SOURCE_IDS_KEY] = out
@@ -558,16 +609,24 @@ def sanitize_source_ids(checkpoint, id_map) -> None:
             del item[SOURCE_IDS_KEY]
 
 
-def scoped_haystack(item, texts_by_id) -> str | None:
+def scoped_haystack(item, texts_by_id, exclude=frozenset()) -> str | None:
     """The id-scoped haystack for an item's bound message(s), or None.
 
     None means "no usable binding" — ids absent, or ANY cited id missing from
     `texts_by_id` (old checkpoints, moved/truncated transcripts, carried
     items from another session) — and the caller falls back to the
     whole-transcript scan, exactly today's behavior. An unresolvable id is
-    not a disproven one."""
+    not a disproven one.
+
+    `exclude` (#359): ids to leave OUT of the haystack — verify_quotes passes
+    the session's signal ids, because a tool-result pointer asserts "this
+    evidences the outcome", not "the quote lives here". An item whose cited
+    ids are ALL excluded has no quote-source claim at all -> None."""
     ids = item.get(SOURCE_IDS_KEY) if isinstance(item, dict) else None
     if not (isinstance(ids, list) and ids and texts_by_id):
+        return None
+    ids = [i for i in ids if not (isinstance(i, str) and i in exclude)]
+    if not ids:
         return None
     parts = []
     for mid in ids:
@@ -694,6 +753,10 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     threading a new param through a call chain that has no other use for
     it."""
     texts_by_id = message_texts_by_id(messages) if messages else {}
+    # #359: signal pointers (tool-result ids) are outcome evidence, not
+    # quote-source claims — they never scope the quote check, and a scoped
+    # MISS must not execute them for the quote-id's crime.
+    signals = signal_message_ids(messages) if messages else set()
     downgraded = 0
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
@@ -701,7 +764,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
         quote = item.get("quote")
         if not isinstance(quote, str) or not quote.strip():
             continue
-        scoped = scoped_haystack(item, texts_by_id)
+        scoped = scoped_haystack(item, texts_by_id, exclude=signals)
         if scoped is not None and quote_matches(quote, scoped):
             item["quote_verified"] = True
             item["last_verified"] = datetime.now(timezone.utc).strftime(
@@ -709,9 +772,14 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
         elif quote_matches(quote, transcript_text):
             if scoped is not None:
                 # Resolved AND mismatched: the quote is real but not in its
-                # cited message — drop the disproven binding, keep the
-                # pre-#358 verdict.
-                item.pop(SOURCE_IDS_KEY, None)
+                # cited message — drop the disproven QUOTE binding (signal
+                # pointers survive, #359), keep the pre-#358 verdict.
+                kept = [i for i in item.get(SOURCE_IDS_KEY) or []
+                        if isinstance(i, str) and i in signals]
+                if kept:
+                    item[SOURCE_IDS_KEY] = kept
+                else:
+                    item.pop(SOURCE_IDS_KEY, None)
                 log.warning("quote verification: quote not found in its cited "
                             "message(s) — binding dropped, verified via "
                             "whole-transcript scan (#358)")
@@ -734,6 +802,107 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
                         logged)
     if downgraded:
         log.info("quote verification: %d verbatim item(s) downgraded to inferred",
+                 downgraded)
+    return downgraded
+
+
+# ---- #359: outcome claims ground in tool-result signals ----
+#
+# The hard trust-class gap (#185/#194 lineage): the model concludes X, X is
+# false, the transcript faithfully records the model saying X — verbatim
+# matching certifies TRANSCRIPTION, not truth. For claims that assert an
+# OUTCOME (succeeded/failed/merged/deployed/tests green), the transcript
+# usually holds a concrete signal — a tool result, an exit status — and
+# rule 20 asks the extractor to cite it. `grounded` is the code-derived
+# verdict over the validated pointers: True = cites a real signal message,
+# False = outcome-shaped claim in a signal-bearing session with no citation
+# (stored inferred — an unwitnessed outcome is a report, not a fact).
+# Deliberately NO new trust class and NO new rendered tag: briefing trust
+# literals are pinned (skill-distribution scar), so this ships as an
+# additive advisory field the briefing can surface later. Items only ever
+# carry the POINTER (message id) — never the signal payload, so redaction
+# semantics are untouched.
+
+GROUNDED_KEY = "grounded"
+
+# Conservative, English-only outcome lexicon: past-tense/state assertions
+# about completion. Non-English claims simply never match — grounding stays
+# absent there, which is the honest no-op (never downgrade on a guess).
+_OUTCOME_RE = re.compile(
+    r"(?:\b(?:succeeded|successfully)\b"
+    r"|\btests?\s+(?:all\s+|are\s+|now\s+)*(?:pass(?:ed|ing)?|green)\b"
+    r"|\b(?:build|suite|ci|pipeline|deploy(?:ment)?)\s+"
+    r"(?:is\s+|now\s+)*(?:pass(?:ed|ing)?|green|succeeded|failed|completed)\b"
+    r"|\b(?:merged|deployed|released|published|shipped|landed)\b"
+    r"|\ball\s+(?:\d+\s+)?tests?\s+pass(?:ed)?\b)",
+    re.IGNORECASE)
+# Hedge/future/plan markers: "will be merged" is a plan, "whether the deploy
+# succeeded" is a question — neither ASSERTS the outcome. When one of these
+# is present the claim is not an outcome assertion and stays untouched
+# (when in doubt, keep today's behavior).
+_HEDGE_RE = re.compile(
+    r"\b(?:will|would|should|shall|going\s+to|to\s+be|not\s+yet|pending|"
+    r"plan(?:ned|s|ning)?|todo|must|needs?\s+to|about\s+to|once|when|"
+    r"if|whether|did|does|can|could|may|might)\b",
+    re.IGNORECASE)
+
+
+def _asserts_outcome(text: str) -> bool:
+    """True when `text` ASSERTS a completed outcome (narrow, English-only)."""
+    if not isinstance(text, str):
+        return False
+    return bool(_OUTCOME_RE.search(text)) and not _HEDGE_RE.search(text)
+
+
+def ground_outcomes(checkpoint, signal_ids) -> int:
+    """Derive the code-owned `grounded` verdict in place (#359). Returns the
+    number of verbatim outcome claims downgraded to inferred.
+
+    Runs AFTER sanitize_source_ids (only code-validated pointers exist) and
+    AFTER verify_quotes (which may drop disproven bindings — grounding must
+    judge the surviving set, or a dropped pointer could leave a stale True).
+
+    Per item, in order:
+    - the model never gets a vote: any model-emitted `grounded` is stripped
+      first (#292 discipline), then re-derived or left absent;
+    - a validated pointer into `signal_ids` -> grounded: true (the claim
+      cites a concrete tool-result signal in this session);
+    - otherwise, IF this session surfaced signals at all AND the item is
+      trust="verbatim" AND its `text` asserts an outcome -> trust becomes
+      "inferred", grounded: false. The quote (and its quote_verified stamp)
+      stays: transcription remains honestly attested — it is the OUTCOME
+      that is unwitnessed;
+    - everything else is untouched. Signal-free sessions (Windsurf, Codex,
+      hermes, markdown — no parseable tool results) never downgrade:
+      grounding is impossible there, and absence of evidence about the HOST
+      is not evidence against the claim.
+
+    Same never-fatal philosophy as sanitize_importance: pure dict walking,
+    an advisory field must never fail a serialize."""
+    signal_ids = set(signal_ids or ())
+    downgraded = 0
+    for item in iter_items(checkpoint):
+        item.pop(GROUNDED_KEY, None)
+        ids = item.get(SOURCE_IDS_KEY)
+        if (isinstance(ids, list)
+                and any(isinstance(i, str) and i in signal_ids for i in ids)):
+            item[GROUNDED_KEY] = True
+            continue
+        if not signal_ids:
+            continue
+        if item.get("trust") != "verbatim":
+            continue
+        if not _asserts_outcome(item.get("text") or ""):
+            continue
+        item["trust"] = "inferred"
+        item[GROUNDED_KEY] = False
+        downgraded += 1
+        # Same log-line-only scrub as verify_quotes: runs pre-redaction.
+        logged, _ = redact.redact_text(item.get("text") or "")
+        log.warning("outcome grounding: unwitnessed outcome claim downgraded "
+                    "verbatim->inferred (no signal cited): %s", logged)
+    if downgraded:
+        log.info("outcome grounding: %d outcome claim(s) downgraded to inferred",
                  downgraded)
     return downgraded
 
@@ -1082,7 +1251,11 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     """
     if chat is None:
         chat = llm.chat
-    n = len(messages) if messages else 0
+    # #359: tool rows are evidence, not conversation — they never count
+    # toward the too-short gate, so surfacing them cannot let a two-turn
+    # session sneak past it.
+    n = sum(1 for m in messages or []
+            if not (isinstance(m, dict) and m.get("tool_result")))
     if n < config.min_messages():
         raise TooShortError(
             f"transcript too short ({n} < {config.min_messages()} messages)"
@@ -1189,8 +1362,10 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     sanitize_scene(checkpoint)
     # #358: translate cited [mN] markers to host message ids and drop any id
     # the transcript cannot vouch for — BEFORE verification, so verify_quotes
-    # only ever sees code-validated bindings.
-    sanitize_source_ids(checkpoint, message_id_map(messages))
+    # only ever sees code-validated bindings. #359: signal pointers (ids of
+    # tool-result messages) survive on any item, evidence for outcome claims.
+    sig_ids = signal_message_ids(messages)
+    sanitize_source_ids(checkpoint, message_id_map(messages), sig_ids)
     # #125: verify verbatim quotes against the SAME rendered text the extractor
     # read, PRE-redaction (redaction runs later in write_checkpoint and would
     # otherwise mass-downgrade legitimate quotes it had masked). Verify once,
@@ -1198,6 +1373,11 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
     # validated binding resolve their id and compare bytes against just that
     # message, whole-transcript scan as fallback.
     verify_quotes(checkpoint, transcript_text, messages)
+    # #359: derive the code-owned `grounded` verdict AFTER verification (it
+    # must judge the surviving bindings) — outcome claims with a validated
+    # signal pointer are marked grounded; unwitnessed verbatim outcome
+    # claims in a signal-bearing session store as inferred.
+    ground_outcomes(checkpoint, sig_ids)
     # #230: stamp provenance last, immediately before hand-off to store/write —
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.

@@ -1450,6 +1450,25 @@ def test_cli_write_checkpoint_drops_model_claimed_source_ids(
     assert "source_message_ids" not in dec
 
 
+def test_cli_write_checkpoint_strips_model_claimed_grounded(
+        tmp_checkpoint_dir, monkeypatch):
+    # #359, same discipline: `grounded` is a code-derived attestation. The
+    # introspection path has no transcript, hence no signals — a model
+    # claiming its own claim is grounded must not persist.
+    from daimon_briefing import store
+
+    cp = json.loads(_valid_json("S-intro"))
+    cp["working_context"]["recent_decisions"] = [{
+        "text": "deploy succeeded", "trust": "inferred", "grounded": True,
+    }]
+    _stdin(monkeypatch, json.dumps(cp))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest(project_dir="/p/A")
+    dec = ck["working_context"]["recent_decisions"][0]
+    assert "grounded" not in dec
+
+
 def test_top_level_help_has_examples(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])
