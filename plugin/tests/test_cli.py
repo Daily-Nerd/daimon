@@ -1430,6 +1430,26 @@ def test_cli_write_checkpoint_strips_model_supplied_code_owned_keys(
     assert ck["created"] != "1999-01-01T00:00:00Z"
 
 
+def test_cli_write_checkpoint_drops_model_claimed_source_ids(
+        tmp_checkpoint_dir, monkeypatch):
+    # #358, same discipline as #292/#295 one level down: the introspection
+    # path has NO transcript to validate against, so a model-claimed
+    # source_message_ids binding is unverifiable and must not persist.
+    from daimon_briefing import store
+
+    cp = json.loads(_valid_json("S-intro"))
+    cp["working_context"]["recent_decisions"] = [{
+        "text": "d", "trust": "verbatim", "quote": "some exact words",
+        "source_message_ids": ["m3", "uuid-fabricated"],
+    }]
+    _stdin(monkeypatch, json.dumps(cp))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest(project_dir="/p/A")
+    dec = ck["working_context"]["recent_decisions"][0]
+    assert "source_message_ids" not in dec
+
+
 def test_top_level_help_has_examples(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])

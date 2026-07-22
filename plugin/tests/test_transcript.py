@@ -202,6 +202,46 @@ def test_from_file_windsurf_cascade_noise_only_returns_empty(tmp_path):
     assert transcript.from_file(p) == []
 
 
+# ---- #358: per-message identity capture ----
+
+
+def test_from_file_claude_jsonl_binds_message_uuid_as_id(tmp_path):
+    # Claude Code rows carry a stable per-message `uuid` (field-verified on
+    # live transcripts) — bind it to the normalized message as `id` so
+    # verbatim items can anchor to the exact transcript entry their quote
+    # came from (#358).
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "aaa-111",
+         "message": {"role": "user", "content": "where did we leave off?"}},
+        {"type": "assistant", "uuid": "bbb-222",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "PR #10 merged."}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "user", "content": "where did we leave off?", "id": "aaa-111"},
+        {"role": "assistant", "content": "PR #10 merged.", "id": "bbb-222"},
+    ]
+
+
+def test_from_file_rows_without_usable_uuid_get_no_id_key(tmp_path):
+    # Hosts without a stable per-message id — and malformed uuid values — keep
+    # today's exact {"role", "content"} shape: no id key, so downstream falls
+    # back to whole-transcript quote scanning (#358). Windsurf Cascade and the
+    # Codex event stream are covered by their own strict-equality tests above.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": 42,
+         "message": {"role": "user", "content": "malformed uuid row"}},
+        {"type": "user", "uuid": "   ",
+         "message": {"role": "user", "content": "blank uuid row"}},
+        {"type": "user", "message": {"role": "user", "content": "no uuid row"}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "user", "content": "malformed uuid row"},
+        {"role": "user", "content": "blank uuid row"},
+        {"role": "user", "content": "no uuid row"},
+    ]
+
+
 def test_from_session_returns_empty_when_hermes_unavailable(monkeypatch):
     # Force the hermes import seam to fail; must degrade to [] not raise.
     monkeypatch.setattr(transcript, "_load_session_db", lambda: None)
