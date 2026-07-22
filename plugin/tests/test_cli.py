@@ -987,6 +987,91 @@ def test_cli_heal_noop_when_no_log(tmp_checkpoint_dir, tmp_log_dir, fake_chat_fa
     assert chat.calls == []
 
 
+# ---- #360: perspective-diverse escalation on the heal path (opt-in) ----
+
+
+def test_cli_heal_escalates_when_flag_on(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch
+):
+    # DAIMON_HEAL_ESCALATION=1: heal's re-serialize runs the escalation tier —
+    # one extraction pass per perspective plus the ordinary merge.
+    from daimon_briefing import serializer, store
+
+    stem = "sample_transcript"
+    transcript = FIXTURES / "sample_transcript.md"
+    _write_log(
+        tmp_log_dir,
+        [
+            f"2026-06-10T12:00:00Z session-end: spawned serialize for {stem} (reason: exit, project: /p/A)",
+            f"error: LLM call failed: bad temperature (transcript: {transcript}) after 1s",
+        ],
+    )
+    chat = fake_chat_factory([_valid_json()] * 4)  # 3 perspectives + 1 merge
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_HEAL_ESCALATION", "1")
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    # scar #8: merge-call count is hierarchical — pin K so 3 partials = 1 merge
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+
+    rc = cli.main(["heal"])
+    assert rc == 0
+    assert store.read_checkpoint(stem) is not None
+    assert len(chat.calls) == 4
+    for c in chat.calls[:3]:
+        assert "EXTRACTION PERSPECTIVE" in c["messages"][0]["content"]
+    assert chat.calls[3]["messages"][0]["content"] == serializer.MERGE_SYS
+
+
+def test_cli_heal_flag_off_stays_byte_identical(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch
+):
+    # Flag off (the default): heal keeps today's exact shape — one single-pass
+    # call under the plain serialize prompt, no perspective text anywhere.
+    from daimon_briefing import serializer, store
+
+    stem = "sample_transcript"
+    transcript = FIXTURES / "sample_transcript.md"
+    _write_log(
+        tmp_log_dir,
+        [
+            f"2026-06-10T12:00:00Z session-end: spawned serialize for {stem} (reason: exit, project: /p/A)",
+            f"error: LLM call failed: bad temperature (transcript: {transcript}) after 1s",
+        ],
+    )
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.delenv("DAIMON_HEAL_ESCALATION", raising=False)
+    monkeypatch.delenv("DAIMON_SCENE_TRACES", raising=False)
+
+    rc = cli.main(["heal"])
+    assert rc == 0
+    assert store.read_checkpoint(stem) is not None
+    assert len(chat.calls) == 1
+    assert chat.calls[0]["messages"][0]["content"] == serializer.SERIALIZE_SYS
+
+
+def test_cli_serialize_never_escalates_even_with_flag_on(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch
+):
+    # The trigger is heal-path ONLY: the session-end default (`daimon
+    # serialize`) never escalates, flag or no flag — token cost scales with
+    # failure, not usage.
+    from daimon_briefing import serializer
+
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_HEAL_ESCALATION", "1")
+    monkeypatch.delenv("DAIMON_SCENE_TRACES", raising=False)
+
+    rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
+    assert rc == 0
+    assert len(chat.calls) == 1
+    assert chat.calls[0]["messages"][0]["content"] == serializer.SERIALIZE_SYS
+
+
 # ---- #219: live progress indicator (render.working) around heal's re-serialize ----
 
 
@@ -2122,7 +2207,7 @@ def test_cmd_heal_real_serializes_target(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_heal_plan", lambda text, now, force=False: plan)
     monkeypatch.setattr(cli, "_append_retry_log", lambda *a, **k: None)
     seen = {}
-    monkeypatch.setattr(cli, "_run_serialize", lambda path, proj: seen.update(path=path, proj=proj) or 0)
+    monkeypatch.setattr(cli, "_run_serialize", lambda path, proj, escalate=False: seen.update(path=path, proj=proj) or 0)
 
     class A:
         dry_run = False
@@ -4332,7 +4417,7 @@ def test_heal_hung_target_does_not_crash(tmp_checkpoint_dir, tmp_log_dir, tmp_pa
         f"(project: /p/H) (transcript: {transcript})",
     ])
     ran = {}
-    monkeypatch.setattr(cli, "_run_serialize", lambda p, proj: ran.update(p=p) or 0)
+    monkeypatch.setattr(cli, "_run_serialize", lambda p, proj, escalate=False: ran.update(p=p) or 0)
     monkeypatch.setattr(cli.time, "time",
                         lambda: datetime(2026, 7, 3, 23, 0, 0, tzinfo=timezone.utc).timestamp())
     rc = cli.main(["heal"])
