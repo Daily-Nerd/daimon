@@ -498,6 +498,17 @@ def scene_traces_enabled() -> bool:
     return _flag("DAIMON_SCENE_TRACES")
 
 
+def worldcheck_enabled() -> bool:
+    """Opt-in (#365): brief-time spot-check of carried PR/issue-state claims
+    against reality via read-only `gh` probes. Default OFF (#318 flag
+    precedent): `daimon brief` runs on the SessionStart hook's latency-
+    critical injection path (8s subprocess budget inside a 10s hook budget),
+    and even budget-bounded network probes there must be deliberately chosen.
+    Flag off, the render path never touches the worldcheck module — output
+    stays byte-identical (test-pinned)."""
+    return _flag("DAIMON_WORLDCHECK")
+
+
 def heal_escalation_enabled() -> bool:
     """Opt-in (#360): `daimon heal` escalates its re-serialize to
     perspective-diverse extraction — N passes over the transcript from

@@ -47,6 +47,15 @@ def _cp(texts, carried=True, with_ids=True):
 
 
 @pytest.fixture
+def proj(tmp_path):
+    """A real directory to act as the project root — Popen(cwd=...) needs it
+    to exist (a nonexistent cwd is a spawn failure -> silent skip)."""
+    d = tmp_path / "projroot"
+    d.mkdir()
+    return str(d)
+
+
+@pytest.fixture
 def fake_gh(tmp_path):
     """Executable fake `gh` + its invocation log. `body` is the shell that
     produces stdout; every call appends its argv (and cwd) to the log."""
@@ -139,22 +148,22 @@ def test_claim_explicit_kind_wins_over_state_heuristic():
 # ---- check(): probes, budget, stamping --------------------------------------
 
 
-def test_check_confirmed_leaves_item_untouched(monkeypatch, fake_gh):
+def test_check_confirmed_leaves_item_untouched(monkeypatch, fake_gh, proj):
     gh, log = fake_gh("echo '{\"state\":\"OPEN\"}'")
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review"])
-    stats = worldcheck.check(cp, "/p/A")
+    stats = worldcheck.check(cp, proj)
     assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0}
     item = cp["working_context"]["open_questions"][0]
     assert "_worldcheck" not in item
     assert len(_calls(log)) == 1
 
 
-def test_check_contradicted_stamps_item(monkeypatch, fake_gh):
+def test_check_contradicted_stamps_item(monkeypatch, fake_gh, proj):
     gh, _log = fake_gh("echo '{\"state\":\"MERGED\",\"mergedAt\":\"2026-07-20T00:00:00Z\"}'")
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review"])
-    stats = worldcheck.check(cp, "/p/A")
+    stats = worldcheck.check(cp, proj)
     assert stats == {"confirmed": 0, "contradicted": 1, "skipped": 0}
     item = cp["working_context"]["open_questions"][0]
     assert item["_worldcheck"] == {"note": "#60 merged", "status": "merged"}
@@ -179,49 +188,49 @@ def test_check_no_github_remote_skips_without_probing(monkeypatch, fake_gh):
     assert _calls(log) == []
 
 
-def test_check_probe_failure_skips(monkeypatch, fake_gh):
+def test_check_probe_failure_skips(monkeypatch, fake_gh, proj):
     gh, _log = fake_gh("exit 1")
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review"])
-    stats = worldcheck.check(cp, "/p/A")
+    stats = worldcheck.check(cp, proj)
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1}
 
 
-def test_check_bad_json_skips(monkeypatch, fake_gh):
+def test_check_bad_json_skips(monkeypatch, fake_gh, proj):
     gh, _log = fake_gh("echo 'not json at all'")
     _enable_probes(monkeypatch, gh)
-    stats = worldcheck.check(_cp(["PR #60 awaiting review"]), "/p/A")
+    stats = worldcheck.check(_cp(["PR #60 awaiting review"]), proj)
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1}
 
 
-def test_check_unknown_state_vocabulary_skips(monkeypatch, fake_gh):
+def test_check_unknown_state_vocabulary_skips(monkeypatch, fake_gh, proj):
     # Only OPEN/CLOSED/MERGED may reach the rendered flag (the note rides
     # into briefing text — bounded vocabulary, not a passthrough).
     gh, _log = fake_gh("echo '{\"state\":\"WEIRD\"}'")
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review"])
-    stats = worldcheck.check(cp, "/p/A")
+    stats = worldcheck.check(cp, proj)
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1}
     assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
 
 
-def test_check_budget_kills_slow_probe(monkeypatch, fake_gh):
+def test_check_budget_kills_slow_probe(monkeypatch, fake_gh, proj):
     gh, _log = fake_gh("sleep 5\necho '{\"state\":\"OPEN\"}'")
     _enable_probes(monkeypatch, gh)
     monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 0.2)
     cp = _cp(["PR #60 awaiting review"])
     start = time.monotonic()
-    stats = worldcheck.check(cp, "/p/A")
+    stats = worldcheck.check(cp, proj)
     elapsed = time.monotonic() - start
     assert elapsed < 2.0  # never blocks anywhere near the hook budget
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1}
 
 
-def test_check_probe_cap(monkeypatch, fake_gh):
+def test_check_probe_cap(monkeypatch, fake_gh, proj):
     gh, log = fake_gh("echo '{\"state\":\"OPEN\"}'")
     _enable_probes(monkeypatch, gh)
     texts = [f"PR #{n} awaiting review" for n in range(101, 108)]  # 7 claims
-    stats = worldcheck.check(_cp(texts), "/p/A")
+    stats = worldcheck.check(_cp(texts), proj)
     assert len(_calls(log)) == worldcheck.MAX_PROBES == 5
     assert stats["confirmed"] == 5
     assert stats["skipped"] == 2
@@ -236,11 +245,11 @@ def test_check_non_carried_items_never_probed(monkeypatch, fake_gh):
     assert _calls(log) == []
 
 
-def test_check_dedup_same_ref_probes_once_stamps_all(monkeypatch, fake_gh):
+def test_check_dedup_same_ref_probes_once_stamps_all(monkeypatch, fake_gh, proj):
     gh, log = fake_gh("echo '{\"state\":\"MERGED\"}'")
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review", "PR #60 review pending on Omar"])
-    stats = worldcheck.check(cp, "/p/A")
+    stats = worldcheck.check(cp, proj)
     assert len(_calls(log)) == 1
     assert stats["contradicted"] == 2
     for item in cp["working_context"]["open_questions"]:
@@ -259,11 +268,11 @@ def test_check_probes_run_in_project_cwd(monkeypatch, fake_gh, tmp_path):
     assert cwd == str(project.resolve())
 
 
-def test_check_issue_claim_uses_issue_probe(monkeypatch, fake_gh):
+def test_check_issue_claim_uses_issue_probe(monkeypatch, fake_gh, proj):
     gh, log = fake_gh("echo '{\"state\":\"CLOSED\"}'")
     _enable_probes(monkeypatch, gh)
     cp = _cp(["issue #171 still open"])
-    stats = worldcheck.check(cp, "/p/A")
+    stats = worldcheck.check(cp, proj)
     assert stats["contradicted"] == 1
     assert "issue view 171" in _calls(log)[0]
     assert cp["working_context"]["open_questions"][0]["_worldcheck"]["note"] == "#171 closed"
@@ -366,11 +375,12 @@ def test_cli_brief_flag_off_never_probes(monkeypatch, tmp_path, capsys):
 
 
 def test_cli_brief_flag_on_flags_contradiction_and_counts(
-    monkeypatch, tmp_path, capsys, fake_gh
+    monkeypatch, tmp_path, capsys, fake_gh, proj
 ):
-    _write_claim_checkpoint()
+    # A real project dir: probes spawn with cwd=<project>, so it must exist.
+    _write_claim_checkpoint(project=proj)
     body = (
-        'case "$@" in\n'
+        'case "$*" in\n'
         "  *\"pr view 60\"*) echo '{\"state\":\"MERGED\"}' ;;\n"
         "  *) echo '{\"state\":\"OPEN\"}' ;;\n"
         "esac"
@@ -378,7 +388,7 @@ def test_cli_brief_flag_on_flags_contradiction_and_counts(
     gh, _log = fake_gh(body)
     _enable_probes(monkeypatch, gh)
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
-    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", proj)
     rc = cli.main(["brief"])
     assert rc == 0
     out = capsys.readouterr().out

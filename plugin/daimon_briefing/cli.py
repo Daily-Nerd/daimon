@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, schema, serializer, store, teamsync, transcript
+from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -524,14 +524,20 @@ def _team_briefings(project) -> list:
     return out
 
 
-def _render_briefing_body(checkpoint, route, *, drift_project, teammates) -> int:
-    """Shared tail of `brief` and `brief --slug`: withhold, drift, render,
-    footnotes. `route` is whatever the events ledger should be keyed by — a
-    project dir on the normal path, a bare slug on the --slug path (the store's
-    slug munging is idempotent, so a slug rides through project_dir-shaped
-    APIs unchanged; guarded by test_project_slug_is_idempotent_on_slugs).
+def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
+                          worldcheck_project=None) -> int:
+    """Shared tail of `brief` and `brief --slug`: withhold, worldcheck, drift,
+    render, footnotes. `route` is whatever the events ledger should be keyed
+    by — a project dir on the normal path, a bare slug on the --slug path (the
+    store's slug munging is idempotent, so a slug rides through
+    project_dir-shaped APIs unchanged; guarded by
+    test_project_slug_is_idempotent_on_slugs).
     `drift_project=None` skips the anchor drift check: anchor paths are
-    relative to the origin project's root, which a slug cannot recover."""
+    relative to the origin project's root, which a slug cannot recover.
+    `worldcheck_project=None` skips the #365 external-state spot-check for the
+    same reason drift skips: --slug and global-fallback briefs render ANOTHER
+    project's checkpoint, and `gh` probes resolve against THIS cwd's repo —
+    the wrong repo context for those claims."""
     withheld = []
     events = {}
     if checkpoint:
@@ -547,6 +553,21 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates) -> int
         except Exception:
             withheld = []
             events = {}
+    # Worldcheck (#365): opt-in, budget-bounded, read-only `gh` spot-check of
+    # carried PR/issue-state claims — stamps contradicted items on the
+    # IN-MEMORY checkpoint before render (transient, like withhold's
+    # candidate stamps; never persisted). Fail-open like withhold above: a
+    # briefing must never block or die on the network. Counters ride the
+    # same usage.log every other counter uses, so `daimon stats` surfaces
+    # the fires-true rate with zero extra machinery.
+    if checkpoint and worldcheck_project and config.worldcheck_enabled():
+        try:
+            wc_stats = worldcheck.check(checkpoint, worldcheck_project)
+            for outcome in ("confirmed", "contradicted", "skipped"):
+                for _ in range(int(wc_stats.get(outcome, 0))):
+                    _note_usage(f"worldcheck:{outcome}")
+        except Exception:
+            pass
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -643,8 +664,13 @@ def _cmd_brief(args) -> int:
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
     teammates = _team_briefings(project) if getattr(args, "team", False) else None
+    # #365: never worldcheck a fallback body — the global pointer may belong
+    # to ANOTHER project, and probing this cwd's repo against that
+    # checkpoint's claims answers for the wrong repo.
     return _render_briefing_body(checkpoint, project,
-                                 drift_project=project, teammates=teammates)
+                                 drift_project=project, teammates=teammates,
+                                 worldcheck_project=None if fallback_used
+                                 else project)
 
 
 # ---- recall: FTS search over local + team checkpoint history (#112) ----

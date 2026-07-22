@@ -204,6 +204,17 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
                     f"daimon resolve {item_id} --status superseded-by:{candidate}\n"
                     f"    reject: daimon reverify {item_id}\n",
                     style="yellow")
+            wc = i.get("_worldcheck")
+            if isinstance(wc, dict) and wc.get("note"):
+                # #365: parity with briefing._line's worldcheck flag, same
+                # repeated-here reasoning as the candidate block above.
+                flag = f"    ⚠ state changed since capture: {wc['note']}"
+                item_id = i.get("id")
+                if item_id:
+                    flag += (f" — confirm: daimon resolve {item_id} "
+                             f"--status {wc.get('status') or 'resolved'}\n"
+                             f"    reject: daimon reverify {item_id}")
+                body.append(flag + "\n", style="yellow")
         if key == "decisions":
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:
