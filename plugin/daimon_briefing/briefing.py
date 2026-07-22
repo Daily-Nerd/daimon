@@ -81,6 +81,23 @@ def _line(item, degraded: bool = False) -> str:
         base += (f"\n  ⚠ likely superseded by {candidate} — confirm: "
                  f"daimon resolve {item_id} --status superseded-by:{candidate}"
                  f"\n    reject: daimon reverify {item_id}")
+    wc = item.get("_worldcheck")
+    if isinstance(wc, dict) and wc.get("note"):
+        # #365: worldcheck contradiction — the world moved off-session. Same
+        # philosophy as the #14 candidate flag above (a machine observation
+        # is surfaced, never suppressed), reusing the same resolve/reverify
+        # confirm/reject command surface. The note/status vocabulary is
+        # bounded at the stamp site (worldcheck._KNOWN_STATES), so nothing
+        # free-form rides into this line. ADDED lines only — the pinned
+        # prefix above never changes.
+        base += f"\n  ⚠ state changed since capture: {wc['note']}"
+        item_id = item.get("id")
+        if item_id:
+            # Confirming writes a human resolution event (source=cli), which
+            # withholds the item from future briefs; rejecting keeps it live.
+            base += (f" — confirm: daimon resolve {item_id} "
+                     f"--status {wc.get('status') or 'resolved'}"
+                     f"\n    reject: daimon reverify {item_id}")
     return base
 
 
