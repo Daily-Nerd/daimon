@@ -34,10 +34,13 @@ log = logging.getLogger(__name__)
 # D-013 -> D-014 (#287: external-artifact identifier rule — "issue #5"
 # without a repo is half a pointer; capture the most specific identifier
 # the transcript states, never invent one).
+# D-014 -> D-015 (#358: verbatim items bind to source transcript message ids;
+# the bump also rotates the #48 chunk-cache key so pre-#358 cached
+# extractions, which carry no ids, can never satisfy a post-#358 request).
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-014"
+PROMPT_VERSION = "D-015"
 
 
 class SerializeError(Exception):
@@ -158,6 +161,14 @@ RULES — follow every one exactly; this is the point of the exercise:
     this rule is about `text`). Never invent an identifier the transcript does not contain;
     if only a vague name was ever stated, keep the vague name.
 
+19. SOURCE MESSAGE IDS: transcript messages may be prefixed with a bracketed marker such as
+    [m12] identifying that message. For every trust="verbatim" item, add
+    "source_message_ids": ["m12"] — the marker id(s) of the exact message(s) the `quote` was
+    copied from, normally exactly one. Copy the id from the marker exactly, without the
+    brackets. Item shapes gain this one optional key; inferred items never carry it. If the
+    transcript shows no [mN] markers, or you cannot tell exactly which message the quote came
+    from, omit the field entirely — never guess or invent an id.
+
 Schema shape:
 {
   "session_id": "<id>",
@@ -273,6 +284,11 @@ MERGE RULES — follow every one exactly:
     item's `links` is the union of both items' links (dedupe identical {type, target} pairs)
     so neither side's links are lost.
 
+14. SOURCE MESSAGE IDS: an item's optional "source_message_ids" array travels WITH its quote:
+    the canonical item keeps the ids of the version whose quote it keeps. Never invent ids,
+    never alter them, and never move them onto an item with a different quote. Preserve them
+    like `links` — dropping them loses provenance.
+
 Schema shape:
 {
   "session_id": "<id>",
@@ -312,17 +328,64 @@ def chunk_transcript(text: str, chunk_lines: int, overlap_lines: int) -> list[st
     return chunks
 
 
+def _message_text(m) -> str:
+    content = m.get("content", "")
+    if isinstance(content, list):  # tool/multipart content -> flatten text parts
+        content = " ".join(
+            p.get("text", "") for p in content if isinstance(p, dict)
+        )
+    return content
+
+
+def _message_id(m) -> str | None:
+    """The host-stable per-message id transcript.py attached (#358), or None."""
+    if not isinstance(m, dict):
+        return None
+    mid = m.get("id")
+    if isinstance(mid, str) and mid.strip():
+        return mid.strip()
+    return None
+
+
 def _render_transcript(messages) -> str:
     lines = []
-    for m in messages:
+    for i, m in enumerate(messages):
         role = m.get("role", "unknown")
-        content = m.get("content", "")
-        if isinstance(content, list):  # tool/multipart content -> flatten text parts
-            content = " ".join(
-                p.get("text", "") for p in content if isinstance(p, dict)
-            )
-        lines.append(f"{role}: {content}")
+        content = _message_text(m)
+        # #358: a bracketed [mN] marker names an identified message so the
+        # extractor can cite where each verbatim quote came from. Id-less
+        # messages (hosts without stable ids) render byte-identical to the
+        # pre-#358 format — no marker, no behavior change.
+        if _message_id(m) is not None:
+            lines.append(f"[m{i + 1}] {role}: {content}")
+        else:
+            lines.append(f"{role}: {content}")
     return "\n\n".join(lines)
+
+
+def message_id_map(messages) -> dict[str, str]:
+    """Rendered marker ("m3") -> host message id, for messages carrying one.
+
+    Positional 1-based numbering over the FULL message list, matching the
+    markers _render_transcript emits — stable under transcript growth for the
+    unchanged prefix, which is what lets #48 cached chunk extractions keep
+    citing valid markers."""
+    out: dict[str, str] = {}
+    for i, m in enumerate(messages or []):
+        mid = _message_id(m)
+        if mid is not None:
+            out[f"m{i + 1}"] = mid
+    return out
+
+
+def message_texts_by_id(messages) -> dict[str, str]:
+    """Host message id -> flattened message text, for id-scoped quote checks."""
+    out: dict[str, str] = {}
+    for m in messages or []:
+        mid = _message_id(m)
+        if mid is not None:
+            out[mid] = _message_text(m)
+    return out
 
 
 def _valid_item(item) -> bool:
@@ -441,6 +504,80 @@ def validate(checkpoint) -> bool:
     return True
 
 
+# ---- #358: verbatim items bind to transcript message ids ----
+#
+# Capture-time binding: the extractor cites, per verbatim item, the [mN]
+# marker of the message its quote came from (rule 19). The parse boundary
+# below translates markers to host ids and drops anything the actual
+# transcript cannot vouch for — the same code-owned-key discipline as
+# #292/#295, one level down: the model proposes, only ids the code resolved
+# survive. Ids ride inside the item payload, so receipts cover them with no
+# receipt-machinery change.
+
+SOURCE_IDS_KEY = "source_message_ids"
+
+
+def sanitize_source_ids(checkpoint, id_map) -> None:
+    """Validate model-emitted source message ids in place (#358).
+
+    `id_map` maps rendered markers ("m3") to host message ids
+    (message_id_map). Per item: a bare string becomes a one-entry list;
+    marker entries (brackets tolerated) translate to their host id; entries
+    already equal to a known host id pass through (merged/cached partials);
+    everything else — unknown ids, non-strings, ids on inferred or
+    quote-less items — is dropped, and the key is removed when nothing valid
+    remains. Same never-fatal philosophy as sanitize_importance: an advisory
+    field must never fail a serialize. Callers with no transcript to
+    validate against (cli's #23 write-checkpoint path) pass {} — every
+    claimed binding drops."""
+    id_map = id_map or {}
+    known_hosts = set(id_map.values())
+    for item in iter_items(checkpoint):
+        if SOURCE_IDS_KEY not in item:
+            continue
+        raw = item[SOURCE_IDS_KEY]
+        if isinstance(raw, str):
+            raw = [raw]
+        out: list[str] = []
+        quote = item.get("quote")
+        bindable = (item.get("trust") == "verbatim"
+                    and isinstance(quote, str) and quote.strip())
+        if bindable and isinstance(raw, list):
+            for entry in raw:
+                if not isinstance(entry, str):
+                    continue
+                marker = entry.strip().strip("[]")
+                host = id_map.get(marker)
+                if host is None and entry.strip() in known_hosts:
+                    host = entry.strip()
+                if host is not None and host not in out:
+                    out.append(host)
+        if out:
+            item[SOURCE_IDS_KEY] = out
+        else:
+            del item[SOURCE_IDS_KEY]
+
+
+def scoped_haystack(item, texts_by_id) -> str | None:
+    """The id-scoped haystack for an item's bound message(s), or None.
+
+    None means "no usable binding" — ids absent, or ANY cited id missing from
+    `texts_by_id` (old checkpoints, moved/truncated transcripts, carried
+    items from another session) — and the caller falls back to the
+    whole-transcript scan, exactly today's behavior. An unresolvable id is
+    not a disproven one."""
+    ids = item.get(SOURCE_IDS_KEY) if isinstance(item, dict) else None
+    if not (isinstance(ids, list) and ids and texts_by_id):
+        return None
+    parts = []
+    for mid in ids:
+        text = texts_by_id.get(mid) if isinstance(mid, str) else None
+        if text is None:
+            return None
+        parts.append(text)
+    return "\n\n".join(parts)
+
+
 # ---- #125: deterministic verbatim-quote verification ----
 #
 # The `verbatim` trust class promises the quote appears in the transcript, but
@@ -522,7 +659,7 @@ def quote_matches(quote, haystack) -> bool:
     return True
 
 
-def verify_quotes(checkpoint, transcript_text: str) -> int:
+def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
     place (#125). On a hit the item gets `quote_verified: true` AND a
     `last_verified` ISO-8601 UTC stamp (#215: the staleness-budget's freshest
@@ -535,17 +672,28 @@ def verify_quotes(checkpoint, transcript_text: str) -> int:
     (a quote whose secret redaction will later mask still verifies here
     against the raw rendered text). Returns the downgrade count.
 
+    #358: when `messages` is given, an item bound to source message id(s) is
+    checked against JUST those messages first — resolve id, compare bytes. A
+    scoped hit keeps the binding; a scoped MISS falls back to the
+    whole-transcript scan so the verdict is byte-identical to today's, but a
+    real-quote-in-the-wrong-message binding (scar #10's item-identity
+    ambiguity, disproven direction) is dropped rather than stored as false
+    provenance. Unresolvable ids (not in `messages`) are not disproven —
+    fallback rules, binding left alone. Without `messages` (legacy two-arg
+    callers) bindings are neither used nor touched.
+
     `last_verified` is checkpoint-append-only by design (#215): it is stamped
     ONLY here, at serialize time. No other code path may rewrite it — user
     resolve/reverify actions live in events.jsonl and are folded in at READ
     time (briefing.stale_carried), never written back onto the item.
 
     No injected `now` here (unlike briefing.build's now=None idiom): this
-    function's existing two-positional-arg signature is called from exactly
-    one site (serialize_strict, itself not now-aware), and datetime.now(...)
-    inline matches store.append_event's own stamping idiom (store.py) rather
-    than threading a new param through a call chain that has no other use
-    for it."""
+    function's signature is called from exactly one production site
+    (serialize_strict, itself not now-aware), and datetime.now(...) inline
+    matches store.append_event's own stamping idiom (store.py) rather than
+    threading a new param through a call chain that has no other use for
+    it."""
+    texts_by_id = message_texts_by_id(messages) if messages else {}
     downgraded = 0
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
@@ -553,13 +701,28 @@ def verify_quotes(checkpoint, transcript_text: str) -> int:
         quote = item.get("quote")
         if not isinstance(quote, str) or not quote.strip():
             continue
-        if quote_matches(quote, transcript_text):
+        scoped = scoped_haystack(item, texts_by_id)
+        if scoped is not None and quote_matches(quote, scoped):
+            item["quote_verified"] = True
+            item["last_verified"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+        elif quote_matches(quote, transcript_text):
+            if scoped is not None:
+                # Resolved AND mismatched: the quote is real but not in its
+                # cited message — drop the disproven binding, keep the
+                # pre-#358 verdict.
+                item.pop(SOURCE_IDS_KEY, None)
+                log.warning("quote verification: quote not found in its cited "
+                            "message(s) — binding dropped, verified via "
+                            "whole-transcript scan (#358)")
             item["quote_verified"] = True
             item["last_verified"] = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
         else:
             item["trust"] = "inferred"
             item["quote_verified"] = False
+            # A downgraded quote is not evidence; a binding for it is noise.
+            item.pop(SOURCE_IDS_KEY, None)
             downgraded += 1
             # Log-line-only scrub: item ids are not stamped until store-save,
             # so the text is the only diagnostic handle here. The item itself
@@ -1024,11 +1187,17 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None) -> dic
         )
     sanitize_importance(checkpoint)
     sanitize_scene(checkpoint)
+    # #358: translate cited [mN] markers to host message ids and drop any id
+    # the transcript cannot vouch for — BEFORE verification, so verify_quotes
+    # only ever sees code-validated bindings.
+    sanitize_source_ids(checkpoint, message_id_map(messages))
     # #125: verify verbatim quotes against the SAME rendered text the extractor
     # read, PRE-redaction (redaction runs later in write_checkpoint and would
     # otherwise mass-downgrade legitimate quotes it had masked). Verify once,
-    # stamp the verdict — the briefing never re-greps.
-    verify_quotes(checkpoint, transcript_text)
+    # stamp the verdict — the briefing never re-greps. #358: items with a
+    # validated binding resolve their id and compare bytes against just that
+    # message, whole-transcript scan as fallback.
+    verify_quotes(checkpoint, transcript_text, messages)
     # #230: stamp provenance last, immediately before hand-off to store/write —
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.

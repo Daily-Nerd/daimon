@@ -756,15 +756,18 @@ def test_validation_retry_note_restates_copy_paste_contract(
     assert "elisions marked with `...`" in second
 
 
-def test_prompt_version_is_d014():
+def test_prompt_version_is_d015():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
     # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
     # transcript-language preservation rule). D-012 -> D-013 (#208: verbatim
     # quote copy-paste discipline rule). D-013 -> D-014 (#287: external-
-    # artifact identifier rule). Pre-bump checkpoints firing the
-    # format_version mismatch warning (#93) is DESIRED behavior.
-    assert serializer.PROMPT_VERSION == "D-014"
+    # artifact identifier rule). D-014 -> D-015 (#358: verbatim items bind
+    # to source transcript message ids). Pre-bump checkpoints firing the
+    # format_version mismatch warning (#93) is DESIRED behavior. The bump
+    # also rotates the #48 chunk-cache key, so pre-#358 cached extractions
+    # (no ids) can never satisfy a post-#358 request.
+    assert serializer.PROMPT_VERSION == "D-015"
 
 
 def test_prompts_preserve_transcript_language():
@@ -1609,3 +1612,184 @@ def test_sanitize_scene_runs_even_with_flag_off(fake_chat_factory, monkeypatch):
     chat = fake_chat_factory(json.dumps(cp))
     ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
     assert "scene" not in ckpt["working_context"]["open_questions"][0]
+
+
+# ---- #358: verbatim items bind to transcript message ids ----
+#
+# Capture-time binding: hosts whose transcripts carry a stable per-message id
+# (Claude Code JSONL `uuid`) render each identified message with a bracketed
+# [mN] marker; the extractor cites the marker per verbatim item; the parse
+# boundary translates markers to host ids and drops anything that does not
+# resolve against the actual transcript (same code-owned-key discipline as
+# #292/#295, one level down). Hosts without ids render byte-identical to the
+# pre-#358 format and keep whole-transcript scanning.
+
+
+def _msgs_with_ids(n=6):
+    out = []
+    for i in range(n):
+        role = "user" if i % 2 == 0 else "assistant"
+        out.append({"role": role, "content": f"line {i} from {role}",
+                    "id": f"uuid-{i}"})
+    return out
+
+
+def test_render_transcript_without_ids_is_byte_identical_to_today():
+    msgs = [{"role": "user", "content": "hola"},
+            {"role": "assistant", "content": "todo bien"}]
+    assert serializer._render_transcript(msgs) == (
+        "user: hola\n\nassistant: todo bien")
+
+
+def test_render_transcript_prefixes_markers_only_for_id_messages():
+    msgs = [{"role": "user", "content": "first", "id": "uuid-a"},
+            {"role": "assistant", "content": "second"},
+            {"role": "user", "content": "third", "id": "uuid-c"}]
+    assert serializer._render_transcript(msgs) == (
+        "[m1] user: first\n\nassistant: second\n\n[m3] user: third")
+
+
+def test_message_id_map_maps_markers_to_host_ids():
+    msgs = [{"role": "user", "content": "first", "id": "uuid-a"},
+            {"role": "assistant", "content": "second"},
+            {"role": "user", "content": "third", "id": " uuid-c "}]
+    assert serializer.message_id_map(msgs) == {"m1": "uuid-a", "m3": "uuid-c"}
+    assert serializer.message_id_map([]) == {}
+    assert serializer.message_id_map(None) == {}
+
+
+def test_prompts_carry_source_message_id_rule():
+    # Always-on (no flag): the prompts are content-pinned, not byte-pinned, so
+    # the rule ships unconditionally. Both prompts must know the key — merge
+    # re-emits items and would silently drop the binding otherwise.
+    assert "SOURCE MESSAGE IDS" in serializer.SERIALIZE_SYS
+    assert '"source_message_ids"' in serializer.SERIALIZE_SYS
+    assert "SOURCE MESSAGE IDS" in serializer.MERGE_SYS
+    assert '"source_message_ids"' in serializer.MERGE_SYS
+
+
+def _cp_one_decision(item):
+    return {
+        "session_id": "S1",
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [item],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [], "uncertainties": [],
+            "contradictions_flagged": [],
+        },
+    }
+
+
+def test_sanitize_source_ids_translates_marker_to_host_id():
+    cp = _cp_one_decision({"text": "d", "trust": "verbatim",
+                           "quote": "line 3 from assistant",
+                           "source_message_ids": ["m4"]})
+    serializer.sanitize_source_ids(cp, {"m4": "uuid-3"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["source_message_ids"] == ["uuid-3"]
+
+
+def test_sanitize_source_ids_accepts_bare_string_and_bracketed_marker():
+    # Models reflow "[m4]" or emit a bare string instead of a list — both
+    # normalize instead of losing the binding.
+    for raw in ("m4", "[m4]", ["[m4]"]):
+        cp = _cp_one_decision({"text": "d", "trust": "verbatim",
+                               "quote": "line 3 from assistant",
+                               "source_message_ids": raw})
+        serializer.sanitize_source_ids(cp, {"m4": "uuid-3"})
+        item = cp["working_context"]["recent_decisions"][0]
+        assert item["source_message_ids"] == ["uuid-3"], raw
+
+
+def test_sanitize_source_ids_drops_unknown_ids_and_garbage():
+    # An id the transcript cannot vouch for is an invented id — parse boundary
+    # drops it; nothing valid left removes the key entirely.
+    cp = _cp_one_decision({"text": "d", "trust": "verbatim",
+                           "quote": "line 3 from assistant",
+                           "source_message_ids": ["m99", 7, None, {"m": 1}]})
+    serializer.sanitize_source_ids(cp, {"m4": "uuid-3"})
+    assert "source_message_ids" not in cp["working_context"]["recent_decisions"][0]
+
+
+def test_sanitize_source_ids_passes_through_known_host_ids():
+    # A merged/cached partial can already carry the translated host id — it is
+    # still validated against the transcript's actual ids, then kept.
+    cp = _cp_one_decision({"text": "d", "trust": "verbatim",
+                           "quote": "line 3 from assistant",
+                           "source_message_ids": ["uuid-3", "uuid-3"]})
+    serializer.sanitize_source_ids(cp, {"m4": "uuid-3"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["source_message_ids"] == ["uuid-3"]  # deduped, validated
+
+
+def test_sanitize_source_ids_drops_key_on_inferred_items():
+    # Binding rides the verbatim quote; an inferred item has no quote to bind.
+    cp = _cp_one_decision({"text": "d", "trust": "inferred",
+                           "source_message_ids": ["m4"]})
+    serializer.sanitize_source_ids(cp, {"m4": "uuid-3"})
+    assert "source_message_ids" not in cp["working_context"]["recent_decisions"][0]
+
+
+def test_sanitize_source_ids_with_empty_map_drops_everything():
+    # The #23 introspection path (cli write-checkpoint) has no transcript: no
+    # model-claimed binding is validatable, so all of them go.
+    cp = _cp_one_decision({"text": "d", "trust": "verbatim",
+                           "quote": "line 3 from assistant",
+                           "source_message_ids": ["m4", "uuid-3"]})
+    serializer.sanitize_source_ids(cp, {})
+    assert "source_message_ids" not in cp["working_context"]["recent_decisions"][0]
+
+
+def _decision_checkpoint_json(item):
+    return json.dumps(_cp_one_decision(item))
+
+
+def test_serialize_strict_stores_host_ids_for_cited_marker(
+        fake_chat_factory, monkeypatch):
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory(_decision_checkpoint_json(
+        {"text": "d", "trust": "verbatim", "quote": "line 3 from assistant",
+         "source_message_ids": ["m4"]}))
+    out = serializer.serialize_strict("S1", _msgs_with_ids(6), chat=chat)
+    item = out["working_context"]["recent_decisions"][0]
+    assert item["source_message_ids"] == ["uuid-3"]  # marker -> host id
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+    # The extractor actually saw the marker it was asked to cite.
+    sent = chat.calls[0]["messages"][1]["content"]
+    assert "[m4] assistant: line 3 from assistant" in sent
+
+
+def test_serialize_strict_drops_invented_marker_and_falls_back(
+        fake_chat_factory, monkeypatch):
+    # Model cites a marker that does not exist: the binding dies at the parse
+    # boundary and verification falls back to the whole-transcript scan —
+    # exactly today's behavior, verdict included.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory(_decision_checkpoint_json(
+        {"text": "d", "trust": "verbatim", "quote": "line 3 from assistant",
+         "source_message_ids": ["m99"]}))
+    out = serializer.serialize_strict("S1", _msgs_with_ids(6), chat=chat)
+    item = out["working_context"]["recent_decisions"][0]
+    assert "source_message_ids" not in item
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+
+
+def test_serialize_strict_idless_host_stays_on_todays_path(
+        fake_chat_factory, monkeypatch):
+    # Hosts without per-message ids (Windsurf, Codex, markdown): no markers in
+    # the rendered prompt, and a hallucinated citation cannot survive.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory(_decision_checkpoint_json(
+        {"text": "d", "trust": "verbatim", "quote": "line 3 from assistant",
+         "source_message_ids": ["m2"]}))
+    out = serializer.serialize_strict("S1", make_messages(6), chat=chat)
+    sent = chat.calls[0]["messages"][1]["content"]
+    assert "[m" not in sent  # rendered transcript is marker-free
+    item = out["working_context"]["recent_decisions"][0]
+    assert "source_message_ids" not in item
+    assert item["quote_verified"] is True

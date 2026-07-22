@@ -276,6 +276,39 @@ def test_verbatim_identical_twin_survives_byte_identical():
     assert qs[0]["trust"] == "verbatim"
 
 
+def test_verbatim_freeze_source_ids_travel_with_quote():
+    # #358: source_message_ids ride the same rail as quote_verified — the
+    # binding attests THIS quote's origin message. When the freeze overwrites
+    # the twin's quote with prev's pinned original, the twin's own ids would
+    # bind prev's quote to the wrong turn; prev's ids replace them.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45,
+        source_message_ids=["u-orig"])])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, days=0, trust="verbatim", quote="different exact words",
+        source_message_ids=["u-new"])])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["quote"] == _VERB_QUOTE
+    assert qs[0]["source_message_ids"] == ["u-orig"]
+
+
+def test_verbatim_freeze_pops_twin_ids_when_prev_has_none():
+    # Prev pinned quote without a binding (pre-#358 checkpoint): the twin's
+    # own ids must not survive attached to a quote they never described.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, days=0, trust="verbatim", quote="different exact words",
+        source_message_ids=["u-new"])])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["quote"] == _VERB_QUOTE
+    assert "source_message_ids" not in qs[0]
+
+
 def test_verbatim_freeze_inherits_older_first_seen():
     # first_seen birth-stamp inheritance still works on the freeze path: the
     # native twin has a NEWER stamp; the older prev original stamp must win,

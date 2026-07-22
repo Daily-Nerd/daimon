@@ -6,7 +6,13 @@
    transcript; anything else as plain text/markdown. Includes a dedicated
    branch for Windsurf Cascade's native transcript (#70).
 
-All messages normalize to OpenAI-format dicts: {"role": str, "content": str}.
+All messages normalize to OpenAI-format dicts: {"role": str, "content": str},
+plus an optional "id" (#358) when the host row carries a stable per-message
+identifier (Claude Code JSONL `uuid`). Hosts without one — Windsurf Cascade's
+native rows ({type, status, payload}, field-confirmed #70), the Codex event
+stream (payload is just {type, message}), hermes SessionDB, markdown/plain
+text — keep the exact two-key shape, and downstream quote verification falls
+back to whole-transcript scanning.
 """
 
 import hashlib
@@ -144,7 +150,16 @@ def _from_jsonl(text: str) -> list[dict]:
             continue
         content = _content_of(obj)
         if content:
-            messages.append({"role": role, "content": content})
+            msg = {"role": role, "content": content}
+            # #358: Claude Code rows carry a stable per-message `uuid` —
+            # keep it as the message id so verbatim items can bind to the
+            # exact transcript entry their quote came from. A discriminating
+            # FIELD, not a row shape (deadend #20): rows without a usable
+            # string uuid keep the exact two-key shape.
+            mid = obj.get("uuid")
+            if isinstance(mid, str) and mid.strip():
+                msg["id"] = mid.strip()
+            messages.append(msg)
     return messages
 
 

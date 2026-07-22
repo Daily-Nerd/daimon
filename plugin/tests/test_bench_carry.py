@@ -41,8 +41,13 @@ class CarryChat:
 
     def __call__(self, messages, **kwargs):
         self.calls += 1
-        blob = " ".join(str(m.get("content") or "") for m in messages)
-        marker = next((w for w in blob.split() if w.endswith("marker")), "nomarker")
+        # Transcript turns only — the SYSTEM prompt is instructions, not
+        # haystack, and since #358 it legitimately contains the word "marker"
+        # (rule 19's [mN] source-id markers), which this scan must not key on.
+        blob = " ".join(str(m.get("content") or "") for m in messages
+                        if m.get("role") != "system")
+        marker = next((w for w in blob.split()
+                       if w.endswith("marker") and w != "marker"), "nomarker")
         return json.dumps({
             "session_id": "ignored",
             "working_context": {

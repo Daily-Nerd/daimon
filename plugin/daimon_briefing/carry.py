@@ -267,6 +267,16 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                     twin["text"] = item["text"]
                     if item.get("quote"):
                         twin["quote"] = item["quote"]
+                        # source_message_ids travel WITH the quote (#358),
+                        # same rail as quote_verified below: a binding
+                        # attests THIS quote's origin message. The twin's
+                        # own ids described its now-replaced quote — keeping
+                        # them would bind prev's quote to the wrong turn.
+                        if item.get("source_message_ids"):
+                            twin["source_message_ids"] = (
+                                item["source_message_ids"])
+                        else:
+                            twin.pop("source_message_ids", None)
                         # quote_verified travels WITH the quote (#167): the
                         # native's verdict attested its own (now replaced)
                         # quote — keeping it would stamp "verified" on a quote

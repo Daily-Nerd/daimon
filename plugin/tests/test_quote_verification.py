@@ -271,6 +271,87 @@ def test_verify_quotes_does_not_stamp_last_verified_for_inferred_items():
     assert "last_verified" not in cp["working_context"]["recent_decisions"][0]
 
 
+# ---- #358: id-scoped verification with whole-transcript fallback ----
+
+_ID_MSGS = [
+    {"role": "user", "content": "we adopt the D-007 prompt", "id": "u-1"},
+    {"role": "assistant", "content": "understood, cache stays keyed", "id": "a-2"},
+]
+
+
+def test_verify_quotes_id_scoped_hit_keeps_binding_and_stamps():
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt",
+         "source_message_ids": ["u-1"]}]})
+    n = serializer.verify_quotes(
+        cp, serializer._render_transcript(_ID_MSGS), _ID_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["quote_verified"] is True
+    assert item["source_message_ids"] == ["u-1"]  # binding survives
+    assert "last_verified" in item
+
+
+def test_verify_quotes_wrong_binding_falls_back_and_drops_ids(caplog):
+    # Scar #10's ambiguity, disproven direction: the quote is real but it
+    # lives in u-1, not the cited a-2. Verdict stays exactly today's (the
+    # whole-transcript scan verifies it) but the false binding must die.
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt",
+         "source_message_ids": ["a-2"]}]})
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.serializer"):
+        n = serializer.verify_quotes(
+            cp, serializer._render_transcript(_ID_MSGS), _ID_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+    assert "source_message_ids" not in item
+    assert any("cited message" in r.getMessage() for r in caplog.records)
+
+
+def test_verify_quotes_miss_downgrades_and_drops_ids():
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim",
+         "quote": "this exact sentence is nowhere in the transcript at all",
+         "source_message_ids": ["u-1"]}]})
+    n = serializer.verify_quotes(
+        cp, serializer._render_transcript(_ID_MSGS), _ID_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert "source_message_ids" not in item  # nothing left worth binding
+
+
+def test_verify_quotes_unresolvable_id_falls_back_and_keeps_ids():
+    # An id that does not resolve (old checkpoint against a rewritten
+    # transcript, carried item from another session) is NOT disproven — the
+    # whole-transcript fallback rules, today's behavior byte-for-byte, and
+    # the binding is left alone for a future audit with the right transcript.
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt",
+         "source_message_ids": ["ghost-9"]}]})
+    n = serializer.verify_quotes(
+        cp, serializer._render_transcript(_ID_MSGS), _ID_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["quote_verified"] is True
+    assert item["source_message_ids"] == ["ghost-9"]
+
+
+def test_verify_quotes_two_arg_call_ignores_bindings():
+    # Without messages the function must behave exactly as before #358 —
+    # bindings are neither used nor touched.
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt",
+         "source_message_ids": ["u-1"]}]})
+    n = serializer.verify_quotes(cp, "assistant: adopt the D-007 prompt today")
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["quote_verified"] is True
+    assert item["source_message_ids"] == ["u-1"]
+
+
 # ---- Unit C: serialize_strict integration ----
 
 def _script(items):
@@ -575,3 +656,63 @@ def test_audit_quotes_all_flag_spans_projects(
     assert "2" in all_out  # both checkpoints scanned under --all
     # sanity: the two runs differ (default is narrower)
     assert default_out != all_out
+
+
+# ---- #358: audit resolves stored message-id bindings before scanning ----
+
+
+def _write_id_transcript(projects_dir, slug, session_id, turns):
+    # Claude Code-shaped rows: per-message uuid rides to messages as `id`.
+    d = projects_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"role": r, "content": c, "uuid": u})
+             for r, c, u in turns]
+    (d / f"{session_id}.jsonl").write_text("\n".join(lines) + "\n",
+                                           encoding="utf-8")
+
+
+def test_audit_quotes_resolves_bound_ids(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_id_transcript(_projects_dir, slug, "SA", [
+        ("user", "we adopt the D-007 prompt for the serializer", "u-111"),
+        ("assistant", "understood, wiring it now", "a-222"),
+    ])
+    cp = _stored_checkpoint("SA", slug, [
+        {"text": "bound decision", "trust": "verbatim",
+         "quote": "adopt the D-007 prompt for the serializer",
+         "source_message_ids": ["u-111"], "id": "d-aaa"},
+    ])
+    store.write_checkpoint("SA", cp, project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "id-resolved: 1" in out
+    assert "verified: 1" in out
+
+
+def test_audit_quotes_stale_id_falls_back_to_whole_scan(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    # An id the current transcript no longer carries (moved/truncated/old
+    # checkpoint) must not fail the item — the whole-transcript scan is the
+    # fallback and its verdict is today's verdict.
+    slug = store.project_slug("/p/A")
+    _write_id_transcript(_projects_dir, slug, "SA", [
+        ("user", "we adopt the D-007 prompt for the serializer", "u-111"),
+    ])
+    cp = _stored_checkpoint("SA", slug, [
+        {"text": "stale binding decision", "trust": "verbatim",
+         "quote": "adopt the D-007 prompt for the serializer",
+         "source_message_ids": ["gone-999"], "id": "d-bbb"},
+    ])
+    store.write_checkpoint("SA", cp, project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "id-resolved: 0" in out
+    assert "verified: 1" in out
+    assert "failed: 0" in out
