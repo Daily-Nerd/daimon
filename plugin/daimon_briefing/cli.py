@@ -434,6 +434,10 @@ def _cmd_write_checkpoint(args) -> int:
     # same spoofing risk serialize_strict guards against, since validate()
     # never inspects top-level keys.
     serializer.strip_code_owned_keys(checkpoint)
+    # #358, same discipline one level down: with no transcript here, no
+    # model-claimed source_message_ids binding is validatable — drop them all
+    # (empty id map = nothing the code can vouch for).
+    serializer.sanitize_source_ids(checkpoint, {})
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))
@@ -1523,7 +1527,7 @@ def _cmd_audit_quotes(args) -> int:
         files = store._session_files(d)
     except OSError:
         files = []
-    scanned = paired = unpaired = items = verified = failed = 0
+    scanned = paired = unpaired = items = verified = failed = id_resolved = 0
     failures: list[tuple[str, str]] = []
     for f in sorted(files):
         try:
@@ -1539,9 +1543,12 @@ def _cmd_audit_quotes(args) -> int:
         session_id = str(cp.get("session_id") or f.stem)
         tpath = _find_audit_transcript(session_id, slug)
         haystack = None
+        texts_by_id = {}
         if tpath is not None:
             try:
-                haystack = serializer._render_transcript(transcript.from_file(tpath))
+                msgs = transcript.from_file(tpath)
+                haystack = serializer._render_transcript(msgs)
+                texts_by_id = serializer.message_texts_by_id(msgs)
             except (OSError, FileNotFoundError):
                 haystack = None
         if haystack is None:
@@ -1555,7 +1562,15 @@ def _cmd_audit_quotes(args) -> int:
             if not isinstance(quote, str) or not quote.strip():
                 continue
             items += 1
-            if serializer.quote_matches(quote, haystack):
+            # #358: an item bound to source message id(s) resolves the id and
+            # compares bytes against just that message. Missing/invalid ids
+            # (old checkpoints, moved/truncated transcripts) fall back to the
+            # whole-transcript scan — the pre-#358 verdict, byte-identical.
+            scoped = serializer.scoped_haystack(item, texts_by_id)
+            if scoped is not None and serializer.quote_matches(quote, scoped):
+                verified += 1
+                id_resolved += 1
+            elif serializer.quote_matches(quote, haystack):
                 verified += 1
             else:
                 failed += 1
@@ -1566,7 +1581,7 @@ def _cmd_audit_quotes(args) -> int:
         f"audit-quotes ({scope})",
         f"  checkpoints scanned: {scanned}  paired: {paired}  unpaired: {unpaired}",
         f"  verbatim quotes checked: {items}  verified: {verified}  "
-        f"failed: {failed}  rate: {rate:.1%}",
+        f"failed: {failed}  id-resolved: {id_resolved}  rate: {rate:.1%}",
     ]
     if failures:
         top = max(0, args.top)
