@@ -438,6 +438,10 @@ def _cmd_write_checkpoint(args) -> int:
     # model-claimed source_message_ids binding is validatable — drop them all
     # (empty id map = nothing the code can vouch for).
     serializer.sanitize_source_ids(checkpoint, {})
+    # #359: `grounded` is a code-derived attestation; with no transcript
+    # there are no signals, so a model-claimed verdict is stripped (empty
+    # signal set = strip-only, no downgrade).
+    serializer.ground_outcomes(checkpoint, set())
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))

@@ -339,6 +339,76 @@ def test_verify_quotes_unresolvable_id_falls_back_and_keeps_ids():
     assert item["source_message_ids"] == ["ghost-9"]
 
 
+# ---- #359: signal ids never scope the quote check ----
+#
+# A tool-result signal pointer (#359) asserts "this message evidences the
+# outcome", NOT "the quote lives here" — so verify_quotes must scope the
+# quote check to the NON-signal cited ids only, and a scoped miss must never
+# execute an innocent signal pointer for the quote-id's crime.
+
+_SIG_MSGS = [
+    {"role": "user", "content": "we adopt the D-007 prompt", "id": "u-1"},
+    {"role": "assistant", "content": "understood, cache stays keyed", "id": "a-2"},
+    {"role": "tool", "content": "exit code 0", "id": "t-3", "tool_result": True},
+]
+
+
+def test_verify_quotes_signal_only_binding_is_not_a_quote_scope():
+    # The item cites ONLY the signal: there is no quote-source claim to
+    # disprove. Whole-transcript scan rules, and the signal pointer survives.
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt",
+         "source_message_ids": ["t-3"]}]})
+    n = serializer.verify_quotes(
+        cp, serializer._render_transcript(_SIG_MSGS), _SIG_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["quote_verified"] is True
+    assert item["source_message_ids"] == ["t-3"]
+
+
+def test_verify_quotes_scoped_miss_keeps_signal_ids_drops_quote_ids(caplog):
+    # Quote is real but lives in u-1, not the cited a-2: the false QUOTE
+    # binding dies (today's #358 behavior), the signal pointer stays.
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt",
+         "source_message_ids": ["a-2", "t-3"]}]})
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.serializer"):
+        n = serializer.verify_quotes(
+            cp, serializer._render_transcript(_SIG_MSGS), _SIG_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["quote_verified"] is True
+    assert item["source_message_ids"] == ["t-3"]
+
+
+def test_verify_quotes_scoped_hit_keeps_quote_and_signal_ids():
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim", "quote": "adopt the D-007 prompt",
+         "source_message_ids": ["u-1", "t-3"]}]})
+    n = serializer.verify_quotes(
+        cp, serializer._render_transcript(_SIG_MSGS), _SIG_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["quote_verified"] is True
+    assert item["source_message_ids"] == ["u-1", "t-3"]
+
+
+def test_verify_quotes_full_miss_still_drops_everything():
+    # A quote found NOWHERE downgrades the item; a downgraded quote is not
+    # evidence and neither is its signal pointer — conservative, unchanged.
+    cp = _cp_with({("working_context", "recent_decisions"): [
+        {"text": "d", "trust": "verbatim",
+         "quote": "this exact sentence is nowhere in the transcript at all",
+         "source_message_ids": ["u-1", "t-3"]}]})
+    n = serializer.verify_quotes(
+        cp, serializer._render_transcript(_SIG_MSGS), _SIG_MSGS)
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert "source_message_ids" not in item
+
+
 def test_verify_quotes_two_arg_call_ignores_bindings():
     # Without messages the function must behave exactly as before #358 —
     # bindings are neither used nor touched.

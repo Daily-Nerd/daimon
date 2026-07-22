@@ -756,18 +756,20 @@ def test_validation_retry_note_restates_copy_paste_contract(
     assert "elisions marked with `...`" in second
 
 
-def test_prompt_version_is_d015():
+def test_prompt_version_is_d016():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
     # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
     # transcript-language preservation rule). D-012 -> D-013 (#208: verbatim
     # quote copy-paste discipline rule). D-013 -> D-014 (#287: external-
     # artifact identifier rule). D-014 -> D-015 (#358: verbatim items bind
-    # to source transcript message ids). Pre-bump checkpoints firing the
+    # to source transcript message ids). D-015 -> D-016 (#359: outcome
+    # claims ground in tool-result signals). Pre-bump checkpoints firing the
     # format_version mismatch warning (#93) is DESIRED behavior. The bump
-    # also rotates the #48 chunk-cache key, so pre-#358 cached extractions
-    # (no ids) can never satisfy a post-#358 request.
-    assert serializer.PROMPT_VERSION == "D-015"
+    # also rotates the #48 chunk-cache key, so pre-#359 cached extractions
+    # (no tool-result rows in their chunks) can never satisfy a post-#359
+    # request.
+    assert serializer.PROMPT_VERSION == "D-016"
 
 
 def test_prompts_preserve_transcript_language():
@@ -1793,3 +1795,219 @@ def test_serialize_strict_idless_host_stays_on_todays_path(
     item = out["working_context"]["recent_decisions"][0]
     assert "source_message_ids" not in item
     assert item["quote_verified"] is True
+
+
+# ---- #359: outcome claims ground in tool-result signals ----
+#
+# Capture-time grounding: transcript.py surfaces tool-result rows as "tool"
+# messages (Claude Code only — the one host with stable ids AND parseable
+# tool results). The extractor cites the signal's [mN] marker in
+# source_message_ids; the parse boundary validates it; ground_outcomes()
+# derives the code-owned advisory `grounded` field and narrowly downgrades
+# verbatim OUTCOME claims that cite no signal in a signal-bearing session.
+# Hosts without tool rows degrade to a no-op: no downgrade, no `grounded`.
+
+
+def _msgs_with_tool(n_conv=4):
+    out = []
+    for i in range(n_conv):
+        role = "user" if i % 2 == 0 else "assistant"
+        out.append({"role": role, "content": f"line {i} from {role}",
+                    "id": f"uuid-{i}"})
+    out.append({"role": "tool", "content": "2 passed, 0 failed - exit code 0",
+                "id": "uuid-tool", "tool_result": True})
+    return out
+
+
+def test_render_transcript_labels_tool_rows():
+    msgs = [{"role": "user", "content": "run it", "id": "u-1"},
+            {"role": "tool", "content": "ok", "id": "t-2", "tool_result": True},
+            {"role": "tool", "content": "boom", "id": "t-3",
+             "tool_result": True, "tool_error": True}]
+    assert serializer._render_transcript(msgs) == (
+        "[m1] user: run it\n\n[m2] tool: ok\n\n[m3] tool (error): boom")
+
+
+def test_signal_message_ids_collects_tool_result_ids():
+    msgs = _msgs_with_tool(4)
+    assert serializer.signal_message_ids(msgs) == {"uuid-tool"}
+    assert serializer.signal_message_ids([]) == set()
+    assert serializer.signal_message_ids(None) == set()
+    # role alone is not a signal — the flag is (markdown transcripts can have
+    # "tool:" role rows with no tool_result payload behind them).
+    assert serializer.signal_message_ids(
+        [{"role": "tool", "content": "x", "id": "t-1"}]) == set()
+
+
+def test_prompts_carry_outcome_grounding_rule():
+    assert "OUTCOME GROUNDING" in serializer.SERIALIZE_SYS
+    assert "tool" in serializer.SERIALIZE_SYS
+    # merge re-emits items: it must know signal ids can ride inferred items
+    # too, or it would silently drop them (rule 14 said "never on inferred").
+    assert "tool-result" in serializer.MERGE_SYS
+
+
+def test_sanitize_source_ids_keeps_signal_ids_on_inferred_items():
+    # The #358 rule was "binding rides the verbatim quote" — #359 adds the one
+    # exception: a pointer to a tool-result signal is valid on ANY item.
+    cp = _cp_one_decision({"text": "deploy succeeded", "trust": "inferred",
+                           "source_message_ids": ["m5"]})
+    serializer.sanitize_source_ids(cp, {"m4": "uuid-3", "m5": "uuid-tool"},
+                                   {"uuid-tool"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["source_message_ids"] == ["uuid-tool"]
+
+
+def test_sanitize_source_ids_still_drops_non_signal_ids_on_inferred_items():
+    cp = _cp_one_decision({"text": "d", "trust": "inferred",
+                           "source_message_ids": ["m4", "m5"]})
+    serializer.sanitize_source_ids(cp, {"m4": "uuid-3", "m5": "uuid-tool"},
+                                   {"uuid-tool"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["source_message_ids"] == ["uuid-tool"]  # m4 dropped, m5 kept
+
+
+def test_sanitize_source_ids_verbatim_item_keeps_quote_and_signal_ids():
+    cp = _cp_one_decision({"text": "deploy succeeded", "trust": "verbatim",
+                           "quote": "line 3 from assistant",
+                           "source_message_ids": ["m4", "m5"]})
+    serializer.sanitize_source_ids(cp, {"m4": "uuid-3", "m5": "uuid-tool"},
+                                   {"uuid-tool"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["source_message_ids"] == ["uuid-3", "uuid-tool"]
+
+
+def test_asserts_outcome_lexicon_is_conservative():
+    yes = ["deploy succeeded", "PR #12 merged", "tests pass now",
+           "the build failed", "released 0.19.0 to PyPI",
+           "all 42 tests passed", "serialization completed successfully"]
+    no = ["will be merged tomorrow", "should be deployed after review",
+          "plan to release on Friday", "whether the deploy succeeded",
+          "use the passed argument", "decide the merge strategy",
+          "el despliegue funciono bien"]  # non-English: honest no-op
+    for text in yes:
+        assert serializer._asserts_outcome(text), text
+    for text in no:
+        assert not serializer._asserts_outcome(text), text
+
+
+def test_ground_outcomes_marks_signal_backed_items_grounded():
+    cp = _cp_one_decision({"text": "deploy succeeded", "trust": "verbatim",
+                           "quote": "q", "source_message_ids":
+                           ["uuid-3", "uuid-tool"]})
+    cp["working_context"]["open_questions"] = [
+        {"text": "tests pass on CI too?", "trust": "inferred",
+         "source_message_ids": ["uuid-tool"]}]
+    serializer.ground_outcomes(cp, {"uuid-tool"})
+    assert cp["working_context"]["recent_decisions"][0]["grounded"] is True
+    assert cp["working_context"]["open_questions"][0]["grounded"] is True
+
+
+def test_ground_outcomes_downgrades_ungrounded_verbatim_outcome_claim():
+    cp = _cp_one_decision({"text": "deploy succeeded", "trust": "verbatim",
+                           "quote": "deploy succeeded"})
+    n = serializer.ground_outcomes(cp, {"uuid-tool"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert item["grounded"] is False
+    assert item["quote"] == "deploy succeeded"  # transcription stays honest
+
+
+def test_ground_outcomes_leaves_non_outcome_and_hedged_items_alone():
+    cp = _cp_one_decision({"text": "rename the module to carry.py",
+                           "trust": "verbatim", "quote": "q"})
+    cp["working_context"]["open_questions"] = [
+        {"text": "will be merged tomorrow", "trust": "verbatim", "quote": "q2"}]
+    n = serializer.ground_outcomes(cp, {"uuid-tool"})
+    assert n == 0
+    assert cp["working_context"]["recent_decisions"][0]["trust"] == "verbatim"
+    assert cp["working_context"]["open_questions"][0]["trust"] == "verbatim"
+    for item in serializer.iter_items(cp):
+        assert "grounded" not in item
+
+
+def test_ground_outcomes_is_a_noop_when_session_has_no_signals():
+    # Windsurf/Codex/hermes/markdown surface no tool rows: grounding is
+    # IMPOSSIBLE there, so an outcome claim keeps today's exact treatment —
+    # absence of evidence about the host is not evidence against the claim.
+    cp = _cp_one_decision({"text": "deploy succeeded", "trust": "verbatim",
+                           "quote": "q"})
+    n = serializer.ground_outcomes(cp, set())
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["trust"] == "verbatim"
+    assert "grounded" not in item
+
+
+def test_ground_outcomes_strips_model_claimed_grounded():
+    # `grounded` is code-owned (#292 discipline): a model that emits it gets
+    # stomped — re-derived from validated pointers or removed, never trusted.
+    cp = _cp_one_decision({"text": "d", "trust": "inferred", "grounded": True})
+    cp["working_context"]["open_questions"] = [
+        {"text": "q", "trust": "inferred", "grounded": "yes"}]
+    serializer.ground_outcomes(cp, set())
+    for item in serializer.iter_items(cp):
+        assert "grounded" not in item
+
+
+def test_serialize_strict_grounds_cited_outcome_claim(
+        fake_chat_factory, monkeypatch):
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory(_decision_checkpoint_json(
+        {"text": "deploy succeeded", "trust": "verbatim",
+         "quote": "line 3 from assistant",
+         "source_message_ids": ["m4", "m5"]}))
+    out = serializer.serialize_strict("S1", _msgs_with_tool(4), chat=chat)
+    item = out["working_context"]["recent_decisions"][0]
+    assert item["source_message_ids"] == ["uuid-3", "uuid-tool"]
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+    assert item["grounded"] is True
+    # the extractor saw the tool row, marked as such
+    sent = chat.calls[0]["messages"][1]["content"]
+    assert "[m5] tool: 2 passed, 0 failed - exit code 0" in sent
+
+
+def test_serialize_strict_downgrades_uncited_outcome_claim(
+        fake_chat_factory, monkeypatch):
+    # Signals existed in this session; the claim cites none of them. The
+    # quote is a faithful transcription (quote_verified stays True) but the
+    # OUTCOME is unwitnessed: stored as inferred, marked grounded: false.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory(_decision_checkpoint_json(
+        {"text": "deploy succeeded", "trust": "verbatim",
+         "quote": "line 3 from assistant"}))
+    out = serializer.serialize_strict("S1", _msgs_with_tool(4), chat=chat)
+    item = out["working_context"]["recent_decisions"][0]
+    assert item["trust"] == "inferred"
+    assert item["grounded"] is False
+    assert item["quote_verified"] is True
+    assert item["quote"] == "line 3 from assistant"
+
+
+def test_serialize_strict_signal_free_host_keeps_todays_behavior(
+        fake_chat_factory, monkeypatch):
+    # No tool rows (Windsurf/Codex/markdown): outcome claims are untouched
+    # and unmarked — grounding degrades to a no-op, not a mass downgrade.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory(_decision_checkpoint_json(
+        {"text": "deploy succeeded", "trust": "verbatim",
+         "quote": "line 3 from assistant"}))
+    out = serializer.serialize_strict("S1", make_messages(6), chat=chat)
+    item = out["working_context"]["recent_decisions"][0]
+    assert item["trust"] == "verbatim"
+    assert "grounded" not in item
+
+
+def test_serialize_strict_min_messages_ignores_tool_rows(
+        fake_chat_factory, monkeypatch):
+    # Tool rows are evidence, not conversation — surfacing them must not let
+    # a 2-turn session sneak past the too-short gate.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    msgs = _msgs_with_tool(2)  # 2 conversation turns + 1 tool row
+    msgs.append({"role": "tool", "content": "out", "id": "t-x",
+                 "tool_result": True})
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    assert serializer.serialize("S1", msgs, chat=chat) is None
+    assert chat.calls == []
