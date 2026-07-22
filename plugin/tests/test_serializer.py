@@ -1940,6 +1940,21 @@ def test_ground_outcomes_is_a_noop_when_session_has_no_signals():
     assert "grounded" not in item
 
 
+def test_ground_outcomes_tolerates_malformed_item_text():
+    # A torn or hand-edited checkpoint can hold a non-string `text` (the #134
+    # lesson lives at the validate boundary, but ground_outcomes also runs on
+    # the cli write-checkpoint path where shapes vary). Grounding is advisory:
+    # garbage must neither raise nor downgrade — never-fatal, same philosophy
+    # as sanitize_importance.
+    cp = _cp_one_decision({"text": ["deploy", "succeeded"], "trust": "verbatim",
+                           "quote": "q"})
+    n = serializer.ground_outcomes(cp, {"uuid-tool"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 0
+    assert item["trust"] == "verbatim"
+    assert "grounded" not in item
+
+
 def test_ground_outcomes_strips_model_claimed_grounded():
     # `grounded` is code-owned (#292 discipline): a model that emits it gets
     # stomped — re-derived from validated pointers or removed, never trusted.

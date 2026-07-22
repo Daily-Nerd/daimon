@@ -348,6 +348,41 @@ def test_from_file_mixed_text_and_tool_result_row_keeps_text_only(tmp_path):
     ]
 
 
+def test_from_file_uuid_rows_without_tool_results_stay_dropped(tmp_path):
+    # Rows that reach the tool-result probe (uuid present, no text) but carry
+    # no tool payload keep pre-#359 behavior — dropped, never surfaced as a
+    # phantom signal: whitespace-only string content is not a block list, and
+    # a block list with no tool_result blocks (image-only row) holds nothing
+    # an outcome claim could ground in.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "u-1",
+         "message": {"role": "user", "content": "real question"}},
+        {"type": "user", "uuid": "e-2",
+         "message": {"role": "user", "content": "   "}},
+        {"type": "user", "uuid": "i-3",
+         "message": {"role": "user", "content": [
+             {"type": "image", "source": {"type": "base64", "data": "AAAA"}}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "user", "content": "real question", "id": "u-1"},
+    ]
+
+
+def test_from_file_tool_result_row_skips_non_tool_blocks(tmp_path):
+    # A tool_result row can carry sibling non-tool blocks (an image attached
+    # to a screenshot result): they are skipped, the textual signal survives.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "user", "uuid": "t-1",
+         "message": {"role": "user", "content": [
+             {"type": "image", "source": {"type": "base64", "data": "AAAA"}},
+             {"type": "tool_result", "content": "deploy ok - exit code 0"}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "tool", "content": "deploy ok - exit code 0", "id": "t-1",
+         "tool_result": True},
+    ]
+
+
 def test_from_session_returns_empty_when_hermes_unavailable(monkeypatch):
     # Force the hermes import seam to fail; must degrade to [] not raise.
     monkeypatch.setattr(transcript, "_load_session_db", lambda: None)
