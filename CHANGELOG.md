@@ -5,6 +5,22 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0](https://github.com/Daily-Nerd/daimon/compare/v0.19.0...v0.20.0) (2026-07-22)
+
+
+### Features
+
+* **briefing:** deterministic external-state spot-check for carried claims ([#366](https://github.com/Daily-Nerd/daimon/issues/366)) ([75b05b8](https://github.com/Daily-Nerd/daimon/commit/75b05b8cd2e9f8717ea1dc5e13d926bd1885897f))
+* **heal:** perspective-diverse extraction as the escalation tier for failed serializes ([#363](https://github.com/Daily-Nerd/daimon/issues/363)) ([d9c3251](https://github.com/Daily-Nerd/daimon/commit/d9c325116dcf6109fb3b39475a16ace6aadf5303))
+* **serializer:** bind verbatim items to transcript message ids at capture time ([#361](https://github.com/Daily-Nerd/daimon/issues/361)) ([ef90d61](https://github.com/Daily-Nerd/daimon/commit/ef90d615fa0e16e3049e0907f300f8ffe87e8e91))
+* **serializer:** ground success claims in tool results and exit codes at capture time ([#362](https://github.com/Daily-Nerd/daimon/issues/362)) ([268134b](https://github.com/Daily-Nerd/daimon/commit/268134bd956d77241b6ea0ececb4371e9bec4c04))
+* **skill:** teach the MCP tool surface as a first-class alternative to CLI commands ([#356](https://github.com/Daily-Nerd/daimon/issues/356)) ([9ffc400](https://github.com/Daily-Nerd/daimon/commit/9ffc400ce2a8260896c59e2962e3382527c60ce7))
+
+
+### Documentation
+
+* **site:** blog release post for 0.19.0 (en + es) ([#353](https://github.com/Daily-Nerd/daimon/issues/353)) ([a32819b](https://github.com/Daily-Nerd/daimon/commit/a32819b5d7e2496fe19c6691b1495e79907d5ce8))
+
 ## [0.19.0](https://github.com/Daily-Nerd/daimon/compare/v0.18.0...v0.19.0) (2026-07-21)
 
 
