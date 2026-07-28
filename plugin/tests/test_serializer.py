@@ -2207,3 +2207,44 @@ def test_escalated_deadline_scales_by_perspective_wave_plan(
     assert len(seen) == 1  # every call shares ONE scaled deadline
     scaled = seen.pop()
     assert scaled >= given + 250  # ~300s extension for 4 waves
+
+
+# --- #376 rejection derivation ---------------------------------------------
+# quote_verified: false and grounded: false are each written ONLY on their
+# downgrade branch, so the finished checkpoint is a faithful record of what
+# the checkers rejected. Deriving from stored state beats a side channel.
+
+def _ck(items):
+    return {"working_context": {"recent_decisions": items}}
+
+
+def test_rejections_derives_quote_downgrade():
+    ck = _ck([{"id": "a", "trust": "inferred", "quote_verified": False}])
+    assert serializer.verification_rejections(ck) == [
+        {"item_ref": "a", "check": "quote", "reason": "quote-not-in-transcript"}]
+
+
+def test_rejections_derives_outcome_downgrade():
+    ck = _ck([{"id": "b", "trust": "inferred", "grounded": False}])
+    assert serializer.verification_rejections(ck) == [
+        {"item_ref": "b", "check": "outcome", "reason": "no-signal-cited"}]
+
+
+def test_rejections_ignores_passing_items():
+    """A verified quote and a grounded outcome are not rejections."""
+    ck = _ck([{"id": "a", "trust": "verbatim", "quote_verified": True,
+               "grounded": True},
+              {"id": "b", "trust": "inferred"}])
+    assert serializer.verification_rejections(ck) == []
+
+
+def test_rejections_reports_both_checks_for_one_item():
+    ck = _ck([{"id": "c", "quote_verified": False, "grounded": False}])
+    out = serializer.verification_rejections(ck)
+    assert [r["check"] for r in out] == ["quote", "outcome"]
+
+
+def test_rejections_skips_items_without_an_id():
+    """No pointer, no row — a ledger entry that cannot be traced is noise."""
+    ck = _ck([{"quote_verified": False}])
+    assert serializer.verification_rejections(ck) == []

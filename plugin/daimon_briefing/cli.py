@@ -316,6 +316,17 @@ def _run_serialize(transcript_path: Path, project: str | None,
         except Exception:  # keep the unmerged checkpoint, proceed to write
             pass
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    # #376: record what the checkers REJECTED, after write_checkpoint because
+    # that is where item ids are guaranteed stamped (the merge branch above
+    # only stamps when it runs). Its own append-only stream, never events.jsonl
+    # — a rejection folded on item_ref would resolve the item and hide exactly
+    # what it describes. Fail-open: an advisory counter never costs a capture.
+    try:
+        for row in serializer.verification_rejections(checkpoint):
+            store.append_verification(row["item_ref"], row["check"],
+                                      row["reason"], project_dir=project)
+    except Exception:
+        pass
     elapsed = int(time.monotonic() - start)
     msg = f"wrote checkpoint: {out} (took {elapsed}s)"
     if llm.fallback_used():
@@ -2041,12 +2052,23 @@ def _stats_events(project_dir) -> dict:
     return out
 
 
+def _stats_verification(project_dir) -> dict:
+    """Rejection ledger (#376) -> total + per-check breakdown. This is the
+    number that turns "memory you can verify" from a claim into something the
+    user can check on their own machine: how often the checkers actually
+    caught something here. Zeroes when nothing was ever rejected, which is
+    itself an answer."""
+    by_check = store.verification_counts(project_dir=project_dir)
+    return {"total": sum(by_check.values()), "by_check": by_check}
+
+
 def _cmd_stats(args) -> int:
     """Aggregate what is already on disk. Nothing is transmitted anywhere —
     sharing the output is a deliberate act (the user pastes it)."""
     data = {"usage": _stats_usage(), "capture": _stats_capture(),
             "store": _stats_store(), "retention": _stats_retention(),
-            "events": _stats_events(_resolve_project(None))}
+            "events": _stats_events(_resolve_project(None)),
+            "verification": _stats_verification(_resolve_project(None))}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0

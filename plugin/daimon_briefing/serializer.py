@@ -924,6 +924,34 @@ def _asserts_outcome(text: str) -> bool:
     return bool(_OUTCOME_RE.search(text)) and not _HEDGE_RE.search(text)
 
 
+def verification_rejections(checkpoint) -> list:
+    """Every rejection the checkers made on this checkpoint, as ledger rows
+    (#376): [{item_ref, check, reason}].
+
+    Derived from the finished checkpoint rather than observed at the call
+    site, because `serialize_strict` has no project context and the ledger
+    write needs one. That is sound, not a shortcut: `quote_verified: False`
+    is written ONLY where verify_quotes downgrades (a passing item gets
+    True, an already-inferred item is left untouched with neither field),
+    and `grounded: False` ONLY where ground_outcomes downgrades. The stored
+    state is therefore a faithful record of both rejection acts.
+
+    An item with no `id` yields no row: a ledger entry nobody can trace back
+    is noise. Never raises — this feeds an advisory counter."""
+    out = []
+    for item in iter_items(checkpoint):
+        ref = item.get("id")
+        if not isinstance(ref, str) or not ref:
+            continue
+        if item.get("quote_verified") is False:
+            out.append({"item_ref": ref, "check": "quote",
+                        "reason": "quote-not-in-transcript"})
+        if item.get(GROUNDED_KEY) is False:
+            out.append({"item_ref": ref, "check": "outcome",
+                        "reason": "no-signal-cited"})
+    return out
+
+
 def ground_outcomes(checkpoint, signal_ids) -> int:
     """Derive the code-owned `grounded` verdict in place (#359). Returns the
     number of verbatim outcome claims downgraded to inferred.

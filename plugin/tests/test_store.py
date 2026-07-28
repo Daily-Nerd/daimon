@@ -1679,3 +1679,85 @@ def test_write_checkpoint_redacts_scene(tmp_checkpoint_dir):
     assert "sk-scenesecret12345678" not in cp["working_context"]["open_questions"][0]["scene"]
     assert "sk-topicsecret99887766" not in cp["working_context"]["active_topic"]["scene"]
     assert cp["redactions"]["api-key"] == 2
+
+
+# --- #376 rejection ledger -------------------------------------------------
+# The ledger is a SECOND append-only stream. It must never reach
+# store.resolutions(): scar candidate append-event-any-kind-resolves-the-item
+# proved that any event folded on item_ref marks that item resolved, which
+# would hide exactly the items verification downgraded.
+
+def test_verification_ledger_never_resolves_the_item(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    proj = "/repo/ledger-iso"
+    store.append_verification("item-1", "quote", "quote-not-in-transcript",
+                              project_dir=proj)
+    assert store.resolutions(project_dir=proj) == {}
+
+
+def test_verification_ledger_appends_and_counts(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    proj = "/repo/ledger-count"
+    store.append_verification("item-1", "quote", "quote-not-in-transcript",
+                              project_dir=proj)
+    store.append_verification("item-2", "quote", "quote-not-in-transcript",
+                              project_dir=proj)
+    store.append_verification("item-3", "outcome", "no-signal-cited",
+                              project_dir=proj)
+    assert store.verification_counts(project_dir=proj) == {"quote": 2, "outcome": 1}
+
+
+def test_verification_ledger_stores_no_item_text(tmp_path, monkeypatch):
+    """Quote verification runs PRE-redaction (#141): raw text must never reach
+    a log sink. The ledger stores a pointer and a reason code, nothing else."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    proj = "/repo/ledger-notext"
+    secret = "sk-live-DEADBEEF-not-a-real-key"
+    store.append_verification("item-1", "quote", "quote-not-in-transcript",
+                              project_dir=proj)
+    blob = store._ledger_path(proj).read_text(encoding="utf-8")
+    assert secret not in blob
+    row = json.loads(blob.splitlines()[0])
+    assert set(row) == {"ts", "check", "item_ref", "reason"}
+
+
+def test_verification_counts_missing_log_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    assert store.verification_counts(project_dir="/repo/never-written") == {}
+
+
+def test_verification_ledger_kill_switch_is_a_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert store.append_verification("i", "quote", "r", project_dir="/repo/ks") is False
+    assert list(tmp_path.rglob("verification.jsonl")) == []
+
+
+def test_verification_ledger_unknown_project_is_a_noop(tmp_path, monkeypatch):
+    """No project bucket means no reader — write and read both no-op."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    assert store._ledger_path(None) is None
+    assert store.append_verification("i", "quote", "r", project_dir=None) is False
+    assert store.verification_counts(project_dir=None) == {}
+
+
+def test_verification_ledger_survives_oserror(tmp_path, monkeypatch):
+    """A ledger write must never fail a capture."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store.Path, "open", boom)
+    assert store.append_verification("i", "quote", "r", project_dir="/repo/oserr") is False
+
+
+def test_verification_counts_skips_corrupt_and_nondict_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    proj = "/repo/corrupt"
+    store.append_verification("i1", "quote", "r", project_dir=proj)
+    with store._ledger_path(proj).open("a", encoding="utf-8") as f:
+        f.write("{not json\n")
+        f.write('["a list, not a row"]\n')
+        f.write('{"item_ref": "i2"}\n')          # no check -> not counted
+    assert store.verification_counts(project_dir=proj) == {"quote": 1}

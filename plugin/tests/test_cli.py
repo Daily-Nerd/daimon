@@ -5834,3 +5834,43 @@ def test_forget_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
     ids = [i.get("id") for i in after["working_context"]["open_questions"]]
     assert iid not in ids
     assert store.resolutions(project_dir="/p/A")[iid]["status"].startswith("forgotten:")
+
+
+# --- #376 rejection ledger in stats ----------------------------------------
+
+def test_stats_verification_reports_counts(tmp_path, monkeypatch):
+    """`daimon stats` answers 'has verification ever caught anything here'."""
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    proj = "/repo/stats-ledger"
+    store.append_verification("i1", "quote", "quote-not-in-transcript",
+                              project_dir=proj)
+    store.append_verification("i2", "outcome", "no-signal-cited",
+                              project_dir=proj)
+    out = cli._stats_verification(proj)
+    assert out == {"total": 2, "by_check": {"quote": 1, "outcome": 1}}
+
+
+def test_stats_verification_empty_when_nothing_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    assert cli._stats_verification("/repo/nothing") == {"total": 0, "by_check": {}}
+
+
+def test_serialize_survives_a_broken_ledger_emit(tmp_checkpoint_dir, fake_chat_factory,
+                                                 monkeypatch):
+    """#376 fail-open, end to end: the rejection ledger is advisory, so a
+    raising emit must still leave a written checkpoint and rc 0. Without this
+    the 'never costs a capture' contract is only a docstring."""
+    from daimon_briefing import serializer, store
+
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+
+    def boom(_checkpoint):
+        raise RuntimeError("ledger derivation exploded")
+
+    monkeypatch.setattr(serializer, "verification_rejections", boom)
+
+    rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
+    assert rc == 0
+    assert store.read_checkpoint("sample_transcript") is not None
