@@ -46,6 +46,14 @@ log = logging.getLogger(__name__)
 # warning is desired, not a bug.
 PROMPT_VERSION = "D-016"
 
+# #367: the chunk-cache rotation lever, deliberately SEPARATE from
+# PROMPT_VERSION. Bump ONLY when extraction semantics change — the output
+# contract, or what a chunk pass extracts (a D-016-grade change like #359's
+# rule 20 warrants a bump; a wording clarification does not). PROMPT_VERSION
+# keeps versioning the checkpoint format; this keeps the #48 cache warm
+# across prompt edits that don't change what gets extracted.
+EXTRACTION_VERSION = 1
+
 
 class SerializeError(Exception):
     """Base for named serialization failures. str(e) is log/CLI-ready."""
@@ -1125,13 +1133,17 @@ def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
 
 # ---- #48: content-addressed chunk-extraction cache (generalizes #314) --------
 # Keyed on chunk TEXT plus every config dimension that shapes extraction
-# (backend, model, temperature, prompt version, and a hash of the actual
-# serialize system prompt — so an un-versioned prompt edit, like the #317
-# scene appendix, invalidates cleanly). session_id is deliberately NOT in the
-# key: prefix chunks of a grown or resume-forked transcript are byte-identical
-# and their paid-for outputs transfer (#48). The prompt embeds a positional
-# "chunk i of n" label that the key ignores — presentation metadata, not
-# extraction semantics.
+# (backend, model, temperature, scene flag, extraction-semantics version, and
+# a lane label for perspective passes). Deliberately NOT keyed on prompt text
+# or PROMPT_VERSION (#367): the prompt evolves nearly every release, and
+# hashing it rotated the whole cache on wording-only edits — re-buying every
+# chunk at full price, exactly the cost the cache exists to avoid.
+# EXTRACTION_VERSION below is the deliberate rotation lever; the scene flag is
+# an explicit dimension because it changes what gets extracted (#317).
+# session_id is deliberately NOT in the key: prefix chunks of a grown or
+# resume-forked transcript are byte-identical and their paid-for outputs
+# transfer (#48). The prompt embeds a positional "chunk i of n" label that the
+# key ignores — presentation metadata, not extraction semantics.
 #
 # Entries persist across successful serializes (that IS the feature) and are
 # reaped by age. Cached output is PRE-redaction — forced by #125: quotes are
@@ -1147,22 +1159,22 @@ def _chunk_cache_dir():
     return config.checkpoint_dir() / ".chunk-cache"
 
 
-def _chunk_cache_key(chunk_text: str, system: str | None = None) -> str:
-    # `system` (#360): the actual system prompt this extraction runs under;
-    # defaults to the plain serialize prompt. Escalation's perspective passes
-    # send DIFFERENT prompts over the same chunks — hashing the per-pass
-    # prompt gives each perspective its own cache lane (no cross-
-    # contamination) while a re-escalation reuses its own prior partials.
+def _chunk_cache_key(chunk_text: str, lane: str = "default") -> str:
+    # `lane` (#360, re-keyed by #367): escalation's perspective passes send
+    # DIFFERENT prompts over the same chunks — the perspective NAME labels
+    # each lane (no cross-contamination) while a re-escalation reuses its own
+    # prior partials. A wording tweak to any prompt keeps every lane warm;
+    # EXTRACTION_VERSION is the deliberate rotation. A forgotten bump serves
+    # a stale extraction for at most chunk_cache_days (default 3) — the same
+    # rotation window the privacy design already relies on.
     try:
         backend = configure.resolved_backend()
     except Exception:
         backend = "unknown"
-    if system is None:
-        system = _serialize_sys()
-    sys_hash = hashlib.sha256(system.encode("utf-8")).hexdigest()[:16]
-    stamp = (f"v1\x00{backend}\x00{config.llm_model() or ''}"
-             f"\x00{config.llm_temperature()}\x00{PROMPT_VERSION}"
-             f"\x00{sys_hash}\x00")
+    scene = "scene" if config.scene_traces_enabled() else ""
+    stamp = (f"v2\x00{backend}\x00{config.llm_model() or ''}"
+             f"\x00{config.llm_temperature()}\x00{EXTRACTION_VERSION}"
+             f"\x00{scene}\x00{lane}\x00")
     return hashlib.sha256(
         stamp.encode("utf-8") + chunk_text.encode("utf-8")).hexdigest()[:32]
 
@@ -1432,10 +1444,10 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
 
         def _one_pass(job):
             i, chunk_text, name, system = job
-            # Own #48 cache lane per perspective (the key hashes the actual
-            # system prompt): a re-escalation reuses its prior paid-for
-            # passes; the default lane is never read or written here.
-            key = _chunk_cache_key(chunk_text, system)
+            # Own #48 cache lane per perspective (the key carries the
+            # perspective name, #367): a re-escalation reuses its prior
+            # paid-for passes; the default lane is never read or written here.
+            key = _chunk_cache_key(chunk_text, lane=name)
             cached = _load_chunk_cache(key)
             if cached is not None:
                 log.info("perspective %s: chunk %d/%d reused cached extraction (#48)",

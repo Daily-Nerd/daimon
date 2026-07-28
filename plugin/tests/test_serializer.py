@@ -1330,9 +1330,37 @@ def test_chunk_cache_key_changes_with_config_dimensions(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_TEMPERATURE", "0.7")
     assert serializer._chunk_cache_key("chunk text") != base
     monkeypatch.delenv("DAIMON_LLM_TEMPERATURE", raising=False)
-    # scene flag reshapes the serialize prompt WITHOUT a PROMPT_VERSION bump —
-    # the key hashes the actual prompt text, so it must move (#319 trap class).
+    # scene flag changes what gets extracted (#317) — an EXPLICIT key
+    # dimension since #367, no longer discovered via prompt-text hashing.
     monkeypatch.setenv("DAIMON_SCENE_TRACES", "1")
+    assert serializer._chunk_cache_key("chunk text") != base
+
+
+def test_chunk_cache_key_survives_wording_only_prompt_edit(monkeypatch):
+    # #367: the treadmill. Prompt text evolves nearly every release; a
+    # wording tweak that does not change extraction semantics must NOT
+    # rotate the cache — that re-buys every chunk at full price, exactly
+    # the cost the cache exists to avoid.
+    base = serializer._chunk_cache_key("chunk text")
+    monkeypatch.setattr(serializer, "SERIALIZE_SYS",
+                        serializer.SERIALIZE_SYS + "\n(clarified wording)")
+    assert serializer._chunk_cache_key("chunk text") == base
+
+
+def test_chunk_cache_key_survives_prompt_version_bump(monkeypatch):
+    # #367: PROMPT_VERSION is the checkpoint format_version, not an
+    # extraction-semantics marker — a bump alone must not rotate the cache.
+    base = serializer._chunk_cache_key("chunk text")
+    monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-999")
+    assert serializer._chunk_cache_key("chunk text") == base
+
+
+def test_chunk_cache_key_rotates_on_extraction_version_bump(monkeypatch):
+    # The deliberate rotation lever: bump EXTRACTION_VERSION when the output
+    # contract or extraction behavior actually changes.
+    base = serializer._chunk_cache_key("chunk text")
+    monkeypatch.setattr(serializer, "EXTRACTION_VERSION",
+                        serializer.EXTRACTION_VERSION + 1)
     assert serializer._chunk_cache_key("chunk text") != base
 
 
@@ -2132,18 +2160,17 @@ def test_escalated_too_short_still_skips(fake_chat_factory):
 
 
 def test_chunk_cache_key_gives_each_perspective_its_own_lane():
-    # #48 keying already hashes the system prompt; passing each perspective's
-    # actual prompt must yield distinct, stable lanes — and the default lane
-    # (no system arg) must be byte-identical to hashing the plain prompt.
+    # #360 lanes, re-keyed by #367: each perspective's NAME labels its lane —
+    # distinct, stable, never bleeding into the default lane. A wording tweak
+    # to a perspective addendum keeps its lane warm (same treadmill argument
+    # as the base prompt); EXTRACTION_VERSION is the deliberate rotation.
     base = serializer._chunk_cache_key("chunk text")
-    assert base == serializer._chunk_cache_key(
-        "chunk text", system=serializer._serialize_sys())
-    keys = [serializer._chunk_cache_key("chunk text", system=system)
-            for _, system in serializer.escalation_systems()]
+    keys = [serializer._chunk_cache_key("chunk text", lane=name)
+            for name, _ in serializer.escalation_systems()]
     assert len(set(keys)) == 3          # perspectives never cross-contaminate
     assert base not in keys             # nor bleed into the default lane
-    assert keys == [serializer._chunk_cache_key("chunk text", system=system)
-                    for _, system in serializer.escalation_systems()]  # stable
+    assert keys == [serializer._chunk_cache_key("chunk text", lane=name)
+                    for name, _ in serializer.escalation_systems()]  # stable
 
 
 def test_escalated_reheal_reuses_own_cached_partials(
