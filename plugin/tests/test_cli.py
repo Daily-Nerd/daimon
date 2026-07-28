@@ -4403,6 +4403,200 @@ def test_stats_capture_dedupe_does_not_mask_a_buried_failure(tmp_log_dir):
     assert cap["success"] == 1
 
 
+# ---- #364: rolling-window capture rate — "is capture healthy NOW", not ever ----
+
+
+def _iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_stats_capture_window_counts_only_recent_results(tmp_log_dir):
+    # #364: lifetime counters can't say whether capture is healthy NOW. Result
+    # lines are unstamped, so each inherits the most recent stamped line above
+    # it; only results attributed inside the window count.
+    from daimon_briefing import ledger
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+    old = now - timedelta(days=20)
+    recent = now - timedelta(days=2)
+    _write_log(tmp_log_dir, [
+        f"{_iso(old)} session-end: spawned serialize for A (project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+        "error: boom (transcript: /t/B.jsonl) after 3s",
+        f"{_iso(recent)} session-end: spawned serialize for C (project: /p/A)",
+        "wrote checkpoint: /c/C.json (took 20s)",
+        "error: boom (transcript: /t/D.jsonl) after 5s",
+    ])
+    cap = ledger._stats_capture(now=now)
+    assert cap["success"] == 2 and cap["errors"] == 2   # lifetime unchanged
+    w = cap["window"]
+    assert w["days"] == 14
+    assert w["success"] == 1
+    assert w["errors"] == 1
+    assert w["error_rate_pct"] == 50.0
+
+
+def test_stats_capture_window_excludes_unstamped_prefix(tmp_log_dir):
+    # A result line before ANY stamped line has an unknown age — it counts
+    # lifetime but never in the window (#54 honesty rule: ambiguous, never
+    # guessed).
+    from daimon_briefing import ledger
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+    _write_log(tmp_log_dir, [
+        "wrote checkpoint: /c/A.json (took 10s)",
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for B "
+        "(project: /p/B)",
+        "wrote checkpoint: /c/B.json (took 20s)",
+    ])
+    cap = ledger._stats_capture(now=now)
+    assert cap["success"] == 2
+    assert cap["window"]["success"] == 1
+
+
+def test_stats_capture_window_rate_none_when_no_attempts(tmp_log_dir):
+    # No in-window successes or errors -> no rate, not 0% (a skip is a policy
+    # outcome, not a capture attempt).
+    from daimon_briefing import ledger
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "skipped serialize for A: transcript too short (2 < 10 messages)",
+    ])
+    cap = ledger._stats_capture(now=now)
+    w = cap["window"]
+    assert w["success"] == 0 and w["errors"] == 0 and w["skipped"] == 1
+    assert w["error_rate_pct"] is None
+
+
+def test_stats_capture_window_shares_reclassify_and_dedupe(tmp_log_dir):
+    # The window tally rides the SAME line classification as the lifetime
+    # fold: too-short errors reclassify to skips (#235) and adjacent doubles
+    # collapse (#300) — the window must never disagree with the lifetime
+    # counters about what a line IS.
+    from daimon_briefing import ledger
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "error: transcript too short (2 < 10 messages) "
+        "(transcript: /t/A.jsonl) after 0s",
+        "wrote checkpoint: /c/B.json (took 10s)",
+        "wrote checkpoint: /c/B.json (took 10s)",
+    ])
+    cap = ledger._stats_capture(now=now)
+    w = cap["window"]
+    assert w["skipped"] == 1
+    assert w["errors"] == 0
+    assert w["success"] == 1
+    assert w["error_rate_pct"] == 0.0
+
+
+def test_stats_capture_window_counts_fallback(tmp_log_dir):
+    # #364 asks for rescue counts in the window: attempts (the chat() entry
+    # warning, itself stamped) and successes (the [fallback backend] suffix).
+    from daimon_briefing import ledger
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} WARNING daimon_briefing.llm: "
+        "llm.fallback backend=command (litellm failed)",
+        "wrote checkpoint: /c/A.json (took 9s) [fallback backend]",
+    ])
+    cap = ledger._stats_capture(now=now)
+    w = cap["window"]
+    assert w["fallback_attempts"] == 1
+    assert w["fallback_serializes"] == 1
+    assert w["success"] == 1
+
+
+def test_stats_json_includes_capture_window(tmp_checkpoint_dir, tmp_log_dir,
+                                            sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert set(data["capture"]["window"]) == {
+        "days", "success", "skipped", "errors", "fallback_attempts",
+        "fallback_serializes", "error_rate_pct"}
+
+
+def test_stats_plain_renders_capture_window_line(tmp_checkpoint_dir,
+                                                 tmp_log_dir,
+                                                 sample_checkpoint, capsys,
+                                                 monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+        "error: boom (transcript: /t/B.jsonl) after 3s",
+    ])
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "last 14d: serialized 1  errors 1  rescued 0" in out
+    assert "error rate: 50.0%" in out
+
+
+def test_stats_plain_warns_when_window_error_rate_exceeds_gate(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys,
+        monkeypatch):
+    # #364 gate: >10% rolling error rate is the reopen/escalate threshold —
+    # any install must be able to see itself trip it.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+        "error: boom (transcript: /t/B.jsonl) after 3s",
+    ])
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "⚠ capture error rate 50.0% (last 14d) exceeds the 10% gate" in out
+
+
+def test_stats_plain_no_gate_warning_at_or_below_threshold(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys,
+        monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+    ])
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "exceeds the 10% gate" not in out
+    assert "error rate: 0.0%" in out
+
+
+def test_stats_rich_renders_capture_window_row(tmp_checkpoint_dir, tmp_log_dir,
+                                               sample_checkpoint, capsys,
+                                               monkeypatch):
+    pytest.importorskip("rich")
+    from daimon_briefing import render, store
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+        "error: boom (transcript: /t/B.jsonl) after 3s",
+    ])
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "last 14d" in out
+    assert "50.0%" in out
+
+
 # ---- #49: heal crash on hung targets + preflight-error attribution ----
 
 

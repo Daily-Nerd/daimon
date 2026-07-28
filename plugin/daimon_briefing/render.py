@@ -815,6 +815,25 @@ def render_stats(data: dict) -> None:
         _plain_stats(data)
 
 
+def _capture_window_lines(c: dict) -> list[str]:
+    """#364: the rolling-window capture-rate line(s), shared verbatim by the
+    plain and rich stats renderers. Second line only when the rolling error
+    rate trips the reopen gate recorded on #364."""
+    from .ledger import _CAPTURE_ERROR_GATE_PCT
+    w = c.get("window")
+    if not w:
+        return []
+    rate = w["error_rate_pct"]
+    lines = [f"last {w['days']}d: serialized {w['success']}  "
+             f"errors {w['errors']}  rescued {w['fallback_serializes']}  "
+             f"error rate: {'n/a' if rate is None else f'{rate}%'}"]
+    if rate is not None and rate > _CAPTURE_ERROR_GATE_PCT:
+        lines.append(f"⚠ capture error rate {rate}% (last {w['days']}d) "
+                     f"exceeds the {_CAPTURE_ERROR_GATE_PCT}% gate — see "
+                     "`daimon status` for failing serializes")
+    return lines
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -845,6 +864,8 @@ def _plain_stats(data: dict) -> None:
           f"errors: {c['errors']}  fallback: "
           f"attempted {c.get('fallback_attempts', 0)}, "
           f"succeeded {c['fallback_serializes']}")
+    for line in _capture_window_lines(c):
+        print(f"  {line}")
     if c["hosts"]:
         print("  spawns by host: " + ", ".join(
             f"{h}: {n}" for h, n in sorted(c["hosts"].items())))
@@ -926,6 +947,11 @@ def _rich_stats(data: dict) -> None:
     capture_table.add_row("errors", str(c["errors"]))
     capture_table.add_row("fallback", f"attempted {c.get('fallback_attempts', 0)}, "
                                       f"succeeded {c['fallback_serializes']}")
+    window_lines = _capture_window_lines(c)
+    if window_lines:
+        # first line is `last Nd: <values>` — split it into the two columns
+        label, _, values = window_lines[0].partition(": ")
+        capture_table.add_row(label, values)
     if c["hosts"]:
         capture_table.add_row("spawns by host", ", ".join(
             f"{h}: {n}" for h, n in sorted(c["hosts"].items())))
@@ -936,6 +962,8 @@ def _rich_stats(data: dict) -> None:
             f"avg {c['total_serialize_seconds'] // c['success']}",
         )
     console.print(capture_table)
+    for warning in window_lines[1:]:  # the #364 gate warning, when tripped
+        console.print(f"[yellow]{warning}[/yellow]")
 
     store_table = Table(title="store", title_justify="left",
                         show_header=True, header_style="bold")

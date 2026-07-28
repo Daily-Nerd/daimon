@@ -16,7 +16,7 @@ slice): the every-line tally (_stats_capture) and the in-window spawn probe
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config, store
@@ -335,10 +335,28 @@ def _is_result_line(line: str) -> bool:
                 or _RESULT_ERR_RE.match(line))
 
 
-def _stats_capture() -> dict:
+# #364: the rolling window behind "is capture healthy NOW" — matches the
+# retention window so both instruments describe the same recent past. The gate
+# is the reopen/escalate threshold recorded on #364: a rolling error rate above
+# it means the foundation the whole product sits on is failing too often.
+_CAPTURE_WINDOW_DAYS = 14
+_CAPTURE_ERROR_GATE_PCT = 10
+
+
+def _stats_capture(now=None) -> dict:
     """serialize.log -> aggregate counters. Tallies EVERY line (scar #9: no
     last-of-kind collapse — a buried failure still counts), except an
     ADJACENT-identical repeat of a result line (#300).
+
+    #364 adds a `window` sub-dict: the same tallies restricted to the last
+    _CAPTURE_WINDOW_DAYS, plus an error-rate percentage over in-window capture
+    ATTEMPTS (success + errors; skips are policy outcomes, not attempts).
+    Result lines are unstamped, so each inherits the most recent stamped
+    line's timestamp; result lines before any stamped line have unknown age
+    and count lifetime only (#54 honesty rule: ambiguous, never guessed).
+    The window shares this fold's line classification verbatim — dedupe and
+    the too-short reclassification below apply identically, so the window can
+    never disagree with the lifetime counters about what a line IS.
 
     #300: every result line is built once, printed to stdout, AND logged
     first-class by _run_serialize. Any spawn path that redirected the child's
@@ -360,13 +378,20 @@ def _stats_capture() -> dict:
     This is NOT the last-of-kind collapse scar #9 forbids: it never reaches
     across sessions, so a failure buried under a later session's success still
     counts."""
+    win = {"days": _CAPTURE_WINDOW_DAYS, "success": 0, "skipped": 0,
+           "errors": 0, "fallback_attempts": 0, "fallback_serializes": 0,
+           "error_rate_pct": None}
     out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
            "fallback_attempts": 0,
-           "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0}
+           "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0,
+           "window": win}
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
         return out
+    cutoff = ((now or datetime.now(timezone.utc))
+              - timedelta(days=_CAPTURE_WINDOW_DAYS))
+    in_window = False  # was the most recent stamped line inside the window?
     prev = None
     for line in text.splitlines():
         line = line.strip()
@@ -374,11 +399,17 @@ def _stats_capture() -> dict:
         prev = line
         if doubled:
             continue
+        if line:
+            stamp = _parse_stamp(line.split()[0])
+            if stamp is not None:
+                in_window = stamp >= cutoff
         # #341: fallback_serializes counts successes only; the chat() entry
         # warning is the attempt marker. Without it, a fallback that runs and
         # dies is indistinguishable from one that never ran.
         if "llm.fallback backend=command" in line:
             out["fallback_attempts"] += 1
+            if in_window:
+                win["fallback_attempts"] += 1
             continue
         m = _RESULT_OK_RE.match(line)
         if m:
@@ -386,11 +417,17 @@ def _stats_capture() -> dict:
             took = int(m.group(1))
             out["max_serialize_seconds"] = max(out["max_serialize_seconds"], took)
             out["total_serialize_seconds"] += took
+            if in_window:
+                win["success"] += 1
             if "[fallback backend]" in line:
                 out["fallback_serializes"] += 1
+                if in_window:
+                    win["fallback_serializes"] += 1
             continue
         if _LEDGER_SKIP_RE.match(line):
             out["skipped"] += 1
+            if in_window:
+                win["skipped"] += 1
             continue
         if _RESULT_ERR_RE.match(line):
             # #235: too-short is a policy skip, not a failure. The write side
@@ -399,12 +436,19 @@ def _stats_capture() -> dict:
             # stays "capture should have worked and didn't".
             if "transcript too short" in line:
                 out["skipped"] += 1
+                if in_window:
+                    win["skipped"] += 1
             else:
                 out["errors"] += 1
+                if in_window:
+                    win["errors"] += 1
             continue
         hm = _STATS_HOST_RE.match(line)
         if hm:
             out["hosts"][hm.group(1)] = out["hosts"].get(hm.group(1), 0) + 1
+    attempts = win["success"] + win["errors"]
+    if attempts:
+        win["error_rate_pct"] = round(win["errors"] * 100 / attempts, 1)
     return out
 
 
