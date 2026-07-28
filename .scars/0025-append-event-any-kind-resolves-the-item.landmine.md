@@ -1,20 +1,20 @@
 ---
-id: 0
+id: 25
 type: landmine
 title: "append_event with ANY kind hides the item — resolutions() ignores kind and is_resolved() defaults unknown statuses to resolved"
 severity: critical
 confidence: 1.0
 created: 2026-07-28
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/store.py
   - pattern: "append_event[(][^)]{0,200}kind="
 evidence:
-  - note: "2026-07-28 probe while designing #376: append_event(ref, 'quote-verification-failed', kind='verification') then resolutions() then is_resolved() returned True — the item would vanish from briefing, recall and carry"
+  - note: 2026-07-28 probe while designing #376: append_event(ref, 'quote-verification-failed', kind='verification') then resolutions() then is_resolved() returned True — the item would vanish from briefing, recall and carry
 expires:
   condition: "resolutions() filters by kind (or the ledger moves to its own stream) AND is_resolved() no longer treats unknown statuses as resolved"
   review_after: 2027-07-28
-status: candidate
+status: active
 ---
 
 `store.append_event` takes a `kind` argument, which reads as if it namespaces
