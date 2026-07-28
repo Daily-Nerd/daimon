@@ -5834,3 +5834,23 @@ def test_forget_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
     ids = [i.get("id") for i in after["working_context"]["open_questions"]]
     assert iid not in ids
     assert store.resolutions(project_dir="/p/A")[iid]["status"].startswith("forgotten:")
+
+
+# --- #376 rejection ledger in stats ----------------------------------------
+
+def test_stats_verification_reports_counts(tmp_path, monkeypatch):
+    """`daimon stats` answers 'has verification ever caught anything here'."""
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    proj = "/repo/stats-ledger"
+    store.append_verification("i1", "quote", "quote-not-in-transcript",
+                              project_dir=proj)
+    store.append_verification("i2", "outcome", "no-signal-cited",
+                              project_dir=proj)
+    out = cli._stats_verification(proj)
+    assert out == {"total": 2, "by_check": {"quote": 1, "outcome": 1}}
+
+
+def test_stats_verification_empty_when_nothing_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    assert cli._stats_verification("/repo/nothing") == {"total": 0, "by_check": {}}

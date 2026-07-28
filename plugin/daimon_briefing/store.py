@@ -929,6 +929,77 @@ def _events_path(project_dir=None):
     return config.checkpoint_dir() / slug / "events.jsonl"
 
 
+def _ledger_path(project_dir=None):
+    slug = project_slug(project_dir)
+    if not slug:
+        return None
+    return config.checkpoint_dir() / slug / "verification.jsonl"
+
+
+def append_verification(item_ref: str, check: str, reason: str,
+                        project_dir=None) -> bool:
+    """One appended line per REJECTION the checker made (#376): a verbatim
+    quote that missed the transcript, an outcome claim with no signal cited.
+
+    Deliberately a SECOND stream, not an `events.jsonl` row with a new `kind`.
+    `resolutions()` folds events on `item_ref` alone and never inspects
+    `kind`, and `is_resolved()` resolves any status outside reopen/
+    supersede-candidate — so a rejection written there would HIDE the very
+    item it describes, from the briefing, from carry and from recall. A
+    downgraded item must stay visible and merely read as inferred.
+
+    Stores a POINTER and a REASON CODE, never the rejected text: quote
+    verification runs pre-redaction (#141), so the raw item text must not
+    reach a log sink. `check` and `reason` are scrubbed anyway (defence in
+    depth — a caller could pass something secret-shaped).
+
+    Same never-fatal contract as append_event: silent no-op under the kill
+    switch or an unknown project, False on OSError. A ledger write must
+    never fail a capture."""
+    if config.is_disabled():
+        return False
+    path = _ledger_path(project_dir)
+    if path is None:
+        return False
+    try:
+        check, _ = redact.redact_text(check)
+        reason, _ = redact.redact_text(reason)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "check": check, "item_ref": item_ref, "reason": reason}
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def verification_counts(project_dir=None) -> dict:
+    """{check: count} over the rejection ledger. Answers the question the
+    trust classes otherwise cannot: has verification ever caught anything on
+    THIS install. Fails open to {} (missing/corrupt log, unknown project) —
+    same posture as the resolutions fold."""
+    out: dict = {}
+    path = _ledger_path(project_dir)
+    if path is None:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return out
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        check = str(row.get("check") or "")
+        if check:
+            out[check] = out.get(check, 0) + 1
+    return out
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "") -> bool:

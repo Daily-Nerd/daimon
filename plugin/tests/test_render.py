@@ -1050,3 +1050,34 @@ def test_render_projects_rich_smoke(monkeypatch, capsys):
     ])
     out = capsys.readouterr().out
     assert "-p-a" in out and "work a" in out
+
+
+# --- #376 rejection ledger in stats output ---------------------------------
+
+def _stats_payload(verification):
+    return {"usage": {}, "capture": {"success": 0, "skipped": 0, "errors": 0,
+                                     "hosts": {}, "fallback_serializes": 0,
+                                     "max_serialize_seconds": 0,
+                                     "total_serialize_seconds": 0},
+            "store": {"checkpoints": 0, "project_buckets": 0,
+                      "items_by_kind": {}, "items_verbatim": 0,
+                      "items_inferred": 0, "items_untagged": 0,
+                      "items_carried": 0},
+            "retention": {}, "events": None, "verification": verification}
+
+
+def test_plain_stats_shows_verification_rejections(capsys, monkeypatch):
+    monkeypatch.setattr(render, "supports_rich", lambda: False)
+    render.render_stats(_stats_payload(
+        {"total": 3, "by_check": {"quote": 2, "outcome": 1}}))
+    out = capsys.readouterr().out
+    assert "verification" in out
+    assert "3" in out and "quote 2" in out and "outcome 1" in out
+
+
+def test_plain_stats_omits_verification_when_nothing_rejected(capsys, monkeypatch):
+    """Zero rejections is a real answer, but an all-zero block is noise in the
+    default view; the JSON payload still carries it."""
+    monkeypatch.setattr(render, "supports_rich", lambda: False)
+    render.render_stats(_stats_payload({"total": 0, "by_check": {}}))
+    assert "verification" not in capsys.readouterr().out

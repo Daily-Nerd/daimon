@@ -863,6 +863,14 @@ def _plain_stats(data: dict) -> None:
         print("events (this project):")
         print(f"  log lines: {e['lines']}  resolved refs: {e['resolved_refs']}  "
               f"fold: {e['fold_ms']}ms")
+    v = data.get("verification")
+    if v and v.get("total"):
+        # #376: what the checkers REJECTED here. Shown only when non-zero —
+        # zero is a real answer but an all-zero block is noise in the default
+        # view, and `--json` always carries it.
+        print("verification (this project):")
+        print(f"  rejections: {v['total']}  " + ", ".join(
+            f"{k} {n}" for k, n in sorted(v["by_check"].items())))
 
 
 def _rich_stats(data: dict) -> None:
@@ -955,3 +963,16 @@ def _rich_stats(data: dict) -> None:
         events_table.add_row("resolved refs", str(e["resolved_refs"]))
         events_table.add_row("fold", f"{e['fold_ms']}ms")
         console.print(events_table)
+
+    v = data.get("verification")
+    if v and v.get("total"):
+        # #376: mirrors the plain renderer — non-zero only.
+        ver_table = Table(title="verification (this project)",
+                          title_justify="left", show_header=True,
+                          header_style="bold")
+        ver_table.add_column("check")
+        ver_table.add_column("rejections")
+        for check, n in sorted(v["by_check"].items()):
+            ver_table.add_row(check, str(n))
+        ver_table.add_row("total", str(v["total"]))
+        console.print(ver_table)
