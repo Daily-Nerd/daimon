@@ -1724,3 +1724,40 @@ def test_verification_ledger_stores_no_item_text(tmp_path, monkeypatch):
 def test_verification_counts_missing_log_is_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
     assert store.verification_counts(project_dir="/repo/never-written") == {}
+
+
+def test_verification_ledger_kill_switch_is_a_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert store.append_verification("i", "quote", "r", project_dir="/repo/ks") is False
+    assert list(tmp_path.rglob("verification.jsonl")) == []
+
+
+def test_verification_ledger_unknown_project_is_a_noop(tmp_path, monkeypatch):
+    """No project bucket means no reader — write and read both no-op."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    assert store._ledger_path(None) is None
+    assert store.append_verification("i", "quote", "r", project_dir=None) is False
+    assert store.verification_counts(project_dir=None) == {}
+
+
+def test_verification_ledger_survives_oserror(tmp_path, monkeypatch):
+    """A ledger write must never fail a capture."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store.Path, "open", boom)
+    assert store.append_verification("i", "quote", "r", project_dir="/repo/oserr") is False
+
+
+def test_verification_counts_skips_corrupt_and_nondict_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    proj = "/repo/corrupt"
+    store.append_verification("i1", "quote", "r", project_dir=proj)
+    with store._ledger_path(proj).open("a", encoding="utf-8") as f:
+        f.write("{not json\n")
+        f.write('["a list, not a row"]\n')
+        f.write('{"item_ref": "i2"}\n')          # no check -> not counted
+    assert store.verification_counts(project_dir=proj) == {"quote": 1}

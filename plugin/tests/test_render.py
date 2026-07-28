@@ -1081,3 +1081,35 @@ def test_plain_stats_omits_verification_when_nothing_rejected(capsys, monkeypatc
     monkeypatch.setattr(render, "supports_rich", lambda: False)
     render.render_stats(_stats_payload({"total": 0, "by_check": {}}))
     assert "verification" not in capsys.readouterr().out
+
+
+def test_rich_stats_shows_verification_rejections(monkeypatch):
+    """Rich path mirrors plain: the count must reach a rich user too."""
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    printed = []
+
+    class _Console:
+        def print(self, obj):
+            printed.append(obj)
+
+    import rich.console
+    monkeypatch.setattr(rich.console, "Console", lambda *a, **k: _Console())
+    render.render_stats(_stats_payload(
+        {"total": 3, "by_check": {"quote": 2, "outcome": 1}}))
+    titles = [getattr(o, "title", None) for o in printed]
+    assert "verification (this project)" in titles
+
+
+def test_rich_stats_omits_verification_when_nothing_rejected(monkeypatch):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    printed = []
+
+    class _Console:
+        def print(self, obj):
+            printed.append(obj)
+
+    import rich.console
+    monkeypatch.setattr(rich.console, "Console", lambda *a, **k: _Console())
+    render.render_stats(_stats_payload({"total": 0, "by_check": {}}))
+    titles = [getattr(o, "title", None) for o in printed]
+    assert "verification (this project)" not in titles
