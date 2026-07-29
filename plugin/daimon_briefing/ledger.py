@@ -16,6 +16,7 @@ slice): the every-line tally (_stats_capture) and the in-window spawn probe
 """
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -210,7 +211,8 @@ def _session_ledger(text: str, now: float) -> dict:
     return sessions
 
 
-def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists, force=False) -> list:
+def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists,
+                          force=False, heartbeat_age=None) -> list:
     """Sessions still LOST — no checkpoint AND latest state != success.
     `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
     stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
@@ -243,6 +245,16 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                         "transcript": e["transcript"], "project": e["project"],
                         "spawned": e["spawned"], "line": e["result_line"]})
         elif e["result_kind"] is None and e["spawned"] and age is not None and age > ceiling:
+            # #342: liveness beats wall-clock. A heartbeat fresher than the
+            # ceiling means the serialize is ALIVE — not outstanding, so
+            # status stays quiet and heal cannot fork a retry against a
+            # still-running child. Absent heartbeat (pre-#342 host hook, or
+            # a child dead before its first touch) falls through to the
+            # wall-clock rule unchanged.
+            if heartbeat_age is not None:
+                hb = heartbeat_age(sid)
+                if hb is not None and hb <= ceiling:
+                    continue
             # #28: a spawn line that recorded its transcript makes a hung
             # (crashed/killed) serialize healable — the checkpoint is
             # recoverable as long as the transcript is still on disk. The
@@ -271,6 +283,9 @@ def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
         config.hung_after_seconds(),
         lambda p: bool(p) and Path(p).exists(),
         force=force,
+        # #342: module-level heartbeat_age resolves via the global, not the
+        # classifier's same-named parameter.
+        heartbeat_age=lambda sid: heartbeat_age(sid, now),
     )
 
 
@@ -316,6 +331,56 @@ def _heal_plan(text, now, force=False) -> dict:
         n = len(skipped)
         note = f"nothing to heal — {n} failure{'s' if n != 1 else ''} can't be auto-repaired:"
     return {"target": target, "skipped": skipped, "note": note}
+
+
+# ---- #342: per-session liveness heartbeat ----
+#
+# Wall-clock hung detection has a cliff: a field install completed a
+# serialize at 1732s — 96% of the 1800s ceiling — so a slightly slower but
+# alive run would read as hung, and heal would fork a retry while the
+# original still worked. Liveness beats wall-clock: the serialize child
+# touches <log_dir>/heartbeats/<session_id> at entry and during every
+# chunk/pass/merge step; "hung" means no heartbeat for the ceiling window,
+# not total duration > ceiling. No heartbeat file at all (crashed child,
+# legacy host hook) degrades to exactly the pre-#342 wall-clock rule.
+
+_HEARTBEAT_REAP_SECONDS = 7 * 86400
+
+
+def _heartbeat_dir() -> Path:
+    return config.log_dir() / "heartbeats"
+
+
+def touch_heartbeat(session_id: str) -> None:
+    """Stamp liveness for a running serialize (#342). Best-effort: a full
+    disk or unwritable dir must never break the serialize doing the
+    touching. Old stamps are reaped opportunistically here — result lines
+    end a session's classification, so a leftover file is disk hygiene,
+    never a liveness signal."""
+    try:
+        d = _heartbeat_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / Path(session_id).name).touch()
+        now = time.time()
+        for p in d.iterdir():
+            try:
+                if now - p.stat().st_mtime > _HEARTBEAT_REAP_SECONDS:
+                    p.unlink()
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+def heartbeat_age(session_id: str, now: float | None = None) -> float | None:
+    """Seconds since this session's serialize last proved liveness, or None
+    when it never has (no stamp — pre-#342 host hook or a child that died
+    before its first touch)."""
+    try:
+        mtime = (_heartbeat_dir() / Path(session_id).name).stat().st_mtime
+    except OSError:
+        return None
+    return max(0.0, (now if now is not None else time.time()) - mtime)
 
 
 # Host prefix on a spawn line, for per-host capture counts. Deliberately the

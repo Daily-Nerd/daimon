@@ -21,7 +21,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from . import config, configure, llm, redact, schema
+from . import config, configure, ledger, llm, redact, schema
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -1360,6 +1360,7 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
             if len(group) == 1:
                 # Singleton — pass through without an LLM call.
                 return group[0]
+            ledger.touch_heartbeat(session_id)  # #342: alive, merging
             t0 = time.monotonic()
             merged = _call_and_parse(
                 chat, _merge_sys(),
@@ -1499,6 +1500,12 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
         raise TooShortError(
             f"transcript too short ({n} < {config.min_messages()} messages)"
         )
+    # #342: first liveness stamp — from here on the child proves it is alive
+    # via heartbeats (entry, every chunk/pass, every merge group), so hung
+    # detection can trust freshness over total wall-clock. After the
+    # too-short gate: a skipped session writes its result line immediately
+    # and needs no liveness trail.
+    ledger.touch_heartbeat(session_id)
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise LLMCallError("deadline exhausted before the first LLM call")
 
@@ -1558,6 +1565,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
 
         def _one_pass(job):
             i, chunk_text, name, system = job
+            ledger.touch_heartbeat(session_id)  # #342: alive, working
             # Own #48 cache lane per perspective (the key carries the
             # perspective name, #367): a re-escalation reuses its prior
             # paid-for passes; the default lane is never read or written here.
@@ -1614,6 +1622,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             # session take chunk_count * minutes of wall-clock.
             def _one_chunk(item):
                 i, chunk_text = item
+                ledger.touch_heartbeat(session_id)  # #342: alive, working
                 # #48: reuse any prior run's paid-for output for this exact
                 # chunk text under the current config — merge deaths, heals,
                 # resume forks, and grown transcripts all hit on their

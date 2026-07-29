@@ -2409,3 +2409,40 @@ def test_pin_imperatives_dedupes_repeated_sentence_across_messages():
     msgs = [{"role": "user", "id": "u-1", "content": sentence},
             {"role": "user", "id": "u-2", "content": sentence}]
     assert serializer.pin_imperatives(cp, msgs) == 1
+
+
+# ---- #342: the serialize child feeds the liveness heartbeat ----
+
+
+def test_serialize_strict_touches_heartbeat(fake_chat_factory, monkeypatch):
+    from daimon_briefing import ledger
+    calls = []
+    monkeypatch.setattr(ledger, "touch_heartbeat",
+                        lambda sid: calls.append(sid))
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert "S1" in calls
+
+
+def test_chunked_serialize_touches_heartbeat_per_chunk(fake_chat_factory,
+                                                       monkeypatch):
+    # The heartbeat must advance DURING the work, not just at entry — a
+    # long chunked serialize with an entry-only touch would go stale by the
+    # merge phase and read as hung exactly on the sessions that hurt most.
+    from daimon_briefing import ledger
+    monkeypatch.setenv("DAIMON_CHUNK_LINES", "6")
+    monkeypatch.setenv("DAIMON_CHUNK_OVERLAP", "1")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    calls = []
+    monkeypatch.setattr(ledger, "touch_heartbeat",
+                        lambda sid: calls.append(sid))
+    messages = make_messages(20)
+    rendered = serializer._render_transcript(messages)
+    n_chunks = len(serializer.chunk_transcript(rendered, 6, 1))
+    assert n_chunks > 1
+    responses = [_valid_checkpoint_json(f"chunk{i}") for i in range(n_chunks)]
+    responses.append(_valid_checkpoint_json("S-long"))
+    chat = fake_chat_factory(responses)
+    assert serializer.serialize("S-long", messages, chat=chat) is not None
+    # entry + per-chunk + merge: strictly more touches than chunks
+    assert len([c for c in calls if c == "S-long"]) > n_chunks
