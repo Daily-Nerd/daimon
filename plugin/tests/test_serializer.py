@@ -2377,3 +2377,35 @@ def test_serialize_strict_pins_and_verifies_skipped_constraint(
     assert pin["quote_verified"] is True
     assert "last_verified" in pin
     assert pin["source_message_ids"] == ["uuid-2"]
+
+
+def test_pin_imperatives_tolerates_torn_checkpoint_sections():
+    # Never-fatal contract: a torn checkpoint (no epistemic_snapshot, or a
+    # non-list strong_beliefs) must not crash the pass — it degrades to
+    # no-op or repairs the list, respectively.
+    torn = {"session_id": "S1", "working_context": {}}
+    msgs = [{"role": "user", "id": "u-1",
+             "content": "You must never ship on red CI."}]
+    assert serializer.pin_imperatives(torn, msgs) == 0
+
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    cp["epistemic_snapshot"]["strong_beliefs"] = None
+    assert serializer.pin_imperatives(cp, msgs) == 1
+    assert len(cp["epistemic_snapshot"]["strong_beliefs"]) == 1
+
+
+def test_pin_imperatives_skips_user_role_tool_results():
+    # A tool payload relayed under a user role is still a payload, not a
+    # user-authored constraint.
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    msgs = [{"role": "user", "id": "u-1", "tool_result": True,
+             "content": "error: you must never pass --force to this tool."}]
+    assert serializer.pin_imperatives(cp, msgs) == 0
+
+
+def test_pin_imperatives_dedupes_repeated_sentence_across_messages():
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    sentence = "You must never edit generated files by hand."
+    msgs = [{"role": "user", "id": "u-1", "content": sentence},
+            {"role": "user", "id": "u-2", "content": sentence}]
+    assert serializer.pin_imperatives(cp, msgs) == 1
