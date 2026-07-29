@@ -141,6 +141,17 @@ def _preflight_error(path: Path) -> str | None:
         return None
     if backend == "auto" and llm._resolve_command() is not None:
         return None  # llm.chat will route to the command CLI, key-free
+    # #383: an explicit litellm backend missing its key/model still has a
+    # rescue when fallback is enabled (default) and a command backend
+    # resolves — _chat_litellm raises ChatError and llm.chat routes to the
+    # command CLI. Hard-failing here killed the entire no-key error class
+    # (28% of one field install's capture errors, zero rescues attempted)
+    # before the rescue machinery could ever run. Fallback off, or nothing
+    # resolving, keeps the early named error — strictly better than an LLM
+    # failure minutes later inside a detached hook child.
+    if (not (config.llm_api_key() and config.llm_model())
+            and config.llm_fallback() and llm._resolve_command() is not None):
+        return None
     if not config.llm_api_key():
         return ("error: no LLM API key — set DAIMON_LLM_API_KEY "
                 f"(env or ~/.daimon/env) (transcript: {path})")
