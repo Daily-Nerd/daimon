@@ -123,13 +123,40 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Windsurf serialize spawns (Windsurf has no session-end event, so capture runs on this throttle). `0` serializes every turn. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
 
+## Scar harvest
+
+Opt-in negative-knowledge drafting (#76). At session end, daimon scans the
+transcript for scar-shaped lessons — dead ends ("we tried X, it broke"),
+intentional-looking weirdness worth fencing, non-obvious couplings — and
+drafts *candidate* files into `<project_root>/.scars/candidates/`. The scan
+is zero-LLM (pure-stdlib marker matching, English and Spanish) and
+path-anchored: a hit that names no real file or directory in its own
+sentence is dropped. Precision over recall — a scar system dies from noise,
+not from a missed lesson.
+
+The boundary with the [Scar](https://github.com/Daily-Nerd/Scar) project,
+stated plainly: **daimon only drafts candidates.** Linting, pre-edit
+injection, and promotion to active scars are Scar's job — install it in the
+target repo to make the candidates useful. daimon never writes into
+`.scars/` itself, never overwrites an existing candidate (a human may have
+edited it), and caps how many candidates one session can emit.
+
+Honest limits: candidates are heuristic drafts and require human review
+before promotion. The harvest only runs in repos that have opted in by
+having a `.scars/` directory — without one it is a silent no-op even with
+the flag on. Candidate text passes through the same secret redaction as
+checkpoints, so candidate files are committable.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DAIMON_SCAR_HARVEST` | off | When truthy, draft scar (negative-knowledge) candidates at session end into `.scars/candidates/` — repos with a `.scars/` directory only. |
+
 ## Ops & diagnostics
 
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_LOG_DIR` | `~/.daimon/logs` | Where the session-end hook writes `serialize.log`. The hook itself hardcodes `~/.daimon/logs`; this override exists so the CLI (and tests) can point `status` elsewhere. |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where host transcripts live (`<slug>/<session>.jsonl`). Read-only — the quote-reverification audit reads them to re-check stored quotes against their source. |
-| `DAIMON_SCAR_HARVEST` | off | When truthy, draft scar (negative-knowledge) candidates from the transcript at session-end. |
 
 ## LLM backend
 
