@@ -5,6 +5,29 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0](https://github.com/Daily-Nerd/daimon/compare/v0.20.0...v0.21.0) (2026-07-29)
+
+
+### Features
+
+* **cli:** configure --init — guided wizard for env and team setup ([#386](https://github.com/Daily-Nerd/daimon/issues/386)) ([11d26d4](https://github.com/Daily-Nerd/daimon/commit/11d26d45df9aeda59f065011698ff87ed2e3450b))
+* **hooks:** heartbeat liveness for hung-serialize detection ([#382](https://github.com/Daily-Nerd/daimon/issues/382)) ([292bd73](https://github.com/Daily-Nerd/daimon/commit/292bd734d078cb752dac4bc65edc4ef0c1de4692))
+* **scars:** qualification filter for the harvest — obligations or no candidate ([#385](https://github.com/Daily-Nerd/daimon/issues/385)) ([42e1a8a](https://github.com/Daily-Nerd/daimon/commit/42e1a8a311dc1723680acf63f07dab767b1a6e5c))
+* **serializer:** deterministic auto-pin for hard-imperative constraints ([#381](https://github.com/Daily-Nerd/daimon/issues/381)) ([5c22f72](https://github.com/Daily-Nerd/daimon/commit/5c22f7215e0d16a14f226809e574c786ab036efc))
+* **team:** scope-routed dual-write across multiple remotes ([#388](https://github.com/Daily-Nerd/daimon/issues/388)) ([b388191](https://github.com/Daily-Nerd/daimon/commit/b388191104d071c031cfc2e1ebcf7a9e325c77d8))
+
+
+### Bug Fixes
+
+* **llm:** preflight no longer kills the no-key rescue on explicit litellm ([#389](https://github.com/Daily-Nerd/daimon/issues/389)) ([b92308f](https://github.com/Daily-Nerd/daimon/commit/b92308f6c339921f015688b53d0d809764bdb00d))
+
+
+### Documentation
+
+* **scars:** give scar harvest the receipts-grade discovery path ([#384](https://github.com/Daily-Nerd/daimon/issues/384)) ([7261fd8](https://github.com/Daily-Nerd/daimon/commit/7261fd8640c7c1477245effb85edaddb239b0c60))
+* **scars:** promote the i18n .md-link landmine to active (0024) ([#373](https://github.com/Daily-Nerd/daimon/issues/373)) ([35062e8](https://github.com/Daily-Nerd/daimon/commit/35062e8f07552fd5417ada5f6c9c638b78aa98cb))
+* **site:** concept blog post on verbatim vs inferred trust classes (en + es) ([#371](https://github.com/Daily-Nerd/daimon/issues/371)) ([d4da62b](https://github.com/Daily-Nerd/daimon/commit/d4da62bc581fb859a2ff4cdd8f31619b744d7560))
+
 ## [0.20.0](https://github.com/Daily-Nerd/daimon/compare/v0.19.0...v0.20.0) (2026-07-22)
 
 
