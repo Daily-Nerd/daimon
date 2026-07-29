@@ -73,6 +73,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 - **Item lifecycle** — `daimon resolve` closes loops, `daimon forget` removes an item with a tombstone event; supersession is tracked, not silently overwritten.
 - **[Team memory](https://daily-nerd.github.io/daimon/docs/team/) (opt-in)** — checkpoints mirrored through a private git remote; teammates' topics and decisions appear clearly attributed, never merged into yours.
 - **Signed receipts (opt-in)** — `DAIMON_RECEIPTS=1` pairs each checkpoint with an offline [vitni](https://github.com/Daily-Nerd/vitni) signature binding its exact bytes to its source transcript; verify with `daimon verify-receipt`.
+- **Scar harvest (opt-in)** — `DAIMON_SCAR_HARVEST=1` drafts negative-knowledge *candidates* (dead ends, intentional-looking weirdness, non-obvious couplings) from each session into `.scars/candidates/` for human review. Zero-LLM, path-anchored, active only in repos that already have a `.scars/` directory; review and promotion tooling lives in [Scar](https://github.com/Daily-Nerd/Scar).
 
 ## What's net-new here
 
