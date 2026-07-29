@@ -6068,3 +6068,102 @@ def test_serialize_survives_a_broken_ledger_emit(tmp_checkpoint_dir, fake_chat_f
     rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
     assert rc == 0
     assert store.read_checkpoint("sample_transcript") is not None
+
+
+# ---- #342: heartbeat liveness — slow-but-alive serializes are not hung ----
+#
+# Field reading: a completed serialize at 1732s = 96% of the 1800s ceiling.
+# Wall-clock alone would soon declare a slow-but-alive serialize hung, and
+# heal would fork a retry while the original still runs. Liveness = a
+# per-session heartbeat the serialize child touches; "hung" means no
+# heartbeat for the ceiling window, not total duration > ceiling.
+
+
+def test_heartbeat_touch_age_roundtrip(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-hb")
+    age = ledger.heartbeat_age("S-hb")
+    assert age is not None and 0 <= age < 30
+    assert ledger.heartbeat_age("S-none") is None
+
+
+def test_heartbeat_touch_reaps_ancient_files(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-old")
+    old = tmp_log_dir / "heartbeats" / "S-old"
+    ancient = time.time() - 8 * 86400
+    os.utime(old, (ancient, ancient))
+    ledger.touch_heartbeat("S-new")
+    assert not old.exists()
+    assert (tmp_log_dir / "heartbeats" / "S-new").exists()
+
+
+def test_outstanding_hung_age_spawn_with_fresh_heartbeat_is_alive():
+    rows = {"X": _led(result_kind=None, result_line=None, spawn_age=2000)}
+    out = cli._outstanding_failures(
+        rows, 0.0, lambda sid: False, 1800, lambda p: True,
+        heartbeat_age=lambda sid: 60)
+    assert out == []
+
+
+def test_outstanding_hung_age_spawn_with_stale_heartbeat_stays_hung():
+    rows = {"X": _led(result_kind=None, result_line=None, spawn_age=4000)}
+    out = cli._outstanding_failures(
+        rows, 0.0, lambda sid: False, 1800, lambda p: True,
+        heartbeat_age=lambda sid: 3600)
+    assert len(out) == 1
+    assert out[0]["kind"] == "hung"
+
+
+def test_outstanding_hung_age_spawn_without_heartbeat_keeps_legacy_behavior():
+    rows = {"X": _led(result_kind=None, result_line=None, spawn_age=2000)}
+    out = cli._outstanding_failures(
+        rows, 0.0, lambda sid: False, 1800, lambda p: True,
+        heartbeat_age=lambda sid: None)
+    assert len(out) == 1
+    assert out[0]["kind"] == "hung"
+
+
+def test_outstanding_error_rows_never_consult_heartbeat():
+    # A result line ends the question — a heartbeat must not resurrect a
+    # session that already reported an error.
+    rows = {"X": _led()}
+    out = cli._outstanding_failures(
+        rows, 0.0, lambda sid: False, 1800, lambda p: True,
+        heartbeat_age=lambda sid: 1)
+    assert len(out) == 1
+    assert out[0]["kind"] == "error"
+
+
+def test_compute_outstanding_reads_real_heartbeat(tmp_log_dir,
+                                                  tmp_checkpoint_dir):
+    from daimon_briefing import ledger
+    stamp = (datetime.now(timezone.utc) - timedelta(seconds=3600)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    text = (f"{stamp} session-end: spawned serialize for HB1 "
+            "(reason: exit, project: /p/A) (transcript: /t/HB1.jsonl)\n")
+    # No heartbeat: the old-age spawn classifies hung (legacy).
+    assert len(cli._compute_outstanding(text, time.time())) == 1
+    # Fresh heartbeat: alive — vanishes from outstanding, heal stays away.
+    ledger.touch_heartbeat("HB1")
+    assert cli._compute_outstanding(text, time.time()) == []
+
+
+def test_heartbeat_touch_never_raises(monkeypatch, tmp_log_dir):
+    from daimon_briefing import ledger
+    # Reap hits an ancient entry it cannot unlink (a directory): skip it,
+    # keep stamping.
+    stubborn = tmp_log_dir / "heartbeats" / "S-dir"
+    stubborn.mkdir(parents=True)
+    ancient = time.time() - 8 * 86400
+    os.utime(stubborn, (ancient, ancient))
+    ledger.touch_heartbeat("S-ok")
+    assert (tmp_log_dir / "heartbeats" / "S-ok").exists()
+    assert stubborn.exists()
+    # Log-dir resolution failing entirely must not break the serialize
+    # doing the touching (best-effort contract).
+    def _boom():
+        raise OSError("boom")
+    monkeypatch.setattr(ledger.config, "log_dir", _boom)
+    ledger.touch_heartbeat("S-ok")
+    assert ledger.heartbeat_age("S-ok") is None
