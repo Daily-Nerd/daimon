@@ -10,19 +10,19 @@
 
 Daimon is a **dream-briefing skill** for coding agents. At session end it writes a small cognitive checkpoint; at the next session's start it reconstructs that into a short, skimmable briefing — "while you were away / here's where we left off." The agent resumes from a faithful prior state instead of confidently guessing.
 
-The primary integration is native host hooks (Claude Code, Codex, Gemini, Windsurf) shelling out to the `daimon` CLI; a hermes-agent plugin is an optional secondary surface. See [MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md) for the authoritative architecture.
+The primary integration is native host hooks (Claude Code, Codex, Windsurf) shelling out to the `daimon` CLI; an opt-in read-only MCP server covers hosts without hooks. See [MVP-DREAM-BRIEFING.md](./MVP-DREAM-BRIEFING.md) for the authoritative architecture and [hosts/](./hosts/) for the current adapter matrix.
 
 ---
 
 ## Who it's for
 
-Users of hermes-agent / Claude-Code-style agents who work across multiple sessions and lose carried-over context when they resume — especially when state changed *outside the AI ecosystem* between sessions (a PR merged in the GitHub UI, a deploy that failed overnight). The briefing surfaces exactly those carried-over open loops.
+Users of Claude-Code-style coding agents who work across multiple sessions and lose carried-over context when they resume — especially when state changed *outside the AI ecosystem* between sessions (a PR merged in the GitHub UI, a deploy that failed overnight). The briefing surfaces exactly those carried-over open loops.
 
 ---
 
 ## Why it doesn't compete with Honcho or Graphiti
 
-It depends on them. The memory substrate is already shipped, production, and inside the hermes ecosystem (`research/findings/07`):
+It doesn't depend on them — per D-009 above, the shipped runtime is self-contained (zero required dependencies). They were evaluated as substrates and rejected; the analysis below is preserved because it explains why rebuilding their layer was never the plan (`research/findings/07`):
 
 - **Honcho** (~5k★, AGPL-3.0) — LLM-driven deriver, per-peer representation, belief reconciliation, Dialectic query API.
 - **Graphiti** (~27k★, Apache-2.0) — bi-temporal knowledge graph, validity intervals, overlap-gated contradiction resolution shipped verbatim in code.
