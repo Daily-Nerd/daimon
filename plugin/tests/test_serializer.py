@@ -2275,3 +2275,105 @@ def test_rejections_skips_items_without_an_id():
     """No pointer, no row — a ledger entry that cannot be traced is noise."""
     ck = _ck([{"quote_verified": False}])
     assert serializer.verification_rejections(ck) == []
+
+
+# ---- #369: deterministic auto-pin for hard-imperative constraints ----
+#
+# Constraint inversion is the highest-damage drift class: a "never" that
+# comes back as "usually" reweights every downstream decision. Nothing
+# guaranteed the model pinned a constraint as a quote — pin_imperatives is
+# the deterministic backstop.
+
+
+def _pinned(cp):
+    return [i for i in serializer.iter_items(cp) if i.get("pinned")]
+
+
+def test_pin_imperatives_pins_skipped_hard_constraint():
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    msgs = [{"role": "user", "id": "u-1",
+             "content": "Context first. You must never push directly to main."}]
+    added = serializer.pin_imperatives(cp, msgs)
+    assert added == 1
+    (pin,) = _pinned(cp)
+    assert pin["trust"] == "verbatim"
+    assert pin["quote"] == "You must never push directly to main."
+    assert pin["text"] == pin["quote"]
+    assert pin["source_message_ids"] == ["u-1"]
+    assert pin in cp["epistemic_snapshot"]["strong_beliefs"]
+
+
+def test_pin_imperatives_skips_already_quoted_constraint():
+    sentence = "You must never push directly to main."
+    cp = _cp_one_decision({"text": "no direct pushes", "trust": "verbatim",
+                           "quote": f"Context first. {sentence}"})
+    msgs = [{"role": "user", "id": "u-1",
+             "content": f"Context first. {sentence}"}]
+    assert serializer.pin_imperatives(cp, msgs) == 0
+    assert _pinned(cp) == []
+
+
+def test_pin_imperatives_ignores_assistant_and_tool_messages():
+    # Assistant imperatives are commentary, tool rows are payloads — only
+    # the user authors constraints.
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    msgs = [{"role": "assistant", "id": "a-1",
+             "content": "You must never call this API twice."},
+            {"role": "tool", "id": "t-1", "tool_result": True,
+             "content": "error: you must not pass --force to this command."}]
+    assert serializer.pin_imperatives(cp, msgs) == 0
+
+
+def test_pin_imperatives_ignores_system_reminder_spans():
+    # Self-echo defense (the #292/self-reference lineage): injected briefing
+    # and hook text rides inside user turns wrapped in <system-reminder> —
+    # pinning it would let daimon quote its own output back as a user
+    # constraint.
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    msgs = [{"role": "user", "id": "u-1",
+             "content": ("<system-reminder>You must never quote briefings."
+                         "</system-reminder> Unrelated user text here.")}]
+    assert serializer.pin_imperatives(cp, msgs) == 0
+
+
+def test_pin_imperatives_ignores_questions_and_soft_modals():
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    msgs = [{"role": "user", "id": "u-1",
+             "content": ("Must we always deploy on Fridays? "
+                         "You should prefer rebase over merge here.")}]
+    assert serializer.pin_imperatives(cp, msgs) == 0
+
+
+def test_pin_imperatives_caps_pins():
+    cp = _cp_one_decision({"text": "d", "trust": "inferred"})
+    lines = [f"You must never touch config file number {i} in production."
+             for i in range(serializer._MAX_AUTO_PINS + 5)]
+    msgs = [{"role": "user", "id": "u-1", "content": " ".join(lines)}]
+    assert serializer.pin_imperatives(cp, msgs) == serializer._MAX_AUTO_PINS
+    assert len(_pinned(cp)) == serializer._MAX_AUTO_PINS
+
+
+def test_pin_imperatives_strips_model_claimed_pinned():
+    # `pinned` is code-owned (#292 discipline, same as `grounded`).
+    cp = _cp_one_decision({"text": "d", "trust": "inferred", "pinned": True})
+    assert serializer.pin_imperatives(cp, []) == 0
+    for item in serializer.iter_items(cp):
+        assert "pinned" not in item
+
+
+def test_serialize_strict_pins_and_verifies_skipped_constraint(
+        fake_chat_factory, monkeypatch):
+    # Integration: the model paraphrases the constraint away; the pin pass
+    # restores it and the normal verification gauntlet stamps it.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory(_decision_checkpoint_json(
+        {"text": "d", "trust": "verbatim", "quote": "line 3 from assistant"}))
+    msgs = _msgs_with_ids(6)
+    msgs[2]["content"] += ". You must never commit secrets to this repo."
+    out = serializer.serialize_strict("S1", msgs, chat=chat)
+    (pin,) = _pinned(out)
+    assert pin["trust"] == "verbatim"
+    assert pin["quote"] == "You must never commit secrets to this repo."
+    assert pin["quote_verified"] is True
+    assert "last_verified" in pin
+    assert pin["source_message_ids"] == ["uuid-2"]

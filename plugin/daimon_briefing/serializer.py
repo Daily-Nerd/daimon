@@ -1013,6 +1013,120 @@ def ground_outcomes(checkpoint, signal_ids) -> int:
     return downgraded
 
 
+# ---- #369: deterministic auto-pin for hard-imperative constraints ----
+#
+# Verbatim trust-class assignment is model-chosen: if the model paraphrases a
+# "must not X" into summary prose, no quote exists, verification has nothing
+# to check, and later softening is undetectable. Constraint inversion is the
+# highest-damage drift class — a "never" that comes back as "usually" silently
+# reweights every downstream decision. This pass is the deterministic
+# backstop: scan USER text for hard-imperative sentences and force-pin any
+# the model skipped as verbatim items, bound to their message ids like any
+# other quote. Tiering bounds noise: only hard imperatives pin (must / must
+# not / never / don't / always / forbidden); soft modals (should, could,
+# prefer) stay at model discretion. The whole value is a check that needs no
+# model to trust.
+
+PINNED_KEY = "pinned"
+
+# Hard imperatives are rare per session; the cap bounds pathological inputs
+# (a pasted style guide) so the verification matcher's workload stays flat.
+_MAX_AUTO_PINS = 10
+_PIN_MAX_CHARS = 300
+
+_IMPERATIVE_RE = re.compile(
+    r"\b(?:must(?:\s+not)?|never|do\s+not|don['’]t|always|forbidden)\b",
+    re.IGNORECASE)
+
+# Injected scaffolding (briefings, hook output) rides inside user turns
+# wrapped in <system-reminder> — pinning it would quote daimon's own output
+# back as a user constraint (the self-reference loop, parked 07-15).
+_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>",
+                                 re.DOTALL | re.IGNORECASE)
+
+
+def _constraint_sentences(text: str):
+    """Sentences worth considering for a pin: terminator kept (the quote must
+    match the transcript byte-for-byte under tier-f normalization), leading
+    list markers shed, questions and fragments dropped."""
+    for raw in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        s = raw.strip().lstrip("-*>•# ").strip()
+        if not s or s.endswith("?"):
+            continue
+        if len(s) > _PIN_MAX_CHARS or len(s.split()) < 3:
+            continue
+        yield s
+
+
+def pin_imperatives(checkpoint, messages) -> int:
+    """Force-pin hard-imperative user constraints the model skipped (#369).
+    Returns the number of items added.
+
+    Runs AFTER sanitize_source_ids (host ids are inserted directly, never
+    marker-translated) and BEFORE verify_quotes, so every pin earns its
+    quote_verified/last_verified stamps through the same gauntlet as a
+    model-chosen quote — a pin is self-verifying by construction (the
+    sentence came from the transcript), and a broken one must fail loudly
+    there, not pass silently here.
+
+    Only user-authored text is scanned: assistant imperatives are
+    commentary, tool rows are payloads, and <system-reminder> spans are
+    daimon's own injected output. `pinned` is code-owned (#292 discipline,
+    same as `grounded`): model-emitted values are stripped first. Never
+    fatal — pure text scanning and dict appends."""
+    for item in iter_items(checkpoint):
+        item.pop(PINNED_KEY, None)
+    existing = [q for q in (
+        _normalize_for_match(item.get("quote"))
+        for item in iter_items(checkpoint)
+        if item.get("trust") == "verbatim"
+        and isinstance(item.get("quote"), str))
+        if q]
+    block = checkpoint.get("epistemic_snapshot")
+    if not isinstance(block, dict):
+        return 0
+    beliefs = block.get("strong_beliefs")
+    if not isinstance(beliefs, list):
+        beliefs = block["strong_beliefs"] = []
+    pinned = dropped = 0
+    seen: set = set()
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        if m.get("tool_result"):
+            continue
+        text = _SYSTEM_REMINDER_RE.sub(" ", _message_text(m))
+        mid = _message_id(m)
+        for sentence in _constraint_sentences(text):
+            if not _IMPERATIVE_RE.search(sentence):
+                continue
+            norm = _normalize_for_match(sentence)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            # The model already pinned it (quote covers the sentence, or the
+            # sentence covers the quote): the backstop has nothing to add.
+            if any(norm in q or q in norm for q in existing):
+                continue
+            if pinned >= _MAX_AUTO_PINS:
+                dropped += 1
+                continue
+            item = {"text": sentence, "trust": "verbatim", "quote": sentence,
+                    PINNED_KEY: True}
+            if mid is not None:
+                item[SOURCE_IDS_KEY] = [mid]
+            beliefs.append(item)
+            pinned += 1
+    if dropped:
+        # No silent caps: a constraint that didn't pin must be visible.
+        log.warning("imperative auto-pin: cap %d reached, %d constraint "
+                    "sentence(s) not pinned", _MAX_AUTO_PINS, dropped)
+    if pinned:
+        log.info("imperative auto-pin: %d hard-imperative constraint(s) "
+                 "force-pinned (#369)", pinned)
+    return pinned
+
+
 def _call_and_parse(chat, system, user_content, deadline, what: str,
                     parse_retries: int = 1) -> dict:
     """One LLM call -> parsed JSON dict, with named failures.
@@ -1552,6 +1666,12 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # tool-result messages) survive on any item, evidence for outcome claims.
     sig_ids = signal_message_ids(messages)
     sanitize_source_ids(checkpoint, message_id_map(messages), sig_ids)
+    # #369: deterministic backstop for constraint pinning — hard-imperative
+    # user sentences the model paraphrased away are force-pinned as verbatim
+    # items here, AFTER id sanitization (host ids go in directly) and BEFORE
+    # verification, so every pin earns quote_verified/last_verified through
+    # the same gauntlet as a model-chosen quote.
+    pin_imperatives(checkpoint, messages)
     # #125: verify verbatim quotes against the SAME rendered text the extractor
     # read, PRE-redaction (redaction runs later in write_checkpoint and would
     # otherwise mass-downgrade legitimate quotes it had masked). Verify once,
