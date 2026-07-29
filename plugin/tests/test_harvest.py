@@ -205,8 +205,16 @@ def _scars_repo(tmp_path):
 
 
 def test_run_writes_anchored_candidate(tmp_path):
+    # #276: the fixture must MEET its type's obligations — attempt +
+    # abandonment evidence makes this a qualified deadend.
     root = _scars_repo(tmp_path)
-    n = harvest.run([_assistant("Never route by raw cwd in config.py.")], str(root), "S1")
+    # Same sentence twice: the in-run slug dedupe emits one candidate.
+    msg = "We tried routing by raw cwd in config.py and it broke."
+    n = harvest.run(
+        [_assistant(msg), _assistant(msg),
+         # single-site avoidance with no evidence: fails qualification in-run
+         _assistant("Never route by raw cwd in config.py.")],
+        str(root), "S1")
     assert n == 1
     files = list((root / ".scars" / "candidates").glob("*.md"))
     assert len(files) == 1
@@ -215,15 +223,18 @@ def test_run_writes_anchored_candidate(tmp_path):
 
 def test_run_is_idempotent(tmp_path):
     root = _scars_repo(tmp_path)
-    msgs = [_assistant("Never route by raw cwd in config.py.")]
+    msgs = [_assistant("We tried routing by raw cwd in config.py and it broke.")]
     assert harvest.run(msgs, str(root), "S1") == 1
     assert harvest.run(msgs, str(root), "S1") == 0  # existing file not overwritten
     assert len(list((root / ".scars" / "candidates").glob("*.md"))) == 1
 
 
 def test_run_skips_unanchored_hits(tmp_path):
+    # Qualifies as a deadend but the named path does not exist in the repo —
+    # the anchor gate drops it.
     root = _scars_repo(tmp_path)
-    n = harvest.run([_assistant("Never do the risky thing, it breaks everything.")], str(root), "S1")
+    n = harvest.run([_assistant("We tried the migration in missing_file.py "
+                                "and it broke.")], str(root), "S1")
     assert n == 0
 
 
@@ -236,21 +247,112 @@ def test_run_skips_when_project_root_falsy():
     assert harvest.run([_assistant("Never touch config.py.")], None, "S1") == 0
 
 
-def test_run_caps_at_five(tmp_path):
-    root = _scars_repo(tmp_path)
-    for i in range(7):
-        (root / f"f{i}.py").write_text("x\n")
-    msgs = [_assistant(f"Gotcha number {i}: never touch f{i}.py mid-run.") for i in range(7)]
-    assert harvest.run(msgs, str(root), "S1") == 5
-
-
 def test_emitted_candidate_passes_scar_lint(tmp_path):
     if shutil.which("scar") is None:
         pytest.skip("scar binary not installed")
     (tmp_path / ".scars").mkdir()
     (tmp_path / "config.py").write_text("x = 1\n")
     (tmp_path / ".scars" / "template.md").write_text("---\nstatus: template\n---\n")
-    n = harvest.run([_assistant("Never route by raw cwd in config.py.")], str(tmp_path), "S1")
+    n = harvest.run([_assistant("We tried routing by raw cwd in config.py "
+                                "and it broke.")], str(tmp_path), "S1")
     assert n == 1
     out = subprocess.run(["scar", "lint"], cwd=tmp_path, capture_output=True, text=True)
     assert "with errors" not in out.stdout or "0 with errors" in out.stdout
+
+
+# ---- #276: qualification filter — the pipe worked, signal extraction didn't ----
+#
+# Running tally before this filter: 4 harvested candidates, 0 promotable.
+# Failure signature (from the #276 specimens): conversational-voice titles,
+# mid-sentence truncation, landmine-by-default with no obligations met, no
+# transcript receipt, self-referential .scars anchors.
+
+
+def test_qualify_rejects_first_person_voice():
+    # Specimen 2: "**The agent is right and I was wrong.**" — transcript
+    # prose leaked verbatim into what should be a claim about code.
+    hit = harvest.Hit("avoidance",
+                      "I was wrong, never call verify() in config.py.", "", 0)
+    assert harvest._qualify(hit) is None
+
+
+def test_qualify_rejects_markdown_bold():
+    hit = harvest.Hit("avoidance",
+                      "**Never** touch the flag in config.py, it breaks.", "", 0)
+    assert harvest._qualify(hit) is None
+
+
+def test_qualify_rejects_overlong_sentence():
+    # Specimen 1's title was truncated at the 80-char boundary with a broken
+    # escape. A title must be a WHOLE claim: sentences that don't fit are
+    # dropped, never truncated.
+    long = ("We tried the approach where the serializer walks every message "
+            "twice in config.py and it turned out the second walk clobbered "
+            "the first one's markers.")
+    assert len(long) > 80
+    hit = harvest.Hit("avoidance", long, "", 0)
+    assert harvest._qualify(hit) is None
+
+
+def test_qualify_rejects_todo_shape():
+    hit = harvest.Hit("avoidance",
+                      "TODO: never write to config.py during flush.", "", 0)
+    assert harvest._qualify(hit) is None
+
+
+def test_qualify_demotes_landmine_default_single_site():
+    # A landmine states "a change to A breaks B" — it needs BOTH sites.
+    # One path + no deadend evidence used to fall into landmine-by-default;
+    # now it fails qualification.
+    hit = harvest.Hit("avoidance",
+                      "Never route by raw cwd in config.py.", "", 0)
+    assert harvest._qualify(hit) is None
+
+
+def test_qualify_accepts_landmine_with_two_sites():
+    hit = harvest.Hit("avoidance",
+                      "Editing config.py breaks the loader in store.py.", "", 0)
+    assert harvest._qualify(hit) == "landmine"
+
+
+def test_qualify_keeps_deadend_and_fence():
+    dead = harvest.Hit("avoidance",
+                       "We tried the mmap approach in store.py; it doesn't work.",
+                       "", 0)
+    fence = harvest.Hit("intentional",
+                        "This cast looks wrong but is intentional in x.py.", "", 0)
+    assert harvest._qualify(dead) == "deadend"
+    assert harvest._qualify(fence) == "fence"
+
+
+def test_run_never_anchors_scar_infrastructure(tmp_path):
+    # The first naive harvest anchored .scars/candidates/ itself — a scar
+    # that would fire on every future candidate write.
+    root = _scars_repo(tmp_path)
+    (root / ".scars" / "candidates").mkdir(parents=True)
+    n = harvest.run(
+        [_assistant("We tried writing to .scars/candidates/ and gave up; "
+                    "it broke.")], str(root), "S1")
+    assert n == 0
+
+
+def test_candidate_carries_transcript_receipt(tmp_path):
+    # #276 item 3: a candidate without a receipt is unreviewable. The
+    # evidence block quotes the transcript moment, not just the session id.
+    root = _scars_repo(tmp_path)
+    msg = ("Some earlier context sentence. We tried the mmap approach in "
+           "config.py and it broke. Later trailing sentence here.")
+    assert harvest.run([_assistant(msg)], str(root), "S1") == 1
+    (path,) = (root / ".scars" / "candidates").glob("*.md")
+    text = path.read_text()
+    assert "transcript receipt" in text
+    assert "Some earlier context sentence" in text  # context, not title echo
+
+
+def test_run_caps_at_three(tmp_path):
+    root = _scars_repo(tmp_path)
+    for i in range(5):
+        (root / f"f{i}.py").write_text("x\n")
+    msgs = [_assistant(f"We tried patching f{i}.py in place and it broke.")
+            for i in range(5)]
+    assert harvest.run(msgs, str(root), "S1") == 3
