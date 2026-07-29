@@ -309,7 +309,7 @@ def _git_common_dir(project):
     """The git dir whose refs/heads is authoritative for `project`, or None.
     In a linked WORKTREE `.git` is a file pointing at <common>/worktrees/<x>,
     whose refs live back in the common dir — reading the worktree dir instead
-    would report every branch gone (the bench lane runs in worktrees)."""
+    would report every branch gone for anyone working out of a worktree."""
     dot = Path(project) / ".git"
     if dot.is_file():
         text = dot.read_text(encoding="utf-8", errors="replace").strip()

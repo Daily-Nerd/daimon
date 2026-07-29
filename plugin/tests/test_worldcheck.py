@@ -562,7 +562,7 @@ def test_check_branch_probe_follows_relative_worktree_gitdir(monkeypatch, tmp_pa
 def test_check_branch_probe_follows_worktree_gitdir(monkeypatch, tmp_path):
     # In a git worktree `.git` is a FILE pointing at the worktree's gitdir,
     # whose refs live in the COMMON dir. Reading the wrong one reports every
-    # branch gone (the bench lane runs in worktrees — #267).
+    # branch gone for anyone working out of a worktree.
     main = _git_repo(tmp_path / "main", branches=["feat/397-slice-2"])
     common = main / ".git"
     wt_gitdir = common / "worktrees" / "wt"
