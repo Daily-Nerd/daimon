@@ -245,15 +245,20 @@ def _membership(sidecar) -> set[str]:
     return allowed
 
 
-def in_scope(project_dir, sidecar) -> bool:
+def in_scope(project_dir, sidecar, honor_env=True) -> bool:
     """May this project's checkpoints enter this synced remote? Default
     CLOSED: membership must be granted by the sidecar's daimon-team.toml
     ([scope] repos or a [projects.*] mapping) or stated explicitly on the
     machine via DAIMON_TEAM_PROJECT. Broken/absent config, no origin,
     unlisted origin — all deny. Never raises; the write path degrades to the
-    local mirror, so a deny withholds, it never loses."""
+    local mirror, so a deny withholds, it never loses.
+
+    `honor_env=False` (#387): answer from the sidecar's toml ONLY. The env
+    grant is machine-global — it cannot say WHICH remote it means — so the
+    multi-remote router must ignore it or it would broadcast every project
+    into every team."""
     try:
-        if config.team_project():
+        if honor_env and config.team_project():
             return True
         allowed = _membership(sidecar)
         if not allowed:

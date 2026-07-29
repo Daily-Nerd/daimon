@@ -1793,6 +1793,15 @@ def _cmd_team_status(args) -> int:
         else:
             lines.append("  scope: none — this remote receives no checkpoints "
                          "(add [scope] repos to daimon-team.toml)")
+    # #387: where the CURRENT project's checkpoints route — the one place a
+    # misconfigured toml is visible BEFORE a session's checkpoint quietly
+    # stays in the local mirror.
+    dests = store._team_write_slugs(_resolve_project(getattr(args, "project", None)))
+    line = "this project writes to: " + ", ".join(dests)
+    if dests == [store._TEAM_LOCAL_REMOTE]:
+        line += ("  (no remote grants it membership — add its repo URL to a "
+                 "sidecar's daimon-team.toml [scope] repos)")
+    lines.append(line)
     render.render_team_status(lines)
     return 0
 

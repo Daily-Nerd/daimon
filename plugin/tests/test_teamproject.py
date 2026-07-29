@@ -506,7 +506,7 @@ def test_read_candidates_swallows_resolver_bugs(tmp_path, monkeypatch):
 
 
 def _remote_clone(name="team-mem"):
-    """A dir store._team_write_slug treats as a real synced remote (.git present)."""
+    """A dir store._team_write_slugs treats as a real synced remote (.git present)."""
     d = config.team_dir() / name
     (d / ".git").mkdir(parents=True, exist_ok=True)
     return d
@@ -630,3 +630,106 @@ def test_dual_write_env_project_reaches_remote(
     sidecar = _remote_clone()  # no config: env intent alone grants membership
     store.write_checkpoint("S-a", sample_checkpoint, project_dir=repo)
     assert any(sidecar.rglob("*.json"))
+
+
+# ---- #387: scope-routed dual-write — the toml is the router, not just a gate ----
+#
+# Repro'd before filing: with two sidecar clones, EVERY project's checkpoints
+# degraded to the local mirror — including projects a sidecar's toml
+# explicitly granted. A second team remote silently disabled team sync for
+# the whole machine.
+
+
+def test_in_scope_honor_env_false_ignores_team_project(tmp_path, monkeypatch):
+    repo = _repo(tmp_path, "gamma", "https://github.com/org/gamma")
+    sidecar = _remote_clone()
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/gamma")
+    assert teamproject.in_scope(repo, sidecar, honor_env=False) is False
+
+
+def test_dual_write_multi_remote_routes_by_scope(tmp_path, sample_checkpoint,
+                                                 monkeypatch):
+    # The filed repro, expectation inverted: the member sidecar receives the
+    # checkpoint, the unrelated one does not, local stays empty.
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    _remote_clone("team-a")
+    _remote_clone("team-b")
+    _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
+                  remote="team-a")
+    _write_config('[scope]\nrepos = ["https://github.com/org/other"]\n',
+                  remote="team-b")
+    store._dual_write_team("S1", sample_checkpoint, str(repo))
+    team = config.team_dir()
+    assert list((team / "team-a").rglob("S1.json"))
+    assert not list((team / "team-b").rglob("S1.json"))
+    assert not list((team / "local").rglob("S1.json"))
+
+
+def test_dual_write_multi_remote_fans_to_every_member(tmp_path,
+                                                      sample_checkpoint,
+                                                      monkeypatch):
+    # Append-only per-author paths make multi-destination writes safe by
+    # construction — a repo in two teams' scopes reaches both.
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    _remote_clone("team-a")
+    _remote_clone("team-b")
+    for r in ("team-a", "team-b"):
+        _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
+                      remote=r)
+    store._dual_write_team("S1", sample_checkpoint, str(repo))
+    team = config.team_dir()
+    assert list((team / "team-a").rglob("S1.json"))
+    assert list((team / "team-b").rglob("S1.json"))
+    assert not list((team / "local").rglob("S1.json"))
+
+
+def test_dual_write_multi_remote_none_in_scope_degrades_local(
+        tmp_path, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    repo = _repo(tmp_path, "personal", "https://github.com/me/personal-notes")
+    _remote_clone("team-a")
+    _remote_clone("team-b")
+    for r in ("team-a", "team-b"):
+        _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
+                      remote=r)
+    store._dual_write_team("S1", sample_checkpoint, str(repo))
+    team = config.team_dir()
+    assert not list((team / "team-a").rglob("S1.json"))
+    assert not list((team / "team-b").rglob("S1.json"))
+    assert list((team / "local").rglob("S1.json"))
+
+
+def test_dual_write_multi_remote_env_grant_does_not_fan_out(
+        tmp_path, sample_checkpoint, monkeypatch):
+    # DAIMON_TEAM_PROJECT is machine-global explicit intent; under multiple
+    # remotes it must NOT broadcast the project into every team. Toml-only
+    # routing applies; nothing grants -> local.
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/alpha")
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    _remote_clone("team-a")
+    _remote_clone("team-b")
+    store._dual_write_team("S1", sample_checkpoint, str(repo))
+    team = config.team_dir()
+    assert not list((team / "team-a").rglob("S1.json"))
+    assert not list((team / "team-b").rglob("S1.json"))
+    assert list((team / "local").rglob("S1.json"))
+
+
+def test_dual_write_single_remote_env_grant_still_honored(
+        tmp_path, sample_checkpoint, monkeypatch):
+    # Single-remote semantics are a compatibility contract: the env grant
+    # keeps working exactly as #279 shipped it.
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/alpha")
+    repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
+    _remote_clone("team-a")
+    store._dual_write_team("S1", sample_checkpoint, str(repo))
+    assert list((config.team_dir() / "team-a").rglob("S1.json"))
