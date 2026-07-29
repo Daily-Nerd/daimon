@@ -1498,6 +1498,10 @@ def _status_world(project_arg=None) -> dict:
     # One receipts line, only when the feature is on (#204) — mirrors the team
     # line's "no line when unused" rule so status stays quiet by default.
     receipts_line = receipts.status_line(project)
+    # #404: forget-suppression hit accounting — the count + most-recent stamp,
+    # surfaced only when non-zero (same "quiet by default" rule). Claim
+    # snapshots stay in the ledger; status shows only the number.
+    forget_hits = store.forget_hit_stats(project)
     identity = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
@@ -1513,7 +1517,8 @@ def _status_world(project_arg=None) -> dict:
         "disabled": disabled, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
-        "hook_drift": hook_drift, "rescue_gap": rescue_gap, "rc": rc,
+        "hook_drift": hook_drift, "rescue_gap": rescue_gap,
+        "forget_hits": forget_hits, "rc": rc,
     }
 
 
@@ -1530,6 +1535,7 @@ def status_payload(project_arg=None) -> tuple:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "forget_hits": w["forget_hits"],
     }
     return payload, w["rc"]
 
@@ -1551,6 +1557,7 @@ def _cmd_status(args) -> int:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "forget_hits": w["forget_hits"],
     })
     return w["rc"]
 

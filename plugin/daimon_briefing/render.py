@@ -457,6 +457,22 @@ def _capture_alarm_lines(alarm: dict) -> list[str]:
     ]
 
 
+def _forget_hits_line(data: dict) -> str | None:
+    """#404: one line when the value-keyed tombstone has caught a re-assertion
+    on this install; silent otherwise (same 'quiet by default' rule as the team
+    and receipts lines). Shows the count + most-recent stamp, never the
+    suppressed claim text."""
+    fh = data.get("forget_hits")
+    if not isinstance(fh, dict):
+        return None
+    n = fh.get("count") or 0
+    if not n:
+        return None
+    ts = fh.get("last_hit_at") or "unknown"
+    return (f"forget ledger (this project): suppressed {n} "
+            f"re-assertion{'s' if n != 1 else ''}, most recent {ts}")
+
+
 def _plain_status(data: dict) -> None:
     alarm = data.get("capture_alarm")
     if alarm:
@@ -480,6 +496,9 @@ def _plain_status(data: dict) -> None:
         print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
         print(data["receipts"])  # #204: one line, only when receipts are on
+    fh_line = _forget_hits_line(data)
+    if fh_line:
+        print(fh_line)  # #404: one line, only when a re-assertion was suppressed
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -563,6 +582,9 @@ def _rich_status(data: dict) -> None:
         console.print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
         console.print(data["receipts"])  # #204: one line, only when receipts are on
+    fh_line = _forget_hits_line(data)
+    if fh_line:
+        console.print(fh_line)  # #404: one line, only when a re-assertion was suppressed
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

@@ -502,7 +502,11 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # mirrored. Runs after redaction so the compared text matches the stored
     # (post-redaction) text the forget command keyed the tombstone on. No-op
     # (zero cost) when nothing was forgotten here.
-    _drop_forgotten(checkpoint, project_dir)
+    forget_dropped = _drop_forgotten(checkpoint, project_dir)
+    if forget_dropped:
+        # #404: account each suppression on the telemetry ledger. Best-effort
+        # (never fatal) — a hit record must never fail the capture it observes.
+        record_forget_hits(forget_dropped, project_dir)
     _stamp_item_ids(checkpoint)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
@@ -1023,6 +1027,87 @@ def verification_counts(project_dir=None) -> dict:
         check = str(row.get("check") or "")
         if check:
             out[check] = out.get(check, 0) + 1
+    return out
+
+
+# ---- #404: forget-suppression hit accounting ----
+
+# A capture-time forget suppression is otherwise silent. Account it on a
+# SECOND telemetry stream (never events.jsonl: scar 0025 — any new event kind
+# there resolves-and-hides the item it names), exactly as append_verification
+# does for the rejection ledger.
+_FORGET_HITS = "forget-hits.jsonl"
+_FORGET_CLAIM_MAX = 60  # short claim snapshot; a bounded re-introduction of the
+                        # forgotten value (status shows only count + ts).
+
+
+def _forget_hits_path(project_dir=None):
+    slug = project_slug(project_dir)
+    if not slug:
+        return None
+    return config.checkpoint_dir() / slug / _FORGET_HITS
+
+
+def record_forget_hits(items, project_dir=None) -> bool:
+    """Append one row per capture-time forget suppression (#404): {ts, key,
+    claim}. Mirrors append_verification's contract — silent no-op under the
+    kill switch or an unknown project, never fatal (a telemetry write must
+    never fail a capture). The claim snapshot is redacted and truncated to a
+    short prefix: a deliberate, bounded record of what was suppressed, kept off
+    the surfaced status line (which shows only the count + timestamp)."""
+    if config.is_disabled():
+        return False
+    path = _forget_hits_path(project_dir)
+    if path is None or not items:
+        return False
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text") or "")
+                claim, _ = redact.redact_text(text[:_FORGET_CLAIM_MAX])
+                row = {"ts": ts, "key": normalize.content_key(text),
+                       "claim": claim}
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def forget_hit_stats(project_dir=None) -> dict:
+    """Read-side rollup of the forget-hit ledger (#404): total suppressions,
+    the most recent timestamp, and the recent claim snapshots. The number the
+    project already publishes for capture health and verification downgrades,
+    now answerable for "how often did the tombstone catch a re-assertion here".
+    Fails open to zeroes (missing/corrupt log, unknown project) — same posture
+    as verification_counts and the resolutions fold."""
+    out: dict = {"count": 0, "last_hit_at": None, "recent": []}
+    path = _forget_hits_path(project_dir)
+    if path is None:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return out
+    recent: list = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        out["count"] += 1
+        ts = row.get("ts")
+        if ts and (out["last_hit_at"] is None or ts > out["last_hit_at"]):
+            out["last_hit_at"] = ts
+        claim = row.get("claim")
+        if claim:
+            recent.append(str(claim))
+    out["recent"] = recent[-5:]
     return out
 
 
