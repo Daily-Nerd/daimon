@@ -7,6 +7,7 @@ bottom of the file, kept cheap).
 """
 import io
 import json
+import time
 
 import pytest
 
@@ -209,6 +210,12 @@ def test_projects_tool_matches_cli_rows(tmp_checkpoint_dir, sample_checkpoint,
 def test_status_tool_matches_cli_payload(tmp_checkpoint_dir, sample_checkpoint,
                                          monkeypatch):
     from daimon_briefing import cli, store
+    # #390: the payload embeds a checkpoint age truncated to whole seconds,
+    # recomputed from the live clock on each call. Freeze it so the tool call
+    # and status_payload see the same instant — a diff must mean the payloads
+    # diverged, not that a second ticked over between them.
+    frozen = time.time()
+    monkeypatch.setattr(time, "time", lambda: frozen)
     store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_status", {}))
