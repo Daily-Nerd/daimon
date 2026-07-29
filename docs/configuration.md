@@ -161,8 +161,13 @@ checkpoints, so candidate files are committable.
 ## LLM backend
 
 Serialization needs an LLM endpoint. `daimon configure` is the intended way to
-set these. The URL, key, and model each fall back to a `LITELLM_*` variable if
-the `DAIMON_*` form is unset.
+set these — and `daimon configure --init` runs the guided wizard: backend,
+timeout, an immediate backend test, an optional team-memory walk (author +
+remote, wired through `daimon team init`), ending with the `daimon status`
+summary. Every prompt has a flag escape hatch (`--backend`, `--timeout`,
+`--author`, `--team-remote`) so scripts and CI can run it non-interactively.
+The URL, key, and model each fall back to a `LITELLM_*` variable if the
+`DAIMON_*` form is unset.
 
 | Variable | Default | What it does |
 |---|---|---|

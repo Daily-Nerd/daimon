@@ -1800,82 +1800,66 @@ def _cmd_team_status(args) -> int:
 # ---- configure: detect/report the resolved backend + fill gaps in ~/.daimon/env ----
 
 
-def _cmd_configure(args) -> int:
-    """Detect + report the resolved LLM backend; fill gaps in ~/.daimon/env.
+def _run_backend_test() -> int:
+    """--test (#56): prove the RESOLVED backend works, interactively, at setup
+    time — the alternative is a real serialize failing minutes later inside
+    a detached hook child. One tiny prompt through the same llm.chat path
+    serialization uses; failure prints the cause and where stderr landed."""
+    start = time.monotonic()
+    try:
+        # working() (#182): the roundtrip is ~15s of otherwise-dead
+        # terminal at the exact moment a new user decides whether the
+        # tool works — spinner on rich/TTY, one plain line elsewhere.
+        with render.working("testing backend — one tiny prompt through "
+                            "the resolved backend"):
+            reply = llm.chat(
+                [{"role": "user", "content":
+                  'Reply with exactly this JSON and nothing else: {"ok": true}'}],
+                retries=1)
+    except llm.ChatError as exc:
+        print(f"backend test: FAILED — {exc}", file=sys.stderr)
+        return 1
+    # Same extraction path serialization uses (#59): a transport that
+    # answers but cannot return extractable JSON — agent-style CLIs often
+    # can't — must fail HERE, not on the first real serialize.
+    try:
+        llm.extract_json(reply)
+    except json.JSONDecodeError:
+        print("backend test: FAILED — transport works, but the backend did "
+              "not return extractable JSON; serialization will fail. "
+              "Agent-style CLIs often can't do this — use an "
+              "OpenAI-compatible endpoint or a raw-completion CLI.",
+              file=sys.stderr)
+        return 1
+    elapsed = time.monotonic() - start
+    render.render_configure_lines([f"backend test: ok ({elapsed:.1f}s round trip)"])
+    return 0
 
-    Always prints a doctor view. With backend flags, writes non-interactively.
-    With no flags it is SAFE everywhere: it only prompts on a TTY when daimon is
-    not ready, and otherwise just prints guidance — it never blocks.
-    """
-    # --test (#56): prove the RESOLVED backend works, interactively, at setup
-    # time — the alternative is a real serialize failing minutes later inside
-    # a detached hook child. One tiny prompt through the same llm.chat path
-    # serialization uses; failure prints the cause and where stderr landed.
-    if getattr(args, "test", False):
-        start = time.monotonic()
-        try:
-            # working() (#182): the roundtrip is ~15s of otherwise-dead
-            # terminal at the exact moment a new user decides whether the
-            # tool works — spinner on rich/TTY, one plain line elsewhere.
-            with render.working("testing backend — one tiny prompt through "
-                                "the resolved backend"):
-                reply = llm.chat(
-                    [{"role": "user", "content":
-                      'Reply with exactly this JSON and nothing else: {"ok": true}'}],
-                    retries=1)
-        except llm.ChatError as exc:
-            print(f"backend test: FAILED — {exc}", file=sys.stderr)
-            return 1
-        # Same extraction path serialization uses (#59): a transport that
-        # answers but cannot return extractable JSON — agent-style CLIs often
-        # can't — must fail HERE, not on the first real serialize.
-        try:
-            llm.extract_json(reply)
-        except json.JSONDecodeError:
-            print("backend test: FAILED — transport works, but the backend did "
-                  "not return extractable JSON; serialization will fail. "
-                  "Agent-style CLIs often can't do this — use an "
-                  "OpenAI-compatible endpoint or a raw-completion CLI.",
-                  file=sys.stderr)
-            return 1
-        elapsed = time.monotonic() - start
-        render.render_configure_lines([f"backend test: ok ({elapsed:.1f}s round trip)"])
-        return 0
 
-    st = configure.status()
-    render.render_configure(st)
+def _configure_flag_updates(args) -> dict:
+    """Backend flags -> env updates (the non-interactive write path)."""
+    updates = {"DAIMON_LLM_BACKEND": args.backend}
+    if args.backend == "litellm":
+        if args.api_key:
+            updates["DAIMON_LLM_API_KEY"] = args.api_key
+        if args.model:
+            updates["DAIMON_LLM_MODEL"] = args.model
+        if args.base_url:
+            updates["DAIMON_LLM_BASE_URL"] = args.base_url
+    elif args.backend == "command":
+        if args.command:
+            updates["DAIMON_LLM_COMMAND"] = args.command
+        if args.output:
+            updates["DAIMON_LLM_COMMAND_OUTPUT"] = args.output
+        if args.input:
+            updates["DAIMON_LLM_COMMAND_INPUT"] = args.input
+    # claude-cli: just pin the backend, no credentials needed.
+    return updates
 
-    if args.backend:
-        updates = {"DAIMON_LLM_BACKEND": args.backend}
-        if args.backend == "litellm":
-            if args.api_key:
-                updates["DAIMON_LLM_API_KEY"] = args.api_key
-            if args.model:
-                updates["DAIMON_LLM_MODEL"] = args.model
-            if args.base_url:
-                updates["DAIMON_LLM_BASE_URL"] = args.base_url
-        elif args.backend == "command":
-            if args.command:
-                updates["DAIMON_LLM_COMMAND"] = args.command
-            if args.output:
-                updates["DAIMON_LLM_COMMAND_OUTPUT"] = args.output
-            if args.input:
-                updates["DAIMON_LLM_COMMAND_INPUT"] = args.input
-        # claude-cli: just pin the backend, no credentials needed.
-        path = configure.write_env(updates)
-        render.render_configure_lines([f"wrote {path}"])
-        render.render_configure(configure.status())  # reprint the new resolved state
-        return 0
 
-    if st["ready"]:
-        return 0  # nothing to do
-    if not sys.stdin.isatty():
-        # Non-interactive and not ready: guide, never block.
-        render.render_configure_lines(["not ready — re-run with --backend {litellm,command,claude-cli} "
-                                       "and the matching value flags, or run interactively in a terminal."])
-        return 0
-
-    # Interactive: prompt for a backend and its values.
+def _ask_backend_updates() -> dict:
+    """Interactive backend Q&A -> env updates. Question order and wording are
+    a stable contract with the tests' answer iterators — extend at the END."""
     backend = _prompt("backend [litellm/command/claude-cli]: ").strip() or "litellm"
     updates = {"DAIMON_LLM_BACKEND": backend}
     if backend == "litellm":
@@ -1903,7 +1887,122 @@ def _cmd_configure(args) -> int:
         if input_spec:
             updates["DAIMON_LLM_COMMAND_INPUT"] = input_spec
     # claude-cli: nothing more to ask.
-    path = configure.write_env(updates)
+    return updates
+
+
+def _configure_wizard(args) -> int:
+    """#368: `daimon configure --init` — the guided path the two
+    highest-friction onboarding moments never had. Backend -> timeout ->
+    probe offer -> optional team walk -> the same `daimon status` summary
+    the docs reference. Every prompt has a flag escape hatch so scripts/CI
+    can run the whole thing non-interactively."""
+    interactive = sys.stdin.isatty() and not args.backend
+    updates: dict = {}
+    if args.backend:
+        updates = _configure_flag_updates(args)
+    elif interactive:
+        updates = _ask_backend_updates()
+        timeout = _prompt(
+            "serialize timeout seconds (blank = default "
+            f"{config.timeout_seconds()}): ").strip()
+        if timeout.isdigit():
+            updates["DAIMON_TIMEOUT"] = timeout
+    else:
+        render.render_configure_lines(
+            ["--init needs a terminal or --backend plus value flags "
+             "(and optionally --timeout/--author/--team-remote)."])
+        return 0
+    if getattr(args, "timeout", None):
+        updates["DAIMON_TIMEOUT"] = str(args.timeout)
+    # Scar fence: DAIMON_TIMEOUT is a TOTAL budget shared across retries, and
+    # real serialize/merge calls run 80-250s each — a sub-420 budget cannot
+    # fit even one slow call. The wizard must not help a user write one.
+    if updates.get("DAIMON_TIMEOUT") and int(updates["DAIMON_TIMEOUT"]) < 420:
+        render.render_configure_lines(
+            [f"timeout {updates['DAIMON_TIMEOUT']}s is below the 420s floor — "
+             "ignored (real serialize/merge calls run 80-250s each; the "
+             "budget must fit at least one slow call plus a retry)"])
+        del updates["DAIMON_TIMEOUT"]
+    if updates:
+        path = configure.write_env(updates)
+        render.render_configure_lines([f"wrote {path}"])
+
+    # Probe right after writing (#368 item 2) — the alternative is the first
+    # real serialize failing inside a detached hook child. Default YES on the
+    # interactive path: a wizard that skips its own verification teaches the
+    # user nothing about whether setup worked.
+    rc = 0
+    run_probe = getattr(args, "test", False)
+    if interactive and not run_probe:
+        run_probe = _prompt("run backend test now? [Y/n]: ").strip().lower() \
+            not in ("n", "no")
+    if run_probe:
+        rc = _run_backend_test()
+
+    # Team walk (#368 item 3): env vars + `team init` in one place, instead
+    # of spread across the reference page and a separate command.
+    author = getattr(args, "author", None)
+    remote = getattr(args, "team_remote", None)
+    if interactive and not (author or remote):
+        if _prompt("set up team memory? [y/N]: ").strip().lower() in ("y", "yes"):
+            author = _prompt("author name (namespaces your checkpoints): ").strip()
+            remote = _prompt("team remote URL (git): ").strip()
+    if author or remote:
+        team_updates = {"DAIMON_TEAM": "1"}
+        if author:
+            team_updates["DAIMON_AUTHOR"] = author
+        configure.write_env(team_updates)
+        if remote:
+            try:
+                dest = teamsync.init(remote, project_dir=Path.cwd())
+                render.render_team_init([
+                    f"initialized team sidecar: {dest}",
+                    "checkpoints now sync there — `daimon team sync` runs "
+                    "opportunistically at session start",
+                ])
+            except teamsync.TeamError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                rc = rc or 1
+
+    # End on the exact status view the docs reference (#368 item 4), so the
+    # user leaves the wizard seeing the same health verdict every other
+    # surface will show them.
+    _cmd_status(argparse.Namespace(project=None, json=False, suppressed=False))
+    return rc
+
+
+def _cmd_configure(args) -> int:
+    """Detect + report the resolved LLM backend; fill gaps in ~/.daimon/env.
+
+    Always prints a doctor view. With backend flags, writes non-interactively.
+    With no flags it is SAFE everywhere: it only prompts on a TTY when daimon is
+    not ready, and otherwise just prints guidance — it never blocks.
+    `--init` (#368) runs the full guided wizard instead.
+    """
+    if getattr(args, "init", False):
+        return _configure_wizard(args)
+    if getattr(args, "test", False):
+        return _run_backend_test()
+
+    st = configure.status()
+    render.render_configure(st)
+
+    if args.backend:
+        path = configure.write_env(_configure_flag_updates(args))
+        render.render_configure_lines([f"wrote {path}"])
+        render.render_configure(configure.status())  # reprint the new resolved state
+        return 0
+
+    if st["ready"]:
+        return 0  # nothing to do
+    if not sys.stdin.isatty():
+        # Non-interactive and not ready: guide, never block.
+        render.render_configure_lines(["not ready — re-run with --backend {litellm,command,claude-cli} "
+                                       "and the matching value flags, or run interactively in a terminal."])
+        return 0
+
+    # Interactive: prompt for a backend and its values.
+    path = configure.write_env(_ask_backend_updates())
     render.render_configure_lines([f"wrote {path}"])
     render.render_configure(configure.status())
     return 0
@@ -2659,6 +2758,22 @@ def main(argv=None) -> int:
         help="command: DAIMON_LLM_COMMAND_INPUT (stdin|arg|file:<flag>) — how the "
              "prompt reaches a CLI that doesn't read stdin, e.g. --input "
              "'file:--prompt-file' for the Devin CLI (#58)",
+    )
+    p_cfg.add_argument(
+        "--init", action="store_true",
+        help="guided setup wizard (#368): backend, timeout, immediate --test "
+             "offer, optional team walk, ends with the status summary; every "
+             "prompt has a flag escape hatch for scripts",
+    )
+    p_cfg.add_argument(
+        "--timeout", type=int,
+        help="--init: DAIMON_TIMEOUT (total serialize budget, floor 420s)",
+    )
+    p_cfg.add_argument("--author", help="--init: DAIMON_AUTHOR for team memory")
+    p_cfg.add_argument(
+        "--team-remote",
+        help="--init: git remote URL — sets DAIMON_TEAM=1 and runs "
+             "`daimon team init <url>`",
     )
     p_cfg.add_argument(
         "--test", action="store_true",

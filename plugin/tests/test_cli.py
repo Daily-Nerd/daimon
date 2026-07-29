@@ -6167,3 +6167,130 @@ def test_heartbeat_touch_never_raises(monkeypatch, tmp_log_dir):
     monkeypatch.setattr(ledger.config, "log_dir", _boom)
     ledger.touch_heartbeat("S-ok")
     assert ledger.heartbeat_age("S-ok") is None
+
+
+# ---- #368: configure --init wizard — guided env + team setup ----
+#
+# The two highest-friction onboarding moments (backend setup, team setup)
+# had no guided path: env hand-edited from a 20-knob reference page, team
+# spread across env vars and a separate CLI command.
+
+
+def _wizard_env(monkeypatch, tmp_path, tty):
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: tty)
+    return env_file
+
+
+def test_configure_init_noninteractive_flags(monkeypatch, tmp_path, capsys):
+    from daimon_briefing import config, teamsync
+    _wizard_env(monkeypatch, tmp_path, tty=False)
+    inits = []
+    monkeypatch.setattr(teamsync, "init",
+                        lambda url, project_dir=None: inits.append(url) or tmp_path)
+    rc = cli.main(["configure", "--init", "--backend", "claude-cli",
+                   "--timeout", "600", "--author", "kb",
+                   "--team-remote", "git@example.com:t.git"])
+    assert rc == 0
+    values = config._file_values()
+    assert values["DAIMON_LLM_BACKEND"] == "claude-cli"
+    assert values["DAIMON_TIMEOUT"] == "600"
+    assert values["DAIMON_TEAM"] == "1"
+    assert values["DAIMON_AUTHOR"] == "kb"
+    assert inits == ["git@example.com:t.git"]
+
+
+def test_configure_init_interactive_full_walk(monkeypatch, tmp_path, capsys):
+    from daimon_briefing import config, teamsync
+    _wizard_env(monkeypatch, tmp_path, tty=True)
+    inits = []
+    monkeypatch.setattr(teamsync, "init",
+                        lambda url, project_dir=None: inits.append(url) or tmp_path)
+    answers = iter([
+        "litellm", "", "M",          # backend, base_url(blank), model
+        "600",                        # timeout
+        "n",                          # skip the probe
+        "y", "kb", "git@example.com:t.git",  # team walk
+    ])
+    monkeypatch.setattr(cli, "_prompt", lambda q: next(answers))
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": "K")
+    rc = cli.main(["configure", "--init"])
+    assert rc == 0
+    values = config._file_values()
+    assert values["DAIMON_LLM_MODEL"] == "M"
+    assert values["DAIMON_TIMEOUT"] == "600"
+    assert values["DAIMON_TEAM"] == "1"
+    assert values["DAIMON_AUTHOR"] == "kb"
+    assert inits == ["git@example.com:t.git"]
+    # ends with the same health verdict `daimon status` prints
+    assert "identity:" in capsys.readouterr().out.lower()
+
+
+def test_configure_init_interactive_declines_team(monkeypatch, tmp_path, capsys):
+    from daimon_briefing import config
+    _wizard_env(monkeypatch, tmp_path, tty=True)
+    answers = iter(["claude-cli", "", "n", "n"])  # backend, timeout blank, no probe, no team
+    monkeypatch.setattr(cli, "_prompt", lambda q: next(answers))
+    rc = cli.main(["configure", "--init"])
+    assert rc == 0
+    values = config._file_values()
+    assert values["DAIMON_LLM_BACKEND"] == "claude-cli"
+    assert "DAIMON_TEAM" not in values
+    assert "DAIMON_TIMEOUT" not in values  # blank answer -> default stays implicit
+
+
+def test_configure_init_ignores_non_numeric_timeout(monkeypatch, tmp_path, capsys):
+    from daimon_briefing import config
+    _wizard_env(monkeypatch, tmp_path, tty=True)
+    answers = iter(["claude-cli", "soon", "n", "n"])
+    monkeypatch.setattr(cli, "_prompt", lambda q: next(answers))
+    assert cli.main(["configure", "--init"]) == 0
+    assert "DAIMON_TIMEOUT" not in config._file_values()
+
+
+def test_configure_init_probe_accept_runs_backend_test(monkeypatch, tmp_path, capsys):
+    from daimon_briefing import llm
+    _wizard_env(monkeypatch, tmp_path, tty=True)
+    calls = []
+    monkeypatch.setattr(llm, "chat",
+                        lambda msgs, **kw: calls.append(1) or '{"ok": true}')
+    answers = iter(["claude-cli", "", "", "n"])  # blank probe answer = default yes
+    monkeypatch.setattr(cli, "_prompt", lambda q: next(answers))
+    assert cli.main(["configure", "--init"]) == 0
+    assert calls  # the probe actually ran through llm.chat
+    assert "backend test: ok" in capsys.readouterr().out
+
+
+def test_configure_init_team_init_failure_returns_error(monkeypatch, tmp_path, capsys):
+    from daimon_briefing import teamsync
+    _wizard_env(monkeypatch, tmp_path, tty=False)
+    def _boom(url, project_dir=None):
+        raise teamsync.TeamError("remote unreachable")
+    monkeypatch.setattr(teamsync, "init", _boom)
+    rc = cli.main(["configure", "--init", "--backend", "claude-cli",
+                   "--team-remote", "git@example.com:t.git"])
+    assert rc == 1
+    assert "remote unreachable" in capsys.readouterr().err
+
+
+def test_configure_init_refuses_sub_floor_timeout(monkeypatch, tmp_path, capsys):
+    # Scar fence: DAIMON_TIMEOUT is a TOTAL budget; real serialize/merge
+    # calls run 80-250s each — the wizard must never write a sub-420 value.
+    from daimon_briefing import config
+    _wizard_env(monkeypatch, tmp_path, tty=False)
+    rc = cli.main(["configure", "--init", "--backend", "claude-cli",
+                   "--timeout", "120"])
+    assert rc == 0
+    assert "DAIMON_TIMEOUT" not in config._file_values()
+    assert "420s floor" in capsys.readouterr().out
+
+
+def test_configure_init_noninteractive_without_flags_guides(monkeypatch,
+                                                            tmp_path, capsys):
+    env_file = _wizard_env(monkeypatch, tmp_path, tty=False)
+    assert cli.main(["configure", "--init"]) == 0
+    assert "--init needs a terminal" in capsys.readouterr().out
+    assert not env_file.exists()
