@@ -34,7 +34,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, receipts, redact, schema, serializer, teamproject
+from . import config, normalize, receipts, redact, schema, serializer, teamproject
 
 log = logging.getLogger("daimon_briefing")
 
@@ -497,6 +497,12 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # checkpoint so read_team can attribute it later, even when team-write is off.
     checkpoint.setdefault("author", config.author())
     _redact_checkpoint(checkpoint)
+    # #402: value-keyed re-capture gate — drop any item whose canonical value
+    # was forgotten for this project, BEFORE it is stamped, signed, indexed, or
+    # mirrored. Runs after redaction so the compared text matches the stored
+    # (post-redaction) text the forget command keyed the tombstone on. No-op
+    # (zero cost) when nothing was forgotten here.
+    _drop_forgotten(checkpoint, project_dir)
     _stamp_item_ids(checkpoint)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
@@ -1136,3 +1142,64 @@ def is_resolved(event) -> bool:
                       # every consumer (carry, withhold, future) inherits
                       # no-suppression without knowing candidates exist.
     return not status.startswith("reopen")
+
+
+# ---- #402: value-keyed forget suppression ----
+
+# `forgotten:` status prefix -> canonical content key. The forget command
+# (cli._cmd_forget) writes `forgotten:<normalize.content_key(text)>`; this
+# derives the live set of tombstoned values at read time.
+_FORGOTTEN_PREFIX = "forgotten:"
+
+
+def forgotten_content_keys(project_dir=None) -> set[str]:
+    """The set of canonical content keys the forget ledger has tombstoned for
+    this project (#402). Derived at read time from the `forgotten:` events — no
+    new store surface. Scoped GLOBALLY per project and keyed on the canonical
+    VALUE only (never a subject/predicate/scope tuple): free-text items have no
+    such tuple, and per-key scoping would let the same value be re-asserted
+    under a different framing. Only the LATEST event per ref counts, so a later
+    `reopen` lifts the tombstone (same fold recall/withhold use). Fails open to
+    an empty set (missing/corrupt log, unknown project)."""
+    keys: set[str] = set()
+    for evt in resolutions(project_dir=project_dir).values():
+        status = str(evt.get("status") or "")
+        if status.lower().startswith(_FORGOTTEN_PREFIX):
+            key = status[len(_FORGOTTEN_PREFIX):].strip()
+            if key:
+                keys.add(key)
+    return keys
+
+
+def _drop_forgotten(checkpoint: dict, project_dir) -> list[dict]:
+    """Value-keyed re-capture gate (#402): drop every item whose canonicalized
+    text hashes into this project's forgotten set BEFORE it reaches the
+    checkpoint on disk. This is what makes "a forgotten value stays gone" hold
+    across a fresh re-extraction of the same sentence — not merely a
+    render-time withhold, which leaves the value sitting on disk. Returns the
+    dropped items so the caller can account the suppression hit (#404).
+
+    Fail-safe: over-suppresses on a hash collision (via the bounded content
+    key) — a forgotten value re-appearing is the worse failure. A no-op with
+    zero cost when nothing was ever forgotten here."""
+    keys = forgotten_content_keys(project_dir)
+    if not keys:
+        return []
+    dropped: list[dict] = []
+    for section, key in _ITEM_LISTS:
+        block = checkpoint.get(section)
+        if not isinstance(block, dict):
+            continue
+        lst = block.get(key)
+        if not isinstance(lst, list):
+            continue
+        kept = []
+        for item in lst:
+            if (isinstance(item, dict)
+                    and normalize.content_key(item.get("text") or "") in keys):
+                dropped.append(item)
+            else:
+                kept.append(item)
+        if len(kept) != len(lst):
+            block[key] = kept
+    return dropped

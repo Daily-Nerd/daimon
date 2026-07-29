@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, carry, config, configure, harvest, llm, normalize, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -944,8 +944,12 @@ def _cmd_forget(args) -> int:
         _note_usage("forget:dry-run")
         print(f"would forget {target['id']}: {target.get('text', '')}")
         return 0
-    content_hash = hashlib.sha256(
-        str(target.get("text") or "").encode("utf-8")).hexdigest()[:12]
+    # #402: key the tombstone on the CANONICAL value (normalize.content_key),
+    # not the raw bytes — so a later re-extraction of the same claim (different
+    # case, invisible chars, a look-alike glyph) folds to the same key and is
+    # suppressed at capture. Still a hash, never the text: removal means the
+    # content leaves the audit trail too (#321).
+    content_hash = normalize.content_key(target.get("text") or "")
     for section, key in store._ITEM_LISTS:
         lst = (checkpoint.get(section) or {}).get(key)
         if isinstance(lst, list):
