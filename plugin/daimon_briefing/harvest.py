@@ -103,12 +103,66 @@ def _scar_type(hit):
     return "deadend" if _DEADEND_RE.search(hit.sentence) else "landmine"
 
 
+# ---- #276: qualification filter — the pipe worked, extraction didn't ----
+#
+# Running tally before this filter: 4 harvested candidates, 0 promotable.
+# The specimens shared one signature: conversational-voice titles (transcript
+# prose, not claims about code), titles truncated mid-sentence at the 80-char
+# boundary, and landmine-by-default extractions meeting none of the type's
+# obligations. Every gate below is derived from a real failed specimen.
+
+_MAX_TITLE_CHARS = 80
+
+# Transcript VOICE, not a claim about code: first-person singular ("I was
+# wrong"), markdown emphasis leaking through, TODO/FIXME imperatives. "We
+# tried X" deliberately survives — that is exactly deadend evidence voice.
+_VOICE_RE = re.compile(r"\*\*|\bI\b|\bI'm\b|\bI've\b")
+
+
+def _qualify(hit) -> str | None:
+    """Scar type for a hit that meets its type's structural obligations, or
+    None -> drop. A scar states what happened; each type has obligations:
+    deadend needs attempt-and-abandonment evidence, fence needs the stated
+    intent (its detection marker IS the reason), landmine needs BOTH sites —
+    a change to A observed breaking B. One-site avoidance prose with no
+    evidence used to fall into landmine-by-default; now it fails here."""
+    s = " ".join(hit.sentence.split())
+    # A title must be a WHOLE claim — never truncated mid-sentence.
+    if len(s) > _MAX_TITLE_CHARS:
+        return None
+    if _VOICE_RE.search(s) or s.startswith(("TODO", "FIXME")):
+        return None
+    if hit.kind == "intentional":
+        return "fence"
+    if _DEADEND_RE.search(s):
+        return "deadend"
+    if len(set(_PATH_RE.findall(s))) >= 2:
+        return "landmine"
+    return None
+
+
+def _receipt(hit) -> str:
+    """The transcript moment, verbatim: the matched sentence with its
+    surrounding context (bounded), secret-scrubbed. A candidate without a
+    receipt is unreviewable — the session id is provenance, not evidence."""
+    ctx = " ".join((hit.context or "").split())
+    sent = " ".join(hit.sentence.split())
+    pos = ctx.find(sent)
+    if pos < 0:
+        excerpt = sent
+    else:
+        start = max(0, pos - 120)
+        excerpt = ctx[start:pos + len(sent) + 120].strip()
+    scrubbed, _ = redact.redact_text(excerpt)
+    return scrubbed
+
+
 def _slug(title):
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s[:60] or "harvested-scar"
 
 
-def to_candidate(hit, anchor, session_id, today):
+def to_candidate(hit, anchor, session_id, today, typ=None):
     """Build (slug, markdown). Lint-valid frontmatter, single path-only anchor.
 
     `title` is emitted via json.dumps → a valid double-quoted YAML scalar even when
@@ -117,9 +171,14 @@ def to_candidate(hit, anchor, session_id, today):
     The verbatim sentence is secret-scrubbed here (#109) before it becomes the
     candidate's title, slug, and body — candidate files are committable, so a
     quoted secret must never persist to .scars/candidates/*.md. Classification
-    (_scar_type) reads the raw hit: its markers are prose, untouched by redaction.
+    (_scar_type / _qualify) reads the raw hit: its markers are prose, untouched
+    by redaction.
+
+    `typ` (#276): the qualification verdict from _qualify; None falls back to
+    the legacy _scar_type mapping for direct callers. The evidence block quotes
+    the transcript moment (#276 item 3) — a receipt, not just provenance.
     """
-    typ = _scar_type(hit)
+    typ = typ or _scar_type(hit)
     sentence, _ = redact.redact_text(hit.sentence)
     title = " ".join(sentence.split())[:80].rstrip()
     slug = _slug(title)
@@ -138,6 +197,7 @@ def to_candidate(hit, anchor, session_id, today):
         "anchors:\n"
         f"  - path: {anchor}\n"
         "evidence:\n"
+        f"  - note: {json.dumps('transcript receipt (verbatim): ' + _receipt(hit))}\n"
         f"  - note: {json.dumps('auto-harvested from session ' + session_id)}\n"
         "expires:\n"
         '  condition: "the referenced code is removed or the constraint no longer holds"\n'
@@ -151,7 +211,9 @@ def to_candidate(hit, anchor, session_id, today):
     return slug, md
 
 
-_MAX_CANDIDATES = 5
+# #276: 2-3 reviewable candidates beat 5 noisy ones — review attention is the
+# scarce resource the qualification filter exists to protect.
+_MAX_CANDIDATES = 3
 
 
 def run(messages, project_root, session_id):
@@ -172,10 +234,18 @@ def run(messages, project_root, session_id):
     written, dropped = 0, 0
     seen = set()
     for hit in detect(messages):
+        typ = _qualify(hit)  # #276: no type obligations met -> no candidate
+        if typ is None:
+            continue
         anchor = anchor_of(hit, project_root)
         if anchor is None:
             continue
-        slug, md = to_candidate(hit, anchor, session_id, today)
+        # #276 anchor discipline: never anchor scar infrastructure — the
+        # first naive harvest anchored .scars/candidates/ itself, a scar
+        # that would fire on every future candidate write.
+        if anchor == ".scars" or anchor.startswith(".scars/"):
+            continue
+        slug, md = to_candidate(hit, anchor, session_id, today, typ)
         if slug in seen:
             continue
         seen.add(slug)
