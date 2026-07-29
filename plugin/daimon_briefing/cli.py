@@ -585,9 +585,13 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     if checkpoint and worldcheck_project and config.worldcheck_enabled():
         try:
             wc_stats = worldcheck.check(checkpoint, worldcheck_project)
-            for outcome in ("confirmed", "contradicted", "skipped"):
-                for _ in range(int(wc_stats.get(outcome, 0))):
-                    _note_usage(f"worldcheck:{outcome}")
+            # #397: the dict carries the aggregate outcomes AND a
+            # "<class>:<outcome>" key per class, so one pass emits both the
+            # slice-1 counters (unchanged meaning) and the per-class
+            # fires-true rate the next expansion gate reads.
+            for counter, count in sorted(wc_stats.items()):
+                for _ in range(int(count)):
+                    _note_usage(f"worldcheck:{counter}")
         except Exception:
             pass
     # NOTE: drift is checked against the resolved project root. If read_latest fell
