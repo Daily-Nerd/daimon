@@ -111,11 +111,14 @@ def test_cli_serialize_no_api_key_names_the_cause(
     # conflated "too short, LLM error, or invalid output".
     # Backend pinned litellm: since #52 pre-flight only requires a key on
     # litellm-bound transports (a dev machine's `claude` on PATH would
-    # otherwise legitimately pass).
+    # otherwise legitimately pass). No rescue backend either (#383): with
+    # one resolving, preflight correctly proceeds to the fallback instead.
+    from daimon_briefing import llm
     for var in ("DAIMON_LLM_API_KEY", "LITELLM_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
     rc = cli.main(["serialize", str(FIXTURES / "sample_transcript.md")])
     assert rc != 0
     err = capsys.readouterr().err
@@ -4646,10 +4649,14 @@ def test_preflight_error_session_is_healable_when_transcript_exists():
 def test_serialize_preflight_errors_carry_transcript_suffix(
         tmp_checkpoint_dir, tmp_log_dir, monkeypatch, tmp_path):
     # End-to-end: _run_serialize's own pre-flight error lines carry the suffix.
-    # Backend pinned litellm — pre-flight is backend-aware since #52.
+    # Backend pinned litellm — pre-flight is backend-aware since #52. No
+    # rescue backend on the box (#383): with one resolving, preflight would
+    # correctly pass instead of erroring.
+    from daimon_briefing import llm
     monkeypatch.delenv("DAIMON_LLM_API_KEY", raising=False)
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
     monkeypatch.setattr(cli.config, "llm_api_key", lambda: None)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
     p = tmp_path / "S-pre.md"
     p.write_text("**user**: hola\n")
     rc = cli.main(["serialize", str(p)])
@@ -4700,9 +4707,13 @@ def test_preflight_names_missing_key_when_litellm_bound(monkeypatch):
 
 
 def test_preflight_names_missing_model_when_key_present(monkeypatch):
+    # No rescue backend on the box (#383): with one resolving, preflight
+    # would correctly pass instead of naming the missing model.
+    from daimon_briefing import llm
     _clear_llm_env_52(monkeypatch)
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
     monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-x")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
     err = cli._preflight_error(Path("/t/x.md"))
     assert err is not None and "DAIMON_LLM_MODEL" in err
 
@@ -6327,3 +6338,56 @@ def test_team_status_routing_names_local_degrade(monkeypatch, capsys,
     out = capsys.readouterr().out
     assert "this project writes to: local" in out
     assert "no remote grants it membership" in out
+
+
+# ---- #383: preflight must not kill the no-key rescue on explicit litellm ----
+#
+# Field numbers: no-API-key was 28% of all capture errors on one install,
+# attempting ZERO rescues — preflight exited before llm.chat's fallback
+# machinery could run, even with fallback enabled and a working command CLI
+# on PATH.
+
+
+def test_preflight_passes_litellm_no_key_when_rescue_resolves(monkeypatch):
+    from daimon_briefing import llm
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_command",
+                        lambda: ("claude -p", "text", "stdin"))
+    assert cli._preflight_error(Path("/t/x.md")) is None
+
+
+def test_preflight_passes_litellm_no_model_when_rescue_resolves(monkeypatch):
+    from daimon_briefing import llm
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-x")  # key but no model
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_command",
+                        lambda: ("claude -p", "text", "stdin"))
+    assert cli._preflight_error(Path("/t/x.md")) is None
+
+
+def test_preflight_still_fails_litellm_no_key_when_fallback_disabled(monkeypatch):
+    # User opted out of the rescue: the helpful early error stays.
+    from daimon_briefing import llm
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "0")
+    monkeypatch.setattr(llm, "_resolve_command",
+                        lambda: ("claude -p", "text", "stdin"))
+    err = cli._preflight_error(Path("/t/x.md"))
+    assert err is not None and "DAIMON_LLM_API_KEY" in err
+
+
+def test_preflight_still_fails_litellm_no_key_when_nothing_resolves(monkeypatch):
+    # No rescue backend on the box: the early named error is strictly better
+    # than an LLM-call failure minutes later.
+    from daimon_briefing import llm
+    _clear_llm_env_52(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    err = cli._preflight_error(Path("/t/x.md"))
+    assert err is not None and "DAIMON_LLM_API_KEY" in err
