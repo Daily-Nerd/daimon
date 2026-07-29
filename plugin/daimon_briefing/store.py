@@ -1037,8 +1037,6 @@ def verification_counts(project_dir=None) -> dict:
 # there resolves-and-hides the item it names), exactly as append_verification
 # does for the rejection ledger.
 _FORGET_HITS = "forget-hits.jsonl"
-_FORGET_CLAIM_MAX = 60  # short claim snapshot; a bounded re-introduction of the
-                        # forgotten value (status shows only count + ts).
 
 
 def _forget_hits_path(project_dir=None):
@@ -1049,12 +1047,17 @@ def _forget_hits_path(project_dir=None):
 
 
 def record_forget_hits(items, project_dir=None) -> bool:
-    """Append one row per capture-time forget suppression (#404): {ts, key,
-    claim}. Mirrors append_verification's contract — silent no-op under the
-    kill switch or an unknown project, never fatal (a telemetry write must
-    never fail a capture). The claim snapshot is redacted and truncated to a
-    short prefix: a deliberate, bounded record of what was suppressed, kept off
-    the surfaced status line (which shows only the count + timestamp)."""
+    """Append one row per capture-time forget suppression (#404): {ts, key}.
+    Mirrors append_verification's contract — silent no-op under the kill switch
+    or an unknown project, never fatal (a telemetry write must never fail a
+    capture).
+
+    Records ONLY the canonical hash key + timestamp — NEVER the text or any
+    prefix of it. forget's whole guarantee (#321) is that a forgotten value's
+    content leaves disk; redact_text catches known secret shapes but not the
+    free-text PII users actually forget (a name, a client, "the X office
+    closed"), so re-persisting even a short snapshot here would reopen the very
+    leak forget closes. The published value is the COUNT, not the content."""
     if config.is_disabled():
         return False
     path = _forget_hits_path(project_dir)
@@ -1067,24 +1070,22 @@ def record_forget_hits(items, project_dir=None) -> bool:
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                text = str(item.get("text") or "")
-                claim, _ = redact.redact_text(text[:_FORGET_CLAIM_MAX])
-                row = {"ts": ts, "key": normalize.content_key(text),
-                       "claim": claim}
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                key = normalize.content_key(item.get("text") or "")
+                f.write(json.dumps({"ts": ts, "key": key}) + "\n")
         return True
     except OSError:
         return False
 
 
 def forget_hit_stats(project_dir=None) -> dict:
-    """Read-side rollup of the forget-hit ledger (#404): total suppressions,
-    the most recent timestamp, and the recent claim snapshots. The number the
-    project already publishes for capture health and verification downgrades,
-    now answerable for "how often did the tombstone catch a re-assertion here".
-    Fails open to zeroes (missing/corrupt log, unknown project) — same posture
-    as verification_counts and the resolutions fold."""
-    out: dict = {"count": 0, "last_hit_at": None, "recent": []}
+    """Read-side rollup of the forget-hit ledger (#404): total suppressions and
+    the most recent timestamp. The number the project already publishes for
+    capture health and verification downgrades, now answerable for "how often
+    did the tombstone catch a re-assertion here". Count + timestamp only — the
+    ledger holds no content to surface. Fails open to zeroes (missing/corrupt
+    log, unknown project) — same posture as verification_counts and the
+    resolutions fold."""
+    out: dict = {"count": 0, "last_hit_at": None}
     path = _forget_hits_path(project_dir)
     if path is None:
         return out
@@ -1092,7 +1093,6 @@ def forget_hit_stats(project_dir=None) -> dict:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
         return out
-    recent: list = []
     for line in lines:
         try:
             row = json.loads(line)
@@ -1104,10 +1104,6 @@ def forget_hit_stats(project_dir=None) -> dict:
         ts = row.get("ts")
         if ts and (out["last_hit_at"] is None or ts > out["last_hit_at"]):
             out["last_hit_at"] = ts
-        claim = row.get("claim")
-        if claim:
-            recent.append(str(claim))
-    out["recent"] = recent[-5:]
     return out
 
 
