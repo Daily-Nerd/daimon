@@ -26,6 +26,7 @@ merged checkpoint history keeps a deep well of files to reconstruct from.
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -34,6 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, receipts, redact, schema, serializer, teamproject
+
+log = logging.getLogger("daimon_briefing")
 
 _LATEST = "latest.json"
 # Rotation pointers, not per-session checkpoints. Anything else ending in .json in
@@ -735,22 +738,43 @@ def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
 _TEAM_LOCAL_REMOTE = "local"
 
 
-def _team_write_slug() -> str:
-    """Which remote-slug dir _dual_write_team targets. When exactly ONE real
-    remote (a sidecar git clone, detected purely by the presence of a .git
-    entry — store stays git/subprocess-free) exists, write straight into it so
-    `daimon team sync` picks the file up. Zero or MULTIPLE remotes -> the
-    Phase 1 'local' dir: with several remotes there is no principled routing
-    choice, so ambiguity degrades to the documented local mirror rather than a
-    guess. Never raises."""
+def _team_write_slugs(project_dir) -> list[str]:
+    """Which remote-slug dir(s) _dual_write_team targets (#387). Each sidecar
+    clone (detected purely by the presence of a .git entry — clone LISTING
+    stays git/subprocess-free) declares its own membership in daimon-team.toml,
+    and that allowlist is the router: the checkpoint goes into EVERY sidecar
+    that grants this project membership, and to the Phase 1 'local' dir when
+    none does (withheld, never lost — the #279 default-closed semantics are
+    unchanged; only routing among willing sidecars is new).
+
+    Single remote keeps the exact #279 contract, including the
+    DAIMON_TEAM_PROJECT env grant. With MULTIPLE remotes the env grant is
+    ignored for routing (honor_env=False): it is machine-global and cannot
+    say which remote it means — honoring it would broadcast every project on
+    the machine into every team. Never raises."""
     try:
         clones = [
             p.name for p in config.team_dir().iterdir()
             if p.is_dir() and p.name != _TEAM_LOCAL_REMOTE and (p / ".git").exists()
         ]
     except OSError:
-        return _TEAM_LOCAL_REMOTE
-    return clones[0] if len(clones) == 1 else _TEAM_LOCAL_REMOTE
+        return [_TEAM_LOCAL_REMOTE]
+    if not clones:
+        return [_TEAM_LOCAL_REMOTE]
+    if len(clones) == 1:
+        ok = teamproject.in_scope(project_dir, config.team_dir() / clones[0])
+        return clones if ok else [_TEAM_LOCAL_REMOTE]
+    if config.team_project():
+        log.warning(
+            "daimon team: DAIMON_TEAM_PROJECT cannot route among %d remotes "
+            "— grant membership in each sidecar's daimon-team.toml instead",
+            len(clones))
+    dests = sorted(
+        c for c in clones
+        if teamproject.in_scope(project_dir, config.team_dir() / c,
+                                honor_env=False)
+    )
+    return dests or [_TEAM_LOCAL_REMOTE]
 
 
 def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
@@ -758,8 +782,8 @@ def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
         <team_dir>/<remote-slug>/projects/<seg…>/authors/<author-slug>/<sid>.json
     under the #200 logical project path when one resolves, else the legacy flat
         <team_dir>/<remote-slug>/authors/<author-slug>/<sid>.json
-    where <remote-slug> is the single synced remote when one exists, else
-    'local' (see _team_write_slug). Immutable append — NO pointers are EVER
+    where <remote-slug> is every scope-granting synced remote (#387), else
+    'local' (see _team_write_slugs). Immutable append — NO pointers are EVER
     written here (the multi-writer git spike verdict: mutable pointers don't
     survive concurrent writers). Best-effort: never raises (mirrors the GC/log
     swallow) — a team-mirror failure must not fail the serialize that already
@@ -776,33 +800,29 @@ def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
         # non-word char to '-'. Post-munge collisions ("a b" vs "a-b") remain a
         # documented edge — distinct humans colliding there is unrealistic.
         author_slug = project_slug(config.author()) or "unknown"
-        slug = _team_write_slug()
-        # #279 default-closed scope gate: a synced clone accepts a project's
-        # checkpoints only when its daimon-team.toml (or DAIMON_TEAM_PROJECT)
-        # grants membership — DAIMON_TEAM is machine-global, and without this
-        # check the single clone would receive EVERY project on the machine
-        # and push it to teammates. Out-of-scope writes degrade to the local
-        # mirror: withheld from the remote, never lost.
-        if slug != _TEAM_LOCAL_REMOTE and not teamproject.in_scope(
-                project_dir, config.team_dir() / slug):
-            slug = _TEAM_LOCAL_REMOTE
-        base = config.team_dir() / slug
+        # #279 default-closed membership + #387 scope routing live together in
+        # _team_write_slugs: every sidecar whose daimon-team.toml grants this
+        # project receives the checkpoint; none willing -> the local mirror
+        # (withheld from remotes, never lost). Multi-destination is safe by
+        # construction: paths are append-only and per-author.
         # #200: env/config/origin-derived logical path (segments are munged in
         # teamproject and can never escape the sidecar); None = flat era.
         segs = teamproject.resolve(project_dir)
-        if segs:
-            d = base.joinpath("projects", *segs, "authors", author_slug)
-        else:
-            d = base / "authors" / author_slug
-        d.mkdir(parents=True, exist_ok=True)
         # Shallow copy is deliberate and sufficient: only top-level keys are
         # stamped below; nested structures are never mutated on this path.
         blob = dict(checkpoint)
         blob.setdefault("project_slug", project_slug(project_dir))
         if segs:
             blob.setdefault("team_project", "/".join(segs))
-        _atomic_write(d / f"{_safe_name(session_id)}.json",
-                      json.dumps(blob, indent=2, ensure_ascii=False))
+        payload = json.dumps(blob, indent=2, ensure_ascii=False)
+        for slug in _team_write_slugs(project_dir):
+            base = config.team_dir() / slug
+            if segs:
+                d = base.joinpath("projects", *segs, "authors", author_slug)
+            else:
+                d = base / "authors" / author_slug
+            d.mkdir(parents=True, exist_ok=True)
+            _atomic_write(d / f"{_safe_name(session_id)}.json", payload)
     except OSError:
         pass
 

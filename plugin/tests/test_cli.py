@@ -6294,3 +6294,36 @@ def test_configure_init_noninteractive_without_flags_guides(monkeypatch,
     assert cli.main(["configure", "--init"]) == 0
     assert "--init needs a terminal" in capsys.readouterr().out
     assert not env_file.exists()
+
+
+# ---- #387: team status shows where the current project routes ----
+
+
+def test_team_status_shows_project_routing(monkeypatch, capsys,
+                                           tmp_checkpoint_dir):
+    from daimon_briefing import store, teamsync
+    monkeypatch.setattr(teamsync, "git_available", lambda: True)
+    monkeypatch.setattr(teamsync, "team_status", lambda: [
+        {"slug": "team-a", "branch": "main", "freshness": "fresh",
+         "unpushed": 0, "pending": 0, "authors": [], "config_warning": None,
+         "scope": ["github.com/org/alpha"]}])
+    monkeypatch.setattr(store, "_team_write_slugs", lambda project: ["team-a"])
+    assert cli.main(["team", "status"]) == 0
+    assert "this project writes to: team-a" in capsys.readouterr().out
+
+
+def test_team_status_routing_names_local_degrade(monkeypatch, capsys,
+                                                 tmp_checkpoint_dir):
+    # The #387 trap made visible: when no sidecar grants membership, status
+    # says so instead of letting checkpoints quietly stay local.
+    from daimon_briefing import store, teamsync
+    monkeypatch.setattr(teamsync, "git_available", lambda: True)
+    monkeypatch.setattr(teamsync, "team_status", lambda: [
+        {"slug": "team-a", "branch": "main", "freshness": "fresh",
+         "unpushed": 0, "pending": 0, "authors": [], "config_warning": None,
+         "scope": []}])
+    monkeypatch.setattr(store, "_team_write_slugs", lambda project: ["local"])
+    assert cli.main(["team", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "this project writes to: local" in out
+    assert "no remote grants it membership" in out
