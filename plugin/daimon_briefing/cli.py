@@ -1086,6 +1086,20 @@ def _cmd_recall_inject(args) -> int:
     _note_usage("recall-inject")
     try:
         prompt = sys.stdin.read()
+        # #450: host-emitted blocks (task notifications, teammate/agent
+        # messages, command output) arrive here as prompts but are nobody
+        # asking for anything — 37.9% of measured injections landed on them.
+        # Its own try: a classifier failure must cost nothing, so it falls back
+        # to today's behavior (suggest) rather than to the outer silent return.
+        try:
+            machine = recall.is_machine_prompt(prompt)
+        except Exception:  # noqa: BLE001 — fail toward suggesting, never skip on a bug
+            machine = False
+        if machine:
+            # Counted apart from `recall-inject`, which still counts every fire:
+            # the pair is the before/after measure of the noise removed (#450).
+            _note_usage("recall-inject:skip-machine")
+            return 0
         project = _resolve_project(args.project)
         session = str(args.session or "")
         # Never re-suggest what the SessionStart briefing already carried: the
