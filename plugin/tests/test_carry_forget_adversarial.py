@@ -181,23 +181,6 @@ def _brief_decisions(cp):
     return [d["text"] for d in (b["decisions"] if b else [])]
 
 
-def _drop_prev_remnants():
-    """Unlink the on-disk remnants of the armed prev (its flat session file and
-    the rotated prev-N pointers) before the recall rebuild. They still contain
-    S BY CONSTRUCTION — the tombstone here never rewrote any file — and
-    recall's forgotten-scrub is id-keyed (it deletes rows by the event ref),
-    so rows indexed from those historical files would surface S regardless of
-    the write gate. #420 pins the WRITE boundary: the question for recall is
-    whether the NEW write fed S to the index. Runs strictly AFTER the raw-disk
-    assertions on the new checkpoint, so a gate failure is caught before any
-    evidence is removed (latest.json and the new session file are never
-    touched)."""
-    keep = {"latest.json", f"{_NEW_SID}.json"}
-    for p in config.checkpoint_dir().rglob("*.json"):
-        if p.name not in keep and _S in p.read_text(encoding="utf-8"):
-            p.unlink()
-
-
 def _recall_texts():
     recall.rebuild()
     return [h["text"] for h in recall.search(_HOT, project_dir=_P)]
@@ -254,9 +237,13 @@ def test_ungated_prev_cannot_resurrect_forgotten_value_through_carry(
     assert _S not in bd
     assert _T in bd and _PROBE in bd
 
-    # 3) Recall after a full index rebuild (prev remnants removed first — see
-    # _drop_prev_remnants; the raw-disk assertions above already ran).
-    _drop_prev_remnants()
+    # 3) Recall after a full index rebuild. The armed prev's remnants (flat
+    # session file, rotated prev-N pointers) still contain S on disk BY
+    # CONSTRUCTION — the tombstone here never rewrote any file. Pre-#427 the
+    # index's forgotten-scrub was id-keyed and this test had to unlink those
+    # remnants to isolate the write boundary; post-#427 the scrub is
+    # value-keyed, so the assertion holds against the FULL on-disk history:
+    # neither the new write nor any historical sibling-id row may surface S.
     texts = _recall_texts()
     assert _S not in texts
     assert _T in texts
