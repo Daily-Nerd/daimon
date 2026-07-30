@@ -14,12 +14,16 @@ steps that lineage does not yet cover:
   * step 10 asserts the append-only audit trail records the deletion while
     holding NONE of the forgotten text.
 
-Ten steps, each re-asserting on the accumulated state, each paired with a
+Eleven steps, each re-asserting on the accumulated state, each paired with a
 never-forgotten twin (T) that MUST stay retrievable so no negative assertion
 can pass vacuously:
 
   1. write a distinctive fact through the serializer; assert retrievable
-  2. forget it; confirm removal from briefing, carry, recall
+     (and seed the #48 chunk cache exactly as a chunked capture would)
+  2. forget it; confirm removal from briefing, carry, recall — and that the
+     serializer chunk cache (PRE-redaction by #125 necessity) is purged
+     WHOLESALE (#422): entries are keyed by chunk text, not searchable by
+     value, so selective removal is impossible and every entry goes
   3. re-feed the SAME source transcript + re-serialize; assert non-resurrection
   4. background job — recall index rebuild; re-assert absence
   5. background job — a subsequent carry; re-assert absence
@@ -28,6 +32,8 @@ can pass vacuously:
   8. derived artifact — recall's SQLite rows
   9. derived artifact — the signed receipt binds the POST-deletion bytes
  10. audit trail — the deletion is recorded, with no forgotten text on disk
+ 11. chunk-cache sink on the ACCUMULATED state — after every background job
+     above, no file under .chunk-cache holds the forgotten value
 
 Deterministic and ZERO model quota: the serializer's LLM is a canned
 `fake_chat` and the vitni signer is a monkeypatched stub — this is a
@@ -50,6 +56,7 @@ from daimon_briefing import (
     carry,
     cli,
     config,
+    llm,
     normalize,
     receipts,
     recall,
@@ -241,6 +248,21 @@ def test_deletion_durability_protocol(tmp_checkpoint_dir, monkeypatch,
     r1 = _recall_texts()
     assert _S in r1 and _T in r1
 
+    # Seed the #48 chunk cache through the PRODUCTION writer, exactly as a
+    # chunked capture of this transcript would have: cached output is
+    # PRE-redaction extraction (forced by #125 quote verification), so the
+    # forgotten value's bytes land here verbatim. This transcript is too
+    # small to trigger chunking, so the sink is seeded explicitly.
+    llm.reset_fallback()  # _save_chunk_cache refuses after a fallback fired
+    cache_dir = serializer._chunk_cache_dir()
+    seed_key = serializer._chunk_cache_key(
+        serializer._render_transcript(_transcript()))
+    serializer._save_chunk_cache(seed_key, json.loads(_extraction_json("S1")))
+    seeded = cache_dir / f"{seed_key}.json"
+    # Control precondition: the sink genuinely holds the value, so the
+    # negative assertions below cannot pass vacuously.
+    assert _S in seeded.read_text(encoding="utf-8")
+
     # --- Step 2: forget it; confirm removal from briefing/carry/recall -----
     assert cli.main(["forget", x_id]) == 0
     res = store.resolutions(project_dir=_P)
@@ -253,6 +275,16 @@ def test_deletion_durability_protocol(tmp_checkpoint_dir, monkeypatch,
     assert _S not in c2 and _T in c2
     r2 = _recall_texts()
     assert _S not in r2 and _T in r2
+
+    # Chunk-cache sink (#422): forget purges the cache WHOLESALE — entries
+    # are keyed by chunk text plus config dimensions, never by contained
+    # value, so selective removal is impossible. The directory survives (the
+    # next serialize re-populates in place); every entry is gone. Accepted
+    # cost: re-paying extraction for chunks younger than chunk_cache_days.
+    assert cache_dir.is_dir()
+    assert list(cache_dir.glob("*.json")) == []
+    for leftover in cache_dir.iterdir():
+        assert _S not in leftover.read_text(encoding="utf-8")
 
     # --- Step 3: re-feed the ORIGINAL SOURCE TRANSCRIPT + re-serialize -----
     # The resurrection vector: the same raw material is re-ingested. The
@@ -332,6 +364,16 @@ def test_deletion_durability_protocol(tmp_checkpoint_dir, monkeypatch,
     assert _S not in events
     for token in (t for t in _S.split() if len(t) >= 4):
         assert token not in events
+
+    # --- Step 11: chunk-cache sink on the ACCUMULATED state ---------------
+    # Steps 3-6 re-ran the serializer after the forget; whatever they left
+    # behind, no file under .chunk-cache may hold the forgotten value. (A
+    # post-forget re-ingest MAY re-cache raw material until the age reaper
+    # or the next forget fires — this transcript serializes single-pass, so
+    # here the cache must simply hold nothing containing S.)
+    assert cache_dir.is_dir()
+    for cached in cache_dir.iterdir():
+        assert _S not in cached.read_text(encoding="utf-8")
 
 
 # =========================================================================
