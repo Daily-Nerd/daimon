@@ -240,6 +240,15 @@ def run_question(question: dict, *, chat, cache: cache_mod.CheckpointCache,
     gold = dataset.gold_sessions(question)
     abstention = dataset.is_abstention(question)
     ranked = metrics.attributed_sessions(results, attribution)
+    recall_at_5 = metrics.recall_at_k(ranked, gold, k)
+    # #405: forbidden-hit scoring runs against the ASSEMBLED BRIEF (the top-k
+    # withhold-filtered text delivered to the model), never the raw retriever
+    # rows — the leak that matters is what reaches the prompt. `forbidden_hit`
+    # is None when the case defines no forbidden material (not-applicable, not a
+    # clean pass); penalized recall floors the case on leakage.
+    forbidden = dataset.forbidden_of(question)
+    brief_text = metrics.assembled_brief_text(results, k)
+    matched = metrics.forbidden_hits_found(brief_text, forbidden)
     return {
         "question_id": question["question_id"],
         "question_type": question.get("question_type"),
@@ -248,8 +257,13 @@ def run_question(question: dict, *, chat, cache: cache_mod.CheckpointCache,
         "n_gold": len(gold),
         "serialize": tally,
         "n_retrieved_sessions": len(ranked),
-        "recall_at_5": metrics.recall_at_k(ranked, gold, k),
+        "recall_at_5": recall_at_5,
         "hit_at_5": metrics.hit_at_k(ranked, gold, k),
         "mrr": metrics.reciprocal_rank(ranked, gold),
         "injected_tokens": metrics.injected_tokens(results, k),
+        "forbidden_total": len(forbidden),
+        "forbidden_matched": len(matched),
+        "forbidden_hit": (bool(matched) if forbidden else None),
+        "recall_at_5_penalized": metrics.scored_recall(
+            recall_at_5, len(matched), len(forbidden)),
     }

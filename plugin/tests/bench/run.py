@@ -165,6 +165,15 @@ def run(args) -> dict:
     print(f"Recall@{args.k}: {_fmt(agg['recall_at_5'])}   "
           f"Hit@{args.k}: {_fmt(agg['hit_at_5'])}   MRR: {_fmt(agg['mrr'])}")
     print(f"avg injected tokens/q (est): {_fmt(agg['avg_injected_tokens'])}")
+    # #405: the forbidden-hit rate is reported ALONGSIDE recall, under the same
+    # reporting policy (full config stamp above, self-measured only). Shown only
+    # when the sample defines forbidden material — a leak rate over zero cases is
+    # meaningless. `penalized` is recall floored by leakage on those cases.
+    if agg.get("questions_with_forbidden"):
+        print(f"forbidden-hit rate: {_fmt(agg['forbidden_hit_rate'])} "
+              f"(over {agg['questions_with_forbidden']} cases with forbidden "
+              f"material)   Recall@{args.k} (leak-penalized): "
+              f"{_fmt(agg['recall_at_5_penalized'])}")
     print(f"scored={agg['questions_scored']} abstention={agg['questions_abstention']} "
           f"serialize_calls={total_serialized} cache_hits={cache.hits}")
     print(f"wrote {out}")
