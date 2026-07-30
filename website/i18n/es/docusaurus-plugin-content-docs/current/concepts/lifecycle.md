@@ -84,6 +84,35 @@ Qué ocurre al olvidar:
 - La retención en el briefing, la supresión del arrastre y `daimon stats`
   heredan el tombstone a través del mismo flujo de eventos.
 
+### Cumplimiento de durabilidad de la eliminación
+
+La afirmación "una memoria olvidada permanece olvidada" no se declara — se
+comprueba como un protocolo ejecutable. `plugin/tests/test_deletion_durability_protocol.py`
+pasa un valor olvidado por cada camino que podría resucitarlo silenciosamente y
+demuestra que sigue ausente en cada uno, mientras un gemelo nunca-olvidado
+permanece recuperable para que ninguna verificación pase de forma vacua:
+
+| # | Paso | Resultado |
+|---|------|-----------|
+| 1 | Escribir un dato distintivo a través del serializer | recuperable |
+| 2 | `forget` — briefing, arrastre, recall | eliminado |
+| 3 | Re-alimentar el **transcript de origen** y re-serializar | no resucita |
+| 4 | Reconstrucción del índice de recall | ausente |
+| 5 | Un arrastre posterior | ausente |
+| 6 | Mirror de escritura dual de equipo | ausente en la copia remota |
+| 7 | Cadena del briefing renderizado | ausente |
+| 8 | Filas SQLite de recall | ausente |
+| 9 | Receipt firmado | vincula los bytes posteriores a la eliminación |
+| 10 | Rastro de auditoría | registra la eliminación, sin nada de su texto |
+
+**Resultado: 10 / 10 pasos en cumplimiento.** Las pruebas son deterministas y
+usan cero cuota de modelo — un extractor precargado y un firmante simulado
+reemplazan al LLM y a la CLI de vitni — así que es una verificación de
+cumplimiento que corre en cada commit, no un benchmark. El paso 3 es el que más
+importa: re-ingerir el material crudo del que salió un ítem eliminado es cómo
+los sistemas lo traen de vuelta sin querer, y el tombstone por-valor lo
+descarta en el límite de escritura sin importar qué re-produzca el extractor.
+
 ## Candidatos a supersesión
 
 Cuando una sesión nueva contradice un ítem arrastrado, el briefing presenta
