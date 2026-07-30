@@ -2710,6 +2710,43 @@ def test_serialize_stamps_sorted_list_and_flags_substitution_when_mixed(
     assert "serialize:model-substituted" in noted
 
 
+def test_serialize_served_collector_raising_leaves_key_absent(
+        fake_chat_factory, monkeypatch):
+    # Fail-open contract: the stamp runs right before store/write, so a
+    # broken collector must never fail an otherwise-successful serialize —
+    # and must leave honest absence, not a partial stamp (#458).
+    from daimon_briefing import llm
+
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "gateway-alias")
+    monkeypatch.setattr(llm, "served_models",
+                        lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert "llm_model_served" not in ckpt
+
+
+def test_serialize_substitution_counter_failure_never_fails_serialize(
+        fake_chat_factory, monkeypatch, caplog):
+    # The counter is telemetry: a broken usage log must cost nothing. The
+    # WARNING and the stamp itself still land (#458).
+    import logging
+
+    from daimon_briefing import cli
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "gateway-alias")
+    _serve(monkeypatch, ["a-model", "z-model"])
+    monkeypatch.setattr(cli, "_note_usage",
+                        lambda _: (_ for _ in ()).throw(OSError("disk")))
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.serializer"):
+        ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_model_served"] == ["a-model", "z-model"]
+    assert any("substitut" in r.getMessage() for r in caplog.records)
+
+
 def test_serialize_uniform_served_does_not_warn_or_count(
         fake_chat_factory, monkeypatch, caplog):
     import logging
