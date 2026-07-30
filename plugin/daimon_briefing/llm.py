@@ -124,12 +124,20 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
         try:
             with urllib.request.urlopen(req, timeout=attempt_timeout) as r:
                 data = json.loads(_read_within_deadline(r, deadline, attempt, last))
+            # #458 / scar 0032: record the model the response SAYS served this
+            # call — the requested `mdl` is a gateway alias and proves nothing.
+            # list.append is atomic under the GIL, so concurrent chunk threads
+            # record safely; served_models() dedupes/sorts on read. Absent or
+            # non-string field -> record nothing (honest absence, no guessing).
+            served = data.get("model")
+            if isinstance(served, str) and served.strip():
+                _served_models.append(served.strip())
             # Surface token cost — the serializer discards the rest of the
             # response, so this log line is the only record of per-call spend.
             usage = data.get("usage") or {}
             if usage:
-                log.info("LLM usage model=%s total_tokens=%s prompt=%s completion=%s",
-                         mdl, usage.get("total_tokens"),
+                log.info("LLM usage model=%s served=%s total_tokens=%s prompt=%s completion=%s",
+                         mdl, served, usage.get("total_tokens"),
                          usage.get("prompt_tokens"), usage.get("completion_tokens"))
             return data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
@@ -166,6 +174,32 @@ def fallback_used() -> bool:
 def reset_fallback() -> None:
     global _fallback_used
     _fallback_used = False
+
+
+# #458 / scar 0032: the requested model name is ROUTING CONFIG, not provenance.
+# Behind an OpenAI-compatible gateway it is an alias, and gateways run silent
+# fallback chains — the call succeeds, a different model serves it, no error
+# is raised (2026-07-30 live: the configured alias was served by a local
+# Qwen3-30B; the response's own `model` field said so). That field is the only
+# per-call truth, so _chat_litellm records it below. Module-sticky accessors
+# deliberately mirror the #28 fallback pattern above: chat()'s `-> str`
+# contract is consumed by every injectable-chat seam (serializer, cli, bench,
+# test fakes) and must not change shape. reset_served_models() at the start of
+# a unit of work; served_models() when stamping. The command backend exposes
+# NO served-model info and records nothing — honest absence, never the
+# requested name copied into the served slot.
+_served_models: list = []
+
+
+def served_models() -> list:
+    """Distinct served-model names observed since the last reset, sorted —
+    deterministic stamp order regardless of chunk-thread completion order."""
+    return sorted(set(_served_models))
+
+
+def reset_served_models() -> None:
+    # Clear in place: concurrent chunk threads hold the same list object.
+    del _served_models[:]
 
 
 def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):

@@ -7,6 +7,7 @@
     "backend": "litellm",
     "backend_configured": "auto",
     "model": "claude-haiku-4-5-via-meridian",
+    "model_note": "`model` is the requested gateway alias, not a served-model receipt: the operator's gateway had silent fallback chains active on run day, so per-call served-model purity is unverifiable for this run; served-model stamping (`model_served`) was added later (#458) and does not cover it",
     "prompt_version": "D-013",
     "seed": 0,
     "sample": 5,

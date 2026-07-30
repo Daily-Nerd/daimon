@@ -2661,3 +2661,116 @@ def test_chunked_serialize_touches_heartbeat_per_chunk(fake_chat_factory,
     assert serializer.serialize("S-long", messages, chat=chat) is not None
     # entry + per-chunk + merge: strictly more touches than chunks
     assert len([c for c in calls if c == "S-long"]) > n_chunks
+
+
+# ---- #458 / scar 0032: llm_model_served — the wire's truth beside the alias ----
+#
+# `llm_model` stays the REQUESTED alias (routing config, #230 semantics
+# untouched). `llm_model_served` is stamped from what the response bodies
+# actually said across the serialize's calls: one distinct name -> string;
+# more than one -> sorted list AND the substitution-during-run signal (a
+# gateway swapped models mid-serialize — the only mismatch we can detect
+# honestly, since alias->served-name mapping is unknowable client-side).
+
+
+def _serve(monkeypatch, names):
+    from daimon_briefing import llm
+    monkeypatch.setattr(llm, "served_models", lambda: list(names))
+
+
+def test_serialize_stamps_served_model_string_when_single(fake_chat_factory, monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "gateway-alias")
+    _serve(monkeypatch, ["provider/real-model-served"])
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_model"] == "gateway-alias"          # requested, unchanged
+    assert ckpt["llm_model_served"] == "provider/real-model-served"
+
+
+def test_serialize_stamps_sorted_list_and_flags_substitution_when_mixed(
+        fake_chat_factory, monkeypatch, caplog):
+    import logging
+
+    from daimon_briefing import cli
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "gateway-alias")
+    _serve(monkeypatch, ["a-model", "z-model"])
+    noted = []
+    monkeypatch.setattr(cli, "_note_usage", noted.append)
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.serializer"):
+        ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_model_served"] == ["a-model", "z-model"]
+    assert any("model" in r.getMessage() and "substitut" in r.getMessage()
+               for r in caplog.records), \
+        "mixed served models must surface as a WARNING, never silently"
+    assert "serialize:model-substituted" in noted
+
+
+def test_serialize_uniform_served_does_not_warn_or_count(
+        fake_chat_factory, monkeypatch, caplog):
+    import logging
+
+    from daimon_briefing import cli
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "gateway-alias")
+    _serve(monkeypatch, ["one-model"])
+    noted = []
+    monkeypatch.setattr(cli, "_note_usage", noted.append)
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.serializer"):
+        ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert not any("substitut" in r.getMessage() for r in caplog.records)
+    assert "serialize:model-substituted" not in noted
+
+
+def test_serialize_absent_served_leaves_key_absent_and_strips_spoof(
+        fake_chat_factory, monkeypatch):
+    # No wire receipt -> no key. And a model-authored `llm_model_served` in
+    # the extracted JSON must never survive as provenance (same discipline
+    # as #292's code-owned keys: the model proposes nothing about its own
+    # identity — a spoofable served-stamp is worse than none).
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "gateway-alias")
+    _serve(monkeypatch, [])
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    spoofed["llm_model_served"] = "model-invented-provenance"
+    chat = fake_chat_factory(json.dumps(spoofed))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert "llm_model_served" not in ckpt
+
+
+def test_serialize_command_backend_leaves_served_absent(fake_chat_factory, monkeypatch):
+    # The command backend records no served-model info (llm.py exposes none
+    # for it — honest absence). Real accessor, not a monkeypatch: proves the
+    # end-to-end default is "no receipt, no key".
+    from daimon_briefing import llm
+    llm.reset_served_models()
+    monkeypatch.delenv("DAIMON_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("DAIMON_LLM_MODEL", raising=False)
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "echo hi")
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["llm_backend"] == "command"
+    assert "llm_model_served" not in ckpt
+
+
+def test_validate_tolerates_served_field_presence_and_absence(fake_chat_factory):
+    # Schema tolerance both ways (green-by-design guard): legacy checkpoints
+    # without `llm_model_served` must keep validating, and new ones carrying
+    # it must not be rejected — validate() is required-keys-only and this
+    # test pins that contract for the new field.
+    legacy = json.loads(_valid_checkpoint_json("S-legacy"))
+    assert serializer.validate(legacy)
+    stamped = json.loads(_valid_checkpoint_json("S-new"))
+    stamped["llm_model_served"] = "provider/real-model-served"
+    assert serializer.validate(stamped)
+    mixed = json.loads(_valid_checkpoint_json("S-mixed"))
+    mixed["llm_model_served"] = ["a-model", "z-model"]
+    assert serializer.validate(mixed)

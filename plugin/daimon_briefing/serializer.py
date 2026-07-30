@@ -1675,10 +1675,30 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
         assignment always stomps any model-authored value with the
         resolved truth.
 
+    `llm_model_served` (#458 / scar 0032): `llm_model` is the REQUESTED
+    alias — routing config. Behind a gateway with silent fallback chains a
+    different model can serve the call with no error, so the response body's
+    own `model` field is the only per-call truth; llm.py collects the
+    distinct names across this process's calls (chunks + merge) and this
+    stamp records them: one distinct name -> string, more than one -> sorted
+    list AND the substitution-during-run signal (WARNING + the
+    `serialize:model-substituted` usage counter). Mixed-within-a-run is the
+    ONLY detectable mismatch: alias->served-name mapping is unknowable
+    client-side (the served id is provider-prefixed or fully qualified, so a
+    raw requested != served compare would always fire). The command backend
+    exposes no served-model info and records nothing, so its checkpoints
+    carry NO key — honest absence, never the requested name copied over.
+
     Fail-open: called right before the checkpoint is handed off to
     store/write, so a resolver exception must never fail an otherwise-
     successful serialize. Both fields are simply left absent.
     """
+    # #458: a model-authored `llm_model_served` in the extracted JSON is a
+    # self-issued receipt — pop unconditionally BEFORE any fail-open early
+    # return, so even a stamp that bails leaves honest absence, not a spoof
+    # (same discipline as strip_code_owned_keys, #292, but local: this key's
+    # legitimate value is only ever computed right here).
+    checkpoint.pop("llm_model_served", None)
     try:
         backend = configure.resolved_backend()
     except Exception:
@@ -1692,6 +1712,31 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
         model = None
     if model:
         checkpoint["llm_model"] = model
+    try:
+        served = llm.served_models()
+    except Exception:
+        served = []
+    if not served:
+        return
+    checkpoint["llm_model_served"] = served[0] if len(served) == 1 else served
+    if len(served) > 1:
+        log.warning(
+            "serialize: model substitution during run — %d distinct served "
+            "models %s behind requested %r; every item in this checkpoint "
+            "was extracted by at least one model that is not the configured "
+            "one (#458)",
+            len(served), served, model)
+        # Count through the SAME local usage-counter mechanism the cli
+        # commands use (#54) — mcp_tools.py already records via
+        # cli._note_usage from outside cli, so this matches the existing
+        # architecture rather than inventing a counter subsystem. Lazy
+        # import keeps the module graph acyclic (cli imports this module);
+        # best-effort keeps the stamp fail-open.
+        try:
+            from . import cli
+            cli._note_usage("serialize:model-substituted")
+        except Exception:
+            pass
 
 
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
