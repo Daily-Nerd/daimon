@@ -923,10 +923,12 @@ def _cmd_resolve(args) -> int:
 
 
 def _cmd_forget(args) -> int:
-    """Deliberate item removal (#321): delete the item from the live
-    checkpoint, then append a tombstone event whose status carries a content
-    HASH, never the text — removal means the content leaves the audit trail
-    too. Binding is _cmd_resolve's never-guess contract verbatim: exact id
+    """Deliberate item removal (#321): append a tombstone event whose status
+    carries a content HASH, never the text — removal means the content leaves
+    the audit trail too — then rewrite the live checkpoint without the value.
+    Tombstone first (#418): the rewrite's _drop_forgotten reads the ledger, so
+    the key must land before the write scrubs sibling ids of the same value.
+    Binding is _cmd_resolve's never-guess contract verbatim: exact id
     first, else a fuzzy query that must match exactly one item. The tombstone
     rides the resolutions fold, so withhold, carry suppression, and the
     recall index deletion all inherit it with no new plumbing. The rewritten
@@ -967,22 +969,35 @@ def _cmd_forget(args) -> int:
     # suppressed at capture. Still a hash, never the text: removal means the
     # content leaves the audit trail too (#321).
     content_hash = normalize.content_key(target.get("text") or "")
-    for section, key in store._ITEM_LISTS:
-        lst = (checkpoint.get(section) or {}).get(key)
-        if isinstance(lst, list):
-            lst[:] = [i for i in lst
-                      if not (isinstance(i, dict) and i.get("id") == target["id"])]
     sid = str(checkpoint.get("session_id") or "")
     if not sid:
         print("checkpoint has no session_id — cannot rewrite")
         return 1
-    store.write_checkpoint(sid, checkpoint, project_dir=project)
+    # Tombstone BEFORE the rewrite (#418): write_checkpoint's _drop_forgotten
+    # consults the ledger during the write — appended after, the new key is
+    # invisible to that scrub and sibling ids carrying the same value survive.
+    # Failing here leaves the checkpoint untouched: no half-removal without an
+    # audit-trail record.
     ok = store.append_event(target["id"], f"forgotten:{content_hash}",
                             note=args.reason or "", kind="tombstone",
                             project_dir=project)
     if not ok:
         print("tombstone event not written (daimon disabled or project unknown)")
         return 1
+    # Splice by VALUE, not only id (#418): one value can hold sibling ids —
+    # the same sentence in two sections, or a widened hash within one
+    # (store._stamp_item_ids). Removal is content removal, so every item
+    # folding to the tombstoned key goes. Id kept in the predicate as a belt
+    # for non-string text, which content_key canonicalizes to "".
+    for section, key in store._ITEM_LISTS:
+        lst = (checkpoint.get(section) or {}).get(key)
+        if isinstance(lst, list):
+            lst[:] = [i for i in lst
+                      if not (isinstance(i, dict)
+                              and (i.get("id") == target["id"]
+                                   or normalize.content_key(i.get("text") or "")
+                                   == content_hash))]
+    store.write_checkpoint(sid, checkpoint, project_dir=project)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
