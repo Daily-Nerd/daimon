@@ -733,3 +733,38 @@ def test_dual_write_single_remote_env_grant_still_honored(
     _remote_clone("team-a")
     store._dual_write_team("S1", sample_checkpoint, str(repo))
     assert list((config.team_dir() / "team-a").rglob("S1.json"))
+
+
+# ---- #423: granted_paths — the inbound scope mirror for project-less readers ----
+
+
+def test_granted_paths_covers_mapped_and_derived_and_scope():
+    sidecar = _remote_clone()
+    _write_config(
+        '[scope]\nrepos = ["git@github.com:Org/Zeta.git"]\n'
+        '[projects."core/beta"]\nrepos = ["https://github.com/org/beta"]\n',
+        remote="team-mem")
+    granted = teamproject.granted_paths(sidecar)
+    assert ("core", "beta") in granted        # the mapped path
+    assert ("org", "beta") in granted         # its tier-3 derived path
+    assert ("org", "zeta") in granted         # scope repo's derived path
+
+
+def test_granted_paths_default_closed_without_config():
+    assert teamproject.granted_paths(_remote_clone()) == set()
+
+
+def test_granted_paths_env_honored_only_when_asked(monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/gamma")
+    sidecar = _remote_clone()  # no toml at all
+    assert ("core", "gamma") in teamproject.granted_paths(sidecar)
+    assert teamproject.granted_paths(sidecar, honor_env=False) == set()
+
+
+def test_granted_paths_resolver_bug_denies(monkeypatch):
+    # Fail CLOSED, mirror of in_scope: a membership bug must deny, never admit.
+    def _boom(_path):
+        raise RuntimeError("resolver bug")
+
+    monkeypatch.setattr(teamproject, "_parse_config", _boom)
+    assert teamproject.granted_paths(_remote_clone()) == set()

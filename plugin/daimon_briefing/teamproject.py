@@ -269,6 +269,42 @@ def in_scope(project_dir, sidecar, honor_env=True) -> bool:
         return False
 
 
+def granted_paths(sidecar, honor_env=True) -> set[tuple[str, ...]]:
+    """The logical project paths ONE sidecar's daimon-team.toml vouches for —
+    the inbound mirror of in_scope for readers that hold NO local project dir
+    (the machine-global recall index, #423). A path is granted when it is:
+
+      - a [projects.*] mapped path, or
+      - the tier-3 origin-derived path of any granted repo ([scope] or a
+        [projects.*] repos list) — pre-mapping history lives there, the same
+        reason read_candidates keeps the derived path as a read candidate, or
+      - (honor_env, single-remote setups only — the same #387 rule the
+        outbound router applies) the machine's DAIMON_TEAM_PROJECT intent.
+
+    Default CLOSED like in_scope: no config, broken config, or a resolver
+    bug all grant nothing. Never raises."""
+    out: set[tuple[str, ...]] = set()
+    try:
+        entries, scope, _err = _parse_config(Path(sidecar) / CONFIG_NAME)
+        repos = set(scope)
+        for segs, mapped in entries:
+            out.add(segs)
+            repos |= mapped
+        for repo in repos:
+            derived = logical_segments("/".join(repo.split("/")[1:]))
+            if derived:
+                out.add(derived)
+        if honor_env:
+            env = config.team_project()
+            if env:
+                segs = logical_segments(env)
+                if segs:
+                    out.add(segs)
+    except Exception:  # membership bugs must deny, never admit
+        return set()
+    return out
+
+
 def scope_entries(sidecar) -> list[str]:
     """Sorted normalized repo allowlist for `daimon team status` — the one
     place a human can see which projects a remote accepts. Never raises."""

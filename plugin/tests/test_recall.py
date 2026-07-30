@@ -1534,3 +1534,121 @@ def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatc
     recall.rebuild()
     hits = recall.search("sqlite", all_projects=True)
     assert not any("recall index" in h["text"] for h in hits)
+
+
+# ---- #423: inbound gate — foreign content passes admit_foreign before indexing ----
+# The index is machine-global (no project dir in hand), so remote membership is
+# judged by what the sidecar's own daimon-team.toml vouches for: content under
+# a granted logical path indexes; everything else from a synced remote is
+# dropped BEFORE a row exists. The "local" mirror is this machine's own writes
+# and stays ungated.
+
+
+def _clone_remote(name="team-a", toml_text=None):
+    d = config.team_dir() / name
+    (d / ".git").mkdir(parents=True, exist_ok=True)
+    if toml_text is not None:
+        (d / "daimon-team.toml").write_text(toml_text, encoding="utf-8")
+    return d
+
+
+def _write_clone_team_file(remote, author, sid, cp, logical=None):
+    blob = {**cp, "author": author}
+    if logical:
+        d = remote.joinpath("projects", *logical.split("/"), "authors", author)
+        blob["team_project"] = logical
+    else:
+        d = remote / "authors" / author
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.json").write_text(json.dumps(blob), encoding="utf-8")
+
+
+_GRANT_X = '[projects."core/x"]\nrepos = ["https://github.com/org/x"]\n'
+
+
+def test_rebuild_skips_out_of_scope_remote_content(tmp_checkpoint_dir, monkeypatch):
+    remote = _clone_remote(toml_text=_GRANT_X)
+    # Nested under a path the sidecar never granted + a flat-era blob: neither
+    # may reach the index (default closed, mirror of #279).
+    _write_clone_team_file(
+        remote, "grace", "S-g1",
+        _cp("S-g1", beliefs=[{"text": "Zoneless flamingo pipelines are stable",
+                              "trust": "inferred"}]),
+        logical="other/thing")
+    _write_clone_team_file(
+        remote, "grace", "S-g2",
+        _cp("S-g2", beliefs=[{"text": "Quantum pelican caching works",
+                              "trust": "inferred"}]))
+    recall.rebuild()
+    assert recall.search("flamingo", all_projects=True) == []
+    assert recall.search("pelican", all_projects=True) == []
+
+
+def test_rebuild_admits_granted_path_and_redacts(tmp_checkpoint_dir, monkeypatch):
+    remote = _clone_remote(toml_text=_GRANT_X)
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", decisions=[{"text": "rotate the flamingo key "
+                                       "AKIAABCDEFGHIJKLMNOP soon",
+                               "trust": "inferred"}]),
+        logical="core/x")
+    recall.rebuild()
+    hits = recall.search("flamingo", all_projects=True)
+    assert len(hits) == 1  # granted path DOES index
+    assert "AKIA" not in hits[0]["text"]  # …but only after local re-redaction
+    assert "[redacted:" in hits[0]["text"]
+
+
+def test_rebuild_drops_locally_forgotten_value_from_foreign(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import normalize
+
+    forgotten_text = "Adopt the flamingo cache for ingest"
+    store.append_event(
+        "d-dead02", f"forgotten:{normalize.content_key(forgotten_text)}",
+        kind="tombstone", project_dir="/repo/x")
+    remote = _clone_remote(toml_text=_GRANT_X)
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", decisions=[{"text": forgotten_text, "trust": "inferred"},
+                              {"text": "Keep the pelican path", "trust": "inferred"}]),
+        logical="core/x")
+    recall.rebuild()
+    assert recall.search("flamingo", all_projects=True) == []
+    assert len(recall.search("pelican", all_projects=True)) == 1  # others kept
+
+
+def test_rebuild_clamps_foreign_verbatim_to_inferred(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    # Own local verbatim row: the control — must stay verbatim.
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": "Adopt pelican caching locally",
+                              "trust": "verbatim", "quote": "adopt it"}]),
+        project_dir="/repo/x")
+    remote = _clone_remote(toml_text=_GRANT_X)
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", decisions=[{"text": "Adopt flamingo caching remotely",
+                               "trust": "verbatim", "quote": "trust me"}]),
+        logical="core/x")
+    recall.rebuild()
+    foreign = recall.search("flamingo", all_projects=True)
+    assert len(foreign) == 1
+    assert foreign[0]["trust"] == "inferred"  # claim clamped at the boundary
+    own = recall.search("pelican", all_projects=True)
+    assert len(own) == 1
+    assert own[0]["trust"] == "verbatim"  # own claim untouched
+
+
+def test_rebuild_env_grant_admits_single_clone_path(tmp_checkpoint_dir, monkeypatch):
+    # DAIMON_TEAM_PROJECT is explicit machine intent; with a SINGLE clone it
+    # grants that logical path inbound too (mirror of _team_write_slugs).
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    remote = _clone_remote()  # no toml at all
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", beliefs=[{"text": "Flamingo pipelines hold under load",
+                             "trust": "inferred"}]),
+        logical="core/x")
+    recall.rebuild()
+    assert len(recall.search("flamingo", all_projects=True)) == 1

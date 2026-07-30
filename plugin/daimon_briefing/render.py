@@ -250,7 +250,12 @@ def _plain_teammates(teammates) -> None:
         print(f"[{author}]")
         active = b.get("active_topic")
         if active:
-            print(f"  Active topic: {active.get('text', '').strip()}")
+            line = f"  Active topic: {active.get('text', '').strip()}"
+            if active.get("foreign_verbatim_claim"):
+                # #423: decisions get this via briefing._line; the topic line
+                # is built here, so the label has to be repeated.
+                line += f" {briefing.FOREIGN_VERBATIM_NOTE}"
+            print(line)
         decisions = b.get("decisions") or []
         if decisions:
             print("  Decisions made:")
@@ -272,12 +277,20 @@ def _rich_teammates(teammates) -> None:
         active = b.get("active_topic")
         if active:
             body.append(f"Active topic: {active.get('text', '').strip()}\n", style="white")
+            if active.get("foreign_verbatim_claim"):
+                body.append(f"    {briefing.FOREIGN_VERBATIM_NOTE}\n", style="yellow")
         decisions = b.get("decisions") or []
         if decisions:
             body.append("Decisions made:\n", style="bold")
             for i in decisions:
                 trust = _trust_key(i)
                 body.append(f"• {i.get('text', '').strip()}\n", style=_TRUST_STYLE[trust])
+                if i.get("foreign_verbatim_claim"):
+                    # #423: parity with briefing._line's plain-path label —
+                    # this panel builds its own Text body, so the label is
+                    # repeated here (same reasoning as the #14 flag above).
+                    body.append(f"    {briefing.FOREIGN_VERBATIM_NOTE}\n",
+                                style="yellow")
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:
                 body.append(f"{note}\n", style="dim")

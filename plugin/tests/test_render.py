@@ -1113,3 +1113,43 @@ def test_rich_stats_omits_verification_when_nothing_rejected(monkeypatch):
     render.render_stats(_stats_payload({"total": 0, "by_check": {}}))
     titles = [getattr(o, "title", None) for o in printed]
     assert "verification (this project)" not in titles
+
+
+# ---- #423: foreign-verbatim label in the Teammates section, both paths ----
+
+
+def _marked_teammates():
+    """One teammate whose active topic AND decision both carry the inbound
+    gate's foreign_verbatim_claim marker (trust already clamped)."""
+    return [("grace", {
+        "active_topic": {"text": "Hardening the ingest gate",
+                         "trust": "inferred", "foreign_verbatim_claim": True},
+        "decisions": [
+            {"text": "Ship the ingest gate tomorrow", "trust": "inferred",
+             "foreign_verbatim_claim": True},
+            {"text": "Keep the pelican path", "trust": "inferred"},
+        ],
+        "decisions_overflow": 0,
+    })]
+
+
+def test_plain_teammates_labels_foreign_verbatim_claim(monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    render.render_teammates(_marked_teammates())
+    out = capsys.readouterr().out
+    topic_line = next(ln for ln in out.splitlines() if "Active topic" in ln)
+    assert "unverifiable here" in topic_line  # label rides the topic line too
+    dec_line = next(ln for ln in out.splitlines() if "Ship the ingest" in ln)
+    assert "unverifiable here" in dec_line
+    unmarked = next(ln for ln in out.splitlines() if "pelican" in ln)
+    assert "unverifiable here" not in unmarked  # never claimed — no label
+
+
+def test_rich_teammates_labels_foreign_verbatim_claim(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_teammates(_marked_teammates())
+    out = capsys.readouterr().out
+    assert "Teammate" in out and "grace" in out
+    # Both the marked topic and the marked decision carry the label; the
+    # unmarked decision does not (2 labels exactly).
+    assert out.count("unverifiable here") == 2
