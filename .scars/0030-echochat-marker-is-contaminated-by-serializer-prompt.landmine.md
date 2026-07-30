@@ -1,20 +1,21 @@
 ---
-id: 0
+id: 30
 type: landmine
 title: The bench EchoChat fake echoes bare "marker", not the per-session token — its topic text does NOT discriminate sessions by content
 severity: medium
 confidence: 0.85
 created: 2026-07-29
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/tests/test_bench_adapter.py
   - pattern: "endswith.*marker"
 evidence:
   - commit: 5e0f6b2
-  - note: "#405 forbidden-hit cases: assumed the gold checkpoint's topic would contain the per-session marker token (e.g. thinkpadmarker); it contained the bare word 'marker' instead, so a forbidden string keyed on the token matched nothing"
+  - note: #405 forbidden-hit cases: assumed the gold checkpoint's topic would contain the per-session marker token (e.g. thinkpadmarker); it contained the bare word 'marker' instead, so a forbidden string keyed on the token matched nothing
 expires:
   condition: "EchoChat is changed to emit a token that cannot collide with the serializer prompt (e.g. a UUID-shaped marker), or serialize_strict stops prepending prompt text to the transcript blob the fake inspects"
   review_after: 2026-12-01
+status: active
 ---
 
 EchoChat (test_bench_adapter.py) picks its marker with

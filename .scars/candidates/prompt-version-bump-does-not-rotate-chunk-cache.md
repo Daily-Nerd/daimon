@@ -15,6 +15,7 @@ evidence:
 expires:
   condition: "the outdated 'rotates the #48 chunk-cache key' phrasing is removed from every pre-#367 comment block above PROMPT_VERSION, or the cache key is re-keyed on PROMPT_VERSION"
   review_after: 2026-12-01
+status: candidate
 ---
 
 When you add an extraction-behavior change (a new numbered rule that changes
