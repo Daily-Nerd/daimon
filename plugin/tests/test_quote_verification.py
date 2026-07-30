@@ -859,6 +859,22 @@ def test_strip_injected_leaves_ordinary_text_byte_identical():
     assert serializer.strip_injected(text) == text
 
 
+def test_a_contentless_row_does_not_break_verification():
+    """A host row whose `content` is null flattens to None, not "" — so the
+    strip runs on a non-str and must fail closed (empty haystack) instead of
+    raising. Verification of the OTHER messages has to survive it: one
+    malformed row must never cost the whole capture its quotes."""
+    msgs = _msgs(("user", "we adopt the D-007 prompt for the serializer", "u-1"))
+    msgs.append({"role": "assistant", "content": None, "id": "a-2"})
+    cp = _decision(text="a real decision",
+                   quote="adopt the D-007 prompt for the serializer")
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 0
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+
+
 # verify_quotes: an echo never earns quote_verified
 
 def test_quote_only_in_a_recall_line_downgrades_to_inferred():

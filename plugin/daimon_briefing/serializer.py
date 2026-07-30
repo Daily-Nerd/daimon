@@ -886,12 +886,15 @@ def stripped_transcript(messages) -> str:
 
     Renders shallow message copies whose flattened text has been stripped, so
     markers, role labels and joins stay byte-identical to the haystack
-    verification read before this fix: only the injected bytes go missing."""
+    verification read before this fix: only the injected bytes go missing.
+
+    No non-dict guard on purpose: `serialize_strict` renders the SAME list
+    through `_render_transcript` before verification runs, and that raises on
+    any non-dict row — so a message list that reaches here has already proven
+    itself dict-shaped. A guard would only move a crash that already
+    happened."""
     stripped = []
     for m in messages or []:
-        if not isinstance(m, dict):
-            stripped.append(m)
-            continue
         copy = dict(m)
         copy["content"] = strip_injected(_message_text(m))
         stripped.append(copy)
