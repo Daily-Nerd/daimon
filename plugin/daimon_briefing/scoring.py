@@ -29,6 +29,41 @@ _NEUTRAL_RECENCY = 0.5    # unstamped items: between fresh (1.0) and ancient (0.
 _DECAY_FLOOR = 0.1        # decay never zeroes an item — only ordering may bury it
 _ESCALATION_CAP = 3.0     # overdue boost ceiling; keeps weights comparable
 
+# Trust class is a CEILING on authority, not a display label (#408). This is a
+# monotone lid on the weight ANY read path may hand an item, keyed on the one
+# stable property set at capture: its trust class. It exists to structurally
+# kill "recall frequency becomes truth" — the self-reference loop where an
+# inferred belief that recurs, scores fresh, or escalates as an open loop drifts
+# into the standing of a verified verbatim quote. No accumulation vector
+# (importance, recency, overdue escalation, carry, recall frequency) can promote
+# a lower-trust item across its lid, because the lid is applied AFTER every one
+# of them, in the single function all consumers route through.
+#
+#   verbatim  -> _ESCALATION_CAP: the full range, overdue boost included. A
+#                verified verbatim quote is the top band; nothing clips it.
+#   inferred  -> 0.7: below the ~1.0 a fresh, max-importance NON-escalated item
+#                reaches, so an inferred item can never sit in the band a
+#                verbatim item of the same shape occupies.
+#   untagged/ -> _DEFAULT_CEILING: an item that never earned a tag gets no more
+#   unknown      authority than an inferred one — the lid, never a promotion.
+#
+# The ONLY things that lift an item's lid are a change of its trust CLASS, and
+# the class changes by exactly two routes: evidence-gated reverify (cli
+# _cmd_reverify) or explicit human action. Scoring, carry, and recall READ the
+# class; none of them raises it.
+TRUST_CEILING: dict[str, float] = {
+    "verbatim": _ESCALATION_CAP,
+    "inferred": 0.7,
+}
+_DEFAULT_CEILING = 0.7    # absent or unknown trust tag: the inferred lid
+
+
+def trust_ceiling(trust: str | None) -> float:
+    """Maximum effective_weight the given trust class may ever reach. A missing
+    or unrecognized class collapses to the default (inferred) lid — never the
+    verbatim band, which must be earned."""
+    return TRUST_CEILING.get(trust, _DEFAULT_CEILING) if trust else _DEFAULT_CEILING
+
 
 def recency_weight(age_days: float) -> float:
     """Tiered recency (ACB dynamic_relevance_score:1121 verbatim): step function,
@@ -80,10 +115,15 @@ def effective_weight(item, item_type: str, now: float) -> float:
     if not (isinstance(imp, int) and not isinstance(imp, bool) and 1 <= imp <= 10):
         imp = _DEFAULT_IMPORTANCE
     base = imp / 10.0
+    # The trust ceiling is applied LAST, to whatever the accumulation vectors
+    # produced (#408): no importance/recency/escalation combination can lift an
+    # item past the lid its trust class earns. The cap is a property of the
+    # record every caller inherits — not a policy any one of them may skip.
+    ceiling = trust_ceiling(item.get("trust"))
     age = _age_days(item, now)
     if age is None:
-        return base * _NEUTRAL_RECENCY
+        return min(base * _NEUTRAL_RECENCY, ceiling)
     weight = base * recency_weight(age) * _type_decay(age, rules)
     if rules["auto_escalation"] and age > rules["expected_lifespan"]:
         weight *= _overdue_boost(age - rules["expected_lifespan"])
-    return weight
+    return min(weight, ceiling)

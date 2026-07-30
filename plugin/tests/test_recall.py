@@ -5,8 +5,10 @@ rebuild-by-scan contract: corrupt it, delete it, add data behind its back, and
 recall must still answer correctly (or empty), never traceback.
 """
 
+import calendar
 import json
 import sqlite3
+import time
 
 import pytest
 
@@ -829,6 +831,34 @@ def test_suggest_surfaces_older_work_unflagged_without_evidence(
                          project_dir="/repo/x", current_session="S-now")
     assert out and out[0]["session_id"] == "S-old"
     assert out[0]["superseded_by"] is None
+
+
+def test_suggest_ranks_verbatim_over_equal_inferred(
+        tmp_checkpoint_dir, monkeypatch):
+    # #408: trust must reach recall ranking. Two sessions carry the SAME
+    # matching text, importance and recency — differing ONLY in trust class.
+    # relevance and effective_weight would tie them if recall dropped trust
+    # (the old leak); the trust CEILING is what breaks the tie: at fresh,
+    # max importance the inferred lid clips the inferred session below the
+    # verbatim one. An inferred item cannot ride recall to a verbatim's band.
+    stamp = "2026-06-20T00:00:00Z"
+    now = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    common = {"text": "litellm gateway cache pins bad responses",
+              "importance": 10, "first_seen": stamp}
+    store.write_checkpoint(
+        "S-inferred", _cp125("S-inferred", decisions=[
+            {**common, "trust": "inferred"}], created=stamp),
+        project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-verbatim", _cp125("S-verbatim", decisions=[
+            {**common, "trust": "verbatim", "quote": "cache answers instantly"}],
+            created=stamp),
+        project_dir="/repo/x")
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5, now=now)
+    sids = [r["session_id"] for r in out]
+    assert sids.index("S-verbatim") < sids.index("S-inferred")
 
 
 def test_suggest_flags_and_demotes_typed_superseded_item(
