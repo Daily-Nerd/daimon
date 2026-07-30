@@ -1168,3 +1168,236 @@ def test_carry_preserves_scene(monkeypatch):
     carried = merged["working_context"]["open_questions"]
     assert any(i.get("scene") == "asked right after the gateway pinned a bad response"
                for i in carried)
+
+
+# --- #268 S2: the corroboration PREDICATE (observed sink) --------------------
+# merge() gains an optional out-parameter: a list it appends
+# (item_id, origin_session, origin_author) to for every prev/native pair that
+# survives every guard. Pure observation — no ledger, no events, no render
+# change (those are S3/S4), and with the default `observed=None` merge behaves
+# exactly as before.
+#
+# The bar is deliberately brutal, because corroboration is the one signal that
+# RAISES trust: two checkpoints agreeing because one copied the other are one
+# witness, not two (manufactured corroboration, arXiv 2606.24322). Every guard
+# below refuses in the same direction — a missed corroboration costs a boost,
+# a forged one costs the axis.
+
+_COR_PREV = "the quorint ledger reconciliation drops entries on feed pauses"
+_COR_NATIVE = "quorint ledger reconciliation still dropping entries when the feed pauses"
+
+
+def _witness(text=_COR_NATIVE, **kw):
+    """A native item that satisfies G3: THIS session's own verified verbatim."""
+    return _item(text, days=0, **{"trust": "verbatim", "quote": "q-native",
+                                  "quote_verified": True, **kw})
+
+
+def _bound(text=_COR_PREV, **kw):
+    """A prev item bound to a DIFFERENT origin session (G1 + G2 satisfied)."""
+    return _item(text, days=1, **{"id": "o-a1d001",
+                                  "origin_session": "S-origin",
+                                  "origin_author": "ada", **kw})
+
+
+def _observe(prev_items, native_items, sid="S-new"):
+    """Merge with the sink attached; return (observed, merged questions)."""
+    observed: list = []
+    out = carry.merge(_cp(sid, 0, questions=list(native_items)),
+                      _cp("S-prev", 1, questions=list(prev_items)), NOW,
+                      observed=observed)
+    return observed, out["working_context"]["open_questions"]
+
+
+def test_observed_records_reworded_twin_from_a_different_origin():
+    observed, qs = _observe([_bound()], [_witness()])
+    assert observed == [("o-a1d001", "S-origin", "ada")]
+    assert len(qs) == 1  # merge behaviour unchanged: still one twin
+
+
+def test_observed_refuses_when_prev_origin_is_unbound():
+    # G1: a pre-#268 item has no first writer on record. Never guessed from
+    # carried_from — that names the LAST hop, and on the twin path not even
+    # that.
+    observed, _ = _observe([_bound(origin_session=None, carried_from="S-x")],
+                           [_witness()])
+    assert observed == []
+
+
+def test_observed_refuses_when_origin_is_this_same_session():
+    # G2: a session cannot corroborate itself. This is the whole attack — a
+    # claim re-asserted across N re-serializes of ONE session's own writing
+    # would otherwise read as N independent agreements.
+    observed, _ = _observe([_bound(origin_session="S-new")], [_witness()])
+    assert observed == []
+
+
+def test_observed_refuses_when_the_observing_session_is_unnameable():
+    # G2 needs BOTH sides. A checkpoint with no session_id cannot prove the
+    # origin is somebody else's, and unprovable never means corroborated.
+    observed: list = []
+    new = _cp("S-new", 0, questions=[_witness()])
+    del new["session_id"]
+    carry.merge(new, _cp("S-prev", 1, questions=[_bound()]), NOW,
+                observed=observed)
+    assert observed == []
+
+
+def test_observed_refuses_an_inferred_native():
+    # G3: only a WITNESS corroborates. An inferred restatement is the model
+    # agreeing with its own earlier reading, not the world speaking twice.
+    observed, _ = _observe([_bound()], [_item(_COR_NATIVE, days=0)])
+    assert observed == []
+
+
+def test_observed_refuses_a_verbatim_native_whose_quote_never_verified():
+    # G3, second leg: verbatim is a CLAIM, quote_verified is the check. #441
+    # already stopped daimon's own injected briefing text from passing that
+    # check — corroboration rides the verified verdict, nothing weaker.
+    observed, _ = _observe([_bound()], [_witness(quote_verified=False)])
+    assert observed == []
+    observed, _ = _observe([_bound()], [_witness(quote_verified=None)])
+    assert observed == []
+
+
+def test_observed_refuses_a_ratio_only_match():
+    # G4: the ratio path (>=60% of the shorter term list) exists so short
+    # rewordings still MERGE. It is far too loose to certify two independent
+    # statements of the same claim — two shared terms out of three.
+    observed, qs = _observe(
+        [_bound("zephyr ledger drop")],
+        [_witness("zephyr ledger stall")])
+    assert len(qs) == 1      # still twinned — merge behaviour untouched
+    assert observed == []    # but never corroborated
+
+
+def test_observed_records_an_absolute_overlap_match():
+    # Control for the case above: >=3 shared salient terms is the strong path.
+    observed, _ = _observe([_bound()], [_witness()])
+    assert observed == [("o-a1d001", "S-origin", "ada")]
+
+
+def test_observed_refuses_a_reversal_pair():
+    # G5, inherited: a native that SUPERSEDES the prev item is excluded from
+    # twin candidacy entirely (#167), so it never reaches the predicate. A
+    # contradiction must never be counted as agreement.
+    observed: list = []
+    prev, new = _reversal_cps()
+    prev["working_context"]["recent_decisions"][0].update(
+        origin_session="S-origin", origin_author="ada")
+    out = carry.merge(new, prev, NOW, observed=observed)
+    assert observed == []
+    assert len(out["working_context"]["recent_decisions"]) == 2  # unchanged
+
+
+def test_observed_refuses_when_both_sides_cite_the_same_message():
+    # G6: two items bound to the SAME transcript turn are one utterance read
+    # twice (a re-serialize, a duplicated transcript), not two witnesses.
+    observed, _ = _observe(
+        [_bound(source_message_ids=["m-7", "m-9"])],
+        [_witness(source_message_ids=["m-9"])])
+    assert observed == []
+
+
+def test_observed_records_when_message_bindings_are_disjoint():
+    # The other side of G6: different turns is exactly what corroboration is.
+    observed, _ = _observe(
+        [_bound(source_message_ids=["m-7"])],
+        [_witness(source_message_ids=["m-9"])])
+    assert observed == [("o-a1d001", "S-origin", "ada")]
+
+
+def test_observed_refuses_a_quantity_conflict_pair():
+    # Inherited from _same_item (#173): different numbers are structurally
+    # distinct items, so they never twin and never corroborate.
+    observed, qs = _observe(
+        [_bound("the quorint ledger dropped 10 entries over 6 feed pauses")],
+        [_witness("the quorint ledger dropped 3 entries over 6 feed pauses")])
+    assert len(qs) == 2   # two distinct items, no twinning
+    assert observed == []
+
+
+def test_observed_refuses_generic_term_only_overlap():
+    # Inherited (#13 live specimen): the two unrelated items that matched on
+    # exactly {data, field, validation}. Generic vocabulary is not identity,
+    # so there is no twin and nothing to corroborate.
+    observed, qs = _observe(
+        [_bound(_SPEC_A), _bound(_SPEC_SIB, id="o-a1d002")],
+        [_witness(_SPEC_B)])
+    assert observed == []
+    assert len(qs) == 3
+
+
+def test_observed_records_an_exact_text_restatement():
+    # The exact-text short-circuit (idempotency guard) returns BEFORE the twin
+    # block. A later session stating the identical sentence, with its own
+    # verified quote, is the strongest corroboration there is — recording it
+    # has to happen on that branch too or it is lost.
+    observed, _ = _observe([_bound()], [_witness(_COR_PREV)])
+    assert observed == [("o-a1d001", "S-origin", "ada")]
+
+
+def test_observed_exact_text_records_an_empty_author_when_unnamed():
+    # origin_author is optional (hosts that name no author). Absent stays
+    # absent — an empty string in the tuple, never a fabricated name.
+    observed, _ = _observe([_bound(origin_author=None)], [_witness(_COR_PREV)])
+    assert observed == [("o-a1d001", "S-origin", "")]
+
+
+def test_observed_exact_text_refuses_an_inferred_native():
+    # G3 applies identically on the short-circuit branch.
+    observed, _ = _observe([_bound()], [_item(_COR_PREV, days=0)])
+    assert observed == []
+
+
+def test_observed_exact_text_refuses_a_reversal_native():
+    # The twin block drops reversals before the predicate; the short-circuit
+    # branch has no such filter, so it needs the check explicitly. A native
+    # that restates the prev text WHILE superseding it is contradicting
+    # itself — ambiguity refuses, same bias as everywhere else here.
+    observed, _ = _observe(
+        [_bound()],
+        [_witness(_COR_PREV, links=[{"type": "supersedes",
+                                     "target": "o-a1d001"}])])
+    assert observed == []
+
+
+def test_observed_exact_text_match_against_a_carried_sibling_is_not_a_witness():
+    # Two prev items with identical text: the first carries, the second hits
+    # the short-circuit against THAT CARRIED COPY, not against anything this
+    # session wrote. No native, no witness.
+    observed, _ = _observe(
+        [_bound(), _bound(id="o-a1d002")], [_item("unrelated plimsol topic")])
+    assert observed == []
+
+
+def test_observed_refuses_a_pair_with_no_item_id_to_attribute():
+    # The tuple's first field is the id the twin ENDS UP carrying. When
+    # neither side has one there is nothing to attribute the observation to.
+    observed, _ = _observe([_bound(id=None)], [_witness()])
+    assert observed == []
+
+
+def test_observed_records_before_the_verbatim_freeze_destroys_the_evidence():
+    # ORDER PIN. The #22 freeze overwrites the native twin's trust/quote and
+    # DROPS its quote_verified (it attested a quote that no longer exists) —
+    # so a predicate evaluated after the freeze would read the frozen prev's
+    # values and G3 would answer about the wrong item.
+    observed, qs = _observe(
+        [_bound(trust="verbatim", quote="q-prev")], [_witness()])
+    assert observed == [("o-a1d001", "S-origin", "ada")]
+    assert qs[0]["quote"] == "q-prev"              # freeze happened
+    assert "quote_verified" not in qs[0]           # and destroyed the evidence
+
+
+def test_observed_default_none_leaves_merge_byte_identical():
+    # The sink is additive: no caller changes, no behaviour change.
+    prev = _cp("S-prev", 1, questions=[_bound(), _bound("plimsol retry loop",
+                                                        id="o-a1d002")])
+    new = _cp("S-new", 0, questions=[_witness()])
+    plain = carry.merge(copy.deepcopy(new), copy.deepcopy(prev), NOW)
+    observed: list = []
+    sunk = carry.merge(copy.deepcopy(new), copy.deepcopy(prev), NOW,
+                       observed=observed)
+    assert plain == sunk
+    assert observed == [("o-a1d001", "S-origin", "ada")]
