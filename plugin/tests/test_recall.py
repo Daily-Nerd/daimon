@@ -1056,6 +1056,68 @@ def test_suggest_rich_prompt_terms_beyond_twelve_still_match(tmp_checkpoint_dir,
     assert out and out[0]["session_id"] == "S-old"
 
 
+# ---- #452: suggest's side of the age-aware injection gate — rows carry the
+# ---- per-item match strength (term_hits) and the standing-rule flag (pinned)
+# ---- so the cli gate can judge stale candidates without recomputing either.
+
+
+def test_suggest_rows_carry_term_hits(tmp_checkpoint_dir, monkeypatch):
+    _seed_history()
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out
+    # text+quote share exactly litellm/gateway/cache with the prompt ("pins"
+    # never contains "pinning"; "debugging" appears nowhere in the item).
+    assert out[0]["term_hits"] == 3
+
+
+def test_rebuild_indexes_pinned_flag_and_suggest_returns_it(
+        tmp_checkpoint_dir, monkeypatch):
+    store.write_checkpoint(
+        "S-old", _cp(
+            "S-old",
+            beliefs=[{"text": "ocelot cache flushes forbidden in prod",
+                      "trust": "verbatim",
+                      "quote": "ocelot cache flushes forbidden in prod",
+                      "pinned": True, "importance": 9,
+                      "first_seen": "2026-06-20T00:00:00Z"}],
+            decisions=[{"text": "ocelot cache warmup adopted for staging",
+                        "trust": "inferred", "importance": 5,
+                        "first_seen": "2026-06-20T00:00:00Z"}],
+            created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x")
+    recall.rebuild()
+    conn = sqlite3.connect(str(config.recall_db()))
+    try:
+        by_text = dict(conn.execute("SELECT text, pinned FROM items").fetchall())
+    finally:
+        conn.close()
+    assert by_text["ocelot cache flushes forbidden in prod"] == 1
+    assert by_text["ocelot cache warmup adopted for staging"] == 0
+    out = recall.suggest("ocelot cache flushes prod",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["pinned"] == 1
+
+
+def test_pre_452_schema_db_rebuilds_instead_of_erroring(
+        tmp_checkpoint_dir, monkeypatch):
+    # An existing v4 db has no `pinned` column — suggest's SELECT would
+    # OperationalError on it. The schema bump must funnel that into the
+    # standard silent rebuild, never a swallowed-empty answer.
+    _seed_history()
+    recall.rebuild()
+    conn = sqlite3.connect(str(config.recall_db()))
+    try:
+        conn.execute("ALTER TABLE items DROP COLUMN pinned")
+        conn.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-old"
+
+
 def test_unattributed_sessions_never_supersede_each_other(tmp_checkpoint_dir, monkeypatch):
     # #31 item 6: all NULL-slug (unattributed) sessions shared one supersession
     # bucket — the newest unattributed session superseded unrelated
