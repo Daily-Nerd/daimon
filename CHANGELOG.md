@@ -5,6 +5,20 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1](https://github.com/Daily-Nerd/daimon/compare/v0.22.0...v0.22.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **recall:** content-key the injection dedup — cross-origin duplicates were 15.5% of injections ([#454](https://github.com/Daily-Nerd/daimon/issues/454)) ([981e1f1](https://github.com/Daily-Nerd/daimon/commit/981e1f1c5b5e2227d51820e9a0c51bc9b184a692))
+* **recall:** skip machine prompts in the recall-inject hook — 37.9% of injections fired at prompts no human wrote ([#453](https://github.com/Daily-Nerd/daimon/issues/453)) ([2300c25](https://github.com/Daily-Nerd/daimon/commit/2300c250121416d4177f7185044b91d9a5dfde5a))
+
+
+### Documentation
+
+* **blog:** origin-bound corroboration ship story, en + es ([#448](https://github.com/Daily-Nerd/daimon/issues/448)) ([7d00c56](https://github.com/Daily-Nerd/daimon/commit/7d00c5682197664cdd6d07ad3dd18f1ccc20f795))
+* **site:** blog post on negative knowledge for coding agents (en + es) ([#396](https://github.com/Daily-Nerd/daimon/issues/396)) ([952cd6d](https://github.com/Daily-Nerd/daimon/commit/952cd6dd5003db0be25b8440a88737d084efe72c))
+
 ## [0.22.0](https://github.com/Daily-Nerd/daimon/compare/v0.21.0...v0.22.0) (2026-07-30)
 
 
