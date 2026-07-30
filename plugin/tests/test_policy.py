@@ -329,3 +329,171 @@ def test_admit_row_uses_injected_redact_fn_and_skips_non_strings():
     assert out["item_text"] is None    # non-string passes through
     assert out["n"] == 3               # non-string passes through
     assert "absent" not in out         # named-but-missing field not created
+
+
+# ---- #268 S1: bind_origin — write-time origin binding ----
+#
+# `carried_from` names the session an item was copied FROM on its last hop,
+# which is the PREVIOUS session, not the session that first wrote the claim.
+# Corroboration counting needs the latter: two checkpoints agreeing because one
+# copied the other is one witness, not two. bind_origin stamps the writing
+# session/author once, at the write boundary, and never rewrites it.
+
+
+def _origin_cp(sid="S-A", author="ada"):
+    return {
+        "session_id": sid,
+        "author": author,
+        "working_context": {
+            "active_topic": {"text": "the ingest path", "trust": "inferred"},
+            "open_questions": [{"text": "should we shard?", "trust": "inferred"}],
+            "recent_decisions": [{"text": _S, "trust": "inferred"}],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [{"text": "sqlite is enough", "trust": "inferred"}],
+            "uncertainties": [{"text": "write volume unknown", "trust": "inferred"}],
+            "contradictions_flagged": [{"text": "we also said postgres",
+                                        "trust": "inferred"}],
+        },
+    }
+
+
+def _list_items(cp):
+    from daimon_briefing import schema
+
+    return [item
+            for section, key in schema.ITEM_LISTS
+            for item in (cp.get(section) or {}).get(key) or []
+            if isinstance(item, dict)]
+
+
+def test_bind_origin_stamps_session_and_author_on_every_list_item():
+    from daimon_briefing import policy
+
+    cp = _origin_cp()
+    policy.bind_origin(cp)
+
+    items = _list_items(cp)
+    assert len(items) == 5  # every list section, not just recent_decisions
+    for item in items:
+        assert item["origin_session"] == "S-A"
+        assert item["origin_author"] == "ada"
+
+
+def test_bind_origin_never_overwrites_an_existing_origin():
+    """setdefault semantics — the same rail `id`/`first_seen` ride. A carried
+    copy arrives already bound to the session that FIRST wrote it, and the
+    session re-writing it must never restamp itself as the origin."""
+    from daimon_briefing import policy
+
+    cp = _origin_cp(sid="S-B", author="grace")
+    carried = cp["working_context"]["recent_decisions"][0]
+    carried["origin_session"] = "S-A"
+    carried["origin_author"] = "ada"
+
+    policy.bind_origin(cp)
+    policy.bind_origin(cp)  # re-admission (anchor --attach rewrite) is idempotent
+
+    assert carried["origin_session"] == "S-A"
+    assert carried["origin_author"] == "ada"
+    # a native item written this session still binds to this session
+    native = cp["working_context"]["open_questions"][0]
+    assert native["origin_session"] == "S-B"
+
+
+def test_bind_origin_skips_absent_or_empty_checkpoint_fields():
+    """An empty origin is worse than none: it would read as a real witness
+    with an unnameable source. Absent field = unknown, the project convention."""
+    from daimon_briefing import policy
+
+    cp = _origin_cp(sid="", author="   ")
+    policy.bind_origin(cp)
+    for item in _list_items(cp):
+        assert "origin_session" not in item
+        assert "origin_author" not in item
+
+    cp = _origin_cp()
+    del cp["author"]
+    policy.bind_origin(cp)
+    for item in _list_items(cp):
+        assert item["origin_session"] == "S-A"   # the known half still binds
+        assert "origin_author" not in item
+
+
+def test_bind_origin_tolerates_malformed_checkpoints():
+    from daimon_briefing import policy
+
+    cp = {"session_id": "S-A", "author": "ada",
+          "working_context": {"recent_decisions": ["bare string", 7, None],
+                              "open_questions": "not-a-list"},
+          "epistemic_snapshot": "not-a-dict"}
+    policy.bind_origin(cp)  # must not raise
+    assert cp["working_context"]["recent_decisions"] == ["bare string", 7, None]
+
+
+def test_admit_checkpoint_binds_origin_and_never_binds_a_dropped_item():
+    """Through the pipeline: the forget gate runs first, so an item the gate
+    dropped is never bound to an origin it will not reach disk under."""
+    from daimon_briefing import policy
+
+    cp = _origin_cp()
+    cp["working_context"]["recent_decisions"].append({"text": _T, "trust": "inferred"})
+    dropped = policy.admit_checkpoint(cp, {normalize.content_key(_S)})
+
+    assert len(dropped) == 1
+    assert "origin_session" not in dropped[0]
+    kept = cp["working_context"]["recent_decisions"]
+    assert [d["text"] for d in kept] == [_T]
+    assert kept[0]["origin_session"] == "S-A"
+    assert kept[0]["origin_author"] == "ada"
+    assert kept[0]["id"]  # id-stamping still runs
+
+
+# ---- #268 S1: origin binding end-to-end through the write boundary ----
+
+
+def test_write_checkpoint_binds_origin_to_the_writing_session_and_author(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
+                           project_dir=_A)
+    item = store.read_latest(project_dir=_A,
+                             fallback=False)["working_context"]["recent_decisions"][0]
+    assert item["origin_session"] == "S1"
+    assert item["origin_author"] == "ada"
+
+
+def test_origin_survives_two_carry_hops_while_carried_from_only_names_the_last(
+        tmp_checkpoint_dir, monkeypatch):
+    """A -> B -> C, with B re-discussing the claim in its own words (the twin
+    path). `carried_from` on C's copy names B — one hop back — so it cannot
+    answer "who first wrote this". `origin_session` still says A."""
+    from daimon_briefing import carry, config, store as _store
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+
+    _store.write_checkpoint("S-A", _cp("S-A", "2026-07-01T00:00:00Z", [_S]),
+                            project_dir=_A)
+
+    def _write_with_carry(sid, created, texts):
+        cp = _cp(sid, created, texts)
+        prev = _store.read_latest(project_dir=_A, fallback=False)
+        cp = carry.merge(cp, prev, _store._created_epoch(created),
+                         floor=config.carry_floor(), cap=config.carry_max(),
+                         resolved=frozenset())
+        _store.write_checkpoint(sid, cp, project_dir=_A)
+        return cp
+
+    # B restates A's decision in its own wording -> native twin, not a copy.
+    _write_with_carry("S-B", "2026-07-02T00:00:00Z",
+                      ["adopt sqlite for the recall index cache layer"])
+    _write_with_carry("S-C", "2026-07-03T00:00:00Z", [_T])
+
+    latest = _store.read_latest(project_dir=_A, fallback=False)
+    sqlite_item = next(d for d in latest["working_context"]["recent_decisions"]
+                       if "sqlite" in d["text"])
+    assert sqlite_item.get("carried_from") in ("S-B", "S-C")
+    assert sqlite_item["origin_session"] == "S-A"
+    assert sqlite_item["origin_author"] == "ada"

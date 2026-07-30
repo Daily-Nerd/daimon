@@ -318,6 +318,18 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 # recorded against the old id still binds after re-extraction.
                 if item.get("id"):
                     twin.setdefault("id", item["id"])
+                # Origin (#268) rides that same rail, and the twin path is the
+                # ONLY place it needs a line: plain carry deep-copies the whole
+                # prev item, binding included. A reworded twin is not a copy —
+                # without this it would reach write_checkpoint unbound and
+                # bind_origin would name THIS session as the first writer, so
+                # every rewording would mint a fresh witness and a claim
+                # restated across N sessions would read as N independent
+                # agreements. Absent on a pre-#268 prev item -> left unbound
+                # here (write_checkpoint binds it), never an empty stamp.
+                for field in ("origin_session", "origin_author"):
+                    if item.get(field):
+                        twin.setdefault(field, item[field])
                 continue
             if item.get("id") in resolved:
                 continue  # world closed this loop (#102) — stop carrying it

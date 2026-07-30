@@ -9,8 +9,11 @@ order is load-bearing and must not change:
 2. drop_forgotten — the value-keyed forget gate (#402) compares against the
    STORED (post-redaction) text the forget command keyed its tombstone on —
    a raw re-extraction of a redacted-then-forgotten sentence only folds to
-   the tombstoned key because redaction already ran; and
-3. stamp_item_ids — ids (#102) are stamped LAST, so they hash redacted text
+   the tombstoned key because redaction already ran;
+3. bind_origin — write-time origin binding (#268) runs after the forget gate
+   for the same reason id-stamping does: a dropped item is never bound to an
+   origin it will not reach disk under; and
+4. stamp_item_ids — ids (#102) are stamped LAST, so they hash redacted text
    and a dropped item is never minted an id at all.
 
 Like the helpers it absorbed, every function mutates its checkpoint argument
@@ -156,13 +159,70 @@ def stamp_item_ids(checkpoint: dict) -> None:
             seen.add(cand)
 
 
+def bind_origin(checkpoint: dict) -> None:
+    """Write-time origin binding (#268 slice 1): stamp each item with the
+    session and author that FIRST wrote it.
+
+    `carried_from` cannot answer this. It names the session an item was
+    copied from on its LAST hop, and on the twin path (a session restating a
+    carried claim in its own words) it is not even that — the reworded native
+    is not a copy, so the next carry stamps it with the restating session.
+    Corroboration counting needs the first writer: two checkpoints agreeing
+    because one copied the other are one witness, not two, and without a
+    first-writer stamp a claim re-asserted across N sessions looks like N
+    independent agreements. That is the manufactured-corroboration failure
+    mode, so origin must be bound where the claim is born, not derived later
+    from a chain that has already lost the answer.
+
+    setdefault semantics, the rail `id` and `first_seen` already ride: a
+    carried copy arrives bound and is never re-bound, so re-writes
+    (anchor --attach's read-mutate-write), rotation, and re-serialization
+    are all idempotent. The corollary is that a value present here is
+    honored forever — which is why the serialize boundary strips any
+    model-emitted binding before this ever runs (serializer's
+    _CODE_OWNED_ITEM_KEYS), the same discipline as `grounded`/`pinned`.
+
+    Only non-empty string fields bind. An empty origin would read as a real
+    witness with an unnameable source; absent = unknown is the project
+    convention (project_slug, git_branch). Walks _ITEM_LISTS, so
+    active_topic is excluded for the same reason stamp_item_ids excludes it:
+    it is per-session by definition and never carries (#33)."""
+    session = checkpoint.get("session_id")
+    author = checkpoint.get("author")
+    stamps = [(key, val) for key, val in (("origin_session", session),
+                                          ("origin_author", author))
+              if isinstance(val, str) and val.strip()]
+    if not stamps:
+        return
+    for section, key in _ITEM_LISTS:
+        block = checkpoint.get(section)
+        if not isinstance(block, dict):
+            continue  # torn/legacy blob — drop_forgotten's tolerance, not
+            #           redact_checkpoint's `or {}`, which trips on a str
+        items = block.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for field, val in stamps:
+                item.setdefault(field, val)
+
+
 def admit_checkpoint(checkpoint: dict, forgotten_keys: set) -> list:
     """Run the full admission pipeline, in the only valid order (module
-    docstring): redact, then the forget gate, then id-stamping. Mutates
-    `checkpoint` in place; returns the forget-dropped items for the caller's
-    hit accounting (#404)."""
+    docstring): redact, then the forget gate, then origin binding, then
+    id-stamping. Mutates `checkpoint` in place; returns the forget-dropped
+    items for the caller's hit accounting (#404).
+
+    bind_origin (#268) sits AFTER the forget gate so a dropped item is never
+    bound to an origin it will not reach disk under — the same reason ids are
+    stamped after it. Its position relative to stamp_item_ids is free (they
+    touch disjoint fields and neither reads the other's output); it runs
+    first only so id-stamping keeps its documented place as the LAST gate."""
     redact_checkpoint(checkpoint)
     dropped = drop_forgotten(checkpoint, forgotten_keys)
+    bind_origin(checkpoint)
     stamp_item_ids(checkpoint)
     return dropped
 

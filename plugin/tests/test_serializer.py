@@ -1254,6 +1254,11 @@ def test_serialize_prompt_has_external_artifact_identifier_rule():
     ("project_slug", "some-other-project"),
     ("git_branch", "not-the-real-branch"),
     ("receipts", "not-a-real-receipt-marker"),
+    # #268 S1: origin binding is an assertion about WHO first wrote a claim —
+    # the input to corroboration counting. A model that can name it can
+    # manufacture a second witness for its own output.
+    ("origin_session", "S-someone-elses-session"),
+    ("origin_author", "not-the-real-author"),
 ])
 def test_serialize_strips_model_supplied_code_owned_key(fake_chat_factory, key, spoofed):
     spoofed_ckpt = json.loads(_valid_checkpoint_json("S1"))
@@ -1262,6 +1267,44 @@ def test_serialize_strips_model_supplied_code_owned_key(fake_chat_factory, key, 
     ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
     assert ckpt is not None
     assert key not in ckpt  # stripped, not carried through as the model's value
+
+
+def test_serialize_strips_model_supplied_origin_binding_off_items(fake_chat_factory):
+    """#268 S1: origin lives on ITEMS, so the top-level strip is not enough.
+    policy.bind_origin uses setdefault (a carried item's origin must survive
+    a re-write), which means a model-emitted item-level binding would be
+    honored forever — a self-issued witness. Strip it at the same boundary
+    `grounded`/`pinned` are stripped: the freshly parsed model output."""
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    for item in [spoofed["working_context"]["active_topic"],
+                 spoofed["working_context"]["open_questions"][0],
+                 spoofed["working_context"]["recent_decisions"][0]]:
+        item["origin_session"] = "S-someone-elses-session"
+        item["origin_author"] = "not-the-real-author"
+    chat = fake_chat_factory(json.dumps(spoofed))
+
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+
+    assert ckpt is not None
+    for item in serializer.iter_items(ckpt):
+        assert "origin_session" not in item
+        assert "origin_author" not in item
+
+
+def test_strip_code_owned_keys_clears_item_origin_on_the_introspection_path():
+    """`daimon write-checkpoint` takes a dict a live model authored directly —
+    the same spoofing surface, one level down (cli calls this function for
+    exactly that reason)."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["working_context"]["open_questions"][0]["origin_session"] = "S-forged"
+    ckpt["working_context"]["open_questions"][0]["origin_author"] = "forger"
+
+    serializer.strip_code_owned_keys(ckpt)
+
+    item = ckpt["working_context"]["open_questions"][0]
+    assert "origin_session" not in item
+    assert "origin_author" not in item
+    assert item["text"] == "q"  # nothing else disturbed
 
 
 def test_serialize_strip_survives_the_validation_retry_pass(fake_chat_factory):

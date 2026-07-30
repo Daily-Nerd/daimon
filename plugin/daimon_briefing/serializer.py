@@ -1605,11 +1605,24 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
 _CODE_OWNED_KEYS = (
     "format_version", "created", "author",
     "transcript_hash", "project_slug", "git_branch", "receipts",
+    # #268: origin binding is asserted by policy.bind_origin at the write
+    # boundary. No code path reads a top-level copy, but a model naming the
+    # key must not leave one lying beside the real per-item stamps.
+    "origin_session", "origin_author",
 )
+
+# The same discipline one level down: origin binds per ITEM (#268 S1), and
+# policy.bind_origin uses setdefault so a carried item's binding survives a
+# re-write. That makes any value already on an item authoritative forever —
+# so a model-emitted one is a self-issued witness that corroboration counting
+# would then treat as an independent session. Stripped from freshly authored
+# model output only, exactly like `grounded`/`pinned` (#292 discipline).
+_CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:
-    """Discard any code-owned key a model emitted in its own output.
+    """Discard any code-owned key a model emitted in its own output, at the
+    checkpoint level (_CODE_OWNED_KEYS) and per item (_CODE_OWNED_ITEM_KEYS).
 
     Public: called both here (after every fresh _produce() parse) and by
     cli's `_cmd_write_checkpoint`, the other place a model authors a
@@ -1631,6 +1644,10 @@ def strip_code_owned_keys(checkpoint: dict) -> None:
         if key in checkpoint:
             log.info("serialize: discarding model-supplied code-owned key %r", key)
             del checkpoint[key]
+    for item in iter_items(checkpoint):
+        for key in _CODE_OWNED_ITEM_KEYS:
+            if item.pop(key, None) is not None:
+                log.info("serialize: discarding model-supplied item key %r", key)
 
 
 def _stamp_llm_provenance(checkpoint: dict) -> None:
