@@ -27,6 +27,11 @@ _CARRIED_KINDS = schema.CARRIED_KINDS
 
 _MIN_SHARED = 3     # shared salient terms for same-item
 _MIN_RATIO = 0.6    # or this fraction of the shorter term list
+# Which rail a same-item match came in on (#268). Dedup treats them alike;
+# corroboration does not — see _match_path and _record_corroboration's G4.
+_MATCH_EXACT = "exact"
+_MATCH_ABSOLUTE = "absolute"
+_MATCH_RATIO = "ratio"
 _GENERIC_DF = 3     # a term shared by >=3 items of one kind is that kind's
                     # vocabulary, not an item's identity. Filtering it out of
                     # dedup stops generic overlap (data/field/validation, the
@@ -124,8 +129,13 @@ def _generic_terms(texts, k: int = _GENERIC_DF) -> frozenset:
     return frozenset(term for term, n in df.items() if n >= k)
 
 
-def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
-    """Term-overlap identity: the serializer rewords constantly (run-01), so
+def _match_path(a_text: str, b_text: str, generic=frozenset()) -> str:
+    """WHICH rail two texts matched on: `_MATCH_ABSOLUTE`, `_MATCH_RATIO`, or
+    "" for no match. `_same_item` is this function's boolean face; the path
+    itself matters only to corroboration (#268), which trusts the absolute
+    rail and refuses the ratio one.
+
+    Term-overlap identity: the serializer rewords constantly (run-01), so
     exact text misses twins. Shared >=3 salient terms, or >=60% of the shorter
     list, means same item — but only AFTER subtracting `generic` (the kind's
     document-frequent vocabulary), so overlap on common words can't merge
@@ -141,15 +151,29 @@ def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
     Quantity-conflict guard (#173) runs FIRST and short-circuits term overlap
     entirely: two texts stating different numbers are structurally distinct
     even when they share enough subject vocabulary to clear the thresholds
-    below (an UPDATE's shared frame, not a reworded twin)."""
+    below (an UPDATE's shared frame, not a reworded twin).
+
+    Absolute beats ratio when both hold: a pair clearing >=_MIN_SHARED is
+    reported as absolute regardless of the fraction it also happens to pass."""
     if _quantity_conflict(a_text, b_text):
-        return False
+        return ""
     a = set(recall.salient_terms(a_text)) - generic
     b = set(recall.salient_terms(b_text)) - generic
     if len(a) < 2 or len(b) < 2:
-        return False
+        return ""
     shared = len(a & b)
-    return shared >= _MIN_SHARED or shared / min(len(a), len(b)) >= _MIN_RATIO
+    if shared >= _MIN_SHARED:
+        return _MATCH_ABSOLUTE
+    if shared / min(len(a), len(b)) >= _MIN_RATIO:
+        return _MATCH_RATIO
+    return ""
+
+
+def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
+    """Same-item verdict for dedup/twinning — any `_match_path` rail counts.
+    See that function for the thresholds and the don't-merge bias behind
+    them."""
+    return bool(_match_path(a_text, b_text, generic))
 
 
 def _is_reversal_of(native_item: dict, prev_text: str, prev_id,
@@ -186,9 +210,81 @@ def _is_reversal_of(native_item: dict, prev_text: str, prev_id,
     return False
 
 
+def _message_ids(item: dict) -> frozenset:
+    """The item's bound transcript-message ids as a set, tolerating the shapes
+    a hand-edited or pre-#358 checkpoint can hold (absent, non-list, non-str
+    entries) — same read-side tolerance as serializer.scoped_haystack."""
+    ids = item.get("source_message_ids")
+    if not isinstance(ids, list):
+        return frozenset()
+    return frozenset(i for i in ids if isinstance(i, str) and i)
+
+
+def _record_corroboration(observed: list, prev_item: dict, native_item: dict,
+                          match_path: str, out_sid: str) -> None:
+    """Append `(item_id, origin_session, origin_author)` to `observed` when
+    this prev/native pair is INDEPENDENT corroboration — and append nothing
+    at all otherwise (#268 slice 2). Pure: decides, records, emits nothing.
+
+    Corroboration is the one signal that RAISES trust, so every guard below
+    refuses in the same direction: a missed observation costs a boost, a
+    forged one costs the axis. Two checkpoints agreeing because one copied
+    the other are ONE witness (manufactured corroboration, arXiv 2606.24322).
+
+      G1 bound origin  — prev names its first writer (#268 S1). Never guessed
+        from `carried_from`: that names the LAST hop, and on the twin path not
+        even that. Unbound stays permanently ineligible.
+      G2 different origin — the first writer is not the session doing the
+        observing. Both sides required: a checkpoint with no session_id cannot
+        prove somebody ELSE wrote the claim, and unprovable is not corroborated.
+      G3 witnessed, not echoed — the NATIVE item is this session's own verified
+        verbatim. `trust` alone is a claim; `quote_verified is True` is the
+        check (and #441 is what stops daimon's own injected briefing text from
+        passing it). Read PRE-freeze: the #22 verbatim freeze overwrites the
+        native's trust/quote_verified with prev's, so afterwards this reads the
+        wrong item entirely.
+      G4 strong match only — identical text, or >=_MIN_SHARED shared salient
+        terms. The ratio rail exists so short rewordings still MERGE; two
+        shared terms out of three is nowhere near evidence of two independent
+        statements.
+      G5 not a reversal — inherited: reversal pairs never reach the twin block
+        (#167). A contradiction is not agreement.
+      G6 disjoint message binding — both sides citing the same transcript turn
+        is one utterance read twice (a re-serialize, a duplicated transcript).
+        Only fires when BOTH carry ids; absent bindings prove nothing either way.
+
+    G7 (the origin session still exists on disk) is deliberately NOT here —
+    it needs I/O, so it belongs to the emitter (S3), never to this module.
+
+    The recorded id is the one the pair ENDS UP under: the native's own when
+    it has one, else the prev id it inherits on the setdefault rail below (and
+    on the exact-text branch the two are equal anyway — ids are sha1 of
+    kind:text). Neither side having an id means nothing to attribute the
+    observation to, so nothing is recorded. `origin_author` is optional
+    (hosts that name no author): absent becomes "", never a fabricated name."""
+    origin = str(prev_item.get("origin_session") or "")
+    if not origin:
+        return                                                          # G1
+    if not out_sid or origin == out_sid:
+        return                                                          # G2
+    if (native_item.get("trust") != "verbatim"
+            or native_item.get("quote_verified") is not True):
+        return                                                          # G3
+    if match_path not in (_MATCH_EXACT, _MATCH_ABSOLUTE):
+        return                                                          # G4
+    prev_msgs, native_msgs = _message_ids(prev_item), _message_ids(native_item)
+    if prev_msgs & native_msgs:
+        return                                                          # G6
+    item_id = str(native_item.get("id") or prev_item.get("id") or "")
+    if not item_id:
+        return  # no identity to attribute the observation to
+    observed.append((item_id, origin, str(prev_item.get("origin_author") or "")))
+
+
 def merge(new_cp: dict, prev_cp: dict | None, now: float,
           floor: float = 0.05, cap: int = 8,
-          resolved: frozenset = frozenset()) -> dict:
+          resolved: frozenset = frozenset(),
+          observed: list | None = None) -> dict:
     """Fold prev_cp's carry-eligible items into a COPY of new_cp.
 
     Native items are never dropped or reordered — carry only appends, and (on
@@ -205,6 +301,15 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
     and the native item itself is never dropped — only the render layer, not
     carry, decides what to do with a resolved-but-still-mentioned item.
 
+    `observed` (#268 slice 2): an optional list merge APPENDS corroboration
+    observations to — `(item_id, origin_session, origin_author)` per prev/
+    native pair that clears `_record_corroboration`'s guards. Out-parameter
+    rather than a second return value so no existing caller changes; default
+    None skips the predicate entirely, so behaviour is byte-identical to
+    before for everyone who doesn't ask. Observation only: this module still
+    writes no ledger, emits no event and renders nothing (that is S3/S4), and
+    the merged checkpoint is the same either way.
+
     No-op paths (non-dict inputs, anachronism guard) return new_cp UNCHANGED,
     not a copy — callers reassign the result immediately, so a defensive
     deepcopy there would just be wasted work."""
@@ -217,6 +322,11 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
 
     out = copy.deepcopy(new_cp)
     prev_sid = str(prev_cp.get("session_id") or "")
+    # The OBSERVING session — who is agreeing, for the corroboration predicate's
+    # G2. Read off the checkpoint being merged into (it is stamped at
+    # serialize, long before this runs); absent means G2 is unprovable and
+    # every observation refuses.
+    out_sid = str(out.get("session_id") or "")
     for section, key, item_type in _CARRIED_KINDS:
         native = (out.get(section) or {}).get(key)
         if not isinstance(native, list):
@@ -235,6 +345,28 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 continue
             text = item["text"]
             if text in native_texts:
+                # #268: this branch returns before the twin block, so the
+                # STRONGEST pair there is — a later session restating the
+                # identical sentence — would never be seen. Match against the
+                # natives only: `native_texts` also holds texts carried in
+                # THIS call, and a prev item agreeing with another prev item
+                # is not a witness. The reversal check the twin block gets by
+                # construction (#167) has to be explicit here.
+                exact = next((n for n in native if isinstance(n, dict)
+                              and n.get("text") == text), None)
+                if exact is not None:
+                    # #268 S1: the kept copy is the NATIVE one, a fresh item.
+                    # Without inheritance here, bind_origin at the next write
+                    # names the RESTATING session as first writer — origin of
+                    # record must ride the exact rail exactly as it rides the
+                    # twin rail (same setdefault, never re-bound).
+                    for field in ("origin_session", "origin_author"):
+                        if item.get(field):
+                            exact.setdefault(field, item[field])
+                    if observed is not None and not _is_reversal_of(
+                            exact, text, item.get("id"), generic):
+                        _record_corroboration(observed, item, exact,
+                                              _MATCH_EXACT, out_sid)
                 continue  # exact twin already present (idempotency)
             # Reversal guard (#167): a native that supersedes THIS prev item
             # (own verified quote + aimed link) is excluded from twin candidacy
@@ -247,6 +379,16 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                                                  generic)),
                         None)
             if twin is not None:
+                # #268: the corroboration verdict runs FIRST — BEFORE the
+                # freeze below, which overwrites the native twin's trust and
+                # drops its quote_verified, i.e. destroys exactly the evidence
+                # G3 asks for (did THIS session witness the claim, or merely
+                # reword what it was handed?).
+                if observed is not None:
+                    _record_corroboration(
+                        observed, item, twin,
+                        _match_path(text, str(twin.get("text") or ""), generic),
+                        out_sid)
                 # Session re-discussed it. Split by the PREV item's trust class
                 # (#22, two-path recall):
                 #   - verbatim -> FREEZE. A verbatim item carries an immutable
@@ -318,6 +460,18 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 # recorded against the old id still binds after re-extraction.
                 if item.get("id"):
                     twin.setdefault("id", item["id"])
+                # Origin (#268) rides that same rail, and the twin path is the
+                # ONLY place it needs a line: plain carry deep-copies the whole
+                # prev item, binding included. A reworded twin is not a copy —
+                # without this it would reach write_checkpoint unbound and
+                # bind_origin would name THIS session as the first writer, so
+                # every rewording would mint a fresh witness and a claim
+                # restated across N sessions would read as N independent
+                # agreements. Absent on a pre-#268 prev item -> left unbound
+                # here (write_checkpoint binds it), never an empty stamp.
+                for field in ("origin_session", "origin_author"):
+                    if item.get(field):
+                        twin.setdefault(field, item[field])
                 continue
             if item.get("id") in resolved:
                 continue  # world closed this loop (#102) — stop carrying it

@@ -5,8 +5,10 @@ rebuild-by-scan contract: corrupt it, delete it, add data behind its back, and
 recall must still answer correctly (or empty), never traceback.
 """
 
+import calendar
 import json
 import sqlite3
+import time
 
 import pytest
 
@@ -831,6 +833,34 @@ def test_suggest_surfaces_older_work_unflagged_without_evidence(
     assert out[0]["superseded_by"] is None
 
 
+def test_suggest_ranks_verbatim_over_equal_inferred(
+        tmp_checkpoint_dir, monkeypatch):
+    # #408: trust must reach recall ranking. Two sessions carry the SAME
+    # matching text, importance and recency — differing ONLY in trust class.
+    # relevance and effective_weight would tie them if recall dropped trust
+    # (the old leak); the trust CEILING is what breaks the tie: at fresh,
+    # max importance the inferred lid clips the inferred session below the
+    # verbatim one. An inferred item cannot ride recall to a verbatim's band.
+    stamp = "2026-06-20T00:00:00Z"
+    now = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    common = {"text": "litellm gateway cache pins bad responses",
+              "importance": 10, "first_seen": stamp}
+    store.write_checkpoint(
+        "S-inferred", _cp125("S-inferred", decisions=[
+            {**common, "trust": "inferred"}], created=stamp),
+        project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-verbatim", _cp125("S-verbatim", decisions=[
+            {**common, "trust": "verbatim", "quote": "cache answers instantly"}],
+            created=stamp),
+        project_dir="/repo/x")
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5, now=now)
+    sids = [r["session_id"] for r in out]
+    assert sids.index("S-verbatim") < sids.index("S-inferred")
+
+
 def test_suggest_flags_and_demotes_typed_superseded_item(
         tmp_checkpoint_dir, monkeypatch):
     # A typed supersedes link flags the old item in suggestions too —
@@ -1504,3 +1534,166 @@ def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatc
     recall.rebuild()
     hits = recall.search("sqlite", all_projects=True)
     assert not any("recall index" in h["text"] for h in hits)
+
+
+# ---- #423: inbound gate — foreign content passes admit_foreign before indexing ----
+# The index is machine-global (no project dir in hand), so remote membership is
+# judged by what the sidecar's own daimon-team.toml vouches for: content under
+# a granted logical path indexes; everything else from a synced remote is
+# dropped BEFORE a row exists. The "local" mirror is this machine's own writes
+# and stays ungated.
+
+
+def _clone_remote(name="team-a", toml_text=None):
+    d = config.team_dir() / name
+    (d / ".git").mkdir(parents=True, exist_ok=True)
+    if toml_text is not None:
+        (d / "daimon-team.toml").write_text(toml_text, encoding="utf-8")
+    return d
+
+
+def _write_clone_team_file(remote, author, sid, cp, logical=None):
+    blob = {**cp, "author": author}
+    if logical:
+        d = remote.joinpath("projects", *logical.split("/"), "authors", author)
+        blob["team_project"] = logical
+    else:
+        d = remote / "authors" / author
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.json").write_text(json.dumps(blob), encoding="utf-8")
+
+
+_GRANT_X = '[projects."core/x"]\nrepos = ["https://github.com/org/x"]\n'
+
+
+def test_rebuild_skips_out_of_scope_remote_content(tmp_checkpoint_dir, monkeypatch):
+    remote = _clone_remote(toml_text=_GRANT_X)
+    # Nested under a path the sidecar never granted + a flat-era blob: neither
+    # may reach the index (default closed, mirror of #279).
+    _write_clone_team_file(
+        remote, "grace", "S-g1",
+        _cp("S-g1", beliefs=[{"text": "Zoneless flamingo pipelines are stable",
+                              "trust": "inferred"}]),
+        logical="other/thing")
+    _write_clone_team_file(
+        remote, "grace", "S-g2",
+        _cp("S-g2", beliefs=[{"text": "Quantum pelican caching works",
+                              "trust": "inferred"}]))
+    recall.rebuild()
+    assert recall.search("flamingo", all_projects=True) == []
+    assert recall.search("pelican", all_projects=True) == []
+
+
+def test_rebuild_admits_granted_path_and_redacts(tmp_checkpoint_dir, monkeypatch):
+    remote = _clone_remote(toml_text=_GRANT_X)
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", decisions=[{"text": "rotate the flamingo key "
+                                       "AKIAABCDEFGHIJKLMNOP soon",
+                               "trust": "inferred"}]),
+        logical="core/x")
+    recall.rebuild()
+    hits = recall.search("flamingo", all_projects=True)
+    assert len(hits) == 1  # granted path DOES index
+    assert "AKIA" not in hits[0]["text"]  # …but only after local re-redaction
+    assert "[redacted:" in hits[0]["text"]
+
+
+def test_rebuild_drops_locally_forgotten_value_from_foreign(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import normalize
+
+    forgotten_text = "Adopt the flamingo cache for ingest"
+    store.append_event(
+        "d-dead02", f"forgotten:{normalize.content_key(forgotten_text)}",
+        kind="tombstone", project_dir="/repo/x")
+    remote = _clone_remote(toml_text=_GRANT_X)
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", decisions=[{"text": forgotten_text, "trust": "inferred"},
+                              {"text": "Keep the pelican path", "trust": "inferred"}]),
+        logical="core/x")
+    recall.rebuild()
+    assert recall.search("flamingo", all_projects=True) == []
+    assert len(recall.search("pelican", all_projects=True)) == 1  # others kept
+
+
+def test_rebuild_clamps_foreign_verbatim_to_inferred(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    # Own local verbatim row: the control — must stay verbatim.
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": "Adopt pelican caching locally",
+                              "trust": "verbatim", "quote": "adopt it"}]),
+        project_dir="/repo/x")
+    remote = _clone_remote(toml_text=_GRANT_X)
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", decisions=[{"text": "Adopt flamingo caching remotely",
+                               "trust": "verbatim", "quote": "trust me"}]),
+        logical="core/x")
+    recall.rebuild()
+    foreign = recall.search("flamingo", all_projects=True)
+    assert len(foreign) == 1
+    assert foreign[0]["trust"] == "inferred"  # claim clamped at the boundary
+    own = recall.search("pelican", all_projects=True)
+    assert len(own) == 1
+    assert own[0]["trust"] == "verbatim"  # own claim untouched
+
+
+def test_rebuild_scrubs_forgotten_value_sibling_id_in_older_session(
+        tmp_checkpoint_dir, monkeypatch):
+    # #427: the forgotten scrub must be VALUE-keyed, not only id-keyed. The
+    # same sentence in two sections mints two item ids (store._stamp_item_ids
+    # hashes f"{key}:{text}"), and forget rewrites only the LATEST session
+    # file — an older per-session checkpoint holding the value under a sibling
+    # id is never rewritten, and rebuild indexes it. Pre-fix that sibling row
+    # survived the id-keyed delete and resurfaced the forgotten value.
+    from daimon_briefing import cli
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
+    s = "Adopt sqlite for the recall index cache"
+    t = "Adopt postgres for the analytics warehouse"
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": s, "trust": "inferred"},
+                             {"text": t, "trust": "inferred"}],
+            created="2026-07-30T00:00:00Z"),
+        project_dir="/repo/x")
+    store.write_checkpoint(
+        "S2",
+        _cp("S2", questions=[{"text": s, "trust": "inferred"}],
+            created="2026-07-31T00:00:00Z"),
+        project_dir="/repo/x")
+    latest = store.read_latest(project_dir="/repo/x", fallback=False)
+    q_id = next(i["id"] for i in latest["working_context"]["open_questions"]
+                if i["text"] == s)
+    old_file = config.checkpoint_dir() / "S1.json"
+    old = json.loads(old_file.read_text(encoding="utf-8"))
+    d_id = next(i["id"] for i in old["working_context"]["recent_decisions"]
+                if i["text"] == s)
+    assert d_id != q_id  # sibling ids: one value, two sections
+
+    assert cli.main(["forget", q_id]) == 0  # the real path, latest session
+    # forget rewrote only the latest session; the older checkpoint still holds
+    # the value verbatim under the sibling id — exactly what rebuild re-indexes.
+    assert s in old_file.read_text(encoding="utf-8")
+
+    recall.rebuild()
+    texts = [h["text"] for h in recall.search("adopt", all_projects=True)]
+    assert s not in texts  # forgotten value gone under EVERY id, any session
+    assert t in texts      # liveness control: the never-forgotten twin stays
+
+
+def test_rebuild_env_grant_admits_single_clone_path(tmp_checkpoint_dir, monkeypatch):
+    # DAIMON_TEAM_PROJECT is explicit machine intent; with a SINGLE clone it
+    # grants that logical path inbound too (mirror of _team_write_slugs).
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    remote = _clone_remote()  # no toml at all
+    _write_clone_team_file(
+        remote, "grace", "S-g",
+        _cp("S-g", beliefs=[{"text": "Flamingo pipelines hold under load",
+                             "trust": "inferred"}]),
+        logical="core/x")
+    recall.rebuild()
+    assert len(recall.search("flamingo", all_projects=True)) == 1

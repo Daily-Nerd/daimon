@@ -45,7 +45,8 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, schema, scoring, store
+from . import (config, normalize, policy, redact, schema, scoring, store,
+               teamproject)
 
 log = logging.getLogger("daimon.recall")
 
@@ -183,15 +184,39 @@ def _scan_sources():
     has aged out, #120). An aged-out team file is skipped WITHOUT entering
     `seen`, so a dual-written copy of your OWN session still indexes from the
     local scan below — retention is a team-view concept, never a cap on your
-    own searchable history."""
+    own searchable history.
+
+    Inbound gate (#423): foreign content (a synced remote's files, other
+    authors) passes policy.admit_foreign before a row can exist — the index
+    is the durable local copy, so scope, local re-redaction, the local forget
+    tombstones and the foreign verbatim->inferred clamp all apply HERE, not
+    at query time. The index is machine-global (no project dir in hand), so
+    remote membership is judged by what the sidecar's own toml vouches for
+    (teamproject.granted_paths) against the checkpoint's stamped logical
+    path; flat-era foreign blobs carry no toml-checkable identity and fail
+    CLOSED. A gated-out file is skipped WITHOUT entering `seen` — same
+    posture as retention. The 'local' mirror (this machine's own writes) and
+    this author's own synced-back copies stay ungated."""
     seen: set[tuple[str, str]] = set()
     root = config.team_dir()
     cutoff = store.team_retention_cutoff()
+    self_author = store.project_slug(config.author())
+    forgotten = store.all_forgotten_content_keys()
     try:
         remotes = list(root.iterdir())
     except OSError:
         remotes = []
+    # Mirror of _team_write_slugs / read_team (#423): the env grant is
+    # explicit machine intent with a single synced clone, unroutable noise
+    # with several.
+    clones = [r for r in remotes if r.is_dir()
+              and r.name != store._TEAM_LOCAL_REMOTE
+              and (r / ".git").exists()]
+    honor_env = len(clones) <= 1
     for remote in remotes:
+        foreign = remote.name != store._TEAM_LOCAL_REMOTE
+        granted = (teamproject.granted_paths(remote, honor_env=honor_env)
+                   if foreign else None)
         # Both layout eras (#200): legacy flat authors/* plus nested
         # projects/**/authors/* — same walker read_team's fan-in rests on.
         author_dirs = store._team_author_dirs(remote)
@@ -210,6 +235,16 @@ def _scan_sources():
                     continue
                 sid = str(cp.get("session_id") or p.stem)
                 author = str(cp.get("author") or adir.name)
+                if foreign and store.project_slug(author) != self_author:
+                    stamp = cp.get("team_project")
+                    segs = (teamproject.logical_segments(stamp)
+                            if isinstance(stamp, str) else ())
+                    cp = policy.admit_foreign(
+                        cp, member=bool(segs) and segs in granted,
+                        forgotten_keys=forgotten,
+                        redact_fn=redact.redact_text)
+                    if cp is None:
+                        continue  # not admitted; never enters `seen`
                 key = (author, sid)
                 if key in seen:
                     continue
@@ -400,6 +435,7 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
         # The bucket dir NAME is the slug, and slug munging is idempotent
         # (guarded by test_project_slug_is_idempotent_on_slugs), so it routes
         # store.resolutions exactly like a project dir.
+        forgotten_ids: set[str] = set()
         for ref, evt in store.resolutions(project_dir=bucket.name).items():
             if not store.is_resolved(evt):
                 continue
@@ -409,20 +445,7 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             # Prefix-match like every other status reader; only the LATEST
             # event counts (a later reopen un-hides history by design).
             if status.lower().startswith("forgotten"):
-                rows = conn.execute(
-                    "SELECT id, text, quote, scene FROM items"
-                    " WHERE item_id = ? AND project_slug IS ?",
-                    (ref, bucket.name)).fetchall()
-                for rowid, text, quote, scene in rows:
-                    # contentless fts5: deletion is the special 'delete'
-                    # INSERT and must repeat the original column values
-                    conn.execute(
-                        "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
-                        " VALUES('delete', ?, ?, ?, ?)",
-                        (rowid, text, quote, scene))
-                conn.execute(
-                    "DELETE FROM items WHERE item_id = ? AND project_slug IS ?",
-                    (ref, bucket.name))
+                forgotten_ids.add(ref)
                 continue
             value = "resolved"
             if status.lower().startswith("superseded-by:"):
@@ -432,6 +455,36 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
                 " WHERE item_id = ? AND project_slug IS ?",
                 (value, ref, bucket.name),
             )
+        if not forgotten_ids:
+            continue
+        # #427: the scrub is VALUE-keyed, not only id-keyed. One value can
+        # live under sibling ids (same sentence in two sections, widened hash
+        # within one — store._stamp_item_ids), and forget rewrites only the
+        # LATEST session file: an older per-session checkpoint still holds the
+        # value under an id the ledger never tombstoned, and rebuild indexes
+        # it. The tombstone status embeds the canonical content key
+        # (`forgotten:<content_key>`, same ledger the write gate reads), so
+        # any row whose text canonicalizes into the forgotten set goes too.
+        # The id-keyed delete stays: it covers rows whose stored text was
+        # redacted into a different key at capture. Canonicalization runs only
+        # when a tombstone exists for the bucket (rows are scanned here, not
+        # per-event, so the common no-forget rebuild pays nothing).
+        forgotten_keys = store.forgotten_content_keys(project_dir=bucket.name)
+        rows = conn.execute(
+            "SELECT id, text, quote, scene, item_id FROM items"
+            " WHERE project_slug IS ?", (bucket.name,)).fetchall()
+        for rowid, text, quote, scene, item_id in rows:
+            if item_id not in forgotten_ids and not (
+                    forgotten_keys
+                    and normalize.content_key(text or "") in forgotten_keys):
+                continue
+            # contentless fts5: deletion is the special 'delete'
+            # INSERT and must repeat the original column values
+            conn.execute(
+                "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
+                " VALUES('delete', ?, ?, ?, ?)",
+                (rowid, text, quote, scene))
+            conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
 
 
 def rebuild() -> int:
@@ -861,7 +914,11 @@ def suggest(prompt: str, project_dir=None, current_session=None,
             continue
         relevance = max(0.0, -float(r["rank"]))  # FTS5 bm25(): smaller = better
         weight = scoring.effective_weight(
-            {"importance": r["importance"], "first_seen": r["first_seen"]},
+            {"importance": r["importance"], "first_seen": r["first_seen"],
+             # trust is part of the record's authority (#408): drop it here and
+             # the trust ceiling never applies to recall ranking, letting an
+             # inferred item ride relevance x recency to a verbatim item's band.
+             "trust": r["trust"]},
             _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
         if r["superseded_by"]:
             weight *= 0.7  # flagged and ranked down, never hidden (#112)

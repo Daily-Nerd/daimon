@@ -1,21 +1,21 @@
 ---
-id: 0
+id: 29
 type: landmine
 title: Local patch-coverage green does NOT mean codecov green when a branch depends on LibreSSL-vs-OpenSSL behavior
 severity: medium
 confidence: 0.9
 created: 2026-07-10
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/receipts.py
 evidence:
   - pr: 205
   - pr: 207
-  - note: "three catch-up commits across two PRs: 71feff7/efa57aa (#205), post-review sweep (#207) — each time local intersect said 0 missing, codecov said otherwise"
+  - note: three catch-up commits across two PRs: 71feff7/efa57aa (#205), post-review sweep (#207) — each time local intersect said 0 missing, codecov said otherwise
 expires:
   condition: "openssl subprocess path removed from receipts.py (vitni keygen becomes the only derivation), or CI adds a macOS/LibreSSL coverage job"
   review_after: 2026-10-01
-status: candidate
+status: active
 ---
 
 receipts.py's key derivation branches on what the host crypto CLI can do:

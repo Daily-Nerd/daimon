@@ -756,7 +756,7 @@ def test_validation_retry_note_restates_copy_paste_contract(
     assert "elisions marked with `...`" in second
 
 
-def test_prompt_version_is_d016():
+def test_prompt_version_is_d017():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
     # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
@@ -764,12 +764,73 @@ def test_prompt_version_is_d016():
     # quote copy-paste discipline rule). D-013 -> D-014 (#287: external-
     # artifact identifier rule). D-014 -> D-015 (#358: verbatim items bind
     # to source transcript message ids). D-015 -> D-016 (#359: outcome
-    # claims ground in tool-result signals). Pre-bump checkpoints firing the
-    # format_version mismatch warning (#93) is DESIRED behavior. The bump
-    # also rotates the #48 chunk-cache key, so pre-#359 cached extractions
-    # (no tool-result rows in their chunks) can never satisfy a post-#359
-    # request.
-    assert serializer.PROMPT_VERSION == "D-016"
+    # claims ground in tool-result signals). D-016 -> D-017 (#416: prefer a
+    # quote span that preserves a temporal span the transcript states —
+    # data-gathering for the deferred bi-temporal design, no new schema).
+    # Pre-bump checkpoints firing the format_version mismatch warning (#93)
+    # is DESIRED behavior.
+    assert serializer.PROMPT_VERSION == "D-017"
+
+
+def test_serialize_prompt_prefers_temporal_span_preserving_quote():
+    # #416: extraction discarded dates/intervals because nothing asked it to
+    # keep them — the ~0.3% citable-date rate was endogenous. The prompt must
+    # now nudge the model to PREFER a span that keeps a stated temporal detail,
+    # without loosening quote discipline or inventing dates.
+    sys = serializer.SERIALIZE_SYS
+    assert "TEMPORAL SPANS" in sys
+    assert "PREFER a contiguous quote span" in sys
+    assert "temporal detail" in sys
+    # must not force or fabricate a date where none exists
+    assert "never invent, normalize, or infer a date" in sys
+    # the chosen span must still be a real, verifiable copy-paste (rule 17)
+    assert "rule 17" in sys
+
+
+def test_merge_prompt_preserves_temporal_span_across_chunks():
+    # #416: a chunked session's merge picks one canonical quote per item —
+    # it must not drop the temporal detail a chunk already captured.
+    merge = serializer.MERGE_SYS
+    assert "TEMPORAL SPANS" in merge
+    assert "temporal detail" in merge
+
+
+def test_temporal_span_survives_into_extracted_quote(fake_chat_factory):
+    # #416 (observable end-to-end): when the transcript contains a date and the
+    # extractor selects a span that keeps it, the pipeline preserves that span
+    # verbatim rather than stripping the date. What CANNOT be unit-tested is
+    # that a real model chooses the date-bearing span — that is prompt-driven
+    # model behavior and needs quota; here FakeChat stands in for that choice,
+    # and we prove the surrounding pipeline does not discard the temporal span.
+    messages = make_messages(20)
+    messages[4] = {
+        "role": "user",
+        "content": "We agreed to ship the migration on 2026-08-14 after the freeze.",
+    }
+    dated_quote = "ship the migration on 2026-08-14"
+    checkpoint = {
+        "session_id": "S1",
+        "working_context": {
+            "active_topic": {"text": "topic", "trust": "inferred"},
+            "open_questions": [{"text": "q", "trust": "inferred"}],
+            "recent_decisions": [
+                {"text": "ship migration", "trust": "verbatim", "quote": dated_quote}
+            ],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [],
+            "uncertainties": [],
+            "contradictions_flagged": [],
+        },
+        "worker_queue": [],
+    }
+    chat = fake_chat_factory(json.dumps(checkpoint))
+    ckpt = serializer.serialize_strict("S1", messages, chat=chat)
+    decision = ckpt["working_context"]["recent_decisions"][0]
+    # the date-bearing span survives verification and stays verbatim
+    assert decision["trust"] == "verbatim"
+    assert decision["quote_verified"] is True
+    assert "2026-08-14" in decision["quote"]
 
 
 def test_prompts_preserve_transcript_language():
@@ -1193,6 +1254,11 @@ def test_serialize_prompt_has_external_artifact_identifier_rule():
     ("project_slug", "some-other-project"),
     ("git_branch", "not-the-real-branch"),
     ("receipts", "not-a-real-receipt-marker"),
+    # #268 S1: origin binding is an assertion about WHO first wrote a claim —
+    # the input to corroboration counting. A model that can name it can
+    # manufacture a second witness for its own output.
+    ("origin_session", "S-someone-elses-session"),
+    ("origin_author", "not-the-real-author"),
 ])
 def test_serialize_strips_model_supplied_code_owned_key(fake_chat_factory, key, spoofed):
     spoofed_ckpt = json.loads(_valid_checkpoint_json("S1"))
@@ -1201,6 +1267,44 @@ def test_serialize_strips_model_supplied_code_owned_key(fake_chat_factory, key, 
     ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
     assert ckpt is not None
     assert key not in ckpt  # stripped, not carried through as the model's value
+
+
+def test_serialize_strips_model_supplied_origin_binding_off_items(fake_chat_factory):
+    """#268 S1: origin lives on ITEMS, so the top-level strip is not enough.
+    policy.bind_origin uses setdefault (a carried item's origin must survive
+    a re-write), which means a model-emitted item-level binding would be
+    honored forever — a self-issued witness. Strip it at the same boundary
+    `grounded`/`pinned` are stripped: the freshly parsed model output."""
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    for item in [spoofed["working_context"]["active_topic"],
+                 spoofed["working_context"]["open_questions"][0],
+                 spoofed["working_context"]["recent_decisions"][0]]:
+        item["origin_session"] = "S-someone-elses-session"
+        item["origin_author"] = "not-the-real-author"
+    chat = fake_chat_factory(json.dumps(spoofed))
+
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+
+    assert ckpt is not None
+    for item in serializer.iter_items(ckpt):
+        assert "origin_session" not in item
+        assert "origin_author" not in item
+
+
+def test_strip_code_owned_keys_clears_item_origin_on_the_introspection_path():
+    """`daimon write-checkpoint` takes a dict a live model authored directly —
+    the same spoofing surface, one level down (cli calls this function for
+    exactly that reason)."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["working_context"]["open_questions"][0]["origin_session"] = "S-forged"
+    ckpt["working_context"]["open_questions"][0]["origin_author"] = "forger"
+
+    serializer.strip_code_owned_keys(ckpt)
+
+    item = ckpt["working_context"]["open_questions"][0]
+    assert "origin_session" not in item
+    assert "origin_author" not in item
+    assert item["text"] == "q"  # nothing else disturbed
 
 
 def test_serialize_strip_survives_the_validation_retry_pass(fake_chat_factory):
@@ -1374,6 +1478,47 @@ def test_chunk_cache_key_survives_backend_resolution_failure(monkeypatch):
     key = serializer._chunk_cache_key("chunk text")
     assert key == serializer._chunk_cache_key("chunk text")
     assert len(key) == 32
+
+
+def test_purge_chunk_cache_continues_past_a_failing_entry(
+        monkeypatch, tmp_checkpoint_dir):
+    # #422 contract: one undeletable entry must not shield the rest — the
+    # purge keeps going, counts only the real deletions, and surfaces the
+    # failure so the caller's forget output can report it honestly.
+    d = tmp_checkpoint_dir / ".chunk-cache"
+    d.mkdir(parents=True)
+    stuck = d / "aaaa.json"
+    stuck.write_text("{}")
+    (d / "bbbb.json").write_text("{}")
+
+    real_unlink = Path.unlink
+
+    def flaky_unlink(self, *args, **kwargs):
+        if self.name == "aaaa.json":
+            raise OSError("Operation not permitted")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    purged, error = serializer.purge_chunk_cache()  # must not raise
+    assert purged == 1                      # only the healthy entry counted
+    assert not (d / "bbbb.json").exists()   # ... and it is genuinely gone
+    assert stuck.exists()                   # honest: the stuck one survived
+    assert "not permitted" in error
+
+
+def test_purge_chunk_cache_reports_unscannable_dir_without_raising(monkeypatch):
+    # #422 contract: purge NEVER raises. A cache dir that exists but cannot
+    # even be enumerated comes back as (0, reason) — reported, not fatal,
+    # because the belief-state deletion is the caller's primary contract.
+    class _EvilDir:
+        def is_dir(self):
+            return True
+
+        def glob(self, pattern):
+            raise OSError("scan denied")
+
+    monkeypatch.setattr(serializer, "_chunk_cache_dir", lambda: _EvilDir())
+    assert serializer.purge_chunk_cache() == (0, "scan denied")
 
 
 def test_chunk_transcript_prefix_chunks_byte_stable_under_growth():
@@ -1912,11 +2057,71 @@ def test_asserts_outcome_lexicon_is_conservative():
     no = ["will be merged tomorrow", "should be deployed after review",
           "plan to release on Friday", "whether the deploy succeeded",
           "use the passed argument", "decide the merge strategy",
-          "el despliegue funciono bien"]  # non-English: honest no-op
+          "el despliegue funciono bien",  # #401: vague verb, deliberate miss
+          "o deploy funcionou bem"]  # not a covered language: honest no-op
     for text in yes:
         assert serializer._asserts_outcome(text), text
     for text in no:
         assert not serializer._asserts_outcome(text), text
+
+
+def test_asserts_outcome_spanish_lexicon_is_conservative():
+    # #401: the project is bilingual end to end, but this gate was English-only,
+    # so a Spanish "los tests pasan" sailed through ungrounded while its English
+    # twin was downgraded. Same shape as the English lexicon: curated, bounded,
+    # never stemming, never an LLM.
+    yes = ["los tests pasan", "las pruebas pasaron", "PR #12 mergeado",
+           "fusionado a main", "desplegado a produccion", "trabajo completado",
+           "el issue quedo resuelto", "bug arreglado", "publicado en PyPI",
+           "release lanzado", "la suite en verde", "el codigo esta desplegado",
+           "compilacion con exito", "el deploy fallo"]
+    no = ["se va a mergear manana", "sera mergeado tras revision",
+          "todavia no esta desplegado", "si los tests pasan lo mergeamos",
+          "cuando quede resuelto lo cerramos", "planeo desplegar el viernes",
+          "falta arreglar el bug", "pendiente de revision",
+          "renombrar el modulo a carry.py"]
+    for text in yes:
+        assert serializer._asserts_outcome(text), text
+    for text in no:
+        assert not serializer._asserts_outcome(text), text
+
+
+def test_asserts_outcome_long_input_completes():
+    # Scar 22: every capture-path regex gets a long-input completion test —
+    # completion IS the signal (no timing assert). Both the English and the
+    # Spanish lexicon, plus both hedge regexes, scan this text.
+    assert serializer._asserts_outcome("pasan " * 12500) in (True, False)
+    assert serializer._asserts_outcome("mergeado " * 12500) in (True, False)
+    assert serializer._asserts_outcome("a-b." * 12500) in (True, False)
+    assert serializer._asserts_outcome("x" * 50000) in (True, False)
+
+
+def test_ground_outcomes_downgrades_ungrounded_spanish_outcome_claim():
+    # #401 paired mirror of the English downgrade test: a Spanish outcome
+    # assertion with no cited signal is stored inferred, grounded: false.
+    cp = _cp_one_decision({"text": "los tests pasan", "trust": "verbatim",
+                           "quote": "los tests pasan"})
+    n = serializer.ground_outcomes(cp, {"uuid-tool"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert item["grounded"] is False
+    assert item["quote"] == "los tests pasan"  # transcription stays honest
+
+
+def test_ground_outcomes_leaves_hedged_spanish_claim_alone():
+    # A Spanish plan/future/question is not an outcome assertion — untouched.
+    cp = _cp_one_decision({"text": "se va a mergear manana",
+                           "trust": "verbatim", "quote": "q"})
+    cp["working_context"]["open_questions"] = [
+        {"text": "si los tests pasan lo mergeamos", "trust": "verbatim",
+         "quote": "q2"}]
+    n = serializer.ground_outcomes(cp, {"uuid-tool"})
+    assert n == 0
+    assert cp["working_context"]["recent_decisions"][0]["trust"] == "verbatim"
+    assert cp["working_context"]["open_questions"][0]["trust"] == "verbatim"
+    for item in serializer.iter_items(cp):
+        assert "grounded" not in item
 
 
 def test_ground_outcomes_marks_signal_backed_items_grounded():
@@ -2249,6 +2454,16 @@ def test_rejections_derives_quote_downgrade():
     ck = _ck([{"id": "a", "trust": "inferred", "quote_verified": False}])
     assert serializer.verification_rejections(ck) == [
         {"item_ref": "a", "check": "quote", "reason": "quote-not-in-transcript"}]
+
+
+def test_rejections_derives_echo_only_quote_downgrade():
+    """#440: a quote whose only support was daimon's own injected output gets
+    its own reason code, so the echo rate is measurable rather than hidden
+    inside the generic quote-not-in-transcript bucket."""
+    ck = _ck([{"id": "a", "trust": "inferred", "quote_verified": False,
+               "quote_echo_only": True}])
+    assert serializer.verification_rejections(ck) == [
+        {"item_ref": "a", "check": "quote", "reason": "echo-only"}]
 
 
 def test_rejections_derives_outcome_downgrade():

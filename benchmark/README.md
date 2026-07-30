@@ -41,10 +41,32 @@ of the question's evidence sessions (`answer_session_ids`).
 | **Hit@k** | 1 if any gold session is in the top-k, else 0 (a laxer success rate) |
 | **MRR** | mean of 1 / rank-of-first-gold-session |
 | **avg_injected_tokens** | estimated tokens of the top-k item texts a briefing injects — daimon's efficiency story, not a quality metric (≈4 chars/token estimate, not exact) |
+| **forbidden-hit rate** | fraction of the cases that *define* forbidden material (`forbidden_hits`) whose forbidden text nonetheless appears in the assembled brief — reported alongside recall, over those cases only |
 
 Abstention questions (`*_abs`, no evidence session) are **excluded** from recall
 scoring — there is nothing to retrieve — and counted separately, never scored as
 zero.
+
+### Forbidden hits — material that must NOT surface
+
+Recall asks whether the right memory surfaces. A case may also carry an optional
+`forbidden_hits: list[str]` — material that must **not** surface (a forgotten
+item, an out-of-scope project's item, a trust-downgraded item). Two rules make
+this honest:
+
+- **Scored against the assembled brief, not the raw retriever output.** The leak
+  that matters is what reaches the prompt. A row the retriever returns but
+  assembly withholds (a superseded/resolved item) never counts as a leak; a row
+  ranked below the delivered top-k window is retrieved but not delivered.
+  Suppression the retriever performs but prompt assembly undoes is not
+  suppression — and this is the only place that catches it.
+- **Leakage is disqualifying, not averaged away.** A forbidden hit is subtracted
+  from that case's own recall — `score = max(0, recall - matched / len(forbidden))`
+  — so a full leak floors an otherwise-perfect case to zero, rather than diluting
+  into a run-wide mean.
+
+The forbidden-hit rate and the leak-penalized recall are reported under the same
+policy as every other figure: full config stamp, self-measured only.
 
 ### Known measurement choices (recorded in every result)
 

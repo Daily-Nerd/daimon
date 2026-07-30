@@ -24,7 +24,6 @@ one a live pointer still references. The default is generous on purpose so #33's
 merged checkpoint history keeps a deep well of files to reconstruct from.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -34,7 +33,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, receipts, redact, schema, serializer, teamproject
+from . import config, normalize, policy, receipts, redact, schema, serializer, teamproject
 
 log = logging.getLogger("daimon_briefing")
 
@@ -391,96 +390,32 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
 _ITEM_LISTS = schema.ITEM_LISTS
 
 
-def _redact_checkpoint(checkpoint: dict) -> None:
-    """Capture-time secret redaction (#104): runs before this module's own
-    _stamp_item_ids call below, so ids stamped HERE hash redacted text. On
-    the serialize path the cli stamps ids earlier (before bind_links, #14),
-    so ids there hash pre-redaction text — no leak (sha1 slices are not
-    reversible) and no consumer recomputes ids from text, but identity for
-    secret-bearing items differs between the two paths.
-    Covers text AND quote on every list item plus active_topic — verbatim
-    quotes are the likeliest secret carriers. Stamps a visible
-    checkpoint["redactions"] counter only when something was scrubbed."""
-    counts: dict = {}
-
-    def _scrub(d: dict, field: str) -> None:
-        val = d.get(field)
-        red, c = redact.redact_text(val)
-        if c:
-            d[field] = red
-            for k, n in c.items():
-                counts[k] = counts.get(k, 0) + n
-
-    for section, key in _ITEM_LISTS:
-        items = (checkpoint.get(section) or {}).get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if isinstance(item, dict):
-                _scrub(item, "text")
-                _scrub(item, "quote")
-                _scrub(item, "scene")
-                links = item.get("links")
-                if isinstance(links, list):
-                    for link in links:
-                        if isinstance(link, dict) and isinstance(link.get("target"), str):
-                            _scrub(link, "target")
-    topic = (checkpoint.get("working_context") or {}).get("active_topic")
-    if isinstance(topic, dict):
-        _scrub(topic, "text")
-        _scrub(topic, "quote")
-        _scrub(topic, "scene")
-    if counts:
-        # MERGE, never overwrite: a re-write (anchor --attach reads, mutates,
-        # writes the same dict) only re-matches NEW secrets — old markers don't
-        # match the patterns again, so overwriting would drop kinds still
-        # physically present in the checkpoint.
-        merged = dict(checkpoint.get("redactions") or {})
-        for k, n in counts.items():
-            merged[k] = merged.get(k, 0) + n
-        checkpoint["redactions"] = merged
+# #421: the admission pipeline (redact -> forget-gate -> id-stamp) moved to
+# policy.py, the pure module that owns its order. Aliased here because cli,
+# bench and tests call the store names; the behavior is byte-identical.
+_redact_checkpoint = policy.redact_checkpoint
+_stamp_item_ids = policy.stamp_item_ids
 
 
-def _stamp_item_ids(checkpoint: dict) -> None:
-    """Stable per-item ids (#102): sha1 of kind:text, 6 hex chars, prefixed
-    with the kind's initial. setdefault semantics — an item that already
-    carries an id (a carried twin, a re-write) is never re-stamped, so
-    identity survives rotation and re-serialization. Collisions within one
-    checkpoint widen the slice; identical-text twins fall through to a
-    counter suffix (same text, same kind, still two loops)."""
-    seen: set = set()
-    for section, key in _ITEM_LISTS:
-        items = (checkpoint.get(section) or {}).get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if not isinstance(item, dict) or not str(item.get("text") or "").strip():
-                continue
-            if item.get("id"):
-                seen.add(item["id"])
-                continue
-            digest = hashlib.sha1(
-                f"{key}:{item['text']}".encode("utf-8")).hexdigest()
-            cand = ""
-            for width in (6, 8, 12, 40):
-                cand = f"{key[0]}-{digest[:width]}"
-                if cand not in seen:
-                    break
-            n = 2
-            while cand in seen:
-                cand = f"{key[0]}-{digest[:6]}-{n}"
-                n += 1
-            item["id"] = cand
-            seen.add(cand)
-
-
-def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Path:
+def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
+                     allow_disabled: bool = False) -> Path | None:
     """Write the session checkpoint + the global latest pointer, and — when the
     project is known — the per-project latest pointer too. The global pointer is
     kept for backward compatibility (pre-routing consumers and the fallback).
 
     Each latest pointer is rotated first (#33 Phase 1): the previous latest is
-    retained as prev-1.json, keeping the last DAIMON_CHECKPOINT_HISTORY writes."""
+    retained as prev-1.json, keeping the last DAIMON_CHECKPOINT_HISTORY writes.
+
+    Kill switch (#421): the FIRST gate, before any directory is even created —
+    disabled means no belief mutations, one consistent answer at the write
+    boundary regardless of entry point (hook, CLI serialize, model-authored
+    write-checkpoint, anchor rewrite). Refusal is a None return, never an
+    exception — the same never-fatal posture as the ledger appenders. The ONE
+    exemption is `allow_disabled=True`, passed only by cli._cmd_forget's
+    rewrite: the maintainer ratified that deletion must still work while
+    disabled (the deletion promise outranks "disabled writes nothing")."""
+    if config.is_disabled() and not allow_disabled:
+        return None
     d = config.checkpoint_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = _contained_path(d, session_id)
@@ -496,8 +431,19 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # store stays free of the git/subprocess dependency (scar 0). Present on every
     # checkpoint so read_team can attribute it later, even when team-write is off.
     checkpoint.setdefault("author", config.author())
-    _redact_checkpoint(checkpoint)
-    _stamp_item_ids(checkpoint)
+    # #421: the ordered admission pipeline — redact, then the #402 value-keyed
+    # forget gate (drop any item whose canonical value was forgotten for this
+    # project BEFORE it is stamped, signed, indexed, or mirrored; the gate runs
+    # after redaction so the compared text matches the stored post-redaction
+    # text the forget command keyed the tombstone on), then id-stamping — lives
+    # in policy.admit_checkpoint, pure by contract. The forgotten-keys ledger
+    # read is its one I/O dependency, so it happens HERE and is injected.
+    forget_dropped = policy.admit_checkpoint(
+        checkpoint, forgotten_content_keys(project_dir))
+    if forget_dropped:
+        # #404: account each suppression on the telemetry ledger. Best-effort
+        # (never fatal) — a hit record must never fail the capture it observes.
+        record_forget_hits(forget_dropped, project_dir)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
     # session older than the pointer window would lose its project forever and
@@ -883,15 +829,27 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     only — NO physical deletes, ever: the shared branch is append-only and
     deletes race appends (spike verdict).
 
+    Inbound gate (#423): content from a synced remote passes
+    policy.admit_foreign before it can reach the result — scope membership
+    (the same teamproject.in_scope answer the outbound router uses, default
+    closed), local re-redaction, the local forget tombstones, and the foreign
+    verbatim->inferred trust clamp. In-memory only: sidecar files are never
+    rewritten. The machine-local mirror ('local') is this machine's own
+    writes and stays ungated, as do this author's own dual-written copies
+    synced back through a clone (their verbatim claims ARE locally
+    verifiable).
+
     Pure file-ops, never raises — a missing/broken/torn team dir yields []."""
     root = config.team_dir()
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
     candidates = teamproject.read_candidates(project_dir)
+    forgotten = forgotten_content_keys(project_dir)
+    self_author = project_slug(config.author())
     # author-slug (dir identity, one per author) -> (recency, author, checkpoint)
     best: dict[str, tuple[float, str, dict]] = {}
 
-    def _consider(adir: Path, check_stamp: bool) -> None:
+    def _consider(adir: Path, check_stamp: bool, member) -> None:
         try:
             files = [p for p in adir.iterdir()
                      if p.is_file() and p.suffix == ".json"]
@@ -910,6 +868,14 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
             rec = _file_recency(p)
             if cutoff is not None and rec < cutoff:
                 continue  # aged out of the read window; file stays on disk
+            if member is not None \
+                    and project_slug(str(cp.get("author") or adir.name)) \
+                    != self_author:
+                cp = policy.admit_foreign(
+                    cp, member=member, forgotten_keys=forgotten,
+                    redact_fn=redact.redact_text)
+                if cp is None:
+                    continue  # not admitted; the file stays on disk untouched
             key = adir.name
             if key not in best or rec > best[key][0]:
                 best[key] = (rec, cp.get("author") or adir.name, cp)
@@ -918,14 +884,24 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
         remotes = list(root.iterdir())
     except OSError:
         return []
+    # #423 scope, mirroring _team_write_slugs: with a single synced clone the
+    # DAIMON_TEAM_PROJECT env grant counts as explicit intent; with several it
+    # cannot say which remote it means, so only each sidecar's toml answers.
+    clones = [r for r in remotes if r.is_dir()
+              and r.name != _TEAM_LOCAL_REMOTE and (r / ".git").exists()]
+    honor_env = len(clones) <= 1
     for remote in remotes:
+        # member=None -> the machine-local mirror, ungated; any other dir is
+        # foreign-shaped and must earn admission (default closed, like #279).
+        member = None if remote.name == _TEAM_LOCAL_REMOTE else \
+            teamproject.in_scope(project_dir, remote, honor_env=honor_env)
         # Nested era (#200): only THIS project's subtrees — every candidate
         # path (winner + prior-tier locations); the paths filter.
         for segs in candidates:
             nested = remote.joinpath("projects", *segs, "authors")
             try:
                 for adir in nested.iterdir():
-                    _consider(adir, check_stamp=False)
+                    _consider(adir, check_stamp=False, member=member)
             except OSError:
                 pass  # no such subtree in this remote (yet)
         # Legacy flat era: stamp-filtered, readable forever.
@@ -934,7 +910,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
         except OSError:
             continue  # not a remote-shaped dir; skip
         for adir in author_dirs:
-            _consider(adir, check_stamp=True)
+            _consider(adir, check_stamp=True, member=member)
     ordered = sorted(best.values(), key=lambda t: t[0], reverse=True)
     return [(author, cp) for _rec, author, cp in ordered]
 
@@ -982,11 +958,14 @@ def append_verification(item_ref: str, check: str, reason: str,
     if path is None:
         return False
     try:
-        check, _ = redact.redact_text(check)
-        reason, _ = redact.redact_text(reason)
+        # #431: the scrub runs through policy.admit_row — same redaction as
+        # before, but mounted on the policy seam so the write-audit guard can
+        # correlate the row on disk with its admission.
+        row = policy.admit_row(
+            {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "check": check, "item_ref": item_ref, "reason": reason},
+            redact_fields=("check", "reason"))
         path.parent.mkdir(parents=True, exist_ok=True)
-        row = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-               "check": check, "item_ref": item_ref, "reason": reason}
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         return True
@@ -1020,33 +999,118 @@ def verification_counts(project_dir=None) -> dict:
     return out
 
 
+# ---- #404: forget-suppression hit accounting ----
+
+# A capture-time forget suppression is otherwise silent. Account it on a
+# SECOND telemetry stream (never events.jsonl: scar 0025 — any new event kind
+# there resolves-and-hides the item it names), exactly as append_verification
+# does for the rejection ledger.
+_FORGET_HITS = "forget-hits.jsonl"
+
+
+def _forget_hits_path(project_dir=None):
+    slug = project_slug(project_dir)
+    if not slug:
+        return None
+    return config.checkpoint_dir() / slug / _FORGET_HITS
+
+
+def record_forget_hits(items, project_dir=None) -> bool:
+    """Append one row per capture-time forget suppression (#404): {ts, key}.
+    Mirrors append_verification's contract — silent no-op under the kill switch
+    or an unknown project, never fatal (a telemetry write must never fail a
+    capture).
+
+    Records ONLY the canonical hash key + timestamp — NEVER the text or any
+    prefix of it. forget's whole guarantee (#321) is that a forgotten value's
+    content leaves disk; redact_text catches known secret shapes but not the
+    free-text PII users actually forget (a name, a client, "the X office
+    closed"), so re-persisting even a short snapshot here would reopen the very
+    leak forget closes. The published value is the COUNT, not the content."""
+    if config.is_disabled():
+        return False
+    path = _forget_hits_path(project_dir)
+    if path is None or not items:
+        return False
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                key = normalize.content_key(item.get("text") or "")
+                f.write(json.dumps({"ts": ts, "key": key}) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def forget_hit_stats(project_dir=None) -> dict:
+    """Read-side rollup of the forget-hit ledger (#404): total suppressions and
+    the most recent timestamp. The number the project already publishes for
+    capture health and verification downgrades, now answerable for "how often
+    did the tombstone catch a re-assertion here". Count + timestamp only — the
+    ledger holds no content to surface. Fails open to zeroes (missing/corrupt
+    log, unknown project) — same posture as verification_counts and the
+    resolutions fold."""
+    out: dict = {"count": 0, "last_hit_at": None}
+    path = _forget_hits_path(project_dir)
+    if path is None:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return out
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        out["count"] += 1
+        ts = row.get("ts")
+        if ts and (out["last_hit_at"] is None or ts > out["last_hit_at"]):
+            out["last_hit_at"] = ts
+    return out
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
-                 project_dir=None, item_text: str = "") -> bool:
+                 project_dir=None, item_text: str = "",
+                 allow_disabled: bool = False) -> bool:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
     audit trail must stay byte-stable. Silent no-op under the kill switch
     and when the project is unknown (an event without a bucket has no
-    reader)."""
-    if config.is_disabled():
+    reader). `allow_disabled` (#421) is the narrow deletion exemption:
+    passed ONLY by cli._cmd_forget's tombstone append — forget must work
+    while disabled, and #418 mandates its tombstone lands before the
+    rewrite, so the tombstone shares the rewrite's exemption. No other
+    caller may pass it."""
+    if config.is_disabled() and not allow_disabled:
         return False
     path = _events_path(project_dir)
     if path is None:
         return False
     try:
-        note, _ = redact.redact_text(note)
-        item_text, _ = redact.redact_text(item_text)
-        # status is free-form by design (readers prefix-match, never enum) —
-        # so it can carry a secret-shaped value and must be scrubbed too (#141).
-        status, _ = redact.redact_text(status)
+        # #431: the scrub runs through policy.admit_row — same redaction as
+        # before (status is free-form by design, readers prefix-match, so it
+        # can carry a secret-shaped value and is scrubbed too, #141), but
+        # mounted on the policy seam so the write-audit guard can correlate
+        # the row on disk with its admission.
+        evt = policy.admit_row(
+            {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "kind": kind, "item_ref": item_ref, "status": status,
+             "source": source, "note": note, "item_text": item_text},
+            redact_fields=("status", "note", "item_text"))
+        # Empty optional fields never land on the row — unchanged shape.
+        if not evt["note"]:
+            del evt["note"]
+        if not evt["item_text"]:
+            del evt["item_text"]
         path.parent.mkdir(parents=True, exist_ok=True)
-        evt = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-               "kind": kind, "item_ref": item_ref, "status": status,
-               "source": source}
-        if note:
-            evt["note"] = note
-        if item_text:
-            evt["item_text"] = item_text
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(evt, ensure_ascii=False) + "\n")
         return True
@@ -1124,15 +1188,186 @@ def resolutions(project_dir=None) -> dict:
 def is_resolved(event) -> bool:
     """Liveness rule (#102, #14): latest event wins; three states — a status
     starting with 'reopen' returns the item to live; 'supersede-candidate'
-    is a machine SUGGESTION and stays live by construction (a guess must
-    never suppress); anything else means resolved. Status is free-form text
-    by design — never an enum, so unknown statuses resolve (the writer
-    bothered to record a lifecycle fact) rather than vanish."""
+    and 'corroborat*' are non-resolving by construction (see below);
+    anything else means resolved. Status is free-form text by design — never
+    an enum, so unknown statuses resolve (the writer bothered to record a
+    lifecycle fact) rather than vanish."""
     if not isinstance(event, dict):
         return False
     status = str(event.get("status") or "").lower()
-    if status.startswith("supersede-candidate"):
+    if status.startswith(("supersede-candidate", "corroborat")):
         return False  # a machine SUGGESTION is live by construction (#14):
                       # every consumer (carry, withhold, future) inherits
                       # no-suppression without knowing candidates exist.
+                      # #268 corroboration is the same shape one step
+                      # further: a row that RAISES trust must never gain the
+                      # power to lower it. Corroboration rows already land on
+                      # a namespaced ref (corroboration_ref) that no item id
+                      # can equal, so this branch is the belt to that brace —
+                      # scar 0025 (any event kind on a bare ref hides its
+                      # item) is too expensive a failure to guard once.
     return not status.startswith("reopen")
+
+
+# ---- #268: corroboration events ----
+
+# A corroboration row NAMES an item without addressing it. `resolutions` folds
+# on `item_ref` alone and `is_resolved` resolves any status outside reopen/
+# supersede-candidate/corroborat* (scar 0025), so a row written on the BARE
+# item id would hide the very item it supports — and would displace a human's
+# superseded-by verdict as that item's latest event (the #376 trap). The
+# namespace is what makes both structurally impossible: no id this codebase
+# mints can contain a colon (see _stamp_item_ids), so no item ref can ever
+# collide with one of these.
+_CORROBORATION_PREFIX = "corroboration:"
+_CORROBORATED_BY = "corroborated-by:"
+
+
+def corroboration_ref(item_id: str) -> str:
+    """The event ref a corroboration row for `item_id` lands on. One literal,
+    shared by the emitter (capture._emit_corroborations) and the reader."""
+    return f"{_CORROBORATION_PREFIX}{item_id}"
+
+
+def _demotes(evt: dict, status: str) -> bool:
+    """Does this lifecycle row CONTRADICT the item it names (#268)?
+
+    Everything `is_resolved` calls resolved (a closed loop, a human's
+    superseded-by, a `forgotten:` tombstone, any free-form lifecycle fact),
+    plus supersede-candidate — the one status is_resolved deliberately keeps
+    live. A machine's supersession guess is not strong enough to HIDE an
+    item, but it is a standing contradiction, and corroboration is trust
+    going up: the bar for discounting it is lower than the bar for hiding.
+
+    `reopen*` is absent on purpose. Reviving an item does not revive the
+    agreement it lost — a witness has to speak again."""
+    return is_resolved(evt) or status.startswith("supersede-candidate")
+
+
+def corroborations(project_dir=None) -> dict:
+    """events.jsonl -> {bare item id: {origins, recorded, latest_demotion_ts}}
+    (#268 slice 3).
+
+    A FULL pass, not the latest-wins `resolutions` fold: every witness counts,
+    so the newest row can never erase an older session's independent
+    agreement. Callers index by the item's own id — the namespace above is an
+    on-disk detail no reader has to know about.
+
+      origins  — the sessions whose corroboration currently COUNTS: recorded
+                 strictly after the latest contradiction. This is the number
+                 a render may show.
+      recorded — every session that ever wrote a row for this item, whatever
+                 happened afterwards. Idempotency binds HERE, never to
+                 `origins`: were the emitter to key on what currently counts,
+                 a demotion would let the same session re-emit and re-earn its
+                 own corroboration with no new evidence.
+      latest_demotion_ts — the contradiction `origins` was measured against,
+                 or None. Kept visible so a reader can say WHY a recorded
+                 witness stopped counting.
+
+    Items with no corroboration row are absent: this fold answers "what has
+    been corroborated", not "what has been resolved". Timestamps compare as
+    strings — every writer stamps the same fixed-width UTC format, so
+    lexicographic order IS chronological (the idiom forget_hit_stats already
+    uses), and an unstamped row sorts oldest, never displacing a stamped one
+    (the same posture `resolutions` takes). Fails open to {} on a missing,
+    unreadable or corrupt log; unparseable lines are skipped best-effort."""
+    out: dict = {}
+    path = _events_path(project_dir)
+    if path is None:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return out
+    witnesses: dict = {}   # item id -> {observing session: latest row ts}
+    demotions: dict = {}   # item id -> latest contradicting row ts
+    for line in lines:
+        try:
+            evt = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(evt, dict):
+            continue
+        ref = str(evt.get("item_ref") or "")
+        if not ref:
+            continue
+        status = str(evt.get("status") or "")
+        # Prefix reads are case-insensitive like every other status reader
+        # here; the PAYLOAD after the prefix is sliced off the raw status —
+        # a session id is case-sensitive and must survive verbatim.
+        lowered = status.lower()
+        ts = str(evt.get("ts") or "")
+        if ref.startswith(_CORROBORATION_PREFIX):
+            item_id = ref[len(_CORROBORATION_PREFIX):]
+            observer = (status[len(_CORROBORATED_BY):].strip()
+                        if lowered.startswith(_CORROBORATED_BY) else "")
+            if not item_id or not observer:
+                continue  # malformed — a row that names no item or no witness
+            seen = witnesses.setdefault(item_id, {})
+            if ts > seen.get(observer, ""):
+                seen[observer] = ts
+        elif _demotes(evt, lowered) and ts > demotions.get(ref, ""):
+            demotions[ref] = ts
+    for item_id, seen in witnesses.items():
+        demoted = demotions.get(item_id)
+        out[item_id] = {
+            "origins": {sid for sid, ts in seen.items()
+                        if demoted is None or ts > demoted},
+            "recorded": set(seen),
+            "latest_demotion_ts": demoted,
+        }
+    return out
+
+
+# ---- #402: value-keyed forget suppression ----
+
+# `forgotten:` status prefix -> canonical content key. The forget command
+# (cli._cmd_forget) writes `forgotten:<normalize.content_key(text)>`; this
+# derives the live set of tombstoned values at read time.
+_FORGOTTEN_PREFIX = "forgotten:"
+
+
+def forgotten_content_keys(project_dir=None) -> set[str]:
+    """The set of canonical content keys the forget ledger has tombstoned for
+    this project (#402). Derived at read time from the `forgotten:` events — no
+    new store surface. Scoped GLOBALLY per project and keyed on the canonical
+    VALUE only (never a subject/predicate/scope tuple): free-text items have no
+    such tuple, and per-key scoping would let the same value be re-asserted
+    under a different framing. Only the LATEST event per ref counts, so a later
+    `reopen` lifts the tombstone (same fold recall/withhold use). Fails open to
+    an empty set (missing/corrupt log, unknown project)."""
+    keys: set[str] = set()
+    for evt in resolutions(project_dir=project_dir).values():
+        status = str(evt.get("status") or "")
+        if status.lower().startswith(_FORGOTTEN_PREFIX):
+            key = status[len(_FORGOTTEN_PREFIX):].strip()
+            if key:
+                keys.add(key)
+    return keys
+
+
+def all_forgotten_content_keys() -> set[str]:
+    """Union of EVERY local project's forget tombstones (#423). The recall
+    index is machine-global and a foreign checkpoint cannot name the local
+    project dir its content corresponds to, so the inbound forget gate
+    suppresses a value forgotten in ANY local project. Over-suppression is
+    the fail-safe direction (drop_forgotten's documented posture) — a
+    forgotten value re-surfacing via a teammate is the worse failure.
+    Never raises; degrades to the empty set."""
+    keys: set[str] = set()
+    try:
+        children = list(config.checkpoint_dir().iterdir())
+    except OSError:
+        return keys
+    for child in children:
+        # Bucket dirs are named by slug; project_slug is idempotent on slugs,
+        # so the name rides through the project_dir-shaped ledger API.
+        if child.is_dir():
+            keys |= forgotten_content_keys(child.name)
+    return keys
+
+
+# #421: the pure splice half of the gate moved to policy.drop_forgotten;
+# write_checkpoint injects forgotten_content_keys(project_dir) (the ledger
+# read above — the one I/O half that stays in the store).

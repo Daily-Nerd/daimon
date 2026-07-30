@@ -189,7 +189,12 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
             # unverified (#204). Inferred/untagged never claimed it, so untouched.
             item_style = "bold red" if (degraded and trust == "verbatim") \
                 else _TRUST_STYLE[trust]
-            body.append(f"• {i.get('text', '').strip()}\n", style=item_style)
+            # #268: the corroboration badge rides the text line here, the same
+            # position it holds on the plain path (after the annotations,
+            # before the quote) — one shared literal, so the two renders state
+            # the witness count in identical bytes.
+            body.append(f"• {i.get('text', '').strip()}"
+                        f"{briefing.corroboration_badge(i)}\n", style=item_style)
             quote = i.get("quote", "").strip()
             if quote:
                 body.append(f'    "{quote}"\n', style="dim italic")
@@ -250,7 +255,12 @@ def _plain_teammates(teammates) -> None:
         print(f"[{author}]")
         active = b.get("active_topic")
         if active:
-            print(f"  Active topic: {active.get('text', '').strip()}")
+            line = f"  Active topic: {active.get('text', '').strip()}"
+            if active.get("foreign_verbatim_claim"):
+                # #423: decisions get this via briefing._line; the topic line
+                # is built here, so the label has to be repeated.
+                line += f" {briefing.FOREIGN_VERBATIM_NOTE}"
+            print(line)
         decisions = b.get("decisions") or []
         if decisions:
             print("  Decisions made:")
@@ -272,12 +282,20 @@ def _rich_teammates(teammates) -> None:
         active = b.get("active_topic")
         if active:
             body.append(f"Active topic: {active.get('text', '').strip()}\n", style="white")
+            if active.get("foreign_verbatim_claim"):
+                body.append(f"    {briefing.FOREIGN_VERBATIM_NOTE}\n", style="yellow")
         decisions = b.get("decisions") or []
         if decisions:
             body.append("Decisions made:\n", style="bold")
             for i in decisions:
                 trust = _trust_key(i)
                 body.append(f"• {i.get('text', '').strip()}\n", style=_TRUST_STYLE[trust])
+                if i.get("foreign_verbatim_claim"):
+                    # #423: parity with briefing._line's plain-path label —
+                    # this panel builds its own Text body, so the label is
+                    # repeated here (same reasoning as the #14 flag above).
+                    body.append(f"    {briefing.FOREIGN_VERBATIM_NOTE}\n",
+                                style="yellow")
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:
                 body.append(f"{note}\n", style="dim")
@@ -457,6 +475,22 @@ def _capture_alarm_lines(alarm: dict) -> list[str]:
     ]
 
 
+def _forget_hits_line(data: dict) -> str | None:
+    """#404: one line when the value-keyed tombstone has caught a re-assertion
+    on this install; silent otherwise (same 'quiet by default' rule as the team
+    and receipts lines). Shows the count + most-recent stamp, never the
+    suppressed claim text."""
+    fh = data.get("forget_hits")
+    if not isinstance(fh, dict):
+        return None
+    n = fh.get("count") or 0
+    if not n:
+        return None
+    ts = fh.get("last_hit_at") or "unknown"
+    return (f"forget ledger (this project): suppressed {n} "
+            f"re-assertion{'s' if n != 1 else ''}, most recent {ts}")
+
+
 def _plain_status(data: dict) -> None:
     alarm = data.get("capture_alarm")
     if alarm:
@@ -480,6 +514,9 @@ def _plain_status(data: dict) -> None:
         print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
         print(data["receipts"])  # #204: one line, only when receipts are on
+    fh_line = _forget_hits_line(data)
+    if fh_line:
+        print(fh_line)  # #404: one line, only when a re-assertion was suppressed
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -563,6 +600,9 @@ def _rich_status(data: dict) -> None:
         console.print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
         console.print(data["receipts"])  # #204: one line, only when receipts are on
+    fh_line = _forget_hits_line(data)
+    if fh_line:
+        console.print(fh_line)  # #404: one line, only when a re-assertion was suppressed
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, llm, normalize, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -270,9 +270,14 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # principle while the SessionEnd hook did (#298).
     deadline = start + config.timeout_seconds()
     try:
-        checkpoint = serializer.serialize_strict(
-            session_id, messages, chat=_chat, deadline=deadline,
-            escalate=escalate)
+        # THE shared pipeline (#432): serialize -> stamps -> carry+fold ->
+        # bind_links -> supersede emission -> write -> rejection ledger.
+        # Identical for both capture doors — hooks.on_session_end calls the
+        # same function; tests/test_capture_parity.py guards the parity.
+        # Error POSTURE stays here: capture raises, this door prints/exits.
+        out = capture.run(session_id, messages, project=project, chat=_chat,
+                          deadline=deadline, transcript_path=path,
+                          transcript_sha=transcript_sha, escalate=escalate)
     except serializer.TooShortError as exc:
         msg = f"skipped serialize for {session_id}: {exc}"
         print(msg)
@@ -284,60 +289,15 @@ def _run_serialize(transcript_path: Path, project: str | None,
         print(msg, file=sys.stderr)
         _append_serialize_log(msg)
         return 1
-    # `created` = when the SESSION ended, not when this write happens (#123).
-    # Stamped here — not left to store's setdefault-now — so a heal/re-serialize
-    # of an old transcript carries its true age and store's pointer guard can
-    # keep it from stealing `latest` from a newer session.
-    checkpoint["created"] = _session_end_stamp(path)
-    if transcript_sha:
-        checkpoint["transcript_hash"] = transcript_sha
-    if config.carry_enabled():
-        # Deterministic carry (#33 Phase 2): fold the previous checkpoint's
-        # unresolved items in BEFORE the write rotates it away. Clock = this
-        # checkpoint's own stamp (scar: never default to wall clock when a
-        # stamp exists), wall time only as fallback for stampless paths.
-        # Advisory feature — a raise here must never cost us the checkpoint
-        # itself (a briefing missing carried items is strictly better than
-        # no briefing at all; same idiom as harvest.run's swallow below).
-        try:
-            # fallback=False (#94): on a project's first serialize there is no
-            # per-project pointer, and the global pointer is another project's
-            # checkpoint — carrying from it would write foreign items into
-            # this project's bucket permanently. No prev -> no carry.
-            prev = store.read_latest(project, fallback=False)
-            now = store._created_epoch(checkpoint.get("created")) or time.time()
-            events = store.resolutions(project_dir=project)
-            resolved = frozenset(ref for ref, evt in events.items()
-                                 if store.is_resolved(evt))
-            checkpoint = carry.merge(checkpoint, prev, now,
-                                     floor=config.carry_floor(),
-                                     cap=config.carry_max(),
-                                     resolved=resolved)
-            # #14: text-target supersession links bound to prev-item ids ->
-            # candidate events, gated so a human verdict is never overridden
-            # (see _emit_supersede_candidates). Same fail-open try as merge
-            # itself — a broken emission must never cost the checkpoint.
-            # Stamp ids BEFORE binding: fresh natives are only stamped inside
-            # write_checkpoint (after this block), so without this every new
-            # item binds with new_id="" and the event carries no target.
-            # Setdefault-idempotent — write_checkpoint's re-stamp no-ops.
-            store._stamp_item_ids(checkpoint)
-            pairs = carry.bind_links(checkpoint, prev)
-            _emit_supersede_candidates(pairs, events, project)
-        except Exception:  # keep the unmerged checkpoint, proceed to write
-            pass
-    out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
-    # #376: record what the checkers REJECTED, after write_checkpoint because
-    # that is where item ids are guaranteed stamped (the merge branch above
-    # only stamps when it runs). Its own append-only stream, never events.jsonl
-    # — a rejection folded on item_ref would resolve the item and hide exactly
-    # what it describes. Fail-open: an advisory counter never costs a capture.
-    try:
-        for row in serializer.verification_rejections(checkpoint):
-            store.append_verification(row["item_ref"], row["check"],
-                                      row["reason"], project_dir=project)
-    except Exception:
-        pass
+    if out is None:
+        # #421: the write boundary refused (kill switch). Same "skipped" shape
+        # as the hash-match short-circuit above — matches neither _RESULT_OK_RE
+        # nor _RESULT_ERR_RE, so the ledger never reads it as a lying success.
+        msg = (f"skipped serialize for {session_id}: daimon disabled "
+               "(DAIMON_DISABLE) — checkpoint not written")
+        print(msg)
+        _append_serialize_log(msg)
+        return 0
     elapsed = int(time.monotonic() - start)
     msg = f"wrote checkpoint: {out} (took {elapsed}s)"
     if llm.fallback_used():
@@ -367,64 +327,10 @@ def _run_serialize(transcript_path: Path, project: str | None,
     return 0
 
 
-def _emit_supersede_candidates(pairs, events: dict, project) -> int:
-    """Turn `carry.bind_links` triples into `supersede-candidate:*` events,
-    gated so a machine SUGGESTION never overrides a human verdict (#14,
-    human-speaks-once).
-
-    `events` is the SAME `store.resolutions` fold the serialize block already
-    fetched for `resolved` — reused, not re-read, so this stays consistent
-    with the resolved set computed moments earlier in the same call.
-
-    Gate per (old_id, new_id, old_text) triple:
-    (a) prior = events.get(old_id) — the latest lifecycle fact for old_id.
-    (b) prior exists and its source isn't "serializer" -> a HUMAN spoke
-        (confirmed via superseded-by, rejected via reopened, or anything
-        else typed by a person) -> skip, forever. The gate itself is why a
-        latest-event check is enough for permanence: machine events only
-        ever land through this function, and this function refuses to
-        write over a non-serializer prior, so once a human event is latest
-        no future serialize run can dethrone it — there is no path back to
-        a machine-authored latest.
-    (c) prior exists, is a serializer-authored candidate, and already points
-        at this same new_id -> idempotent, skip (re-running serialize on an
-        unchanged pair must not spam the log).
-    (d) otherwise -> append. Covers both the fresh case (no prior) and the
-        candidate-changed case (prior candidate names a DIFFERENT new_id —
-        the carry target moved, so a fresh candidate replaces it as latest).
-
-    Returns the number of events actually appended."""
-    appended = 0
-    for old_id, new_id, old_text in pairs:
-        if not new_id:
-            continue  # defense-in-depth: never write a candidate with no
-                      # target ("supersede-candidate:") — the wiring stamps
-                      # ids before binding, but a caller that skips that
-                      # step must not corrupt the event log
-        prior = events.get(old_id)
-        if prior and str(prior.get("source") or "") != "serializer":
-            continue  # human spoke — machine stays silent forever
-        if prior and prior.get("status") == f"supersede-candidate:{new_id}":
-            continue  # idempotent — same candidate already latest
-        if store.append_event(old_id, f"supersede-candidate:{new_id}",
-                              source="serializer", item_text=old_text,
-                              project_dir=project):
-            appended += 1
-    return appended
-
-
-def _session_end_stamp(path) -> str:
-    """When the session in `path` ended, in checkpoint `created` format (#123):
-    the transcript's last message timestamp, falling back to the file mtime
-    (markdown/plain transcripts carry no per-row stamps), then to now."""
-    stamp = transcript.last_timestamp(path)
-    if stamp:
-        return stamp
-    try:
-        mtime = Path(path).stat().st_mtime
-    except OSError:
-        mtime = time.time()
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mtime))
+# Moved to capture.py (#432) with the rest of the shared pipeline; re-exported
+# because `cli.<name>` is a stable seam — tests and callers resolve them here.
+_emit_supersede_candidates = capture._emit_supersede_candidates
+_session_end_stamp = capture._session_end_stamp
 
 
 def _cmd_serialize(args) -> int:
@@ -474,6 +380,10 @@ def _cmd_write_checkpoint(args) -> int:
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))
+    if out is None:  # #421: write boundary refused (kill switch)
+        print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
+              file=sys.stderr)
+        return 1
     render.render_write_checkpoint([f"wrote checkpoint: {out} (source: {args.source})"])
     recall.warm()  # #246: freshen off the read path; never raises
     return 0
@@ -520,7 +430,11 @@ def _cmd_anchor(args) -> int:
         return 1
     item = matches[0]
     item["anchored_to"] = a
-    store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    if store.write_checkpoint(session_id, checkpoint, project_dir=project) is None:
+        # #421: write boundary refused (kill switch) — nothing was attached
+        print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
+              file=sys.stderr)
+        return 1
     render.render_anchor_attach([f"attached {a['qualified_name']} to: {item.get('text')}"])
     recall.warm()  # #246: the re-write staled the index; freshen off the read path
     return 0
@@ -575,6 +489,17 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         except Exception:
             withheld = []
             events = {}
+        # Corroboration (#268): a SEPARATE axis from the trust class — how many
+        # independent sessions have witnessed the claim, never what kind of
+        # evidence it is. Its own try: a failure here must cost the badge
+        # only, not the withheld list `events` still owes to stale_carried
+        # below. Transient stamps on the in-memory checkpoint, same posture as
+        # the candidate flags above and the worldcheck flags below.
+        try:
+            checkpoint = briefing.mark_corroborated(
+                checkpoint, store.corroborations(project_dir=route))
+        except Exception:
+            pass
     # Worldcheck (#365): opt-in, budget-bounded, read-only `gh` spot-check of
     # carried PR/issue-state claims — stamps contradicted items on the
     # IN-MEMORY checkpoint before render (transient, like withhold's
@@ -585,9 +510,13 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     if checkpoint and worldcheck_project and config.worldcheck_enabled():
         try:
             wc_stats = worldcheck.check(checkpoint, worldcheck_project)
-            for outcome in ("confirmed", "contradicted", "skipped"):
-                for _ in range(int(wc_stats.get(outcome, 0))):
-                    _note_usage(f"worldcheck:{outcome}")
+            # #397: the dict carries the aggregate outcomes AND a
+            # "<class>:<outcome>" key per class, so one pass emits both the
+            # slice-1 counters (unchanged meaning) and the per-class
+            # fires-true rate the next expansion gate reads.
+            for counter, count in sorted(wc_stats.items()):
+                for _ in range(int(count)):
+                    _note_usage(f"worldcheck:{counter}")
         except Exception:
             pass
     # NOTE: drift is checked against the resolved project root. If read_latest fell
@@ -902,10 +831,12 @@ def _cmd_resolve(args) -> int:
 
 
 def _cmd_forget(args) -> int:
-    """Deliberate item removal (#321): delete the item from the live
-    checkpoint, then append a tombstone event whose status carries a content
-    HASH, never the text — removal means the content leaves the audit trail
-    too. Binding is _cmd_resolve's never-guess contract verbatim: exact id
+    """Deliberate item removal (#321): append a tombstone event whose status
+    carries a content HASH, never the text — removal means the content leaves
+    the audit trail too — then rewrite the live checkpoint without the value.
+    Tombstone first (#418): the rewrite's _drop_forgotten reads the ledger, so
+    the key must land before the write scrubs sibling ids of the same value.
+    Binding is _cmd_resolve's never-guess contract verbatim: exact id
     first, else a fuzzy query that must match exactly one item. The tombstone
     rides the resolutions fold, so withhold, carry suppression, and the
     recall index deletion all inherit it with no new plumbing. The rewritten
@@ -940,27 +871,67 @@ def _cmd_forget(args) -> int:
         _note_usage("forget:dry-run")
         print(f"would forget {target['id']}: {target.get('text', '')}")
         return 0
-    content_hash = hashlib.sha256(
-        str(target.get("text") or "").encode("utf-8")).hexdigest()[:12]
-    for section, key in store._ITEM_LISTS:
-        lst = (checkpoint.get(section) or {}).get(key)
-        if isinstance(lst, list):
-            lst[:] = [i for i in lst
-                      if not (isinstance(i, dict) and i.get("id") == target["id"])]
+    # #402: key the tombstone on the CANONICAL value (normalize.content_key),
+    # not the raw bytes — so a later re-extraction of the same claim (different
+    # case, invisible chars, a look-alike glyph) folds to the same key and is
+    # suppressed at capture. Still a hash, never the text: removal means the
+    # content leaves the audit trail too (#321).
+    content_hash = normalize.content_key(target.get("text") or "")
     sid = str(checkpoint.get("session_id") or "")
     if not sid:
         print("checkpoint has no session_id — cannot rewrite")
         return 1
-    store.write_checkpoint(sid, checkpoint, project_dir=project)
+    # Tombstone BEFORE the rewrite (#418): write_checkpoint's forget gate
+    # consults the ledger during the write — appended after, the new key is
+    # invisible to that scrub and sibling ids carrying the same value survive.
+    # Failing here leaves the checkpoint untouched: no half-removal without an
+    # audit-trail record. allow_disabled (#421): forget is the ratified
+    # deletion exemption to the kill switch — the tombstone (and the rewrite
+    # below, which #418 chains to it) must land even while daimon is disabled.
     ok = store.append_event(target["id"], f"forgotten:{content_hash}",
                             note=args.reason or "", kind="tombstone",
-                            project_dir=project)
+                            project_dir=project, allow_disabled=True)
     if not ok:
-        print("tombstone event not written (daimon disabled or project unknown)")
+        print("tombstone event not written (project unknown or ledger unwritable)")
         return 1
+    # Splice by VALUE, not only id (#418): one value can hold sibling ids —
+    # the same sentence in two sections, or a widened hash within one
+    # (store._stamp_item_ids). Removal is content removal, so every item
+    # folding to the tombstoned key goes. Id kept in the predicate as a belt
+    # for non-string text, which content_key canonicalizes to "".
+    for section, key in store._ITEM_LISTS:
+        lst = (checkpoint.get(section) or {}).get(key)
+        if isinstance(lst, list):
+            lst[:] = [i for i in lst
+                      if not (isinstance(i, dict)
+                              and (i.get("id") == target["id"]
+                                   or normalize.content_key(i.get("text") or "")
+                                   == content_hash))]
+    # allow_disabled (#421): the ONE write_checkpoint call that may run under
+    # the kill switch — the rewrite that makes the deletion real on disk.
+    store.write_checkpoint(sid, checkpoint, project_dir=project,
+                           allow_disabled=True)
+    # #422: the serializer chunk cache holds PRE-redaction extraction output
+    # (quote verification forbids redacting before caching, #125), keyed by
+    # chunk text — the forgotten value cannot be located selectively, so the
+    # purge is WHOLESALE and default-on. Never fatal: the belief-state
+    # deletion above is the primary contract; a failed purge is reported
+    # honestly below, and the age reaper still bounds any survivor at
+    # chunk_cache_days.
+    try:
+        purged, purge_err = serializer.purge_chunk_cache()
+    except Exception as e:  # belt: purge_chunk_cache itself never raises
+        purged, purge_err = 0, str(e)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
+    if purge_err is not None:
+        print(f"warning: chunk cache purge failed: {purge_err} — "
+              "cached pre-redaction chunks may persist up to "
+              f"{config.chunk_cache_days()} day(s) (age reaper)")
+    else:
+        print(f"purged {purged} cached chunk extraction(s) "
+              "(pre-redaction serializer cache)")
     return 0
 
 
@@ -1490,6 +1461,10 @@ def _status_world(project_arg=None) -> dict:
     # One receipts line, only when the feature is on (#204) — mirrors the team
     # line's "no line when unused" rule so status stays quiet by default.
     receipts_line = receipts.status_line(project)
+    # #404: forget-suppression hit accounting — the count + most-recent stamp,
+    # surfaced only when non-zero (same "quiet by default" rule). Claim
+    # snapshots stay in the ledger; status shows only the number.
+    forget_hits = store.forget_hit_stats(project)
     identity = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
@@ -1505,7 +1480,8 @@ def _status_world(project_arg=None) -> dict:
         "disabled": disabled, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
-        "hook_drift": hook_drift, "rescue_gap": rescue_gap, "rc": rc,
+        "hook_drift": hook_drift, "rescue_gap": rescue_gap,
+        "forget_hits": forget_hits, "rc": rc,
     }
 
 
@@ -1522,6 +1498,7 @@ def status_payload(project_arg=None) -> tuple:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "forget_hits": w["forget_hits"],
     }
     return payload, w["rc"]
 
@@ -1543,6 +1520,7 @@ def _cmd_status(args) -> int:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "forget_hits": w["forget_hits"],
     })
     return w["rc"]
 
@@ -1606,8 +1584,14 @@ def _cmd_audit_quotes(args) -> int:
         if tpath is not None:
             try:
                 msgs = transcript.from_file(tpath)
-                haystack = serializer._render_transcript(msgs)
-                texts_by_id = serializer.message_texts_by_id(msgs)
+                # #440: the same stripped haystacks verify_quotes used at
+                # serialize time. Audit re-blesses stored items, so reading
+                # the raw render here would certify exactly the echo
+                # verification rejected — and do it with the CLI's authority.
+                haystack = serializer.stripped_transcript(msgs)
+                texts_by_id = {
+                    mid: serializer.strip_injected(text) for mid, text
+                    in serializer.message_texts_by_id(msgs).items()}
             except (OSError, FileNotFoundError):
                 haystack = None
         if haystack is None:
@@ -2458,8 +2442,11 @@ def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
     sys.__excepthook__(exc_type, exc, tb)
 
 
-def main(argv=None) -> int:
-    sys.excepthook = _crash_stamp_excepthook  # #92: stamp uncaught crashes
+def build_parser() -> argparse.ArgumentParser:
+    """The full daimon parser tree, extracted from main (#431) so tests can
+    walk the subparser registry mechanically — the write-audit architecture
+    guard enumerates every command argparse knows about, so a NEW subcommand
+    is enumerated (and audited) automatically the moment it is registered."""
     # #68: one formatter selection for the WHOLE parser tree. argparse does not
     # propagate formatter_class from parent to subparser, so every add_parser
     # call below must receive it — done here by patching add_parser on each
@@ -2868,6 +2855,12 @@ def main(argv=None) -> int:
         help="serve MCP over stdio until EOF — reads only, never writes; "
              "register in your host's MCP config (see the docs site)")
     pm_serve.set_defaults(func=_cmd_mcp_serve)
+    return parser
+
+
+def main(argv=None) -> int:
+    sys.excepthook = _crash_stamp_excepthook  # #92: stamp uncaught crashes
+    parser = build_parser()
 
     # Slugs are munged absolute paths, so they START with "-" ("/Users/x" ->
     # "-Users-x") — argparse reads `--slug -Users-x` as a missing argument and

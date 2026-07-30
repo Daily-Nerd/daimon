@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import briefing, config, harvest, llm, recall, serializer, store, transcript
+from . import briefing, capture, config, harvest, llm, recall, serializer, store, transcript
 
 log = logging.getLogger("daimon_briefing")
 
@@ -79,6 +79,7 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
         # reproducing a byte-identical checkpoint. No transcript_path -> can't
         # hash -> proceeds exactly as before #185 (fail-open).
         transcript_path = kwargs.get("transcript_path")
+        transcript_sha = None
         if transcript_path:
             transcript_sha = transcript.file_sha256(transcript_path)
             if store.transcript_unchanged(session_id, transcript_sha):
@@ -91,18 +92,38 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
         messages = transcript.from_session(session_id)
         if not messages or len(messages) < config.min_messages():
             return
+        root = config.resolve_project_root(config.project_dir())
         try:
-            # serialize_strict, NOT the never-raise serialize(): a swallowed
+            # THE shared pipeline (#432): serialize -> stamps -> carry+fold ->
+            # bind_links -> supersede emission -> write -> rejection ledger —
+            # the SAME function cli._run_serialize calls, so a checkpoint's
+            # contents no longer depend on which door the session left through
+            # (tests/test_capture_parity.py guards this). Inside it,
+            # serialize_strict — NOT the never-raise serialize(): a swallowed
             # LLM/schema failure would exit through the old "skip" branch and
             # never reach the ledger — only a too-short session is a true skip.
-            checkpoint = serializer.serialize_strict(
-                session_id, messages, chat=_chat, deadline=deadline
+            # No `escalate` here ever (#360): escalation is heal-only, so its
+            # cost scales with failure, not usage. transcript_path/sha may be
+            # None — this host reads messages via transcript.from_session, not
+            # always a file — in which case the created stamp falls back to
+            # the store's setdefault-now, exactly as before.
+            out = capture.run(
+                session_id, messages, project=root, chat=_chat,
+                deadline=deadline, transcript_path=transcript_path,
+                transcript_sha=transcript_sha,
             )
         except serializer.TooShortError:
             log.info("daimon: no checkpoint produced for session %s (skip)", session_id)
             return
-        root = config.resolve_project_root(config.project_dir())
-        store.write_checkpoint(session_id, checkpoint, project_dir=root)
+        if out is None:
+            # #421: the write boundary refused (kill switch flipped since the
+            # hook-start check). Nothing landed — a skip, never a lying success.
+            log.info(
+                "daimon: skipped checkpoint write for session %s: daimon "
+                "disabled (DAIMON_DISABLE)",
+                session_id,
+            )
+            return
         log.info(
             "daimon: wrote checkpoint for session %s (took %ds)",
             session_id,
@@ -151,6 +172,12 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         try:
             events = store.resolutions(project_dir=project)
             checkpoint, _withheld, _candidates = briefing.withhold(checkpoint, events)
+            # #268: the witness count is a reason to weight a claim, so the
+            # injected context states it exactly as the human brief does.
+            # Rides the same fail-open try — the badge is advisory, and no
+            # annotation is worth losing the injection over.
+            checkpoint = briefing.mark_corroborated(
+                checkpoint, store.corroborations(project_dir=project))
         except Exception:
             pass
         text = briefing.render(checkpoint)

@@ -113,6 +113,17 @@ def gold_sessions(question: dict) -> set[str]:
     return set(question.get("answer_session_ids") or [])
 
 
+def forbidden_of(question: dict) -> list[str]:
+    """The optional `forbidden_hits` for a question (#405): material that must
+    NOT surface in the assembled brief. Absent on stock LongMemEval questions —
+    an empty list means the case is scored on recall alone. Tolerant of shape
+    drift: bare strings are kept, blanks/non-strings dropped."""
+    raw = question.get("forbidden_hits")
+    if not isinstance(raw, list):
+        return []
+    return [str(s) for s in raw if isinstance(s, str) and s.strip()]
+
+
 def sessions_of(question: dict) -> list[tuple[str, list[dict]]]:
     """(session_id, messages) pairs for the haystack, in order.
 

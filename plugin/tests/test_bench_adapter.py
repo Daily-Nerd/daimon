@@ -106,3 +106,74 @@ def test_env_is_restored_after_a_question(tmp_path, monkeypatch):
     )
     import os
     assert os.environ["DAIMON_CARRY"] == "sentinel"
+
+
+# ---- #405: forbidden-hit scoring, wired through the real pipeline -----------
+
+
+class SecretChat:
+    """Fake serializer backend that always emits a checkpoint whose active_topic
+    carries a distinctive secret token plus a query-matching term — so the token
+    reliably reaches the assembled brief regardless of the transcript."""
+
+    def __call__(self, messages, **kwargs):
+        return json.dumps({
+            "session_id": "ignored",
+            "working_context": {
+                "active_topic": {
+                    "text": "database choice: secret_leak_token was postgres",
+                    "trust": "inferred"},
+                "open_questions": [], "recent_decisions": [],
+            },
+            "epistemic_snapshot": {
+                "strong_beliefs": [], "uncertainties": [], "contradictions_flagged": [],
+            },
+            "worker_queue": [],
+        })
+
+
+def _leak_question():
+    q = _question()
+    q["question"] = "which database choice did we make"
+    return q
+
+
+def test_run_question_scores_forbidden_leak_against_the_brief(tmp_path):
+    # SecretChat leaks "secret_leak_token" into every checkpoint's topic, so the
+    # assembled brief carries it — forbidding it must count as a leak that FLOORS
+    # the case (base recall 1.0, one of one forbidden hit → penalized 0.0).
+    q = _leak_question()
+    q["forbidden_hits"] = ["secret_leak_token"]
+    result = adapter.run_question(
+        q, chat=SecretChat(), cache=cache_mod.CheckpointCache(tmp_path / "c"),
+        backend="fake", model="fake", root=tmp_path / "runs", k=5, depth=20, workers=1,
+    )
+    assert result["recall_at_5"] == 1.0
+    assert result["forbidden_total"] == 1
+    assert result["forbidden_matched"] == 1
+    assert result["forbidden_hit"] is True
+    assert result["recall_at_5_penalized"] == 0.0
+
+
+def test_run_question_clean_when_forbidden_material_absent(tmp_path):
+    q = _question()
+    q["forbidden_hits"] = ["nonexistent secret phrase xyzzy"]
+    result = adapter.run_question(
+        q, chat=EchoChat(), cache=cache_mod.CheckpointCache(tmp_path / "c"),
+        backend="fake", model="fake", root=tmp_path / "runs", k=5, depth=20, workers=1,
+    )
+    assert result["forbidden_total"] == 1
+    assert result["forbidden_matched"] == 0
+    assert result["forbidden_hit"] is False
+    # a clean case keeps its base recall untouched
+    assert result["recall_at_5_penalized"] == result["recall_at_5"]
+
+
+def test_run_question_without_forbidden_field_reports_none(tmp_path):
+    result = adapter.run_question(
+        _question(), chat=EchoChat(), cache=cache_mod.CheckpointCache(tmp_path / "c"),
+        backend="fake", model="fake", root=tmp_path / "runs", k=5, depth=20, workers=1,
+    )
+    assert result["forbidden_total"] == 0
+    assert result["forbidden_hit"] is None
+    assert result["recall_at_5_penalized"] == result["recall_at_5"]

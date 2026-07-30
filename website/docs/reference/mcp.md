@@ -22,6 +22,11 @@ All four carry `readOnlyHint`. Tool-level failures (bad arguments, missing
 FTS5) come back as `isError` results the agent can read; they never kill the
 server.
 
+`daimon_brief` renders the same trust tags as the CLI, so a line may also
+carry the `[≈ corroborated ×N]` badge — a count of independent sessions that
+witnessed the claim, on its own axis and never a higher trust class. See
+[trust classes](../concepts/trust-classes.md).
+
 ## Scoping rules
 
 The server inherits daimon's cross-project discipline:

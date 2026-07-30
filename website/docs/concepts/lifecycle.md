@@ -74,8 +74,55 @@ What happens on forget:
   checkpoint copies in your local index — including your local copies of team
   mirrors — so recall cannot resurrect it. (Propagating tombstones into
   teammates' own mirrors is a deliberate follow-up, not in v1.)
+- The serializer's **chunk cache** is purged **wholesale**. That cache keeps
+  pre-redaction extraction output for a few days so an interrupted capture
+  never re-pays its LLM calls — and because its entries are keyed by chunk
+  text, not searchable by contained value, selective removal is impossible.
+  Forget clears all of it (the cost: chunks younger than the rotation window,
+  `chunk_cache_days`, default 3 days, get re-extracted next time). Entries
+  are also age-reaped at that window independently of forget. The purge is
+  never fatal — removal of the belief state always completes — and the
+  command reports honestly whether the purge succeeded.
 - Briefing withhold, carry suppression, and `daimon stats` all inherit the
   tombstone through the same event stream.
+
+### Deletion-durability compliance
+
+The claim "a forgotten memory stays forgotten" is not asserted — it is
+committed as an executable protocol. `plugin/tests/test_deletion_durability_protocol.py`
+runs a forgotten value through every path that could quietly resurrect it and
+proves it stays gone at each one, while a never-forgotten twin stays
+retrievable so no check can pass vacuously:
+
+| # | Step | Result |
+|---|------|--------|
+| 1 | Write a distinctive fact through the serializer | retrievable |
+| 2 | `forget` it — briefing, carry, recall | removed |
+| 3 | Re-feed the **original source transcript** and re-serialize | not resurrected |
+| 4 | Recall index rebuild | absent |
+| 5 | A subsequent carry | absent |
+| 6 | Team dual-write mirror | absent from the remote copy |
+| 7 | Rendered brief string | absent |
+| 8 | Recall SQLite rows | absent |
+| 9 | Signed receipt | binds the post-deletion bytes |
+| 10 | Audit trail | records the deletion, holds none of its text |
+| 11 | Serializer chunk cache (pre-redaction) | purged wholesale on forget |
+
+**Result: 11 / 11 steps compliant.** The tests are deterministic and use zero
+model quota — a canned extractor and a stubbed signer stand in for the LLM and
+the vitni CLI — so this is a compliance check that runs on every commit, not a
+benchmark. Step 3 is the one that matters most: re-ingesting the raw material a
+deleted item came from is how systems quietly bring it back, and the
+value-keyed tombstone drops it at the write boundary regardless of what the
+extractor re-produces.
+
+One bound worth stating exactly: the chunk cache is pre-redaction *by
+necessity* (quote verification needs the raw text), so before this step
+joined the protocol a forgotten value's bytes could sit in the cache until
+the age reaper fired. Now `forget` purges the local chunk cache in the same
+command, and the `chunk_cache_days` reaper (default 3 days) remains the
+independent upper bound for anything written after a forget. The claim is
+scoped to this machine: the cache never syncs anywhere.
 
 ## Supersession candidates
 

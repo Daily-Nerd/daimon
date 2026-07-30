@@ -41,10 +41,17 @@ log = logging.getLogger(__name__)
 # 20 asks for signal citations, and the bump rotates the #48 chunk-cache key
 # so pre-#359 cached extractions, whose chunks rendered no tool rows, can
 # never satisfy a post-#359 request).
+# D-016 -> D-017 (#416: rule 21 asks extraction to PREFER a quote span that
+# preserves a temporal span the transcript states — pure data-gathering for
+# the deferred bi-temporal design (#406), NO new schema field or storage. The
+# EXTRACTION_VERSION bump below rotates the #48 chunk-cache key so pre-#416
+# cached extractions, which never tried to keep a date, can never satisfy a
+# post-#416 request — a later re-measurement of the citable-date rate must
+# reflect the new behavior, not stale accidental survival.)
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-016"
+PROMPT_VERSION = "D-017"
 
 # #367: the chunk-cache rotation lever, deliberately SEPARATE from
 # PROMPT_VERSION. Bump ONLY when extraction semantics change — the output
@@ -52,7 +59,12 @@ PROMPT_VERSION = "D-016"
 # rule 20 warrants a bump; a wording clarification does not). PROMPT_VERSION
 # keeps versioning the checkpoint format; this keeps the #48 cache warm
 # across prompt edits that don't change what gets extracted.
-EXTRACTION_VERSION = 1
+# 1 -> 2 (#416): rule 21 changes which span extraction selects for a quote
+# (it now prefers one that keeps a stated temporal span) — that is what a
+# chunk pass extracts, so the cache must rotate. Serving a pre-#416 cached
+# extraction that dropped the date would poison the later citable-date
+# re-measurement the whole change exists to make honest.
+EXTRACTION_VERSION = 2
 
 
 class SerializeError(Exception):
@@ -193,6 +205,15 @@ RULES — follow every one exactly; this is the point of the exercise:
     output into `text` or `quote` because of this rule. If no tool-result message evidences
     the outcome, add nothing — the absence is itself a signal.
 
+21. TEMPORAL SPANS: when the transcript states a date, time, or interval that is relevant
+    to an item — when something happened, is due, or holds true (e.g. "on 2026-08-14", "by
+    Friday", "from March to June", "during the Q3 freeze") — PREFER a contiguous quote span
+    that KEEPS that temporal detail over an equally-valid span that drops it. The chosen span
+    must still obey rule 17: a real, contiguous, verifiable copy-paste — never widen a span
+    past what verifies just to reach a date, and never invent, normalize, or infer a date the
+    transcript does not state. Add nothing when no temporal detail is present; this rule only
+    stops you from discarding one that is.
+
 Schema shape:
 {
   "session_id": "<id>",
@@ -314,6 +335,11 @@ MERGE RULES — follow every one exactly:
     like `links` — dropping them loses provenance. Ids may ALSO point at tool-result
     messages that evidence an outcome claim (these can appear on inferred items too):
     preserve those on the canonical item exactly the same way, even when it has no quote.
+
+15. TEMPORAL SPANS: when two versions of the same item differ only in whether the quote keeps
+    a date, time, or interval, keep the version whose quote PRESERVES that temporal detail — it
+    is the more specific quote. Never invent, alter, or normalize a date while merging; this
+    rule only prevents dropping a temporal detail a chunk already captured.
 
 Schema shape:
 {
@@ -796,6 +822,85 @@ def quote_matches(quote, haystack) -> bool:
     return True
 
 
+# ---- #440: daimon's own injected output is not a witness ----
+#
+# The recall hook (`daimon recall: prior work — ...`) and the SessionStart
+# briefing (`DAIMON BRIEFING ...`) print INTO the host's transcript, and
+# transcript.py flattens hook stdout byte-identically into the user turn that
+# carried it — under the SAME message id as the user's own prose (whole-turn
+# granularity, #358). A quote copied out of that echo used to pass
+# verification and store as trust="verbatim", quote_verified: true: a PRIOR
+# session's item laundered as freshly witnessed in THIS one.
+#
+# The strip is applied to the verification haystacks ONLY. `_render_transcript`
+# deliberately keeps feeding the extractor the raw text: the brief legitimately
+# informs the model, and #48 chunk-cache keys derive from the chunk text, so
+# stripping there would invalidate every cached extraction on every install.
+# The laundering happens at verification, so it is fixed at verification.
+
+# Injected scaffolding rides inside user turns wrapped in <system-reminder>.
+# Quoting it back is daimon vouching for its own output (the self-reference
+# loop, parked 07-15); `pin_imperatives` (#369) has always stripped it for its
+# own scan, and this is that same strip promoted to shared use.
+_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>",
+                                 re.DOTALL | re.IGNORECASE)
+# Line-scoped: a recall injection is exactly one line and never spans a
+# newline, so a genuine user sentence on the next line keeps its witness.
+_RECALL_LINE_RE = re.compile(r"daimon recall: prior work —[^\n]*")
+# Message-scoped: the briefing is a multi-line render with no terminator, so
+# everything from its first marker to the end of the MESSAGE goes. Either
+# marker fires on its own — a host that swallows the hook's `DAIMON BRIEFING`
+# header still emits the render's own first line. A deliberate
+# over-approximation: over-stripping costs a downgrade to inferred,
+# under-stripping mints a false `verbatim`, and only one of those is a
+# security bug.
+_BRIEF_HEAD_RE = re.compile(
+    r"(?:DAIMON BRIEFING |While you were away — here['’]s where we left off\.).*",
+    re.DOTALL)
+
+# Code-owned, absent-never-False (#292 discipline, same as `grounded`): set
+# only where verify_quotes proves the quote lives in injected output and
+# nowhere else, so `verification_rejections` can ledger it under its own
+# reason code and the echo rate becomes an endogenous measurement.
+ECHO_ONLY_KEY = "quote_echo_only"
+
+
+def strip_injected(text: str) -> str:
+    """`text` minus daimon's own injected spans — ONE message's text.
+
+    The briefing rule truncates to end of string, which is end of MESSAGE by
+    contract: every caller hands this a single message body. The
+    whole-transcript haystack goes through `stripped_transcript`, which strips
+    per message and re-renders, so a briefing never swallows the turns after
+    it. Non-str input yields "" — an unusable haystack fails closed."""
+    if not isinstance(text, str):
+        return ""
+    text = _SYSTEM_REMINDER_RE.sub(" ", text)
+    text = _RECALL_LINE_RE.sub("", text)
+    return _BRIEF_HEAD_RE.sub("", text)
+
+
+def stripped_transcript(messages) -> str:
+    """`_render_transcript`'s text with every message's injected spans removed
+    — the whole-transcript VERIFICATION haystack (#440).
+
+    Renders shallow message copies whose flattened text has been stripped, so
+    markers, role labels and joins stay byte-identical to the haystack
+    verification read before this fix: only the injected bytes go missing.
+
+    No non-dict guard on purpose: `serialize_strict` renders the SAME list
+    through `_render_transcript` before verification runs, and that raises on
+    any non-dict row — so a message list that reaches here has already proven
+    itself dict-shaped. A guard would only move a crash that already
+    happened."""
+    stripped = []
+    for m in messages or []:
+        copy = dict(m)
+        copy["content"] = strip_injected(_message_text(m))
+        stripped.append(copy)
+    return _render_transcript(stripped)
+
+
 def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
     place (#125). On a hit the item gets `quote_verified: true` AND a
@@ -829,13 +934,30 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     (serialize_strict, itself not now-aware), and datetime.now(...) inline
     matches store.append_event's own stamping idiom (store.py) rather than
     threading a new param through a call chain that has no other use for
-    it."""
-    texts_by_id = message_texts_by_id(messages) if messages else {}
+    it.
+
+    #440: both haystacks are stripped of daimon's OWN injected output first
+    (see strip_injected) — a quote copied out of a recall line or a briefing
+    block is an echo, not a witness, and must never earn `verbatim`. A miss
+    is re-checked against the unstripped text so an echoed quote is ledgered
+    under `echo-only` rather than the generic absent-quote reason."""
+    # #440: the RAW pair survives alongside the stripped haystacks, read on
+    # the failure path only — to tell an echoed quote from an absent one.
+    raw_texts_by_id = message_texts_by_id(messages) if messages else {}
+    texts_by_id = {mid: strip_injected(text)
+                   for mid, text in raw_texts_by_id.items()}
+    haystack = (stripped_transcript(messages) if messages
+                else strip_injected(transcript_text))
     # #359: signal pointers (tool-result ids) are outcome evidence, not
     # quote-source claims — they never scope the quote check, and a scoped
     # MISS must not execute them for the quote-id's crime.
     signals = signal_message_ids(messages) if messages else set()
-    downgraded = 0
+    downgraded = echoed = 0
+    # The model never gets a vote on the echo verdict (#292 discipline, same
+    # as `grounded`/`pinned`): any model-emitted value is dropped before the
+    # checker re-derives it.
+    for item in iter_items(checkpoint):
+        item.pop(ECHO_ONLY_KEY, None)
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
             continue
@@ -847,7 +969,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             item["quote_verified"] = True
             item["last_verified"] = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
-        elif quote_matches(quote, transcript_text):
+        elif quote_matches(quote, haystack):
             if scoped is not None:
                 # Resolved AND mismatched: the quote is real but not in its
                 # cited message — drop the disproven QUOTE binding (signal
@@ -865,6 +987,16 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             item["last_verified"] = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
         else:
+            # #440: a second pass over the UNSTRIPPED text separates "present
+            # only in daimon's own injected output" from "absent entirely".
+            # Same downgrade either way — an echo is not a witness — but the
+            # distinct reason code turns the echo rate into something the
+            # rejection ledger can count.
+            raw_scoped = scoped_haystack(item, raw_texts_by_id, exclude=signals)
+            if ((raw_scoped is not None and quote_matches(quote, raw_scoped))
+                    or quote_matches(quote, transcript_text)):
+                item[ECHO_ONLY_KEY] = True
+                echoed += 1
             item["trust"] = "inferred"
             item["quote_verified"] = False
             # A downgraded quote is not evidence; a binding for it is noise.
@@ -876,11 +1008,16 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             # (#194): this line is the only surviving record of the downgrade —
             # the CLI routes it to serialize.log, which holds full result lines.
             logged, _ = redact.redact_text(item.get("text") or "")
-            log.warning("quote verification: downgraded verbatim->inferred: %s",
-                        logged)
+            if item.get(ECHO_ONLY_KEY):
+                log.warning("quote verification: downgraded verbatim->inferred "
+                            "(echo-only: quote appears only in daimon's own "
+                            "injected output): %s", logged)
+            else:
+                log.warning("quote verification: downgraded verbatim->inferred: %s",
+                            logged)
     if downgraded:
-        log.info("quote verification: %d verbatim item(s) downgraded to inferred",
-                 downgraded)
+        log.info("quote verification: %d verbatim item(s) downgraded to inferred"
+                 " (%d echo-only)", downgraded, echoed)
     return downgraded
 
 
@@ -903,9 +1040,9 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
 
 GROUNDED_KEY = "grounded"
 
-# Conservative, English-only outcome lexicon: past-tense/state assertions
-# about completion. Non-English claims simply never match — grounding stays
-# absent there, which is the honest no-op (never downgrade on a guess).
+# Conservative, English outcome lexicon: past-tense/state assertions about
+# completion. A curated, BOUNDED-regex allowlist (scar 22: no unbounded prefix
+# before a keyword alternation) — never stemming, never an LLM call.
 _OUTCOME_RE = re.compile(
     r"(?:\b(?:succeeded|successfully)\b"
     r"|\btests?\s+(?:all\s+|are\s+|now\s+)*(?:pass(?:ed|ing)?|green)\b"
@@ -913,6 +1050,26 @@ _OUTCOME_RE = re.compile(
     r"(?:is\s+|now\s+)*(?:pass(?:ed|ing)?|green|succeeded|failed|completed)\b"
     r"|\b(?:merged|deployed|released|published|shipped|landed)\b"
     r"|\ball\s+(?:\d+\s+)?tests?\s+pass(?:ed)?\b)",
+    re.IGNORECASE)
+# Spanish outcome lexicon (#401): the project is bilingual end to end (docs, es
+# briefings), but this gate was English-only, so a Spanish "los tests pasan"
+# sailed through ungrounded while its English twin was downgraded. Same shape
+# as the English lexicon above and the same house rules — a curated, bounded
+# allowlist, NOT stemming, NOT an LLM. Participles carry Spanish gender/number
+# agreement through a bounded (?:o|a|os|as) suffix; still fully bounded.
+_OUTCOME_ES_RE = re.compile(
+    r"(?:\bexitosamente\b"
+    r"|\bcon\s+[eé]xito\b"
+    r"|\b(?:los\s+|las\s+)?(?:tests?|pruebas)\s+"
+    r"(?:ya\s+|ahora\s+|todas\s+)*(?:pasan|pasaron)\b"
+    r"|\b(?:el\s+|la\s+)?(?:build|suite|ci|pipeline|despliegue|compilaci[oó]n)"
+    r"\s+(?:ya\s+|ahora\s+)*(?:pas[oó]|complet[oó]|termin[oó]|fall[oó]|"
+    r"en\s+verde)\b"
+    r"|\b(?:mergead|fusionad|desplegad|publicad|lanzad|liberad|completad|"
+    r"resuelt|arreglad|solucionad)(?:o|a|os|as)\b"
+    r"|\bfall(?:[oó]|aron|id[oa]s?)\b"
+    r"|\ben\s+verde\b"
+    r"|\btodas\s+(?:las\s+)?(?:\d+\s+)?pruebas\s+pas(?:an|aron)\b)",
     re.IGNORECASE)
 # Hedge/future/plan markers: "will be merged" is a plan, "whether the deploy
 # succeeded" is a question — neither ASSERTS the outcome. When one of these
@@ -923,13 +1080,28 @@ _HEDGE_RE = re.compile(
     r"plan(?:ned|s|ning)?|todo|must|needs?\s+to|about\s+to|once|when|"
     r"if|whether|did|does|can|could|may|might)\b",
     re.IGNORECASE)
+# Spanish hedge markers (#401), mirror of _HEDGE_RE: future ("se va a mergear"),
+# plan ("planeo", "pendiente", "falta"), condition/question ("si", "cuando").
+_HEDGE_ES_RE = re.compile(
+    r"\b(?:se\s+van?\s+a|van?\s+a|vamos\s+a|ser[aá]n?|"
+    r"plane(?:o|as|amos|ad[oa]s?)|pendiente|"
+    r"todav[ií]a\s+no|a[uú]n\s+no|falta[nr]?|hay\s+que|hace\s+falta|"
+    r"deber[ií]an?|debe[n]?|podr[ií]an?|quiz[aá]s?|tal\s+vez|"
+    r"si|cuando|una\s+vez|acaso|a\s+punto\s+de|por\s+hacer)\b",
+    re.IGNORECASE)
 
 
 def _asserts_outcome(text: str) -> bool:
-    """True when `text` ASSERTS a completed outcome (narrow, English-only)."""
+    """True when `text` ASSERTS a completed outcome (narrow; English + Spanish).
+
+    Mirrors both language lexicons: a claim asserts an outcome only when a
+    curated verb matches AND no hedge (either language) is present — a Spanish
+    hedge blocks an English claim too, which is the conservative default."""
     if not isinstance(text, str):
         return False
-    return bool(_OUTCOME_RE.search(text)) and not _HEDGE_RE.search(text)
+    if _HEDGE_RE.search(text) or _HEDGE_ES_RE.search(text):
+        return False
+    return bool(_OUTCOME_RE.search(text) or _OUTCOME_ES_RE.search(text))
 
 
 def verification_rejections(checkpoint) -> list:
@@ -952,8 +1124,13 @@ def verification_rejections(checkpoint) -> list:
         if not isinstance(ref, str) or not ref:
             continue
         if item.get("quote_verified") is False:
+            # #440: the two ways a quote fails are worth telling apart —
+            # "nowhere in the session" is a fabrication signal, "only inside
+            # daimon's own injected output" is the echo rate.
             out.append({"item_ref": ref, "check": "quote",
-                        "reason": "quote-not-in-transcript"})
+                        "reason": ("echo-only"
+                                   if item.get(ECHO_ONLY_KEY) is True
+                                   else "quote-not-in-transcript")})
         if item.get(GROUNDED_KEY) is False:
             out.append({"item_ref": ref, "check": "outcome",
                         "reason": "no-signal-cited"})
@@ -1040,9 +1217,9 @@ _IMPERATIVE_RE = re.compile(
 
 # Injected scaffolding (briefings, hook output) rides inside user turns
 # wrapped in <system-reminder> — pinning it would quote daimon's own output
-# back as a user constraint (the self-reference loop, parked 07-15).
-_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>",
-                                 re.DOTALL | re.IGNORECASE)
+# back as a user constraint (the self-reference loop, parked 07-15). The
+# pattern itself now lives with the #440 strip family above, which generalized
+# this guard from the auto-pin scan to the verification haystacks.
 
 
 def _constraint_sentences(text: str):
@@ -1334,6 +1511,37 @@ def _save_chunk_cache(key: str, partial: dict) -> None:
         pass
 
 
+def purge_chunk_cache():
+    """#422: wholesale removal of every cached chunk extraction. `daimon
+    forget` calls this after a successful tombstone+rewrite: cached output is
+    PRE-redaction (see the block comment above _chunk_cache_dir) and keyed by
+    chunk TEXT plus config dimensions — a forgotten value cannot be located
+    selectively, so the whole cache goes. Accepted cost: re-paying extraction
+    for chunks younger than chunk_cache_days (default 3), the same window the
+    age reaper already bounds. The directory itself is kept — the next
+    serialize re-populates in place. Orphaned `.*.tmp` writer droppings carry
+    the same pre-redaction bytes, so they go too.
+
+    Returns (purged_count, error_or_None) and NEVER raises: the caller's
+    deletion of belief state is the primary contract; a failed purge is
+    reported, not fatal."""
+    d = _chunk_cache_dir()
+    if not d.is_dir():
+        return 0, None  # nothing cached — vacuously purged
+    purged, error = 0, None
+    try:
+        targets = sorted(set(d.glob("*.json")) | set(d.glob(".*.tmp")))
+    except OSError as e:
+        return 0, str(e)
+    for entry in targets:
+        try:
+            entry.unlink()
+            purged += 1
+        except OSError as e:
+            error = str(e)
+    return purged, error
+
+
 def _merge_partials(chat, session_id: str, partials: list, deadline,
                     attempt_note: str = "") -> dict:
     """Hierarchically merge partial checkpoints into one, K partials at a time.
@@ -1397,11 +1605,24 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
 _CODE_OWNED_KEYS = (
     "format_version", "created", "author",
     "transcript_hash", "project_slug", "git_branch", "receipts",
+    # #268: origin binding is asserted by policy.bind_origin at the write
+    # boundary. No code path reads a top-level copy, but a model naming the
+    # key must not leave one lying beside the real per-item stamps.
+    "origin_session", "origin_author",
 )
+
+# The same discipline one level down: origin binds per ITEM (#268 S1), and
+# policy.bind_origin uses setdefault so a carried item's binding survives a
+# re-write. That makes any value already on an item authoritative forever —
+# so a model-emitted one is a self-issued witness that corroboration counting
+# would then treat as an independent session. Stripped from freshly authored
+# model output only, exactly like `grounded`/`pinned` (#292 discipline).
+_CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:
-    """Discard any code-owned key a model emitted in its own output.
+    """Discard any code-owned key a model emitted in its own output, at the
+    checkpoint level (_CODE_OWNED_KEYS) and per item (_CODE_OWNED_ITEM_KEYS).
 
     Public: called both here (after every fresh _produce() parse) and by
     cli's `_cmd_write_checkpoint`, the other place a model authors a
@@ -1423,6 +1644,10 @@ def strip_code_owned_keys(checkpoint: dict) -> None:
         if key in checkpoint:
             log.info("serialize: discarding model-supplied code-owned key %r", key)
             del checkpoint[key]
+    for item in iter_items(checkpoint):
+        for key in _CODE_OWNED_ITEM_KEYS:
+            if item.pop(key, None) is not None:
+                log.info("serialize: discarding model-supplied item key %r", key)
 
 
 def _stamp_llm_provenance(checkpoint: dict) -> None:

@@ -3,7 +3,7 @@ import re
 import time as _time
 from pathlib import Path
 
-from daimon_briefing import config, serializer, store
+from daimon_briefing import config, normalize, serializer, store
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
@@ -870,6 +870,138 @@ def test_read_team_nested_retention_applies(tmp_checkpoint_dir, sample_checkpoin
     assert [a for a, _ in team] == ["grace"]  # ada aged out of the READ window
     # NO physical deletes — the nested era is append-only too.
     assert (_nested_author_dir("core/api", "ada") / "a-old.json").exists()
+
+
+# ---- #423: inbound gate — scope, redaction, forget, and trust apply on READ ----
+# Foreign content (a synced remote's files) passes policy.admit_foreign before
+# it reaches read_team output; the machine-local mirror ("local") is this
+# machine's own writes and stays ungated.
+
+
+def _clone_remote(name="team-a", toml_text=None):
+    """A dir the store treats as a real synced remote (.git present)."""
+    d = config.team_dir() / name
+    (d / ".git").mkdir(parents=True, exist_ok=True)
+    if toml_text is not None:
+        (d / "daimon-team.toml").write_text(toml_text, encoding="utf-8")
+    return d
+
+
+def _foreign_file(remote, author, sid, cp, logical=None, project_dir=None):
+    """Lay down a teammate's checkpoint inside a remote, either era."""
+    blob = {**cp, "author": cp.get("author") or author}
+    if logical:
+        d = remote.joinpath("projects", *logical.split("/"), "authors", author)
+        blob["team_project"] = logical
+    else:
+        d = remote / "authors" / author
+    if project_dir is not None:
+        blob["project_slug"] = store.project_slug(project_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.json").write_text(json.dumps(blob), encoding="utf-8")
+
+
+def test_read_team_drops_out_of_scope_remote(tmp_checkpoint_dir, sample_checkpoint):
+    # The clone grants membership to org/alpha only; /repo/x has no origin and
+    # no env grant — default CLOSED, exactly like the write path (#279).
+    remote = _clone_remote(
+        toml_text='[scope]\nrepos = ["https://github.com/org/alpha"]\n')
+    _foreign_file(remote, "grace", "S-g", _stamped(sample_checkpoint, "S-g", 1),
+                  project_dir="/repo/x")
+    assert store.read_team(project_dir="/repo/x") == []
+
+
+def test_read_team_local_mirror_needs_no_grant(tmp_checkpoint_dir, sample_checkpoint):
+    # Control for the scope gate: the machine-local mirror is this machine's
+    # own withheld writes — always readable, no membership required, ungated
+    # (verbatim stays verbatim; no foreign marker).
+    d = _team_author_dir("grace")
+    d.mkdir(parents=True, exist_ok=True)
+    blob = {**_stamped(sample_checkpoint, "S-g", 1), "author": "grace",
+            "project_slug": store.project_slug("/repo/x")}
+    (d / "S-g.json").write_text(json.dumps(blob), encoding="utf-8")
+    team = store.read_team(project_dir="/repo/x")
+    assert [a for a, _ in team] == ["grace"]
+    first = team[0][1]["working_context"]["recent_decisions"][0]
+    assert first["trust"] == "verbatim"
+    assert "foreign_verbatim_claim" not in first
+
+
+def test_read_team_multi_remote_env_grant_ignored(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # Two clones: the machine-global env grant cannot say WHICH remote it
+    # means — same #387 rule the outbound router applies (honor_env=False).
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    a = _clone_remote("team-a")
+    _clone_remote("team-b")
+    _foreign_file(a, "grace", "S-g", _stamped(sample_checkpoint, "S-g", 1),
+                  logical="core/x")
+    assert store.read_team(project_dir="/repo/x") == []
+
+
+def test_read_team_in_scope_foreign_arrives_redacted(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # Single clone honors the env grant (mirror of _team_write_slugs). The
+    # teammate's older daimon missed a secret shape; the local read side
+    # re-scrubs before the text reaches any surface.
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    remote = _clone_remote()
+    cp = _stamped(sample_checkpoint, "S-g", 1)
+    cp = json.loads(json.dumps(cp))  # deep copy before nested mutation
+    cp["working_context"]["recent_decisions"].append(
+        {"text": "rotate the key AKIAABCDEFGHIJKLMNOP soon", "trust": "inferred"})
+    _foreign_file(remote, "grace", "S-g", cp, logical="core/x")
+    team = store.read_team(project_dir="/repo/x")
+    assert [a for a, _ in team] == ["grace"]
+    texts = [i["text"] for i in team[0][1]["working_context"]["recent_decisions"]]
+    assert all("AKIA" not in t for t in texts)
+    assert any("[redacted:" in t for t in texts)
+
+
+def test_read_team_foreign_cannot_reassert_forgotten_value(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    forgotten_text = "Adopt the D-007 prompt for the serializer"
+    store.append_event(
+        "d-dead01", f"forgotten:{normalize.content_key(forgotten_text)}",
+        kind="tombstone", project_dir="/repo/x")
+    remote = _clone_remote()
+    _foreign_file(remote, "grace", "S-g", _stamped(sample_checkpoint, "S-g", 1),
+                  logical="core/x")
+    team = store.read_team(project_dir="/repo/x")
+    assert [a for a, _ in team] == ["grace"]
+    texts = [i["text"] for i in team[0][1]["working_context"]["recent_decisions"]]
+    assert forgotten_text not in texts
+    assert "Single-pass for Slice 1, chunking is Slice 2" in texts  # others kept
+
+
+def test_read_team_foreign_verbatim_clamped_with_marker(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # A foreign `verbatim` claim is locally unverifiable (receipts resolve
+    # against the LOCAL checkpoint dir) — indexed/returned as inferred, with a
+    # marker so render can label the claim.
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    remote = _clone_remote()
+    _foreign_file(remote, "grace", "S-g", _stamped(sample_checkpoint, "S-g", 1),
+                  logical="core/x")
+    team = store.read_team(project_dir="/repo/x")
+    first = team[0][1]["working_context"]["recent_decisions"][0]
+    assert first["trust"] == "inferred"
+    assert first["foreign_verbatim_claim"] is True
+    inferred = team[0][1]["working_context"]["recent_decisions"][1]
+    assert "foreign_verbatim_claim" not in inferred  # never claimed — unmarked
+
+
+def test_read_team_own_synced_copy_not_clamped(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # Your OWN dual-written copy synced back through a clone is not foreign —
+    # its verbatim claims ARE locally verifiable, so the clamp must not touch
+    # it (control for #423 trust handling).
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    remote = _clone_remote()
+    _foreign_file(remote, "ada", "S-a", _stamped(sample_checkpoint, "S-a", 1),
+                  logical="core/x")
+    team = store.read_team(project_dir="/repo/x")
+    assert [a for a, _ in team] == ["ada"]
+    first = team[0][1]["working_context"]["recent_decisions"][0]
+    assert first["trust"] == "verbatim"
+    assert "foreign_verbatim_claim" not in first
 
 
 # ---- latest-pointer regression guard: heal of an old session must not steal

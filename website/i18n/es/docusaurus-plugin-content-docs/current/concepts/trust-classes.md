@@ -79,6 +79,74 @@ firman al escribirse — si alguien edita el archivo después, la verificación
 al momento del briefing lo nota, y las etiquetas `✓ verbatim` afectadas se
 **degradan visiblemente** en lugar de confiarse en silencio.
 
+## La insignia de corroboración — un segundo eje
+
+Algunas líneas del briefing llevan una anotación extra junto a la etiqueta de
+confianza:
+
+```
+- [~ inferred] The staging config drift needs an owner [carried] [≈ corroborated ×2]
+```
+
+Esa insignia cuenta **avistamientos independientes** de la afirmación: cuántas
+sesiones distintas la han observado, incluyendo la que la escribió primero. Es
+una pregunta distinta de la clase de confianza, que responde *qué tipo de
+evidencia respalda esto*. Los dos ejes nunca se mezclan — la línea de arriba
+es un ítem corroborado que sigue siendo `~ inferred`, y seguirá siendo
+inferido por más sesiones que coincidan.
+
+**La insignia no es un ascenso.** Una clase de confianza cambia por exactamente
+dos vías: un `daimon reverify` con evidencia, o una acción humana explícita.
+La coincidencia no es evidencia sobre el *tipo* de una afirmación, así que
+ninguna cantidad de ella mueve la etiqueta.
+
+Qué gana la insignia:
+
+- Una sesión posterior **reafirma de forma independiente** la afirmación, con
+  sus propias palabras o con las mismas, y esa reafirmación es a su vez una
+  cita verbatim verificada contra el transcript de *esa* sesión.
+- El primer autor de la afirmación es **demostrablemente otro** — cada ítem
+  registra la sesión que lo escribió originalmente, y una sesión no puede
+  corroborarse a sí misma.
+- El total llega a **dos** — el origen registrado más al menos un testigo
+  independiente.
+
+Qué nunca la gana:
+
+- **Los ecos del propio daimon.** Una inyección de recall o un bloque de
+  briefing impresos en el transcript son salida de daimon, no un testigo. La
+  verificación de citas descarta los fragmentos que daimon inyectó antes de
+  comprobar nada, así que una reafirmación copiada de un briefing se degrada a
+  `~ inferred` y no puede corroborar. Queda excluida por construcción, no por
+  un chequeo que se pueda saltar.
+- **Sobrevivir al [arrastre](./carry.md).** Un ítem que avanza de sesión en
+  sesión es una afirmación copiada N veces, no N avistamientos.
+- **Los compañeros de equipo.** El checkpoint sincronizado de un compañero es
+  inverificable en tu máquina — sus afirmaciones verbatim llegan degradadas a
+  `inferred`, y su sesión de origen no existe en tu directorio de checkpoints.
+  La corroboración de equipo no está en esta versión.
+
+La degradación le gana a la insignia. Cualquier cosa que contradiga un ítem —
+una [resolución](./lifecycle.md), un veredicto `superseded-by`, una supersesión
+marcada como probable, una nota de estado cambiado desde la captura, una
+tumba — pone el conteo en cero desde ese momento, y la contradicción se
+muestra sola. "Tres sesiones coincidieron" impreso junto a "esto probablemente
+está mal" se lee como respaldo de la afirmación, que es justo la inversión de
+la señal. Reabrir un ítem **no** restaura lo que perdió; la corroboración se
+vuelve a ganar con un testigo, no con un cambio de estado.
+
+El conteo nunca se guarda en el ítem. Se deriva al momento de leer, desde el
+registro de eventos append-only, donde cada corroboración es una fila que
+nombra la sesión que coincidió y el ítem sobre el que coincidió — así los
+testigos son auditables, y ninguna edición de un archivo de checkpoint puede
+inventar un número que el registro no respalde.
+
+La corroboración tampoco entra en el ranking. No sube el puntaje de un ítem,
+ni en el briefing ni en recall. Una insignia que levantara un ítem lo haría
+aparecer más seguido, lo que lo inyectaría en más transcripts, lo que
+produciría más reafirmaciones — un ciclo que mide cuántas veces daimon se
+mostró un ítem a sí mismo, y nada sobre el mundo.
+
 ## VERIFY BEFORE TRUSTING
 
 Los briefings abren con una sección de ítems que describen estado que pudo

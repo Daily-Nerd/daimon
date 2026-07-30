@@ -36,6 +36,10 @@ DEGRADE_NOTE = (
     "⚠ RECEIPT UNVERIFIED — this checkpoint claims signed provenance, but its "
     "receipt is missing or no longer matches the stored bytes. The 'verbatim' "
     "quotes below are shown UNVERIFIED (run `daimon verify-receipt`).")
+# #423: a teammate's `verbatim` claim cannot be verified on this machine —
+# receipts resolve against the LOCAL checkpoint dir — so the inbound gate
+# clamps it to inferred and marks it; render states BOTH facts visibly.
+FOREIGN_VERBATIM_NOTE = "[teammate claims verbatim — unverifiable here]"
 
 
 def receipt_degraded(checkpoint) -> bool:
@@ -59,6 +63,37 @@ def _mark(item, degraded: bool = False) -> str:
     return _UNTAGGED_MARK
 
 
+# #268: how many independent sightings a claim needs before the render says
+# so. The origin of record is the first, so ONE corroborating session clears
+# the bar — and a lone unwitnessed claim stays silent rather than announcing
+# "×1", which would read as evidence where there is none.
+CORROBORATION_MIN = 2
+
+
+def corroboration_badge(item) -> str:
+    """The ` [≈ corroborated ×N]` annotation for an item, or "" (#268 slice 4).
+
+    A SEPARATE axis from the trust class — `_mark` says what KIND of evidence
+    backs the claim, this says how many independent sessions have witnessed
+    it. A corroborated inferred item is still inferred.
+
+    Two suppressions, same rule: a contradiction never co-renders with a
+    well-witnessed badge. An item flagged as likely superseded (#14) or
+    contradicted by the world (#365) shows the contradiction ALONE — a witness
+    count printed beside "this is probably wrong" reads as support for the
+    claim, inverting the very signal corroboration exists to carry. Silence
+    costs a boost; the inversion costs the axis.
+
+    One literal, shared by the plain path (_line) and the rich panel
+    (render._rich_brief), so the two can never drift."""
+    n = item.get("_corroborated")
+    if not isinstance(n, int) or n < CORROBORATION_MIN:
+        return ""
+    if item.get("_supersede_candidate") or item.get("_worldcheck"):
+        return ""
+    return f" [≈ corroborated ×{n}]"
+
+
 def _line(item, degraded: bool = False) -> str:
     # #134: dict.get returns the stored None for a present-but-null key (the
     # default only fires for an ABSENT key), so a torn/legacy checkpoint could
@@ -71,6 +106,11 @@ def _line(item, degraded: bool = False) -> str:
         # Epistemic honesty, same philosophy as trust marks: a loop carried
         # from an older session must not read as fresh context (#33 Phase 2).
         base += " [carried]"
+    if item.get("foreign_verbatim_claim"):
+        # #423: the inbound gate clamped a teammate's verbatim claim to
+        # inferred; state both facts — claimed verbatim, unverifiable here.
+        base += f" {FOREIGN_VERBATIM_NOTE}"
+    base += corroboration_badge(item)
     if quote:
         base += f'  — "{quote}"'
     candidate = item.get("_supersede_candidate")
@@ -308,6 +348,58 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
         items[:] = kept
 
     return out, withheld, candidates
+
+
+# ---- #268: corroboration — independent sightings, stamped for the render ----
+
+
+def mark_corroborated(checkpoint, corroborations: dict):
+    """Stamp corroborated items with a transient `_corroborated = N` count and
+    return the result; pure, no I/O — the caller does the read, exactly as
+    `withhold` takes `store.resolutions()`'s output (#268 slice 4).
+
+    `corroborations` is `store.corroborations()`'s shape, keyed by bare item
+    id. N = 1 + the EFFECTIVE origins: the origin of record is the claim's
+    first sighting, and every session in `origins` is one more. `recorded` is
+    deliberately not counted — a witness discounted by a later contradiction
+    stays on the record without paying, and re-deriving that verdict here
+    would be a second opinion about a question the fold already answered.
+    Below `CORROBORATION_MIN` nothing is stamped at all, so an uncorroborated
+    item is byte-identical to its pre-#268 render.
+
+    Transient like withhold's candidate stamps and worldcheck's flags: the
+    count lives in events.jsonl, and a `_corroborated` key on a stored
+    checkpoint would be a second, forgeable copy of it. Nothing here writes.
+
+    No corroborations, or a non-dict checkpoint -> the input UNCHANGED, same
+    no-op idiom as withhold/carry.merge: no copy unless something is actually
+    stamped, so the common case (nothing witnessed yet) costs nothing."""
+    if not isinstance(checkpoint, dict) or not corroborations:
+        return checkpoint
+
+    # Dry run over the ORIGINAL, then one deepcopy — withhold's shape exactly.
+    to_stamp = []  # [(section, key, index, n)]
+    for section, key in store._ITEM_LISTS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            entry = corroborations.get(item.get("id"))
+            if not isinstance(entry, dict):
+                continue
+            n = 1 + len(entry.get("origins") or ())
+            if n >= CORROBORATION_MIN:
+                to_stamp.append((section, key, idx, n))
+
+    if not to_stamp:
+        return checkpoint
+
+    out = copy.deepcopy(checkpoint)
+    for section, key, idx, n in to_stamp:
+        out[section][key][idx]["_corroborated"] = n
+    return out
 
 
 # ---- #215: staleness budget — carried items nobody has world-checked ----
