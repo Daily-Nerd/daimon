@@ -678,8 +678,9 @@ def test_cli_status_json_shape(
                          "siblings", "health", "team", "crash", "disabled",
                          "skipped_recent", "recall_error", "recall_index",
                          "receipts", "capture_alarm", "hook_drift",
-                         "rescue_gap"}
+                         "rescue_gap", "forget_hits"}
     assert data["capture_alarm"] is None  # #265 FAIL-only probe silent by default
+    assert data["forget_hits"]["count"] == 0  # #404 nothing suppressed yet
     assert data["team"] is None  # no team remote configured -> explicit null (#113)
     assert data["receipts"] is None  # #204 feature off -> explicit null
     assert data["project"]["exists"] is True

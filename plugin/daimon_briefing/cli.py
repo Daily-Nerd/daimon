@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, carry, config, configure, harvest, llm, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, carry, config, configure, harvest, llm, normalize, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -944,8 +944,12 @@ def _cmd_forget(args) -> int:
         _note_usage("forget:dry-run")
         print(f"would forget {target['id']}: {target.get('text', '')}")
         return 0
-    content_hash = hashlib.sha256(
-        str(target.get("text") or "").encode("utf-8")).hexdigest()[:12]
+    # #402: key the tombstone on the CANONICAL value (normalize.content_key),
+    # not the raw bytes — so a later re-extraction of the same claim (different
+    # case, invisible chars, a look-alike glyph) folds to the same key and is
+    # suppressed at capture. Still a hash, never the text: removal means the
+    # content leaves the audit trail too (#321).
+    content_hash = normalize.content_key(target.get("text") or "")
     for section, key in store._ITEM_LISTS:
         lst = (checkpoint.get(section) or {}).get(key)
         if isinstance(lst, list):
@@ -1494,6 +1498,10 @@ def _status_world(project_arg=None) -> dict:
     # One receipts line, only when the feature is on (#204) — mirrors the team
     # line's "no line when unused" rule so status stays quiet by default.
     receipts_line = receipts.status_line(project)
+    # #404: forget-suppression hit accounting — the count + most-recent stamp,
+    # surfaced only when non-zero (same "quiet by default" rule). Claim
+    # snapshots stay in the ledger; status shows only the number.
+    forget_hits = store.forget_hit_stats(project)
     identity = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
@@ -1509,7 +1517,8 @@ def _status_world(project_arg=None) -> dict:
         "disabled": disabled, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
-        "hook_drift": hook_drift, "rescue_gap": rescue_gap, "rc": rc,
+        "hook_drift": hook_drift, "rescue_gap": rescue_gap,
+        "forget_hits": forget_hits, "rc": rc,
     }
 
 
@@ -1526,6 +1535,7 @@ def status_payload(project_arg=None) -> tuple:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "forget_hits": w["forget_hits"],
     }
     return payload, w["rc"]
 
@@ -1547,6 +1557,7 @@ def _cmd_status(args) -> int:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "forget_hits": w["forget_hits"],
     })
     return w["rc"]
 

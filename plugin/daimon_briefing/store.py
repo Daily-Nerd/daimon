@@ -34,7 +34,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, receipts, redact, schema, serializer, teamproject
+from . import config, normalize, receipts, redact, schema, serializer, teamproject
 
 log = logging.getLogger("daimon_briefing")
 
@@ -497,6 +497,16 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # checkpoint so read_team can attribute it later, even when team-write is off.
     checkpoint.setdefault("author", config.author())
     _redact_checkpoint(checkpoint)
+    # #402: value-keyed re-capture gate — drop any item whose canonical value
+    # was forgotten for this project, BEFORE it is stamped, signed, indexed, or
+    # mirrored. Runs after redaction so the compared text matches the stored
+    # (post-redaction) text the forget command keyed the tombstone on. No-op
+    # (zero cost) when nothing was forgotten here.
+    forget_dropped = _drop_forgotten(checkpoint, project_dir)
+    if forget_dropped:
+        # #404: account each suppression on the telemetry ledger. Best-effort
+        # (never fatal) — a hit record must never fail the capture it observes.
+        record_forget_hits(forget_dropped, project_dir)
     _stamp_item_ids(checkpoint)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
@@ -1020,6 +1030,83 @@ def verification_counts(project_dir=None) -> dict:
     return out
 
 
+# ---- #404: forget-suppression hit accounting ----
+
+# A capture-time forget suppression is otherwise silent. Account it on a
+# SECOND telemetry stream (never events.jsonl: scar 0025 — any new event kind
+# there resolves-and-hides the item it names), exactly as append_verification
+# does for the rejection ledger.
+_FORGET_HITS = "forget-hits.jsonl"
+
+
+def _forget_hits_path(project_dir=None):
+    slug = project_slug(project_dir)
+    if not slug:
+        return None
+    return config.checkpoint_dir() / slug / _FORGET_HITS
+
+
+def record_forget_hits(items, project_dir=None) -> bool:
+    """Append one row per capture-time forget suppression (#404): {ts, key}.
+    Mirrors append_verification's contract — silent no-op under the kill switch
+    or an unknown project, never fatal (a telemetry write must never fail a
+    capture).
+
+    Records ONLY the canonical hash key + timestamp — NEVER the text or any
+    prefix of it. forget's whole guarantee (#321) is that a forgotten value's
+    content leaves disk; redact_text catches known secret shapes but not the
+    free-text PII users actually forget (a name, a client, "the X office
+    closed"), so re-persisting even a short snapshot here would reopen the very
+    leak forget closes. The published value is the COUNT, not the content."""
+    if config.is_disabled():
+        return False
+    path = _forget_hits_path(project_dir)
+    if path is None or not items:
+        return False
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                key = normalize.content_key(item.get("text") or "")
+                f.write(json.dumps({"ts": ts, "key": key}) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def forget_hit_stats(project_dir=None) -> dict:
+    """Read-side rollup of the forget-hit ledger (#404): total suppressions and
+    the most recent timestamp. The number the project already publishes for
+    capture health and verification downgrades, now answerable for "how often
+    did the tombstone catch a re-assertion here". Count + timestamp only — the
+    ledger holds no content to surface. Fails open to zeroes (missing/corrupt
+    log, unknown project) — same posture as verification_counts and the
+    resolutions fold."""
+    out: dict = {"count": 0, "last_hit_at": None}
+    path = _forget_hits_path(project_dir)
+    if path is None:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return out
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        out["count"] += 1
+        ts = row.get("ts")
+        if ts and (out["last_hit_at"] is None or ts > out["last_hit_at"]):
+            out["last_hit_at"] = ts
+    return out
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "") -> bool:
@@ -1136,3 +1223,64 @@ def is_resolved(event) -> bool:
                       # every consumer (carry, withhold, future) inherits
                       # no-suppression without knowing candidates exist.
     return not status.startswith("reopen")
+
+
+# ---- #402: value-keyed forget suppression ----
+
+# `forgotten:` status prefix -> canonical content key. The forget command
+# (cli._cmd_forget) writes `forgotten:<normalize.content_key(text)>`; this
+# derives the live set of tombstoned values at read time.
+_FORGOTTEN_PREFIX = "forgotten:"
+
+
+def forgotten_content_keys(project_dir=None) -> set[str]:
+    """The set of canonical content keys the forget ledger has tombstoned for
+    this project (#402). Derived at read time from the `forgotten:` events — no
+    new store surface. Scoped GLOBALLY per project and keyed on the canonical
+    VALUE only (never a subject/predicate/scope tuple): free-text items have no
+    such tuple, and per-key scoping would let the same value be re-asserted
+    under a different framing. Only the LATEST event per ref counts, so a later
+    `reopen` lifts the tombstone (same fold recall/withhold use). Fails open to
+    an empty set (missing/corrupt log, unknown project)."""
+    keys: set[str] = set()
+    for evt in resolutions(project_dir=project_dir).values():
+        status = str(evt.get("status") or "")
+        if status.lower().startswith(_FORGOTTEN_PREFIX):
+            key = status[len(_FORGOTTEN_PREFIX):].strip()
+            if key:
+                keys.add(key)
+    return keys
+
+
+def _drop_forgotten(checkpoint: dict, project_dir) -> list[dict]:
+    """Value-keyed re-capture gate (#402): drop every item whose canonicalized
+    text hashes into this project's forgotten set BEFORE it reaches the
+    checkpoint on disk. This is what makes "a forgotten value stays gone" hold
+    across a fresh re-extraction of the same sentence — not merely a
+    render-time withhold, which leaves the value sitting on disk. Returns the
+    dropped items so the caller can account the suppression hit (#404).
+
+    Fail-safe: over-suppresses on a hash collision (via the bounded content
+    key) — a forgotten value re-appearing is the worse failure. A no-op with
+    zero cost when nothing was ever forgotten here."""
+    keys = forgotten_content_keys(project_dir)
+    if not keys:
+        return []
+    dropped: list[dict] = []
+    for section, key in _ITEM_LISTS:
+        block = checkpoint.get(section)
+        if not isinstance(block, dict):
+            continue
+        lst = block.get(key)
+        if not isinstance(lst, list):
+            continue
+        kept = []
+        for item in lst:
+            if (isinstance(item, dict)
+                    and normalize.content_key(item.get("text") or "") in keys):
+                dropped.append(item)
+            else:
+                kept.append(item)
+        if len(kept) != len(lst):
+            block[key] = kept
+    return dropped
