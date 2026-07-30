@@ -393,14 +393,31 @@ def _emit_supersede_candidates(pairs, events: dict, project) -> int:
         candidate-changed case (prior candidate names a DIFFERENT new_id —
         the carry target moved, so a fresh candidate replaces it as latest).
 
+    Forget gate (#419): `old_text` is a PREV item's raw text, and this runs
+    BEFORE write_checkpoint's forget gate — so a forgotten value surviving in
+    the prev checkpoint under a never-tombstoned id (sibling-id shape, #418)
+    would land as plaintext `item_text` in append-only events.jsonl, forever.
+    A pair whose old_text canonicalizes into the forgotten set (the same
+    normalize.content_key keying store._drop_forgotten uses) is skipped
+    entirely. Fail-safe direction: if the forgotten-keys read raises, emit
+    NOTHING — a missed suggestion costs a candidate event; a leaked value
+    costs the deletion guarantee.
+
     Returns the number of events actually appended."""
     appended = 0
+    try:
+        forgotten = store.forgotten_content_keys(project_dir=project)
+    except Exception:
+        return 0  # can't prove a value isn't forgotten -> emit nothing
     for old_id, new_id, old_text in pairs:
         if not new_id:
             continue  # defense-in-depth: never write a candidate with no
                       # target ("supersede-candidate:") — the wiring stamps
                       # ids before binding, but a caller that skips that
                       # step must not corrupt the event log
+        if forgotten and normalize.content_key(old_text or "") in forgotten:
+            continue  # #419: tombstoned VALUE — its text must never reach
+                      # the append-only audit trail
         prior = events.get(old_id)
         if prior and str(prior.get("source") or "") != "serializer":
             continue  # human spoke — machine stays silent forever
