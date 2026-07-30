@@ -96,3 +96,81 @@ def test_small_clock_skew_tolerated_as_fresh():
         "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_NOW + 60))  # 60s in the future
     w = scoring.effective_weight(skewed, "recent_decision", _NOW)
     assert w == scoring.effective_weight(_item(0, 5), "recent_decision", _NOW)
+
+
+# ---- #408: trust class as an authority CEILING ----
+
+
+def test_trust_ceiling_table_is_monotone_verbatim_on_top():
+    # The table is a monotone lid: verbatim earns the top band, and every
+    # lower-trust class (inferred, untagged/unknown) sits strictly below it.
+    v = scoring.trust_ceiling("verbatim")
+    i = scoring.trust_ceiling("inferred")
+    untagged = scoring.trust_ceiling(None)
+    unknown = scoring.trust_ceiling("not-a-real-class")
+    assert v > i                    # verbatim strictly above inferred
+    assert i >= untagged >= 0.0     # non-increasing down the ladder
+    assert untagged == unknown      # absent tag and unknown tag share the lid
+
+
+def test_no_input_lifts_effective_weight_above_trust_ceiling():
+    """Architecture guard (#408): effective_weight is the ONE authority
+    function every read path (briefing order, carry survival, recall rank)
+    routes through. Drive it with an adversarial cross-product — max
+    importance, every scoring type, ages that maximize overdue escalation,
+    future and missing stamps, out-of-range importances — and assert the
+    output NEVER crosses the record's trust ceiling.
+
+    This asserts the cap is UNCONDITIONAL: there is no combination of
+    importance / recency / overdue escalation that promotes a lower-trust
+    item into a higher band. It is a test that the promoting path does not
+    EXIST, not a test that some path behaves."""
+    types = list(scoring.TYPE_RULES) + ["no-such-type"]
+    ages = [None, -30, -1, 0, 1, 7, 14, 15, 21, 30, 45, 60, 90, 200, 3650]
+    importances = [None, -5, 0, 1, 5, 9, 10, 11, 999]  # incl. out-of-range
+    for trust in ("verbatim", "inferred", None, "bogus-class", ""):
+        ceiling = scoring.trust_ceiling(trust)
+        for t in types:
+            for age in ages:
+                for imp in importances:
+                    it: dict = {}
+                    if trust is not None:
+                        it["trust"] = trust
+                    if age is not None:
+                        it["first_seen"] = _iso(age)
+                    if imp is not None:
+                        it["importance"] = imp
+                    w = scoring.effective_weight(it, t, _NOW)
+                    assert w <= ceiling + 1e-9, (trust, t, age, imp, w, ceiling)
+
+
+def test_inferred_cannot_reach_verbatim_band():
+    # The strongest an inferred item can get — fresh, max importance — still
+    # sits strictly below the authority a verbatim item of the SAME shape
+    # reaches. Recency / importance / recall frequency cannot close this gap:
+    # the ceiling is a property of the record, not the score.
+    shape = {"first_seen": _iso(0), "importance": 10}
+    inferred = scoring.effective_weight(
+        {**shape, "trust": "inferred"}, "recent_decision", _NOW)
+    verbatim = scoring.effective_weight(
+        {**shape, "trust": "verbatim"}, "recent_decision", _NOW)
+    assert inferred < verbatim
+    assert inferred <= scoring.trust_ceiling("inferred")
+
+
+def test_overdue_inferred_open_question_still_capped():
+    # Escalation is the sharpest promotion vector — an overdue open loop grows
+    # its own weight back. It must NOT let an inferred item cross its ceiling,
+    # however far overdue: escalation counters decay, it never defeats trust.
+    for age in (15, 21, 30, 45, 90, 200):
+        w = scoring.effective_weight(
+            {"trust": "inferred", "first_seen": _iso(age), "importance": 10},
+            "open_question", _NOW)
+        assert w <= scoring.trust_ceiling("inferred") + 1e-9
+
+
+def test_verbatim_keeps_full_escalation_range():
+    # The ceiling must not clip a verified verbatim item: its lid is the
+    # escalation cap, so a verbatim open loop keeps every bit of overdue boost.
+    v_ceiling = scoring.trust_ceiling("verbatim")
+    assert v_ceiling >= scoring._ESCALATION_CAP

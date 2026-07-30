@@ -861,7 +861,11 @@ def suggest(prompt: str, project_dir=None, current_session=None,
             continue
         relevance = max(0.0, -float(r["rank"]))  # FTS5 bm25(): smaller = better
         weight = scoring.effective_weight(
-            {"importance": r["importance"], "first_seen": r["first_seen"]},
+            {"importance": r["importance"], "first_seen": r["first_seen"],
+             # trust is part of the record's authority (#408): drop it here and
+             # the trust ceiling never applies to recall ranking, letting an
+             # inferred item ride relevance x recency to a verbatim item's band.
+             "trust": r["trust"]},
             _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
         if r["superseded_by"]:
             weight *= 0.7  # flagged and ranked down, never hidden (#112)
