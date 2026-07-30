@@ -2545,8 +2545,11 @@ def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
     sys.__excepthook__(exc_type, exc, tb)
 
 
-def main(argv=None) -> int:
-    sys.excepthook = _crash_stamp_excepthook  # #92: stamp uncaught crashes
+def build_parser() -> argparse.ArgumentParser:
+    """The full daimon parser tree, extracted from main (#431) so tests can
+    walk the subparser registry mechanically — the write-audit architecture
+    guard enumerates every command argparse knows about, so a NEW subcommand
+    is enumerated (and audited) automatically the moment it is registered."""
     # #68: one formatter selection for the WHOLE parser tree. argparse does not
     # propagate formatter_class from parent to subparser, so every add_parser
     # call below must receive it — done here by patching add_parser on each
@@ -2955,6 +2958,12 @@ def main(argv=None) -> int:
         help="serve MCP over stdio until EOF — reads only, never writes; "
              "register in your host's MCP config (see the docs site)")
     pm_serve.set_defaults(func=_cmd_mcp_serve)
+    return parser
+
+
+def main(argv=None) -> int:
+    sys.excepthook = _crash_stamp_excepthook  # #92: stamp uncaught crashes
+    parser = build_parser()
 
     # Slugs are munged absolute paths, so they START with "-" ("/Users/x" ->
     # "-Users-x") — argparse reads `--slug -Users-x` as a missing argument and
