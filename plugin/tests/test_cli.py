@@ -3095,6 +3095,236 @@ def test_stats_surfaces_machine_skip_apart_from_recall_inject(
     assert data["usage"]["recall-inject"] == 2  # denominator keeps every fire
 
 
+# ---- #451: injection dedup is content-keyed, not only origin-keyed. Measured
+# ---- on the maintainer's corpus: 15.5% of injections repeated text already
+# ---- injected that session, and every repeated group was CROSS-origin.
+
+# All four texts share the same four prompt terms and the same word count, so
+# FTS5 bm25 is effectively flat across them and #78 importance is the ranking
+# lever the fixtures actually steer with.
+_CK_DUP = "litellm gateway cache pinning stalls the release"
+_CK_DISTINCT_A = "litellm gateway cache warmup skips the release"
+_CK_DISTINCT_B = "litellm gateway cache purge blocks the release"
+_CK_PROMPT = "litellm gateway cache release trouble again"
+
+
+def _seed_item(session, text, importance, project="/repo/x",
+               created="2026-06-20T00:00:00Z"):
+    """One checkpoint carrying one open question. The active topic is
+    deliberately term-disjoint from `_CK_PROMPT` so it can never become the
+    row `suggest` returns for the session."""
+    from daimon_briefing import store
+
+    store.write_checkpoint(
+        session,
+        {"session_id": session, "created": created,
+         "working_context": {
+             "active_topic": {"text": f"scratch notes {session}",
+                              "trust": "inferred"},
+             "open_questions": [{
+                 "text": text, "trust": "verbatim", "quote": text,
+                 "importance": importance, "first_seen": created}],
+             "recent_decisions": []},
+         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                                "contradictions_flagged": []}},
+        project_dir=project,
+    )
+
+
+def _seed_latest_decoy(project="/repo/x"):
+    """Written LAST so the briefing-already-covered exclusion (project latest +
+    global latest) lands on a checkpoint no fixture prompt matches."""
+    _seed_item("S-latest", "unrelated newer topiary work", 1, project=project,
+               created="2026-06-28T00:00:00Z")
+
+
+def _quoted_texts(out: str) -> list[str]:
+    """The injected item texts only — not the trailing `daimon recall "..."`
+    deep-dive hint, which quotes the prompt's salient terms."""
+    return re.findall(r'ago\): "(.*?)" \[', out)
+
+
+def test_recall_inject_does_not_repeat_content_from_another_origin(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Two distinct candidates outrank the dup copies, so the first prompt spends
+    # its budget on them; the second prompt is where the surviving dup copy
+    # would re-inject text the session already saw, from a different origin.
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_item("S-dup-lo", _CK_DUP, 3)
+    _seed_item("S-distinct-a", _CK_DISTINCT_A, 9)
+    _seed_item("S-distinct-b", _CK_DISTINCT_B, 8)
+    _seed_latest_decoy()
+
+    _rc1, out1 = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert _CK_DUP in out1  # the dup text IS injected once — that is fine
+    rc2, out2 = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc2 == 0
+    assert _CK_DUP not in out2  # same text, different origin -> suppressed
+    assert out2 != ""  # ... and the remaining distinct candidate takes its slot
+
+
+def test_recall_inject_never_spends_both_slots_on_one_content_key(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # The worst measured shape: a whole 2-slot budget on two copies of one rule
+    # from two origins. Here both dup copies outrank the distinct candidate.
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_item("S-dup-lo", _CK_DUP, 9)
+    _seed_item("S-distinct-a", _CK_DISTINCT_A, 8)
+    _seed_latest_decoy()
+
+    rc, out = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc == 0
+    texts = _quoted_texts(out)
+    assert len(texts) == 2  # suppression promotes, it never shrinks the budget
+    assert len(set(texts)) == 2
+
+
+def test_recall_inject_content_key_folds_case_and_whitespace_variants(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # normalize.content_key is normalized identity, not similarity: casing,
+    # collapsed whitespace and unicode confusables fold; different WORDS do not.
+    noisy = "  LiteLLM   Gateway  Cache  Pinning  Stalls  The  Release  "
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_item("S-dup-lo", noisy, 9)
+    _seed_item("S-distinct-a", _CK_DISTINCT_A, 8)
+    _seed_latest_decoy()
+
+    rc, out = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc == 0
+    assert _CK_DISTINCT_A in out  # the case/space variant was folded away
+    assert noisy.strip() not in out
+
+
+def test_recall_inject_origin_cooldown_survives_content_keying(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # The measured 0 same-origin repeats must stay 0: re-suggesting the SAME
+    # checkpoint is still blocked, whatever its content key.
+    _seed_recall_history()
+    _rc1, out1 = _inject(monkeypatch, capsys,
+                         "debugging the litellm gateway cache pinning again")
+    rc2, out2 = _inject(monkeypatch, capsys,
+                        "still stuck on that litellm gateway cache pinning")
+    assert out1 != ""
+    assert rc2 == 0 and out2 == ""
+
+
+def test_recall_inject_reads_legacy_flat_list_seen_file_and_upgrades_it(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Pre-#451 state on disk is a flat JSON list of origin ids. It must be read
+    # as origins (suppression preserved) and rewritten in the new shape.
+    from daimon_briefing import config, normalize
+
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_item("S-distinct-a", _CK_DISTINCT_A, 9)
+    _seed_latest_decoy()
+    seen = config.recall_seen_dir() / "S-now.json"
+    seen.parent.mkdir(parents=True, exist_ok=True)
+    seen.write_text(json.dumps(["S-dup-hi"]), encoding="utf-8")
+
+    rc, out = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc == 0
+    assert _CK_DUP not in out  # legacy origin entry still suppresses
+    assert _CK_DISTINCT_A in out
+    upgraded = json.loads(seen.read_text(encoding="utf-8"))
+    assert upgraded["origins"] == ["S-distinct-a", "S-dup-hi"]
+    assert upgraded["content_keys"] == [normalize.content_key(_CK_DISTINCT_A)]
+
+
+def test_recall_inject_handles_codex_format_origin_id(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Origin ids are not all uuids — Codex sessions carry rollout-<timestamp>-…
+    codex = "rollout-2026-07-11T19-04-27-0f3c9a11"
+    _seed_item(codex, _CK_DUP, 10)
+    _seed_item("S-dup-lo", _CK_DUP, 9)
+    _seed_item("S-distinct-a", _CK_DISTINCT_A, 8)
+    _seed_latest_decoy()
+
+    rc, out = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc == 0 and codex in out
+    texts = _quoted_texts(out)
+    assert len(texts) == 2 and len(set(texts)) == 2
+
+
+def test_recall_inject_unreadable_seen_state_falls_open_to_suggesting(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Cooldown state is best-effort: a corrupt or unreadable file costs one
+    # extra suggestion, never a swallowed one and never a non-zero rc.
+    from daimon_briefing import config
+
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_latest_decoy()
+    seen = config.recall_seen_dir() / "S-now.json"
+    seen.parent.mkdir(parents=True, exist_ok=True)
+    seen.write_text("{not json at all", encoding="utf-8")
+
+    rc, out = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc == 0 and _CK_DUP in out
+
+
+@pytest.mark.parametrize("payload", ['{"origins": 5}', '{"content_keys": []}',
+                                     '"a bare string"'])
+def test_recall_inject_malformed_seen_shapes_fall_open(
+        payload, tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import config
+
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_latest_decoy()
+    seen = config.recall_seen_dir() / "S-now.json"
+    seen.parent.mkdir(parents=True, exist_ok=True)
+    seen.write_text(payload, encoding="utf-8")
+
+    rc, out = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc == 0 and _CK_DUP in out
+
+
+def test_recall_inject_unwritable_seen_state_still_suggests_rc_zero(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import cli as cli_mod
+
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_latest_decoy()
+
+    def boom(_path, _origins, _keys):
+        raise AssertionError("_save_seen must swallow its own IO trouble")
+
+    monkeypatch.setattr(cli_mod, "_save_seen", boom)
+    rc, out = _inject(monkeypatch, capsys, _CK_PROMPT)
+    assert rc == 0 and _CK_DUP in out
+
+
+def test_recall_inject_content_dedup_is_counted_for_measurement(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # The issue's expected effect is a rate, so the suppression has to be
+    # readable from `daimon stats` the way #450's machine skip is.
+    _seed_item("S-dup-hi", _CK_DUP, 10)
+    _seed_item("S-dup-lo", _CK_DUP, 9)
+    _seed_item("S-distinct-a", _CK_DISTINCT_A, 8)
+    _seed_latest_decoy()
+
+    _inject(monkeypatch, capsys, _CK_PROMPT)
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["recall-inject:dedup-content"] == 1
+    assert data["usage"]["recall-inject"] == 1
+
+
+def test_save_seen_prunes_week_old_cooldown_files(tmp_checkpoint_dir):
+    from daimon_briefing import config, cli as cli_mod
+
+    seen_dir = config.recall_seen_dir()
+    seen_dir.mkdir(parents=True, exist_ok=True)
+    stale = seen_dir / "S-ancient.json"
+    stale.write_text("[]", encoding="utf-8")
+    old = time.time() - (8 * 86400)
+    os.utime(stale, (old, old))
+
+    cli_mod._save_seen(seen_dir / "S-fresh.json", {"S-o"}, {"deadbeef"})
+    assert not stale.exists()
+    assert json.loads((seen_dir / "S-fresh.json").read_text()) == {
+        "origins": ["S-o"], "content_keys": ["deadbeef"]}
+
+
 # ---- #33 Phase 2: deterministic carry wired into the serialize path ----
 
 

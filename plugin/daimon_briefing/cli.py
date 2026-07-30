@@ -1029,27 +1029,49 @@ def _cmd_log(args) -> int:
 
 _SEEN_PRUNE_SECONDS = 7 * 86400  # cooldown files for week-old sessions are dead
 
+_INJECT_BUDGET = 2   # slots per prompt (#125 noise budget)
+_INJECT_FETCH = 8    # candidates asked of `suggest`, i.e. budget + headroom:
+                     # content dedup below must be able to PROMOTE the next
+                     # distinct candidate, and it can only promote from
+                     # candidates it was given (#451)
+
 
 def _seen_path(session: str):
     """Cooldown-state file for one session, or None when the id is unusable
-    (empty, or path-hostile — the id becomes a filename)."""
+    (empty, or path-hostile — the id becomes a filename). Origin ids are not
+    all uuids: a Codex session id is `rollout-<timestamp>-<hex>`, which is a
+    fine filename and must keep working."""
     if not session or "/" in session or "\\" in session or ".." in session:
         return None
     return config.recall_seen_dir() / f"{session}.json"
 
 
-def _load_seen(path) -> set:
+def _load_seen(path) -> tuple[set, set]:
+    """(origin session ids, content keys) already injected this host session.
+
+    Two on-disk shapes are read. The pre-#451 file is a flat JSON list of
+    origin ids; it loads as origins with NO content keys, so an in-flight
+    session keeps every suppression it had and simply starts collecting
+    content keys from its next injection. The current shape is
+    {"origins": [...], "content_keys": [...]}. Anything else — corrupt,
+    truncated, a bare scalar — is state we cannot trust, and cooldown is
+    best-effort: fall open to an empty set and pay one extra suggestion."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return {str(s) for s in raw} if isinstance(raw, list) else set()
-    except (OSError, json.JSONDecodeError):
-        return set()
+        if isinstance(raw, list):
+            return {str(s) for s in raw}, set()
+        return ({str(s) for s in raw["origins"]},
+                {str(k) for k in raw["content_keys"]})
+    except (OSError, json.JSONDecodeError, TypeError, KeyError):
+        return set(), set()
 
 
-def _save_seen(path, seen: set) -> None:
+def _save_seen(path, origins: set, content_keys: set) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(sorted(seen)), encoding="utf-8")
+        path.write_text(json.dumps({"origins": sorted(origins),
+                                    "content_keys": sorted(content_keys)}),
+                        encoding="utf-8")
         # Opportunistic prune: cooldown state for long-dead sessions.
         cutoff = time.time() - _SEEN_PRUNE_SECONDS
         for p in path.parent.iterdir():
@@ -1110,18 +1132,47 @@ def _cmd_recall_inject(args) -> int:
             if sid:
                 exclude.add(str(sid))
         seen_file = _seen_path(session)
-        seen = _load_seen(seen_file) if seen_file else set()
+        seen_origins, seen_keys = (_load_seen(seen_file) if seen_file
+                                   else (set(), set()))
         matches = recall.suggest(prompt, project_dir=project,
                                  current_session=session,
-                                 exclude_sessions=exclude | seen)
-        if not matches:
+                                 exclude_sessions=exclude | seen_origins,
+                                 limit=_INJECT_FETCH)
+        # #451: an origin id is not a content identity. The same claim carried
+        # by two checkpoints (sibling-id copies — the read-side twin of the
+        # value-keyed forget arc, #424/#435) passes the origin cooldown and
+        # re-injects as if it were new: 15.5% of measured injections repeated
+        # text the session had already seen, every repeated group cross-origin.
+        # So the budget is spent on distinct content keys, within one injection
+        # AND across the session, and a suppressed candidate yields its slot to
+        # the next distinct one instead of shrinking the injection.
+        chosen: list[dict] = []
+        chosen_keys: set[str] = set()
+        suppressed = False
+        for m in matches:
+            key = normalize.content_key(m.get("text") or "")
+            if key in seen_keys or key in chosen_keys:
+                suppressed = True
+                continue
+            chosen_keys.add(key)
+            chosen.append(m)
+            if len(chosen) >= _INJECT_BUDGET:
+                break
+        if suppressed:
+            # Counted apart from `recall-inject`, which still counts every fire:
+            # the issue's claim is a RATE, so the pair has to be readable from
+            # `daimon stats` the way #450's machine skip is.
+            _note_usage("recall-inject:dedup-content")
+        if not chosen:
             return 0
         now = time.time()
         terms = recall.salient_terms(prompt)
-        for m in matches:
+        for m in chosen:
             print(_suggest_line(m, terms, now))
         if seen_file:
-            _save_seen(seen_file, seen | {str(m["session_id"]) for m in matches})
+            _save_seen(seen_file,
+                       seen_origins | {str(m["session_id"]) for m in chosen},
+                       seen_keys | chosen_keys)
     except Exception:  # noqa: BLE001 — see docstring: fail-open, always rc 0
         pass
     return 0
