@@ -45,7 +45,8 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, policy, redact, schema, scoring, store, teamproject
+from . import (config, normalize, policy, redact, schema, scoring, store,
+               teamproject)
 
 log = logging.getLogger("daimon.recall")
 
@@ -434,6 +435,7 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
         # The bucket dir NAME is the slug, and slug munging is idempotent
         # (guarded by test_project_slug_is_idempotent_on_slugs), so it routes
         # store.resolutions exactly like a project dir.
+        forgotten_ids: set[str] = set()
         for ref, evt in store.resolutions(project_dir=bucket.name).items():
             if not store.is_resolved(evt):
                 continue
@@ -443,20 +445,7 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             # Prefix-match like every other status reader; only the LATEST
             # event counts (a later reopen un-hides history by design).
             if status.lower().startswith("forgotten"):
-                rows = conn.execute(
-                    "SELECT id, text, quote, scene FROM items"
-                    " WHERE item_id = ? AND project_slug IS ?",
-                    (ref, bucket.name)).fetchall()
-                for rowid, text, quote, scene in rows:
-                    # contentless fts5: deletion is the special 'delete'
-                    # INSERT and must repeat the original column values
-                    conn.execute(
-                        "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
-                        " VALUES('delete', ?, ?, ?, ?)",
-                        (rowid, text, quote, scene))
-                conn.execute(
-                    "DELETE FROM items WHERE item_id = ? AND project_slug IS ?",
-                    (ref, bucket.name))
+                forgotten_ids.add(ref)
                 continue
             value = "resolved"
             if status.lower().startswith("superseded-by:"):
@@ -466,6 +455,36 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
                 " WHERE item_id = ? AND project_slug IS ?",
                 (value, ref, bucket.name),
             )
+        if not forgotten_ids:
+            continue
+        # #427: the scrub is VALUE-keyed, not only id-keyed. One value can
+        # live under sibling ids (same sentence in two sections, widened hash
+        # within one — store._stamp_item_ids), and forget rewrites only the
+        # LATEST session file: an older per-session checkpoint still holds the
+        # value under an id the ledger never tombstoned, and rebuild indexes
+        # it. The tombstone status embeds the canonical content key
+        # (`forgotten:<content_key>`, same ledger the write gate reads), so
+        # any row whose text canonicalizes into the forgotten set goes too.
+        # The id-keyed delete stays: it covers rows whose stored text was
+        # redacted into a different key at capture. Canonicalization runs only
+        # when a tombstone exists for the bucket (rows are scanned here, not
+        # per-event, so the common no-forget rebuild pays nothing).
+        forgotten_keys = store.forgotten_content_keys(project_dir=bucket.name)
+        rows = conn.execute(
+            "SELECT id, text, quote, scene, item_id FROM items"
+            " WHERE project_slug IS ?", (bucket.name,)).fetchall()
+        for rowid, text, quote, scene, item_id in rows:
+            if item_id not in forgotten_ids and not (
+                    forgotten_keys
+                    and normalize.content_key(text or "") in forgotten_keys):
+                continue
+            # contentless fts5: deletion is the special 'delete'
+            # INSERT and must repeat the original column values
+            conn.execute(
+                "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
+                " VALUES('delete', ?, ?, ?, ?)",
+                (rowid, text, quote, scene))
+            conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
 
 
 def rebuild() -> int:
