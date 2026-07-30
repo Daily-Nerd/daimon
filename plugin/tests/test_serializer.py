@@ -756,7 +756,7 @@ def test_validation_retry_note_restates_copy_paste_contract(
     assert "elisions marked with `...`" in second
 
 
-def test_prompt_version_is_d016():
+def test_prompt_version_is_d017():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
     # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
@@ -764,12 +764,73 @@ def test_prompt_version_is_d016():
     # quote copy-paste discipline rule). D-013 -> D-014 (#287: external-
     # artifact identifier rule). D-014 -> D-015 (#358: verbatim items bind
     # to source transcript message ids). D-015 -> D-016 (#359: outcome
-    # claims ground in tool-result signals). Pre-bump checkpoints firing the
-    # format_version mismatch warning (#93) is DESIRED behavior. The bump
-    # also rotates the #48 chunk-cache key, so pre-#359 cached extractions
-    # (no tool-result rows in their chunks) can never satisfy a post-#359
-    # request.
-    assert serializer.PROMPT_VERSION == "D-016"
+    # claims ground in tool-result signals). D-016 -> D-017 (#416: prefer a
+    # quote span that preserves a temporal span the transcript states —
+    # data-gathering for the deferred bi-temporal design, no new schema).
+    # Pre-bump checkpoints firing the format_version mismatch warning (#93)
+    # is DESIRED behavior.
+    assert serializer.PROMPT_VERSION == "D-017"
+
+
+def test_serialize_prompt_prefers_temporal_span_preserving_quote():
+    # #416: extraction discarded dates/intervals because nothing asked it to
+    # keep them — the ~0.3% citable-date rate was endogenous. The prompt must
+    # now nudge the model to PREFER a span that keeps a stated temporal detail,
+    # without loosening quote discipline or inventing dates.
+    sys = serializer.SERIALIZE_SYS
+    assert "TEMPORAL SPANS" in sys
+    assert "PREFER a contiguous quote span" in sys
+    assert "temporal detail" in sys
+    # must not force or fabricate a date where none exists
+    assert "never invent, normalize, or infer a date" in sys
+    # the chosen span must still be a real, verifiable copy-paste (rule 17)
+    assert "rule 17" in sys
+
+
+def test_merge_prompt_preserves_temporal_span_across_chunks():
+    # #416: a chunked session's merge picks one canonical quote per item —
+    # it must not drop the temporal detail a chunk already captured.
+    merge = serializer.MERGE_SYS
+    assert "TEMPORAL SPANS" in merge
+    assert "temporal detail" in merge
+
+
+def test_temporal_span_survives_into_extracted_quote(fake_chat_factory):
+    # #416 (observable end-to-end): when the transcript contains a date and the
+    # extractor selects a span that keeps it, the pipeline preserves that span
+    # verbatim rather than stripping the date. What CANNOT be unit-tested is
+    # that a real model chooses the date-bearing span — that is prompt-driven
+    # model behavior and needs quota; here FakeChat stands in for that choice,
+    # and we prove the surrounding pipeline does not discard the temporal span.
+    messages = make_messages(20)
+    messages[4] = {
+        "role": "user",
+        "content": "We agreed to ship the migration on 2026-08-14 after the freeze.",
+    }
+    dated_quote = "ship the migration on 2026-08-14"
+    checkpoint = {
+        "session_id": "S1",
+        "working_context": {
+            "active_topic": {"text": "topic", "trust": "inferred"},
+            "open_questions": [{"text": "q", "trust": "inferred"}],
+            "recent_decisions": [
+                {"text": "ship migration", "trust": "verbatim", "quote": dated_quote}
+            ],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [],
+            "uncertainties": [],
+            "contradictions_flagged": [],
+        },
+        "worker_queue": [],
+    }
+    chat = fake_chat_factory(json.dumps(checkpoint))
+    ckpt = serializer.serialize_strict("S1", messages, chat=chat)
+    decision = ckpt["working_context"]["recent_decisions"][0]
+    # the date-bearing span survives verification and stays verbatim
+    assert decision["trust"] == "verbatim"
+    assert decision["quote_verified"] is True
+    assert "2026-08-14" in decision["quote"]
 
 
 def test_prompts_preserve_transcript_language():

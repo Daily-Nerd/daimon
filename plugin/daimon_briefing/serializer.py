@@ -41,10 +41,17 @@ log = logging.getLogger(__name__)
 # 20 asks for signal citations, and the bump rotates the #48 chunk-cache key
 # so pre-#359 cached extractions, whose chunks rendered no tool rows, can
 # never satisfy a post-#359 request).
+# D-016 -> D-017 (#416: rule 21 asks extraction to PREFER a quote span that
+# preserves a temporal span the transcript states — pure data-gathering for
+# the deferred bi-temporal design (#406), NO new schema field or storage. The
+# EXTRACTION_VERSION bump below rotates the #48 chunk-cache key so pre-#416
+# cached extractions, which never tried to keep a date, can never satisfy a
+# post-#416 request — a later re-measurement of the citable-date rate must
+# reflect the new behavior, not stale accidental survival.)
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-016"
+PROMPT_VERSION = "D-017"
 
 # #367: the chunk-cache rotation lever, deliberately SEPARATE from
 # PROMPT_VERSION. Bump ONLY when extraction semantics change — the output
@@ -52,7 +59,12 @@ PROMPT_VERSION = "D-016"
 # rule 20 warrants a bump; a wording clarification does not). PROMPT_VERSION
 # keeps versioning the checkpoint format; this keeps the #48 cache warm
 # across prompt edits that don't change what gets extracted.
-EXTRACTION_VERSION = 1
+# 1 -> 2 (#416): rule 21 changes which span extraction selects for a quote
+# (it now prefers one that keeps a stated temporal span) — that is what a
+# chunk pass extracts, so the cache must rotate. Serving a pre-#416 cached
+# extraction that dropped the date would poison the later citable-date
+# re-measurement the whole change exists to make honest.
+EXTRACTION_VERSION = 2
 
 
 class SerializeError(Exception):
@@ -193,6 +205,15 @@ RULES — follow every one exactly; this is the point of the exercise:
     output into `text` or `quote` because of this rule. If no tool-result message evidences
     the outcome, add nothing — the absence is itself a signal.
 
+21. TEMPORAL SPANS: when the transcript states a date, time, or interval that is relevant
+    to an item — when something happened, is due, or holds true (e.g. "on 2026-08-14", "by
+    Friday", "from March to June", "during the Q3 freeze") — PREFER a contiguous quote span
+    that KEEPS that temporal detail over an equally-valid span that drops it. The chosen span
+    must still obey rule 17: a real, contiguous, verifiable copy-paste — never widen a span
+    past what verifies just to reach a date, and never invent, normalize, or infer a date the
+    transcript does not state. Add nothing when no temporal detail is present; this rule only
+    stops you from discarding one that is.
+
 Schema shape:
 {
   "session_id": "<id>",
@@ -314,6 +335,11 @@ MERGE RULES — follow every one exactly:
     like `links` — dropping them loses provenance. Ids may ALSO point at tool-result
     messages that evidence an outcome claim (these can appear on inferred items too):
     preserve those on the canonical item exactly the same way, even when it has no quote.
+
+15. TEMPORAL SPANS: when two versions of the same item differ only in whether the quote keeps
+    a date, time, or interval, keep the version whose quote PRESERVES that temporal detail — it
+    is the more specific quote. Never invent, alter, or normalize a date while merging; this
+    rule only prevents dropping a temporal detail a chunk already captured.
 
 Schema shape:
 {
