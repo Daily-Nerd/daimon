@@ -1437,6 +1437,47 @@ def test_chunk_cache_key_survives_backend_resolution_failure(monkeypatch):
     assert len(key) == 32
 
 
+def test_purge_chunk_cache_continues_past_a_failing_entry(
+        monkeypatch, tmp_checkpoint_dir):
+    # #422 contract: one undeletable entry must not shield the rest — the
+    # purge keeps going, counts only the real deletions, and surfaces the
+    # failure so the caller's forget output can report it honestly.
+    d = tmp_checkpoint_dir / ".chunk-cache"
+    d.mkdir(parents=True)
+    stuck = d / "aaaa.json"
+    stuck.write_text("{}")
+    (d / "bbbb.json").write_text("{}")
+
+    real_unlink = Path.unlink
+
+    def flaky_unlink(self, *args, **kwargs):
+        if self.name == "aaaa.json":
+            raise OSError("Operation not permitted")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    purged, error = serializer.purge_chunk_cache()  # must not raise
+    assert purged == 1                      # only the healthy entry counted
+    assert not (d / "bbbb.json").exists()   # ... and it is genuinely gone
+    assert stuck.exists()                   # honest: the stuck one survived
+    assert "not permitted" in error
+
+
+def test_purge_chunk_cache_reports_unscannable_dir_without_raising(monkeypatch):
+    # #422 contract: purge NEVER raises. A cache dir that exists but cannot
+    # even be enumerated comes back as (0, reason) — reported, not fatal,
+    # because the belief-state deletion is the caller's primary contract.
+    class _EvilDir:
+        def is_dir(self):
+            return True
+
+        def glob(self, pattern):
+            raise OSError("scan denied")
+
+    monkeypatch.setattr(serializer, "_chunk_cache_dir", lambda: _EvilDir())
+    assert serializer.purge_chunk_cache() == (0, "scan denied")
+
+
 def test_chunk_transcript_prefix_chunks_byte_stable_under_growth():
     # The property the whole cache rests on: full windows re-materialize
     # byte-identically when the transcript grows; only the tail changes.
