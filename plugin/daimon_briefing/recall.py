@@ -75,7 +75,10 @@ def _note_error(where: str, exc: BaseException) -> None:
 # v4 (#317): items + items_fts grew a scene column (episodic context traces);
 # an old db queried with the new column list would OperationalError, so the
 # bump forces the rebuild instead.
-_SCHEMA_VERSION = "4"
+# v5 (#452): items grew pinned — the cli age gate exempts pinned standing
+# rules, so suggest()'s SELECT names the column and a v4 db would
+# OperationalError on it; the bump funnels that into the rebuild too.
+_SCHEMA_VERSION = "5"
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -103,12 +106,15 @@ def _load(path: Path) -> dict | None:
 
 def _items(cp: dict):
     """Yield (kind, text, trust, quote, scene, importance, first_seen, item_id,
-    supersede_targets) for every cognitive item in a checkpoint. Tolerant of
-    shape drift: bare strings become text-only items; anything without usable
-    text is skipped (an index row with no text matches nothing). importance/
-    first_seen/item_id are None on pre-D-011 items; scene is "" on items
-    without one (#317). supersede_targets is the item's `supersedes` link
-    target strings (#234) — usually empty."""
+    pinned, supersede_targets) for every cognitive item in a checkpoint.
+    Tolerant of shape drift: bare strings become text-only items; anything
+    without usable text is skipped (an index row with no text matches
+    nothing). importance/first_seen/item_id are None on pre-D-011 items;
+    scene is "" on items without one (#317). pinned is 0/1 — the #369
+    force-pinned standing-rule flag, carried so the #452 age gate can read it
+    without re-opening checkpoints (any truthy value counts; absent = 0).
+    supersede_targets is the item's `supersedes` link target strings (#234) —
+    usually empty."""
     for section, key, kind in _KIND_SOURCES:
         block = cp.get(section)
         if not isinstance(block, dict):
@@ -146,7 +152,7 @@ def _items(cp: dict):
                         targets.append(link["target"].strip())
             yield (kind, text, str(item.get("trust") or ""),
                    str(item.get("quote") or ""), str(item.get("scene") or ""),
-                   imp, fs, item_id, targets)
+                   imp, fs, item_id, 1 if item.get("pinned") else 0, targets)
 
 
 def _bucket_slugs(d: Path) -> dict[str, str]:
@@ -345,6 +351,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 importance INTEGER,
                 first_seen TEXT,
                 item_id TEXT,
+                pinned INTEGER NOT NULL DEFAULT 0,
                 frontier INTEGER NOT NULL DEFAULT 0
             );
             CREATE VIRTUAL TABLE items_fts USING fts5(text, quote, scene, content='');
@@ -524,14 +531,15 @@ def rebuild() -> int:
                 if key not in newest or (stamped, recency, sid) > newest[key]:
                     newest[key] = (stamped, recency, sid)
             for (kind, text, trust, quote, scene, importance, first_seen,
-                 item_id, targets) in _items(cp):
+                 item_id, pinned, targets) in _items(cp):
                 cur = conn.execute(
                     "INSERT INTO items"
                     " (text, quote, scene, trust, kind, author, project_slug,"
-                    "  session_id, created, importance, first_seen, item_id)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  session_id, created, importance, first_seen, item_id,"
+                    "  pinned)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (text, quote, scene, trust, kind, author, slug, sid, recency,
-                     importance, first_seen, item_id),
+                     importance, first_seen, item_id, pinned),
                 )
                 conn.execute(
                     "INSERT INTO items_fts(rowid, text, quote, scene)"
@@ -894,6 +902,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     flag means item-level evidence (a typed supersedes link or a logged
     resolution, #234), so it is rare and load-bearing; it still never hides
     a result (an overturned decision is still evidence, #112).
+
+    Each returned row also carries `term_hits` (its own distinct-term match
+    count) and `pinned` (the #369 standing-rule flag) — inputs to the cli
+    age gate (#452), not rank inputs here.
     """
     slug = store.project_slug(project_dir)
     if slug is None:
@@ -915,6 +927,9 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
         " i.session_id, i.created, i.importance, i.first_seen, i.superseded_by,"
+        # pinned rides out for the #452 age gate (standing rules are
+        # age-independent); it is NOT a rank input here.
+        " i.pinned,"
         " bm25(items_fts) AS rank"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         # Best-ranked candidates first (#31 item 4): without ORDER BY the LIMIT
@@ -957,6 +972,12 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     for r, hit in matched:
         if len(coverage[r["session_id"]]) < _MIN_OVERLAP:
             continue
+        # #452: the per-ITEM distinct-term count rides out with the row (the
+        # session-level coverage above is the gate; this is the row's own
+        # match strength). Purely additive — cli's age gate reads it to demand
+        # a stronger match from stale items; nothing here ranks on it beyond
+        # the existing len(hit) tiebreak below.
+        r["term_hits"] = len(hit)
         relevance = max(0.0, -float(r["rank"]))  # FTS5 bm25(): smaller = better
         weight = scoring.effective_weight(
             {"importance": r["importance"], "first_seen": r["first_seen"],

@@ -1035,6 +1035,33 @@ _INJECT_FETCH = 8    # candidates asked of `suggest`, i.e. budget + headroom:
                      # distinct candidate, and it can only promote from
                      # candidates it was given (#451)
 
+# #452: age dominates injection precision. Measured per-slot relevance by item
+# age on the maintainer's corpus: <=1d = 78%, 2-7d ~ 24%, >7d = 6-10% — a
+# week-old item riding an ordinary 2-term match is near-certain noise, so past
+# the knee it must EARN its slot with a substantially stronger match. The
+# thresholds are the measured knee and one term above suggest's session floor
+# (_MIN_OVERLAP = 2): 3 distinct hits on one ITEM is specific prior work, not
+# vocabulary coincidence.
+_AGE_GATE_DAYS = 7   # past this, a candidate needs _STALE_MIN_HITS
+_STALE_MIN_HITS = 3  # distinct salient-term hits that buy a stale slot back
+
+
+def _inject_age_bucket(age_days: float | None) -> str:
+    """Stats bucket for a CHOSEN candidate's age — the bands of #452's
+    measured relevance table, so the before/after read by age is a `daimon
+    stats` query. `unknown` = no usable first_seen stamp."""
+    if age_days is None:
+        return "unknown"
+    if age_days <= 1:
+        return "<=1d"
+    if age_days <= 3:
+        return "2-3d"
+    if age_days <= 7:
+        return "4-7d"
+    if age_days <= 14:
+        return "8-14d"
+    return ">14d"
+
 
 def _seen_path(session: str):
     """Cooldown-state file for one session, or None when the id is unusable
@@ -1146,16 +1173,49 @@ def _cmd_recall_inject(args) -> int:
         # So the budget is spent on distinct content keys, within one injection
         # AND across the session, and a suppressed candidate yields its slot to
         # the next distinct one instead of shrinking the injection.
+        now = time.time()
         chosen: list[dict] = []
         chosen_keys: set[str] = set()
         suppressed = False
+        age_gated = False
         for m in matches:
             key = normalize.content_key(m.get("text") or "")
             if key in seen_keys or key in chosen_keys:
                 suppressed = True
                 continue
+            # #452: stale items must show a stronger match. Age comes from the
+            # row's first_seen through the same parser scoring trusts
+            # (store._created_epoch) with the same tolerance philosophy:
+            # missing, malformed, or future stamps mean age UNKNOWN, and
+            # unknown is never gated — a missing stamp is not evidence of
+            # staleness (fail toward suggesting, the #450 direction). Two
+            # exemptions where pure age is not evidence of noise: a still-OPEN
+            # question, whose survival is the signal (scoring's
+            # auto_escalation philosophy — resolution, not freshness, retires
+            # it), and a pinned standing rule, which is age-independent by
+            # construction (#452's own data: the rare >7d hits were exactly
+            # standing rules and open gates). Like the #451 dedup, a gated
+            # candidate is a `continue`, so its slot promotes the next one.
+            epoch = store._created_epoch(m.get("first_seen"))
+            age_days = ((now - epoch) / 86400.0
+                        if epoch is not None and epoch <= now else None)
+            hits = m.get("term_hits")
+            exempt = ((m.get("kind") == "question"
+                       and not m.get("superseded_by"))
+                      or bool(m.get("pinned")))
+            if (age_days is not None and age_days > _AGE_GATE_DAYS
+                    and not exempt
+                    # isinstance, not `or 0`: a row with no term_hits offers
+                    # no match-strength evidence, and absent evidence never
+                    # gates (same fail-open direction as unknown age).
+                    and isinstance(hits, int) and hits < _STALE_MIN_HITS):
+                age_gated = True
+                continue
             chosen_keys.add(key)
             chosen.append(m)
+            # #452 re-measurement: every CHOSEN row records its age bucket, so
+            # the before/after precision read by age stays a stats query.
+            _note_usage(f"recall-inject:age:{_inject_age_bucket(age_days)}")
             if len(chosen) >= _INJECT_BUDGET:
                 break
         if suppressed:
@@ -1163,9 +1223,12 @@ def _cmd_recall_inject(args) -> int:
             # the issue's claim is a RATE, so the pair has to be readable from
             # `daimon stats` the way #450's machine skip is.
             _note_usage("recall-inject:dedup-content")
+        if age_gated:
+            # Same convention as dedup-content above: once per injection run
+            # where >=1 candidate was age-gated (#452) — a rate, not a tally.
+            _note_usage("recall-inject:age-gate")
         if not chosen:
             return 0
-        now = time.time()
         terms = recall.salient_terms(prompt)
         for m in chosen:
             print(_suggest_line(m, terms, now))

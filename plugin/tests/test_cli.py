@@ -3038,7 +3038,10 @@ def test_recall_inject_control_same_text_without_marker_suggests(
     assert rc == 0 and "S-old" in out
     tags = [line.split()[1]
             for line in (tmp_log_dir / "usage.log").read_text().splitlines()]
-    assert tags == ["recall-inject"]  # no skip tag on a genuine prompt
+    assert tags[0] == "recall-inject"  # denominator fires first
+    # No skip tag on a genuine prompt (#452 later added per-chosen age-bucket
+    # counters to this same log, so the list is no longer exactly one tag).
+    assert "recall-inject:skip-machine" not in tags
 
 
 def test_recall_inject_suggests_when_prompt_quotes_a_marker_beyond_the_window(
@@ -3307,6 +3310,227 @@ def test_recall_inject_content_dedup_is_counted_for_measurement(
     data = json.loads(capsys.readouterr().out)
     assert data["usage"]["recall-inject:dedup-content"] == 1
     assert data["usage"]["recall-inject"] == 1
+
+
+# ---- #452: stale items need a stronger match. Measured per-slot relevance by
+# ---- item age: <=1d = 78%, 2-7d ~ 24%, >7d = 6-10% — age dominates every
+# ---- other precision axis, so a >7d item must EARN its slot with more
+# ---- distinct term hits, while still-open questions and pinned standing
+# ---- rules stay age-independent (the rare >7d hits were exactly those).
+
+# Prompt terms: ocelot / pipeline / cache / deploy. WEAK shares exactly two
+# of them (the suggest floor), STRONG shares three (the stale bar) — chosen so
+# no term is a substring of another word in any fixture text.
+_AGE_PROMPT = "ocelot pipeline cache deploy"
+_AGE_WEAK = "ocelot pipeline rollback stalls staging"
+_AGE_WEAK_B = "ocelot pipeline retry loops staging"
+_AGE_STRONG = "ocelot pipeline cache warmup staging"
+_AGE_FRESH_A = "ocelot pipeline warmup skips staging"
+_AGE_FRESH_B = "ocelot pipeline purge blocks staging"
+
+
+def _iso_days_ago(days: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                         time.gmtime(time.time() - days * 86400))
+
+
+def _seed_aged(session, text, importance, *, days_old, kind="decision",
+               pinned=False, item_id=None, first_seen=None, project="/repo/x"):
+    """One checkpoint carrying one aged item of the given kind. `created` and
+    `first_seen` share the stamp (unless overridden) so the item's age is
+    unambiguous; the active topic is term-disjoint from `_AGE_PROMPT` so it can
+    never become the row suggest returns for the session."""
+    from daimon_briefing import store
+
+    stamp = _iso_days_ago(days_old)
+    item = {"text": text, "trust": "verbatim", "quote": text,
+            "importance": importance,
+            "first_seen": first_seen if first_seen is not None else stamp}
+    if pinned:
+        item["pinned"] = True
+    if item_id:
+        item["id"] = item_id
+    questions, decisions, beliefs = [], [], []
+    if kind == "question":
+        questions = [item]
+    elif kind == "belief":
+        beliefs = [item]
+    else:
+        decisions = [item]
+    store.write_checkpoint(
+        session,
+        {"session_id": session, "created": stamp,
+         "working_context": {
+             "active_topic": {"text": f"scratch notes {session}",
+                              "trust": "inferred"},
+             "open_questions": questions, "recent_decisions": decisions},
+         "epistemic_snapshot": {"strong_beliefs": beliefs, "uncertainties": [],
+                                "contradictions_flagged": []}},
+        project_dir=project,
+    )
+
+
+def _seed_age_decoy(project="/repo/x"):
+    """Written LAST with the newest stamp so the briefing-already-covered
+    exclusion lands on a checkpoint no #452 fixture prompt matches."""
+    _seed_aged("S-age-latest", "unrelated topiary sculpture notes", 1,
+               days_old=0, project=project)
+
+
+def _usage_tags(tmp_log_dir):
+    return [line.split()[1]
+            for line in (tmp_log_dir / "usage.log").read_text().splitlines()]
+
+
+def test_recall_inject_gates_stale_low_hit_candidate(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # >7d old, only two term hits: the pure-age precision band is 6-10%, so
+    # the slot is not worth it — silence.
+    _seed_aged("S-stale", _AGE_WEAK, 9, days_old=30)
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and out == ""
+    assert "recall-inject:age-gate" in _usage_tags(tmp_log_dir)
+
+
+def test_recall_inject_fresh_copy_of_same_text_still_injects(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Control for the gate above: the IDENTICAL candidate, merely fresh,
+    # keeps its slot — the gate is age-conditioned, never a new match bar.
+    _seed_aged("S-fresh", _AGE_WEAK, 9, days_old=0)
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and _AGE_WEAK in out
+
+
+def test_recall_inject_stale_strong_match_injects(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # >7d but three distinct term hits: a substantially stronger match buys
+    # the slot back.
+    _seed_aged("S-stale", _AGE_STRONG, 9, days_old=30)
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and _AGE_STRONG in out
+
+
+def test_recall_inject_open_question_survives_age_gate(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # A still-open question's survival is evidence (scoring's auto_escalation
+    # philosophy): the pure-age penalty never applies to it.
+    _seed_aged("S-q", _AGE_WEAK, 9, days_old=30, kind="question")
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and _AGE_WEAK in out
+
+
+def test_recall_inject_superseded_question_is_age_gated(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # ...but a RESOLVED question lost that evidence: the exemption reads the
+    # row's superseded_by, so it gates like any other stale low-hit item.
+    from daimon_briefing import config, store
+
+    _seed_aged("S-q", _AGE_WEAK, 9, days_old=30, kind="question",
+               item_id="o-452aaa")
+    _seed_age_decoy()
+    slug = store.project_slug("/repo/x")
+    ev = config.checkpoint_dir() / slug / "events.jsonl"
+    ev.parent.mkdir(parents=True, exist_ok=True)
+    ev.write_text(
+        json.dumps({"ts": _iso_days_ago(0), "kind": "resolution",
+                    "item_ref": "o-452aaa", "status": "resolved",
+                    "source": "cli"}) + "\n", encoding="utf-8")
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and out == ""
+
+
+def test_recall_inject_pinned_item_survives_age_gate(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Standing rules are age-independent — the issue's own data: the rare >7d
+    # hits were pinned rules or open gates.
+    _seed_aged("S-pin", _AGE_WEAK, 9, days_old=30, kind="belief", pinned=True)
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and _AGE_WEAK in out
+
+
+@pytest.mark.parametrize("shape", ["malformed", "future"])
+def test_recall_inject_unknown_age_is_never_gated(
+        shape, tmp_checkpoint_dir, capsys, monkeypatch):
+    # A missing/unreadable/future stamp is not evidence of staleness — same
+    # fail-open direction as #450's classifier failure.
+    stamp = "sometime-last-quarter" if shape == "malformed" \
+        else _iso_days_ago(-30)
+    _seed_aged("S-unknown", _AGE_WEAK, 9, days_old=30, first_seen=stamp)
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and _AGE_WEAK in out
+
+
+def test_recall_inject_gated_candidate_yields_slot_to_next(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # The gate is a `continue`, not a budget spend: with budget 2 and
+    # candidates [stale-low-hit, fresh, fresh], both fresh ones inject. The
+    # importances put the STALE candidate first in rank (at 20d: 1.0 base x
+    # 0.7 recency x 0.6 decay = 0.42 beats the fresh 0.2s; all three share
+    # the same two prompt terms so bm25 is flat) — the yielded slot is real,
+    # not a ranking accident.
+    _seed_aged("S-stale", _AGE_WEAK, 10, days_old=20)
+    _seed_aged("S-fresh-a", _AGE_FRESH_A, 2, days_old=0)
+    _seed_aged("S-fresh-b", _AGE_FRESH_B, 2, days_old=0)
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0
+    texts = _quoted_texts(out)
+    assert len(texts) == 2
+    assert _AGE_WEAK not in texts
+    assert set(texts) == {_AGE_FRESH_A, _AGE_FRESH_B}
+
+
+def test_recall_inject_age_gate_counted_once_for_measurement(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # Mirrors #451's dedup-content convention: one count per injection run
+    # where gating occurred, however many candidates were gated — the stats
+    # pair (age-gate / recall-inject) is a RATE.
+    _seed_aged("S-stale-a", _AGE_WEAK, 10, days_old=30)
+    _seed_aged("S-stale-b", _AGE_WEAK_B, 9, days_old=30)
+    _seed_age_decoy()
+    _inject(monkeypatch, capsys, _AGE_PROMPT)
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["recall-inject:age-gate"] == 1
+    assert data["usage"]["recall-inject"] == 1
+
+
+def test_recall_inject_age_bucket_counted_per_chosen_row(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # Re-measurement counters: every CHOSEN row records its age bucket so the
+    # before/after read by age is a `daimon stats` query, not a log dig.
+    _seed_aged("S-fresh-a", _AGE_FRESH_A, 9, days_old=0)
+    _seed_aged("S-mid", _AGE_STRONG, 8, days_old=10)
+    _seed_age_decoy()
+    _inject(monkeypatch, capsys, _AGE_PROMPT)
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["recall-inject:age:<=1d"] == 1
+    assert data["usage"]["recall-inject:age:8-14d"] == 1
+
+
+def test_inject_age_bucket_boundaries_match_the_452_bands():
+    # The bands ARE the #452 measurement table — a drifted boundary would file
+    # future re-measurement rows against the wrong measured baseline. Pinned
+    # at both edges of every band, boundaries inclusive-left per the table.
+    assert cli._inject_age_bucket(None) == "unknown"
+    assert cli._inject_age_bucket(0.0) == "<=1d"
+    assert cli._inject_age_bucket(1.0) == "<=1d"
+    assert cli._inject_age_bucket(1.5) == "2-3d"
+    assert cli._inject_age_bucket(3.0) == "2-3d"
+    assert cli._inject_age_bucket(3.5) == "4-7d"
+    assert cli._inject_age_bucket(7.0) == "4-7d"
+    assert cli._inject_age_bucket(7.5) == "8-14d"
+    assert cli._inject_age_bucket(14.0) == "8-14d"
+    assert cli._inject_age_bucket(14.5) == ">14d"
 
 
 def test_save_seen_prunes_week_old_cooldown_files(tmp_checkpoint_dir):
