@@ -88,8 +88,10 @@ instalación que los registre:
   `daimon recall-inject` por stdin, e inyecta un puntero de una línea cuando
   el prompt se solapa con un pendiente previo. Como se dispara por prompt,
   las fallas son silenciosas (exit 0, sin salida) — lo único que imprime es
-  una sugerencia real — y los comandos slash (directivas del host, no
-  enunciados de trabajo) nunca coinciden.
+  una sugerencia real. Los prompts que no son una persona pidiendo trabajo
+  nunca coinciden: los comandos slash (directivas del host) y los bloques
+  emitidos por el host — notificaciones de tareas en segundo plano, mensajes
+  de agentes o compañeros de equipo, salida de comandos.
 
 Estos dos scripts de captura/inyección se cablean de una de dos maneras
 mutuamente excluyentes — elige UNA (ambas a la vez disparan todo dos veces

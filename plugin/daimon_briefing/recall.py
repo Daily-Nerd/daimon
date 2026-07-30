@@ -828,6 +828,51 @@ def salient_terms(prompt: str) -> list[str]:
     return out if len(out) >= _MIN_TERMS else []
 
 
+# #450: literal openings of the host-emitted blocks that reach the prompt hook
+# as if they were user input — background-task notifications, teammate/agent
+# messages, slash-command output. Measured on the maintainer's transcripts,
+# 37.9% of injections landed on these, at the same rate as on real prompts:
+# nothing consumes those suggestions, so they are pure token cost. Literal and
+# case-sensitive on purpose — the hosts emit exactly one casing, and loosening
+# the match only buys false skips.
+_MACHINE_MARKERS = (
+    "[SYSTEM NOTIFICATION",
+    "<task-notification>",
+    "<teammate-message",
+    "<agent-message",
+    "<local-command-stdout>",
+)
+
+_MACHINE_SCAN_CHARS = 400   # opening region only — see is_machine_prompt
+
+
+def is_machine_prompt(prompt: str) -> bool:
+    """True when the prompt is structurally a host-emitted block rather than a
+    person asking for work (#450). Deliberately conservative: a missed skip is
+    the status quo, a wrong skip costs one suggestion.
+
+    Boundary — a marker counts only when it OPENS A LINE inside the first
+    _MACHINE_SCAN_CHARS characters (after leading whitespace):
+
+      - Line-start, because a machine block's marker is the block's opening;
+        a human quoting one does it mid-sentence ("why does the hook fire on
+        <task-notification> blocks?"). A plain substring scan would silence
+        recall on exactly the prompts that discuss recall. Indented markers
+        (a pasted code sample) are left ambiguous and still get suggestions.
+      - Windowed, because a genuine prompt may paste a whole block far below
+        its own question; only the opening region can carry the block that IS
+        the prompt. Observed shape: the notification wrapper opens with
+        `[SYSTEM NOTIFICATION` at offset 0 and carries `<task-notification>`
+        ~490 chars in, past this window — the marker list is redundant for
+        that reason, so the window never has to be widened to catch it.
+
+    Truncation at the window can only split a marker, i.e. only ever miss a
+    skip, which is the safe direction.
+    """
+    head = prompt.lstrip()[:_MACHINE_SCAN_CHARS]
+    return any(line.startswith(_MACHINE_MARKERS) for line in head.split("\n"))
+
+
 def suggest(prompt: str, project_dir=None, current_session=None,
             exclude_sessions=(), limit: int = 2, now=None) -> list[dict]:
     """Proactive matches for a user prompt, or [] — silence is the default and

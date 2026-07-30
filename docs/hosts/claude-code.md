@@ -84,8 +84,9 @@ registers them:
   `daimon recall-inject` on stdin, and injects a one-line pointer when the
   prompt overlaps a prior open loop. Because it fires per-prompt, failures
   are silent (exit 0, no output) — the only thing it ever prints is a real
-  suggestion — and slash commands (host directives, not work statements)
-  never match.
+  suggestion. Prompts that are not a person asking for work never match:
+  slash commands (host directives) and host-emitted machine blocks —
+  background-task notifications, teammate/agent messages, command output.
 
 These two capture/inject scripts are wired in one of two mutually exclusive
 ways — pick ONE (both at once double-fires every session: two briefing

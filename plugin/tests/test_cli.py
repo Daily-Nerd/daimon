@@ -3006,6 +3006,95 @@ def test_recall_inject_never_fails(tmp_checkpoint_dir, capsys, monkeypatch):
     assert rc == 0
 
 
+# ---- #450: machine prompts (notifications, teammate/agent messages, command
+# ---- output) are not work statements — the hook must stay silent on them.
+
+_MACHINE_MARKERS = ("[SYSTEM NOTIFICATION", "<task-notification>",
+                    "<teammate-message", "<agent-message",
+                    "<local-command-stdout>")
+
+# Matches the seeded history hard: the ONLY reason these prompts stay silent
+# must be the machine classifier, never a missing match.
+_MATCHING_TEXT = "debugging the litellm gateway cache pinning again"
+
+
+@pytest.mark.parametrize("marker", _MACHINE_MARKERS)
+def test_recall_inject_skips_machine_prompt(
+        marker, tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys, f"{marker} x>\n{_MATCHING_TEXT}\n")
+    assert rc == 0
+    assert out == ""
+    tags = [line.split()[1]
+            for line in (tmp_log_dir / "usage.log").read_text().splitlines()]
+    assert "recall-inject:skip-machine" in tags
+
+
+def test_recall_inject_control_same_text_without_marker_suggests(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # Fixture pair for the skip above: identical body, no machine wrapper.
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys, _MATCHING_TEXT)
+    assert rc == 0 and "S-old" in out
+    tags = [line.split()[1]
+            for line in (tmp_log_dir / "usage.log").read_text().splitlines()]
+    assert tags == ["recall-inject"]  # no skip tag on a genuine prompt
+
+
+def test_recall_inject_suggests_when_prompt_quotes_a_marker_beyond_the_window(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # A real question that pastes a notification below it: the block marker is
+    # outside the opening region, so this keeps its suggestions.
+    _seed_recall_history()
+    prompt = (_MATCHING_TEXT + "\n"
+              + "context line about that same gateway seam\n" * 20
+              + "<task-notification>\n<task-id>t1</task-id>\n")
+    rc, out = _inject(monkeypatch, capsys, prompt)
+    assert rc == 0
+    assert "S-old" in out
+
+
+def test_recall_inject_suggests_when_prompt_mentions_a_marker_inline(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    _seed_recall_history()
+    rc, out = _inject(
+        monkeypatch, capsys,
+        f"why does <teammate-message> matter while {_MATCHING_TEXT}?")
+    assert rc == 0
+    assert "S-old" in out
+
+
+def test_recall_inject_classifier_error_falls_open_to_todays_behavior(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # The classifier sits on the per-prompt critical path: if it raises, the
+    # command must behave exactly as it did before #450 — suggestions, rc 0.
+    from daimon_briefing import recall
+
+    _seed_recall_history()
+
+    def boom(_prompt):
+        raise RuntimeError("classifier exploded")
+
+    monkeypatch.setattr(recall, "is_machine_prompt", boom)
+    rc, out = _inject(monkeypatch, capsys, _MATCHING_TEXT)
+    assert rc == 0
+    assert "S-old" in out
+
+
+def test_stats_surfaces_machine_skip_apart_from_recall_inject(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # The acceptance criterion: the effect is measurable from `daimon stats`
+    # alone — skips counted separately, total fires still counted.
+    _seed_recall_history()
+    _inject(monkeypatch, capsys, "<task-notification>\n" + _MATCHING_TEXT)
+    _inject(monkeypatch, capsys, _MATCHING_TEXT, session="S-two")
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["usage"]["recall-inject:skip-machine"] == 1
+    assert data["usage"]["recall-inject"] == 2  # denominator keeps every fire
+
+
 # ---- #33 Phase 2: deterministic carry wired into the serialize path ----
 
 

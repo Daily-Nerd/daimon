@@ -1697,3 +1697,61 @@ def test_rebuild_env_grant_admits_single_clone_path(tmp_checkpoint_dir, monkeypa
         logical="core/x")
     recall.rebuild()
     assert len(recall.search("flamingo", all_projects=True)) == 1
+
+
+# ---- #450: machine-prompt classifier — the recall hook must not fire on
+# ---- notifications, teammate/agent messages, or command output.
+
+
+MACHINE_MARKERS = ("[SYSTEM NOTIFICATION", "<task-notification>",
+                   "<teammate-message", "<agent-message",
+                   "<local-command-stdout>")
+
+
+@pytest.mark.parametrize("marker", MACHINE_MARKERS)
+def test_machine_marker_opening_the_prompt_is_machine(marker):
+    prompt = f'{marker} id="a1">\nthe agent finished its batch\n'
+    assert recall.is_machine_prompt(prompt) is True
+
+
+@pytest.mark.parametrize("marker", MACHINE_MARKERS)
+def test_machine_marker_after_leading_blank_lines_is_machine(marker):
+    # Hosts vary on trailing/leading whitespace around the block; the block is
+    # still the whole prompt.
+    assert recall.is_machine_prompt(f"\n\n  {marker} rest of the block") is True
+
+
+@pytest.mark.parametrize("marker", MACHINE_MARKERS)
+def test_marker_quoted_inline_in_a_human_sentence_is_not_machine(marker):
+    # The maintainer's own prompts about this feature quote the markers. A
+    # mid-line mention is prose, never a block opening.
+    prompt = (f"why does the recall hook still fire on {marker} blocks when "
+              "the session already briefed that work?")
+    assert recall.is_machine_prompt(prompt) is False
+
+
+@pytest.mark.parametrize("marker", MACHINE_MARKERS)
+def test_marker_beyond_the_scan_window_is_not_machine(marker):
+    # A genuine prompt that pastes a block far below its own question keeps its
+    # suggestions: only the opening region can carry a block marker.
+    prompt = ("here is the failing gateway trace I want to talk about\n"
+              + "padding line about the gateway seam\n" * 20
+              + f"{marker} pasted for reference")
+    assert len(prompt) > recall._MACHINE_SCAN_CHARS
+    assert recall.is_machine_prompt(prompt) is False
+
+
+def test_indented_marker_is_not_machine():
+    # An indented code block quoting a marker is a human pasting an example.
+    assert recall.is_machine_prompt("look at this:\n\n    <task-notification>\n") is False
+
+
+def test_ordinary_prompt_is_not_machine():
+    assert recall.is_machine_prompt("finish the gateway seam refactor") is False
+    assert recall.is_machine_prompt("") is False
+
+
+def test_lowercased_marker_is_not_machine():
+    # Literal and case-sensitive on purpose: the hosts emit exactly one casing,
+    # and loosening it only buys false skips.
+    assert recall.is_machine_prompt("[system notification] all done") is False
