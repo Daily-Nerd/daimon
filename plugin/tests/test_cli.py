@@ -3212,6 +3212,150 @@ def test_carry_still_carries_candidate_ref(tmp_checkpoint_dir, monkeypatch):
     assert "X" not in resolved
 
 
+# ---- #419: forgotten values must never reach events.jsonl via emission ----
+# events.jsonl is append-only and never rewritten (store.py), so a forgotten
+# value's plaintext landing in `item_text` is PERMANENT — it violates
+# _cmd_forget's contract ("removal means the content leaves the audit trail
+# too"). The leak condition: the value survives in the prev checkpoint under
+# an item id that was never tombstoned (sibling-id shape, #418), and pairs up
+# as a supersede candidate BEFORE write_checkpoint's forget gate can fire.
+
+
+_FORGOTTEN_TEXT = "adopt sqlite for the recall index cache"
+_CONTROL_TEXT = "route telemetry through the vector gateway"
+
+
+def test_candidate_emission_skips_forgotten_value(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import normalize, store
+
+    project = "/p/candidate-forgotten"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    # Tombstone the VALUE under a sibling ref — the pair's own old_id was
+    # never tombstoned, so the human-speaks-once gate cannot save us here.
+    store.append_event("r-gone0001",
+                       f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
+                       project_dir=project)
+
+    pairs = [("r-old0001", "r-new0001", _FORGOTTEN_TEXT),
+             ("r-old0002", "r-new0002", _CONTROL_TEXT)]
+    events = store.resolutions(project_dir=project)
+    count = cli._emit_supersede_candidates(pairs, events, project)
+
+    slug = store.project_slug(project)
+    raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text(encoding="utf-8")
+    assert _FORGOTTEN_TEXT not in raw     # the leak — append-only, so forever
+    assert _CONTROL_TEXT in raw           # liveness: the filter is a skip, not a mute
+    assert count == 1
+
+
+def test_candidate_emission_emits_nothing_when_forgotten_keys_read_fails(
+        tmp_checkpoint_dir, monkeypatch):
+    # Fail-safe direction: if we cannot PROVE a value isn't forgotten, emit
+    # nothing — a missed candidate event costs a suggestion; a leaked value
+    # costs the deletion guarantee.
+    from daimon_briefing import store
+
+    project = "/p/candidate-keys-broken"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("ledger unreadable")
+
+    monkeypatch.setattr(store, "forgotten_content_keys", _boom)
+    pairs = [("r-old0001", "r-new0001", "a perfectly ordinary decision text")]
+    assert cli._emit_supersede_candidates(pairs, {}, project) == 0
+    slug = store.project_slug(project)
+    assert not (tmp_checkpoint_dir / slug / "events.jsonl").exists()
+
+
+def test_serialize_supersede_candidate_never_leaks_forgotten_text(
+        tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path):
+    """E2E through the serialize path (#419): prev checkpoint holds the
+    forgotten value under a never-tombstoned id (written BEFORE the tombstone,
+    so the write-time forget gate never saw it — independent of #418's fix);
+    a fresh session supersedes it by text target; the candidate event must
+    NOT carry the forgotten plaintext into append-only events.jsonl."""
+    from daimon_briefing import normalize, store
+
+    project = "/p/supersede-forgotten-leak"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+
+    # 1. Prev checkpoint written BEFORE the tombstone exists — both decisions
+    # land on disk with stamped ids.
+    prev = {
+        "session_id": "S-prev",
+        "created": "2026-06-28T00:00:00Z",
+        "working_context": {
+            "active_topic": {"text": "prior topic", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [
+                {"text": _FORGOTTEN_TEXT, "trust": "inferred"},
+                {"text": _CONTROL_TEXT, "trust": "inferred"},
+            ],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }
+    store.write_checkpoint("S-prev", prev, project_dir=project)
+    stored = store.read_latest(project_dir=project, fallback=False)
+    forgotten_id = next(
+        d["id"] for d in stored["working_context"]["recent_decisions"]
+        if d["text"] == _FORGOTTEN_TEXT)
+
+    # 2. Tombstone the VALUE under a different ref (sibling-id condition):
+    # the surviving copy's own id carries no event, so nothing in the
+    # human-speaks-once gate blocks the pair.
+    store.append_event("r-gone0001",
+                       f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
+                       project_dir=project)
+
+    # 3. New session supersedes BOTH prev decisions by free-text target.
+    # Native texts share no salient vocabulary with prev texts (no twin
+    # id-inheritance); each target uniquely matches one prev item.
+    new_cp = json.dumps({
+        "session_id": "S-leak",
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [
+                {"text": "postgres replaces the old lookup store",
+                 "trust": "inferred",
+                 "links": [{"type": "supersedes",
+                            "target": "sqlite recall index cache"}]},
+                {"text": "grpc collector handles metrics now",
+                 "trust": "inferred",
+                 "links": [{"type": "supersedes",
+                            "target": "telemetry vector gateway"}]},
+            ],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    })
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(new_cp))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    p = _timed_jsonl(tmp_path, "S-leak.jsonl", [
+        "2026-07-01T10:00:00Z", "2026-07-01T10:01:00Z", "2026-07-01T10:02:00Z",
+    ])
+    assert cli.main(["serialize", str(p)]) == 0
+
+    slug = store.project_slug(project)
+    raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text(encoding="utf-8")
+    # THE contract: no line of the append-only log carries the forgotten text.
+    assert _FORGOTTEN_TEXT not in raw
+    # And no candidate event exists for the forgotten pair at all.
+    assert not any(
+        json.loads(line).get("item_ref") == forgotten_id
+        and str(json.loads(line).get("status") or "").startswith("supersede-candidate")
+        for line in raw.splitlines() if line.strip())
+    # Liveness controls: the never-forgotten twin's candidate DID emit, text
+    # and all — the fix is a targeted skip, not a silenced emitter.
+    candidates = [json.loads(line) for line in raw.splitlines()
+                  if line.strip()
+                  and str(json.loads(line).get("status") or "")
+                  .startswith("supersede-candidate")]
+    assert len(candidates) == 1
+    assert candidates[0]["item_text"] == _CONTROL_TEXT
+
+
 # ---- #29: UX-contract batch — surface messages must match what the code does ----
 
 
