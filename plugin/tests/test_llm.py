@@ -936,3 +936,81 @@ def test_chat_fallback_no_deadline_stays_none(monkeypatch):
     monkeypatch.setattr(llm, "_chat_command", fake_command)
     assert llm.chat([{"role": "user", "content": "x"}]) == "OK"
     assert seen["deadline"] is None
+
+
+# ---- #458 / scar 0032: the served model comes from the wire, not the config ----
+#
+# A gateway alias is routing config; gateways run silent fallback chains, so the
+# response body's `model` field is the only per-call truth about which model
+# actually served. llm must capture it per call and expose it to the stamping
+# caller (module-sticky accessor, mirroring the #28 fallback_used pattern —
+# chat()'s `-> str` contract is consumed by every injectable-chat seam and
+# must not change shape).
+
+
+def _ok_response_with_model(content, served_model):
+    body = json.dumps({
+        "model": served_model,
+        "choices": [{"message": {"content": content}}],
+    }).encode()
+    return io.BytesIO(body)
+
+
+def test_chat_records_served_model_from_response_body(llm_env, monkeypatch):
+    # The live incident (2026-07-30): request named the gateway alias, the
+    # response's own `model` field named the local fallback that actually ran.
+    llm.reset_served_models()
+
+    def fake_urlopen(req, timeout=None):
+        return _ok_response_with_model(
+            "ok", "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+    assert llm.served_models() == ["unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF"]
+
+
+def test_chat_without_model_field_records_honest_absence(llm_env, monkeypatch):
+    # No `model` in the response body -> nothing recorded. Never copy the
+    # requested alias into the served slot — that would re-create the exact
+    # lie #458 exists to kill.
+    llm.reset_served_models()
+
+    def fake_urlopen(req, timeout=None):
+        return _ok_response("ok")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+    assert llm.served_models() == []
+
+
+def test_served_models_distinct_sorted_and_resettable(llm_env, monkeypatch):
+    # Multiple calls in one process (a chunked serialize) accumulate; the
+    # accessor reports DISTINCT names, sorted, so the stamp is deterministic.
+    llm.reset_served_models()
+    served = iter(["z-model", "a-model", "z-model"])
+
+    def fake_urlopen(req, timeout=None):
+        return _ok_response_with_model("ok", next(served))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    for _ in range(3):
+        assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+    assert llm.served_models() == ["a-model", "z-model"]
+    llm.reset_served_models()
+    assert llm.served_models() == []
+
+
+def test_command_backend_records_no_served_model(monkeypatch):
+    # The claude-CLI/command backend exposes no served-model info at all —
+    # honest absence, never a guess (scar 0032: measurements attributed
+    # without a served-model receipt must say so by carrying nothing).
+    llm.reset_served_models()
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "mycli")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_OUTPUT", raising=False)
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_INPUT", raising=False)
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda argv, stdin_text, timeout, env, cwd: (0, "OK", ""))
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "OK"
+    assert llm.served_models() == []

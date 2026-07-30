@@ -49,3 +49,63 @@ def test_real_backend_serialize_and_recall(tmp_path):
     )
     assert result["serialize"]["indexed"] >= 1
     assert result["n_retrieved_sessions"] >= 1
+
+
+# ---- #458 / scar 0032: served-model stamp in the bench report ----
+#
+# The config stamp's `model` is the REQUESTED gateway alias — routing config,
+# not provenance. `model_served` records what the wire said across the run;
+# a run that saw more than one served model gets an explicit `mixed_models`
+# flag in the aggregate block so a number is never attributed to one model
+# when several actually ran. No LLM needed: pure stamp-shaping helper.
+
+
+def test_stamp_served_models_single(tmp_path):
+    stamp, agg = {}, {}
+    bench_run._stamp_served_models(stamp, agg, ["provider/only-model"])
+    assert stamp["model_served"] == "provider/only-model"
+    assert "mixed_models" not in agg
+
+
+def test_stamp_served_models_mixed_flags_never_silent(tmp_path):
+    stamp, agg = {}, {}
+    bench_run._stamp_served_models(stamp, agg, ["z-model", "a-model"])
+    assert stamp["model_served"] == ["a-model", "z-model"]
+    assert agg["mixed_models"] is True
+
+
+def test_stamp_served_models_absent_records_nothing(tmp_path):
+    # Command backend / all-cache runs have no wire receipt: honest absence,
+    # never the alias copied over.
+    stamp, agg = {}, {}
+    bench_run._stamp_served_models(stamp, agg, [])
+    assert "model_served" not in stamp
+    assert "mixed_models" not in agg
+
+
+def test_committed_baseline_is_annotated_and_metrics_untouched():
+    # #458 acceptance: the 5-question baseline's `model` is a gateway alias
+    # recorded while fallback chains were live — the config block must SAY so
+    # (model_note, mirroring interim-317-baseline-first54.json), and the
+    # annotation must not touch a single metric value.
+    import json
+    from pathlib import Path
+
+    baseline = Path(__file__).resolve().parents[2] / \
+        "benchmark/results/longmemeval-s-baseline.json"
+    report = json.loads(baseline.read_text(encoding="utf-8"))
+    note = report["config"]["model_note"]
+    assert "alias" in note
+    assert "#458" in note
+    assert "unverifiable" in note
+    assert report["config"]["model"] == "claude-haiku-4-5-via-meridian"
+    assert report["metrics"] == {
+        "k": 5,
+        "questions_total": 5,
+        "questions_scored": 5,
+        "questions_abstention": 0,
+        "recall_at_5": 0.8,
+        "hit_at_5": 1.0,
+        "mrr": 0.85,
+        "avg_injected_tokens": 149.6,
+    }

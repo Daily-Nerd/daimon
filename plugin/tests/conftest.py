@@ -41,6 +41,15 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     return home
 
 
+@pytest.fixture(autouse=True)
+def _reset_served_models():
+    """#458: the served-model collector is module-sticky (same shape as #28's
+    fallback flag) — clear it per test so one test's canned response bodies
+    can never stamp phantom served models onto another test's checkpoints."""
+    from daimon_briefing import llm
+    llm.reset_served_models()
+
+
 @pytest.fixture
 def tmp_checkpoint_dir(tmp_path):
     # The autouse fixture already points DAIMON_CHECKPOINT_DIR here; expose the path.

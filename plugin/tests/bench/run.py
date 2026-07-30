@@ -115,11 +115,32 @@ def _build_config_stamp(args, dataset_path: Path) -> dict:
     }
 
 
+def _stamp_served_models(stamp: dict, agg: dict, served: list) -> None:
+    """#458 / scar 0032: `stamp['model']` is the REQUESTED gateway alias —
+    routing config, not provenance (gateways run silent fallback chains, so
+    the alias proves nothing about which model ran). `served` is what the
+    response bodies actually said across the run (llm.served_models()). One
+    distinct name -> `model_served` string; several -> the sorted list AND an
+    explicit `mixed_models: true` on the aggregate block, so a mixed run can
+    never be attributed to a single model silently. Empty (command backend,
+    or an all-cache run that made no LLM call) -> no key at all: honest
+    absence, never the alias copied into the served slot."""
+    distinct = sorted(set(served))
+    if not distinct:
+        return
+    stamp["model_served"] = distinct[0] if len(distinct) == 1 else distinct
+    if len(distinct) > 1:
+        agg["mixed_models"] = True
+
+
 def run(args) -> dict:
     dataset_path = _resolve_dataset(args)
     questions = dataset.sample(dataset.load(dataset_path), args.sample, args.seed)
     cache = cache_mod.CheckpointCache(Path(args.cache_dir))
     chat = llm.chat
+    # #458: collect served-model receipts for THIS run only — the collector
+    # is module-sticky (same lifecycle as llm's #28 fallback flag).
+    llm.reset_served_models()
 
     stamp = _build_config_stamp(args, dataset_path)
     print(f"suite={args.suite} sample={len(questions)} backend={stamp['backend']} "
@@ -143,6 +164,13 @@ def run(args) -> dict:
               f"({time.monotonic() - qt0:.0f}s)")
 
     agg = metrics.aggregate(per_question, args.k)
+    # #458: stamp what actually served (reset ran before the loop, so these
+    # are exactly this run's receipts). A mixed run is flagged loudly in the
+    # aggregate block AND on stdout — never aggregated silently.
+    _stamp_served_models(stamp, agg, llm.served_models())
+    if agg.get("mixed_models"):
+        print(f"WARNING: mixed served models in this run ({stamp['model_served']}) "
+              "— do not attribute this number to a single model (#458)")
     total_serialized = sum(r["serialize"]["serialized"] for r in per_question)
     report = {
         "config": stamp,
