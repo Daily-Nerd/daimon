@@ -3517,6 +3517,22 @@ def test_recall_inject_age_bucket_counted_per_chosen_row(
     assert data["usage"]["recall-inject:age:8-14d"] == 1
 
 
+def test_inject_age_bucket_boundaries_match_the_452_bands():
+    # The bands ARE the #452 measurement table — a drifted boundary would file
+    # future re-measurement rows against the wrong measured baseline. Pinned
+    # at both edges of every band, boundaries inclusive-left per the table.
+    assert cli._inject_age_bucket(None) == "unknown"
+    assert cli._inject_age_bucket(0.0) == "<=1d"
+    assert cli._inject_age_bucket(1.0) == "<=1d"
+    assert cli._inject_age_bucket(1.5) == "2-3d"
+    assert cli._inject_age_bucket(3.0) == "2-3d"
+    assert cli._inject_age_bucket(3.5) == "4-7d"
+    assert cli._inject_age_bucket(7.0) == "4-7d"
+    assert cli._inject_age_bucket(7.5) == "8-14d"
+    assert cli._inject_age_bucket(14.0) == "8-14d"
+    assert cli._inject_age_bucket(14.5) == ">14d"
+
+
 def test_save_seen_prunes_week_old_cooldown_files(tmp_checkpoint_dir):
     from daimon_briefing import config, cli as cli_mod
 
