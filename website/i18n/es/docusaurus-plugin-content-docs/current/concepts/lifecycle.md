@@ -81,6 +81,16 @@ Qué ocurre al olvidar:
   locales de los mirrors de equipo — así recall no puede resucitarlo.
   (Propagar tombstones a los mirrors propios de tus compañeros es un
   seguimiento deliberado, no está en v1.)
+- La **caché de chunks** del serializer se purga **por completo**. Esa caché
+  guarda salida de extracción pre-redacción durante unos días para que una
+  captura interrumpida nunca re-pague sus llamadas al LLM — y como sus
+  entradas se indexan por el texto del chunk, no por el valor contenido, la
+  eliminación selectiva es imposible. Forget la vacía entera (el costo: los
+  chunks más jóvenes que la ventana de rotación, `chunk_cache_days`, 3 días
+  por defecto, se re-extraen la próxima vez). Las entradas también se
+  cosechan por edad en esa ventana, independientemente de forget. La purga
+  nunca es fatal — la eliminación del estado de creencias siempre se
+  completa — y el comando reporta honestamente si la purga tuvo éxito.
 - La retención en el briefing, la supresión del arrastre y `daimon stats`
   heredan el tombstone a través del mismo flujo de eventos.
 
@@ -104,14 +114,25 @@ permanece recuperable para que ninguna verificación pase de forma vacua:
 | 8 | Filas SQLite de recall | ausente |
 | 9 | Receipt firmado | vincula los bytes posteriores a la eliminación |
 | 10 | Rastro de auditoría | registra la eliminación, sin nada de su texto |
+| 11 | Caché de chunks del serializer (pre-redacción) | purgada por completo al olvidar |
 
-**Resultado: 10 / 10 pasos en cumplimiento.** Las pruebas son deterministas y
+**Resultado: 11 / 11 pasos en cumplimiento.** Las pruebas son deterministas y
 usan cero cuota de modelo — un extractor precargado y un firmante simulado
 reemplazan al LLM y a la CLI de vitni — así que es una verificación de
 cumplimiento que corre en cada commit, no un benchmark. El paso 3 es el que más
 importa: re-ingerir el material crudo del que salió un ítem eliminado es cómo
 los sistemas lo traen de vuelta sin querer, y el tombstone por-valor lo
 descarta en el límite de escritura sin importar qué re-produzca el extractor.
+
+Un límite que vale la pena declarar con exactitud: la caché de chunks es
+pre-redacción *por necesidad* (la verificación de citas necesita el texto
+crudo), así que antes de que este paso entrara al protocolo, los bytes de un
+valor olvidado podían quedarse en la caché hasta que actuara la cosecha por
+edad. Ahora `forget` purga la caché local de chunks en el mismo comando, y la
+cosecha de `chunk_cache_days` (3 días por defecto) sigue siendo el límite
+superior independiente para todo lo escrito después de un forget. La
+afirmación se limita a esta máquina: la caché nunca se sincroniza a ningún
+lado.
 
 ## Candidatos a supersesión
 

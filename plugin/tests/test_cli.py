@@ -6186,6 +6186,52 @@ def test_forget_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
     assert store.resolutions(project_dir="/p/A")[iid]["status"].startswith("forgotten:")
 
 
+def test_forget_purges_chunk_cache(tmp_checkpoint_dir, capsys, monkeypatch):
+    """#422: the serializer chunk cache holds PRE-redaction extraction output
+    keyed by chunk TEXT — a forgotten value cannot be located selectively, so
+    forget purges the cache WHOLESALE and reports the count honestly."""
+    from daimon_briefing import llm, serializer, store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    item = cp["working_context"]["open_questions"][0]
+    llm.reset_fallback()  # _save_chunk_cache refuses after a fallback fired
+    serializer._save_chunk_cache(
+        serializer._chunk_cache_key("chunk quoting: " + item["text"]),
+        {"working_context": {"open_questions": [
+            {"text": item["text"], "trust": "inferred"}]}})
+    cache_dir = serializer._chunk_cache_dir()
+    assert list(cache_dir.glob("*.json"))  # seeded (control precondition)
+    assert cli.main(["forget", item["id"]]) == 0
+    assert cache_dir.is_dir()              # dir kept — entries gone
+    assert list(cache_dir.glob("*.json")) == []
+    out = capsys.readouterr().out
+    assert "forgot" in out
+    assert "purged 1 cached chunk" in out  # honest reporting, success path
+
+
+def test_forget_cache_purge_failure_warns_but_still_succeeds(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    """#422: the purge is never-fatal — deletion of belief state is the
+    primary contract — but a failed purge is reported, never silent."""
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+
+    def boom():
+        raise RuntimeError("cache dir on fire")
+
+    monkeypatch.setattr(cli.serializer, "purge_chunk_cache", boom)
+    assert cli.main(["forget", iid]) == 0  # forget itself still succeeds
+    after = store.read_latest(project_dir="/p/A", fallback=False)
+    assert iid not in [i.get("id")
+                       for i in after["working_context"]["open_questions"]]
+    out = capsys.readouterr().out
+    assert "forgot" in out
+    assert "cache purge failed" in out
+    assert "cache dir on fire" in out
+
+
 # --- #376 rejection ledger in stats ----------------------------------------
 
 def test_stats_verification_reports_counts(tmp_path, monkeypatch):
