@@ -15,6 +15,12 @@ order is load-bearing and must not change:
 
 Like the helpers it absorbed, every function mutates its checkpoint argument
 IN PLACE (the established store.py contract — callers rely on it).
+
+#423 adds the INBOUND twin: admit_foreign runs where a teammate's synced
+checkpoint enters local surfaces (read_team, the recall scan) — scope, local
+re-redaction, the local forget gate, and the foreign verbatim->inferred
+trust clamp. Same purity contract: membership, the forgotten set, and the
+redact function are all injected by the caller.
 """
 
 import hashlib
@@ -28,7 +34,7 @@ from . import normalize, redact, schema
 _ITEM_LISTS = schema.ITEM_LISTS
 
 
-def redact_checkpoint(checkpoint: dict) -> None:
+def redact_checkpoint(checkpoint: dict, redact_fn=None) -> None:
     """Capture-time secret redaction (#104): runs before this module's own
     stamp_item_ids call below, so ids stamped HERE hash redacted text. On
     the serialize path the cli stamps ids earlier (before bind_links, #14),
@@ -37,12 +43,16 @@ def redact_checkpoint(checkpoint: dict) -> None:
     secret-bearing items differs between the two paths.
     Covers text AND quote on every list item plus active_topic — verbatim
     quotes are the likeliest secret carriers. Stamps a visible
-    checkpoint["redactions"] counter only when something was scrubbed."""
+    checkpoint["redactions"] counter only when something was scrubbed.
+    `redact_fn` (#423) lets the inbound gate inject the scrub function;
+    the write path keeps the module-level default."""
     counts: dict = {}
+    if redact_fn is None:
+        redact_fn = redact.redact_text
 
     def _scrub(d: dict, field: str) -> None:
         val = d.get(field)
-        red, c = redact.redact_text(val)
+        red, c = redact_fn(val)
         if c:
             d[field] = red
             for k, n in c.items():
@@ -155,3 +165,61 @@ def admit_checkpoint(checkpoint: dict, forgotten_keys: set) -> list:
     dropped = drop_forgotten(checkpoint, forgotten_keys)
     stamp_item_ids(checkpoint)
     return dropped
+
+
+def clamp_foreign_trust(checkpoint: dict) -> None:
+    """#423: a foreign `verbatim` claim is structurally unverifiable on this
+    machine — receipt verification resolves against the LOCAL checkpoint dir —
+    so repeated foreign assertion must never read as verified capture (the
+    manufactured-corroboration failure mode). Clamp the trust class to
+    `inferred` (also the #413 authority ceiling the recall index scores by)
+    and stamp `foreign_verbatim_claim` so the Teammates render can state both
+    facts visibly: claimed verbatim, unverifiable here. Items that never
+    claimed verbatim are left untouched — no marker they never earned."""
+    def _clamp(item) -> None:
+        if isinstance(item, dict) and item.get("trust") == "verbatim":
+            item["trust"] = "inferred"
+            item["foreign_verbatim_claim"] = True
+
+    for section, key in _ITEM_LISTS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            _clamp(item)
+    _clamp((checkpoint.get("working_context") or {}).get("active_topic"))
+
+
+def admit_foreign(checkpoint, *, member: bool, forgotten_keys: set,
+                  redact_fn):
+    """#423 inbound gate: the read/index-time twin of admit_checkpoint, run
+    where FOREIGN content (a synced teammate's checkpoint) enters local
+    surfaces. In-memory only — sidecar files and the git layer are never
+    rewritten. Order mirrors the write pipeline where it overlaps:
+
+    1. scope    — `member` is the caller's teamproject.in_scope answer for
+                  the sidecar this checkpoint came from; not a member -> None
+                  (caller skips the checkpoint entirely, default closed);
+    2. redact   — the injected local redact_fn re-scrubs text/quote/scene
+                  (+ active_topic): a teammate on an older daimon with fewer
+                  secret patterns must not seed a durable cleartext copy here;
+    3. forget   — items whose canonicalized text hashes into the injected
+                  LOCAL forgotten set are dropped, so a teammate's checkpoint
+                  cannot re-assert a value forgotten on this machine
+                  (redaction first, same load-bearing order as the write side);
+    4. trust    — clamp_foreign_trust above.
+
+    Pure by the module contract: the caller injects membership, the forgotten
+    set, and the redact function. Mutates `checkpoint` in place and returns
+    it, or None when the checkpoint must not be admitted. Tolerant of
+    legacy/malformed foreign blobs (missing sections, junk items) — the only
+    hard rejection is a non-dict, which fails CLOSED rather than admit what
+    the gate cannot inspect."""
+    if not member:
+        return None
+    if not isinstance(checkpoint, dict):
+        return None  # cannot inspect it -> cannot vouch for it
+    redact_checkpoint(checkpoint, redact_fn)
+    drop_forgotten(checkpoint, forgotten_keys)
+    clamp_foreign_trust(checkpoint)
+    return checkpoint

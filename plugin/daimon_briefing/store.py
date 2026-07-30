@@ -829,15 +829,27 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     only — NO physical deletes, ever: the shared branch is append-only and
     deletes race appends (spike verdict).
 
+    Inbound gate (#423): content from a synced remote passes
+    policy.admit_foreign before it can reach the result — scope membership
+    (the same teamproject.in_scope answer the outbound router uses, default
+    closed), local re-redaction, the local forget tombstones, and the foreign
+    verbatim->inferred trust clamp. In-memory only: sidecar files are never
+    rewritten. The machine-local mirror ('local') is this machine's own
+    writes and stays ungated, as do this author's own dual-written copies
+    synced back through a clone (their verbatim claims ARE locally
+    verifiable).
+
     Pure file-ops, never raises — a missing/broken/torn team dir yields []."""
     root = config.team_dir()
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
     candidates = teamproject.read_candidates(project_dir)
+    forgotten = forgotten_content_keys(project_dir)
+    self_author = project_slug(config.author())
     # author-slug (dir identity, one per author) -> (recency, author, checkpoint)
     best: dict[str, tuple[float, str, dict]] = {}
 
-    def _consider(adir: Path, check_stamp: bool) -> None:
+    def _consider(adir: Path, check_stamp: bool, member) -> None:
         try:
             files = [p for p in adir.iterdir()
                      if p.is_file() and p.suffix == ".json"]
@@ -856,6 +868,14 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
             rec = _file_recency(p)
             if cutoff is not None and rec < cutoff:
                 continue  # aged out of the read window; file stays on disk
+            if member is not None \
+                    and project_slug(str(cp.get("author") or adir.name)) \
+                    != self_author:
+                cp = policy.admit_foreign(
+                    cp, member=member, forgotten_keys=forgotten,
+                    redact_fn=redact.redact_text)
+                if cp is None:
+                    continue  # not admitted; the file stays on disk untouched
             key = adir.name
             if key not in best or rec > best[key][0]:
                 best[key] = (rec, cp.get("author") or adir.name, cp)
@@ -864,14 +884,24 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
         remotes = list(root.iterdir())
     except OSError:
         return []
+    # #423 scope, mirroring _team_write_slugs: with a single synced clone the
+    # DAIMON_TEAM_PROJECT env grant counts as explicit intent; with several it
+    # cannot say which remote it means, so only each sidecar's toml answers.
+    clones = [r for r in remotes if r.is_dir()
+              and r.name != _TEAM_LOCAL_REMOTE and (r / ".git").exists()]
+    honor_env = len(clones) <= 1
     for remote in remotes:
+        # member=None -> the machine-local mirror, ungated; any other dir is
+        # foreign-shaped and must earn admission (default closed, like #279).
+        member = None if remote.name == _TEAM_LOCAL_REMOTE else \
+            teamproject.in_scope(project_dir, remote, honor_env=honor_env)
         # Nested era (#200): only THIS project's subtrees — every candidate
         # path (winner + prior-tier locations); the paths filter.
         for segs in candidates:
             nested = remote.joinpath("projects", *segs, "authors")
             try:
                 for adir in nested.iterdir():
-                    _consider(adir, check_stamp=False)
+                    _consider(adir, check_stamp=False, member=member)
             except OSError:
                 pass  # no such subtree in this remote (yet)
         # Legacy flat era: stamp-filtered, readable forever.
@@ -880,7 +910,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
         except OSError:
             continue  # not a remote-shaped dir; skip
         for adir in author_dirs:
-            _consider(adir, check_stamp=True)
+            _consider(adir, check_stamp=True, member=member)
     ordered = sorted(best.values(), key=lambda t: t[0], reverse=True)
     return [(author, cp) for _rec, author, cp in ordered]
 
@@ -1190,6 +1220,27 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
             key = status[len(_FORGOTTEN_PREFIX):].strip()
             if key:
                 keys.add(key)
+    return keys
+
+
+def all_forgotten_content_keys() -> set[str]:
+    """Union of EVERY local project's forget tombstones (#423). The recall
+    index is machine-global and a foreign checkpoint cannot name the local
+    project dir its content corresponds to, so the inbound forget gate
+    suppresses a value forgotten in ANY local project. Over-suppression is
+    the fail-safe direction (drop_forgotten's documented posture) — a
+    forgotten value re-surfacing via a teammate is the worse failure.
+    Never raises; degrades to the empty set."""
+    keys: set[str] = set()
+    try:
+        children = list(config.checkpoint_dir().iterdir())
+    except OSError:
+        return keys
+    for child in children:
+        # Bucket dirs are named by slug; project_slug is idempotent on slugs,
+        # so the name rides through the project_dir-shaped ledger API.
+        if child.is_dir():
+            keys |= forgotten_content_keys(child.name)
     return keys
 
 

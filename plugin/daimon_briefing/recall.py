@@ -45,7 +45,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, schema, scoring, store
+from . import config, policy, redact, schema, scoring, store, teamproject
 
 log = logging.getLogger("daimon.recall")
 
@@ -183,15 +183,39 @@ def _scan_sources():
     has aged out, #120). An aged-out team file is skipped WITHOUT entering
     `seen`, so a dual-written copy of your OWN session still indexes from the
     local scan below — retention is a team-view concept, never a cap on your
-    own searchable history."""
+    own searchable history.
+
+    Inbound gate (#423): foreign content (a synced remote's files, other
+    authors) passes policy.admit_foreign before a row can exist — the index
+    is the durable local copy, so scope, local re-redaction, the local forget
+    tombstones and the foreign verbatim->inferred clamp all apply HERE, not
+    at query time. The index is machine-global (no project dir in hand), so
+    remote membership is judged by what the sidecar's own toml vouches for
+    (teamproject.granted_paths) against the checkpoint's stamped logical
+    path; flat-era foreign blobs carry no toml-checkable identity and fail
+    CLOSED. A gated-out file is skipped WITHOUT entering `seen` — same
+    posture as retention. The 'local' mirror (this machine's own writes) and
+    this author's own synced-back copies stay ungated."""
     seen: set[tuple[str, str]] = set()
     root = config.team_dir()
     cutoff = store.team_retention_cutoff()
+    self_author = store.project_slug(config.author())
+    forgotten = store.all_forgotten_content_keys()
     try:
         remotes = list(root.iterdir())
     except OSError:
         remotes = []
+    # Mirror of _team_write_slugs / read_team (#423): the env grant is
+    # explicit machine intent with a single synced clone, unroutable noise
+    # with several.
+    clones = [r for r in remotes if r.is_dir()
+              and r.name != store._TEAM_LOCAL_REMOTE
+              and (r / ".git").exists()]
+    honor_env = len(clones) <= 1
     for remote in remotes:
+        foreign = remote.name != store._TEAM_LOCAL_REMOTE
+        granted = (teamproject.granted_paths(remote, honor_env=honor_env)
+                   if foreign else None)
         # Both layout eras (#200): legacy flat authors/* plus nested
         # projects/**/authors/* — same walker read_team's fan-in rests on.
         author_dirs = store._team_author_dirs(remote)
@@ -210,6 +234,16 @@ def _scan_sources():
                     continue
                 sid = str(cp.get("session_id") or p.stem)
                 author = str(cp.get("author") or adir.name)
+                if foreign and store.project_slug(author) != self_author:
+                    stamp = cp.get("team_project")
+                    segs = (teamproject.logical_segments(stamp)
+                            if isinstance(stamp, str) else ())
+                    cp = policy.admit_foreign(
+                        cp, member=bool(segs) and segs in granted,
+                        forgotten_keys=forgotten,
+                        redact_fn=redact.redact_text)
+                    if cp is None:
+                        continue  # not admitted; never enters `seen`
                 key = (author, sid)
                 if key in seen:
                     continue

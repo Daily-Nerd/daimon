@@ -170,6 +170,13 @@ in the machine-local mirror (`<team_dir>/local/`) — withheld from the remote,
 never lost. Without this gate, one enabled remote would receive every project
 on the machine, including personal ones.
 
+The same allowlist gates **reads** too: `brief --team` and the recall index
+only admit a synced remote's content when the scope check passes. A remote
+this project was never granted to contributes nothing to this project's
+briefing or search index — the files stay untouched in the sidecar clone,
+they just don't enter local surfaces. The machine-local mirror
+(`<team_dir>/local/`, your own withheld writes) needs no grant.
+
 A project is in scope for a remote when any of these holds:
 
 1. Its origin URL is listed under the sidecar's top-level `[scope]` table:
@@ -212,11 +219,32 @@ Teammates' checkpoints are shown within a read-time age window controlled by
 is a read filter only — no file is ever physically deleted from the append-only
 shared branch.
 
+### The inbound gate
+
+Every policy daimon enforces on your own checkpoints on the way out is
+re-asserted on a teammate's checkpoint on the way in, at read/index time
+(in-memory — sidecar files and git history are never rewritten):
+
+- **Scope** — content from a remote that doesn't pass the scope check above
+  never reaches the briefing or the recall index.
+- **Redaction** — your local secret patterns re-scrub incoming text before it
+  is shown or indexed. A teammate on an older daimon with fewer patterns
+  can't seed a durable cleartext copy on your machine.
+- **Forget** — values you tombstoned with `daimon forget` are dropped from
+  incoming checkpoints too: a teammate's copy can't re-surface something you
+  deleted locally.
+- **Trust** — a teammate's `verbatim` item is stored and scored as
+  `inferred`, because its receipt can only be verified on the machine that
+  captured it. In the Teammates section it renders with a visible label —
+  `[teammate claims verbatim — unverifiable here]` — stating both facts:
+  the claim, and that it can't be checked locally. Your own items are
+  unaffected.
+
 ## Environment reference
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_TEAM` | unset (off) | Set to `1` to mirror your checkpoints into the team dir. Gates writes only; reads are always on. |
+| `DAIMON_TEAM` | unset (off) | Set to `1` to mirror your checkpoints into the team dir. Gates the outbound mirror; reads are on regardless, but pass the per-remote scope gate above. |
 | `DAIMON_AUTHOR` | `git config user.name` → OS username → `unknown` | The author name your checkpoints are filed under. |
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Root of the local team mirror (one subdirectory per sidecar clone). |
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path (e.g. `core/api-gateway`) for this machine's sessions. Beats the `daimon-team.toml` mapping and the origin-derived fallback. |

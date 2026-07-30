@@ -200,3 +200,103 @@ def test_policy_module_is_pure():
     for token in ("open(", ".write_text", ".read_text", ".write_bytes",
                   ".read_bytes", ".mkdir", "os.environ", "getenv"):
         assert token not in src, f"policy.py contains I/O-shaped token {token!r}"
+
+
+# ---- #423: inbound gate — admit_foreign (scope, redact, forget, trust clamp) ----
+
+
+def _foreign_cp():
+    return {
+        "session_id": "S-f",
+        "author": "grace",
+        "working_context": {
+            "active_topic": {"text": "tuning the ingest path", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [
+                {"text": _S, "trust": "verbatim", "quote": "we adopt sqlite"},
+                {"text": _T, "trust": "inferred"},
+            ],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }
+
+
+def test_admit_foreign_out_of_scope_returns_none():
+    from daimon_briefing import policy
+
+    cp = _foreign_cp()
+    assert policy.admit_foreign(
+        cp, member=False, forgotten_keys=set(),
+        redact_fn=redact.redact_text) is None
+
+
+def test_admit_foreign_redacts_with_injected_fn():
+    from daimon_briefing import policy
+
+    cp = _foreign_cp()
+    cp["working_context"]["recent_decisions"][0]["text"] = _SECRET_RAW
+    out = policy.admit_foreign(
+        cp, member=True, forgotten_keys=set(), redact_fn=redact.redact_text)
+    assert out is cp  # in-place mutation, the established module contract
+    text = out["working_context"]["recent_decisions"][0]["text"]
+    assert "AKIA" not in text
+    assert "[redacted:" in text
+    assert out.get("redactions")  # visible counter, same as the write path
+
+
+def test_admit_foreign_drops_locally_forgotten_value():
+    from daimon_briefing import policy
+
+    out = policy.admit_foreign(
+        _foreign_cp(), member=True,
+        forgotten_keys={normalize.content_key(_S)},
+        redact_fn=redact.redact_text)
+    kept = [d["text"] for d in out["working_context"]["recent_decisions"]]
+    assert _S not in kept
+    assert _T in kept
+
+
+def test_admit_foreign_forget_gate_sees_redacted_text():
+    """Order mirror of admit_checkpoint: redaction runs BEFORE the forget
+    gate, so a foreign re-assertion of a redacted-then-forgotten sentence
+    folds to the tombstoned (post-redaction) key and stays gone."""
+    from daimon_briefing import policy
+
+    redacted, counts = redact.redact_text(_SECRET_RAW)
+    assert counts  # the fixture really is secret-shaped
+    cp = _foreign_cp()
+    cp["working_context"]["recent_decisions"][0]["text"] = _SECRET_RAW
+    out = policy.admit_foreign(
+        cp, member=True, forgotten_keys={normalize.content_key(redacted)},
+        redact_fn=redact.redact_text)
+    kept = [d["text"] for d in out["working_context"]["recent_decisions"]]
+    assert kept == [_T]
+
+
+def test_admit_foreign_clamps_verbatim_and_marks_claim():
+    from daimon_briefing import policy
+
+    out = policy.admit_foreign(
+        _foreign_cp(), member=True, forgotten_keys=set(),
+        redact_fn=redact.redact_text)
+    first, second = out["working_context"]["recent_decisions"]
+    assert first["trust"] == "inferred"
+    assert first["foreign_verbatim_claim"] is True
+    assert second["trust"] == "inferred"
+    assert "foreign_verbatim_claim" not in second  # never claimed — unmarked
+
+
+def test_admit_foreign_tolerates_malformed_checkpoints():
+    from daimon_briefing import policy
+
+    # A non-dict blob fails CLOSED (dropped), never raises.
+    assert policy.admit_foreign(
+        [1, 2], member=True, forgotten_keys=set(),
+        redact_fn=redact.redact_text) is None
+    # Junk items / missing sections ride through without raising.
+    cp = {"working_context": {"recent_decisions": ["bare string", 7, None],
+                              "active_topic": "not-a-dict"}}
+    out = policy.admit_foreign(
+        cp, member=True, forgotten_keys={normalize.content_key(_S)},
+        redact_fn=redact.redact_text)
+    assert out is cp

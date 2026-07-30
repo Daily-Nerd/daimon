@@ -2650,6 +2650,50 @@ def test_cli_brief_team_respects_decision_cap(tmp_checkpoint_dir, sample_checkpo
     assert "earlier decision" in out  # overflow marker: cap dropped 1 of grace's 2
 
 
+def test_cli_brief_team_labels_foreign_verbatim_claim(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path):
+    """#423: a teammate's `verbatim` claim renders as a CLAIM — clamped to the
+    inferred mark plus a visible 'unverifiable here' label — while the user's
+    OWN verbatim items keep the full verbatim mark (control)."""
+    import json as _json
+
+    from daimon_briefing import config, store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("a-1", sample_checkpoint, project_dir=proj)
+
+    # A single synced clone; the env grant is this machine's explicit intent.
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    remote = config.team_dir() / "team-a"
+    (remote / ".git").mkdir(parents=True, exist_ok=True)
+    d = remote / "projects" / "core" / "x" / "authors" / "grace"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "S-g.json").write_text(_json.dumps({
+        "session_id": "S-g",
+        "author": "grace",
+        "team_project": "core/x",
+        "working_context": {
+            "active_topic": {"text": "Hardening the ingest gate", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [
+                {"text": "Ship the ingest gate tomorrow", "trust": "verbatim",
+                 "quote": "ship it tomorrow"},
+            ],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }), encoding="utf-8")
+
+    rc = cli.main(["brief", "--team", "--project", proj])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "✓ verbatim" in out  # control: OWN verbatim rendering unchanged
+    line = next(ln for ln in out.splitlines() if "Ship the ingest gate" in ln)
+    assert "~ inferred" in line          # the claim renders clamped…
+    assert "✓ verbatim" not in line
+    assert "unverifiable here" in line   # …with both facts stated visibly
+    assert "verbatim" in line            # (claimed verbatim + unverifiable)
+
+
 # ---- recall: FTS search over local + team checkpoint history (#112) ----
 
 

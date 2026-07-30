@@ -36,6 +36,10 @@ DEGRADE_NOTE = (
     "⚠ RECEIPT UNVERIFIED — this checkpoint claims signed provenance, but its "
     "receipt is missing or no longer matches the stored bytes. The 'verbatim' "
     "quotes below are shown UNVERIFIED (run `daimon verify-receipt`).")
+# #423: a teammate's `verbatim` claim cannot be verified on this machine —
+# receipts resolve against the LOCAL checkpoint dir — so the inbound gate
+# clamps it to inferred and marks it; render states BOTH facts visibly.
+FOREIGN_VERBATIM_NOTE = "[teammate claims verbatim — unverifiable here]"
 
 
 def receipt_degraded(checkpoint) -> bool:
@@ -71,6 +75,10 @@ def _line(item, degraded: bool = False) -> str:
         # Epistemic honesty, same philosophy as trust marks: a loop carried
         # from an older session must not read as fresh context (#33 Phase 2).
         base += " [carried]"
+    if item.get("foreign_verbatim_claim"):
+        # #423: the inbound gate clamped a teammate's verbatim claim to
+        # inferred; state both facts — claimed verbatim, unverifiable here.
+        base += f" {FOREIGN_VERBATIM_NOTE}"
     if quote:
         base += f'  — "{quote}"'
     candidate = item.get("_supersede_candidate")
