@@ -367,6 +367,63 @@ def test_twin_inherits_prev_id():
     assert qs[0]["id"] == "o-aaa111"
 
 
+def test_twin_inherits_prev_origin_binding():
+    """#268 S1: origin rides the same rail as id/first_seen. A reworded native
+    twin is the SAME claim, so the session that first wrote it stays its
+    origin — otherwise every rewording would mint a fresh witness and two
+    sessions restating one claim would corroborate each other."""
+    prev = _cp("S-prev", 1, questions=[
+        _item("cache guard holds", id="o-aaa111",
+              origin_session="S-origin", origin_author="ada")])
+    new = _cp("S-new", 0, questions=[
+        _item("the cache guard is holding", days=0)])
+    out = carry.merge(new, prev, NOW)
+    twin = out["working_context"]["open_questions"][0]
+    assert twin["origin_session"] == "S-origin"
+    assert twin["origin_author"] == "ada"
+
+
+def test_twin_keeps_its_own_origin_over_prev():
+    """setdefault, not overwrite — a twin already bound (a re-merge, or a
+    native that was itself carried in) keeps the binding it arrived with."""
+    prev = _cp("S-prev", 1, questions=[
+        _item("cache guard holds", origin_session="S-prev-origin",
+              origin_author="grace")])
+    new = _cp("S-new", 0, questions=[
+        _item("the cache guard is holding", days=0,
+              origin_session="S-own", origin_author="ada")])
+    out = carry.merge(new, prev, NOW)
+    twin = out["working_context"]["open_questions"][0]
+    assert twin["origin_session"] == "S-own"
+    assert twin["origin_author"] == "ada"
+
+
+def test_twin_without_prev_origin_is_left_unbound():
+    """A pre-#268 prev checkpoint has no origin to give. The twin must stay
+    absent (write_checkpoint's bind_origin then binds it to THIS session) —
+    never an empty string, which would read as a nameless witness."""
+    prev = _cp("S-prev", 1, questions=[_item("cache guard holds")])
+    new = _cp("S-new", 0, questions=[
+        _item("the cache guard is holding", days=0)])
+    out = carry.merge(new, prev, NOW)
+    twin = out["working_context"]["open_questions"][0]
+    assert "origin_session" not in twin
+    assert "origin_author" not in twin
+
+
+def test_plain_carry_copy_keeps_its_origin():
+    """The non-twin path needs no propagation line — carried items are
+    deep-copied whole — but the guarantee is load-bearing, so pin it."""
+    prev = _cp("S-prev", 1, questions=[
+        _item("zephyr ledger drop unresolved",
+              origin_session="S-origin", origin_author="ada")])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    carried = out["working_context"]["open_questions"][0]
+    assert carried["carried_from"] == "S-prev"     # one hop back
+    assert carried["origin_session"] == "S-origin"  # all the way back
+    assert carried["origin_author"] == "ada"
+
+
 def test_resolved_prev_item_does_not_carry():
     prev = _cp("S-prev", 1, questions=[
         _item("dead loop no longer relevant", id="o-dead01"),
