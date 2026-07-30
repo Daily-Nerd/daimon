@@ -1395,6 +1395,37 @@ def _save_chunk_cache(key: str, partial: dict) -> None:
         pass
 
 
+def purge_chunk_cache():
+    """#422: wholesale removal of every cached chunk extraction. `daimon
+    forget` calls this after a successful tombstone+rewrite: cached output is
+    PRE-redaction (see the block comment above _chunk_cache_dir) and keyed by
+    chunk TEXT plus config dimensions — a forgotten value cannot be located
+    selectively, so the whole cache goes. Accepted cost: re-paying extraction
+    for chunks younger than chunk_cache_days (default 3), the same window the
+    age reaper already bounds. The directory itself is kept — the next
+    serialize re-populates in place. Orphaned `.*.tmp` writer droppings carry
+    the same pre-redaction bytes, so they go too.
+
+    Returns (purged_count, error_or_None) and NEVER raises: the caller's
+    deletion of belief state is the primary contract; a failed purge is
+    reported, not fatal."""
+    d = _chunk_cache_dir()
+    if not d.is_dir():
+        return 0, None  # nothing cached — vacuously purged
+    purged, error = 0, None
+    try:
+        targets = sorted(set(d.glob("*.json")) | set(d.glob(".*.tmp")))
+    except OSError as e:
+        return 0, str(e)
+    for entry in targets:
+        try:
+            entry.unlink()
+            purged += 1
+        except OSError as e:
+            error = str(e)
+    return purged, error
+
+
 def _merge_partials(chat, session_id: str, partials: list, deadline,
                     attempt_note: str = "") -> dict:
     """Hierarchically merge partial checkpoints into one, K partials at a time.

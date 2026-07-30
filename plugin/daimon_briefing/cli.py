@@ -1020,9 +1020,27 @@ def _cmd_forget(args) -> int:
     # the kill switch — the rewrite that makes the deletion real on disk.
     store.write_checkpoint(sid, checkpoint, project_dir=project,
                            allow_disabled=True)
+    # #422: the serializer chunk cache holds PRE-redaction extraction output
+    # (quote verification forbids redacting before caching, #125), keyed by
+    # chunk text — the forgotten value cannot be located selectively, so the
+    # purge is WHOLESALE and default-on. Never fatal: the belief-state
+    # deletion above is the primary contract; a failed purge is reported
+    # honestly below, and the age reaper still bounds any survivor at
+    # chunk_cache_days.
+    try:
+        purged, purge_err = serializer.purge_chunk_cache()
+    except Exception as e:  # belt: purge_chunk_cache itself never raises
+        purged, purge_err = 0, str(e)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
+    if purge_err is not None:
+        print(f"warning: chunk cache purge failed: {purge_err} — "
+              "cached pre-redaction chunks may persist up to "
+              f"{config.chunk_cache_days()} day(s) (age reaper)")
+    else:
+        print(f"purged {purged} cached chunk extraction(s) "
+              "(pre-redaction serializer cache)")
     return 0
 
 
