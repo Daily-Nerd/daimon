@@ -229,8 +229,11 @@ def brief_max_tokens() -> int:
 
 def recall_seen_dir() -> Path:
     """Per-session suggestion-cooldown state for recall-inject (#125): one small
-    JSON per session listing the checkpoints already suggested, so a repeated
-    topic never re-injects. Disposable like the recall db — deleting it only
+    JSON per session, {"origins": [...], "content_keys": [...]} — the
+    checkpoints already suggested AND the content keys already injected, so
+    neither a repeated topic nor the same claim carried by a second checkpoint
+    re-injects (#451). Pre-#451 files are a flat list of origins and still read
+    (see cli._load_seen). Disposable like the recall db — deleting it only
     resets cooldowns. DAIMON_RECALL_SEEN_DIR overrides (tests -> tmp)."""
     raw = _get("DAIMON_RECALL_SEEN_DIR")
     if raw:
