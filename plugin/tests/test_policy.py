@@ -300,3 +300,32 @@ def test_admit_foreign_tolerates_malformed_checkpoints():
         cp, member=True, forgotten_keys={normalize.content_key(_S)},
         redact_fn=redact.redact_text)
     assert out is cp
+
+
+# ---- #431: admit_row — the ledger-row admission seam ----
+
+
+def test_admit_row_scrubs_named_fields_in_place():
+    from daimon_briefing import policy
+
+    row = {"ts": "2026-07-29T00:00:00Z", "item_ref": "o-1",
+           "status": "resolved", "note": f"key is {_SECRET_RAW}"}
+    out = policy.admit_row(row, redact_fields=("status", "note"))
+    assert out is row  # same object back — the correlation contract
+    assert "AKIA" not in out["note"]
+    assert "[redacted:" in out["note"]
+    assert out["status"] == "resolved"          # clean field untouched
+    assert out["item_ref"] == "o-1"             # unnamed field never scrubbed
+
+
+def test_admit_row_uses_injected_redact_fn_and_skips_non_strings():
+    from daimon_briefing import policy
+
+    row = {"note": "hello", "item_text": None, "n": 3}
+    out = policy.admit_row(
+        row, redact_fields=("note", "item_text", "n", "absent"),
+        redact_fn=lambda s: ("SCRUBBED", {"x": 1}))
+    assert out["note"] == "SCRUBBED"   # injected fn used
+    assert out["item_text"] is None    # non-string passes through
+    assert out["n"] == 3               # non-string passes through
+    assert "absent" not in out         # named-but-missing field not created
