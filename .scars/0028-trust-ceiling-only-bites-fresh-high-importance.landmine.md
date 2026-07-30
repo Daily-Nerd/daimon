@@ -1,20 +1,21 @@
 ---
-id: 0
+id: 28
 type: landmine
 title: The #408 trust ceiling only clips FRESH, high-importance items — stale ceiling tests tie misleadingly
 severity: medium
 confidence: 0.9
 created: 2026-07-29
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/scoring.py
   - pattern: "trust_ceiling|TRUST_CEILING"
 evidence:
   - pr: 408
-  - note: "recall ceiling test tied verbatim vs inferred at 39d overdue (raw ~0.30 < 0.7 lid) until now was aligned to first_seen so raw ~1.0 clipped the inferred item"
+  - note: recall ceiling test tied verbatim vs inferred at 39d overdue (raw ~0.30 < 0.7 lid) until now was aligned to first_seen so raw ~1.0 clipped the inferred item
 expires:
   condition: "TYPE_RULES reshaped so overdue-escalated inferred items can exceed the inferred ceiling, or the ceiling becomes a multiplicative discount instead of a min() clamp"
   review_after: 2026-12-01
+status: active
 ---
 
 effective_weight applies the trust ceiling as `min(weight, ceiling)`. The lid
