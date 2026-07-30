@@ -958,11 +958,14 @@ def append_verification(item_ref: str, check: str, reason: str,
     if path is None:
         return False
     try:
-        check, _ = redact.redact_text(check)
-        reason, _ = redact.redact_text(reason)
+        # #431: the scrub runs through policy.admit_row — same redaction as
+        # before, but mounted on the policy seam so the write-audit guard can
+        # correlate the row on disk with its admission.
+        row = policy.admit_row(
+            {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "check": check, "item_ref": item_ref, "reason": reason},
+            redact_fields=("check", "reason"))
         path.parent.mkdir(parents=True, exist_ok=True)
-        row = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-               "check": check, "item_ref": item_ref, "reason": reason}
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         return True
@@ -1092,19 +1095,22 @@ def append_event(item_ref: str, status: str, note: str = "",
     if path is None:
         return False
     try:
-        note, _ = redact.redact_text(note)
-        item_text, _ = redact.redact_text(item_text)
-        # status is free-form by design (readers prefix-match, never enum) —
-        # so it can carry a secret-shaped value and must be scrubbed too (#141).
-        status, _ = redact.redact_text(status)
+        # #431: the scrub runs through policy.admit_row — same redaction as
+        # before (status is free-form by design, readers prefix-match, so it
+        # can carry a secret-shaped value and is scrubbed too, #141), but
+        # mounted on the policy seam so the write-audit guard can correlate
+        # the row on disk with its admission.
+        evt = policy.admit_row(
+            {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "kind": kind, "item_ref": item_ref, "status": status,
+             "source": source, "note": note, "item_text": item_text},
+            redact_fields=("status", "note", "item_text"))
+        # Empty optional fields never land on the row — unchanged shape.
+        if not evt["note"]:
+            del evt["note"]
+        if not evt["item_text"]:
+            del evt["item_text"]
         path.parent.mkdir(parents=True, exist_ok=True)
-        evt = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-               "kind": kind, "item_ref": item_ref, "status": status,
-               "source": source}
-        if note:
-            evt["note"] = note
-        if item_text:
-            evt["item_text"] = item_text
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(evt, ensure_ascii=False) + "\n")
         return True

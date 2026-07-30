@@ -167,6 +167,27 @@ def admit_checkpoint(checkpoint: dict, forgotten_keys: set) -> list:
     return dropped
 
 
+def admit_row(row: dict, redact_fields: tuple = (), redact_fn=None) -> dict:
+    """#431: the ledger-row admission gate — the seam an append-only
+    belief-bearing row (events.jsonl, verification.jsonl) passes through
+    before store appends it. Scrubs the named free-text fields with the
+    injected redact function (default redact.redact_text — same #141
+    defence-in-depth the appenders applied inline before this seam
+    existed), IN PLACE, and returns the SAME dict: callers must write the
+    returned object, so the write-audit architecture guard
+    (tests/test_write_audit_guard.py) can correlate the row that landed on
+    disk with this admission. Pure by the module contract: no I/O, no
+    clock — `ts` is stamped by the caller."""
+    if redact_fn is None:
+        redact_fn = redact.redact_text
+    for field in redact_fields:
+        val = row.get(field)
+        if isinstance(val, str) and val:
+            scrubbed, _ = redact_fn(val)
+            row[field] = scrubbed
+    return row
+
+
 def clamp_foreign_trust(checkpoint: dict) -> None:
     """#423: a foreign `verbatim` claim is structurally unverifiable on this
     machine — receipt verification resolves against the LOCAL checkpoint dir —
