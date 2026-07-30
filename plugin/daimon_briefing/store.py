@@ -24,7 +24,6 @@ one a live pointer still references. The default is generous on purpose so #33's
 merged checkpoint history keeps a deep well of files to reconstruct from.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -34,7 +33,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, normalize, receipts, redact, schema, serializer, teamproject
+from . import config, normalize, policy, receipts, redact, schema, serializer, teamproject
 
 log = logging.getLogger("daimon_briefing")
 
@@ -391,96 +390,32 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
 _ITEM_LISTS = schema.ITEM_LISTS
 
 
-def _redact_checkpoint(checkpoint: dict) -> None:
-    """Capture-time secret redaction (#104): runs before this module's own
-    _stamp_item_ids call below, so ids stamped HERE hash redacted text. On
-    the serialize path the cli stamps ids earlier (before bind_links, #14),
-    so ids there hash pre-redaction text — no leak (sha1 slices are not
-    reversible) and no consumer recomputes ids from text, but identity for
-    secret-bearing items differs between the two paths.
-    Covers text AND quote on every list item plus active_topic — verbatim
-    quotes are the likeliest secret carriers. Stamps a visible
-    checkpoint["redactions"] counter only when something was scrubbed."""
-    counts: dict = {}
-
-    def _scrub(d: dict, field: str) -> None:
-        val = d.get(field)
-        red, c = redact.redact_text(val)
-        if c:
-            d[field] = red
-            for k, n in c.items():
-                counts[k] = counts.get(k, 0) + n
-
-    for section, key in _ITEM_LISTS:
-        items = (checkpoint.get(section) or {}).get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if isinstance(item, dict):
-                _scrub(item, "text")
-                _scrub(item, "quote")
-                _scrub(item, "scene")
-                links = item.get("links")
-                if isinstance(links, list):
-                    for link in links:
-                        if isinstance(link, dict) and isinstance(link.get("target"), str):
-                            _scrub(link, "target")
-    topic = (checkpoint.get("working_context") or {}).get("active_topic")
-    if isinstance(topic, dict):
-        _scrub(topic, "text")
-        _scrub(topic, "quote")
-        _scrub(topic, "scene")
-    if counts:
-        # MERGE, never overwrite: a re-write (anchor --attach reads, mutates,
-        # writes the same dict) only re-matches NEW secrets — old markers don't
-        # match the patterns again, so overwriting would drop kinds still
-        # physically present in the checkpoint.
-        merged = dict(checkpoint.get("redactions") or {})
-        for k, n in counts.items():
-            merged[k] = merged.get(k, 0) + n
-        checkpoint["redactions"] = merged
+# #421: the admission pipeline (redact -> forget-gate -> id-stamp) moved to
+# policy.py, the pure module that owns its order. Aliased here because cli,
+# bench and tests call the store names; the behavior is byte-identical.
+_redact_checkpoint = policy.redact_checkpoint
+_stamp_item_ids = policy.stamp_item_ids
 
 
-def _stamp_item_ids(checkpoint: dict) -> None:
-    """Stable per-item ids (#102): sha1 of kind:text, 6 hex chars, prefixed
-    with the kind's initial. setdefault semantics — an item that already
-    carries an id (a carried twin, a re-write) is never re-stamped, so
-    identity survives rotation and re-serialization. Collisions within one
-    checkpoint widen the slice; identical-text twins fall through to a
-    counter suffix (same text, same kind, still two loops)."""
-    seen: set = set()
-    for section, key in _ITEM_LISTS:
-        items = (checkpoint.get(section) or {}).get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if not isinstance(item, dict) or not str(item.get("text") or "").strip():
-                continue
-            if item.get("id"):
-                seen.add(item["id"])
-                continue
-            digest = hashlib.sha1(
-                f"{key}:{item['text']}".encode("utf-8")).hexdigest()
-            cand = ""
-            for width in (6, 8, 12, 40):
-                cand = f"{key[0]}-{digest[:width]}"
-                if cand not in seen:
-                    break
-            n = 2
-            while cand in seen:
-                cand = f"{key[0]}-{digest[:6]}-{n}"
-                n += 1
-            item["id"] = cand
-            seen.add(cand)
-
-
-def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Path:
+def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
+                     allow_disabled: bool = False) -> Path | None:
     """Write the session checkpoint + the global latest pointer, and — when the
     project is known — the per-project latest pointer too. The global pointer is
     kept for backward compatibility (pre-routing consumers and the fallback).
 
     Each latest pointer is rotated first (#33 Phase 1): the previous latest is
-    retained as prev-1.json, keeping the last DAIMON_CHECKPOINT_HISTORY writes."""
+    retained as prev-1.json, keeping the last DAIMON_CHECKPOINT_HISTORY writes.
+
+    Kill switch (#421): the FIRST gate, before any directory is even created —
+    disabled means no belief mutations, one consistent answer at the write
+    boundary regardless of entry point (hook, CLI serialize, model-authored
+    write-checkpoint, anchor rewrite). Refusal is a None return, never an
+    exception — the same never-fatal posture as the ledger appenders. The ONE
+    exemption is `allow_disabled=True`, passed only by cli._cmd_forget's
+    rewrite: the maintainer ratified that deletion must still work while
+    disabled (the deletion promise outranks "disabled writes nothing")."""
+    if config.is_disabled() and not allow_disabled:
+        return None
     d = config.checkpoint_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = _contained_path(d, session_id)
@@ -496,18 +431,19 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None) -> Pat
     # store stays free of the git/subprocess dependency (scar 0). Present on every
     # checkpoint so read_team can attribute it later, even when team-write is off.
     checkpoint.setdefault("author", config.author())
-    _redact_checkpoint(checkpoint)
-    # #402: value-keyed re-capture gate — drop any item whose canonical value
-    # was forgotten for this project, BEFORE it is stamped, signed, indexed, or
-    # mirrored. Runs after redaction so the compared text matches the stored
-    # (post-redaction) text the forget command keyed the tombstone on. No-op
-    # (zero cost) when nothing was forgotten here.
-    forget_dropped = _drop_forgotten(checkpoint, project_dir)
+    # #421: the ordered admission pipeline — redact, then the #402 value-keyed
+    # forget gate (drop any item whose canonical value was forgotten for this
+    # project BEFORE it is stamped, signed, indexed, or mirrored; the gate runs
+    # after redaction so the compared text matches the stored post-redaction
+    # text the forget command keyed the tombstone on), then id-stamping — lives
+    # in policy.admit_checkpoint, pure by contract. The forgotten-keys ledger
+    # read is its one I/O dependency, so it happens HERE and is injected.
+    forget_dropped = policy.admit_checkpoint(
+        checkpoint, forgotten_content_keys(project_dir))
     if forget_dropped:
         # #404: account each suppression on the telemetry ledger. Best-effort
         # (never fatal) — a hit record must never fail the capture it observes.
         record_forget_hits(forget_dropped, project_dir)
-    _stamp_item_ids(checkpoint)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
     # session older than the pointer window would lose its project forever and
@@ -1109,13 +1045,18 @@ def forget_hit_stats(project_dir=None) -> dict:
 
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
-                 project_dir=None, item_text: str = "") -> bool:
+                 project_dir=None, item_text: str = "",
+                 allow_disabled: bool = False) -> bool:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
     audit trail must stay byte-stable. Silent no-op under the kill switch
     and when the project is unknown (an event without a bucket has no
-    reader)."""
-    if config.is_disabled():
+    reader). `allow_disabled` (#421) is the narrow deletion exemption:
+    passed ONLY by cli._cmd_forget's tombstone append — forget must work
+    while disabled, and #418 mandates its tombstone lands before the
+    rewrite, so the tombstone shares the rewrite's exemption. No other
+    caller may pass it."""
+    if config.is_disabled() and not allow_disabled:
         return False
     path = _events_path(project_dir)
     if path is None:
@@ -1252,35 +1193,6 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
     return keys
 
 
-def _drop_forgotten(checkpoint: dict, project_dir) -> list[dict]:
-    """Value-keyed re-capture gate (#402): drop every item whose canonicalized
-    text hashes into this project's forgotten set BEFORE it reaches the
-    checkpoint on disk. This is what makes "a forgotten value stays gone" hold
-    across a fresh re-extraction of the same sentence — not merely a
-    render-time withhold, which leaves the value sitting on disk. Returns the
-    dropped items so the caller can account the suppression hit (#404).
-
-    Fail-safe: over-suppresses on a hash collision (via the bounded content
-    key) — a forgotten value re-appearing is the worse failure. A no-op with
-    zero cost when nothing was ever forgotten here."""
-    keys = forgotten_content_keys(project_dir)
-    if not keys:
-        return []
-    dropped: list[dict] = []
-    for section, key in _ITEM_LISTS:
-        block = checkpoint.get(section)
-        if not isinstance(block, dict):
-            continue
-        lst = block.get(key)
-        if not isinstance(lst, list):
-            continue
-        kept = []
-        for item in lst:
-            if (isinstance(item, dict)
-                    and normalize.content_key(item.get("text") or "") in keys):
-                dropped.append(item)
-            else:
-                kept.append(item)
-        if len(kept) != len(lst):
-            block[key] = kept
-    return dropped
+# #421: the pure splice half of the gate moved to policy.drop_forgotten;
+# write_checkpoint injects forgotten_content_keys(project_dir) (the ledger
+# read above — the one I/O half that stays in the store).
