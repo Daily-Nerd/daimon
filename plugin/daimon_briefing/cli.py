@@ -327,6 +327,15 @@ def _run_serialize(transcript_path: Path, project: str | None,
         except Exception:  # keep the unmerged checkpoint, proceed to write
             pass
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    if out is None:
+        # #421: the write boundary refused (kill switch). Same "skipped" shape
+        # as the hash-match short-circuit above — matches neither _RESULT_OK_RE
+        # nor _RESULT_ERR_RE, so the ledger never reads it as a lying success.
+        msg = (f"skipped serialize for {session_id}: daimon disabled "
+               "(DAIMON_DISABLE) — checkpoint not written")
+        print(msg)
+        _append_serialize_log(msg)
+        return 0
     # #376: record what the checkers REJECTED, after write_checkpoint because
     # that is where item ids are guaranteed stamped (the merge branch above
     # only stamps when it runs). Its own append-only stream, never events.jsonl
@@ -491,6 +500,10 @@ def _cmd_write_checkpoint(args) -> int:
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))
+    if out is None:  # #421: write boundary refused (kill switch)
+        print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
+              file=sys.stderr)
+        return 1
     render.render_write_checkpoint([f"wrote checkpoint: {out} (source: {args.source})"])
     recall.warm()  # #246: freshen off the read path; never raises
     return 0
@@ -537,7 +550,11 @@ def _cmd_anchor(args) -> int:
         return 1
     item = matches[0]
     item["anchored_to"] = a
-    store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    if store.write_checkpoint(session_id, checkpoint, project_dir=project) is None:
+        # #421: write boundary refused (kill switch) — nothing was attached
+        print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
+              file=sys.stderr)
+        return 1
     render.render_anchor_attach([f"attached {a['qualified_name']} to: {item.get('text')}"])
     recall.warm()  # #246: the re-write staled the index; freshen off the read path
     return 0
@@ -973,16 +990,18 @@ def _cmd_forget(args) -> int:
     if not sid:
         print("checkpoint has no session_id — cannot rewrite")
         return 1
-    # Tombstone BEFORE the rewrite (#418): write_checkpoint's _drop_forgotten
+    # Tombstone BEFORE the rewrite (#418): write_checkpoint's forget gate
     # consults the ledger during the write — appended after, the new key is
     # invisible to that scrub and sibling ids carrying the same value survive.
     # Failing here leaves the checkpoint untouched: no half-removal without an
-    # audit-trail record.
+    # audit-trail record. allow_disabled (#421): forget is the ratified
+    # deletion exemption to the kill switch — the tombstone (and the rewrite
+    # below, which #418 chains to it) must land even while daimon is disabled.
     ok = store.append_event(target["id"], f"forgotten:{content_hash}",
                             note=args.reason or "", kind="tombstone",
-                            project_dir=project)
+                            project_dir=project, allow_disabled=True)
     if not ok:
-        print("tombstone event not written (daimon disabled or project unknown)")
+        print("tombstone event not written (project unknown or ledger unwritable)")
         return 1
     # Splice by VALUE, not only id (#418): one value can hold sibling ids —
     # the same sentence in two sections, or a widened hash within one
@@ -997,7 +1016,10 @@ def _cmd_forget(args) -> int:
                               and (i.get("id") == target["id"]
                                    or normalize.content_key(i.get("text") or "")
                                    == content_hash))]
-    store.write_checkpoint(sid, checkpoint, project_dir=project)
+    # allow_disabled (#421): the ONE write_checkpoint call that may run under
+    # the kill switch — the rewrite that makes the deletion real on disk.
+    store.write_checkpoint(sid, checkpoint, project_dir=project,
+                           allow_disabled=True)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
