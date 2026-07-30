@@ -1912,11 +1912,71 @@ def test_asserts_outcome_lexicon_is_conservative():
     no = ["will be merged tomorrow", "should be deployed after review",
           "plan to release on Friday", "whether the deploy succeeded",
           "use the passed argument", "decide the merge strategy",
-          "el despliegue funciono bien"]  # non-English: honest no-op
+          "el despliegue funciono bien",  # #401: vague verb, deliberate miss
+          "o deploy funcionou bem"]  # not a covered language: honest no-op
     for text in yes:
         assert serializer._asserts_outcome(text), text
     for text in no:
         assert not serializer._asserts_outcome(text), text
+
+
+def test_asserts_outcome_spanish_lexicon_is_conservative():
+    # #401: the project is bilingual end to end, but this gate was English-only,
+    # so a Spanish "los tests pasan" sailed through ungrounded while its English
+    # twin was downgraded. Same shape as the English lexicon: curated, bounded,
+    # never stemming, never an LLM.
+    yes = ["los tests pasan", "las pruebas pasaron", "PR #12 mergeado",
+           "fusionado a main", "desplegado a produccion", "trabajo completado",
+           "el issue quedo resuelto", "bug arreglado", "publicado en PyPI",
+           "release lanzado", "la suite en verde", "el codigo esta desplegado",
+           "compilacion con exito", "el deploy fallo"]
+    no = ["se va a mergear manana", "sera mergeado tras revision",
+          "todavia no esta desplegado", "si los tests pasan lo mergeamos",
+          "cuando quede resuelto lo cerramos", "planeo desplegar el viernes",
+          "falta arreglar el bug", "pendiente de revision",
+          "renombrar el modulo a carry.py"]
+    for text in yes:
+        assert serializer._asserts_outcome(text), text
+    for text in no:
+        assert not serializer._asserts_outcome(text), text
+
+
+def test_asserts_outcome_long_input_completes():
+    # Scar 22: every capture-path regex gets a long-input completion test —
+    # completion IS the signal (no timing assert). Both the English and the
+    # Spanish lexicon, plus both hedge regexes, scan this text.
+    assert serializer._asserts_outcome("pasan " * 12500) in (True, False)
+    assert serializer._asserts_outcome("mergeado " * 12500) in (True, False)
+    assert serializer._asserts_outcome("a-b." * 12500) in (True, False)
+    assert serializer._asserts_outcome("x" * 50000) in (True, False)
+
+
+def test_ground_outcomes_downgrades_ungrounded_spanish_outcome_claim():
+    # #401 paired mirror of the English downgrade test: a Spanish outcome
+    # assertion with no cited signal is stored inferred, grounded: false.
+    cp = _cp_one_decision({"text": "los tests pasan", "trust": "verbatim",
+                           "quote": "los tests pasan"})
+    n = serializer.ground_outcomes(cp, {"uuid-tool"})
+    item = cp["working_context"]["recent_decisions"][0]
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert item["grounded"] is False
+    assert item["quote"] == "los tests pasan"  # transcription stays honest
+
+
+def test_ground_outcomes_leaves_hedged_spanish_claim_alone():
+    # A Spanish plan/future/question is not an outcome assertion — untouched.
+    cp = _cp_one_decision({"text": "se va a mergear manana",
+                           "trust": "verbatim", "quote": "q"})
+    cp["working_context"]["open_questions"] = [
+        {"text": "si los tests pasan lo mergeamos", "trust": "verbatim",
+         "quote": "q2"}]
+    n = serializer.ground_outcomes(cp, {"uuid-tool"})
+    assert n == 0
+    assert cp["working_context"]["recent_decisions"][0]["trust"] == "verbatim"
+    assert cp["working_context"]["open_questions"][0]["trust"] == "verbatim"
+    for item in serializer.iter_items(cp):
+        assert "grounded" not in item
 
 
 def test_ground_outcomes_marks_signal_backed_items_grounded():

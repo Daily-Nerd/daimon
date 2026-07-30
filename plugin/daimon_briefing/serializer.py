@@ -903,9 +903,9 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
 
 GROUNDED_KEY = "grounded"
 
-# Conservative, English-only outcome lexicon: past-tense/state assertions
-# about completion. Non-English claims simply never match — grounding stays
-# absent there, which is the honest no-op (never downgrade on a guess).
+# Conservative, English outcome lexicon: past-tense/state assertions about
+# completion. A curated, BOUNDED-regex allowlist (scar 22: no unbounded prefix
+# before a keyword alternation) — never stemming, never an LLM call.
 _OUTCOME_RE = re.compile(
     r"(?:\b(?:succeeded|successfully)\b"
     r"|\btests?\s+(?:all\s+|are\s+|now\s+)*(?:pass(?:ed|ing)?|green)\b"
@@ -913,6 +913,26 @@ _OUTCOME_RE = re.compile(
     r"(?:is\s+|now\s+)*(?:pass(?:ed|ing)?|green|succeeded|failed|completed)\b"
     r"|\b(?:merged|deployed|released|published|shipped|landed)\b"
     r"|\ball\s+(?:\d+\s+)?tests?\s+pass(?:ed)?\b)",
+    re.IGNORECASE)
+# Spanish outcome lexicon (#401): the project is bilingual end to end (docs, es
+# briefings), but this gate was English-only, so a Spanish "los tests pasan"
+# sailed through ungrounded while its English twin was downgraded. Same shape
+# as the English lexicon above and the same house rules — a curated, bounded
+# allowlist, NOT stemming, NOT an LLM. Participles carry Spanish gender/number
+# agreement through a bounded (?:o|a|os|as) suffix; still fully bounded.
+_OUTCOME_ES_RE = re.compile(
+    r"(?:\bexitosamente\b"
+    r"|\bcon\s+[eé]xito\b"
+    r"|\b(?:los\s+|las\s+)?(?:tests?|pruebas)\s+"
+    r"(?:ya\s+|ahora\s+|todas\s+)*(?:pasan|pasaron)\b"
+    r"|\b(?:el\s+|la\s+)?(?:build|suite|ci|pipeline|despliegue|compilaci[oó]n)"
+    r"\s+(?:ya\s+|ahora\s+)*(?:pas[oó]|complet[oó]|termin[oó]|fall[oó]|"
+    r"en\s+verde)\b"
+    r"|\b(?:mergead|fusionad|desplegad|publicad|lanzad|liberad|completad|"
+    r"resuelt|arreglad|solucionad)(?:o|a|os|as)\b"
+    r"|\bfall(?:[oó]|aron|id[oa]s?)\b"
+    r"|\ben\s+verde\b"
+    r"|\btodas\s+(?:las\s+)?(?:\d+\s+)?pruebas\s+pas(?:an|aron)\b)",
     re.IGNORECASE)
 # Hedge/future/plan markers: "will be merged" is a plan, "whether the deploy
 # succeeded" is a question — neither ASSERTS the outcome. When one of these
@@ -923,13 +943,28 @@ _HEDGE_RE = re.compile(
     r"plan(?:ned|s|ning)?|todo|must|needs?\s+to|about\s+to|once|when|"
     r"if|whether|did|does|can|could|may|might)\b",
     re.IGNORECASE)
+# Spanish hedge markers (#401), mirror of _HEDGE_RE: future ("se va a mergear"),
+# plan ("planeo", "pendiente", "falta"), condition/question ("si", "cuando").
+_HEDGE_ES_RE = re.compile(
+    r"\b(?:se\s+van?\s+a|van?\s+a|vamos\s+a|ser[aá]n?|"
+    r"plane(?:o|as|amos|ad[oa]s?)|pendiente|"
+    r"todav[ií]a\s+no|a[uú]n\s+no|falta[nr]?|hay\s+que|hace\s+falta|"
+    r"deber[ií]an?|debe[n]?|podr[ií]an?|quiz[aá]s?|tal\s+vez|"
+    r"si|cuando|una\s+vez|acaso|a\s+punto\s+de|por\s+hacer)\b",
+    re.IGNORECASE)
 
 
 def _asserts_outcome(text: str) -> bool:
-    """True when `text` ASSERTS a completed outcome (narrow, English-only)."""
+    """True when `text` ASSERTS a completed outcome (narrow; English + Spanish).
+
+    Mirrors both language lexicons: a claim asserts an outcome only when a
+    curated verb matches AND no hedge (either language) is present — a Spanish
+    hedge blocks an English claim too, which is the conservative default."""
     if not isinstance(text, str):
         return False
-    return bool(_OUTCOME_RE.search(text)) and not _HEDGE_RE.search(text)
+    if _HEDGE_RE.search(text) or _HEDGE_ES_RE.search(text):
+        return False
+    return bool(_OUTCOME_RE.search(text) or _OUTCOME_ES_RE.search(text))
 
 
 def verification_rejections(checkpoint) -> list:
