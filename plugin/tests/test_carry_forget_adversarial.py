@@ -3,10 +3,12 @@
 `carry.merge`'s only forget suppression is ID-keyed (`item.get("id") in
 resolved`, carry.py). When a prev checkpoint still holds a forgotten VALUE under
 an id the ledger never tombstoned, carry forwards the item in memory; the only
-thing between it and disk is `store._drop_forgotten` running inside
-`store.write_checkpoint`. The lookalike tests (test_forget_reassertion_e2e's
-carry section, test_deletion_durability_protocol's carry step) feed carry a prev
-that the forget rewrite ALREADY scrubbed — delete `_drop_forgotten` and they all
+thing between it and disk is the value-keyed forget gate —
+`policy.drop_forgotten`, run by `store.write_checkpoint` via
+`policy.admit_checkpoint` (#421). The lookalike tests
+(test_forget_reassertion_e2e's carry section,
+test_deletion_durability_protocol's carry step) feed carry a prev that the
+forget rewrite ALREADY scrubbed — delete the gate and they all
 stay green. This file pins the boundary, architecture-guard style: the first
 test proves the resurrection path does not exist; the second is the committed
 MUTATION CHECK — it disables the gate and asserts the value DOES reach disk,
@@ -33,7 +35,8 @@ import json
 import os
 from datetime import datetime, timezone
 
-from daimon_briefing import briefing, carry, cli, config, normalize, recall, store
+from daimon_briefing import (briefing, carry, cli, config, normalize, policy,
+                             recall, store)
 from tests.conftest import FakeChat
 
 _P = "/repo/carry-forget-adversarial-420"
@@ -261,17 +264,22 @@ def test_ungated_prev_cannot_resurrect_forgotten_value_through_carry(
 
 def test_gate_removed_carried_value_reaches_disk(tmp_checkpoint_dir, tmp_path,
                                                  monkeypatch):
-    """The committed MUTATION CHECK (#420 acceptance): with _drop_forgotten
-    no-opped, the SAME fixture drives the forgotten value through carry onto
-    disk. This proves the sibling test is sensitive to exactly this gate —
-    delete `_drop_forgotten` and that test goes red, because this one shows
-    the resurrection genuinely happens without it."""
+    """The committed MUTATION CHECK (#420 acceptance): with the value-keyed
+    gate no-opped, the SAME fixture drives the forgotten value through carry
+    onto disk. This proves the sibling test is sensitive to exactly this gate —
+    delete `policy.drop_forgotten` and that test goes red, because this one
+    shows the resurrection genuinely happens without it."""
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _P)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
 
     _arm_adversarial_state()
-    # The mutation: the write boundary loses its value-keyed scrub.
-    monkeypatch.setattr(store, "_drop_forgotten", lambda checkpoint, project_dir: [])
+    # The mutation: the write boundary loses its value-keyed scrub. Patched at
+    # the gate's home (#421) — policy.admit_checkpoint dispatches through the
+    # module global `drop_forgotten`, so this name is what the write path
+    # resolves at call time. The resurrection assertions below double as the
+    # patch's own liveness check: they only pass if the no-op really bit.
+    monkeypatch.setattr(policy, "drop_forgotten",
+                        lambda checkpoint, forgotten_keys: [])
 
     stored = _serialize_new_session(tmp_path, monkeypatch)
 
