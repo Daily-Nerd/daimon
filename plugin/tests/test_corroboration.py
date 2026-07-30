@@ -26,14 +26,17 @@ The emission gates all refuse in the same direction as slice 2's predicate: a
 missed corroboration costs a boost, a forged one costs the axis.
 """
 
+import ast
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 
-from daimon_briefing import (briefing, capture, cli, hooks, mcp_tools,
-                             normalize, recall, render, store, transcript)
+from daimon_briefing import (briefing, capture, carry, cli, config, hooks,
+                             mcp_tools, normalize, recall, render, scoring,
+                             serializer, store, transcript)
 
 PROJECT = "/p/corroborate"
 ITEM = "o-a1d001"
@@ -499,7 +502,7 @@ _QUOTE = "reconciliation drops entries on feed pauses again today"
 E2E_PROJECT = "/p/corroborate-e2e"
 
 
-def _seed_prev(text=_PREV_TEXT, session=ORIGIN):
+def _seed_prev(text=_PREV_TEXT, session=ORIGIN, project=E2E_PROJECT):
     """The ORIGIN session's checkpoint: the claim's first writer, on disk (so
     G7 can produce it) and old enough that carry's anachronism guard lets the
     new checkpoint merge."""
@@ -515,7 +518,7 @@ def _seed_prev(text=_PREV_TEXT, session=ORIGIN):
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []},
-    }, project_dir=E2E_PROJECT)
+    }, project_dir=project)
 
 
 def _extraction(session, text):
@@ -729,6 +732,7 @@ def test_carry_merge_still_runs_when_corroboration_emission_explodes(
 # ---------------------------------------------------------------------------
 
 BADGE_2 = "[≈ corroborated ×2]"
+BADGE_4 = "[≈ corroborated ×4]"
 
 
 def _entry(origins, recorded=None, demoted=None):
@@ -793,7 +797,7 @@ def test_the_count_uses_effective_origins_not_recorded_witnesses():
 def test_three_effective_origins_render_as_four_sightings():
     out = _rendered(_render_checkpoint(),
                     {ITEM: _entry({"S-a", "S-b", "S-c"})})
-    assert "[≈ corroborated ×4]" in out
+    assert BADGE_4 in out
 
 
 def test_a_supersede_candidate_suppresses_the_badge():
@@ -908,3 +912,406 @@ def test_a_malformed_corroboration_entry_stamps_nothing():
     # reader's dict earns no badge rather than a crash or an invented count.
     assert "corroborated" not in _rendered(_render_checkpoint(),
                                            {ITEM: "corroborated-by:S-witness"})
+
+
+# ---------------------------------------------------------------------------
+# Slice 5: THE FENCES.
+#
+# Slices 1-4 built the axis. Nothing below adds behaviour — each test pins a
+# property the pipeline already has, at the boundary where a plausible future
+# change would silently take it away. The three fences answer the three ways
+# this feature is known to fail elsewhere:
+#
+#   1. ECHO — daimon reads its own injected output back and counts it as an
+#      independent witness (the self-reference loop, parked 07-15).
+#   2. TEAM — repeated foreign assertion stands in for repeated observation
+#      (manufactured corroboration, arXiv 2606.24322).
+#   3. RANKING — a corroborated item scores higher, therefore surfaces more,
+#      therefore gets echoed more, therefore scores higher.
+# ---------------------------------------------------------------------------
+
+
+# ---- FENCE 1: an echo of daimon's own briefing is not a witness ------------
+
+_ECHO_PROJECT = "/p/corroborate-echo"
+
+# The two shapes daimon's own prior output takes inside a host transcript. Both
+# ride in USER turns — transcript.py flattens hook stdout byte-identically into
+# the turn that carried it, under the same message id as the human's own prose.
+_ECHO_RECALL_LINE = (
+    'daimon recall: prior work — open_question from S-origin (5 days ago): '
+    f'"{_PREV_TEXT}" [verbatim]. More: daimon recall "quorint ledger"')
+_ECHO_BRIEF_BLOCK = (
+    "<system-reminder>\n"
+    "DAIMON BRIEFING (checkpoint: S-origin, written 5 days ago)\n"
+    "While you were away — here's where we left off.\n"
+    "Open loops:\n"
+    f"- [✓ verbatim] {_PREV_TEXT} [carried]\n"
+    "</system-reminder>")
+
+
+def _echo_transcript(tmp_path, session):
+    """A session whose ONLY sighting of the prior claim is daimon's own two
+    injections — the recall line and the briefing block — with the human's own
+    words about something else entirely."""
+    rows = [
+        ("user", f"{_ECHO_RECALL_LINE}\nok, where are we on the ingest path?"),
+        ("assistant", "the ingest path is still on the old batching code"),
+        ("user", f"{_ECHO_BRIEF_BLOCK}\nright, let us pick that up tomorrow"),
+    ]
+    p = tmp_path / f"{session}.jsonl"
+    p.write_text("\n".join(
+        json.dumps({"type": role, "message": {"role": role, "content": body},
+                    "timestamp": f"2026-07-01T10:0{i}:00Z"})
+        for i, (role, body) in enumerate(rows)), encoding="utf-8")
+    os.utime(p, (1782000000, 1782000000))  # scar 0016: pin the mtime fallback
+    return p
+
+
+def test_an_echoed_briefing_item_never_self_corroborates_end_to_end(
+        tmp_path, fake_chat_factory, monkeypatch):
+    """THE fence for #268: daimon's own injected output cannot corroborate
+    daimon's own memory.
+
+    Every prior slice makes this hard in one place — #440 strips the injected
+    spans from the verification haystacks, S2's G3 demands a VERIFIED verbatim
+    on the observing side, S4 suppresses the badge below threshold. This test
+    is the single end-to-end statement that the composition holds: a prior
+    item is injected in BOTH shapes daimon actually emits, the extraction
+    quotes only from those injected spans, and the run must produce zero
+    corroboration rows and leave the effective count exactly where it was.
+
+    Without this, the loop closes on itself: an item briefs -> the model
+    restates it -> the restatement counts as an independent sighting -> the
+    badge raises its standing -> it briefs harder. Nothing outside daimon ever
+    said the claim twice.
+    """
+    session = "S-echo-witness"
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", _ECHO_PROJECT)
+    _seed_prev(project=_ECHO_PROJECT)
+    before = store.corroborations(project_dir=_ECHO_PROJECT)
+    assert before == {}, "the prior claim starts with no corroboration at all"
+
+    # The extraction quotes the injected text and nothing else — the exact
+    # laundering #441 was filed for.
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(json.dumps({
+        "session_id": session,
+        "working_context": {
+            "active_topic": {"text": "the ingest path", "trust": "inferred"},
+            "open_questions": [{"text": _PREV_TEXT, "trust": "verbatim",
+                                "quote": _PREV_TEXT}],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    })))
+    assert cli.main(["serialize",
+                     str(_echo_transcript(tmp_path, session))]) == 0
+
+    home = tmp_path / ".daimon"
+    assert _corroboration_rows(home, _ECHO_PROJECT) == []
+    assert store.corroborations(project_dir=_ECHO_PROJECT) == before
+
+    # Liveness — the run really did merge the claim, so the zero above is a
+    # refusal and not a capture that never happened. And the reason it refused
+    # is on the record: the quote lived only in daimon's own output, so the
+    # item is inferred and flagged, never a fresh verbatim.
+    written = store.read_latest(project_dir=_ECHO_PROJECT, fallback=False)
+    item = next(q for q in written["working_context"]["open_questions"]
+                if q["text"] == _PREV_TEXT)
+    assert item["trust"] == "inferred"
+    assert item[serializer.ECHO_ONLY_KEY] is True
+    assert item["origin_session"] == ORIGIN   # still the FIRST writer's claim
+
+    # And the payoff the attack was after never renders.
+    marked = briefing.mark_corroborated(
+        written, store.corroborations(project_dir=_ECHO_PROJECT))
+    assert "corroborated" not in briefing.render_plain(briefing.build(marked))
+
+
+# ---- FENCE 2: a teammate's checkpoint cannot mint corroboration -----------
+#
+# v1 counts LOCAL sessions only, and the reason is the failure mode named in
+# arXiv 2606.24322: where re-assertion is cheap, "N sources agree" degenerates
+# into one source asserted N times. A synced sidecar is exactly that — a
+# teammate's own daimon writes their claims, and nothing on this machine can
+# check any of it. Two independent structures keep it out, and both are pinned
+# below so the property is guaranteed rather than incidental.
+
+_TEAM_PROJECT = "/repo/corroborate-team"
+_TEAM_LOGICAL = "core/corroborate"
+
+
+def _synced_teammate(text=_PREV_TEXT, author="grace", session="S-grace"):
+    """A teammate's checkpoint arriving through a real synced remote, admitted
+    through the real inbound path. Returns what `store.read_team` yields — the
+    gated form, which is the only form any local surface ever sees."""
+    remote = config.team_dir() / "team-a"
+    (remote / ".git").mkdir(parents=True, exist_ok=True)
+    d = remote.joinpath("projects", *_TEAM_LOGICAL.split("/"), "authors", author)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{session}.json").write_text(json.dumps({
+        "session_id": session,
+        "author": author,
+        "team_project": _TEAM_LOGICAL,
+        "created": "2026-06-26T08:00:00Z",
+        "working_context": {
+            "active_topic": {"text": "their topic", "trust": "inferred"},
+            "open_questions": [
+                # Their daimon bound the origin at their write boundary (S1),
+                # verified the quote against THEIR transcript, and stored it
+                # verbatim. Every one of those facts is true over there and
+                # unverifiable here.
+                {"text": text, "trust": "verbatim", "quote": text,
+                 "quote_verified": True, "id": "o-theirs1",
+                 "importance": 7, "first_seen": "2026-06-20T00:00:00Z",
+                 "origin_session": session, "origin_author": author},
+            ],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }), encoding="utf-8")
+    team = store.read_team(project_dir=_TEAM_PROJECT)
+    assert [a for a, _ in team] == [author], "the teammate was never admitted"
+    return team[0][1]["working_context"]["open_questions"][0]
+
+
+def _local_witness(text=_PREV_TEXT):
+    """This session's own item: verified verbatim, the only thing G3 accepts."""
+    return {"id": "o-ours001", "text": text, "trust": "verbatim",
+            "quote": text, "quote_verified": True}
+
+
+def test_a_synced_teammate_never_produces_a_corroboration_row(
+        tmp_checkpoint_dir, monkeypatch):
+    """A teammate asserting the same claim buys no corroboration — and the two
+    reasons are structural, not a check anyone can forget to run.
+
+    (a) The inbound gate clamps every foreign `verbatim` to `inferred` (#423),
+        and G3 accepts nothing weaker than a VERIFIED verbatim. A foreign item
+        can therefore never stand on the observing side of the predicate.
+    (b) G7 asks whether the origin session exists in THIS project's local
+        checkpoint dir. A teammate's session never does, so even a foreign
+        item whose origin binding is perfectly well-formed is an origin
+        nobody here can produce.
+
+    Take either one away and repeated foreign assertion becomes a corroboration
+    engine: the same claim, synced from N teammates, reads as N independent
+    sightings of the world.
+    """
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", _TEAM_LOGICAL)
+    theirs = _synced_teammate()
+
+    # The clamp landed — the claim survives, its verbatim standing does not.
+    # Note what it did NOT touch: the teammate's `quote_verified: true` rides
+    # through untouched, because it is their honest record of their own
+    # transcript. The trust flip is therefore the entire difference between
+    # this item and a witness, which is what makes the control below exact.
+    assert theirs["trust"] == "inferred"
+    assert theirs["foreign_verbatim_claim"] is True
+    assert theirs["quote_verified"] is True
+
+    # (a) as the OBSERVING side: the clamp alone defeats G3.
+    observed: list = []
+    carry._record_corroboration(observed, _seed_local_origin_item(), theirs,
+                                carry._MATCH_EXACT, "S-local-now")
+    assert observed == []
+
+    # ...and the control that proves the clamp is what did it: the identical
+    # item with its trust class put back clears the predicate outright.
+    carry._record_corroboration(observed, _seed_local_origin_item(),
+                                dict(theirs, trust="verbatim"),
+                                carry._MATCH_EXACT, "S-local-now")
+    assert observed == [("o-theirs1", ORIGIN, "ada")]  # native's id, as always
+
+    # (b) as the ORIGIN side: a well-formed foreign binding still writes
+    # nothing, because no local checkpoint can produce that session.
+    foreign_observed: list = []
+    carry._record_corroboration(foreign_observed, theirs, _local_witness(),
+                                carry._MATCH_EXACT, "S-local-now")
+    assert foreign_observed == [("o-ours001", "S-grace", "grace")]
+    assert capture._emit_corroborations(
+        foreign_observed, {}, frozenset(), _TEAM_PROJECT, "S-local-now") == 0
+    assert _rows(tmp_checkpoint_dir, project=_TEAM_PROJECT) == []
+    assert store.corroborations(project_dir=_TEAM_PROJECT) == {}
+
+
+def _seed_local_origin_item():
+    """A LOCAL prev item with a bound origin — the legitimate other half of the
+    predicate, so the foreign side is the only variable in the test above."""
+    return {"id": "o-ours001", "text": _PREV_TEXT, "trust": "inferred",
+            "origin_session": ORIGIN, "origin_author": "ada"}
+
+
+# ---- FENCE 3: corroboration is an annotation, never a ranking input --------
+#
+# The design rationale, because a future patch WILL be tempted to wire the
+# count into the score and it looks like an obvious improvement:
+#
+#   Ranking on corroboration closes a self-reinforcing salience loop.
+#   A corroborated item scores higher -> it surfaces in more briefings and
+#   more recall injections -> it is injected into more transcripts -> more
+#   sessions restate it -> it accrues more corroboration. The feedback runs
+#   entirely inside daimon; nothing about the WORLD changed at any step. The
+#   axis stops measuring independent agreement and starts measuring how often
+#   daimon showed the item to itself — manufactured corroboration with extra
+#   steps (arXiv 2606.24322).
+#
+# The same reasoning is why #408's trust ceiling is applied last in
+# effective_weight: no accumulation vector may lift an item's authority. The
+# badge is a fact stated ON a line, and it moves no line.
+
+_CORROBORATION_TOKENS = ("corroborat", "CORROBORATION_MIN", "_corroborated")
+
+
+def test_scoring_and_recall_never_read_the_corroboration_axis():
+    """Structural fence, the test_policy_module_is_pure idiom: the RANKING
+    modules must not so much as name the axis.
+
+    A behavioural test can only sample the inputs it thinks to try; this one
+    fails the moment the wire is laid, wherever it is laid. Deleting it is the
+    only way to wire corroboration into ranking — which is the point. Read the
+    section comment above before you do: the loop it prevents is not
+    hypothetical, and it is invisible in any metric daimon can collect about
+    itself.
+    """
+    for module in (scoring, recall):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            # `from . import corroborations` / `from .store import ...`
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    assert not any(t in alias.name
+                                   for t in _CORROBORATION_TOKENS), alias.name
+            # `store.corroborations`, `store.corroboration_ref`
+            elif isinstance(node, ast.Attribute):
+                assert not any(t in node.attr for t in _CORROBORATION_TOKENS), \
+                    f"{module.__name__} reads .{node.attr}"
+            # a bare name, and `item["_corroborated"]` / .get("_corroborated")
+            elif isinstance(node, ast.Name):
+                assert not any(t in node.id for t in _CORROBORATION_TOKENS), \
+                    f"{module.__name__} references {node.id}"
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert not any(t in node.value
+                               for t in _CORROBORATION_TOKENS), node.value
+        # Belt to those braces: a string built at runtime, a getattr, a comment
+        # promising the wire is coming — none of it survives either.
+        for token in _CORROBORATION_TOKENS:
+            assert token not in src, \
+                f"{module.__name__} mentions {token!r} — see this test's docstring"
+
+
+@pytest.mark.parametrize("item_type", sorted(scoring.TYPE_RULES))
+@pytest.mark.parametrize("trust", ["verbatim", "inferred", None])
+def test_effective_weight_is_byte_identical_with_and_without_the_axis(
+        item_type, trust):
+    # Behavioural half of the fence, across the whole matrix the lid cares
+    # about: whatever the stamp says, the weight is the weight.
+    now = 1782000000.0
+    item = {"text": "the ledger reconciliation drops entries", "importance": 9,
+            "first_seen": "2026-05-01T00:00:00Z", "trust": trust}
+    base = scoring.effective_weight(item, item_type, now)
+    for stamp in (2, 7, 40):
+        assert scoring.effective_weight(
+            dict(item, _corroborated=stamp), item_type, now) == base
+
+
+def test_ledger_rows_on_disk_do_not_reorder_a_briefing(tmp_checkpoint_dir):
+    """The other shape the data arrives in: not a stamp on the item, but rows
+    in events.jsonl. Section order is a pure #78 ranking, so the ledger has to
+    be invisible to it — the badge is added to a line that was already in that
+    position.
+
+    The two items sit ONE importance point apart with everything else equal,
+    which is what gives this test teeth: the trailing item wears four
+    witnesses, so any boost worth wiring at all (multiplicative or additive)
+    would reorder them. `now` is pinned so the verdict is not a function of
+    the day the suite runs (scar 0016's cousin — no wall clock in an
+    assertion)."""
+    now = store._created_epoch("2026-06-25T08:00:00Z")
+    store.write_checkpoint("S-rank", {
+        "session_id": "S-rank",
+        "created": "2026-06-25T08:00:00Z",
+        "working_context": {
+            "active_topic": {"text": "seed", "trust": "inferred"},
+            "open_questions": [
+                {"text": "the quorint feed pauses drop ledger entries",
+                 "trust": "inferred", "importance": 5,
+                 "first_seen": "2026-06-20T00:00:00Z"},
+                {"text": "the zephyr batching window is unowned",
+                 "trust": "inferred", "importance": 6,
+                 "first_seen": "2026-06-20T00:00:00Z"},
+            ],
+            "recent_decisions": []},
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }, project_dir=PROJECT)
+    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    weak = stored["working_context"]["open_questions"][0]["id"]
+
+    def _order():
+        marked = briefing.mark_corroborated(
+            stored, store.corroborations(project_dir=PROJECT))
+        return [i["text"] for i in briefing.build(marked, now=now)["open_loops"]]
+
+    before = _order()
+    assert before[0].startswith("the zephyr")   # importance decides, as always
+    for witness in ("S-w1", "S-w2", "S-w3"):
+        assert store.append_event(store.corroboration_ref(weak),
+                                  f"corroborated-by:{witness}",
+                                  kind="corroboration", source="serializer",
+                                  project_dir=PROJECT)
+    assert store.corroborations(project_dir=PROJECT)[weak]["origins"] == {
+        "S-w1", "S-w2", "S-w3"}     # liveness: the rows really landed
+    assert _order() == before
+    # ...and the badge really is on the trailing line — the annotation landed,
+    # the position did not move.
+    assert BADGE_4 in briefing.render_plain(briefing.build(
+        briefing.mark_corroborated(
+            stored, store.corroborations(project_dir=PROJECT)), now=now))
+
+
+def test_recall_ranking_is_blind_to_corroboration(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    # recall.suggest is the OTHER surface that ranks, and the more dangerous
+    # one: its results are injected into transcripts, which is where the next
+    # restatement would come from. Four witnesses on the trailing item, and it
+    # is still trailing.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    # One importance point apart and otherwise identical, for the same reason
+    # the briefing fence above is: a wide gap would let a real boost hide.
+    for session, text, importance in (
+            ("S-r1", "the quorint ledger reconciliation drops entries", 6),
+            ("S-r2", "the quorint ledger reconciliation stalls entries", 5)):
+        store.write_checkpoint(session, {
+            "session_id": session,
+            "created": "2026-06-25T08:00:00Z",
+            "working_context": {
+                "active_topic": {"text": "seed", "trust": "inferred"},
+                "open_questions": [{"text": text, "trust": "inferred",
+                                    "importance": importance,
+                                    "first_seen": "2026-06-20T00:00:00Z"}],
+                "recent_decisions": []},
+            "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+        }, project_dir=PROJECT)
+
+    prompt = "quorint ledger reconciliation entries"
+    before = [h["session_id"] for h in
+              recall.suggest(prompt, project_dir=PROJECT, limit=2)]
+    assert before == ["S-r1", "S-r2"], before
+
+    trailing = store.read_checkpoint("S-r2")["working_context"][
+        "open_questions"][0]["id"]
+    for witness in ("S-w1", "S-w2", "S-w3", "S-w4"):
+        assert store.append_event(store.corroboration_ref(trailing),
+                                  f"corroborated-by:{witness}",
+                                  kind="corroboration", source="serializer",
+                                  project_dir=PROJECT)
+    assert len(store.corroborations(project_dir=PROJECT)[trailing]["origins"]) == 4
+
+    after = recall.suggest(prompt, project_dir=PROJECT, limit=2)
+    assert [h["session_id"] for h in after] == before
+    # ...and the namespaced ref kept the rows out of the lifecycle fold, so the
+    # corroborated item is neither hidden nor flagged (scar 0025 again).
+    assert all(h["superseded_by"] is None for h in after)

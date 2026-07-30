@@ -23,6 +23,12 @@ Las cuatro llevan `readOnlyHint`. Las fallas a nivel de herramienta
 (argumentos inválidos, FTS5 ausente) vuelven como resultados `isError` que el
 agente puede leer; nunca matan el servidor.
 
+`daimon_brief` renderiza las mismas etiquetas de confianza que la CLI, así que
+una línea puede traer además la insignia `[≈ corroborated ×N]` — un conteo de
+sesiones independientes que atestiguaron la afirmación, en su propio eje y
+nunca una clase de confianza superior. Ver
+[clases de confianza](../concepts/trust-classes.md).
+
 ## Reglas de alcance
 
 El servidor hereda la disciplina entre proyectos de daimon:

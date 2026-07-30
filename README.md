@@ -16,7 +16,7 @@ VERIFY BEFORE TRUSTING (state may have changed outside this session):
 
 Open loops:
 - [✓ verbatim] Retry policy for the payments webhook — exponential or fixed?  — "don't ship the retry loop until we pick a policy"
-- [~ inferred] The staging config drift needs an owner [carried]
+- [~ inferred] The staging config drift needs an owner [carried] [≈ corroborated ×2]
 
 Decisions made:
 - [✓ verbatim] Postgres advisory locks over Redis locks for the scheduler  — "let's not add a Redis dependency for this"
@@ -26,6 +26,8 @@ Active topic: Migrating the scheduler off cron to the new worker pool
 ```
 
 Every item carries its **trust class**: `✓ verbatim` items are pinned to an exact quote from the transcript and are never reworded — not by carry-over between sessions, not by rendering, not by budget truncation. `~ inferred` items are the agent's own conclusions and are allowed to evolve. Items carried from older sessions say so. That distinction — knowing which memories are quotes and which are guesses — is the point.
+
+`≈ corroborated ×N` is a **separate axis**: N independent sessions have witnessed that claim. It never promotes the trust class, and daimon's own briefing and recall echoes are excluded from the count by construction — see [trust classes](https://daily-nerd.github.io/daimon/docs/concepts/trust-classes/).
 
 ## See it happen
 
