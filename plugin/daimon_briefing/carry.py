@@ -352,10 +352,18 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 # THIS call, and a prev item agreeing with another prev item
                 # is not a witness. The reversal check the twin block gets by
                 # construction (#167) has to be explicit here.
-                if observed is not None:
-                    exact = next((n for n in native if isinstance(n, dict)
-                                  and n.get("text") == text), None)
-                    if exact is not None and not _is_reversal_of(
+                exact = next((n for n in native if isinstance(n, dict)
+                              and n.get("text") == text), None)
+                if exact is not None:
+                    # #268 S1: the kept copy is the NATIVE one, a fresh item.
+                    # Without inheritance here, bind_origin at the next write
+                    # names the RESTATING session as first writer — origin of
+                    # record must ride the exact rail exactly as it rides the
+                    # twin rail (same setdefault, never re-bound).
+                    for field in ("origin_session", "origin_author"):
+                        if item.get(field):
+                            exact.setdefault(field, item[field])
+                    if observed is not None and not _is_reversal_of(
                             exact, text, item.get("id"), generic):
                         _record_corroboration(observed, item, exact,
                                               _MATCH_EXACT, out_sid)

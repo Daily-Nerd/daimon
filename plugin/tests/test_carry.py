@@ -1337,6 +1337,28 @@ def test_observed_records_an_exact_text_restatement():
     assert observed == [("o-a1d001", "S-origin", "ada")]
 
 
+def test_exact_text_restatement_inherits_the_prev_origin_binding():
+    # S1's origin-of-record must ride the exact rail the same way it rides
+    # the twin rail. The short-circuit keeps the NATIVE copy (idempotency),
+    # and that copy is a fresh item — without inheritance here, bind_origin
+    # at the next write would name the RESTATING session as first writer,
+    # and the field the whole predicate keys on would drift on the
+    # strongest match there is.
+    _, qs = _observe([_bound()], [_witness(_COR_PREV)])
+    kept = next(i for i in qs if i.get("text") == _COR_PREV)
+    assert kept.get("origin_session") == "S-origin"
+    assert kept.get("origin_author") == "ada"
+
+
+def test_exact_text_restatement_keeps_its_own_origin_over_prev():
+    # setdefault semantics on the exact rail too: a native that already
+    # carries a binding is never re-bound.
+    _, qs = _observe([_bound()],
+                     [_witness(_COR_PREV, origin_session="S-mine")])
+    kept = next(i for i in qs if i.get("text") == _COR_PREV)
+    assert kept.get("origin_session") == "S-mine"
+
+
 def test_observed_exact_text_records_an_empty_author_when_unnamed():
     # origin_author is optional (hosts that name no author). Absent stays
     # absent — an empty string in the tuple, never a fabricated name.

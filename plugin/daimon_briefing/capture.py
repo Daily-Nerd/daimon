@@ -1,5 +1,6 @@
 """The ONE capture pipeline (#432): serialize -> stamp -> carry+fold ->
-bind_links -> supersede emission -> write -> rejection ledger.
+bind_links -> supersede emission -> corroboration emission -> write ->
+rejection ledger.
 
 Both capture entry points — `cli._run_serialize` and `hooks.on_session_end` —
 call `run`. They had drifted: the hook wrote checkpoints that skipped the
@@ -75,10 +76,15 @@ def run(session_id: str, messages, *, project, chat, deadline,
             events = store.resolutions(project_dir=project)
             resolved = frozenset(ref for ref, evt in events.items()
                                  if store.is_resolved(evt))
+            # #268: merge's observation sink — every prev/native pair that
+            # clears the corroboration predicate, as (item_id, origin_session,
+            # origin_author). merge only DECIDES; the ledger write is ours.
+            observed: list = []
             checkpoint = carry.merge(checkpoint, prev, now,
                                      floor=config.carry_floor(),
                                      cap=config.carry_max(),
-                                     resolved=resolved)
+                                     resolved=resolved,
+                                     observed=observed)
             # #14: text-target supersession links bound to prev-item ids ->
             # candidate events, gated so a human verdict is never overridden
             # (see _emit_supersede_candidates). Same fail-open try as merge
@@ -89,7 +95,24 @@ def run(session_id: str, messages, *, project, chat, deadline,
             # Setdefault-idempotent — write_checkpoint's re-stamp no-ops.
             store._stamp_item_ids(checkpoint)
             pairs = carry.bind_links(checkpoint, prev)
-            _emit_supersede_candidates(pairs, events, project)
+            # ONE forgotten-keys read for both emitters (#268): each writes to
+            # the same append-only log, each must refuse a tombstoned value,
+            # and both must see the same ledger the `resolved` set above was
+            # computed from. A raise here aborts BOTH emissions and keeps the
+            # checkpoint — the fail-safe direction either emitter would take
+            # on its own.
+            forgotten = store.forgotten_content_keys(project_dir=project)
+            _emit_supersede_candidates(pairs, events, project,
+                                       forgotten=forgotten)
+            # Corroboration rows land AFTER the candidates, deliberately: the
+            # same capture can suggest a supersession and record an agreement
+            # about the same item, and the corroboration reader measures its
+            # count against the LATEST contradiction — so the candidate has to
+            # be on the log first for that comparison to be honest.
+            _emit_corroborations(
+                observed, events,
+                _forgotten_item_ids(forgotten, checkpoint, prev),
+                project, str(checkpoint.get("session_id") or ""))
         except Exception:  # keep the unmerged checkpoint, proceed to write
             pass
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
@@ -111,7 +134,8 @@ def run(session_id: str, messages, *, project, chat, deadline,
     return out
 
 
-def _emit_supersede_candidates(pairs, events: dict, project) -> int:
+def _emit_supersede_candidates(pairs, events: dict, project,
+                               forgotten=None) -> int:
     """Turn `carry.bind_links` triples into `supersede-candidate:*` events,
     gated so a machine SUGGESTION never overrides a human verdict (#14,
     human-speaks-once).
@@ -147,12 +171,18 @@ def _emit_supersede_candidates(pairs, events: dict, project) -> int:
     NOTHING — a missed suggestion costs a candidate event; a leaked value
     costs the deletion guarantee.
 
+    `forgotten` (#268): the caller may INJECT that key set, so the pipeline
+    reads the ledger once and both emitters gate on the identical answer.
+    None means read it here — the fail-safe read above, unchanged, which is
+    also what a direct caller gets.
+
     Returns the number of events actually appended."""
     appended = 0
-    try:
-        forgotten = store.forgotten_content_keys(project_dir=project)
-    except Exception:
-        return 0  # can't prove a value isn't forgotten -> emit nothing
+    if forgotten is None:
+        try:
+            forgotten = store.forgotten_content_keys(project_dir=project)
+        except Exception:
+            return 0  # can't prove a value isn't forgotten -> emit nothing
     for old_id, new_id, old_text in pairs:
         if not new_id:
             continue  # defense-in-depth: never write a candidate with no
@@ -169,6 +199,124 @@ def _emit_supersede_candidates(pairs, events: dict, project) -> int:
             continue  # idempotent — same candidate already latest
         if store.append_event(old_id, f"supersede-candidate:{new_id}",
                               source="serializer", item_text=old_text,
+                              project_dir=project):
+            appended += 1
+    return appended
+
+
+def _forgotten_item_ids(forgotten: set, *checkpoints) -> set:
+    """The ids, across `checkpoints`, of items whose canonical VALUE has been
+    tombstoned (#268 emission gate, #402 keying).
+
+    The slice-2 triple carries an item id and an origin, no text — and the
+    forget ledger is keyed on the VALUE, not on an id, precisely because one
+    value can live under sibling ids (#418). Resolving one against the other
+    needs the checkpoints the triples were derived from, which the caller
+    already holds: the merged checkpoint (where the corroborated item ends up)
+    and prev (where the value may still survive under a never-tombstoned id,
+    the sibling shape #419 closed for the supersede stream).
+
+    Ids, not texts, are what crosses into the emitter — so no forgotten value
+    is ever carried near the append-only log, only the knowledge that an id
+    must not be written about. Free when nothing was ever forgotten here."""
+    out: set = set()
+    if not forgotten:
+        return out
+    for cp in checkpoints:
+        if not isinstance(cp, dict):
+            continue  # no prev on a project's first serialize
+        for item in serializer.iter_items(cp):
+            if (item.get("id")
+                    and normalize.content_key(item.get("text") or "") in forgotten):
+                out.add(item["id"])
+    return out
+
+
+def _origin_on_disk(origin_session: str, project) -> bool:
+    """G7: does the session that FIRST wrote this claim still exist here?
+
+    Slice 2's predicate can only read what the item CLAIMS about its origin
+    (#268 S1 binds it at write time, and the serialize boundary strips any
+    model-emitted binding — but a hand-edited or synced checkpoint can still
+    assert an origin nobody can produce). A witness that cannot be produced is
+    not a witness, so the claim is checked against the per-session checkpoint
+    files store.write_checkpoint lands, and scoped to THIS project: a
+    checkpoint that exists but belongs elsewhere cannot vouch for a claim
+    here.
+
+    Absent, unreadable, torn, GC'd, or foreign all answer the same way — no.
+    store.read_checkpoint is total (it swallows the bad-path/torn-file cases
+    itself), so there is nothing here to catch."""
+    cp = store.read_checkpoint(origin_session)
+    if not isinstance(cp, dict):
+        return False
+    return cp.get("project_slug") == store.project_slug(project)
+
+
+def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,
+                         observer: str) -> int:
+    """Turn `carry.merge`'s observation triples into corroboration events
+    (#268 slice 3) — the durable, auditable form of "somebody else's claim was
+    independently restated here".
+
+    The row is a POINTER and a WITNESS, nothing else:
+      kind      "corroboration"
+      item_ref  `store.corroboration_ref(item_id)` — NAMESPACED. Never the
+                bare id: `resolutions` folds on item_ref alone and
+                `is_resolved` resolves nearly everything (scar 0025), so a
+                bare-ref row would hide the item it supports and would
+                displace a human's superseded-by verdict as latest (#376).
+      status    "corroborated-by:<observing session>"
+      source    "serializer" — machine-authored, same as a supersede candidate.
+    No `item_text`, ever: this log is append-only and never rewritten, so a
+    value written here outlives every deletion the user can ask for (#419).
+
+    Written through `store.append_event`, so redaction and the write-audit
+    seam (#431) come free — this function opens no file of its own.
+
+    Gates, each refusing in the same direction as the slice-2 predicate (a
+    missed corroboration costs a boost; a forged one costs the axis):
+      - unnameable witness -> nothing. The row's entire payload is WHO agreed.
+      - idempotency: an (item, observing session) already on the record is
+        skipped, and one call writes at most one row per item — every triple
+        in a call shares the observer, so the rest are the same witness. Bound
+        to `recorded` (every row ever written), never to `origins` (the rows
+        that currently count): keying on the latter would let a demotion hand
+        an existing witness a second vote.
+      - forgotten: neither a value-tombstoned id (`forgotten_ids`, computed by
+        _forgotten_item_ids) nor an id whose own latest lifecycle event is a
+        tombstone may be written about at all.
+      - G7 `_origin_on_disk`.
+    A fold that cannot be read means duplicates cannot be ruled out, so the
+    whole call writes nothing.
+
+    `events` is the SAME `store.resolutions` fold the serialize block already
+    fetched, reused exactly as _emit_supersede_candidates reuses it.
+
+    Returns the number of events actually appended."""
+    if not observed or not observer:
+        return 0
+    try:
+        recorded = store.corroborations(project_dir=project)
+    except Exception:
+        return 0  # can't prove this isn't a re-run -> write nothing
+    appended = 0
+    written: set = set()
+    for item_id, origin, _origin_author in observed:
+        if not item_id or item_id in written or item_id in forgotten_ids:
+            continue
+        prior = events.get(item_id)
+        if prior and str(prior.get("status") or "").lower().startswith(
+                store._FORGOTTEN_PREFIX):
+            continue  # tombstoned by id — nothing to corroborate, ever
+        if observer in recorded.get(item_id, {}).get("recorded", ()):
+            continue  # this witness already spoke about this item
+        if not _origin_on_disk(origin, project):
+            continue
+        written.add(item_id)
+        if store.append_event(store.corroboration_ref(item_id),
+                              f"corroborated-by:{observer}",
+                              kind="corroboration", source="serializer",
                               project_dir=project):
             appended += 1
     return appended
