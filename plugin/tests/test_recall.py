@@ -1640,6 +1640,51 @@ def test_rebuild_clamps_foreign_verbatim_to_inferred(tmp_checkpoint_dir, monkeyp
     assert own[0]["trust"] == "verbatim"  # own claim untouched
 
 
+def test_rebuild_scrubs_forgotten_value_sibling_id_in_older_session(
+        tmp_checkpoint_dir, monkeypatch):
+    # #427: the forgotten scrub must be VALUE-keyed, not only id-keyed. The
+    # same sentence in two sections mints two item ids (store._stamp_item_ids
+    # hashes f"{key}:{text}"), and forget rewrites only the LATEST session
+    # file — an older per-session checkpoint holding the value under a sibling
+    # id is never rewritten, and rebuild indexes it. Pre-fix that sibling row
+    # survived the id-keyed delete and resurfaced the forgotten value.
+    from daimon_briefing import cli
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
+    s = "Adopt sqlite for the recall index cache"
+    t = "Adopt postgres for the analytics warehouse"
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": s, "trust": "inferred"},
+                             {"text": t, "trust": "inferred"}],
+            created="2026-07-30T00:00:00Z"),
+        project_dir="/repo/x")
+    store.write_checkpoint(
+        "S2",
+        _cp("S2", questions=[{"text": s, "trust": "inferred"}],
+            created="2026-07-31T00:00:00Z"),
+        project_dir="/repo/x")
+    latest = store.read_latest(project_dir="/repo/x", fallback=False)
+    q_id = next(i["id"] for i in latest["working_context"]["open_questions"]
+                if i["text"] == s)
+    old_file = config.checkpoint_dir() / "S1.json"
+    old = json.loads(old_file.read_text(encoding="utf-8"))
+    d_id = next(i["id"] for i in old["working_context"]["recent_decisions"]
+                if i["text"] == s)
+    assert d_id != q_id  # sibling ids: one value, two sections
+
+    assert cli.main(["forget", q_id]) == 0  # the real path, latest session
+    # forget rewrote only the latest session; the older checkpoint still holds
+    # the value verbatim under the sibling id — exactly what rebuild re-indexes.
+    assert s in old_file.read_text(encoding="utf-8")
+
+    recall.rebuild()
+    texts = [h["text"] for h in recall.search("adopt", all_projects=True)]
+    assert s not in texts  # forgotten value gone under EVERY id, any session
+    assert t in texts      # liveness control: the never-forgotten twin stays
+
+
 def test_rebuild_env_grant_admits_single_clone_path(tmp_checkpoint_dir, monkeypatch):
     # DAIMON_TEAM_PROJECT is explicit machine intent; with a SINGLE clone it
     # grants that logical path inbound too (mirror of _team_write_slugs).
