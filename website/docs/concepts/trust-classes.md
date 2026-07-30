@@ -73,6 +73,70 @@ the checkpoint's exact bytes are signed when written — so if a checkpoint file
 is edited after the fact, briefing-time verification notices, and the affected
 `✓ verbatim` labels are **visibly degraded** rather than silently trusted.
 
+## The corroboration badge — a second axis
+
+Some briefing lines carry an extra annotation beside the trust tag:
+
+```
+- [~ inferred] The staging config drift needs an owner [carried] [≈ corroborated ×2]
+```
+
+That badge counts **independent sightings** of the claim: how many separate
+sessions have observed it, including the session that first wrote it. It is a
+different question from the trust class, which answers *what kind of evidence
+backs this*. The two never merge — the line above is a corroborated item that
+is still `~ inferred`, and it will stay inferred no matter how many sessions
+agree.
+
+**The badge is not a promotion.** A trust class changes by exactly two routes:
+an evidence-gated `daimon reverify`, or explicit human action. Agreement is
+not evidence about the *kind* of a claim, so no amount of it moves the tag.
+
+What earns the badge:
+
+- A later session **independently restates** the claim in its own words or the
+  same ones, and that restatement is itself a verified verbatim quote from
+  *that* session's transcript.
+- The claim's **first writer is provably someone else** — every item records
+  the session that originally wrote it, and a session cannot corroborate
+  itself.
+- The total reaches **two** — the origin of record plus at least one
+  independent witness.
+
+What never earns it:
+
+- **Daimon's own echoes.** A recall injection or a briefing block printed into
+  the transcript is daimon's output, not a witness. Quote verification strips
+  daimon's injected spans before it checks anything, so a restatement copied
+  out of a briefing is downgraded to `~ inferred` and cannot corroborate.
+  Excluded by construction, not by a check that could be skipped.
+- **[Carry](./carry.md) survival.** An item riding forward from session to
+  session is one claim copied N times, not N sightings.
+- **Teammates.** A synced teammate's checkpoint is unverifiable on your
+  machine — their verbatim claims arrive clamped to `inferred`, and their
+  origin session does not exist in your checkpoint directory. Team
+  corroboration is not in this version.
+
+Demotion outranks the badge. Anything that contradicts an item — a
+[resolution](./lifecycle.md), a `superseded-by` verdict, a flagged likely
+supersession, a state-changed-since-capture note, a tombstone — zeroes the
+count from that moment on, and the contradiction renders alone. "Three
+sessions agreed" printed next to "this is probably wrong" reads as support for
+the claim, which inverts the signal. Reopening an item does **not** restore
+what it lost; corroboration has to be re-earned by a witness, not by a status
+change.
+
+The count is never stored on the item. It is derived at read time from the
+append-only event log, where each corroboration is one row naming the session
+that agreed and the item it agreed about — so the witnesses are auditable, and
+no edit to a checkpoint file can invent a number the log does not support.
+
+Corroboration also stays out of ranking. It does not raise an item's score, in
+the briefing or in recall. A badge that lifted an item would surface it more
+often, which would inject it into more transcripts, which would produce more
+restatements — a loop that measures how often daimon showed an item to itself
+rather than anything about the world.
+
 ## VERIFY BEFORE TRUSTING
 
 Briefings open with a section of items describing state that may have changed
