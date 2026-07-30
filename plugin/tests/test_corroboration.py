@@ -32,8 +32,8 @@ import time
 
 import pytest
 
-from daimon_briefing import (briefing, capture, cli, hooks, normalize, recall,
-                             store, transcript)
+from daimon_briefing import (briefing, capture, cli, hooks, mcp_tools,
+                             normalize, recall, render, store, transcript)
 
 PROJECT = "/p/corroborate"
 ITEM = "o-a1d001"
@@ -703,3 +703,208 @@ def test_carry_merge_still_runs_when_corroboration_emission_explodes(
     assert written["session_id"] == session
     texts = [q["text"] for q in written["working_context"]["open_questions"]]
     assert "an unrelated prior loop about zephyr batching" in texts
+
+
+# ---------------------------------------------------------------------------
+# Slice 4: the RENDER — the corroboration badge.
+#
+# The badge is a SEPARATE axis from the trust class, and the separation is the
+# whole point: `verbatim` says what KIND of evidence backs a claim, the badge
+# says HOW MANY independent sessions have witnessed it. A corroborated
+# inferred item is still inferred. `_mark` is therefore untouched.
+#
+# Two rules do the load-bearing work here:
+#
+#   N = 1 + effective origins. The origin of record is the first sighting, so
+#   one corroborating session makes two — the ratified threshold. A witness
+#   whose row predates the item's latest contradiction is not effective and
+#   does not count (store.corroborations already separates `origins` from
+#   `recorded`; the render trusts that split rather than re-deriving it).
+#
+#   A contradiction never co-renders with a well-witnessed badge. An item
+#   flagged as likely superseded (#14) or contradicted by the world (#365)
+#   shows the contradiction alone: "three sessions agreed" next to "this is
+#   probably wrong" reads as evidence FOR the claim, which is precisely the
+#   inversion corroboration must never produce.
+# ---------------------------------------------------------------------------
+
+BADGE_2 = "[≈ corroborated ×2]"
+
+
+def _entry(origins, recorded=None, demoted=None):
+    """One store.corroborations row, hand-built — the reader's exact shape."""
+    return {"origins": set(origins),
+            "recorded": set(origins if recorded is None else recorded),
+            "latest_demotion_ts": demoted}
+
+
+def _render_checkpoint(text=_TEXT, item_id=ITEM, **over):
+    item = {"id": item_id, "text": text, "trust": "inferred"}
+    item.update(over)
+    return {"session_id": "S-render",
+            "created": "2026-06-25T08:00:00Z",
+            "working_context": {
+                "active_topic": {"text": "seed", "trust": "inferred"},
+                "open_questions": [item],
+                "recent_decisions": []},
+            "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []}}
+
+
+def _rendered(checkpoint, corroborations):
+    marked = briefing.mark_corroborated(checkpoint, corroborations)
+    return briefing.render_plain(briefing.build(marked))
+
+
+def test_two_total_sightings_render_the_badge():
+    # One corroborating origin + the origin of record = two independent
+    # sightings, the ratified threshold. Placement is pinned: after the trust
+    # mark and the item text, before the quote — an ANNOTATION on the line,
+    # never a replacement for the mark.
+    out = _rendered(_render_checkpoint(), {ITEM: _entry({OBSERVER})})
+    assert f"[~ inferred] {_TEXT} {BADGE_2}" in out
+
+
+def test_an_item_with_no_corroboration_row_gets_no_badge():
+    # Zero rows is the overwhelmingly common case and must cost nothing and
+    # say nothing — silence, not "×1".
+    assert "corroborated" not in _rendered(_render_checkpoint(), {})
+
+
+def test_a_single_sighting_stays_below_the_threshold():
+    # A demotion zeroed the only witness: `recorded` remembers it, `origins`
+    # no longer counts it, so the item is back to one sighting — its own.
+    out = _rendered(_render_checkpoint(),
+                    {ITEM: _entry(set(), recorded={OBSERVER},
+                                  demoted="2026-07-11T10:00:00Z")})
+    assert "corroborated" not in out
+
+
+def test_the_count_uses_effective_origins_not_recorded_witnesses():
+    # Two sessions ever wrote a row; one of them was discounted by a later
+    # contradiction. Counting `recorded` here would let a demoted witness keep
+    # paying — the render must read the same number the fold already decided.
+    out = _rendered(_render_checkpoint(),
+                    {ITEM: _entry({"S-b"}, recorded={"S-a", "S-b"},
+                                  demoted="2026-07-11T10:00:00Z")})
+    assert BADGE_2 in out
+    assert "×3" not in out
+
+
+def test_three_effective_origins_render_as_four_sightings():
+    out = _rendered(_render_checkpoint(),
+                    {ITEM: _entry({"S-a", "S-b", "S-c"})})
+    assert "[≈ corroborated ×4]" in out
+
+
+def test_a_supersede_candidate_suppresses_the_badge():
+    # The #14 flag and the badge point in opposite directions. The
+    # contradiction wins outright; it is not softened by a witness count.
+    out = _rendered(_render_checkpoint(_supersede_candidate="o-b2c003"),
+                    {ITEM: _entry({OBSERVER, "S-b"})})
+    assert "corroborated" not in out
+    assert "likely superseded by o-b2c003" in out
+
+
+def test_a_worldcheck_contradiction_suppresses_the_badge():
+    # Same rule for the #365 flag: the world moved, so agreement about the
+    # stale claim is not evidence the claim holds.
+    out = _rendered(
+        _render_checkpoint(_worldcheck={"note": "#60 merged", "status": "merged"}),
+        {ITEM: _entry({OBSERVER, "S-b"})})
+    assert "corroborated" not in out
+    assert "state changed since capture: #60 merged" in out
+
+
+def test_the_stamp_is_transient_and_never_reaches_disk(tmp_checkpoint_dir):
+    # The badge is derived at render time from events.jsonl, exactly like
+    # withhold's candidate stamps. A `_corroborated` key on a stored
+    # checkpoint would be a second, forgeable copy of a count the ledger
+    # already owns. Scar 0027: the on-disk state is asserted through
+    # store.read_latest, never through the in-memory dict that was written.
+    item_id, stored = _corroborated_checkpoint()
+    marked = briefing.mark_corroborated(
+        stored, store.corroborations(project_dir=PROJECT))
+
+    assert marked["working_context"]["open_questions"][0]["_corroborated"] == 2
+    # Pure: the caller's own dict is untouched, and so is the file.
+    assert "_corroborated" not in stored["working_context"]["open_questions"][0]
+    fresh = store.read_latest(project_dir=PROJECT, fallback=False)
+    assert "_corroborated" not in fresh["working_context"]["open_questions"][0]
+
+
+def test_plain_and_rich_render_the_same_badge(monkeypatch, capsys):
+    # The rich panel builds its own body rather than routing through
+    # briefing._line, so parity is a real risk, not a formality (the #14 and
+    # #365 flags each had to be repeated there). Byte-comparable badge text.
+    marked = briefing.mark_corroborated(
+        _render_checkpoint(text="the feed pauses drop entries"),
+        {ITEM: _entry({OBSERVER})})
+    render.render_brief(marked)
+    plain = capsys.readouterr().out
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_brief(marked)
+    rich_out = capsys.readouterr().out
+    assert BADGE_2 in plain
+    assert BADGE_2 in rich_out
+
+
+# ---- the three read paths that fold events ---------------------------------
+
+
+def test_the_brief_command_surfaces_the_badge(tmp_checkpoint_dir, monkeypatch,
+                                              capsys):
+    _corroborated_checkpoint()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    assert cli.main(["brief"]) == 0
+    assert BADGE_2 in capsys.readouterr().out
+
+
+def test_pre_llm_call_injects_the_badge(tmp_checkpoint_dir, monkeypatch):
+    # The hook path renders into the model's context, where the count is a
+    # reason to weight the claim — the same fact the human brief states.
+    _corroborated_checkpoint()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    out = hooks.pre_llm_call(session_id="S-new", user_message="hi",
+                             conversation_history=[], is_first_turn=True,
+                             model="m", platform="cli")
+    assert BADGE_2 in out["context"]
+
+
+def test_the_mcp_brief_surfaces_the_badge(tmp_checkpoint_dir):
+    _corroborated_checkpoint()
+    out = mcp_tools.HANDLERS["daimon_brief"]({"slug": store.project_slug(PROJECT)})
+    assert BADGE_2 in out
+
+
+def test_the_brief_survives_an_unreadable_corroboration_fold(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # Same fail-open posture as withhold and worldcheck: the badge is an
+    # advisory annotation, and a briefing must never die over one.
+    _corroborated_checkpoint()
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("events.jsonl is a smoking crater")
+
+    monkeypatch.setattr(store, "corroborations", _boom)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    assert cli.main(["brief"]) == 0
+    out = capsys.readouterr().out
+    assert _TEXT in out            # the item still briefs
+    assert "corroborated" not in out
+
+
+def test_a_torn_item_row_never_costs_its_neighbour_a_badge():
+    # #134 posture, same as every other reader here: a legacy/torn checkpoint
+    # can hold a null where an item belongs. Skip it, keep going — one bad row
+    # must not silently strip the axis off the rest of the section.
+    cp = _render_checkpoint()
+    cp["working_context"]["open_questions"].insert(0, None)
+    out = _rendered(cp, {ITEM: _entry({OBSERVER})})
+    assert f"{_TEXT} {BADGE_2}" in out
+
+
+def test_a_malformed_corroboration_entry_stamps_nothing():
+    # The fold's shape is a contract, not a promise: anything that is not the
+    # reader's dict earns no badge rather than a crash or an invented count.
+    assert "corroborated" not in _rendered(_render_checkpoint(),
+                                           {ITEM: "corroborated-by:S-witness"})

@@ -172,6 +172,12 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         try:
             events = store.resolutions(project_dir=project)
             checkpoint, _withheld, _candidates = briefing.withhold(checkpoint, events)
+            # #268: the witness count is a reason to weight a claim, so the
+            # injected context states it exactly as the human brief does.
+            # Rides the same fail-open try — the badge is advisory, and no
+            # annotation is worth losing the injection over.
+            checkpoint = briefing.mark_corroborated(
+                checkpoint, store.corroborations(project_dir=project))
         except Exception:
             pass
         text = briefing.render(checkpoint)
