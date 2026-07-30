@@ -489,6 +489,17 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         except Exception:
             withheld = []
             events = {}
+        # Corroboration (#268): a SEPARATE axis from the trust class — how many
+        # independent sessions have witnessed the claim, never what kind of
+        # evidence it is. Its own try: a failure here must cost the badge
+        # only, not the withheld list `events` still owes to stale_carried
+        # below. Transient stamps on the in-memory checkpoint, same posture as
+        # the candidate flags above and the worldcheck flags below.
+        try:
+            checkpoint = briefing.mark_corroborated(
+                checkpoint, store.corroborations(project_dir=route))
+        except Exception:
+            pass
     # Worldcheck (#365): opt-in, budget-bounded, read-only `gh` spot-check of
     # carried PR/issue-state claims — stamps contradicted items on the
     # IN-MEMORY checkpoint before render (transient, like withhold's

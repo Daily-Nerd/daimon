@@ -189,7 +189,12 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
             # unverified (#204). Inferred/untagged never claimed it, so untouched.
             item_style = "bold red" if (degraded and trust == "verbatim") \
                 else _TRUST_STYLE[trust]
-            body.append(f"• {i.get('text', '').strip()}\n", style=item_style)
+            # #268: the corroboration badge rides the text line here, the same
+            # position it holds on the plain path (after the annotations,
+            # before the quote) — one shared literal, so the two renders state
+            # the witness count in identical bytes.
+            body.append(f"• {i.get('text', '').strip()}"
+                        f"{briefing.corroboration_badge(i)}\n", style=item_style)
             quote = i.get("quote", "").strip()
             if quote:
                 body.append(f'    "{quote}"\n', style="dim italic")

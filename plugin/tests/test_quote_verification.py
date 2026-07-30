@@ -945,6 +945,39 @@ def test_quote_absent_entirely_is_not_flagged_echo_only():
     assert "quote_echo_only" not in item
 
 
+def test_a_corroboration_badge_quoted_out_of_a_brief_is_echo_only():
+    # #268 slice 4 x #440: the badge is daimon's own render, so a quote that
+    # copies a badged briefing line back out of the transcript is an echo of
+    # daimon agreeing with itself — the exact self-corroboration loop the
+    # namespaced ledger exists to prevent, arriving by a different door. The
+    # briefing strip already swallows it; this pins that the new annotation
+    # rides inside the stripped span rather than surviving as a witness.
+    from daimon_briefing import briefing
+
+    badged = briefing.mark_corroborated(
+        {"working_context": {
+            "active_topic": None,
+            "open_questions": [],
+            "recent_decisions": [{"id": "d-a1d001", "text": _ECHOED,
+                                  "trust": "inferred"}]},
+         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []}},
+        {"d-a1d001": {"origins": {"S-a"}, "recorded": {"S-a"},
+                      "latest_demotion_ts": None}})
+    rendered = briefing.render(badged)
+    line = next(ln for ln in rendered.splitlines() if "corroborated" in ln)
+    assert "[≈ corroborated ×2]" in line
+
+    msgs = _msgs(("user", f"DAIMON BRIEFING (checkpoint: S0)\n{rendered}", "u-1"),
+                 ("user", "so where were we?", "u-2"))
+    cp = _decision(quote=line.strip())
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert item["quote_verified"] is False
+    assert item["quote_echo_only"] is True
+
+
 def test_echo_flag_is_code_owned_and_model_values_are_stripped():
     cp = _decision(quote="adopt the D-007 prompt", quote_echo_only=True)
     serializer.verify_quotes(cp, "assistant: adopt the D-007 prompt today")
