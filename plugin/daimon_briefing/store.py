@@ -1188,18 +1188,136 @@ def resolutions(project_dir=None) -> dict:
 def is_resolved(event) -> bool:
     """Liveness rule (#102, #14): latest event wins; three states — a status
     starting with 'reopen' returns the item to live; 'supersede-candidate'
-    is a machine SUGGESTION and stays live by construction (a guess must
-    never suppress); anything else means resolved. Status is free-form text
-    by design — never an enum, so unknown statuses resolve (the writer
-    bothered to record a lifecycle fact) rather than vanish."""
+    and 'corroborat*' are non-resolving by construction (see below);
+    anything else means resolved. Status is free-form text by design — never
+    an enum, so unknown statuses resolve (the writer bothered to record a
+    lifecycle fact) rather than vanish."""
     if not isinstance(event, dict):
         return False
     status = str(event.get("status") or "").lower()
-    if status.startswith("supersede-candidate"):
+    if status.startswith(("supersede-candidate", "corroborat")):
         return False  # a machine SUGGESTION is live by construction (#14):
                       # every consumer (carry, withhold, future) inherits
                       # no-suppression without knowing candidates exist.
+                      # #268 corroboration is the same shape one step
+                      # further: a row that RAISES trust must never gain the
+                      # power to lower it. Corroboration rows already land on
+                      # a namespaced ref (corroboration_ref) that no item id
+                      # can equal, so this branch is the belt to that brace —
+                      # scar 0025 (any event kind on a bare ref hides its
+                      # item) is too expensive a failure to guard once.
     return not status.startswith("reopen")
+
+
+# ---- #268: corroboration events ----
+
+# A corroboration row NAMES an item without addressing it. `resolutions` folds
+# on `item_ref` alone and `is_resolved` resolves any status outside reopen/
+# supersede-candidate/corroborat* (scar 0025), so a row written on the BARE
+# item id would hide the very item it supports — and would displace a human's
+# superseded-by verdict as that item's latest event (the #376 trap). The
+# namespace is what makes both structurally impossible: no id this codebase
+# mints can contain a colon (see _stamp_item_ids), so no item ref can ever
+# collide with one of these.
+_CORROBORATION_PREFIX = "corroboration:"
+_CORROBORATED_BY = "corroborated-by:"
+
+
+def corroboration_ref(item_id: str) -> str:
+    """The event ref a corroboration row for `item_id` lands on. One literal,
+    shared by the emitter (capture._emit_corroborations) and the reader."""
+    return f"{_CORROBORATION_PREFIX}{item_id}"
+
+
+def _demotes(evt: dict, status: str) -> bool:
+    """Does this lifecycle row CONTRADICT the item it names (#268)?
+
+    Everything `is_resolved` calls resolved (a closed loop, a human's
+    superseded-by, a `forgotten:` tombstone, any free-form lifecycle fact),
+    plus supersede-candidate — the one status is_resolved deliberately keeps
+    live. A machine's supersession guess is not strong enough to HIDE an
+    item, but it is a standing contradiction, and corroboration is trust
+    going up: the bar for discounting it is lower than the bar for hiding.
+
+    `reopen*` is absent on purpose. Reviving an item does not revive the
+    agreement it lost — a witness has to speak again."""
+    return is_resolved(evt) or status.startswith("supersede-candidate")
+
+
+def corroborations(project_dir=None) -> dict:
+    """events.jsonl -> {bare item id: {origins, recorded, latest_demotion_ts}}
+    (#268 slice 3).
+
+    A FULL pass, not the latest-wins `resolutions` fold: every witness counts,
+    so the newest row can never erase an older session's independent
+    agreement. Callers index by the item's own id — the namespace above is an
+    on-disk detail no reader has to know about.
+
+      origins  — the sessions whose corroboration currently COUNTS: recorded
+                 strictly after the latest contradiction. This is the number
+                 a render may show.
+      recorded — every session that ever wrote a row for this item, whatever
+                 happened afterwards. Idempotency binds HERE, never to
+                 `origins`: were the emitter to key on what currently counts,
+                 a demotion would let the same session re-emit and re-earn its
+                 own corroboration with no new evidence.
+      latest_demotion_ts — the contradiction `origins` was measured against,
+                 or None. Kept visible so a reader can say WHY a recorded
+                 witness stopped counting.
+
+    Items with no corroboration row are absent: this fold answers "what has
+    been corroborated", not "what has been resolved". Timestamps compare as
+    strings — every writer stamps the same fixed-width UTC format, so
+    lexicographic order IS chronological (the idiom forget_hit_stats already
+    uses), and an unstamped row sorts oldest, never displacing a stamped one
+    (the same posture `resolutions` takes). Fails open to {} on a missing,
+    unreadable or corrupt log; unparseable lines are skipped best-effort."""
+    out: dict = {}
+    path = _events_path(project_dir)
+    if path is None:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return out
+    witnesses: dict = {}   # item id -> {observing session: latest row ts}
+    demotions: dict = {}   # item id -> latest contradicting row ts
+    for line in lines:
+        try:
+            evt = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(evt, dict):
+            continue
+        ref = str(evt.get("item_ref") or "")
+        if not ref:
+            continue
+        status = str(evt.get("status") or "")
+        # Prefix reads are case-insensitive like every other status reader
+        # here; the PAYLOAD after the prefix is sliced off the raw status —
+        # a session id is case-sensitive and must survive verbatim.
+        lowered = status.lower()
+        ts = str(evt.get("ts") or "")
+        if ref.startswith(_CORROBORATION_PREFIX):
+            item_id = ref[len(_CORROBORATION_PREFIX):]
+            observer = (status[len(_CORROBORATED_BY):].strip()
+                        if lowered.startswith(_CORROBORATED_BY) else "")
+            if not item_id or not observer:
+                continue  # malformed — a row that names no item or no witness
+            seen = witnesses.setdefault(item_id, {})
+            if ts > seen.get(observer, ""):
+                seen[observer] = ts
+        elif _demotes(evt, lowered) and ts > demotions.get(ref, ""):
+            demotions[ref] = ts
+    for item_id, seen in witnesses.items():
+        demoted = demotions.get(item_id)
+        out[item_id] = {
+            "origins": {sid for sid, ts in seen.items()
+                        if demoted is None or ts > demoted},
+            "recorded": set(seen),
+            "latest_demotion_ts": demoted,
+        }
+    return out
 
 
 # ---- #402: value-keyed forget suppression ----
