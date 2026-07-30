@@ -2413,6 +2413,16 @@ def test_rejections_derives_quote_downgrade():
         {"item_ref": "a", "check": "quote", "reason": "quote-not-in-transcript"}]
 
 
+def test_rejections_derives_echo_only_quote_downgrade():
+    """#440: a quote whose only support was daimon's own injected output gets
+    its own reason code, so the echo rate is measurable rather than hidden
+    inside the generic quote-not-in-transcript bucket."""
+    ck = _ck([{"id": "a", "trust": "inferred", "quote_verified": False,
+               "quote_echo_only": True}])
+    assert serializer.verification_rejections(ck) == [
+        {"item_ref": "a", "check": "quote", "reason": "echo-only"}]
+
+
 def test_rejections_derives_outcome_downgrade():
     ck = _ck([{"id": "b", "trust": "inferred", "grounded": False}])
     assert serializer.verification_rejections(ck) == [

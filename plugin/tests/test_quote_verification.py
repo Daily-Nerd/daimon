@@ -786,3 +786,215 @@ def test_audit_quotes_stale_id_falls_back_to_whole_scan(
     assert "id-resolved: 0" in out
     assert "verified: 1" in out
     assert "failed: 0" in out
+
+
+# ---- Unit G (#440): daimon's own injected output is not a witness ----
+#
+# The recall hook and the SessionStart briefing print INTO the transcript, and
+# transcript.py flattens hook stdout byte-identically into the user turn that
+# carried it. Verification therefore used to accept a quote copied out of
+# daimon's own echo as though this session had witnessed it — a prior
+# session's item laundered as freshly verbatim, bound to a real user turn.
+# The verification haystacks (and ONLY those — the extraction prompt and the
+# chunk cache keep seeing the raw text) drop injected spans first.
+
+_ECHOED = "we agreed to freeze the verbatim pin on reconsolidation"
+_RECALL = ('daimon recall: prior work — decision from S0 (2h ago): '
+           f'"{_ECHOED}" [verbatim]. More: daimon recall "freeze verbatim pin"')
+_BRIEF = ("DAIMON BRIEFING (checkpoint: S0, written 2h ago)\n"
+          "While you were away — here's where we left off.\n"
+          f"decisions:\n- {_ECHOED}")
+_REMINDER = f"<system-reminder>\n{_BRIEF}\n</system-reminder>"
+
+
+def _msgs(*turns):
+    """(role, content, id) turns shaped like transcript.py's Claude Code rows."""
+    return [{"role": r, "content": c, "id": i} for r, c, i in turns]
+
+
+def _decision(**over):
+    item = {"text": "freeze the pin", "trust": "verbatim", "quote": _ECHOED}
+    item.update(over)
+    return _cp_with({("working_context", "recent_decisions"): [item]})
+
+
+def _only_decision(cp):
+    return cp["working_context"]["recent_decisions"][0]
+
+
+# strip_injected: the shared strip, unit-level
+
+def test_strip_injected_removes_a_system_reminder_span():
+    out = serializer.strip_injected(f"genuine before\n{_REMINDER}\ngenuine after")
+    assert _ECHOED not in out
+    assert "genuine before" in out
+    assert "genuine after" in out
+
+
+def test_strip_injected_removes_a_recall_line_but_keeps_its_neighbours():
+    out = serializer.strip_injected(
+        f"my own words here\n{_RECALL}\nand more of mine")
+    assert _ECHOED not in out
+    assert "my own words here" in out
+    assert "and more of mine" in out
+
+
+def test_strip_injected_truncates_from_an_unwrapped_briefing_prefix():
+    out = serializer.strip_injected(f"please review the plan\n{_BRIEF}")
+    assert _ECHOED not in out
+    assert "please review the plan" in out
+
+
+def test_strip_injected_truncates_from_the_bare_briefing_header():
+    # A host that swallows the DAIMON BRIEFING line still emits the render's
+    # own header, so the header alone must be enough to fire the strip.
+    out = serializer.strip_injected(
+        f"ok\nWhile you were away — here's where we left off.\n- {_ECHOED}")
+    assert _ECHOED not in out
+    assert "ok" in out
+
+
+def test_strip_injected_leaves_ordinary_text_byte_identical():
+    text = "we decided to adopt the D-007 prompt\n- and to ship it on Friday"
+    assert serializer.strip_injected(text) == text
+
+
+def test_a_contentless_row_does_not_break_verification():
+    """A host row whose `content` is null flattens to None, not "" — so the
+    strip runs on a non-str and must fail closed (empty haystack) instead of
+    raising. Verification of the OTHER messages has to survive it: one
+    malformed row must never cost the whole capture its quotes."""
+    msgs = _msgs(("user", "we adopt the D-007 prompt for the serializer", "u-1"))
+    msgs.append({"role": "assistant", "content": None, "id": "a-2"})
+    cp = _decision(text="a real decision",
+                   quote="adopt the D-007 prompt for the serializer")
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 0
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+
+
+# verify_quotes: an echo never earns quote_verified
+
+def test_quote_only_in_a_recall_line_downgrades_to_inferred():
+    msgs = _msgs(("user", f"{_RECALL}\nwhat did we settle on?", "u-1"))
+    cp = _decision()
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert item["quote_verified"] is False
+    assert item["quote_echo_only"] is True
+
+
+def test_quote_only_in_a_system_reminder_brief_downgrades_to_inferred():
+    msgs = _msgs(("user", f"{_REMINDER}\ncarry on please", "u-1"))
+    cp = _decision()
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert item["quote_verified"] is False
+    assert item["quote_echo_only"] is True
+
+
+def test_quote_only_in_an_unwrapped_briefing_block_downgrades_to_inferred():
+    # The context-emitting hosts' path: hook stdout lands raw, no wrapper.
+    msgs = _msgs(("user", _BRIEF, "u-1"),
+                 ("user", "so where were we?", "u-2"))
+    cp = _decision()
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 1
+    assert item["quote_verified"] is False
+    assert item["quote_echo_only"] is True
+
+
+def test_genuine_text_adjacent_to_an_injected_line_still_verifies():
+    genuine = "let us cut the release once the write guard lands"
+    msgs = _msgs(("user", f"{_RECALL}\n{genuine}", "u-1"))
+    cp = _decision(text="cut the release", quote=genuine)
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 0
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+    assert "quote_echo_only" not in item
+
+
+def test_echo_quote_bound_to_the_injected_turn_loses_its_binding():
+    # Whole-turn id granularity is exactly what made the laundering possible:
+    # the injected span and the user's own prose share one message id.
+    msgs = _msgs(("user", f"{_RECALL}\nplease continue", "u-1"),
+                 ("assistant", "on it", "a-2"))
+    cp = _decision(source_message_ids=["u-1"])
+    serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert item["quote_verified"] is False
+    assert item["quote_echo_only"] is True
+    assert "source_message_ids" not in item
+
+
+def test_quote_absent_entirely_is_not_flagged_echo_only():
+    msgs = _msgs(("user", "nothing related here at all", "u-1"))
+    cp = _decision(quote="this sentence is nowhere in the source transcript")
+    serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert item["quote_verified"] is False
+    assert "quote_echo_only" not in item
+
+
+def test_echo_flag_is_code_owned_and_model_values_are_stripped():
+    cp = _decision(quote="adopt the D-007 prompt", quote_echo_only=True)
+    serializer.verify_quotes(cp, "assistant: adopt the D-007 prompt today")
+    item = _only_decision(cp)
+    assert item["quote_verified"] is True
+    assert "quote_echo_only" not in item
+
+
+def test_legacy_two_arg_call_still_strips_a_reminder_span():
+    cp = _decision()
+    n = serializer.verify_quotes(cp, f"user: {_REMINDER}")
+    assert n == 1
+    assert _only_decision(cp)["quote_echo_only"] is True
+
+
+# the rejection ledger carries the distinct reason code
+
+def test_capture_writes_the_echo_only_reason_to_the_rejection_ledger(
+    tmp_checkpoint_dir, fake_chat_factory
+):
+    from daimon_briefing import capture
+    chat = fake_chat_factory(_script([
+        {"text": "freeze the pin", "trust": "verbatim", "quote": _ECHOED}]))
+    msgs = _msgs(("user", f"{_RECALL}\nwhat did we settle on?", "u-1"))
+    msgs += [dict(m, id=f"m-{i}") for i, m in enumerate(make_messages(12))]
+    capture.run("S1", msgs, project="/p/E", chat=chat, deadline=None)
+    slug = store.project_slug("/p/E")
+    rows = [json.loads(line) for line in
+            (tmp_checkpoint_dir / slug / "verification.jsonl")
+            .read_text(encoding="utf-8").splitlines()]
+    assert [r["reason"] for r in rows] == ["echo-only"]
+    assert rows[0]["check"] == "quote"
+
+
+# `daimon audit` reads the same stripped haystack
+
+def test_audit_quotes_does_not_verify_an_echoed_quote(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [
+        ("user", f"{_RECALL}\nwhat did we settle on?"),
+        ("assistant", "let me look"),
+    ])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": "freeze the pin", "trust": "verbatim", "quote": _ECHOED,
+         "id": "d-echo"}]), project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "verified: 0" in out
+    assert "failed: 1" in out

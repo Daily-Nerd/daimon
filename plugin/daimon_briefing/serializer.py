@@ -822,6 +822,85 @@ def quote_matches(quote, haystack) -> bool:
     return True
 
 
+# ---- #440: daimon's own injected output is not a witness ----
+#
+# The recall hook (`daimon recall: prior work — ...`) and the SessionStart
+# briefing (`DAIMON BRIEFING ...`) print INTO the host's transcript, and
+# transcript.py flattens hook stdout byte-identically into the user turn that
+# carried it — under the SAME message id as the user's own prose (whole-turn
+# granularity, #358). A quote copied out of that echo used to pass
+# verification and store as trust="verbatim", quote_verified: true: a PRIOR
+# session's item laundered as freshly witnessed in THIS one.
+#
+# The strip is applied to the verification haystacks ONLY. `_render_transcript`
+# deliberately keeps feeding the extractor the raw text: the brief legitimately
+# informs the model, and #48 chunk-cache keys derive from the chunk text, so
+# stripping there would invalidate every cached extraction on every install.
+# The laundering happens at verification, so it is fixed at verification.
+
+# Injected scaffolding rides inside user turns wrapped in <system-reminder>.
+# Quoting it back is daimon vouching for its own output (the self-reference
+# loop, parked 07-15); `pin_imperatives` (#369) has always stripped it for its
+# own scan, and this is that same strip promoted to shared use.
+_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>",
+                                 re.DOTALL | re.IGNORECASE)
+# Line-scoped: a recall injection is exactly one line and never spans a
+# newline, so a genuine user sentence on the next line keeps its witness.
+_RECALL_LINE_RE = re.compile(r"daimon recall: prior work —[^\n]*")
+# Message-scoped: the briefing is a multi-line render with no terminator, so
+# everything from its first marker to the end of the MESSAGE goes. Either
+# marker fires on its own — a host that swallows the hook's `DAIMON BRIEFING`
+# header still emits the render's own first line. A deliberate
+# over-approximation: over-stripping costs a downgrade to inferred,
+# under-stripping mints a false `verbatim`, and only one of those is a
+# security bug.
+_BRIEF_HEAD_RE = re.compile(
+    r"(?:DAIMON BRIEFING |While you were away — here['’]s where we left off\.).*",
+    re.DOTALL)
+
+# Code-owned, absent-never-False (#292 discipline, same as `grounded`): set
+# only where verify_quotes proves the quote lives in injected output and
+# nowhere else, so `verification_rejections` can ledger it under its own
+# reason code and the echo rate becomes an endogenous measurement.
+ECHO_ONLY_KEY = "quote_echo_only"
+
+
+def strip_injected(text: str) -> str:
+    """`text` minus daimon's own injected spans — ONE message's text.
+
+    The briefing rule truncates to end of string, which is end of MESSAGE by
+    contract: every caller hands this a single message body. The
+    whole-transcript haystack goes through `stripped_transcript`, which strips
+    per message and re-renders, so a briefing never swallows the turns after
+    it. Non-str input yields "" — an unusable haystack fails closed."""
+    if not isinstance(text, str):
+        return ""
+    text = _SYSTEM_REMINDER_RE.sub(" ", text)
+    text = _RECALL_LINE_RE.sub("", text)
+    return _BRIEF_HEAD_RE.sub("", text)
+
+
+def stripped_transcript(messages) -> str:
+    """`_render_transcript`'s text with every message's injected spans removed
+    — the whole-transcript VERIFICATION haystack (#440).
+
+    Renders shallow message copies whose flattened text has been stripped, so
+    markers, role labels and joins stay byte-identical to the haystack
+    verification read before this fix: only the injected bytes go missing.
+
+    No non-dict guard on purpose: `serialize_strict` renders the SAME list
+    through `_render_transcript` before verification runs, and that raises on
+    any non-dict row — so a message list that reaches here has already proven
+    itself dict-shaped. A guard would only move a crash that already
+    happened."""
+    stripped = []
+    for m in messages or []:
+        copy = dict(m)
+        copy["content"] = strip_injected(_message_text(m))
+        stripped.append(copy)
+    return _render_transcript(stripped)
+
+
 def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
     place (#125). On a hit the item gets `quote_verified: true` AND a
@@ -855,13 +934,30 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     (serialize_strict, itself not now-aware), and datetime.now(...) inline
     matches store.append_event's own stamping idiom (store.py) rather than
     threading a new param through a call chain that has no other use for
-    it."""
-    texts_by_id = message_texts_by_id(messages) if messages else {}
+    it.
+
+    #440: both haystacks are stripped of daimon's OWN injected output first
+    (see strip_injected) — a quote copied out of a recall line or a briefing
+    block is an echo, not a witness, and must never earn `verbatim`. A miss
+    is re-checked against the unstripped text so an echoed quote is ledgered
+    under `echo-only` rather than the generic absent-quote reason."""
+    # #440: the RAW pair survives alongside the stripped haystacks, read on
+    # the failure path only — to tell an echoed quote from an absent one.
+    raw_texts_by_id = message_texts_by_id(messages) if messages else {}
+    texts_by_id = {mid: strip_injected(text)
+                   for mid, text in raw_texts_by_id.items()}
+    haystack = (stripped_transcript(messages) if messages
+                else strip_injected(transcript_text))
     # #359: signal pointers (tool-result ids) are outcome evidence, not
     # quote-source claims — they never scope the quote check, and a scoped
     # MISS must not execute them for the quote-id's crime.
     signals = signal_message_ids(messages) if messages else set()
-    downgraded = 0
+    downgraded = echoed = 0
+    # The model never gets a vote on the echo verdict (#292 discipline, same
+    # as `grounded`/`pinned`): any model-emitted value is dropped before the
+    # checker re-derives it.
+    for item in iter_items(checkpoint):
+        item.pop(ECHO_ONLY_KEY, None)
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
             continue
@@ -873,7 +969,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             item["quote_verified"] = True
             item["last_verified"] = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
-        elif quote_matches(quote, transcript_text):
+        elif quote_matches(quote, haystack):
             if scoped is not None:
                 # Resolved AND mismatched: the quote is real but not in its
                 # cited message — drop the disproven QUOTE binding (signal
@@ -891,6 +987,16 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             item["last_verified"] = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
         else:
+            # #440: a second pass over the UNSTRIPPED text separates "present
+            # only in daimon's own injected output" from "absent entirely".
+            # Same downgrade either way — an echo is not a witness — but the
+            # distinct reason code turns the echo rate into something the
+            # rejection ledger can count.
+            raw_scoped = scoped_haystack(item, raw_texts_by_id, exclude=signals)
+            if ((raw_scoped is not None and quote_matches(quote, raw_scoped))
+                    or quote_matches(quote, transcript_text)):
+                item[ECHO_ONLY_KEY] = True
+                echoed += 1
             item["trust"] = "inferred"
             item["quote_verified"] = False
             # A downgraded quote is not evidence; a binding for it is noise.
@@ -902,11 +1008,16 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             # (#194): this line is the only surviving record of the downgrade —
             # the CLI routes it to serialize.log, which holds full result lines.
             logged, _ = redact.redact_text(item.get("text") or "")
-            log.warning("quote verification: downgraded verbatim->inferred: %s",
-                        logged)
+            if item.get(ECHO_ONLY_KEY):
+                log.warning("quote verification: downgraded verbatim->inferred "
+                            "(echo-only: quote appears only in daimon's own "
+                            "injected output): %s", logged)
+            else:
+                log.warning("quote verification: downgraded verbatim->inferred: %s",
+                            logged)
     if downgraded:
-        log.info("quote verification: %d verbatim item(s) downgraded to inferred",
-                 downgraded)
+        log.info("quote verification: %d verbatim item(s) downgraded to inferred"
+                 " (%d echo-only)", downgraded, echoed)
     return downgraded
 
 
@@ -1013,8 +1124,13 @@ def verification_rejections(checkpoint) -> list:
         if not isinstance(ref, str) or not ref:
             continue
         if item.get("quote_verified") is False:
+            # #440: the two ways a quote fails are worth telling apart —
+            # "nowhere in the session" is a fabrication signal, "only inside
+            # daimon's own injected output" is the echo rate.
             out.append({"item_ref": ref, "check": "quote",
-                        "reason": "quote-not-in-transcript"})
+                        "reason": ("echo-only"
+                                   if item.get(ECHO_ONLY_KEY) is True
+                                   else "quote-not-in-transcript")})
         if item.get(GROUNDED_KEY) is False:
             out.append({"item_ref": ref, "check": "outcome",
                         "reason": "no-signal-cited"})
@@ -1101,9 +1217,9 @@ _IMPERATIVE_RE = re.compile(
 
 # Injected scaffolding (briefings, hook output) rides inside user turns
 # wrapped in <system-reminder> — pinning it would quote daimon's own output
-# back as a user constraint (the self-reference loop, parked 07-15).
-_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>",
-                                 re.DOTALL | re.IGNORECASE)
+# back as a user constraint (the self-reference loop, parked 07-15). The
+# pattern itself now lives with the #440 strip family above, which generalized
+# this guard from the auto-pin scan to the verification haystacks.
 
 
 def _constraint_sentences(text: str):

@@ -1573,8 +1573,14 @@ def _cmd_audit_quotes(args) -> int:
         if tpath is not None:
             try:
                 msgs = transcript.from_file(tpath)
-                haystack = serializer._render_transcript(msgs)
-                texts_by_id = serializer.message_texts_by_id(msgs)
+                # #440: the same stripped haystacks verify_quotes used at
+                # serialize time. Audit re-blesses stored items, so reading
+                # the raw render here would certify exactly the echo
+                # verification rejected — and do it with the CLI's authority.
+                haystack = serializer.stripped_transcript(msgs)
+                texts_by_id = {
+                    mid: serializer.strip_injected(text) for mid, text
+                    in serializer.message_texts_by_id(msgs).items()}
             except (OSError, FileNotFoundError):
                 haystack = None
         if haystack is None:
