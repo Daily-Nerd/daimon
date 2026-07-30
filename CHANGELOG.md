@@ -5,6 +5,37 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0](https://github.com/Daily-Nerd/daimon/compare/v0.21.0...v0.22.0) (2026-07-30)
+
+
+### Features
+
+* **briefing:** render the corroboration badge — separate axis, never a trust class ([#268](https://github.com/Daily-Nerd/daimon/issues/268) slice 4) ([#445](https://github.com/Daily-Nerd/daimon/issues/445)) ([05e30bb](https://github.com/Daily-Nerd/daimon/commit/05e30bb499d369876f4b72642530d0df9e6960a2))
+* **capture:** corroboration events — namespaced ledger rows, derived counts ([#268](https://github.com/Daily-Nerd/daimon/issues/268) slice 3) ([#444](https://github.com/Daily-Nerd/daimon/issues/444)) ([51657f2](https://github.com/Daily-Nerd/daimon/commit/51657f2d86a25d3c86b790993a099970a987e124))
+* **carry:** corroboration predicate — origin-proven independence, pure ([#268](https://github.com/Daily-Nerd/daimon/issues/268) slice 2) ([#443](https://github.com/Daily-Nerd/daimon/issues/443)) ([2cd6994](https://github.com/Daily-Nerd/daimon/commit/2cd699430cec817853ed194bd48ea7638674169c))
+* **policy:** bind item origin at write time ([#268](https://github.com/Daily-Nerd/daimon/issues/268) slice 1) ([#442](https://github.com/Daily-Nerd/daimon/issues/442)) ([ba7202a](https://github.com/Daily-Nerd/daimon/commit/ba7202aac3edb51aa19e0ef817c9b75ae652f7cc))
+* **policy:** extract admission pipeline into pure policy module and gate writes on the kill switch ([#428](https://github.com/Daily-Nerd/daimon/issues/428)) ([a17b644](https://github.com/Daily-Nerd/daimon/commit/a17b644c10bf6a457d7c6c48a6bfeadc8aa92e5a))
+* **scoring:** trust class as an authority ceiling — recall frequency can never promote belief ([#413](https://github.com/Daily-Nerd/daimon/issues/413)) ([4f02e2e](https://github.com/Daily-Nerd/daimon/commit/4f02e2efc250b1929b38e48bd2e71008dc731102))
+* **serializer:** ground Spanish outcome claims (bilingual lexicon) ([#411](https://github.com/Daily-Nerd/daimon/issues/411)) ([0870dd6](https://github.com/Daily-Nerd/daimon/commit/0870dd698d79b16850e6c8674f345f2c9c43a9ca))
+* **serializer:** prefer quote spans that preserve temporal detail ([#417](https://github.com/Daily-Nerd/daimon/issues/417)) ([91ce3b0](https://github.com/Daily-Nerd/daimon/commit/91ce3b0ed13daf0bc728ab1ce39d33405c0917f5))
+* **store:** value-keyed forget tombstone arc — canonicalization, re-capture gate, hit accounting ([#412](https://github.com/Daily-Nerd/daimon/issues/412)) ([9daf310](https://github.com/Daily-Nerd/daimon/commit/9daf310eabab2b6eeefffbe31a64e9fb080ee81a))
+* **teamsync:** gate inbound team content — scope, redaction, forget, and trust now apply on read ([#430](https://github.com/Daily-Nerd/daimon/issues/430)) ([947ddac](https://github.com/Daily-Nerd/daimon/commit/947ddacaa62906eabd88b647a4c04633a389ff39))
+* **worldcheck:** extend spot-check to file-exists, branch-state, and dependency-version claim classes ([#399](https://github.com/Daily-Nerd/daimon/issues/399)) ([ecb7faf](https://github.com/Daily-Nerd/daimon/commit/ecb7fafefa817f0726f46b221ddd4c7f4400a30a))
+
+
+### Bug Fixes
+
+* **cli:** supersede-candidate emission skips values in the forget ledger ([#425](https://github.com/Daily-Nerd/daimon/issues/425)) ([f60f2d9](https://github.com/Daily-Nerd/daimon/commit/f60f2d9e2dcaa5fc75065d649d7f150d011b6818))
+* **forget:** append tombstone before rewrite and remove by value so sibling ids cannot survive ([#424](https://github.com/Daily-Nerd/daimon/issues/424)) ([d3556e1](https://github.com/Daily-Nerd/daimon/commit/d3556e12db08e37da7d880a377e0cf9e462ec66c))
+* **forget:** purge the serializer chunk cache so deletion covers the pre-redaction window ([#429](https://github.com/Daily-Nerd/daimon/issues/429)) ([7f73080](https://github.com/Daily-Nerd/daimon/commit/7f730804e1f1bcf4aa9c865ce511b9ccdee7ec89))
+* **recall:** resolve forgotten tombstones by content key so sibling-id copies in historical sessions cannot survive rebuild ([#435](https://github.com/Daily-Nerd/daimon/issues/435)) ([59271b6](https://github.com/Daily-Nerd/daimon/commit/59271b6070ce0bf850a78c17498b3f1e0717065a))
+* **serializer:** quote verification no longer accepts daimon's own injected text as witness ([#441](https://github.com/Daily-Nerd/daimon/issues/441)) ([4710e17](https://github.com/Daily-Nerd/daimon/commit/4710e1725dae7030d0ad0ca5b88ac303ea618344))
+
+
+### Documentation
+
+* **pitch:** align PITCH.md with shipped reality ([#393](https://github.com/Daily-Nerd/daimon/issues/393)) ([522a217](https://github.com/Daily-Nerd/daimon/commit/522a217bba088fa4f65324b0b79ad90b50e6df5b))
+
 ## [0.21.0](https://github.com/Daily-Nerd/daimon/compare/v0.20.0...v0.21.0) (2026-07-29)
 
 
