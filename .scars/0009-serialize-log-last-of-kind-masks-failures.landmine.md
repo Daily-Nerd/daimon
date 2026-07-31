@@ -5,7 +5,7 @@ title: Reasoning over serialize.log with last-of-kind logic masks per-session bu
 severity: high
 confidence: 0.9
 created: 2026-06-30
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - pattern: "_parse_serialize_log|last[_ ]?result"
 evidence:

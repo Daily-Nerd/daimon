@@ -1,21 +1,20 @@
 ---
-id: 0
+id: 35
 type: landmine
 title: A PROMPT_VERSION bump does NOT rotate the #48 chunk cache — its own historical comment says it does, but the cache key is EXTRACTION_VERSION
 severity: medium
 confidence: 0.9
 created: 2026-07-29
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/serializer.py
-    pattern: "rotates the #48 chunk-cache key"
 evidence:
-  - commit: "#416"
-  - note: "#416 added extraction rule 21 (prefer a quote span that keeps a temporal span). The pre-#367 D-015/D-016 comment blocks claim the PROMPT_VERSION bump 'rotates the #48 chunk-cache key' — but since #367 the cache key (_chunk_cache_key) hashes EXTRACTION_VERSION, not PROMPT_VERSION. Bumping only PROMPT_VERSION would have served stale date-dropping cached extractions for up to chunk_cache_days (default 3), silently poisoning the citable-date re-measurement the change exists to make honest."
+  - commit: #416
+  - note: #416 added extraction rule 21 (prefer a quote span that keeps a temporal span). The pre-#367 D-015/D-016 comment blocks claim the PROMPT_VERSION bump 'rotates the #48 chunk-cache key' — but since #367 the cache key (_chunk_cache_key) hashes EXTRACTION_VERSION, not PROMPT_VERSION. Bumping only PROMPT_VERSION would have served stale date-dropping cached extractions for up to chunk_cache_days (default 3), silently poisoning the citable-date re-measurement the change exists to make honest.
 expires:
   condition: "the outdated 'rotates the #48 chunk-cache key' phrasing is removed from every pre-#367 comment block above PROMPT_VERSION, or the cache key is re-keyed on PROMPT_VERSION"
   review_after: 2026-12-01
-status: candidate
+status: active
 ---
 
 When you add an extraction-behavior change (a new numbered rule that changes

@@ -5,7 +5,7 @@ title: uv run daimon from repo root runs the stale GLOBAL tool, not the working 
 severity: medium
 confidence: 0.95
 created: 2026-07-02
-authors: [claude, kibukx]
+authors: [claude, Kibukx]
 anchors:
   - path: plugin/
   - path: README.md

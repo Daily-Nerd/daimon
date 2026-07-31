@@ -5,7 +5,7 @@ title: uv tool install --force reuses cached wheel when version is unchanged
 severity: low
 confidence: 0.9
 created: 2026-06-10
-authors: [claude]
+authors: ["claude", "Kibukx"]
 anchors:
   - path: plugin/pyproject.toml
   - pattern: "uv tool install"
@@ -14,7 +14,7 @@ evidence:
 expires:
   condition: "plugin adopts per-change version bumps, or install docs/scripts always pass --reinstall"
   review_after: 2027-06-10
-status: candidate
+status: active
 ---
 
 `uv tool install --force <local-dir>` resolves against the cached wheel for an

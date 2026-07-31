@@ -5,7 +5,7 @@ title: Two independent LLM clients (lib/llm.py + evaluate.py) share the stall-ha
 severity: high
 confidence: 0.9
 created: 2026-06-30
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/experiments/lib/llm.py
   - path: research/memory-backend/benchmark/evaluate.py

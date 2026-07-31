@@ -5,7 +5,7 @@ title: Concurrent probe_d007.py runs race on runs/ — no locking
 severity: medium
 confidence: 0.9
 created: 2026-06-09
-authors: [claude, kibukx]
+authors: [claude, Kibukx]
 anchors:
   - path: research/experiments/track-a/probe_d007.py
   - pattern: "score.json"

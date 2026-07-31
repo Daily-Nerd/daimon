@@ -1,18 +1,19 @@
 ---
-id: 0
+id: 34
 type: landmine
 title: Manually closing a Popen stdin pipe makes communicate() raise — and fail-open reapers turn that into silent skips
 severity: medium
 confidence: 0.9
 created: 2026-07-31
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/worldcheck.py
 evidence:
-  - note: "#439 implementation session 2026-07-31: every stdin-bearing vitni probe skipped silently; answer was on stdout the whole time"
+  - note: #439 implementation session 2026-07-31: every stdin-bearing vitni probe skipped silently; answer was on stdout the whole time
 expires:
   condition: "worldcheck._run_probes stops writing probe stdin manually (e.g. moves to communicate(input=...) with its own timeout discipline)"
   review_after: 2026-10-31
+status: active
 ---
 
 `subprocess.Popen(stdin=PIPE)` + a manual `proc.stdin.write(...); proc.stdin.close()`
