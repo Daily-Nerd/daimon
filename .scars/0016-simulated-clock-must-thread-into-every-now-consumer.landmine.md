@@ -9,6 +9,7 @@ authors: ["claude-code", "kibukx"]
 anchors:
   - path: research/experiments/multicycle/
   - pattern: "briefing\.build\b"
+violation: "briefing\.build\((?![^)]{0,300}now=)"
 evidence:
   - note: "lab commit 510787d (pre-public-history archive; fix squashed into lab PR #134)"
   - note: live run-01 killed 2026-07-02 — 6 cycles of spend invalidated

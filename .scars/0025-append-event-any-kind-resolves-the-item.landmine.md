@@ -8,7 +8,13 @@ created: 2026-07-28
 authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/store.py
+  - path: plugin/daimon_briefing/capture.py
+  - path: plugin/daimon_briefing/cli.py
+  - path: plugin/daimon_briefing/recall.py
+  - path: plugin/daimon_briefing/briefing.py
+  - path: plugin/tests/
   - pattern: "append_event[(][^)]{0,200}kind="
+violation: "append_event\([^)]{0,200}kind=(?!["'](tombstone|corroboration)["']|args\.kind)"
 evidence:
   - note: 2026-07-28 probe while designing #376: append_event(ref, 'quote-verification-failed', kind='verification') then resolutions() then is_resolved() returned True — the item would vanish from briefing, recall and carry
 expires:
