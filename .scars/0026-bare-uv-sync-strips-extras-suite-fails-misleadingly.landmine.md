@@ -8,6 +8,11 @@ created: 2026-07-29
 authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/pyproject.toml
+  - path: scripts/
+  - path: .github/workflows/
+  - path: CONTRIBUTING.md
+  - path: docs/
+violation: "uv sync(?!.*--all-extras)(?!.*--extra[= ].*--extra[= ])"
 evidence:
   - note: 2026-07-29 session: after `uv sync -q`, pytest binary vanished; after `uv sync --extra dev`, 31 test_render failures (rich missing) read as regressions on an untouched module; `uv sync --extra dev --extra pretty` restored 2037 passed
   - pr: 424

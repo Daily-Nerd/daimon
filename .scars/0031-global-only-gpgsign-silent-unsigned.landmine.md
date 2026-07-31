@@ -8,6 +8,8 @@ created: 2026-07-30
 authors: ["claude-code", "Kibukx"]
 anchors:
   - pattern: "git commit"
+  - path: scripts/
+  - path: .github/
 violation: "--no-gpg-sign"
 evidence:
   - pr: 441
