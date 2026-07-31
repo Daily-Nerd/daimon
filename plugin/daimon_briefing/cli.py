@@ -59,7 +59,7 @@ from .ledger import (
     _parse_serialize_log,
     _parse_stamp,
     _session_ledger,
-    _spawns_in_window,
+    _spawns_in_window,  # noqa: F401 — re-exported for compat
     _spawns_in_window_count,
     _stats_capture,
 )
@@ -2221,24 +2221,59 @@ _RETENTION_WINDOW_DAYS = 14
 
 
 def _stats_retention(now=None) -> dict:
-    """usage.log -> hook-driven briefings (`brief:auto`) vs deliberate
-    re-reads, over the last _RETENTION_WINDOW_DAYS. Re-reads are memory
-    reads only (`brief`, `recall`); `status` is ops polling and counts
-    apart, outside the total and the ratio (#232 — a debugging session
-    must not read as retention). Plain `brief` lines stamped before the
-    first `brief:auto` ever logged predate the flag and are reported as
-    untagged — ambiguous, never guessed (#54 honesty rule).
+    """usage.log -> briefings delivered vs deliberate re-reads, over the last
+    _RETENTION_WINDOW_DAYS. `status` is ops polling and counts apart, outside
+    the total and the ratio (#232 — a debugging session must not read as
+    retention).
+
+    A briefing reaches the agent by one of two paths, and which one is
+    available is a permanent property of the host (#349): hosts with a
+    session-start event log `brief:auto`, and hosts without one (Cascade,
+    Codex) have the skill invoke `daimon brief` instead. usage.log carries no
+    host, so a plain `brief` line is only readable against the hosts that
+    actually spawned captures in the same window (#477):
+
+    - `hook`/`none` — no hookless spawns contradict it, so `brief` is a
+      deliberate re-read, as it always was.
+    - `skill` — hookless spawns only. `brief` IS the briefing being delivered;
+      counting it as a re-read made the only working delivery path on that
+      host invisible. The pre-`--auto` untagged rule is off here too: a host
+      that can never log `brief:auto` has no upgrade marker to sit before.
+    - `mixed` — both. A plain `brief` is neither confidently delivery nor
+      re-read, so it is reported as `ambiguous_briefs` and the ratio is
+      withheld rather than guessed (#54). This is the defect #477 filed: one
+      stray auto-capable session in the denominator against a fortnight of
+      hookless reads in the numerator rendered as a confident headline number.
+
+    Plain `brief` lines stamped before the first `brief:auto` ever logged
+    predate the flag and are reported as untagged — ambiguous, never guessed.
     stale_hook_warning: sessions were captured in the window but zero
     auto-briefings were logged — the SessionStart hook likely predates
     --auto."""
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=_RETENTION_WINDOW_DAYS)
     out = {"window_days": _RETENTION_WINDOW_DAYS, "hook_briefs": 0,
+           "skill_briefs": 0, "ambiguous_briefs": 0, "briefings_total": 0,
+           "delivery_mode": "none",
            # status is ops polling (serializer health, pending counts), not a
            # memory read (#232): counted apart, never in the total or ratio.
            "rereads": {"brief": 0, "recall": 0}, "status_checks": 0,
-           "rereads_total": 0, "rereads_per_hook_brief": None,
+           "rereads_total": 0, "rereads_per_briefing": None,
            "untagged_briefs": 0, "stale_hook_warning": False}
+    # Host population is read from the SAME window as the counters, so a stale
+    # spawn from a host retired months ago cannot reclassify this fortnight.
+    auto_spawns = _spawns_in_window_count(cutoff, hosts=AUTO_BRIEF_HOSTS)
+    total_spawns = _spawns_in_window_count(cutoff)
+    hookless_spawns = total_spawns - auto_spawns
+    if hookless_spawns and auto_spawns:
+        mode = "mixed"
+    elif hookless_spawns:
+        mode = "skill"
+    elif auto_spawns:
+        mode = "hook"
+    else:
+        mode = "none"
+    out["delivery_mode"] = mode
     try:
         lines = (config.log_dir() / "usage.log").read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -2253,7 +2288,8 @@ def _stats_retention(now=None) -> dict:
             events.append((stamp, parts[1]))
     first_auto = min((s for s, cmd in events if cmd == "brief:auto"), default=None)
     for stamp, cmd in events:
-        if cmd == "brief" and (first_auto is None or stamp < first_auto):
+        if (cmd == "brief" and mode != "skill"
+                and (first_auto is None or stamp < first_auto)):
             out["untagged_briefs"] += 1
             continue
         if stamp < cutoff:
@@ -2262,17 +2298,25 @@ def _stats_retention(now=None) -> dict:
             out["hook_briefs"] += 1
         elif cmd == "status":
             out["status_checks"] += 1
+        elif cmd == "brief":
+            if mode == "skill":
+                out["skill_briefs"] += 1
+            elif mode == "mixed":
+                out["ambiguous_briefs"] += 1
+            else:
+                out["rereads"]["brief"] += 1
         elif cmd in out["rereads"]:
             out["rereads"][cmd] += 1
     out["rereads_total"] = sum(out["rereads"].values())
-    if out["hook_briefs"]:
-        out["rereads_per_hook_brief"] = round(
-            out["rereads_total"] / out["hook_briefs"], 2)
+    out["briefings_total"] = out["hook_briefs"] + out["skill_briefs"]
+    # Withheld on `mixed`: the numerator spans hosts the denominator does not.
+    if mode != "mixed" and out["briefings_total"]:
+        out["rereads_per_briefing"] = round(
+            out["rereads_total"] / out["briefings_total"], 2)
     # #349: only spawns from auto-brief-capable hosts count — a Windsurf- or
     # Codex-only machine can never log brief:auto, and warning it to re-run
     # `hooks install` is a permanent false positive.
-    if out["hook_briefs"] == 0 and _spawns_in_window(
-            cutoff, hosts=AUTO_BRIEF_HOSTS):
+    if out["hook_briefs"] == 0 and auto_spawns:
         out["stale_hook_warning"] = True
     return out
 
