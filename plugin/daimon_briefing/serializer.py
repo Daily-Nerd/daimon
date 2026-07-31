@@ -1444,6 +1444,26 @@ def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
 # files are written 0600. Same sensitivity and root as checkpoints.
 # Everything here is best-effort: a broken cache must never break a
 # serialize — worst case is re-paying the chunk call.
+#
+# #465 producer verification (the same hole #343 closed in the bench cache,
+# tests/bench/cache.py — this mirrors that contract). The `model` dimension in
+# the key above is the CONFIGURED alias: routing config, not provenance (scar
+# 0032). When the gateway silently substitutes, the client-side fallback flag
+# stays False, so the substitute's extraction would land under the alias key
+# and replay for chunk_cache_days. The served model can never join the key —
+# it is unknowable before the call that produces it (chicken-egg) — so entries
+# instead carry it in an envelope `{"served_model": ..., "partial": {...}}`
+# and reads verify it against the run's #458 receipts (llm.served_models()):
+#   - recorded producer disagrees with the run's single receipt -> MISS
+#   - recorded null (command backend, honest absence — never the alias copied
+#     in) replays ONLY into a run that is itself receiptless
+#   - the run is already mixed -> MISS (fail toward re-serialize)
+#   - the run has no receipts yet -> ADOPT the recorded producer via
+#     llm.note_served, so a later live substitution trips both this check and
+#     the existing _stamp_llm_provenance WARNING/counter
+# Writes hold the poison gate (scar 0015): a mixed-producer run caches nothing.
+# Pre-#465 entries are raw partials with no receipt — unattributable, so they
+# are a counted miss and re-warm once.
 
 
 def _chunk_cache_dir():
@@ -1481,7 +1501,54 @@ def _load_chunk_cache(key: str):
             (_chunk_cache_dir() / f"{key}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return obj if isinstance(obj, dict) else None
+    if not isinstance(obj, dict):
+        return None
+    if "partial" not in obj:
+        # Pre-#465 entry: a raw partial with no producer receipt, exactly the
+        # unattributable shape a silently-substituted run leaves behind. Never
+        # replayed; the cost is a one-time re-warm after upgrading, after
+        # which every entry carries its receipt.
+        _note_chunk_cache_miss("serialize:chunk-cache-legacy-miss")
+        return None
+    partial = obj.get("partial")
+    if not isinstance(partial, dict):
+        return None
+    recorded = obj.get("served_model")
+    if recorded is not None and not isinstance(recorded, str):
+        return None  # corrupt receipt: unverifiable, so not replayable
+    observed = llm.served_models()
+    if recorded is None:
+        # Receiptless entry (command backend): replayable only into a run that
+        # is itself receiptless — a receipted run must not fold in content no
+        # receipt can attribute.
+        if observed:
+            _note_chunk_cache_miss("serialize:chunk-cache-model-mismatch")
+            return None
+    elif len(observed) > 1:
+        # Already mixed: nothing can be verified against a single producer, so
+        # fail toward re-serialize rather than replay into the mess.
+        _note_chunk_cache_miss("serialize:chunk-cache-model-mismatch")
+        return None
+    elif not observed:
+        # First read before any live call — adopt the entry's producer as this
+        # run's first receipt (#465; mirrors the bench cache's pin adoption).
+        llm.note_served(recorded)
+    elif recorded != observed[0]:
+        _note_chunk_cache_miss("serialize:chunk-cache-model-mismatch")
+        return None
+    return partial
+
+
+def _note_chunk_cache_miss(counter: str) -> None:
+    # Counted through the SAME local usage-counter mechanism the cli commands
+    # use (#54), so a producer-verification miss is never silently
+    # indistinguishable from a cold cache. Lazy import keeps the module graph
+    # acyclic (cli imports this module); best-effort keeps the read fail-open.
+    try:
+        from . import cli
+        cli._note_usage(counter)
+    except Exception:
+        pass
 
 
 def _save_chunk_cache(key: str, partial: dict) -> None:
@@ -1491,6 +1558,13 @@ def _save_chunk_cache(key: str, partial: dict) -> None:
         # #28/#343 lesson: once the weaker fallback backend has fired in this
         # process, nothing from this run may be cached under the primary
         # backend's key — that is exactly how caches get poisoned.
+        return
+    served = llm.served_models()
+    if len(served) > 1:
+        # #465: distinct producers observed in this process — no chunk is
+        # attributable to a single model, and caching any of it under the
+        # alias key is exactly how caches get poisoned (scar 0015). The write
+        # gate stays THE gate.
         return
     d = _chunk_cache_dir()
     try:
@@ -1503,8 +1577,13 @@ def _save_chunk_cache(key: str, partial: dict) -> None:
                     stale.unlink()
             except OSError:
                 continue
+        # #465 envelope: the producer rides alongside the payload. Exactly one
+        # receipt names it; none is honest absence (null), never a default to
+        # the configured alias (scar 0032).
+        entry = {"served_model": served[0] if served else None,
+                 "partial": partial}
         tmp = d / f".{key}.{uuid.uuid4().hex[:8]}.tmp"
-        tmp.write_text(json.dumps(partial, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
         tmp.chmod(0o600)
         tmp.replace(d / f"{key}.json")
     except OSError:
