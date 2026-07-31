@@ -6,6 +6,15 @@ two generic words shared with a short prompt are a vocabulary coincidence,
 not prior work. Everything here is flag-gated and fail-open: flag off (the
 default) the code path must be provably inert, and any df-table trouble means
 the gate passes (absent evidence never gates, the #450/#452 direction).
+
+The gate is a POST-SELECTION FILTER, not a selection-time skip: suggest()
+picks its rows exactly as it would with the flag off, and the gate then drops
+non-exempt rows from low-mass sessions with no backfill. The subsequence and
+no-backfill pins at the bottom of this file are the load-bearing ones —
+v1 gated during selection, the freed slots got promoted into, and the exempt
+class (pinned rows, open questions) filled them, so the gate ADDED
+injections. Read test_gate_never_promotes_an_exempt_sibling before touching
+anything here.
 """
 
 import math
@@ -259,11 +268,48 @@ def test_flag_on_rare_term_session_passes(tmp_checkpoint_dir, monkeypatch):
     assert out and out[0]["session_id"] == "S-rare"
 
 
-def test_exempt_rows_survive_a_low_mass_session(tmp_checkpoint_dir, monkeypatch):
+@pytest.mark.parametrize("kwargs, kind", [
+    ({"beliefs": [{"text": "deploy pipeline freeze standing rule",
+                   "trust": "inferred", "pinned": True}]}, "belief"),
+    ({"questions": [{"text": "deploy pipeline flakiness cause unknown",
+                     "trust": "inferred"}]}, "question"),
+])
+def test_exempt_row_survives_when_arm_a_selected_it(
+        tmp_checkpoint_dir, monkeypatch, kwargs, kind):
     # Mirrors the cli age-gate exemptions (#452): a pinned standing rule and a
-    # still-open question survive a session that fails mass; the sibling
-    # decision (highest importance, so it would otherwise be the session's
-    # chosen row) does not.
+    # still-open question ride through a session that fails mass. The
+    # exemption PRESERVES a row arm A already chose — it never RECRUITS one
+    # (see test_gate_never_promotes_an_exempt_sibling), so the fixture puts
+    # the exempt row alone in its session, exactly where arm A picks it.
+    _seed_generic_corpus()
+    store.write_checkpoint("S-exempt", _cp("S-exempt", **kwargs),
+                           project_dir="/repo/x")
+    monkeypatch.delenv("DAIMON_RECALL_IDF_GATE", raising=False)
+    off = recall.suggest(_GENERIC_PROMPT, project_dir="/repo/x",
+                         current_session="S-now", limit=5)
+    assert any(r["session_id"] == "S-exempt" for r in off), "fixture drifted"
+    monkeypatch.setenv("DAIMON_RECALL_IDF_GATE", "1")
+    on = recall.suggest(_GENERIC_PROMPT, project_dir="/repo/x",
+                        current_session="S-now", limit=5)
+    assert [r["session_id"] for r in on] == ["S-exempt"]
+    assert on[0]["kind"] == kind
+    assert on[0]["pinned"] or not on[0]["superseded_by"]
+
+
+def test_gate_never_promotes_an_exempt_sibling(tmp_checkpoint_dir, monkeypatch):
+    """The regression the post-selection rework exists to kill (#470).
+
+    v1 applied the gate DURING selection, so dropping a session's chosen row
+    freed its slot and the next candidate — very often the same session's
+    exempt sibling — was promoted into it. The gate then RECRUITED pinned rows
+    and open questions instead of merely sparing them: over 215 replayed real
+    prompts arm A injected 344 rows and arm B 374 at threshold 10, and 86 of
+    the 123 B-only injections were open questions. Tightening the threshold
+    made it monotonically worse.
+
+    Post-selection there is no freed slot: the sibling arm A did not choose
+    stays unchosen, so this session goes silent instead of getting louder.
+    """
     _seed_generic_corpus()
     store.write_checkpoint(
         "S-mix", _cp(
@@ -275,13 +321,19 @@ def test_exempt_rows_survive_a_low_mass_session(tmp_checkpoint_dir, monkeypatch)
             decisions=[{"text": "deploy pipeline retry added",
                         "trust": "inferred", "importance": 9}]),
         project_dir="/repo/x")
-    monkeypatch.setenv("DAIMON_RECALL_IDF_GATE", "1")
-    out = recall.suggest(_GENERIC_PROMPT, project_dir="/repo/x",
+    monkeypatch.delenv("DAIMON_RECALL_IDF_GATE", raising=False)
+    off = recall.suggest(_GENERIC_PROMPT, project_dir="/repo/x",
                          current_session="S-now", limit=5)
-    assert out and all(r["session_id"] == "S-mix" for r in out)
-    for r in out:
-        assert r["pinned"] or (r["kind"] == "question"
-                               and not r["superseded_by"])
+    chosen = [r for r in off if r["session_id"] == "S-mix"]
+    # One row per session, and for this session arm A chooses the decision:
+    # if that ever stops holding the scenario no longer tests promotion.
+    assert len(chosen) == 1, "fixture drifted: expected one S-mix row"
+    assert not chosen[0]["pinned"] and chosen[0]["kind"] != "question", \
+        "fixture drifted: arm A must choose the NON-exempt sibling"
+    monkeypatch.setenv("DAIMON_RECALL_IDF_GATE", "1")
+    on = recall.suggest(_GENERIC_PROMPT, project_dir="/repo/x",
+                        current_session="S-now", limit=5)
+    assert not any(r["session_id"] == "S-mix" for r in on)
 
 
 def test_resolved_question_is_not_exempt(tmp_checkpoint_dir, monkeypatch):
@@ -392,3 +444,100 @@ def test_gate_fails_open_when_term_df_table_is_gone(
     out = recall.suggest(_GENERIC_PROMPT, project_dir="/repo/x",
                          current_session="S-now", limit=5)
     assert out and any(r["session_id"] == "S-gen" for r in out)
+
+
+# ---- the structural guarantee: gate-on output SUBSETS gate-off output ----
+#
+# This is the whole point of the post-selection rework. The gate may only
+# REMOVE rows arm A already chose; it may never reorder them, never promote a
+# sibling into a freed slot, and never reach past `limit` for a replacement.
+# Both properties below are corpus-independent statements about the mechanism,
+# so they are the tests that must never be weakened: any future edit that
+# moves the mass computation back into selection breaks them by construction.
+
+_MIXED_PROMPT = "deploy pipeline zyxwvut quorblatz recalibration status"
+
+
+def _seed_mixed_corpus():
+    """Four matching sessions over one generic corpus:
+
+      S-hist   40 generic filler decisions      low mass, not exempt
+      S-gen    one generic decision             low mass, not exempt
+      S-rare   three df=1 terms                 passes mass
+      S-pin    one pinned standing rule         low mass, EXEMPT
+
+    With ~47 indexed items idf(deploy) = idf(pipeline) = ln(47/42) ~= 0.11, so
+    a generic pair carries ~0.2 of mass; three df=1 terms carry 3*ln(47) ~=
+    11.5. The exempt session is in the corpus on purpose: under v1 it was
+    prime backfill material for a slot the gate had just freed.
+    """
+    _seed_generic_corpus()
+    store.write_checkpoint(
+        "S-gen", _cp("S-gen", decisions=[{"text": "deploy pipeline rework",
+                                          "trust": "inferred"}]),
+        project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-rare", _cp("S-rare", decisions=[{
+            "text": "zyxwvut quorblatz recalibration rework",
+            "trust": "inferred"}]),
+        project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-pin", _cp("S-pin", beliefs=[{
+            "text": "deploy pipeline freeze standing rule",
+            "trust": "inferred", "pinned": True}]),
+        project_dir="/repo/x")
+
+
+def _keys(rows):
+    return [(r["session_id"], r["kind"], r["text"]) for r in rows]
+
+
+def _is_subsequence(small, big) -> bool:
+    """True when `small` appears inside `big` in order (gaps allowed).
+    `x in iterator` consumes up to the match, so a straight all() over one
+    shared iterator is exactly the subsequence test."""
+    it = iter(big)
+    return all(k in it for k in small)
+
+
+@pytest.mark.parametrize("limit", [1, 2, 3, 5])
+def test_gate_on_output_is_a_subsequence_of_gate_off_output(
+        tmp_checkpoint_dir, monkeypatch, limit):
+    _seed_mixed_corpus()
+    monkeypatch.delenv("DAIMON_RECALL_IDF_GATE", raising=False)
+    off = recall.suggest(_MIXED_PROMPT, project_dir="/repo/x",
+                         current_session="S-now", limit=limit)
+    monkeypatch.setenv("DAIMON_RECALL_IDF_GATE", "1")
+    on = recall.suggest(_MIXED_PROMPT, project_dir="/repo/x",
+                        current_session="S-now", limit=limit)
+    assert len(off) == min(limit, 4), "fixture drifted: expected 4 sessions"
+    assert _is_subsequence(_keys(on), _keys(off)), f"{_keys(on)} !< {_keys(off)}"
+
+
+def test_gate_frees_a_slot_without_backfilling_it(
+        tmp_checkpoint_dir, monkeypatch):
+    # The v1 promotion scenario made explicit: a gated row sits in the limit-2
+    # window while further eligible candidates queue behind it. Gate-on must
+    # return the window minus the gated row — never the queued candidate that
+    # gate-off had no room for.
+    _seed_mixed_corpus()
+    monkeypatch.delenv("DAIMON_RECALL_IDF_GATE", raising=False)
+    off_wide = recall.suggest(_MIXED_PROMPT, project_dir="/repo/x",
+                              current_session="S-now", limit=5)
+    off = recall.suggest(_MIXED_PROMPT, project_dir="/repo/x",
+                         current_session="S-now", limit=2)
+    assert len(off) == 2 and len(off_wide) == 4
+    queued = {r["session_id"] for r in off_wide} - {r["session_id"] for r in off}
+    assert queued, "fixture drifted: nothing queued outside the limit-2 window"
+    assert {"S-gen", "S-hist"} & {r["session_id"] for r in off}, \
+        "fixture drifted: no gateable row inside the limit-2 window"
+    monkeypatch.setenv("DAIMON_RECALL_IDF_GATE", "1")
+    on = recall.suggest(_MIXED_PROMPT, project_dir="/repo/x",
+                        current_session="S-now", limit=2)
+    # A gateable row sits in the window, so the gate MUST have bitten. Under
+    # v1 this assertion failed at 2 < 2: the freed slot came straight back,
+    # filled by the exempt S-pin row that arm A never selected.
+    assert len(on) < len(off), "fixture drifted: the gate never fired"
+    assert _is_subsequence(_keys(on), _keys(off))
+    assert not ({r["session_id"] for r in on} & queued), \
+        "the gate backfilled a freed slot"

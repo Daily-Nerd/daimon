@@ -853,17 +853,22 @@ _KIND_TO_TYPE = schema.KIND_TO_TYPE
 _IDF_MIN_MASS = 8.0     # #470 gate floor: minimum summed idf over a session's
                         # covered terms. PROVISIONAL — the value is owned by
                         # the #470 pre-registered sweep; do not tune it here.
+                        # Threshold-tightening only ever REMOVES rows now: the
+                        # gate is a post-selection filter (see suggest()), so
+                        # the sweep measures a monotone curve. Under v1 it did
+                        # not — a tighter threshold injected MORE.
 
 
 def _low_idf_mass_sessions(conn: sqlite3.Connection, slug,
                            coverage: dict[str, set]) -> set[str]:
     """Session ids whose covered terms sum below _IDF_MIN_MASS of idf (#470),
-    idf = ln(n_items/df) from the queried project's term_df. A covered term
-    with no df row contributes the project's build-time median_idf — coverage
-    substring-tests, so it can hit terms that are not index tokens, and the
-    median is neutral where the max would reward exactly those accidental
-    hits. Reuses the caller's connection (one query fetches every needed df
-    row) and fails OPEN on ANY df trouble — missing tables, foreign db —
+    idf = ln(n_items/df) from the queried project's term_df. The caller uses
+    this to FILTER an already-selected result list — never to steer selection
+    (see suggest()). A covered term with no df row contributes the project's
+    build-time median_idf — coverage substring-tests, so it can hit terms that
+    are not index tokens, and the median is neutral where the max would reward
+    exactly those accidental hits. Reuses the caller's connection (one query
+    fetches every needed df row) and fails OPEN on ANY df trouble — missing tables, foreign db —
     because absent evidence never gates (#450/#452): the empty set, gate
     passed, is the only failure mode."""
     try:
@@ -993,6 +998,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         shared word, however many items repeat it, is still coincidence
       - at most `limit` results, one per session, ranked by
         FTS5 relevance x #78 effective_weight
+      - then, opt-in behind DAIMON_RECALL_IDF_GATE (#470), that result list is
+        FILTERED: rows from a session whose covered terms carry too little
+        summed idf drop, without replacement. Selection never sees the gate,
+        so gate-on output is always a subsequence of gate-off output
 
     Superseded items are INCLUDED, ranked down and flagged — since v3 the
     flag means item-level evidence (a typed supersedes link or a logged
@@ -1066,7 +1075,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
                 matched.append((r, hit))
 
             # #470, dark behind DAIMON_RECALL_IDF_GATE: flag off, low_mass
-            # stays empty and the gate below can never fire.
+            # stays empty and the filter at the bottom can never fire. The
+            # mass is COMPUTED here only because the df lookup needs this
+            # connection; it is CONSUMED after selection, and nothing between
+            # here and there may read it. See the filter's comment for why.
             if coverage and config.recall_idf_gate():
                 low_mass = _low_idf_mass_sessions(conn, slug, coverage)
         finally:
@@ -1078,15 +1090,6 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     scored = []
     for r, hit in matched:
         if len(coverage[r["session_id"]]) < _MIN_OVERLAP:
-            continue
-        # #470: a session whose covered terms carry too little idf mass is a
-        # generic-vocabulary coincidence — its NON-EXEMPT rows drop. Pinned
-        # standing rules and still-open questions ride through, mirroring the
-        # cli age-gate exemptions (#452): survival, not vocabulary rarity, is
-        # their signal. The _MIN_OVERLAP floor above stays untouched.
-        if r["session_id"] in low_mass and not (
-                r["pinned"] or (r["kind"] == "question"
-                                and not r["superseded_by"])):
             continue
         # #452: the per-ITEM distinct-term count rides out with the row (the
         # session-level coverage above is the gate; this is the row's own
@@ -1115,4 +1118,30 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         out.append(r)
         if len(out) >= limit:
             break
+
+    # #470 mass gate, applied HERE and only here: a pure post-selection filter
+    # over the list `out` already holds. `low_mass` is empty unless the flag is
+    # on, so flag off this is a no-op over an empty set. A session whose
+    # covered terms carry too little idf mass is a generic-vocabulary
+    # coincidence — its non-EXEMPT rows drop, exempt being pinned standing
+    # rules and still-open questions (the cli age-gate exemptions, #452:
+    # survival, not vocabulary rarity, is their signal).
+    #
+    # WHY POST-SELECTION — do not "fix" this back into the loop above. v1 did
+    # exactly that, skipping gated rows during scoring, and the freed slots
+    # were immediately refilled: the next candidate got promoted, and the
+    # exempt class was first in that queue. The gate RECRUITED pinned rows and
+    # open questions instead of merely sparing them. Measured over 215
+    # replayed real prompts: arm A injected 344 rows, arm B 374 at threshold
+    # 10, and 86 of the 123 B-only injections were open questions —
+    # monotonically worse as the threshold tightened. Filtering after
+    # selection buys the structural guarantee the rework exists for: gate-on
+    # output is a SUBSEQUENCE of gate-off output. Same candidates, same
+    # ranking, same one-per-session cap, same `limit`, minus zero or more
+    # rows, with NO backfill. Test-pinned in test_recall_idf_gate.
+    if low_mass:
+        out = [r for r in out
+               if r["session_id"] not in low_mass
+               or r["pinned"]
+               or (r["kind"] == "question" and not r["superseded_by"])]
     return out
