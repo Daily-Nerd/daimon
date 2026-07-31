@@ -202,6 +202,23 @@ def reset_served_models() -> None:
     del _served_models[:]
 
 
+def note_served(name) -> None:
+    """Record a served-model observation that did not come off this process's
+    wire — today only #465's chunk-cache replay.
+
+    A replayed cached chunk's recorded producer is a genuine observation of
+    "a model whose output is in this checkpoint": the content joins the
+    serialize exactly like a live call's would. Folding it into the same
+    collector makes the EXISTING mixed-run detection (the serializer's
+    substitution WARNING + `serialize:model-substituted` counter +
+    `llm_model_served` stamp) cover replay-then-live-substitution with no new
+    stamp logic. Same append-under-GIL contract as _chat_litellm's record; same
+    honest-absence rule — a non-string or blank name records NOTHING rather
+    than guessing (scar 0032)."""
+    if isinstance(name, str) and name.strip():
+        _served_models.append(name.strip())
+
+
 def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """Dispatch to the configured backend. litellm (default) falls back to a
     command backend on ChatError when fallback is enabled and one resolves."""

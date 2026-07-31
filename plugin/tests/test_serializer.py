@@ -1725,6 +1725,165 @@ def test_chunk_cache_files_written_0600(
         assert _stat.S_IMODE(p.stat().st_mode) == 0o600
 
 
+# ---- #465: chunk-cache producer verification (mirrors bench cache.py, #343) ----
+
+
+def _chunk_entry(tmp_checkpoint_dir, key):
+    return json.loads(
+        (tmp_checkpoint_dir / ".chunk-cache" / f"{key}.json").read_text(
+            encoding="utf-8"))
+
+
+def test_save_chunk_cache_records_the_single_served_producer(tmp_checkpoint_dir):
+    # #465: the entry carries the model that ACTUALLY served (the #458 wire
+    # receipt), never the configured alias (scar 0032).
+    from daimon_briefing import llm
+    llm.note_served("provider/real-model")
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    assert _chunk_entry(tmp_checkpoint_dir, "k1") == {
+        "served_model": "provider/real-model",
+        "partial": {"working_context": {"a": 1}},
+    }
+
+
+def test_save_chunk_cache_refuses_a_mixed_producer_run(tmp_checkpoint_dir):
+    # Two distinct receipts in one process: no chunk is attributable to a
+    # single producer, so nothing from this run may be cached — the write
+    # gate is THE poison gate (scar 0015).
+    from daimon_briefing import llm
+    llm.note_served("a-model")
+    llm.note_served("z-model")
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    assert not (tmp_checkpoint_dir / ".chunk-cache" / "k1.json").exists()
+
+
+def test_save_chunk_cache_records_honest_absence_without_receipts(
+        tmp_checkpoint_dir):
+    # Command backend exposes no receipts: null, never the alias copied in.
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    assert _chunk_entry(tmp_checkpoint_dir, "k1")["served_model"] is None
+
+
+def test_save_chunk_cache_still_refuses_after_a_fallback_fired(
+        monkeypatch, tmp_checkpoint_dir):
+    # #28/#343 gate untouched by the #465 envelope work.
+    from daimon_briefing import llm
+    monkeypatch.setattr(llm, "fallback_used", lambda: True)
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    assert not (tmp_checkpoint_dir / ".chunk-cache").exists()
+
+
+def test_load_chunk_cache_rejects_a_legacy_receiptless_entry(
+        monkeypatch, tmp_checkpoint_dir):
+    # Pre-#465 raw partial: unattributable content, exactly the shape a
+    # poisoned cache leaves behind — a counted MISS, never replayed.
+    from daimon_briefing import cli
+    d = tmp_checkpoint_dir / ".chunk-cache"
+    d.mkdir(parents=True)
+    (d / "k1.json").write_text(json.dumps({"working_context": {"a": 1}}),
+                               encoding="utf-8")
+    noted = []
+    monkeypatch.setattr(cli, "_note_usage", noted.append)
+    assert serializer._load_chunk_cache("k1") is None
+    assert "serialize:chunk-cache-legacy-miss" in noted
+
+
+def test_load_chunk_cache_returns_the_partial_when_producer_matches(
+        tmp_checkpoint_dir):
+    from daimon_briefing import llm
+    llm.note_served("provider/real-model")
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    assert serializer._load_chunk_cache("k1") == {"working_context": {"a": 1}}
+
+
+def test_load_chunk_cache_rejects_a_different_producer(
+        monkeypatch, tmp_checkpoint_dir):
+    # The #465 hole itself: an entry written when the gateway silently served
+    # a substitute must not be replayed into a run served by another model.
+    from daimon_briefing import cli, llm
+    llm.note_served("substitute-model")
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    llm.reset_served_models()
+    llm.note_served("provider/real-model")
+    noted = []
+    monkeypatch.setattr(cli, "_note_usage", noted.append)
+    assert serializer._load_chunk_cache("k1") is None
+    assert "serialize:chunk-cache-model-mismatch" in noted
+
+
+def test_load_chunk_cache_rejects_a_receiptless_entry_in_a_receipted_run(
+        monkeypatch, tmp_checkpoint_dir):
+    # A run that HAS receipts must not replay unattributable content.
+    from daimon_briefing import cli, llm
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    llm.note_served("provider/real-model")
+    noted = []
+    monkeypatch.setattr(cli, "_note_usage", noted.append)
+    assert serializer._load_chunk_cache("k1") is None
+    assert "serialize:chunk-cache-model-mismatch" in noted
+
+
+def test_load_chunk_cache_rejects_everything_once_the_run_is_mixed(
+        monkeypatch, tmp_checkpoint_dir):
+    from daimon_briefing import cli, llm
+    llm.note_served("provider/real-model")
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    llm.note_served("substitute-model")
+    noted = []
+    monkeypatch.setattr(cli, "_note_usage", noted.append)
+    assert serializer._load_chunk_cache("k1") is None
+    assert "serialize:chunk-cache-model-mismatch" in noted
+
+
+def test_load_chunk_cache_adopts_the_recorded_producer_when_run_has_none(
+        tmp_checkpoint_dir):
+    # First read before any live call: the replayed producer IS an observation
+    # of "a model whose output is in this checkpoint", so it joins the run's
+    # receipts — a later live substitution then trips both the read
+    # verification above and the existing mixed-run stamp/WARNING (#458).
+    from daimon_briefing import llm
+    llm.note_served("provider/real-model")
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    llm.reset_served_models()
+    assert serializer._load_chunk_cache("k1") == {"working_context": {"a": 1}}
+    assert llm.served_models() == ["provider/real-model"]
+
+
+def test_load_chunk_cache_rejects_an_envelope_with_a_non_dict_partial(
+        tmp_checkpoint_dir):
+    d = tmp_checkpoint_dir / ".chunk-cache"
+    d.mkdir(parents=True)
+    (d / "k1.json").write_text(
+        json.dumps({"served_model": None, "partial": "not a dict"}),
+        encoding="utf-8")
+    assert serializer._load_chunk_cache("k1") is None
+
+
+def test_load_chunk_cache_rejects_a_non_string_recorded_producer(
+        tmp_checkpoint_dir):
+    # A corrupt receipt is unverifiable, so it is not replayable — the same
+    # rule as a missing one, never a silent pass-through.
+    d = tmp_checkpoint_dir / ".chunk-cache"
+    d.mkdir(parents=True)
+    (d / "k1.json").write_text(
+        json.dumps({"served_model": 42, "partial": {"working_context": {}}}),
+        encoding="utf-8")
+    assert serializer._load_chunk_cache("k1") is None
+
+
+def test_chunk_cache_verification_counters_never_break_a_serialize(
+        monkeypatch, tmp_checkpoint_dir):
+    # Telemetry only: a broken usage log must cost nothing but the counter.
+    from daimon_briefing import cli, llm
+    llm.note_served("substitute-model")
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    llm.reset_served_models()
+    llm.note_served("provider/real-model")
+    monkeypatch.setattr(cli, "_note_usage",
+                        lambda _: (_ for _ in ()).throw(OSError("disk")))
+    assert serializer._load_chunk_cache("k1") is None  # must not raise
+
+
 # ---- #317: scene traces (encode-time episodic context, bench-gated experiment) ----
 
 

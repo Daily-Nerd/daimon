@@ -1001,6 +1001,26 @@ def test_served_models_distinct_sorted_and_resettable(llm_env, monkeypatch):
     assert llm.served_models() == []
 
 
+def test_note_served_folds_a_replayed_producer_into_the_collector():
+    # #465: a replayed cached chunk's recorded producer is an observation of
+    # "a model whose output is in this checkpoint" — folding it in makes the
+    # EXISTING mixed-run detection cover replay-then-live-substitution.
+    llm.reset_served_models()
+    llm.note_served("provider/real-model")
+    assert llm.served_models() == ["provider/real-model"]
+    llm.note_served("  z-model  ")            # stripped like the wire path
+    llm.note_served("provider/real-model")    # dedupe still happens on read
+    assert llm.served_models() == ["provider/real-model", "z-model"]
+
+
+def test_note_served_ignores_empty_input():
+    # Honest absence: nothing to record beats recording a blank (scar 0032).
+    llm.reset_served_models()
+    for junk in (None, "", "   ", 42, ["a-model"]):
+        llm.note_served(junk)
+    assert llm.served_models() == []
+
+
 def test_command_backend_records_no_served_model(monkeypatch):
     # The claude-CLI/command backend exposes no served-model info at all —
     # honest absence, never a guess (scar 0032: measurements attributed
