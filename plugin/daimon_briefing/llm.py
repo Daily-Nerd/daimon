@@ -220,18 +220,44 @@ def note_served(name) -> None:
         _served_models.append(name.strip())
 
 
+def resolve_backend() -> dict:
+    """The single source of truth for which backend serves a chat() call.
+
+    {"backend": "litellm"|"command"|"claude-cli",
+     "source": "explicit"|"auto-key"|"auto-command"|"auto-none"}
+
+    chat() calls this instead of re-deriving the "auto" cascade inline —
+    daimon#475's rescue-posture code calls it too, and any other caller must,
+    rather than re-implementing the decision a second time (two copies of
+    one decision drift the moment either changes).
+
+    Mirrors chat()'s dispatch exactly:
+    - config.llm_backend() returns an explicit value ("litellm", "command",
+      "claude-cli") -> that backend, source "explicit".
+    - "auto" + config.llm_api_key() truthy -> "litellm", source "auto-key".
+    - "auto" + no key + _resolve_command() resolves -> "command", source
+      "auto-command".
+    - "auto" + no key + nothing resolves -> "litellm", source "auto-none".
+      This is the branch where litellm is picked ONLY so _chat_litellm
+      raises its helpful no-key error — `source` is what lets callers tell
+      this apart from a real litellm install, and is the whole reason
+      `source` exists. Do not collapse it.
+    """
+    backend = config.llm_backend()
+    if backend != "auto":
+        return {"backend": backend, "source": "explicit"}
+    if config.llm_api_key():
+        return {"backend": "litellm", "source": "auto-key"}
+    if _resolve_command() is not None:
+        return {"backend": "command", "source": "auto-command"}
+    return {"backend": "litellm", "source": "auto-none"}
+
+
 def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """Dispatch to the configured backend. litellm (default) falls back to a
     command backend on ChatError when fallback is enabled and one resolves."""
     global _fallback_used
-    backend = config.llm_backend()
-    if backend == "auto":
-        if config.llm_api_key():
-            backend = "litellm"
-        elif _resolve_command() is not None:
-            backend = "command"
-        else:
-            backend = "litellm"   # let _chat_litellm raise the helpful no-key error
+    backend = resolve_backend()["backend"]
     if backend in ("command", "claude-cli"):
         return _chat_command(messages, deadline)
     try:

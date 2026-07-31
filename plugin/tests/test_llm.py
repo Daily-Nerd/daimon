@@ -616,6 +616,104 @@ def test_chat_auto_falls_to_litellm_when_nothing(monkeypatch):
         llm.chat([{"role": "user", "content": "x"}])
 
 
+# ---- #475 slice 1: resolve_backend() — single source of truth for dispatch.
+# chat() re-implemented the "auto" cascade inline; rescue-posture code (slice
+# 2) needs the same decision. Two copies of one decision drift the moment
+# either changes — extract it once, make chat() USE it, and pin the agreement
+# with a test that can never let them diverge again.
+
+
+def test_resolve_backend_explicit_command(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    assert llm.resolve_backend() == {"backend": "command", "source": "explicit"}
+
+
+def test_resolve_backend_explicit_claude_cli(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    assert llm.resolve_backend() == {"backend": "claude-cli", "source": "explicit"}
+
+
+def test_resolve_backend_explicit_litellm(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    assert llm.resolve_backend() == {"backend": "litellm", "source": "explicit"}
+
+
+def test_resolve_backend_auto_key_present(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
+    assert llm.resolve_backend() == {"backend": "litellm", "source": "auto-key"}
+
+
+def test_resolve_backend_auto_no_key_command_resolves(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
+    monkeypatch.setattr(config, "llm_api_key", lambda: None)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    assert llm.resolve_backend() == {"backend": "command", "source": "auto-command"}
+
+
+def test_resolve_backend_auto_no_key_no_command(monkeypatch):
+    # The "auto-none" branch: chat() still picks litellm here (so
+    # _chat_litellm raises its helpful no-key error), but `source` marks it
+    # distinctly from a real litellm install — do not collapse it.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
+    monkeypatch.setattr(config, "llm_api_key", lambda: None)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    assert llm.resolve_backend() == {"backend": "litellm", "source": "auto-none"}
+
+
+def _dispatch_family(backend: str) -> str:
+    """chat() branches on `backend in ("command", "claude-cli")`, sending
+    both onto the SAME function (_chat_command) — the drift test below can
+    only observe which underlying function actually ran, not the distinct
+    label, so it buckets resolve_backend()'s output the same way chat() does
+    before comparing."""
+    return "command" if backend in ("command", "claude-cli") else "litellm"
+
+
+@pytest.mark.parametrize(
+    "backend_env, api_key, command_resolves",
+    [
+        ("command", None, None),
+        ("claude-cli", None, None),
+        ("litellm", "sk-test", None),
+        ("auto", "sk-key", None),
+        ("auto", None, ("mycli", "text", "stdin")),
+        ("auto", None, None),
+    ],
+    ids=[
+        "explicit-command", "explicit-claude-cli", "explicit-litellm",
+        "auto-key", "auto-command", "auto-none",
+    ],
+)
+def test_resolve_backend_agrees_with_chat_dispatch(
+    monkeypatch, backend_env, api_key, command_resolves
+):
+    """The agreement test (#475 design doc, test 8): chat()'s real dispatch
+    must never disagree with resolve_backend(). Stub both backend
+    implementations to record which one chat() actually invokes, then assert
+    it matches resolve_backend() — this is what makes the two-copies-drift
+    class structurally untestable-to-break."""
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", backend_env)
+    monkeypatch.setattr(config, "llm_api_key", lambda: api_key)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: command_resolves)
+    invoked = {"backend": None}
+
+    def fake_litellm(*a, **k):
+        invoked["backend"] = "litellm"
+        return "FROM_LITELLM"
+
+    def fake_command(m, deadline):
+        invoked["backend"] = "command"
+        return "FROM_CMD"
+
+    monkeypatch.setattr(llm, "_chat_litellm", fake_litellm)
+    monkeypatch.setattr(llm, "_chat_command", fake_command)
+
+    llm.chat([{"role": "user", "content": "x"}])
+
+    assert invoked["backend"] == _dispatch_family(llm.resolve_backend()["backend"])
+
+
 # ---- #28 S6: fallback must be observable, not just logged to a dead-drop ----
 
 
