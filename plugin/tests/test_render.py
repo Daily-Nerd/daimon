@@ -337,6 +337,110 @@ def test_render_status_outstanding_rich_smoke(monkeypatch, capsys):
     assert "heal" in out
 
 
+# ---- #474: the ledger already carried the cause; status never read it ----
+
+
+def _one_error(line):
+    return [{"sid": "S-A", "kind": "error", "class": "healable", "age": 180,
+             "age_str": "3m", "transcript": "/t/S-A.jsonl", "project": "/p/A",
+             "spawned": True, "line": line}]
+
+
+def test_render_status_outstanding_shows_failure_cause(capsys):
+    # A field install ran 78% capture errors for 14 days with the cause one
+    # dict field away from the operator. The class-specific hint must survive.
+    data = _status_data()
+    data["outstanding"] = _one_error(
+        "error: command backend exited 1 (stderr: /l/backend-stderr.log) "
+        "(transcript: /t/S-A.jsonl) after 3s")
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "  - S-A  error 3m ago — run `daimon heal`\n" in out
+    assert ("    cause: command backend exited 1 "
+            "(stderr: /l/backend-stderr.log)\n") in out
+    # the bookkeeping tail is the operator's noise, not the cause
+    assert "(transcript:" not in out
+    assert "after 3s" not in out
+
+
+def test_render_status_outstanding_cause_on_every_error_class(capsys):
+    for cls, hint in (("retry-exhausted", "heal --force"),
+                      ("unrecoverable", "cannot auto-heal")):
+        data = _status_data()
+        f = _one_error("error: boom (transcript: /t/S-A.jsonl) after 3s")[0]
+        f["class"] = cls
+        data["outstanding"] = [f]
+        render.render_status(data)
+        out = capsys.readouterr().out
+        assert "    cause: boom\n" in out
+        assert hint in out
+
+
+def test_render_status_outstanding_without_line_degrades_to_prior_output(capsys):
+    # hung records always carry line=None; an error record can too when the
+    # ledger fold never saw a result line. Neither may print a dangling label.
+    data = _status_data()
+    f = _one_error(None)[0]
+    data["outstanding"] = [f, _outstanding_sample()[1]]
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "  - S-A  error 3m ago — run `daimon heal`\n" in out
+    assert "  - S-C  spawned 40m ago, no result (hung/killed; transcript unavailable)\n" in out
+    assert "cause" not in out
+
+
+@pytest.mark.parametrize("line", [
+    "wrote checkpoint: /c/x.json (took 1s)",   # wrong prefix entirely
+    "error: ",                                 # prefix with nothing after it
+    "error: (transcript: /t/S-A.jsonl) after 3s",  # bookkeeping only
+    42,                                        # not a string at all
+])
+def test_render_status_outstanding_malformed_line_prints_no_cause(capsys, line):
+    data = _status_data()
+    data["outstanding"] = _one_error(line)
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "  - S-A  error 3m ago — run `daimon heal`\n" in out
+    assert "cause" not in out
+
+
+def test_render_status_outstanding_cause_is_truncated(capsys):
+    # A backend can dump kilobytes into the exception message; status is a
+    # diagnostic surface, not a pager.
+    data = _status_data()
+    data["outstanding"] = _one_error(
+        "error: " + ("boom " * 2000) + "(transcript: /t/S-A.jsonl) after 3s")
+    render.render_status(data)
+    out = capsys.readouterr().out
+    cause = [ln for ln in out.splitlines() if ln.strip().startswith("cause:")]
+    assert len(cause) == 1
+    assert len(cause[0]) <= render._CAUSE_MAX_CHARS + 16
+
+
+def test_render_status_outstanding_cause_is_single_line(capsys):
+    data = _status_data()
+    data["outstanding"] = _one_error(
+        "error: traceback\n  File \"x.py\", line 1\nRuntimeError: nope "
+        "(transcript: /t/S-A.jsonl) after 3s")
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "    cause: traceback File \"x.py\", line 1 RuntimeError: nope\n" in out
+
+
+def test_render_status_outstanding_cause_is_redacted(capsys):
+    # #141: result lines are NOT scrubbed at write time (_append_serialize_log
+    # and hooks._ledger_capture_failure both write str(exc) raw), so the
+    # display seam is where the scrub has to happen.
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    data = _status_data()
+    data["outstanding"] = _one_error(
+        f"error: backend said key {secret} (transcript: /t/S-A.jsonl) after 3s")
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert secret not in out
+    assert "[redacted:aws-key]" in out
+
+
 def _cfg_ready():
     return {"ready": True, "resolved_backend": "command", "command_source": "claude-cli",
             "command": "claude", "has_api_key": False, "has_model": False,

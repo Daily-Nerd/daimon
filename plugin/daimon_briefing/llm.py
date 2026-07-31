@@ -12,6 +12,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 from . import config, redact
 
@@ -395,12 +396,28 @@ def _apply_input_spec(argv, prompt_text, input_spec, cwd):
     return argv, prompt_text
 
 
+# #474 reverses #56's truncate-per-run rule on field evidence: 143 lifetime
+# errors left exactly ONE line, and a question about them stayed open nine days
+# while every new failure erased the evidence for the last. The log is now a
+# BOUNDED APPEND — a byte cap trimmed oldest-first, chosen over rotation
+# because rotation is more machinery (numbering, N-file cleanup, a second path
+# every reader has to know about) for the same "cannot grow without limit"
+# guarantee. 512 KiB is thousands of entries and rounding error next to one
+# transcript.
+_STDERR_LOG_MAX_BYTES = 512 * 1024
+
+
 def _log_backend_stderr(argv0, err, header, out=None) -> str:
-    """Write redacted command-backend diagnostics to backend-stderr.log
-    (truncate-per-run — the log is "the last failure", not an archive, #56)
-    and return a hint embeddable in a ChatError message: the log path on
-    success, "stderr suppressed" on any OSError — logging must never mask the
-    real failure (fail-open on the logging seam, #225).
+    """Append redacted command-backend diagnostics to backend-stderr.log and
+    return a hint embeddable in a ChatError message: the log path on success,
+    "stderr suppressed" on any OSError — logging must never mask the real
+    failure (fail-open on the logging seam, #225).
+
+    The log is an ARCHIVE bounded to the last _STDERR_LOG_MAX_BYTES, each entry
+    UTC-stamped so it correlates with serialize.log and checkpoint ages. It was
+    truncate-per-run — "the last failure", not an archive — until the field
+    showed a repeating failure destroying its own history exactly when the
+    repetition IS the diagnosis (#56, reversed on evidence by #474).
 
     `out` is the backend's stdout, appended under a label AFTER stderr:
     agent-style CLIs (claude among them) report errors on stdout with an
@@ -415,11 +432,23 @@ def _log_backend_stderr(argv0, err, header, out=None) -> str:
         # CLI backends can echo prompt fragments (transcript text) into
         # either stream — scrub before it persists (#141).
         err_logged, _ = redact.redact_text(err or "")
-        body = f"{header}\n{err_logged}\n"
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        body = f"--- {stamp} ---\n{header}\n{err_logged}\n"
         if out is not None:
             out_logged, _ = redact.redact_text(out)
             body += f"--- stdout ---\n{out_logged}\n"
-        p.write_text(body, encoding="utf-8")
+        try:
+            prior = p.read_bytes()
+        except OSError:
+            prior = b""  # absent (first failure) or unreadable: still log this one
+        raw = prior + body.encode("utf-8")
+        if len(raw) > _STDERR_LOG_MAX_BYTES:
+            raw = raw[-_STDERR_LOG_MAX_BYTES:]
+            # The tail slice can land mid-character; dropping through the first
+            # newline discards those bytes with the half entry they belong to.
+            nl = raw.find(b"\n")
+            raw = raw[nl + 1:] if nl != -1 else b""
+        p.write_bytes(raw)
         hint = f"stderr: {p}"
     except OSError:
         pass
@@ -457,8 +486,8 @@ def _chat_command(messages, deadline):
             # stderr stays OFF every wire, but the user's own disk is the same
             # trust domain as the transcript being serialized — discarding it
             # locally turned every backend failure into guesswork (#56, exit
-            # 101 in the field with zero diagnostics). Truncate-per-run: the
-            # log is "the last failure", not an archive.
+            # 101 in the field with zero diagnostics). Bounded append: a
+            # repeating failure must not erase its own history (#474).
             hint = _log_backend_stderr(
                 argv[0], err, f"command backend exit {rc} (argv0: {argv[0]})",
                 out=out)
