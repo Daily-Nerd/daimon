@@ -5,7 +5,7 @@ title: Scar pattern anchors are NOT YAML — quotes stripped, escapes untouched,
 severity: medium
 confidence: 0.9
 created: 2026-07-02
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: .scars/
 violation: "pattern:.*\\\\"

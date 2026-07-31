@@ -5,7 +5,7 @@ title: uv tool install --force reuses cached wheel when version is unchanged
 severity: low
 confidence: 0.9
 created: 2026-06-10
-authors: ["claude", "kibukx"]
+authors: ["claude", "Kibukx"]
 anchors:
   - path: plugin/pyproject.toml
   - pattern: "uv tool install"

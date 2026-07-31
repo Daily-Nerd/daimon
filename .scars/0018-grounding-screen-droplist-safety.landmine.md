@@ -5,7 +5,7 @@ title: grounding screen's safety invariant depends on the salient_tokens drop-li
 severity: medium
 confidence: 0.8
 created: 2026-06-29
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/experiments/track-a/scoring/grounding_screen.py
   - pattern: "STOPWORDS|salient_tokens|screen_negative"

@@ -5,7 +5,7 @@ title: serializer merge-call count is hierarchical (chunks × merge_group_size) 
 severity: medium
 confidence: 0.85
 created: 2026-06-30
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/serializer.py
   - pattern: "MERGE_SYS"

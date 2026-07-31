@@ -5,7 +5,7 @@ title: Gateway kills LLM requests at ~815s; dense K=3 merges on kimi exceed it a
 severity: high
 confidence: 0.85
 created: 2026-06-12
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/serializer.py
   - path: plugin/daimon_briefing/config.py

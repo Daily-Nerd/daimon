@@ -5,7 +5,7 @@ title: The strict grounding skeptic looks over-strict (low rescue rate) but is c
 severity: high
 confidence: 0.85
 created: 2026-06-29
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/experiments/track-a/scoring/grounding_skeptic.py
   - path: research/experiments/track-a/scoring/grounding_fixture.json

@@ -5,7 +5,7 @@ title: Rarity/IDF weighting of recall matches is anti-correlated with relevance 
 severity: high
 confidence: 0.9
 created: 2026-07-31
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/recall.py
   - path: research/experiments/recall-replay-ab/

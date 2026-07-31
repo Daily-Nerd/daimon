@@ -5,7 +5,7 @@ title: LLM-judge grounding must reference the transcript, never the answer key
 severity: high
 confidence: 0.95
 created: 2026-06-09
-authors: [claude, kibukx]
+authors: [claude, Kibukx]
 anchors:
   - path: research/experiments/track-a/probe_d007.py
   - pattern: "GROUNDING_JUDGE_SYS"

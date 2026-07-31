@@ -5,7 +5,7 @@ title: A PROMPT_VERSION bump does NOT rotate the #48 chunk cache — its own his
 severity: medium
 confidence: 0.9
 created: 2026-07-29
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/serializer.py
 evidence:

@@ -5,7 +5,7 @@ title: transcript.from_session returns RAW hermes messages (block-array content)
 severity: high
 confidence: 0.95
 created: 2026-06-30
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/transcript.py
   - path: plugin/daimon_briefing/harvest.py

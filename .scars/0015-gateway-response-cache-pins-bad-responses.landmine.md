@@ -5,7 +5,7 @@ title: Gateway exact-match response cache pins transient bad LLM responses; iden
 severity: high
 confidence: 0.9
 created: 2026-06-12
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/llm.py
   - path: research/experiments/track-a/rerun.py

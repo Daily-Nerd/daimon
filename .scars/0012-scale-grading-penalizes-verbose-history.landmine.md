@@ -5,7 +5,7 @@ title: state-benchmark stale-substring grader fakes a "prose loses" signal — a
 severity: high
 confidence: 0.85
 created: 2026-06-27
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/memory-backend/benchmark/state/grade.py
   - pattern: "ANSWER_PROMPT|asserts_stale|is_override"

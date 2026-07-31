@@ -5,7 +5,7 @@ title: DAIMON_TIMEOUT must stay >=420 — haiku real serialize/merge calls run 8
 severity: medium
 confidence: 0.85
 created: 2026-06-13
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/config.py
   - pattern: "DAIMON_TIMEOUT"

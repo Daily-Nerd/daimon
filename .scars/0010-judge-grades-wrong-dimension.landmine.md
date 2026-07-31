@@ -5,7 +5,7 @@ title: LLM judges silently grade the wrong dimension — grep-verify catches abs
 severity: high
 confidence: 0.8
 created: 2026-06-12
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/experiments/track-a/
   - pattern: "stale|staleness|adversarial.{0,40}verif|overturn"

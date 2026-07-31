@@ -5,7 +5,7 @@ title: Simulated-time stamps freeze decay math unless the clock is threaded into
 severity: high
 confidence: 0.9
 created: 2026-07-02
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/experiments/multicycle/
   - pattern: "briefing\.build\b"

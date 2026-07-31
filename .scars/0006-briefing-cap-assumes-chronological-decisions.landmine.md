@@ -5,7 +5,7 @@ title: Briefing decision-cap keeps the TAIL of recent_decisions — it silently 
 severity: medium
 confidence: 0.9
 created: 2026-06-30
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/briefing.py
   - path: plugin/daimon_briefing/serializer.py

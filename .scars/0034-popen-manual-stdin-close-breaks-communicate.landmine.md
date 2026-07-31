@@ -5,7 +5,7 @@ title: Manually closing a Popen stdin pipe makes communicate() raise — and fai
 severity: medium
 confidence: 0.9
 created: 2026-07-31
-authors: ["claude-code", "kibukx"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/worldcheck.py
 evidence:

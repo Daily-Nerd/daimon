@@ -5,7 +5,7 @@ title: LLM judge per-claim grounding is noise-dominated without forced verificat
 severity: high
 confidence: 0.85
 created: 2026-06-10
-authors: ["claude-code", kibukx]
+authors: ["claude-code", Kibukx]
 anchors:
   - path: research/experiments/track-a/
   - pattern: "grounded|FMR|judge.{0,40}claim"
