@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -110,6 +111,11 @@ def _build_config_stamp(args, dataset_path: Path) -> dict:
         # changes the serialize prompt, so the mode is stamped and cache-keyed.
         "scene": "on" if args.scene else "off",
         "workers": args.workers,
+        # #343: the explicit served-model expectation (--expect-served /
+        # BENCH_EXPECT_SERVED), or null when the run pins on first observation.
+        # Recorded so a number can be read knowing whether provenance was
+        # asserted up front or adopted from the wire.
+        "expected_served": args.expect_served,
         "dataset_file": dataset_path.name,
         "dataset_sha256": dataset.sha256_of(dataset_path),
     }
@@ -136,11 +142,11 @@ def _stamp_served_models(stamp: dict, agg: dict, served: list) -> None:
 def run(args) -> dict:
     dataset_path = _resolve_dataset(args)
     questions = dataset.sample(dataset.load(dataset_path), args.sample, args.seed)
-    cache = cache_mod.CheckpointCache(Path(args.cache_dir))
+    # #343: the cache verifies every entry's recorded producer against the
+    # run's served-model pin (explicit --expect-served, else first observed).
+    cache = cache_mod.CheckpointCache(Path(args.cache_dir),
+                                      expected_served=args.expect_served)
     chat = llm.chat
-    # #458: collect served-model receipts for THIS run only — the collector
-    # is module-sticky (same lifecycle as llm's #28 fallback flag).
-    llm.reset_served_models()
 
     stamp = _build_config_stamp(args, dataset_path)
     print(f"suite={args.suite} sample={len(questions)} backend={stamp['backend']} "
@@ -148,30 +154,61 @@ def run(args) -> dict:
           f"scene={stamp['scene']}")
 
     per_question: list[dict] = []
+    run_served: set = set()
     t0 = time.monotonic()
     for i, q in enumerate(questions, 1):
         qt0 = time.monotonic()
-        result = adapter.run_question(
-            q, chat=chat, cache=cache, backend=stamp["backend"],
-            model=stamp["model"] or "unknown", root=Path(args.work_dir),
-            k=args.k, depth=args.depth, min_messages=args.min_messages,
-            workers=args.workers, carry_on=args.carry, scene_on=args.scene,
-        )
+        # #343: question-scoped receipts. Resetting the #458 collector per
+        # question attributes a substitution to the question that observed it
+        # — and lets a run keep scoring after the gateway heals (the cumulative
+        # set would taint every later question with a model seen once).
+        # `run_served` re-accumulates everything for the run-level #458 stamp,
+        # INCLUDING receipts from questions that errored: the foreign model's
+        # serve happened and stays on the record.
+        llm.reset_served_models()
+        try:
+            result = adapter.run_question(
+                q, chat=chat, cache=cache, backend=stamp["backend"],
+                model=stamp["model"] or "unknown", root=Path(args.work_dir),
+                k=args.k, depth=args.depth, min_messages=args.min_messages,
+                workers=args.workers, carry_on=args.carry, scene_on=args.scene,
+            )
+            print(f"[{i}/{len(questions)}] {result['question_id']} "
+                  f"hit@{args.k}={result['hit_at_5']} "
+                  f"r@{args.k}={result['recall_at_5']} "
+                  f"indexed={result['serialize']['indexed']}/{result['n_haystack']} "
+                  f"({time.monotonic() - qt0:.0f}s)")
+        except cache_mod.ServedModelMismatch as e:
+            # #343: fail-loud, not fail-run. The question becomes an error row
+            # (never scored, aggregate carries `questions_error`), the run
+            # continues — later questions served by the pin still score.
+            result = {
+                "question_id": q["question_id"],
+                "question_type": q.get("question_type"),
+                "error": "served_model_mismatch",
+                "error_detail": str(e),
+                "model_pinned": e.pinned,
+                "model_observed": e.observed,
+            }
+            print(f"[{i}/{len(questions)}] {q['question_id']} "
+                  f"ERROR served-model mismatch (#343): {e}")
+        run_served.update(llm.served_models())
         per_question.append(result)
-        print(f"[{i}/{len(questions)}] {result['question_id']} "
-              f"hit@{args.k}={result['hit_at_5']} r@{args.k}={result['recall_at_5']} "
-              f"indexed={result['serialize']['indexed']}/{result['n_haystack']} "
-              f"({time.monotonic() - qt0:.0f}s)")
 
     agg = metrics.aggregate(per_question, args.k)
-    # #458: stamp what actually served (reset ran before the loop, so these
-    # are exactly this run's receipts). A mixed run is flagged loudly in the
+    # #458: stamp what actually served across the whole run (accumulated over
+    # the per-question resets above). A mixed run is flagged loudly in the
     # aggregate block AND on stdout — never aggregated silently.
-    _stamp_served_models(stamp, agg, llm.served_models())
+    _stamp_served_models(stamp, agg, sorted(run_served))
     if agg.get("mixed_models"):
         print(f"WARNING: mixed served models in this run ({stamp['model_served']}) "
               "— do not attribute this number to a single model (#458)")
-    total_serialized = sum(r["serialize"]["serialized"] for r in per_question)
+    if agg.get("questions_error"):
+        print(f"WARNING: {agg['questions_error']} question(s) failed loudly on "
+              f"served-model mismatch (#343) — recorded as error rows, not "
+              f"scored; run pin={cache.pinned_served!r}")
+    total_serialized = sum(r["serialize"]["serialized"] for r in per_question
+                           if "serialize" in r)
     report = {
         "config": stamp,
         "metrics": agg,
@@ -179,6 +216,11 @@ def run(args) -> dict:
             "llm_serialize_calls": total_serialized,
             "cache_hits": cache.hits,
             "cache_misses": cache.misses,
+            # #343: verification misses broken out of the total so a producer
+            # rejection is never mistaken for a cold cache. legacy = pre-#343
+            # entries with no recorded producer (one-time re-warm cost).
+            "cache_model_mismatch_misses": cache.model_mismatch_misses,
+            "cache_legacy_misses": cache.legacy_misses,
             "wall_seconds": round(time.monotonic() - t0, 1),
         },
         "per_question": per_question,
@@ -230,6 +272,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="fold prior checkpoints forward (cross-session carry, "
                         "#274) — a separate retrieval axis; recorded in the "
                         "config stamp and cached under separate keys")
+    p.add_argument("--expect-served",
+                   default=os.environ.get("BENCH_EXPECT_SERVED"),
+                   help="expected served model for the whole run (#343), as "
+                        "the wire reports it (response.model) — NOT the "
+                        "configured gateway alias, which never matches (scar "
+                        "0032). Env: BENCH_EXPECT_SERVED. When set, every "
+                        "receipt (including the first) is checked against it; "
+                        "when unset, the run pins the first observed serve. "
+                        "Any other served model fails that question loudly")
     p.add_argument("--min-messages", default=adapter.BENCH_MIN_MESSAGES,
                    help="serialize floor for the benchmark (product default is 10)")
     p.add_argument("--dataset-path", help="use a local dataset file (skip download)")
