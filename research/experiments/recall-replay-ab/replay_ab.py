@@ -81,12 +81,22 @@ def _load_dataset(path: Path, default_project) -> list[dict]:
     `idx` is the row's position in the FILE (stable across runs — ids and
     diffs reference it)."""
     rows = []
+    # The 07-30 dataset carries one row PER INJECTION (659 rows, ~342 unique
+    # prompts): the same prompt appears once per injected item. Replaying a
+    # duplicate would hit its own seen-state cooldown and register a phantom
+    # silence, so prompts dedupe on (session, ts, prompt) — first row wins.
+    seen_rows = set()
     with path.open(encoding="utf-8") as f:
         for idx, line in enumerate(f):
             line = line.strip()
             if not line:
                 continue
             obj = json.loads(line)
+            row_key = (str(obj.get("session") or ""), str(obj["ts"]),
+                       str(obj["prompt"]))
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
             rows.append({
                 "idx": idx,
                 "prompt": str(obj["prompt"]),
