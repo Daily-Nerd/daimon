@@ -37,7 +37,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from daimon_briefing import carry, config, recall, serializer, store
+from daimon_briefing import carry, config, llm, recall, serializer, store
 
 from tests.bench import cache as cache_mod
 from tests.bench import dataset, metrics
@@ -135,6 +135,9 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
                     with carry on, a carried copy maps to `carried_from` (the
                     session that first produced it — chains preserve the origin
                     because carry.merge stamps carried_from with setdefault).
+
+    Raises cache_mod.ServedModelMismatch (#343) when any wire receipt names a
+    served model other than the run's pin — the caller records an error row.
     """
     sessions = dataset.sessions_of(question)
     cache_lock = threading.Lock()
@@ -158,13 +161,39 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
             return index, sid, None, "failed"
         except Exception:
             return index, sid, None, "failed"
+        # #343: verify the wire receipts BEFORE the cache write. served is the
+        # run-unit's distinct receipt set (llm.served_models(), reset by run.py
+        # per question) — this serialize's own receipts are guaranteed in it
+        # (chat() appends before returning), plus possibly concurrent workers'.
+        # Any receipt disagreeing with the run pin means a gateway substituted
+        # a model (scar 0032) and per-call attribution is lost, so NOTHING is
+        # cached (scar 0015: the write gate is the only poison gate) and the
+        # question fails loudly below. Deliberately conservative: a pin-served
+        # checkpoint racing a substituted one is re-paid next run, never risked.
+        served = llm.served_models()
         with cache_lock:
-            cache.put(key, checkpoint)
+            offender = cache.check_served(served)
+            if offender is None:
+                # Record the producer: the pin (== the single consistent
+                # receipt) when receipts exist, else honest absence (command
+                # backend exposes no served model — never the alias).
+                cache.put(key, checkpoint,
+                          served_model=cache.pinned_served if served else None)
+        if offender is not None:
+            return index, sid, None, "model_mismatch"
         return index, sid, checkpoint, "serialized"
 
     workers = max(1, min(workers, len(sessions) or 1))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         produced = list(pool.map(_produce, enumerate(sessions)))
+
+    # #343: a served-model mismatch fails the WHOLE question loudly — an error
+    # row upstream, never a partial score over sessions a substitute model
+    # serialized. Raised after the pool so concurrent workers finish cleanly
+    # (their results are discarded with the question; none were cached).
+    if any(r[3] == "model_mismatch" for r in produced):
+        observed = sorted(set(llm.served_models()) - {cache.pinned_served})
+        raise cache_mod.ServedModelMismatch(cache.pinned_served, observed)
 
     tally = {"serialized": 0, "cached": 0, "too_short": 0, "failed": 0, "indexed": 0}
     attribution: dict[tuple[str, str], str] = {}

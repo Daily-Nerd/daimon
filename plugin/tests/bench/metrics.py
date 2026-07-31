@@ -190,8 +190,16 @@ def aggregate(per_question: list[dict], k: int) -> dict:
     Retrieval means (recall@k, hit@k, mrr) are taken over SCORED questions only
     (abstention rows excluded). The token average is over ALL questions — it is
     the efficiency of the whole run, abstentions included.
+
+    Error rows (#343: `error` set — e.g. a served-model mismatch failed the
+    question loudly) are excluded from every mean AND counted explicitly in
+    `questions_error`, so a run that hit failures carries them in its
+    aggregate forever — a mixed-model run can never present itself as a
+    clean score.
     """
-    scored = [q for q in per_question if not q.get("abstention")]
+    errors = [q for q in per_question if q.get("error")]
+    scored = [q for q in per_question
+              if not q.get("abstention") and not q.get("error")]
     recalls = [q["recall_at_5"] for q in scored if q.get("recall_at_5") is not None]
     hits = [1.0 if q["hit_at_5"] else 0.0 for q in scored
             if q.get("hit_at_5") is not None]
@@ -218,7 +226,8 @@ def aggregate(per_question: list[dict], k: int) -> dict:
         "k": k,
         "questions_total": len(per_question),
         "questions_scored": len(scored),
-        "questions_abstention": len(per_question) - len(scored),
+        "questions_abstention": len(per_question) - len(scored) - len(errors),
+        "questions_error": len(errors),
         "recall_at_5": _mean(recalls),
         "hit_at_5": _mean(hits),
         "mrr": _mean(rrs),

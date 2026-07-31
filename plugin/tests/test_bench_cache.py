@@ -70,7 +70,10 @@ class TestCacheRoundTrip:
         assert c.misses == 1
 
     def test_put_writes_valid_json(self, tmp_path):
+        # #343: on disk an entry is an envelope recording its producer; a put
+        # without a receipt records null (honest absence), never the alias.
         c = cache.CheckpointCache(tmp_path)
         c.put("k", {"session_id": "s1"})
         stored = json.loads((tmp_path / "k.json").read_text(encoding="utf-8"))
-        assert stored["session_id"] == "s1"
+        assert stored["checkpoint"]["session_id"] == "s1"
+        assert stored["served_model"] is None
