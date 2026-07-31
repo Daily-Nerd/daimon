@@ -39,6 +39,18 @@ def supports_rich() -> bool:
 
 _TRUST_STYLE = {"verbatim": "bold green", "inferred": "yellow", "untagged": "dim"}
 
+# A withheld retention ratio travels with its reason (#54, #477): a caveat
+# documented elsewhere does not survive a pasted stats table.
+_RATIO_WITHHELD = {
+    "mixed": ("n/a (mixed hosts — a plain `brief` here is either a "
+              "skill-delivered briefing or a re-read, and usage.log cannot "
+              "tell them apart)"),
+}
+
+
+def _ratio_na(mode: str) -> str:
+    return _RATIO_WITHHELD.get(mode, "n/a")
+
 
 @contextmanager
 def working(message: str):
@@ -928,14 +940,18 @@ def _plain_stats(data: dict) -> None:
     r = data.get("retention")
     if r:
         print(f"retention (last {r['window_days']}d):")
-        print(f"  hook briefings: {r['hook_briefs']}")
+        print(f"  briefings delivered: hook {r['hook_briefs']}, "
+              f"skill-invoked {r['skill_briefs']}  "
+              f"(total {r['briefings_total']})")
         rr = r["rereads"]
         print(f"  deliberate re-reads: brief {rr['brief']}, "
               f"recall {rr['recall']}  (total {r['rereads_total']})")
         print(f"  status checks: {r['status_checks']}  (ops, not counted)")
-        ratio = r["rereads_per_hook_brief"]
-        print(f"  re-reads per hook briefing: "
-              f"{ratio if ratio is not None else 'n/a'}")
+        ratio = r["rereads_per_briefing"]
+        shown = _ratio_na(r["delivery_mode"]) if ratio is None else ratio
+        print(f"  re-reads per briefing: {shown}")
+        if r["ambiguous_briefs"]:
+            print(f"  unclassified `brief` invocations: {r['ambiguous_briefs']}")
         if r["untagged_briefs"]:
             print(f"  untagged brief lines (pre --auto): {r['untagged_briefs']}")
         if r["stale_hook_warning"]:
@@ -1002,16 +1018,23 @@ def _rich_stats(data: dict) -> None:
                           header_style="bold")
         ret_table.add_column("metric")
         ret_table.add_column("value", justify="right")
-        ret_table.add_row("hook briefings", str(r["hook_briefs"]))
+        ret_table.add_row("briefings delivered",
+                          f"hook {r['hook_briefs']}, "
+                          f"skill-invoked {r['skill_briefs']} "
+                          f"(total {r['briefings_total']})")
         rr = r["rereads"]
         ret_table.add_row("deliberate re-reads",
                           f"brief {rr['brief']}, "
                           f"recall {rr['recall']} (total {r['rereads_total']})")
         ret_table.add_row("status checks (ops, not counted)",
                           str(r["status_checks"]))
-        ratio = r["rereads_per_hook_brief"]
-        ret_table.add_row("re-reads per hook briefing",
-                          "n/a" if ratio is None else str(ratio))
+        ratio = r["rereads_per_briefing"]
+        ret_table.add_row("re-reads per briefing",
+                          _ratio_na(r["delivery_mode"]) if ratio is None
+                          else str(ratio))
+        if r["ambiguous_briefs"]:
+            ret_table.add_row("unclassified `brief` invocations",
+                              str(r["ambiguous_briefs"]))
         if r["untagged_briefs"]:
             ret_table.add_row("untagged brief lines (pre --auto)",
                               str(r["untagged_briefs"]))

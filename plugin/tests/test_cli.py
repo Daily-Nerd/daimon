@@ -5631,7 +5631,7 @@ def test_retention_counts_hook_briefs_and_rereads_in_window(tmp_log_dir):
     assert r["rereads"] == {"brief": 1, "recall": 1}
     assert r["status_checks"] == 1
     assert r["rereads_total"] == 2
-    assert r["rereads_per_hook_brief"] == 1.0
+    assert r["rereads_per_briefing"] == 1.0
     assert r["untagged_briefs"] == 1
     assert r["stale_hook_warning"] is False
 
@@ -5642,7 +5642,7 @@ def test_retention_zero_hook_briefs_ratio_is_none(tmp_log_dir):
     (tmp_log_dir / "usage.log").write_text(_usage_line(1, "status", now))
     r = cli._stats_retention(now=now)
     assert r["hook_briefs"] == 0
-    assert r["rereads_per_hook_brief"] is None
+    assert r["rereads_per_briefing"] is None
 
 
 def test_retention_status_alone_never_moves_the_value_signal(tmp_log_dir):
@@ -5659,7 +5659,7 @@ def test_retention_status_alone_never_moves_the_value_signal(tmp_log_dir):
     r = cli._stats_retention(now=now)
     assert r["status_checks"] == 3
     assert r["rereads_total"] == 0
-    assert r["rereads_per_hook_brief"] == 0.0
+    assert r["rereads_per_briefing"] == 0.0
 
 
 def test_retention_all_briefs_untagged_when_no_auto_ever(tmp_log_dir):
@@ -5713,6 +5713,137 @@ def test_retention_stale_warning_still_fires_on_mixed_hosts(tmp_log_dir):
         f"{stamp} session-end: spawned serialize for S1 (pid 2)\n")
     r = cli._stats_retention(now=now)
     assert r["stale_hook_warning"] is True
+
+
+# ---- #477: the ratio must not mix host populations ----
+
+
+def _host_spawn_line(days_ago, host, sid, now):
+    stamp = (now - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"{stamp} {host}: spawned serialize for {sid} (pid 1)\n"
+
+
+def test_retention_no_spawn_log_keeps_hook_semantics(tmp_log_dir):
+    """No serialize.log at all: nothing contradicts the hook reading, so plain
+    `brief` stays a deliberate re-read and the ratio is computed as before."""
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(5, "brief:auto", now) + _usage_line(4, "brief", now))
+    r = cli._stats_retention(now=now)
+    assert r["delivery_mode"] == "none"
+    assert r["briefings_total"] == 1
+    assert r["rereads"]["brief"] == 1
+    assert r["rereads_per_briefing"] == 1.0
+
+
+def test_retention_hook_only_machine_counts_briefs_as_rereads(tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _host_spawn_line(2, "session-end", "S1", now))
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(5, "brief:auto", now)
+        + _usage_line(4, "brief", now)
+        + _usage_line(3, "recall", now))
+    r = cli._stats_retention(now=now)
+    assert r["delivery_mode"] == "hook"
+    assert r["hook_briefs"] == 1
+    assert r["skill_briefs"] == 0
+    assert r["briefings_total"] == 1
+    assert r["rereads"] == {"brief": 1, "recall": 1}
+    assert r["rereads_per_briefing"] == 2.0
+
+
+def test_retention_hookless_machine_reports_skill_delivered_briefings(tmp_log_dir):
+    """#477 / #349: Cascade has no session-start event, so `daimon brief` run by
+    the skill IS the briefing being delivered. Counting it as a deliberate
+    re-read made the only working delivery path on that host invisible."""
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _host_spawn_line(2, "windsurf-cascade", "W1", now)
+        + _host_spawn_line(1, "codex-stop", "C1", now))
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(5, "brief", now)
+        + _usage_line(4, "brief", now)
+        + _usage_line(3, "recall", now))
+    r = cli._stats_retention(now=now)
+    assert r["delivery_mode"] == "skill"
+    assert r["hook_briefs"] == 0
+    assert r["skill_briefs"] == 2
+    assert r["briefings_total"] == 2
+    # a hookless host can never log brief:auto, so the pre-auto "untagged"
+    # rule must not swallow its briefings.
+    assert r["untagged_briefs"] == 0
+    assert r["rereads"] == {"brief": 0, "recall": 1}
+    assert r["rereads_total"] == 1
+    assert r["rereads_per_briefing"] == 0.5
+
+
+def test_retention_mixed_hosts_withhold_the_ratio(tmp_log_dir):
+    """The #477 defect itself: one stray auto-capable session puts 1 in the
+    denominator while a fortnight of hookless `brief`/`recall` accumulates in
+    the numerator. That rendered as a confident `8.0`. Withhold instead (#54)."""
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _host_spawn_line(2, "windsurf-cascade", "W1", now)
+        + _host_spawn_line(1, "session-end", "S1", now))
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(6, "brief:auto", now)
+        + "".join(_usage_line(5, "brief", now) for _ in range(4))
+        + "".join(_usage_line(4, "recall", now) for _ in range(4)))
+    r = cli._stats_retention(now=now)
+    assert r["delivery_mode"] == "mixed"
+    assert r["hook_briefs"] == 1
+    # the plain `brief` lines are neither confidently delivery nor re-read
+    assert r["ambiguous_briefs"] == 4
+    assert r["rereads"]["brief"] == 0
+    assert r["rereads_per_briefing"] is None
+
+
+def test_retention_mixed_hosts_still_counts_recall(tmp_log_dir):
+    """Ambiguity is confined to `brief`. `recall` is a re-read on every host and
+    must stay visible even when the ratio is withheld."""
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _host_spawn_line(2, "windsurf-cascade", "W1", now)
+        + _host_spawn_line(1, "session-end", "S1", now))
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(6, "brief:auto", now) + _usage_line(3, "recall", now))
+    r = cli._stats_retention(now=now)
+    assert r["rereads"]["recall"] == 1
+    assert r["rereads_total"] == 1
+    assert r["rereads_per_briefing"] is None
+
+
+def test_retention_skill_mode_with_no_briefs_has_no_ratio(tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _host_spawn_line(2, "windsurf-cascade", "W1", now))
+    (tmp_log_dir / "usage.log").write_text(_usage_line(1, "recall", now))
+    r = cli._stats_retention(now=now)
+    assert r["delivery_mode"] == "skill"
+    assert r["briefings_total"] == 0
+    assert r["rereads_per_briefing"] is None
+
+
+def test_retention_stale_spawns_do_not_set_the_delivery_mode(tmp_log_dir):
+    """Host population is read from the same window as the counters. A Windsurf
+    spawn from two months ago must not reclassify this fortnight's briefings."""
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _host_spawn_line(60, "windsurf-cascade", "W1", now)
+        + _host_spawn_line(2, "session-end", "S1", now))
+    (tmp_log_dir / "usage.log").write_text(
+        _usage_line(5, "brief:auto", now) + _usage_line(4, "brief", now))
+    r = cli._stats_retention(now=now)
+    assert r["delivery_mode"] == "hook"
+    assert r["rereads_per_briefing"] == 1.0
 
 
 def test_spawns_in_window_skips_garbage_and_stale_spawns(tmp_log_dir):
@@ -5860,9 +5991,11 @@ def test_stats_json_includes_retention(tmp_checkpoint_dir, tmp_log_dir,
     assert cli.main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert "retention" in data
-    assert set(data["retention"]) >= {"window_days", "hook_briefs", "rereads",
-                                      "status_checks", "rereads_total",
-                                      "rereads_per_hook_brief",
+    assert set(data["retention"]) >= {"window_days", "hook_briefs",
+                                      "skill_briefs", "ambiguous_briefs",
+                                      "briefings_total", "delivery_mode",
+                                      "rereads", "status_checks",
+                                      "rereads_total", "rereads_per_briefing",
                                       "untagged_briefs", "stale_hook_warning"}
 
 
@@ -5878,10 +6011,10 @@ def test_stats_plain_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
     assert "retention (last 14d):" in out
-    assert "hook briefings: 1" in out
+    assert "briefings delivered: hook 1, skill-invoked 0  (total 1)" in out
     # the lone status poll is ops, not retention (#232)
     assert "status checks: 1  (ops, not counted)" in out
-    assert "re-reads per hook briefing: 0.0" in out
+    assert "re-reads per briefing: 0.0" in out
 
 
 def test_stats_rich_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
@@ -5897,9 +6030,30 @@ def test_stats_rich_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
     assert "retention (last 14d)" in out
-    assert "hook briefings" in out
+    assert "briefings delivered" in out
     assert "status checks (ops, not counted)" in out
     assert "0.0" in out  # ratio: the status poll counts apart (#232)
+
+
+def test_stats_plain_says_why_the_ratio_is_withheld_on_mixed_hosts(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    """#54 honesty rule: a withheld number must travel with its reason, because
+    a caveat documented elsewhere does not survive a pasted stats table."""
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "serialize.log").write_text(
+        _host_spawn_line(2, "windsurf-cascade", "W1", now)
+        + _host_spawn_line(1, "session-end", "S1", now))
+    (tmp_log_dir / "usage.log").write_text(_usage_line(3, "brief:auto", now)
+                                           + _usage_line(2, "brief", now))
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "re-reads per briefing: n/a" in out
+    assert "mixed hosts" in out
+    assert "unclassified `brief` invocations: 1" in out
 
 
 def test_stats_plain_warns_on_stale_hook(tmp_checkpoint_dir, tmp_log_dir,
