@@ -47,75 +47,10 @@ _TSCRIPT_HEX = hashlib.sha256(b"hello transcript").hexdigest()
 
 
 # ---- fake vitni CLI --------------------------------------------------------
-
-_FAKE_CLI_SRC = r'''#!/usr/bin/env python3
-import sys, json, os
-cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-raw = sys.stdin.read()
-cap = os.environ.get("FAKE_VITNI_CAPTURE")
-if cap:
-    with open(cap, "a") as f:
-        f.write(json.dumps({"cmd": cmd, "stdin": raw}) + "\n")
-mode = os.environ.get("FAKE_VITNI_MODE", "ok")
-if mode == "garbage":
-    sys.stdout.write("not json at all")
-    sys.exit(0)
-if mode == "rc1":
-    sys.stderr.write("boom")
-    sys.exit(1)
-if mode == "hang":
-    import time
-    time.sleep(30)
-try:
-    data = json.loads(raw)
-except ValueError:
-    print(json.dumps({"error": "invalid_json"})); sys.exit(0)
-if cmd == "sign":
-    print(json.dumps({"signed_receipt": os.environ.get("FAKE_VITNI_JWS", "aaa.bbb.ccc")}))
-elif cmd == "verify":
-    verdict = os.environ.get("FAKE_VITNI_VERDICT", "ok")
-    if verdict == "ok":
-        print(json.dumps({"valid": True, "reason": "ok"}))
-    else:
-        print(json.dumps({"valid": False, "reason": verdict}))
-elif cmd == "keygen":
-    kmode = os.environ.get("FAKE_VITNI_KEYGEN_MODE", "ok")
-    if kmode == "unknown":          # simulate an old CLI without keygen
-        print(json.dumps({"error": "unknown_command"})); sys.exit(0)
-    if kmode == "error":            # {"error"} on exit 0 — never rc
-        print(json.dumps({"error": "invalid_seed"})); sys.exit(0)
-    if kmode == "nojwk":            # malformed output shape
-        print(json.dumps({"private_key_b64": data.get("seed_b64", "")})); sys.exit(0)
-    seed = data.get("seed_b64")
-    if seed == "":                 # present-but-empty != absent -> invalid_seed
-        print(json.dumps({"error": "invalid_seed"})); sys.exit(0)
-    PROBE = "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A="
-    PROBE_X = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
-    if seed == PROBE:
-        x = os.environ.get("FAKE_VITNI_PROBE_X", PROBE_X)
-    else:
-        x = os.environ.get("FAKE_VITNI_KEYGEN_X",
-                           "Kg2fakeKEYGENxKg2fakeKEYGENxKg2fakeKEYGENxK")
-    print(json.dumps({"jwk": {"alg": "EdDSA", "crv": "Ed25519", "kty": "OKP",
-                              "status": "active", "x": x},
-                      "private_key_b64": seed}))
-else:
-    print(json.dumps({"error": "unknown_command"}))
-sys.exit(0)
-'''
-
-
-@pytest.fixture
-def fake_cli(tmp_path, monkeypatch):
-    """Install a fake vitni CLI on DAIMON_VITNI_CLI + capture file. Returns the
-    capture-path so a test can assert what daimon actually sent on stdin."""
-    script = tmp_path / "fake-vitni"
-    script.write_text(_FAKE_CLI_SRC)
-    script.chmod(0o755)
-    capture = tmp_path / "vitni-capture.jsonl"
-    monkeypatch.setenv("DAIMON_VITNI_CLI", str(script))
-    monkeypatch.setenv("FAKE_VITNI_CAPTURE", str(capture))
-    return capture
+#
+# `_FAKE_CLI_SRC` and the `fake_cli` fixture live in tests/conftest.py: #439
+# gave the same CLI contract a second consumer (worldcheck's receipt-validity
+# class), and two divergent copies of the fake would let the call sites drift.
 
 
 @pytest.fixture
@@ -1020,15 +955,16 @@ def test_probe_runs_once_per_process(keys_seed_only, fake_cli, monkeypatch):
     assert len(probe_calls) == 1  # cached after first probe
 
 
-def test_probe_cache_is_per_cli_binary(tmp_path, keys_seed_only, monkeypatch):
+def test_probe_cache_is_per_cli_binary(tmp_path, keys_seed_only, monkeypatch,
+                                       fake_cli_src):
     # A verdict belongs to the binary that earned it: after CLI A passes the
     # probe, repointing DAIMON_VITNI_CLI at binary B must re-probe B — a bad B
     # must NOT inherit A's pass and be trusted with the real seed.
     good = tmp_path / "cli-good"
-    good.write_text(_FAKE_CLI_SRC)
+    good.write_text(fake_cli_src)
     good.chmod(0o755)
     bad = tmp_path / "cli-bad"
-    bad.write_text(_FAKE_CLI_SRC)
+    bad.write_text(fake_cli_src)
     bad.chmod(0o755)
     capture = tmp_path / "cap.jsonl"
     monkeypatch.setenv("FAKE_VITNI_CAPTURE", str(capture))

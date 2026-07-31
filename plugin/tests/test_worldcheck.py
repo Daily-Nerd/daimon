@@ -22,8 +22,17 @@ Contract pinned here:
   cross-project (--slug) and global-fallback briefs never probe, and outcomes
   land in usage.log as worldcheck:<outcome> AND worldcheck:<class>:<outcome>.
 
+#439 slice 3 adds receipt-validity, the first class whose subject is daimon's
+OWN artifact: a carried item's ORIGIN checkpoint verified through the vitni CLI
+(full signature + structure + binding, not the cheap byte match the briefing
+already does). It samples ONE origin per day by rotation, and a FAILED
+verification both flags the item and feeds the #376 rejection ledger — written
+by the CLI, never by worldcheck, which still writes nothing to disk.
+
 All gh probes in this suite hit a fake `gh` script on disk — zero network.
 Slice 2's probes touch only tmp_path trees — zero network, zero subprocess.
+Slice 3's probes hit the shared fake vitni CLI (tests/conftest.py) — a local
+subprocess, still zero network.
 """
 
 import json
@@ -32,7 +41,7 @@ import time
 
 import pytest
 
-from daimon_briefing import briefing, cli, config, store, worldcheck
+from daimon_briefing import briefing, cli, config, receipts, store, worldcheck
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -1036,3 +1045,408 @@ def test_stats_surfaces_worldcheck_counters(monkeypatch, tmp_path, capsys):
     usage = data.get("usage") or {}
     assert usage.get("worldcheck:contradicted") == 1
     assert usage.get("worldcheck:confirmed") == 2
+
+
+# ---- #439 slice 3: receipt-validity -----------------------------------------
+#
+# The first class whose subject is daimon's OWN artifact rather than the world
+# around it: a carried item's ORIGIN checkpoint is verified through the vitni
+# CLI (full signature + structure + binding, not just the cheap byte match the
+# briefing already does). Everything the slice-1 contract promised still holds
+# — one aggregate budget, one shared probe cap, silent skip on any failure,
+# nothing written to disk from inside worldcheck.
+
+
+def _cp_origins(origins, texts=None):
+    """Checkpoint whose carried open_questions each name an origin session.
+    `texts` defaults to a non-claim text per item, so the only claim available
+    is the receipt one (the classes stay independently observable)."""
+    texts = texts or [f"note {i}" for i in range(len(origins))]
+    cp = _cp(texts)
+    for item, origin in zip(cp["working_context"]["open_questions"], origins):
+        if origin is not None:
+            item["origin_session"] = origin
+    return cp
+
+
+def _pubkey_dir(tmp_path, monkeypatch):
+    """A keys dir holding only the cached PUBLIC key — worldcheck verifies, it
+    never signs, so the seed is deliberately absent."""
+    kdir = tmp_path / "keys"
+    kdir.mkdir(exist_ok=True)
+    (kdir / "signing.pub.json").write_text(json.dumps(
+        {"kty": "OKP", "crv": "Ed25519", "x": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+         "alg": "EdDSA", "status": "active"}))
+    monkeypatch.setenv("DAIMON_KEYS_DIR", str(kdir))
+    return kdir
+
+
+def _signed_origin(session, project, *, sidecar=True, tamper=False,
+                   receipts_era=True, slug=None):
+    """Write a receipt-era origin checkpoint (+ its `.receipt` sidecar) exactly
+    where store/receipts expect them. `tamper=True` signs OTHER bytes, which is
+    what an edited-after-signing artifact looks like from brief time."""
+    cp = {"session_id": session,
+          "project_slug": slug if slug is not None else store.project_slug(project),
+          "working_context": {}, "epistemic_snapshot": {}}
+    if receipts_era:
+        cp["receipts"] = True
+    path = config.checkpoint_dir() / f"{session}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cp, indent=2), encoding="utf-8")
+    if sidecar:
+        signed = b"other bytes entirely" if tamper else path.read_bytes()
+        # The JWS is session-derived so a test can tell WHICH origin was
+        # verified from the CLI capture alone.
+        path.with_suffix(".receipt").write_text(json.dumps({
+            "jws": f"{session}.bbb.ccc",
+            "receipt": {"outputs_hash": receipts._multibase_sha256(signed)},
+            "kid": "daimon-1", "performer_id": "tester"}))
+    return path
+
+
+@pytest.fixture
+def receipts_on(tmp_path, monkeypatch, fake_cli):
+    """Receipt-validity fully armed: feature flag on, a fake vitni CLI on
+    DAIMON_VITNI_CLI, a cached public key. Returns the CLI capture path — its
+    NON-existence is how a test proves no subprocess ever ran."""
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _pubkey_dir(tmp_path, monkeypatch)
+    return fake_cli
+
+
+def _vitni_calls(capture):
+    if not capture.exists():
+        return []
+    return [json.loads(x) for x in capture.read_text().splitlines() if x.strip()]
+
+
+def test_receipt_valid_confirms_and_leaves_item_untouched(receipts_on, proj):
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0,
+                     "receipt-validity:confirmed": 1}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+    calls = _vitni_calls(receipts_on)
+    assert [c["cmd"] for c in calls] == ["verify"]
+
+
+def test_receipt_cli_verify_payload_matches_the_receipts_contract(receipts_on, proj):
+    # Same subcommand and same stdin shape `receipts._verify_receipt` builds —
+    # only the runner differs (Popen under worldcheck's deadline instead of a
+    # blocking subprocess.run with a 10s timeout).
+    _signed_origin("S-origin", proj)
+    worldcheck.check(_cp_origins(["S-origin"]), proj)
+    sent = json.loads(_vitni_calls(receipts_on)[0]["stdin"])
+    assert sent["signed_receipt"] == "S-origin.bbb.ccc"
+    assert sent["policy"] == {"expected_binding": "local",
+                              "expected_method": receipts.METHOD}
+    assert list(sent["keys"]) == ["tester"]
+    assert list(sent["keys"]["tester"]) == ["daimon-1"]
+
+
+def test_receipt_cli_rejection_stamps_and_feeds_the_ledger(
+    receipts_on, proj, monkeypatch
+):
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    cp = _cp_origins(["S-origin"])
+    _signed_origin("S-origin", proj)
+    stats = worldcheck.check(cp, proj)
+    assert stats["contradicted"] == 1
+    assert stats["receipt-validity:contradicted"] == 1
+    item = cp["working_context"]["open_questions"][0]
+    # Bounded literals only: the note rides into briefing output and the
+    # hook-injected LLM context, so no session id and no CLI text may reach it.
+    assert item["_worldcheck"] == {
+        "note": "signed receipt failed verification", "status": "unverified"}
+    assert "S-origin" not in item["_worldcheck"]["note"]
+    assert stats[worldcheck.LEDGER_KEY] == [("o-000001", "receipt", "receipt-invalid")]
+
+
+def test_receipt_tampered_bytes_flag_without_any_subprocess(receipts_on, proj):
+    # Phase (a) is FREE (sidecar + sha256, no exec). A byte mismatch is already
+    # a terminal answer, so the CLI must never be spawned for it.
+    _signed_origin("S-origin", proj, tamper=True)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert stats["receipt-validity:contradicted"] == 1
+    assert cp["working_context"]["open_questions"][0]["_worldcheck"] == {
+        "note": "signed receipt no longer matches checkpoint bytes",
+        "status": "unverified"}
+    assert stats[worldcheck.LEDGER_KEY] == [("o-000001", "receipt", "receipt-tampered")]
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_era_origin_with_no_sidecar_is_tampered(receipts_on, proj):
+    # Marked receipt-era but the receipt is gone: removed or lost, and
+    # provenance cannot be confirmed — the same verdict verify-receipt gives.
+    _signed_origin("S-origin", proj, sidecar=False)
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert stats["receipt-validity:contradicted"] == 1
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_pre_receipt_origin_skips_silently(receipts_on, proj):
+    # An origin written before receipts existed has nothing to verify. It is a
+    # SKIP, not a contradiction — no retroactive downgrades (#204).
+    _signed_origin("S-origin", proj, sidecar=False, receipts_era=False)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_item_without_origin_session_makes_no_claim(receipts_on, proj):
+    # Pre-#268 carried items carry no origin binding — nothing to check, and
+    # nothing to count either (the same bar a bare "#48" mention meets).
+    stats = worldcheck.check(_cp_origins([None]), proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_feature_off_makes_no_claim(receipts_on, proj, monkeypatch):
+    monkeypatch.delenv("DAIMON_RECEIPTS", raising=False)
+    _signed_origin("S-origin", proj)
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_gc_d_origin_makes_no_claim(receipts_on, proj):
+    # A GC'd origin is a NORMAL skip: the store keeps a bounded number of
+    # per-session files, so an old origin being gone says nothing about the
+    # claim. Never a contradiction.
+    stats = worldcheck.check(_cp_origins(["S-gone"]), proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_foreign_project_origin_makes_no_claim(receipts_on, proj):
+    # A checkpoint that exists but belongs elsewhere cannot vouch for a claim
+    # here — capture._origin_on_disk's rule, reused verbatim.
+    _signed_origin("S-origin", proj, slug="some-other-project")
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_missing_cli_skips_silently(receipts_on, proj, monkeypatch):
+    monkeypatch.setenv("DAIMON_VITNI_CLI", "vitni-verify-that-does-not-exist")
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+
+
+def test_receipt_missing_pubkey_skips_silently(receipts_on, proj, tmp_path,
+                                               monkeypatch):
+    monkeypatch.setenv("DAIMON_KEYS_DIR", str(tmp_path / "no-keys-here"))
+    _signed_origin("S-origin", proj)
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_garbage_cli_output_skips(receipts_on, proj, monkeypatch):
+    # Unparseable output is not a rejection: a broken verifier must never be
+    # read as "this receipt is bad" (don't-guess bias, the module's stance).
+    monkeypatch.setenv("FAKE_VITNI_MODE", "garbage")
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+
+
+def test_receipt_nonzero_rc_skips(receipts_on, proj, monkeypatch):
+    monkeypatch.setenv("FAKE_VITNI_MODE", "rc1")
+    _signed_origin("S-origin", proj)
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+
+
+def test_receipt_hanging_cli_is_killed_at_the_deadline(receipts_on, proj,
+                                                       monkeypatch):
+    # receipts._run_cli would wait _CLI_TIMEOUT=10s — twelve times the WHOLE
+    # worldcheck budget. Under worldcheck's own deadline machinery it is killed
+    # and skipped, and the render is never blocked.
+    monkeypatch.setenv("FAKE_VITNI_MODE", "hang")
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 0.3)
+    _signed_origin("S-origin", proj)
+    start = time.monotonic()
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert time.monotonic() - start < 3.0
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+
+
+def test_receipt_probes_one_origin_per_day_by_rotation(receipts_on, proj,
+                                                       monkeypatch):
+    # Day-bucket ROTATION, not a hash-modulo gate: a sha1(origin) % N scheme
+    # leaves some origins deterministically never sampled (permanent blind
+    # spots), while rotation covers every origin over consecutive days.
+    _signed_origin("S-a", proj)
+    _signed_origin("S-b", proj)
+    monkeypatch.setattr(worldcheck, "_day_bucket", lambda: 4)  # 4 % 2 == 0
+    worldcheck.check(_cp_origins(["S-a", "S-b"]), proj)
+    assert len(_vitni_calls(receipts_on)) == 1
+    monkeypatch.setattr(worldcheck, "_day_bucket", lambda: 5)  # 5 % 2 == 1
+    stats = worldcheck.check(_cp_origins(["S-a", "S-b"]), proj)
+    assert len(_vitni_calls(receipts_on)) == 2
+    # One probe per brief either way: the other origin makes no claim at all.
+    assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0,
+                     "receipt-validity:confirmed": 1}
+
+
+def test_receipt_rotation_reaches_every_origin_over_days(receipts_on, proj,
+                                                         monkeypatch):
+    _signed_origin("S-a", proj)
+    _signed_origin("S-b", proj)
+    _signed_origin("S-c", proj)
+    for day in range(3):
+        monkeypatch.setattr(worldcheck, "_day_bucket", lambda d=day: d)
+        stats = worldcheck.check(_cp_origins(["S-a", "S-b", "S-c"]), proj)
+        assert stats["receipt-validity:confirmed"] == 1  # exactly one per day
+    # Three consecutive days, three distinct origins verified: no origin is
+    # left permanently unsampled, which is the whole point of rotation.
+    sent = {json.loads(c["stdin"])["signed_receipt"] for c in
+            _vitni_calls(receipts_on)}
+    assert sent == {"S-a.bbb.ccc", "S-b.bbb.ccc", "S-c.bbb.ccc"}
+
+
+def test_receipt_one_probe_stamps_every_item_sharing_that_origin(
+    receipts_on, proj, monkeypatch
+):
+    # Dedup by origin, same as slice 1 dedups by ref: ONE probe, every claim
+    # naming that target scored against it.
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin", "S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert len(_vitni_calls(receipts_on)) == 1
+    assert stats["receipt-validity:contradicted"] == 2
+    assert len(stats[worldcheck.LEDGER_KEY]) == 2
+    for item in cp["working_context"]["open_questions"]:
+        assert item["_worldcheck"]["status"] == "unverified"
+
+
+def test_receipt_never_overwrites_a_text_class_stamp(receipts_on, proj,
+                                                     monkeypatch, fake_gh):
+    # An item can carry BOTH a text claim and a receipt claim. The text stamp
+    # is the more actionable one (it names what changed and drives a `daimon
+    # resolve --status`), so it WINS — but the receipt outcome still counts and
+    # still reaches the rejection ledger.
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    gh, _log = fake_gh("echo '{\"state\":\"MERGED\"}'")
+    _enable_probes(monkeypatch, gh)
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"], texts=["PR #60 awaiting review"])
+    stats = worldcheck.check(cp, proj)
+    item = cp["working_context"]["open_questions"][0]
+    assert item["_worldcheck"] == {"note": "#60 merged", "status": "merged"}
+    assert stats["pr-state:contradicted"] == 1
+    assert stats["receipt-validity:contradicted"] == 1
+    assert stats[worldcheck.LEDGER_KEY] == [("o-000001", "receipt", "receipt-invalid")]
+
+
+def test_receipt_claims_are_carried_only(receipts_on, proj):
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"])
+    for item in cp["working_context"]["open_questions"]:
+        item.pop("carried_from")
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_ledger_key_absent_when_nothing_failed(receipts_on, proj):
+    # The reserved key only appears when there is something to write — the
+    # counter dict the CLI iterates stays all-ints on the happy path.
+    _signed_origin("S-origin", proj)
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert worldcheck.LEDGER_KEY not in stats
+
+
+def test_receipt_idless_item_yields_no_ledger_row(receipts_on, proj, monkeypatch):
+    # A ledger entry nobody can trace back is noise (serializer's rule).
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"])
+    cp["working_context"]["open_questions"][0].pop("id")
+    stats = worldcheck.check(cp, proj)
+    assert stats["receipt-validity:contradicted"] == 1
+    assert worldcheck.LEDGER_KEY not in stats
+
+
+def test_receipt_check_writes_nothing_to_disk(receipts_on, proj, monkeypatch):
+    # worldcheck's hardest constraint: transient stamps only. The ledger write
+    # is the CLI's job, precisely so this stays true.
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    _signed_origin("S-origin", proj)
+
+    def _boom(*a, **k):
+        raise AssertionError("worldcheck must never write to the ledger itself")
+
+    monkeypatch.setattr(store, "append_verification", _boom)
+    stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert stats["receipt-validity:contradicted"] == 1
+
+
+# ---- #439 CLI wiring --------------------------------------------------------
+
+
+def _verification_rows(project):
+    path = config.checkpoint_dir() / store.project_slug(project) / "verification.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+
+
+def test_cli_brief_receipt_failure_appends_a_verification_row(
+    monkeypatch, tmp_path, capsys, receipts_on, proj
+):
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"])
+    store.write_checkpoint("S-now", cp, project_dir=proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", proj)
+    rc = cli.main(["brief"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "⚠ state changed since capture: signed receipt failed verification" in out
+    rows = _verification_rows(proj)
+    assert len(rows) == 1
+    assert rows[0]["check"] == "receipt"
+    assert rows[0]["reason"] == "receipt-invalid"
+    assert rows[0]["item_ref"] == "o-000001"
+    # A POINTER and a REASON CODE, never the item's text (#376).
+    assert "note 0" not in json.dumps(rows[0])
+    usage = _usage_lines(tmp_path)
+    assert sum(
+        1 for ln in usage if ln.endswith(" worldcheck:receipt-validity:contradicted")) == 1
+    assert sum(1 for ln in usage if ln.endswith(" worldcheck:contradicted")) == 1
+
+
+def test_cli_brief_receipt_confirmed_writes_no_verification_row(
+    monkeypatch, tmp_path, capsys, receipts_on, proj
+):
+    _signed_origin("S-origin", proj)
+    store.write_checkpoint("S-now", _cp_origins(["S-origin"]), project_dir=proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", proj)
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert _verification_rows(proj) == []
+    usage = _usage_lines(tmp_path)
+    assert sum(
+        1 for ln in usage if ln.endswith(" worldcheck:receipt-validity:confirmed")) == 1

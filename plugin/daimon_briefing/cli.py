@@ -504,8 +504,10 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                 checkpoint, store.corroborations(project_dir=route))
         except Exception:
             pass
-    # Worldcheck (#365): opt-in, budget-bounded, read-only `gh` spot-check of
-    # carried PR/issue-state claims — stamps contradicted items on the
+    # Worldcheck (#365/#397/#439): opt-in, budget-bounded, read-only
+    # spot-check of carried claims — repo state via `gh`, on-disk state via
+    # the filesystem, and the origin checkpoint's signed receipt via the vitni
+    # CLI. Stamps contradicted items on the
     # IN-MEMORY checkpoint before render (transient, like withhold's
     # candidate stamps; never persisted). Fail-open like withhold above: a
     # briefing must never block or die on the network. Counters ride the
@@ -513,7 +515,13 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     # the fires-true rate with zero extra machinery.
     if checkpoint and worldcheck_project and config.worldcheck_enabled():
         try:
-            wc_stats = worldcheck.check(checkpoint, worldcheck_project)
+            wc_stats = dict(worldcheck.check(checkpoint, worldcheck_project))
+            # #439: the receipt-validity class returns its FAILURES alongside
+            # the counters, under a reserved key. worldcheck writes nothing to
+            # disk by contract, so the rejection-ledger append happens HERE,
+            # where the project route is already resolved. Popped first: the
+            # counter loop below must see an all-ints dict.
+            ledger_rows = wc_stats.pop(worldcheck.LEDGER_KEY, ())
             # #397: the dict carries the aggregate outcomes AND a
             # "<class>:<outcome>" key per class, so one pass emits both the
             # slice-1 counters (unchanged meaning) and the per-class
@@ -521,6 +529,12 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
             for counter, count in sorted(wc_stats.items()):
                 for _ in range(int(count)):
                     _note_usage(f"worldcheck:{counter}")
+            # A POINTER and a REASON CODE, never the item's text (#376) — the
+            # same second stream capture writes, for the same reason: folded
+            # into events.jsonl a rejection would HIDE the item it describes.
+            for item_ref, check, reason in ledger_rows:
+                store.append_verification(item_ref, check, reason,
+                                          project_dir=route)
         except Exception:
             pass
     # NOTE: drift is checked against the resolved project root. If read_latest fell
