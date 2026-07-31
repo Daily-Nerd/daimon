@@ -527,6 +527,29 @@ def test_cli_status_lists_buried_failure(tmp_checkpoint_dir, tmp_log_dir, capsys
     assert "run `daimon heal`" in out
 
 
+def test_cli_status_surfaces_the_failure_cause(
+    tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch
+):
+    # #474 end to end: the cause has been in the ledger record since the
+    # per-session fold landed, and `status` never printed it — a field install
+    # burned ~23 hours and 3 sessions rediscovering it from a log file by hand.
+    transcript_a = FIXTURES / "sample_transcript.md"
+    _write_log(
+        tmp_log_dir,
+        [
+            "2026-06-10T12:00:00Z session-end: spawned serialize for sample_transcript "
+            "(reason: exit, project: /p/A)",
+            "error: command backend exited 1 (stderr: /l/backend-stderr.log) "
+            f"(transcript: {transcript_a}) after 1s",
+        ],
+    )
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    assert "cause: command backend exited 1 (stderr: /l/backend-stderr.log)" in out
+    assert "run `daimon heal`" in out  # the actionable hint survives
+
+
 def test_cli_status_log_success_line(tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _write_log(

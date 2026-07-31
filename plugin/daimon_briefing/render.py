@@ -7,10 +7,11 @@ which is non-TTY — always renders plain.
 """
 
 import os
+import re
 import sys
 from contextlib import contextmanager
 
-from . import briefing, config, schema, serializer
+from . import briefing, config, redact, schema, serializer
 
 _TRUTHY = ("1", "true", "yes", "on")
 
@@ -427,6 +428,42 @@ def _recall_index_line(att) -> str | None:
     return f"recall index: {att['items']} items"
 
 
+# The bookkeeping tail of a ledger error line (ledger.py:132-134) — the
+# transcript path is already reachable from the record, and `after Ns` is a
+# duration, not a cause. Anchored at the end so a message that merely mentions
+# a transcript mid-sentence keeps it.
+_CAUSE_TAIL_RE = re.compile(r"\s*\(transcript: .+?\)(?: after \d+s)?\s*$")
+# Status is a diagnostic surface, not a pager: a backend can put kilobytes into
+# an exception message. 160 chars is one wrapped line on an 80-column terminal
+# and comfortably fits the shapes that actually occur ("command backend exited
+# 1 (stderr: <path>)", "LLM unreachable/timeout after 3 tries at <base>").
+_CAUSE_MAX_CHARS = 160
+
+
+def _failure_cause(line) -> str | None:
+    """The human-meaningful half of a ledger error line (#474): everything
+    between the `error: ` prefix and the transcript/duration bookkeeping,
+    flattened to one bounded line. None for anything that is not an error line
+    — hung records carry `line: None` by construction, and status must degrade
+    to its pre-#474 output rather than print a dangling label.
+
+    Redacted here because result lines are NOT scrubbed at write time
+    (_append_serialize_log and hooks._ledger_capture_failure both write
+    `str(exc)` raw) — same #141 rule the backend-stderr log applies."""
+    if not isinstance(line, str):
+        return None
+    text = " ".join(line.split())
+    if not text.startswith("error: "):
+        return None
+    text = _CAUSE_TAIL_RE.sub("", text[len("error: "):]).strip()
+    if not text:
+        return None
+    text, _ = redact.redact_text(text)
+    if len(text) > _CAUSE_MAX_CHARS:
+        text = text[:_CAUSE_MAX_CHARS].rstrip() + "…"
+    return text
+
+
 def _outstanding_lines(outstanding) -> list:
     """Human lines for lost sessions; empty list when nothing is outstanding."""
     lines = []
@@ -456,6 +493,12 @@ def _outstanding_lines(outstanding) -> list:
             lines.append(f"  - {f['sid']}  error {age} ago — transcript unavailable, cannot auto-heal")
         else:
             lines.append(f"  - {f['sid']}  error {age} ago — run `daimon heal`")
+        # #474: the cause has always been in the record and was never read.
+        # A continuation line keeps the class-specific hint (the actionable
+        # part) at the end of the first line where operators already look.
+        cause = _failure_cause(f.get("line"))
+        if cause:
+            lines.append(f"    cause: {cause}")
     return lines
 
 

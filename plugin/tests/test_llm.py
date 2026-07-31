@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -675,7 +676,10 @@ def test_command_backend_stderr_log_redacts_secret(monkeypatch, tmp_path):
     assert "[redacted:aws-key]" in text
 
 
-def test_command_backend_stderr_log_truncates_per_run(monkeypatch, tmp_path):
+def test_command_backend_stderr_log_appends_across_runs(monkeypatch, tmp_path):
+    # #474 REVERSES the #56 truncate-per-run rule: on a field install 143
+    # lifetime errors left exactly one line, so a diagnostic question stayed
+    # open for nine days while every failure erased the evidence for the last.
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
     monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
@@ -686,7 +690,61 @@ def test_command_backend_stderr_log_truncates_per_run(monkeypatch, tmp_path):
     with pytest.raises(llm.ChatError):
         llm.chat([{"role": "user", "content": "x"}])
     text = (tmp_path / "logs" / "backend-stderr.log").read_text()
-    assert "second" in text and "first" not in text
+    assert "first" in text and "second" in text
+    assert text.index("first") < text.index("second")  # chronological
+
+
+def test_command_backend_stderr_log_entries_are_utc_stamped(monkeypatch, tmp_path):
+    # #474: entries have to be correlatable with serialize.log and checkpoint
+    # ages, which are UTC `%Y-%m-%dT%H:%M:%SZ`.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (1, "", "boom"))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "x"}])
+    text = (tmp_path / "logs" / "backend-stderr.log").read_text()
+    assert re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", text)
+
+
+def test_command_backend_stderr_log_is_size_bounded(monkeypatch, tmp_path):
+    # An append-only failure log on an install failing 78% of the time is a
+    # disk-filler unless it is bounded. Oldest entries go first.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    log = tmp_path / "logs" / "backend-stderr.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("ANCIENT-MARKER\n" + ("filler line\n" * 60000))
+    assert log.stat().st_size > llm._STDERR_LOG_MAX_BYTES
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (1, "", "newest"))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "x"}])
+    assert log.stat().st_size <= llm._STDERR_LOG_MAX_BYTES
+    text = log.read_text()
+    assert "newest" in text          # the run that just failed survives
+    assert "ANCIENT-MARKER" not in text  # the oldest entry is what gets dropped
+
+
+def test_command_backend_stderr_log_read_failure_still_logs(monkeypatch, tmp_path):
+    # #225 fail-open, extended to the read seam the append introduced: a prior
+    # log that cannot be read back must not cost the current entry.
+    from pathlib import Path
+
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "failing-cli")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
+    log = tmp_path / "logs" / "backend-stderr.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("prior entry\n")
+    monkeypatch.setattr(Path, "read_bytes",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("EIO")))
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (1, "", "newest"))
+    with pytest.raises(llm.ChatError) as exc:
+        llm.chat([{"role": "user", "content": "x"}])
+    assert "backend-stderr.log" in str(exc.value)
+    assert "suppressed" not in str(exc.value)
+    assert "newest" in log.read_text()
 
 
 # ---- #225: rc=0 + empty stdout gets the same local diagnostics as a non-zero
