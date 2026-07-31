@@ -1,11 +1,16 @@
-"""#470 stage-1 replay A/B harness: IDF mass gate OFF (arm A) vs ON (arm B).
+"""Replay A/B harness for recall-scoring hypotheses.
+
+Arm A is today's shipped recall. Arm B is a VARIANT — a pluggable hypothesis
+supplied by the experimenter (see variants.py). The harness itself holds no
+opinion about what recall should do; it exists to measure a proposed change
+against the shipped behaviour on real replayed prompts, cheaply and blindly.
 
 Deterministic offline replay of historical prompts through recall.suggest()
 plus a faithful replica of cli._cmd_recall_inject's downstream post-filter
 (briefing-session exclusion, per-session seen-file cooldown, #451 content-key
 dedup, #452 age gate), so both arms approximate the user-felt injection
 surface. B is compared against A ONLY — identical harness both arms, no
-external baseline. Protocol: see README.md (pre-registered) and issue #470.
+external baseline. Protocol: see README.md (pre-register it before running).
 
 Snapshot semantics: per prompt, only checkpoints WRITTEN at-or-before the
 prompt's timestamp participate (store._file_recency: `created` stamp, mtime
@@ -31,10 +36,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+import variants
 from daimon_briefing import cli, config, normalize, recall, store, teamproject
-
-_DEFAULT_SWEEP = "6,8,10,12"
-_ORIG_MASS = recall._IDF_MIN_MASS
 
 # Env keys the harness pins (snapshot world) or clears (read-behavior knobs).
 _PINNED_KEYS = (
@@ -44,7 +47,7 @@ _PINNED_KEYS = (
 )
 _CLEARED_KEYS = (
     "DAIMON_TEAM", "DAIMON_TEAM_PROJECT", "DAIMON_TEAM_RETENTION_DAYS",
-    "DAIMON_DISABLE", "DAIMON_RECALL_IDF_GATE",
+    "DAIMON_DISABLE",
 )
 
 
@@ -137,21 +140,11 @@ def _pinned_env(base: Path, author: str):
             else:
                 os.environ[k] = v
         teamproject._cache.clear()
-        recall._IDF_MIN_MASS = _ORIG_MASS
 
 
-def _set_arm(threshold) -> None:
-    """Arm toggle. threshold None = arm A (gate off). For arm B the sweep
-    value is set by assigning recall._IDF_MIN_MASS directly — a
-    research-script monkeypatch, acceptable HERE only: the constant is
-    module-level by design and its value is owned by this pre-registered
-    sweep (#470)."""
-    if threshold is None:
-        os.environ.pop("DAIMON_RECALL_IDF_GATE", None)
-        recall._IDF_MIN_MASS = _ORIG_MASS
-    else:
-        os.environ["DAIMON_RECALL_IDF_GATE"] = "1"
-        recall._IDF_MIN_MASS = float(threshold)
+def _b_label(param) -> str:
+    """Arm label. One arm B per sweep value; no sweep = a single arm 'B'."""
+    return "B" if param is None else f"B@{param}"
 
 
 class _Snapshot:
@@ -260,6 +253,9 @@ def _postfilter(matches, seen_keys, now):
     return chosen, chosen_keys, suppressed, age_gated
 
 
+_ARM_A = object()   # sentinel: this arm is shipped recall, no variant
+
+
 def _stratum(n_terms: int) -> str:
     if n_terms < 2:
         return "<2"
@@ -267,10 +263,17 @@ def _stratum(n_terms: int) -> str:
 
 
 def run(dataset_path, daimon_home, sweep_tokens, out_dir,
-        default_project=None, seed=470, holdout_min=20) -> dict:
+        default_project=None, seed=470, holdout_min=20,
+        variant=None, variant_name="none") -> dict:
     """Replay the dataset, write diffs/judging/key/summary into out_dir,
-    return the in-memory results (used by verify.py's assertions)."""
+    return the in-memory results (used by verify.py's assertions).
+
+    `variant` is the arm-B callable (variants.py contract); None means the
+    identity variant. `sweep_tokens` is the list of per-arm parameter strings
+    handed to it — one arm B per value, or [None] for a knobless variant."""
     t0 = time.time()
+    variant = variant or variants.none
+    sweep_tokens = list(sweep_tokens) or [None]
     dataset_path = Path(dataset_path).expanduser()
     source = Path(daimon_home).expanduser() / "checkpoints"
     if not source.is_dir():
@@ -283,7 +286,8 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
     # historical scans ran under the maintainer's real identity.
     author = config.author()
 
-    variants = [("A", None)] + [(f"B@{t}", float(t)) for t in sweep_tokens]
+    arms_spec = [("A", _ARM_A)] + [(_b_label(t), t) for t in sweep_tokens]
+    b_labels = [label for label, _ in arms_spec[1:]]
     prompts: list[dict] = []
     counters = {"n_prompts": len(rows), "n_replayed": 0,
                 "n_machine_skipped": 0, "n_below_min_terms": 0,
@@ -293,15 +297,13 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
         (base / "team").mkdir()
         with _pinned_env(base, author):
             snap = _Snapshot(source, base / "checkpoints")
-            _set_arm(None)
             recall.rebuild()  # empty-class baseline so the db always exists
             n_rebuilds = 1
-            # Per (variant, session) cooldown state — arms diverge in what
-            # they inject, so each variant owns its own seen accumulation.
-            seen_state = {label: {} for label, _ in variants}
+            # Per (arm, session) cooldown state — arms diverge in what they
+            # inject, so each arm owns its own seen accumulation.
+            seen_state = {label: {} for label, _ in arms_spec}
             for row in rows:
                 if snap.advance(row["ts"]):
-                    _set_arm(None)
                     recall.rebuild()
                     n_rebuilds += 1
                 if recall.is_machine_prompt(row["prompt"]):
@@ -325,16 +327,32 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
                 seen_ok = _session_seen_ok(row["session"])
                 arms = {}
                 flags = {}
-                for label, threshold in variants:  # fixed order: A then B
-                    _set_arm(threshold)
+                for label, param in arms_spec:  # fixed order: A then each B
                     state = (seen_state[label].setdefault(
                         row["session"], {"origins": set(), "keys": set()})
                         if seen_ok else {"origins": set(), "keys": set()})
-                    matches = recall.suggest(
-                        row["prompt"], project_dir=row["project"],
-                        current_session=row["session"],
-                        exclude_sessions=exclude | state["origins"],
-                        limit=cli._INJECT_FETCH, now=row["ts"])
+
+                    def _call(_state=state, **override):
+                        """The shipped call for this prompt/arm. A variant
+                        may re-parameterise it (input-side hypothesis) or
+                        transform what it returns (output-side)."""
+                        kw = dict(
+                            prompt=row["prompt"], project_dir=row["project"],
+                            current_session=row["session"],
+                            exclude_sessions=exclude | _state["origins"],
+                            limit=cli._INJECT_FETCH, now=row["ts"])
+                        kw.update(override)
+                        return recall.suggest(**kw)
+
+                    if param is _ARM_A:
+                        matches = _call()
+                    else:
+                        matches = variant({
+                            "prompt": row["prompt"], "terms": terms,
+                            "project": row["project"], "session": row["session"],
+                            "ts": row["ts"], "param": param,
+                            "db_path": str(config.recall_db()),
+                        }, _call)
                     chosen, chosen_keys, suppressed, age_gated = _postfilter(
                         matches, state["keys"], row["ts"])
                     if seen_ok and chosen:  # cli saves only when it injected
@@ -352,10 +370,10 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
                 prompts.append({**row, "machine": False,
                                 "stratum": _stratum(len(terms)),
                                 "arms": arms, "flags": flags})
-            _set_arm(None)
 
-    results = _build_outputs(prompts, list(sweep_tokens), counters, snap,
-                             n_rebuilds, seed, holdout_min, out)
+    results = _build_outputs(prompts, b_labels, counters, snap, n_rebuilds,
+                             seed, holdout_min, variant_name, sweep_tokens,
+                             out)
     runtime = time.time() - t0
     # Runtime lives OUTSIDE summary.json so the determinism check (--verify)
     # can byte-compare every analytical artifact.
@@ -374,20 +392,19 @@ def _inj_ids(injs) -> set:
     return {(i["session_id"], i["content_key"]) for i in injs}
 
 
-def _build_outputs(prompts, sweep_tokens, counters, snap, n_rebuilds,
-                   seed, holdout_min, out: Path) -> dict:
+def _build_outputs(prompts, b_labels, counters, snap, n_rebuilds,
+                   seed, holdout_min, variant_name, sweep_tokens,
+                   out: Path) -> dict:
     replayed = [p for p in prompts if not p["machine"]]
-    # ---- per-threshold aggregates + diff detection ----
-    thresholds = {}
+    # ---- per-arm aggregates + diff detection ----
+    arm_aggs = {}
     diff_rows = []
     for p in replayed:
         a = _inj_ids(p["arms"]["A"])
-        p["_diff"] = any(_inj_ids(p["arms"][f"B@{t}"]) != a
-                         for t in sweep_tokens)
+        p["_diff"] = any(_inj_ids(p["arms"][label]) != a for label in b_labels)
         if p["_diff"]:
             diff_rows.append(p)
-    for t in sweep_tokens:
-        label = f"B@{t}"
+    for label in b_labels:
         agg = {"a_injections": 0, "b_injections": 0, "diff_prompts": 0,
                "a_only": 0, "b_only": 0,
                "a_dedup_prompts": 0, "b_dedup_prompts": 0,
@@ -411,7 +428,7 @@ def _build_outputs(prompts, sweep_tokens, counters, snap, n_rebuilds,
             agg["b_dedup_prompts"] += int(p["flags"][label]["dedup"])
             agg["a_agegate_prompts"] += int(p["flags"]["A"]["age_gate"])
             agg["b_agegate_prompts"] += int(p["flags"][label]["age_gate"])
-        thresholds[t] = agg
+        arm_aggs[label] = agg
 
     # ---- diffs.jsonl (private: carries prompt text) ----
     diff_idxs = sorted(p["idx"] for p in diff_rows)
@@ -419,11 +436,11 @@ def _build_outputs(prompts, sweep_tokens, counters, snap, n_rebuilds,
         for p in sorted(diff_rows, key=lambda r: r["idx"]):
             a_map = {(i["session_id"], i["content_key"]): i
                      for i in p["arms"]["A"]}
-            per_t = {}
-            for t in sweep_tokens:
+            per_arm = {}
+            for label in b_labels:
                 b_map = {(i["session_id"], i["content_key"]): i
-                         for i in p["arms"][f"B@{t}"]}
-                per_t[t] = {
+                         for i in p["arms"][label]}
+                per_arm[label] = {
                     "a_only": [a_map[k] for k in sorted(a_map.keys() - b_map.keys())],
                     "b_only": [b_map[k] for k in sorted(b_map.keys() - a_map.keys())],
                     "common": [a_map[k] for k in sorted(a_map.keys() & b_map.keys())],
@@ -431,7 +448,7 @@ def _build_outputs(prompts, sweep_tokens, counters, snap, n_rebuilds,
             f.write(json.dumps({
                 "idx": p["idx"], "prompt": p["prompt"], "ts": p["ts"],
                 "session": p["session"], "stratum": p["stratum"],
-                "thresholds": per_t}) + "\n")
+                "arms": per_arm}) + "\n")
 
     # ---- judging.jsonl / judging-holdout.jsonl / key.jsonl ----
     # One unit per (diff prompt, injection) over the union of all arms.
@@ -443,7 +460,7 @@ def _build_outputs(prompts, sweep_tokens, counters, snap, n_rebuilds,
     units = []
     for p in sorted(diff_rows, key=lambda r: r["idx"]):
         by_id = {}
-        for label in ["A"] + [f"B@{t}" for t in sweep_tokens]:
+        for label in ["A"] + b_labels:
             for i in p["arms"][label]:
                 by_id.setdefault((i["session_id"], i["content_key"]), i)
         a = _inj_ids(p["arms"]["A"])
@@ -451,11 +468,11 @@ def _build_outputs(prompts, sweep_tokens, counters, snap, n_rebuilds,
             uid = hashlib.sha256(
                 f"{seed}|{p['idx']}|{k[0]}|{k[1]}".encode()).hexdigest()[:12]
             arms_of = {}
-            for t in sweep_tokens:
-                b = _inj_ids(p["arms"][f"B@{t}"])
-                arms_of[t] = ("common" if k in a and k in b
-                              else "a-only" if k in a
-                              else "b-only" if k in b else "absent")
+            for label in b_labels:
+                b = _inj_ids(p["arms"][label])
+                arms_of[label] = ("common" if k in a and k in b
+                                  else "a-only" if k in a
+                                  else "b-only" if k in b else "absent")
             units.append({
                 "id": uid, "idx": p["idx"], "prompt": p["prompt"],
                 "ts": p["ts"], "session": p["session"],
@@ -483,19 +500,19 @@ def _build_outputs(prompts, sweep_tokens, counters, snap, n_rebuilds,
 
     # ---- summary.json (aggregates only — no prompt text, safe to share) ----
     summary = {
-        "issue": 470,
+        "variant": variant_name,
         "corpus": {
             **counters,
             "n_source_files": len(snap.entries),
             "n_snapshot_classes": snap.classes,
             "n_rebuilds": n_rebuilds,
-            "sweep": sweep_tokens,
+            "sweep": [t for t in sweep_tokens if t is not None],
             "seed": seed,
             "n_diff_prompts_total": len(diff_idxs),
             "holdout": {"applied": bool(holdout), "min": holdout_min,
                         "n_holdout": len(holdout)},
         },
-        "thresholds": thresholds,
+        "arms": arm_aggs,
     }
     (out / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -509,8 +526,14 @@ def main(argv=None) -> int:
                     " (+optional project) per row")
     ap.add_argument("--daimon-home", default="~/.daimon",
                     help="flat checkpoint store to snapshot from (READ-ONLY)")
-    ap.add_argument("--sweep", default=_DEFAULT_SWEEP,
-                    help="comma-separated _IDF_MIN_MASS values for arm B")
+    ap.add_argument("--variant", default="none",
+                    help="arm B hypothesis: a builtin name (%s) or"
+                         " 'module:function' / 'file.py:function'"
+                         % ", ".join(sorted(variants.BUILTIN)))
+    ap.add_argument("--sweep", default="",
+                    help="comma-separated parameter values handed to the"
+                         " variant — one arm B per value; omit for a single"
+                         " unparameterised arm B")
     ap.add_argument("--out", help="output directory (PRIVATE except summary.json)")
     ap.add_argument("--project", default=None,
                     help="default project dir for rows without one")
@@ -525,14 +548,15 @@ def main(argv=None) -> int:
         return verify.main()
     if not args.dataset or not args.out:
         ap.error("--dataset and --out are required (or use --verify)")
-    tokens = [t.strip() for t in args.sweep.split(",") if t.strip()]
-    for t in tokens:
-        float(t)  # fail fast on a bad sweep value
+    tokens = [t.strip() for t in args.sweep.split(",") if t.strip()] or [None]
+    variant = variants.resolve(args.variant)
     res = run(args.dataset, args.daimon_home, tokens, args.out,
               default_project=args.project, seed=args.seed,
-              holdout_min=args.holdout_min)
+              holdout_min=args.holdout_min, variant=variant,
+              variant_name=args.variant)
     c = res["summary"]["corpus"]
-    print(f"replayed {c['n_replayed']}/{c['n_prompts']} prompts "
+    print(f"variant {args.variant}: replayed "
+          f"{c['n_replayed']}/{c['n_prompts']} prompts "
           f"({c['n_machine_skipped']} machine-skipped), "
           f"{c['n_snapshot_classes']} snapshot classes, "
           f"{c['n_diff_prompts_total']} diff prompts, "
