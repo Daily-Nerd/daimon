@@ -1401,6 +1401,125 @@ def test_receipt_check_writes_nothing_to_disk(receipts_on, proj, monkeypatch):
     assert stats["receipt-validity:contradicted"] == 1
 
 
+# ---- #439 fail-open branches ------------------------------------------------
+#
+# Every branch below is a SILENT SKIP by contract, which is exactly why each
+# needs its own test: a fail-open `except` that quietly returns the wrong
+# answer looks identical to one that works. The assertions pin the OUTCOME
+# (all-zeros or a skipped counter, never a stamp, never a raise), not merely
+# that nothing escaped.
+
+
+def test_receipt_unknown_project_slug_makes_no_claim(receipts_on):
+    # An unnameable project cannot be compared against an origin's
+    # `project_slug`, so eligibility is unanswerable and nothing is claimed.
+    # store.project_slug answers None for a blank dir — the same "unknown
+    # project" the ledger and event writers refuse to write for.
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, "   ")
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_eligibility_scan_stops_at_an_exhausted_budget(
+    receipts_on, proj, monkeypatch
+):
+    # The scan reads one checkpoint per DISTINCT origin, so it runs UNDER the
+    # aggregate deadline like every probe. An already-spent budget must stop
+    # it before the first read, not merely discard the result afterwards.
+    _signed_origin("S-a", proj)
+    _signed_origin("S-b", proj)
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", -1.0)
+
+    def _boom(*a, **k):
+        raise AssertionError("an exhausted budget must stop the scan cold")
+
+    monkeypatch.setattr(store, "read_checkpoint", _boom)
+    cp = _cp_origins(["S-a", "S-b"])
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_origin_gc_d_between_collection_and_probe_skips(
+    receipts_on, proj, monkeypatch
+):
+    # Eligibility and the probe are two separate reads, and GC runs on its own
+    # schedule between them. A checkpoint that was there at collection and
+    # gone at probe time is a SKIP: its absence says nothing about the claim.
+    _signed_origin("S-origin", proj)
+    real = store.read_checkpoint
+    calls = []
+
+    def _vanishing(session_id):
+        calls.append(session_id)
+        return real(session_id) if len(calls) == 1 else None
+
+    monkeypatch.setattr(store, "read_checkpoint", _vanishing)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert len(calls) == 2  # once for eligibility, once at probe time
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_phase_a_failure_skips_without_spawning(receipts_on, proj,
+                                                        monkeypatch):
+    # Phase (a) is a file read plus a sha256, and either can fail on a torn
+    # store. A raise there must not be read as tampering and must not fall
+    # through to the CLI — an unanswerable check is a skip, not a verdict.
+    _signed_origin("S-origin", proj)
+
+    def _boom(_checkpoint):
+        raise OSError("store went away mid-read")
+
+    monkeypatch.setattr(receipts, "verbatim_degraded", _boom)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+    assert _vitni_calls(receipts_on) == []
+
+
+def test_receipt_unwritable_stdin_skips_without_leaking_the_payload(
+    receipts_on, proj, monkeypatch
+):
+    # The child can die between spawn and write (a killed verifier, a full
+    # pipe on a wedged host). The write raises, the probe answers nothing, and
+    # the briefing renders — the payload simply never arrives.
+    _signed_origin("S-origin", proj)
+    real_popen = worldcheck.subprocess.Popen
+
+    class _DeadStdin:
+        def write(self, _payload):
+            raise BrokenPipeError("child already gone")
+
+        def close(self):
+            raise AssertionError("close is unreachable once write raised")
+
+    def _popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        if proc.stdin is not None:
+            proc.stdin.close()  # hand the child EOF; the fake replaces the handle
+            proc.stdin = _DeadStdin()
+        return proc
+
+    monkeypatch.setattr(worldcheck.subprocess, "Popen", _popen)
+    cp = _cp_origins(["S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
+                     "receipt-validity:skipped": 1}
+    assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
+    # The CLI ran but received NOTHING — proof the failure was the write, not
+    # a rejection the verifier actually reached a conclusion about.
+    assert [c["stdin"] for c in _vitni_calls(receipts_on)] == [""]
+
+
 # ---- #439 CLI wiring --------------------------------------------------------
 
 
