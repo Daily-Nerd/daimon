@@ -37,9 +37,11 @@ another project's scoped recall (same philosophy as store's pointer routing).
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
+import statistics
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -78,7 +80,11 @@ def _note_error(where: str, exc: BaseException) -> None:
 # v5 (#452): items grew pinned — the cli age gate exempts pinned standing
 # rules, so suggest()'s SELECT names the column and a v4 db would
 # OperationalError on it; the bump funnels that into the rebuild too.
-_SCHEMA_VERSION = "5"
+# v6 (#470): term_df + df_meta — per-project document frequency with a
+# build-time median idf, read by suggest()'s flag-gated idf mass floor. An
+# old db has neither table; the bump forces the rebuild everywhere, which is
+# safe — the db is derived, and a rebuild is the answer to every doubt.
+_SCHEMA_VERSION = "6"
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -355,6 +361,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 frontier INTEGER NOT NULL DEFAULT 0
             );
             CREATE VIRTUAL TABLE items_fts USING fts5(text, quote, scene, content='');
+            CREATE TABLE term_df(
+                project_slug TEXT,
+                term TEXT,
+                df INTEGER,
+                PRIMARY KEY(project_slug, term)
+            );
+            CREATE TABLE df_meta(
+                project_slug TEXT PRIMARY KEY,
+                n_items INTEGER,
+                median_idf REAL
+            );
             """
         )
     except sqlite3.OperationalError as exc:
@@ -521,6 +538,11 @@ def rebuild() -> int:
         # (author, slug, kind, owner_sid, owner_recency, owner_item_id,
         #  owner_text, target) per supersedes link (#234).
         links: list[tuple] = []
+        # #470: per-project document frequency, accumulated in the same scan.
+        # NULL-slug sessions stay out — suggest() is slug-scoped, so their df
+        # could never be queried (same posture as the newest map above).
+        df_counts: dict[str, dict[str, int]] = {}
+        n_by_slug: dict[str, int] = {}
         for sid, author, slug, recency, cp in _scan_sources():
             # Unattributed sessions never supersede each other (#31 item 6):
             # NULL slugs are UNRELATED projects sharing a non-identity, not
@@ -551,6 +573,12 @@ def rebuild() -> int:
                     for target in targets:
                         links.append((author, slug, kind, sid, recency,
                                       item_id, text, target))
+                    # text + quote, because coverage in suggest() substring-
+                    # tests both fields — df must count what coverage sees.
+                    n_by_slug[slug] = n_by_slug.get(slug, 0) + 1
+                    bucket = df_counts.setdefault(slug, {})
+                    for term in _df_terms(f"{text} {quote}"):
+                        bucket[term] = bucket.get(term, 0) + 1
         # Whole-checkpoint recency (#234 v3): a silent rank input, NEVER a
         # label. Measured precision of the old recency-derived flag was
         # indistinguishable from a coin flip; only item-level evidence below
@@ -564,6 +592,20 @@ def rebuild() -> int:
             )
         _apply_typed_supersession(conn, links)
         _apply_event_resolutions(conn)
+        # #470: df tables land inside the same temp-db build, so atomicity
+        # rides the existing os.replace for free. median_idf is precomputed
+        # HERE so query time never scans a project's vocabulary. Keyed off
+        # n_by_slug, not df_counts: a project whose items are all stopwords
+        # still gets its df_meta row.
+        for pslug, n in n_by_slug.items():
+            bucket = df_counts.get(pslug, {})
+            conn.executemany(
+                "INSERT INTO term_df VALUES (?, ?, ?)",
+                [(pslug, term, c) for term, c in bucket.items()])
+            idfs = [math.log(n / c) for c in bucket.values()]
+            conn.execute(
+                "INSERT INTO df_meta VALUES (?, ?, ?)",
+                (pslug, n, statistics.median(idfs) if idfs else 0.0))
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
                      (_SCHEMA_VERSION,))
         conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
@@ -808,6 +850,45 @@ _MIN_OVERLAP = 2        # matched SESSION must share >=2 distinct salient terms
 # the .get() below keeps its default fallback.
 _KIND_TO_TYPE = schema.KIND_TO_TYPE
 
+_IDF_MIN_MASS = 8.0     # #470 gate floor: minimum summed idf over a session's
+                        # covered terms. PROVISIONAL — the value is owned by
+                        # the #470 pre-registered sweep; do not tune it here.
+
+
+def _low_idf_mass_sessions(conn: sqlite3.Connection, slug,
+                           coverage: dict[str, set]) -> set[str]:
+    """Session ids whose covered terms sum below _IDF_MIN_MASS of idf (#470),
+    idf = ln(n_items/df) from the queried project's term_df. A covered term
+    with no df row contributes the project's build-time median_idf — coverage
+    substring-tests, so it can hit terms that are not index tokens, and the
+    median is neutral where the max would reward exactly those accidental
+    hits. Reuses the caller's connection (one query fetches every needed df
+    row) and fails OPEN on ANY df trouble — missing tables, foreign db —
+    because absent evidence never gates (#450/#452): the empty set, gate
+    passed, is the only failure mode."""
+    try:
+        meta = conn.execute(
+            "SELECT n_items, median_idf FROM df_meta WHERE project_slug = ?",
+            (slug,)).fetchone()
+        if not meta or not meta[0]:
+            return set()
+        n_items, median_idf = float(meta[0]), float(meta[1] or 0.0)
+        terms = sorted(set().union(*coverage.values()))
+        marks = ",".join("?" for _ in terms)
+        df = dict(conn.execute(
+            f"SELECT term, df FROM term_df WHERE project_slug = ?"
+            f" AND term IN ({marks})", (slug, *terms)).fetchall())
+    except sqlite3.Error as exc:
+        _note_error("suggest.idf", exc)
+        return set()
+    out = set()
+    for sid, covered in coverage.items():
+        mass = sum(math.log(n_items / df[t]) if df.get(t) else median_idf
+                   for t in covered)
+        if mass < _IDF_MIN_MASS:
+            out.add(sid)
+    return out
+
 
 def _fold(tok: str) -> str:
     """Strip combining marks so terms align with what FTS5 stored: the index
@@ -834,6 +915,21 @@ def salient_terms(prompt: str) -> list[str]:
         if len(out) >= _TERM_CAP:
             break
     return out if len(out) >= _MIN_TERMS else []
+
+
+def _df_terms(text: str) -> set[str]:
+    """Uncapped tokenizer for the #470 document-frequency build: the same
+    fold/length/stopword rules as salient_terms, WITHOUT the _TERM_CAP
+    truncation or the _MIN_TERMS floor — df over a long item must count its
+    whole vocabulary (the cap would truncate it at 24), and a single-term
+    item is still a document. Kept in lockstep with salient_terms by the
+    subset/equality pin tests in test_recall_idf_gate."""
+    out: set[str] = set()
+    for m in re.finditer(r"\w[\w\-]*", text):
+        tok = _fold(m.group(0)).lower()
+        if len(tok) >= 3 and tok not in _STOPWORDS:
+            out.add(tok)
+    return out
 
 
 # #450: literal openings of the host-emitted blocks that reach the prompt hook
@@ -938,39 +1034,59 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         " WHERE items_fts MATCH ? AND i.project_slug = ?"
         " ORDER BY rank ASC LIMIT 256"
     )
+    # Pass 1 runs inside the connection scope: the #470 mass gate needs the
+    # completed coverage sets AND a df lookup, and one connection must serve
+    # both (a second connect per suggest would double the db open cost for a
+    # flag most installs keep off).
+    coverage: dict[str, set] = {}
+    matched: list[tuple[dict, set]] = []
+    low_mass: set[str] = set()
     try:
         conn = sqlite3.connect(str(config.recall_db()))
         try:
             cur = conn.execute(sql, (expr, slug))
             cols = [c[0] for c in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+            # Pass 1: per-session distinct-term coverage. The overlap gate
+            # below is session-level — which terms a session's items match
+            # TOGETHER — so the coverage sets must be complete before any
+            # row can be judged.
+            for r in rows:
+                if r["session_id"] in excluded:
+                    continue
+                # Fold the haystack like the terms (#27): salient_terms folds
+                # "sesión"->"sesion", so an unfolded haystack silences accented
+                # content that FTS5 (remove_diacritics) already matched.
+                haystack = _fold(f"{r['text']} {r['quote'] or ''}".lower())
+                hit = {t for t in terms if t in haystack}
+                if not hit:
+                    continue
+                coverage.setdefault(r["session_id"], set()).update(hit)
+                matched.append((r, hit))
+
+            # #470, dark behind DAIMON_RECALL_IDF_GATE: flag off, low_mass
+            # stays empty and the gate below can never fire.
+            if coverage and config.recall_idf_gate():
+                low_mass = _low_idf_mass_sessions(conn, slug, coverage)
         finally:
             conn.close()
     except sqlite3.Error as exc:
         _note_error("suggest", exc)
         return []  # suggestion is opportunistic — any db trouble means silence
 
-    # Pass 1: per-session distinct-term coverage. The overlap gate below is
-    # session-level — which terms a session's items match TOGETHER — so the
-    # coverage sets must be complete before any row can be judged.
-    coverage: dict[str, set] = {}
-    matched: list[tuple[dict, set]] = []
-    for r in rows:
-        if r["session_id"] in excluded:
-            continue
-        # Fold the haystack like the terms (#27): salient_terms folds
-        # "sesión"->"sesion", so an unfolded haystack silences accented
-        # content that FTS5 (remove_diacritics) already matched.
-        haystack = _fold(f"{r['text']} {r['quote'] or ''}".lower())
-        hit = {t for t in terms if t in haystack}
-        if not hit:
-            continue
-        coverage.setdefault(r["session_id"], set()).update(hit)
-        matched.append((r, hit))
-
     scored = []
     for r, hit in matched:
         if len(coverage[r["session_id"]]) < _MIN_OVERLAP:
+            continue
+        # #470: a session whose covered terms carry too little idf mass is a
+        # generic-vocabulary coincidence — its NON-EXEMPT rows drop. Pinned
+        # standing rules and still-open questions ride through, mirroring the
+        # cli age-gate exemptions (#452): survival, not vocabulary rarity, is
+        # their signal. The _MIN_OVERLAP floor above stays untouched.
+        if r["session_id"] in low_mass and not (
+                r["pinned"] or (r["kind"] == "question"
+                                and not r["superseded_by"])):
             continue
         # #452: the per-ITEM distinct-term count rides out with the row (the
         # session-level coverage above is the gate; this is the row's own

@@ -241,6 +241,15 @@ def recall_seen_dir() -> Path:
     return Path.home() / ".daimon" / "recall_seen"
 
 
+def recall_idf_gate() -> bool:
+    """Opt-in (#470 stage 1, default OFF): suggest() drops sessions whose
+    matched terms carry too little summed idf — two generic words shared with
+    a short prompt are vocabulary coincidence, not prior work. Dark launch:
+    the threshold is owned by the #470 pre-registered sweep, and flag off the
+    gate path must stay provably inert (test-pinned)."""
+    return _flag("DAIMON_RECALL_IDF_GATE")
+
+
 def team_project() -> str | None:
     """Explicit logical team-project path for this machine's sessions (#200):
     a relative path like 'core/api-gateway'. Tier-1 override in teamproject's
