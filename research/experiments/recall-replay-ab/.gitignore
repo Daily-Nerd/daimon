@@ -1,0 +1,5 @@
+# Replay outputs carry REAL prompt text — never committed.
+results/
+out*/
+*.jsonl
+__pycache__/
