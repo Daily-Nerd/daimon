@@ -851,6 +851,188 @@ def test_audit_quotes_stale_id_falls_back_to_whole_scan(
     assert "failed: 0" in out
 
 
+# ---- #503: audit resolves a CARRIED item against its ORIGIN transcript ----
+#
+# carry.merge copies `quote` and `source_message_ids` forward when an item
+# survives into a later checkpoint, but never the transcript identity they
+# came from. Checking a carried item against the CONTAINING checkpoint's
+# transcript — the pre-#503 behavior — checks it against a transcript it was
+# never in. The fix resolves per ITEM from `origin_session` (stamped at
+# policy.bind_origin, carried forward by carry.merge), falling back to the
+# containing checkpoint's own session when the stamp is absent or its
+# transcript cannot be resolved.
+
+def test_audit_quotes_carried_item_verifies_against_origin_transcript(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [
+        ("user", "the origin sentence lives only in this session"),
+    ])
+    _write_transcript(_projects_dir, slug, "SB", [
+        ("user", "completely different content in the later session"),
+    ])
+    cp = _stored_checkpoint("SB", slug, [
+        {"text": "carried decision", "trust": "verbatim",
+         "quote": "the origin sentence lives only in this session",
+         "origin_session": "SA", "id": "d-carried"},
+    ])
+    store.write_checkpoint("SB", cp, project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "verified: 1" in out
+    assert "failed: 0" in out
+
+
+def test_audit_quotes_item_without_origin_falls_back_to_containing_checkpoint(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """Pre-#268 items (and anything else missing the origin_session stamp)
+    keep resolving against the containing checkpoint's own transcript —
+    #503's per-item resolution must not regress this."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SC", [
+        ("user", "native sentence said in this very session"),
+    ])
+    cp = _stored_checkpoint("SC", slug, [
+        {"text": "native decision", "trust": "verbatim",
+         "quote": "native sentence said in this very session", "id": "d-native"},
+    ])
+    store.write_checkpoint("SC", cp, project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "verified: 1" in out
+    assert "failed: 0" in out
+
+
+def test_audit_quotes_missing_origin_transcript_falls_back_without_crashing(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """origin_session names a session whose transcript is nowhere on disk
+    (GC'd, never captured on this host, wrong host layout). Resolution must
+    fall back to the containing checkpoint's own transcript rather than
+    crash or silently drop the item."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SB", [
+        ("user", "this quote is only in the containing session after all"),
+    ])
+    cp = _stored_checkpoint("SB", slug, [
+        {"text": "carried decision", "trust": "verbatim",
+         "quote": "this quote is only in the containing session after all",
+         "origin_session": "S-GHOST", "id": "d-ghost"},
+    ])
+    store.write_checkpoint("SB", cp, project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "verified: 1" in out
+    assert "failed: 0" in out
+
+
+def test_audit_quotes_source_ids_resolve_against_origin_transcript(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """A carried item's source_message_ids name uuids in the ORIGIN
+    transcript, not the containing checkpoint's own. Scoping against the
+    wrong transcript would fail to resolve the id and fall through to a
+    full-transcript scan of a transcript the quote was never in."""
+    slug = store.project_slug("/p/A")
+    _write_id_transcript(_projects_dir, slug, "SA", [
+        ("user", "we adopt the D-007 prompt for the serializer", "u-111"),
+    ])
+    _write_id_transcript(_projects_dir, slug, "SB", [
+        ("user", "totally unrelated later-session content", "u-222"),
+    ])
+    cp = _stored_checkpoint("SB", slug, [
+        {"text": "carried bound decision", "trust": "verbatim",
+         "quote": "adopt the D-007 prompt for the serializer",
+         "source_message_ids": ["u-111"], "origin_session": "SA",
+         "id": "d-bound-carried"},
+    ])
+    store.write_checkpoint("SB", cp, project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "id-resolved: 1" in out
+    assert "verified: 1" in out
+    assert "failed: 0" in out
+
+
+def test_audit_quotes_usage_is_not_unpaired_when_only_origins_resolve(
+    tmp_checkpoint_dir, _projects_dir, _log_dir, capsys
+):
+    """#503 x #504: `audit-quotes:unpaired` means NO transcript resolved for
+    anything. Once resolution is per-item, a checkpoint whose own transcript is
+    gone can still verify every quote it holds through origin_session — that
+    run resolved transcripts and verified quotes, so reporting it as unpaired
+    would report silence where real work happened."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [
+        ("user", "the shared origin sentence quoted by everyone"),
+    ])
+    # SB has NO transcript of its own — only the carried item's origin does.
+    store.write_checkpoint("SB", _stored_checkpoint("SB", slug, [
+        {"text": "carried", "trust": "verbatim",
+         "quote": "the shared origin sentence quoted by everyone",
+         "origin_session": "SA", "id": "d-1"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    assert "verified: 1" in out          # the quote really was checked
+    assert "unpaired: 1" in out          # SB's own transcript is still absent
+    usage = (_log_dir / "usage.log").read_text(encoding="utf-8")
+    assert "audit-quotes:unpaired" not in usage
+    assert "audit-quotes" in usage
+
+
+def test_audit_quotes_caches_transcripts_by_session(
+    tmp_checkpoint_dir, _projects_dir, capsys, monkeypatch
+):
+    """A corpus scan resolves each session's transcript AT MOST ONCE, even
+    when many carried items across many checkpoints name it as their
+    origin_session — `--all` walks the whole corpus, so re-parsing per item
+    would make it quadratic."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [
+        ("user", "the shared origin sentence quoted by everyone"),
+    ])
+    calls = []
+    real_from_file = transcript.from_file
+
+    def counting_from_file(path):
+        calls.append(path)
+        return real_from_file(path)
+    monkeypatch.setattr(transcript, "from_file", counting_from_file)
+
+    def carried_item(item_id):
+        return {"text": item_id, "trust": "verbatim",
+                "quote": "the shared origin sentence quoted by everyone",
+                "origin_session": "SA", "id": item_id}
+
+    store.write_checkpoint("SB1", _stored_checkpoint(
+        "SB1", slug, [carried_item("d-1"), carried_item("d-2")]),
+        project_dir="/p/A")
+    store.write_checkpoint("SB2", _stored_checkpoint(
+        "SB2", slug, [carried_item("d-3"), carried_item("d-4")]),
+        project_dir="/p/A")
+
+    rc = cli.main(["audit-quotes", "--project", "/p/A"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "verified: 4" in out
+    assert "failed: 0" in out
+    # SA's transcript is parsed exactly once, not once per carried item (4)
+    # or once per checkpoint that carries it (2).
+    assert len(calls) == 1
+
+
 # ---- Unit G (#440): daimon's own injected output is not a witness ----
 #
 # The recall hook and the SessionStart briefing print INTO the transcript, and
