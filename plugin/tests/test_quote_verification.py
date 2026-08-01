@@ -51,6 +51,45 @@ def test_redacted_placeholder_stripped_from_fragment():
     assert serializer.quote_matches("set the staging token [redacted:api-key]", hay)
 
 
+def test_redacted_placeholder_mid_quote_still_matches():
+    # #505: the marker sits BETWEEN real text on both sides. Deleting it joined
+    # two spans that are not adjacent in the source ("...token for prod" vs
+    # "...token sk-... for prod"), so the quote could never match. Treating the
+    # marker as a fragment boundary — the same way ellipsis is treated — is what
+    # the docstring always promised.
+    hay = "assistant: please set the staging token sk_live_abc123def for prod now"
+    assert serializer.quote_matches(
+        "set the staging token [redacted:api-key] for prod", hay)
+
+
+def test_redacted_placeholder_at_quote_start_still_matches():
+    hay = "assistant: the value sk_live_abc123def was rotated yesterday"
+    assert serializer.quote_matches("[redacted:api-key] was rotated yesterday", hay)
+
+
+def test_redacted_fragments_must_appear_in_order():
+    # A redaction boundary must not weaken the precision guard: the surviving
+    # fragments still have to appear in the source IN ORDER.
+    hay = "assistant: please set the staging token sk_live_abc123def for prod now"
+    assert not serializer.quote_matches(
+        "for prod now [redacted:api-key] set the staging token", hay)
+
+
+def test_marker_only_quote_is_unverifiable():
+    # Nothing survives the split -> no usable fragment -> conservative False.
+    # A quote that is ENTIRELY a redacted secret carries no evidence at all.
+    assert not serializer.quote_matches(
+        "[redacted:api-key]", "assistant: sk_live_abc123def is the token")
+
+
+def test_multiple_redactions_in_one_quote_match():
+    hay = ("assistant: use api_key=sk_live_abc123def and "
+           "password=hunter2secret for the staging box")
+    assert serializer.quote_matches(
+        "use api_key=[redacted:api-key] and password=[redacted:api-key] "
+        "for the staging box", hay)
+
+
 def test_ellipsis_split_in_order_passes():
     hay = ("assistant: first we rotate the pointer chain, then much later "
            "we write the new latest atomically")
