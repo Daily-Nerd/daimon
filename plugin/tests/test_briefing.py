@@ -383,6 +383,31 @@ def test_truncate_without_sections_head_cuts_with_marker():
     assert "…" in out or "..." in out or "truncated" in out
 
 
+def test_truncate_cuts_sections_not_preamble_when_sections_overflow():
+    # #489: the blind head-cut is documented as the SECTION-LESS fallback, but
+    # it also fired whenever the sections were found and did not fit — handing
+    # back raw preamble and dropping every label. That is the inverse of the
+    # contract, and it bites hardest on the longest, most structured items.
+    preamble = "unlabeled preamble filler " * 20
+    text = (preamble
+            + "\n**Problem:** the serializer drops the tail\n"
+            + "problem detail " * 20
+            + "\n**Root Cause:** the throttle window closes early\n"
+            + "cause detail " * 20
+            + "\n**Fix:** flush before the window closes\n")
+    budget = 400
+    # Precondition: the sections alone are over budget, so the fit-branch
+    # cannot fire and the fallback is what is under test.
+    sections = "\n".join(briefing._SECTION_RE.findall(text))
+    assert len(sections) + len(briefing._TRUNCATION_MARKER) > budget
+
+    out = briefing.truncate_preserving_sections(text, budget)
+    assert len(out) <= budget
+    assert "**Problem:**" in out
+    assert not out.startswith("unlabeled preamble")
+    assert "…" in out or "..." in out or "truncated" in out
+
+
 def _fat_checkpoint(n_beliefs=40, n_loops=6):
     def item(i, imp, kind):
         return {"text": f"{kind} number {i} " + "padding words " * 30,

@@ -575,17 +575,24 @@ def estimate_tokens(text: str) -> int:
 
 def truncate_preserving_sections(text: str, max_chars: int) -> str:
     """Cut `text` to max_chars, keeping **Label:** sections over filler: if the
-    labeled sections alone fit, they ARE the truncation; only a section-less
-    text falls back to a blind head-cut. Always appends a visible marker —
-    silent truncation reads as 'this is everything' when it isn't."""
+    labeled sections alone fit, they ARE the truncation; when they do not fit
+    the cut still lands INSIDE them, and only a section-less text falls back to
+    a blind head-cut of the raw text. Always appends a visible marker — silent
+    truncation reads as 'this is everything' when it isn't.
+
+    #489: the over-budget case used to fall through to the raw head-cut, which
+    returned unlabeled preamble and dropped every section it had just found —
+    the inverse of the contract, and worst on the longest, most structured
+    items. Cutting the joined sections degrades predictably instead: the
+    leading label survives, and what is lost is the tail rather than all of it.
+    """
     if len(text) <= max_chars:
         return text
     parts = _SECTION_RE.findall(text)
-    if parts:
-        key = "\n".join(parts)
-        if len(key) + len(_TRUNCATION_MARKER) <= max_chars:
-            return key + _TRUNCATION_MARKER
-    return text[:max(0, max_chars - len(_TRUNCATION_MARKER))] + _TRUNCATION_MARKER
+    body = "\n".join(parts) if parts else text
+    if parts and len(body) + len(_TRUNCATION_MARKER) <= max_chars:
+        return body + _TRUNCATION_MARKER
+    return body[:max(0, max_chars - len(_TRUNCATION_MARKER))] + _TRUNCATION_MARKER
 
 
 def _trim_note(dropped: int) -> str:
