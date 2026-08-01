@@ -28,6 +28,7 @@ This substitutes for plugin-suite tests: the harness is research code, but
 its correctness claims must be executable.
 """
 
+import doctest
 import json
 import sys
 import tempfile
@@ -129,6 +130,42 @@ def build_fixture_home(root: Path) -> tuple[Path, Path]:
          "ts": T0 + 7 * DAY, "session": "sess-machine", "project": PROJ},
     ]
     dataset = root / "dataset.jsonl"
+    dataset.write_text("".join(json.dumps(r) + "\n" for r in rows),
+                       encoding="utf-8")
+    return home, dataset
+
+
+def build_stance_fixture(root: Path) -> tuple[Path, Path]:
+    """Synthetic flat store + dataset for the #483 `stance_gate` variant
+    (variants.py): one checkpoint recent enough to be injectable, replayed
+    against two prompts that share ITS vocabulary but differ only in
+    grammatical stance — question-shaped vs statement-shaped — so any
+    difference between arm A and the stance_gate arm is attributable to the
+    gate, not to term overlap."""
+    home = root / "stance-home"
+    with replay_ab._pinned_env(home, author="fixture"):
+        filler = [{"text": f"deploy pipeline filler{i:02d} note",
+                   "trust": "inferred"} for i in range(40)]
+        store.write_checkpoint(
+            "T-hist", _cp("T-hist", T0 + 1 * DAY, filler), project_dir=PROJ)
+        store.write_checkpoint(
+            "T-src", _cp("T-src", T0 + 2 * DAY,
+                         [{"text": "widget calibration procedure documented",
+                           "trust": "inferred"}]), project_dir=PROJ)
+        store.write_checkpoint(
+            "T-pad", _cp("T-pad", T0 + 3 * DAY,
+                         [{"text": "unrelated aardvark bookkeeping entry",
+                           "trust": "inferred"}]), project_dir=PROJ)
+    rows = [
+        # idx 0: question-shaped — must pass through unchanged (B == A).
+        {"prompt": "how do I run the widget calibration procedure?",
+         "ts": T0 + 4 * DAY, "session": "sess-stance-q", "project": PROJ},
+        # idx 1: statement-shaped — must be fully suppressed (B == []).
+        {"prompt": "ran the widget calibration procedure and it passed",
+         "ts": T0 + 4 * DAY + 3600, "session": "sess-stance-s",
+         "project": PROJ},
+    ]
+    dataset = root / "stance-dataset.jsonl"
     dataset.write_text("".join(json.dumps(r) + "\n" for r in rows),
                        encoding="utf-8")
     return home, dataset
@@ -262,6 +299,64 @@ def main() -> int:
             "machine prompt skipped",
             summ["corpus"]["n_machine_skipped"] == 1
             and prompts[4]["machine"])
+
+        # 9. classify_stance's own doctests (variants.py) — the classifier's
+        #    worked examples must pass as executable claims, not just prose.
+        dt = doctest.testmod(variants, verbose=False)
+        ok &= _check(
+            "classify_stance: doctests pass",
+            dt.attempted > 0 and dt.failed == 0,
+            f"attempted={dt.attempted} failed={dt.failed}")
+
+        # 10. classify_stance edge cases beyond the doctests: case
+        #     insensitivity and the "first ~2 sentences only" opener/phrase
+        #     boundary (the trailing '?' check alone is whole-prompt).
+        ok &= _check(
+            "classify_stance: case-insensitive opener",
+            variants.classify_stance("HOW DO I FIX THIS") == "question")
+        ok &= _check(
+            "classify_stance: opener beyond first 2 sentences does not "
+            "count",
+            variants.classify_stance(
+                "Shipped the fix. Tests are green. How about that.")
+            == "statement")
+        ok &= _check(
+            "classify_stance: phrase marker beyond first 2 sentences does "
+            "not count",
+            variants.classify_stance(
+                "Shipped the fix. Tests are green. Still trying to land "
+                "the follow-up.") == "statement")
+
+        # 11. stance_gate variant (#483), exercised end to end through the
+        #     real harness on a synthetic fixture — same pattern as the
+        #     marker_silencer checks above, for the real hypothesis instead
+        #     of a fixture-only stand-in.
+        print("verify: stance-gate fixture built, running replay ...")
+        stance_home, stance_dataset = build_stance_fixture(root)
+        res_stance = replay_ab.run(
+            stance_dataset, stance_home, [None], root / "out-stance",
+            seed=470, variant=variants.stance_gate, variant_name="stance_gate")
+        sp = {p["idx"]: p for p in res_stance["prompts"]}
+        pq, ps = sp[0], sp[1]
+        ok &= _check(
+            "stance_gate fixture: prompts classify as intended",
+            variants.classify_stance(pq["prompt"]) == "question"
+            and variants.classify_stance(ps["prompt"]) == "statement")
+        ok &= _check(
+            "stance_gate: question-shaped prompt passes through, B == A",
+            len(pq["arms"]["A"]) >= 1 and pq["arms"]["B"] == pq["arms"]["A"],
+            f"A={len(pq['arms']['A'])} B={len(pq['arms']['B'])}")
+        ok &= _check(
+            "stance_gate: statement-shaped prompt fully suppressed, "
+            "B == []",
+            len(ps["arms"]["A"]) >= 1 and ps["arms"]["B"] == [],
+            f"A={len(ps['arms']['A'])} B={len(ps['arms']['B'])}")
+        stance_agg = res_stance["summary"]["arms"]["B"]
+        ok &= _check(
+            "stance_gate: aggregate a_only > 0 (the suppression), "
+            "b_only == 0 (gate never adds a row suggest() didn't return)",
+            stance_agg["a_only"] > 0 and stance_agg["b_only"] == 0,
+            f"a_only={stance_agg['a_only']} b_only={stance_agg['b_only']}")
 
     print("VERIFY " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
