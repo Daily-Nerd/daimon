@@ -174,3 +174,72 @@ def test_verbatim_keeps_full_escalation_range():
     # escalation cap, so a verbatim open loop keeps every bit of overdue boost.
     v_ceiling = scoring.trust_ceiling("verbatim")
     assert v_ceiling >= scoring._ESCALATION_CAP
+
+
+# ---- #488: the ceiling must BOUND the order, not erase it ----
+
+
+def test_clamped_items_keep_distinct_weights_by_importance():
+    # #408's min() caps correctly and destroys injectivity on [C, inf): every
+    # fresh inferred item at importance 8/9/10 evaluated to exactly 0.700, so
+    # among the HIGHEST-importance items in a briefing the tiebreak fell to
+    # whatever order the serializer happened to emit (briefing._by_weight is a
+    # stable sort). The lid was only ever asked to bound the score.
+    ws = [scoring.effective_weight(
+        {"trust": "inferred", "first_seen": _iso(0), "importance": imp},
+        "open_question", _NOW) for imp in (7, 8, 9, 10)]
+    assert len(set(ws)) == len(ws), f"importance ordering collapsed: {ws}"
+    assert ws == sorted(ws), f"not monotone in importance: {ws}"
+
+
+def test_soft_clip_never_attains_the_ceiling():
+    # Strictly tighter than min(), which ATTAINS the lid. Drive the same
+    # adversarial cross-product shape as the #408 guard and assert strict
+    # inequality, not <=.
+    ceiling = scoring.trust_ceiling("inferred")
+    for imp in (8, 9, 10):
+        for age in (0, 1, 2):
+            w = scoring.effective_weight(
+                {"trust": "inferred", "first_seen": _iso(age),
+                 "importance": imp}, "open_question", _NOW)
+            assert w < ceiling, (imp, age, w, ceiling)
+
+
+def test_soft_clip_is_a_noop_below_the_knee():
+    # The change must touch ONLY the degenerate region. Anything whose raw
+    # accumulation lands below the knee scores exactly what it scored before.
+    ceiling = scoring.trust_ceiling("inferred")
+    knee = ceiling * (1 - scoring._SOFT_CLIP_DELTA)
+    for age, imp in ((30, 5), (60, 3), (90, 7), (200, 2)):
+        item = {"trust": "inferred", "first_seen": _iso(age),
+                "importance": imp}
+        w = scoring.effective_weight(item, "recent_decision", _NOW)
+        if w < knee:                      # only assert on the untouched region
+            raw = (imp / 10.0) * scoring.recency_weight(age) * scoring._type_decay(
+                age, scoring.TYPE_RULES["recent_decision"])
+            assert abs(w - raw) < 1e-12, (age, imp, w, raw)
+
+
+def test_soft_clip_preserves_the_cross_class_band():
+    # #408's load-bearing property: no inferred item reaches the band a
+    # verbatim item of the same shape occupies. The soft clip must not leak
+    # across it while it is busy separating ties.
+    shape = {"first_seen": _iso(0), "importance": 10}
+    inferred = scoring.effective_weight(
+        {**shape, "trust": "inferred"}, "open_question", _NOW)
+    verbatim = scoring.effective_weight(
+        {**shape, "trust": "verbatim"}, "open_question", _NOW)
+    assert inferred < scoring.trust_ceiling("inferred") < verbatim
+
+
+def test_soft_clip_at_a_zero_ceiling_silences_without_a_special_case():
+    # A trust class with no authority is expressible in the table (nothing
+    # forbids a 0.0 lid). The closed form handles it: the knee collapses to 0,
+    # the gap term vanishes, and every weight maps to 0.0 — so no guard branch
+    # is needed, and none exists to rot untested.
+    for w in (0.0, 0.5, 1.0, 3.0):
+        assert scoring._soft_clip(w, 0.0) == 0.0, w
+    # and the live table has no non-positive lid, which is why the above is a
+    # statement about the formula rather than about production behavior.
+    assert all(v > 0 for v in scoring.TRUST_CEILING.values())
+    assert scoring._DEFAULT_CEILING > 0
