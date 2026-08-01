@@ -28,10 +28,13 @@ Intended per-door differences are explicit parameters, nothing else:
     whenever a path exists, both doors stamp identically.
 """
 
+import logging
 import time
 from pathlib import Path
 
 from . import carry, config, normalize, serializer, store, transcript
+
+log = logging.getLogger(__name__)
 
 
 def run(session_id: str, messages, *, project, chat, deadline,
@@ -120,6 +123,16 @@ def run(session_id: str, messages, *, project, chat, deadline,
         # #421: the write boundary refused (kill switch) — nothing landed, so
         # there is nothing to ledger rejections against either.
         return None
+    # #480 slice 3: verify pending agent resolve candidates for THIS project
+    # against THIS session's transcript. Independent of config.carry_enabled()
+    # — an agent's claim can be confirmed even on a project's very first
+    # serialize after the candidate landed. Its own try/except (not folded
+    # into the carry block above): a broken verification pass must never cost
+    # the checkpoint OR ride on carry being on.
+    try:
+        _verify_agent_resolutions(project, messages)
+    except Exception:
+        log.warning("agent resolution verification pass failed", exc_info=True)
     # #376: record what the checkers REJECTED, after write_checkpoint because
     # that is where item ids are guaranteed stamped (the merge branch above
     # only stamps when it runs). Its own append-only stream, never events.jsonl
@@ -320,6 +333,84 @@ def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,
                               project_dir=project):
             appended += 1
     return appended
+
+
+# ---- #480 slice 3: serialize-time verification of agent resolve candidates ----
+
+# The confirming event's status. Deliberately does NOT start with
+# "resolving-candidate" or "supersede-candidate" (store.is_resolved's and
+# _tie_rank's exemption prefixes, scar 0025's shape) — a CONFIRMED claim must
+# resolve and withhold like any ordinary human resolution (_tie_rank rank 1),
+# never sit at rank 0 alongside the candidate it replaces. See
+# tests/test_store.py's near-collision guard.
+AGENT_VERIFIED_STATUS = "resolved-agent-verified"
+
+
+def _pending_agent_candidates(events: dict) -> dict:
+    """{item_ref: evidence quote} for every ref whose LATEST lifecycle event
+    (store.resolutions' fold — already latest-by-ts, ties broken by content)
+    is a still-pending agent resolve candidate (#480 slice 2). A ref
+    superseded by ANY later event — a human resolve, a reopen, or this same
+    pass's own prior confirming event — is not pending; the fold already
+    resolves that, this only filters on the folded result. That is what
+    makes both idempotence (a confirmed ref's latest event is no longer
+    'resolving-candidate') and the human-reopen case (a later 'reopened'
+    event is latest) come free, with no extra bookkeeping here."""
+    out: dict = {}
+    for ref, evt in events.items():
+        if not isinstance(evt, dict):
+            continue
+        if str(evt.get("status") or "") != "resolving-candidate":
+            continue
+        if str(evt.get("source") or "") != "agent":
+            continue
+        evidence = evt.get("note")
+        if isinstance(evidence, str) and evidence.strip():
+            out[ref] = evidence
+    return out
+
+
+def _verify_agent_resolutions(project, messages) -> int:
+    """#480 slice 3: byte-check every pending agent resolve candidate's
+    evidence quote against THIS session's transcript — same matching stack
+    verify_quotes already holds verbatim capture claims to (#125), reused,
+    not duplicated: an agent's evidence meets the same bar a capture claim's
+    quote meets.
+
+    Quote found -> a confirming event, source="serializer",
+    status=AGENT_VERIFIED_STATUS, note recording which role (if
+    determinable) carried the quote. From here the item withholds like any
+    ordinary resolution, credited as agent-verified. Quote not found ->
+    nothing written; the candidate stands, exactly as live as before, for a
+    human's resolve/reverify or a future serialize to settle.
+
+    `events` is read fresh, scoped to `project` — store.resolutions reads
+    that project's OWN events.jsonl (store._events_path keys on
+    project_slug), so a candidate belonging to a different project can never
+    be reached from here, let alone confirmed against this transcript (#480
+    cross-project discipline: the store's per-project file layout does the
+    isolating, this function never crosses it).
+
+    Returns the number of confirming events appended. Callers wrap this in
+    their own try/except (capture.run does) — a broken pass here must never
+    fail the serialize itself."""
+    events = store.resolutions(project_dir=project)
+    pending = _pending_agent_candidates(events)
+    if not pending:
+        return 0
+    haystack = serializer.stripped_transcript(messages) if messages else ""
+    confirmed = 0
+    for ref, evidence in pending.items():
+        found, role = serializer.verify_agent_evidence(
+            evidence, messages, haystack=haystack)
+        if not found:
+            continue
+        if store.append_event(
+                ref, AGENT_VERIFIED_STATUS,
+                note=f"verified agent evidence (role: {role})",
+                source="serializer", project_dir=project):
+            confirmed += 1
+    return confirmed
 
 
 def _session_end_stamp(path) -> str:

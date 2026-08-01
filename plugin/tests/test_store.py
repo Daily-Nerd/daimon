@@ -1933,3 +1933,29 @@ def test_verification_counts_skips_corrupt_and_nondict_rows(tmp_path, monkeypatc
         f.write('["a list, not a row"]\n')
         f.write('{"item_ref": "i2"}\n')          # no check -> not counted
     assert store.verification_counts(project_dir=proj) == {"quote": 1}
+
+
+# ---- #480 slice 3: resolved-agent-verified — the confirming status ----
+
+
+def test_is_resolved_agent_verified_vs_candidate_near_collision():
+    # 'resolved-agent-verified' and 'resolving-candidate' differ by only a
+    # few characters and both start with "resolv" — the trap this slice
+    # names explicitly. Asserted side by side: the confirming status
+    # resolves (withholds), the candidate status it replaces stays live.
+    from daimon_briefing import store
+    assert store.is_resolved({"status": "resolved-agent-verified"}) is True
+    assert store.is_resolved({"status": "resolving-candidate"}) is False
+
+
+def test_tie_rank_resolved_agent_verified_is_ordinary_rank_not_candidate_rank():
+    # The confirming event must rank as a normal resolving event (rank 1),
+    # NEVER rank 0 alongside the candidate it replaces — rank 0 would let a
+    # same-second stray candidate re-tie against its own confirmation and
+    # fall to the (arbitrary) canonical-JSON tie-break instead of a
+    # deterministic win, undermining the "verified beats unverified" story.
+    from daimon_briefing import store
+    assert store._tie_rank({"status": "resolved-agent-verified"}) == 1
+    assert store._tie_rank({"status": "resolving-candidate"}) == 0
+    assert store._tie_rank({"status": "resolved-agent-verified"}) != \
+        store._tie_rank({"status": "resolving-candidate"})

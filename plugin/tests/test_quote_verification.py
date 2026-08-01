@@ -1031,3 +1031,103 @@ def test_audit_quotes_does_not_verify_an_echoed_quote(
     assert rc == 0
     assert "verified: 0" in out
     assert "failed: 1" in out
+
+
+# ---- #480 slice 3: verify_agent_evidence reuses verify_quotes' matching ----
+#
+# An agent's `resolve --by agent --evidence "<quote>"` claim is byte-checked
+# at serialize time against the SAME transcript, through the SAME
+# normalization/matching stack (quote_matches, strip_injected) as a verbatim
+# capture claim — these tests exercise that function directly, unit-level,
+# the same way Unit A above exercises quote_matches directly.
+
+def test_verify_agent_evidence_hit_returns_role_of_the_carrying_message():
+    msgs = [
+        {"role": "user", "content": "can you check PR #6?"},
+        {"role": "assistant", "content": "the user merged PR #6 from the GitHub UI"},
+    ]
+    found, role = serializer.verify_agent_evidence(
+        "the user merged PR #6 from the GitHub UI", msgs)
+    assert found is True
+    assert role == "assistant"
+
+
+def test_verify_agent_evidence_miss_returns_false_and_unknown():
+    msgs = [{"role": "user", "content": "totally unrelated content"}]
+    found, role = serializer.verify_agent_evidence(
+        "this exact sentence is nowhere in the transcript at all", msgs)
+    assert found is False
+    assert role == "unknown"
+
+
+def test_verify_agent_evidence_reuses_tier_f_normalization():
+    # Same hyphen/space fold quote_matches already proves (#208) — the
+    # evidence quote meets the identical bar, not a second weaker matcher.
+    msgs = [{"role": "user", "content": "retry windows are 3–5 seconds — measured on the gateway"}]
+    found, role = serializer.verify_agent_evidence(
+        "retry windows are 3-5 seconds - measured on the gateway", msgs)
+    assert found is True
+    assert role == "user"
+
+
+def test_verify_agent_evidence_blank_or_nonstring_is_false():
+    msgs = [{"role": "user", "content": "some real content here"}]
+    assert serializer.verify_agent_evidence("", msgs) == (False, "unknown")
+    assert serializer.verify_agent_evidence("   ", msgs) == (False, "unknown")
+    assert serializer.verify_agent_evidence(None, msgs) == (False, "unknown")
+
+
+def test_verify_agent_evidence_role_unknown_when_message_role_missing():
+    # A hit whose carrying message has no usable role: found True, labeled
+    # honestly as "unknown" rather than guessed (#480 design: labeling, not
+    # gating — see the design doc's self-quotation section).
+    msgs = [{"content": "the deploy succeeded and tests are green"}]
+    found, role = serializer.verify_agent_evidence(
+        "the deploy succeeded and tests are green", msgs)
+    assert found is True
+    assert role == "unknown"
+
+
+def test_verify_agent_evidence_strips_daimon_own_injected_output():
+    # #440: a quote that only appears inside daimon's OWN injected recall/
+    # briefing span is an echo, not a witness — must not verify.
+    msgs = [{"role": "user", "content": f"{_RECALL}\nwhat did we settle on?"}]
+    found, role = serializer.verify_agent_evidence(_ECHOED, msgs)
+    assert found is False
+    assert role == "unknown"
+
+
+def test_verify_agent_evidence_skips_non_dict_messages_in_role_scan():
+    # A garbage row must not crash the role scan or steal attribution — the
+    # quote's real carrier still gets the credit. Only reachable with a
+    # caller-precomputed haystack: without one, stripped_transcript raises
+    # on the non-dict row first (serialize_strict's contract), so the loop's
+    # own guard exists precisely for the precomputed-haystack path.
+    good = {"role": "user", "content": "we froze the pin"}
+    haystack = serializer.stripped_transcript([good])
+    found, role = serializer.verify_agent_evidence(
+        "we froze the pin", ["not a dict", good], haystack=haystack)
+    assert found is True
+    assert role == "user"
+
+
+def test_verify_agent_evidence_haystack_hit_without_single_message_is_unknown():
+    # The docstring's third role-unknown case: the quote verifies against
+    # the caller-provided haystack, but no single message's own text carries
+    # it — found stays True (the bytes ARE in the transcript), role is the
+    # honest "unknown" rather than a guessed attribution.
+    found, role = serializer.verify_agent_evidence(
+        "the whole quote lives only in the joined haystack",
+        [{"role": "user", "content": "alpha half"}],
+        haystack="the whole quote lives only in the joined haystack")
+    assert found is True
+    assert role == "unknown"
+
+
+def test_verify_agent_evidence_accepts_a_precomputed_haystack():
+    msgs = [{"role": "assistant", "content": "we shipped the manual approval step"}]
+    haystack = serializer.stripped_transcript(msgs)
+    found, role = serializer.verify_agent_evidence(
+        "we shipped the manual approval step", msgs, haystack=haystack)
+    assert found is True
+    assert role == "assistant"
