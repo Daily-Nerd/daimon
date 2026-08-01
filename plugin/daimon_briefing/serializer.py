@@ -1021,6 +1021,54 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     return downgraded
 
 
+# ---- #480 slice 3: agent resolve-candidate evidence, verified at serialize ----
+#
+# `daimon resolve --by agent --evidence "<quote>"` (#482, slice 2) appends a
+# `resolving-candidate` event that never withholds anything on its own — the
+# quote is only a CLAIM until this pass byte-checks it against the session's
+# own transcript, at serialize time, the same way verify_quotes byte-checks a
+# verbatim capture claim. Deliberately the SAME matching stack (quote_matches,
+# strip_injected/stripped_transcript) rather than a second one: an agent's
+# evidence meets the identical bar a capture claim's quote meets.
+
+def verify_agent_evidence(evidence, messages, haystack=None) -> tuple:
+    """Byte-check ONE agent resolve-candidate's evidence quote against a
+    transcript. Returns (found, role).
+
+    `found` is whether the quote's bytes are present in the (stripped)
+    transcript, under quote_matches' tier-f normalization. `role` is the
+    `role` of the single message whose own stripped text contains the quote,
+    when exactly that is determinable; "unknown" when the quote isn't found
+    at all, when no single message's text contains it (e.g. real bytes but
+    only found once messages are joined into the whole-transcript haystack),
+    or when the carrying message has no usable role. Per the design doc's
+    self-quotation section: this is labeling, not gating — an assistant-only
+    quote is exactly as trustworthy as any other assistant assertion, and the
+    caller records the role rather than hiding or blocking on it.
+
+    `haystack` lets a caller checking several candidates against the SAME
+    session's transcript build the stripped whole-transcript haystack once
+    (stripped_transcript is O(messages)) instead of once per candidate; omit
+    it to have this function build it.
+
+    Blank/non-str evidence never matches — mirrors verify_quotes' own
+    "no usable quote" guard, conservative by construction."""
+    if not isinstance(evidence, str) or not evidence.strip():
+        return False, "unknown"
+    if haystack is None:
+        haystack = stripped_transcript(messages) if messages else ""
+    if not quote_matches(evidence, haystack):
+        return False, "unknown"
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        if quote_matches(evidence, strip_injected(_message_text(m))):
+            role = m.get("role")
+            return True, (role.strip()
+                         if isinstance(role, str) and role.strip() else "unknown")
+    return True, "unknown"
+
+
 # ---- #359: outcome claims ground in tool-result signals ----
 #
 # The hard trust-class gap (#185/#194 lineage): the model concludes X, X is
