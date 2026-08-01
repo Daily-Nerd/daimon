@@ -1225,6 +1225,73 @@ def _save_seen(path, origins: set, content_keys: set) -> None:
         pass  # cooldown is best-effort; losing it means one extra suggestion
 
 
+_UNSET = object()   # "compute it yourself"; None is a MEANINGFUL age here
+
+
+def _row_age_days(m, now: float):
+    """Age of a suggest() row in days, or None when the stamp is missing,
+    malformed, or in the future. Same parser and same tolerance philosophy
+    scoring trusts (store._created_epoch): unknown age is never evidence of
+    staleness, so it fails toward suggesting (#450 direction)."""
+    epoch = store._created_epoch(m.get("first_seen"))
+    return ((now - epoch) / 86400.0
+            if epoch is not None and epoch <= now else None)
+
+
+def age_gate_blocks(m, now: float, age_days=_UNSET) -> bool:
+    """Does #452's age gate silence this candidate?
+
+    ONE definition, called by the injection path and by the replay harness's
+    post-filter replica. It used to be duplicated, and a duplicated gate drifts
+    the moment either side changes — a harness measuring last week's policy
+    reports confident numbers about a system that no longer exists.
+
+    #491 removed the question half of the exemption. It read "no logged
+    resolution" as "still open", and the premise was measured false: 1280 of
+    1343 question rows (95.3%) carry no resolution, so survival is the DEFAULT,
+    not evidence. Blind-graded, the injections it admitted came back 3/30 = 10%
+    relevant (95% CI [3.5%, 25.6%]) — inside the 6-10% band this gate already
+    blocks, which is the whole argument. On the replay corpus it admitted 68 of
+    340 injections, every one a question and not one of them pinned.
+
+    Two narrower liveness signals were measured first and BOTH separate the
+    wrong way, which is why this is a removal rather than a refinement:
+
+      * carry depth: exempt-admitted rows are MORE carried than the ones
+        earning their slot honestly (33% appear in a single checkpoint vs
+        54%), so being re-asserted does not predict being useful.
+      * frontier-by-content (is this item's text still in the newest
+        checkpoint at prompt time): 1 of 68 exempt vs 15 of 272 earned. It
+        would gate 67 of 68 — indistinguishable from removal, and pointing the
+        same wrong way. NOTE it is not readable here anyway: `suggest`'s SELECT
+        does not carry `frontier` (only `search`'s does), so that measurement
+        described a hypothetical column, never shipped behaviour.
+
+    Questions are not banned — a stale question matching _STALE_MIN_HITS
+    distinct terms still injects, like any other stale row. It just stops being
+    waved through on age alone. Pinned survives untouched: a standing rule is
+    age-independent by construction and is a small, curated set — though note
+    the pinned branch fires zero times on the replay corpus, so it rests on
+    #452's original observation, not on anything #491 measured.
+
+    Cost, recorded because the instrument cannot see it: this is purely
+    subtractive at the prompt level. 38 of 189 prompts that previously carried
+    an injection now carry none, and NO prompt gains one. Precision of what is
+    injected is measurable; the value of what is now withheld is not.
+    """
+    if age_days is _UNSET:
+        age_days = _row_age_days(m, now)
+    if age_days is None or age_days <= _AGE_GATE_DAYS:
+        return False
+    if m.get("pinned"):
+        return False
+    hits = m.get("term_hits")
+    # isinstance, not `or 0`: a row with no term_hits offers no match-strength
+    # evidence, and absent evidence never gates (same fail-open direction as
+    # unknown age).
+    return isinstance(hits, int) and hits < _STALE_MIN_HITS
+
+
 def _suggest_line(r: dict, terms, now: float) -> str:
     """One compact, attributed, trust-preserving injection line (#125)."""
     age = _format_age(now - r["created"]) if r.get("created") else "?"
@@ -1302,27 +1369,15 @@ def _cmd_recall_inject(args) -> int:
             # (store._created_epoch) with the same tolerance philosophy:
             # missing, malformed, or future stamps mean age UNKNOWN, and
             # unknown is never gated — a missing stamp is not evidence of
-            # staleness (fail toward suggesting, the #450 direction). Two
-            # exemptions where pure age is not evidence of noise: a still-OPEN
-            # question, whose survival is the signal (scoring's
-            # auto_escalation philosophy — resolution, not freshness, retires
-            # it), and a pinned standing rule, which is age-independent by
-            # construction (#452's own data: the rare >7d hits were exactly
-            # standing rules and open gates). Like the #451 dedup, a gated
-            # candidate is a `continue`, so its slot promotes the next one.
-            epoch = store._created_epoch(m.get("first_seen"))
-            age_days = ((now - epoch) / 86400.0
-                        if epoch is not None and epoch <= now else None)
-            hits = m.get("term_hits")
-            exempt = ((m.get("kind") == "question"
-                       and not m.get("superseded_by"))
-                      or bool(m.get("pinned")))
-            if (age_days is not None and age_days > _AGE_GATE_DAYS
-                    and not exempt
-                    # isinstance, not `or 0`: a row with no term_hits offers
-                    # no match-strength evidence, and absent evidence never
-                    # gates (same fail-open direction as unknown age).
-                    and isinstance(hits, int) and hits < _STALE_MIN_HITS):
+            # staleness (fail toward suggesting, the #450 direction). Like the
+            # #451 dedup, a gated candidate is a `continue`, so its slot
+            # promotes the next one.
+            # Age is computed ONCE and shared with the stats bucket below:
+            # if the gate and the #452 re-measurement ever read different
+            # clocks, the counters stop describing the gate that produced
+            # them — the same duplication this predicate exists to remove.
+            age_days = _row_age_days(m, now)
+            if age_gate_blocks(m, now, age_days=age_days):
                 age_gated = True
                 continue
             chosen_keys.add(key)
