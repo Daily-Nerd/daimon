@@ -1111,6 +1111,11 @@ def _cmd_loops(args) -> int:
             text = str(item.get("text") or "").strip()
             if not text:
                 continue
+            if item.get("_agent_claim"):
+                # #480 slice 4: the listing agrees with the briefing — an
+                # item carrying a still-pending, unverified agent claim
+                # (briefing.withhold's transient stamp) is marked here too.
+                text += " (agent claim pending)"
             rows.append((item["id"], key, text, briefing._mark(item)))
     if not rows:
         print("no open loops")
@@ -2460,13 +2465,78 @@ def _stats_verification(project_dir) -> dict:
     return {"total": sum(by_check.values()), "by_check": by_check}
 
 
+def _stats_resolutions(project_dir, usage: dict) -> dict:
+    """Resolution credit, by source (#480 slice 5) — who is closing loops,
+    and whether their receipts hold. Two populations, kept honestly apart
+    (#477's lesson, #478's fix): `human`/`agent_verified`/`agent_pending`
+    fold THIS PROJECT's events.jsonl (store._events_path keys per project),
+    `refused` reads usage.log, which is per-MACHINE (every project's CLI
+    invocations share one file, #54's own design) — the render layer labels
+    the refused line apart from the other three; never summed together.
+
+    - `human`: lifetime COUNT OF EVENTS (not refs — a ref resolved twice
+      over its life, e.g. corrected later, is two human decisions), with
+      source="cli", kind="resolution" (the human `resolve` path's default —
+      excludes `forget`'s "tombstone" kind and `log`'s freeform rows, which
+      also default to source="cli" but are not resolve decisions; scar
+      0025's own lesson: kind never isolates a fold on its own, so this
+      filters kind explicitly rather than trusting it to), whose status
+      is_resolved (a real resolution, not a reopen/candidate/corroboration
+      row).
+    - `agent_verified`: lifetime count of events with source="serializer"
+      and status==capture.AGENT_VERIFIED_STATUS — the one call site that
+      ever writes it (capture._verify_agent_resolutions, #480 slice 3).
+    - `agent_pending`: refs whose FOLDED latest event is still a pending
+      agent candidate — reuses capture._pending_agent_candidates over
+      store.resolutions()'s fold rather than re-deriving the same status/
+      source filter a second time (the same reuse briefing.withhold's #480
+      slice 4 stamp makes).
+    - `refused`: the `resolve:no-evidence` usage-log tag (#303/#482) — an
+      agent that tried `--by agent` with no evidence, refused before any
+      event was written.
+
+    Fails open to zeroes on a broken/missing/unknown-project log, same
+    stance as every other stats instrument here."""
+    out = {"human": 0, "agent_verified": 0, "agent_pending": 0, "refused": 0}
+    path = store._events_path(project_dir)
+    if path is not None:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            lines = []
+        for line in lines:
+            try:
+                evt = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(evt, dict) or not evt.get("item_ref"):
+                continue
+            source = str(evt.get("source") or "")
+            status = str(evt.get("status") or "")
+            kind = str(evt.get("kind") or "")
+            if source == "cli" and kind == "resolution" and store.is_resolved(evt):
+                out["human"] += 1
+            elif source == "serializer" and status == capture.AGENT_VERIFIED_STATUS:
+                out["agent_verified"] += 1
+    try:
+        out["agent_pending"] = len(capture._pending_agent_candidates(
+            store.resolutions(project_dir=project_dir)))
+    except Exception:
+        pass
+    out["refused"] = usage.get("resolve:no-evidence", 0)
+    return out
+
+
 def _cmd_stats(args) -> int:
     """Aggregate what is already on disk. Nothing is transmitted anywhere —
     sharing the output is a deliberate act (the user pastes it)."""
-    data = {"usage": _stats_usage(), "capture": _stats_capture(),
+    usage = _stats_usage()
+    project = _resolve_project(None)
+    data = {"usage": usage, "capture": _stats_capture(),
             "store": _stats_store(), "retention": _stats_retention(),
-            "events": _stats_events(_resolve_project(None)),
-            "verification": _stats_verification(_resolve_project(None)),
+            "events": _stats_events(project),
+            "verification": _stats_verification(project),
+            "resolutions": _stats_resolutions(project, usage),
             # #475 part 2: current-configuration posture, rendered next to
             # (never merged into) the historical fallback counts above.
             "rescue_posture": llm.rescue_posture()}

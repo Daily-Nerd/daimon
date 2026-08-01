@@ -907,6 +907,99 @@ def test_reopen_clears_candidate_flag():
     assert "_supersede_candidate" not in kept[0]
 
 
+# ---- #480 slice 4: withhold's fourth outcome — a pending AGENT claim ----
+
+
+def _agent_evt(ref, evidence, text=""):
+    e = {"ts": "2026-08-01T00:00:00Z", "kind": "resolution",
+         "item_ref": ref, "status": "resolving-candidate", "source": "agent",
+         "note": evidence}
+    if text:
+        e["item_text"] = text
+    return e
+
+
+def test_withhold_stamps_pending_agent_claim():
+    cp = {"working_context": {"open_questions": [
+        {"text": "does carry hold", "id": "o-aaa"}]}}
+    resolutions = {"o-aaa": _agent_evt("o-aaa", "the PR merged clean")}
+    filtered, withheld, candidates = briefing.withhold(cp, resolutions)
+    kept = filtered["working_context"]["open_questions"]
+    assert len(kept) == 1
+    assert kept[0]["_agent_claim"] == "the PR merged clean"
+    assert withheld == []
+    # A pending agent claim is its own stamp, not a #14 supersede-candidate —
+    # `candidates` (status --suppressed's subsection) must stay untouched.
+    assert candidates == []
+    # input checkpoint is never mutated — no transient field, ever.
+    assert "_agent_claim" not in cp["working_context"]["open_questions"][0]
+
+
+def test_withhold_agent_verified_item_is_dropped_like_ordinary_resolution():
+    # #480 slice 3's confirming status ("resolved-agent-verified") is NOT one
+    # of is_resolved's exempt prefixes — a verified claim withholds exactly
+    # like any ordinary human resolution, no special-casing needed here.
+    cp = {"working_context": {"open_questions": [
+        {"text": "does carry hold", "id": "o-aaa"}]}}
+    evt = _res_evt("o-aaa", status="resolved-agent-verified")
+    evt["source"] = "serializer"
+    filtered, withheld, candidates = briefing.withhold(cp, {"o-aaa": evt})
+    assert filtered["working_context"]["open_questions"] == []
+    assert len(withheld) == 1
+    assert candidates == []
+
+
+def test_withhold_reopen_clears_agent_claim_stamp():
+    cp = {"working_context": {"open_questions": [
+        {"text": "does carry hold", "id": "o-aaa"}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {"o-aaa": _res_evt("o-aaa", status="reopened")})
+    assert withheld == []
+    assert candidates == []
+    kept = filtered["working_context"]["open_questions"]
+    assert "_agent_claim" not in kept[0]
+
+
+def test_line_renders_agent_claim_annotation():
+    item = {"text": "release approved", "id": "o-aaa",
+            "_agent_claim": "the user merged PR #6"}
+    line = briefing._line(item)
+    assert '⚠ agent claims resolved — unverified: "the user merged PR #6"' in line
+    assert "confirm: daimon resolve o-aaa --status resolved" in line
+    assert "reject: daimon reverify o-aaa" in line
+
+
+def test_line_no_agent_claim_annotation_when_absent():
+    item = {"text": "release approved", "id": "o-aaa"}
+    line = briefing._line(item)
+    assert "agent claims resolved" not in line
+
+
+def test_line_truncates_long_agent_claim_evidence():
+    long_quote = "x" * 200
+    item = {"text": "release approved", "id": "o-aaa", "_agent_claim": long_quote}
+    line = briefing._line(item)
+    assert long_quote not in line
+    assert "…" in line
+    assert "x" * 121 not in line
+
+
+def test_line_short_agent_claim_evidence_untruncated():
+    quote = "shipped in v0.9"
+    item = {"text": "release approved", "id": "o-aaa", "_agent_claim": quote}
+    line = briefing._line(item)
+    assert f'"{quote}"' in line
+    assert "…" not in line
+
+
+def test_corroboration_badge_suppressed_with_agent_claim():
+    # Same philosophy as the #14/#365 suppressions just above: a witness
+    # count printed beside "this claim is unverified" would read as support
+    # for a claim that has not earned it.
+    item = {"_corroborated": 3, "_agent_claim": "quote"}
+    assert briefing.corroboration_badge(item) == ""
+
+
 # ---- #215: staleness budget — stale_carried() ----
 #
 # Agreement between agent-written sources (a fresh checkpoint restating a

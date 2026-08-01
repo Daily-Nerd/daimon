@@ -154,6 +154,35 @@ def test_compact_teaches_dry_run_before_commit():
     assert "--note" in body
 
 
+# ---- #480 slice 5: the portable skill teaches the agent resolve path too ----
+#
+# #257's own field numbers (3 agent-initiated recalls, 2 resolved refs, ever)
+# showed teaching the HUMAN path alone did not move resolution. This closes
+# the gap the design doc names explicitly: the portable skill already taught
+# `daimon resolve "<item text>" --dry-run` / `--note`; it must ALSO teach the
+# evidence-gated agent path, with the same quote-discipline rule the
+# daimon-briefing plugin skill and daimon-end skill state.
+
+
+def test_full_teaches_agent_resolve_with_evidence():
+    full = skill_content.render_full()
+    closing = full.split("## Closing loops")[1].split("\n## ")[0]
+    assert "--by agent" in closing
+    assert "--evidence" in closing
+    # Quote discipline (rule 17) — the byte-check-at-session-end rule must be
+    # stated, not just the flag name, or the evidence gate reads as decoration.
+    assert "byte-checked" in closing.lower() or "verified" in closing.lower()
+    assert "daimon loops" in closing
+    assert "human-only" in closing.lower() or "human only" in closing.lower()
+
+
+def test_compact_teaches_agent_resolve_with_evidence():
+    body = skill_content.render_compact()
+    assert "--by agent" in body
+    assert "--evidence" in body
+    assert "daimon loops" in body
+
+
 # ---- #351: the MCP tool surface is a first-class alternative to the CLI ----
 
 

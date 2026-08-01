@@ -651,6 +651,48 @@ def test_rich_brief_does_not_show_handle_for_decisions(capsys):
     assert "r-abc123" not in out
 
 
+# ---- #480 slice 4: rich path renders the pending agent-claim flavor ----
+
+
+def test_rich_brief_shows_agent_claim_annotation(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    b = {
+        "external": [],
+        "open_loops": [{"text": "release approved", "trust": "inferred",
+                        "id": "o-aaa", "_agent_claim": "the user merged PR #6"}],
+        "decisions": [], "decisions_overflow": 0,
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+    }
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "agent claims resolved" in out
+    assert "the user merged PR #6" in out
+    assert "daimon resolve o-aaa --status resolved" in out
+    assert "daimon reverify o-aaa" in out
+
+
+def test_rich_brief_agent_claim_evidence_truncated(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    long_quote = "y" * 200
+    b = {
+        "external": [],
+        "open_loops": [{"text": "release approved", "trust": "inferred",
+                        "id": "o-aaa", "_agent_claim": long_quote}],
+        "decisions": [], "decisions_overflow": 0,
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+    }
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert long_quote not in out
+    assert "…" in out
+
+
 def _identity_status_data(identity, health):
     return {
         "project": identity["git_root"],

@@ -20,7 +20,7 @@ import time
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
 # module-level import (contrast carry.py's own local-import notes, which
 # don't apply here).
-from . import carry, config, llm, receipts, schema, scoring, serializer, store
+from . import capture, carry, config, llm, receipts, schema, scoring, serializer, store
 
 log = logging.getLogger("daimon.briefing")
 
@@ -89,9 +89,24 @@ def corroboration_badge(item) -> str:
     n = item.get("_corroborated")
     if not isinstance(n, int) or n < CORROBORATION_MIN:
         return ""
-    if item.get("_supersede_candidate") or item.get("_worldcheck"):
+    if item.get("_supersede_candidate") or item.get("_worldcheck") or item.get("_agent_claim"):
         return ""
     return f" [≈ corroborated ×{n}]"
+
+
+# ---- #480 slice 4: the pending agent-claim flavor — never withheld, rendered ----
+
+# Evidence quotes can be arbitrarily long (they are copy-pasted transcript
+# spans); the brief line is meant to be skimmable, not a full transcript
+# replay — the checkpoint keeps the full text, this is a display cap only.
+_AGENT_CLAIM_EVIDENCE_CHARS = 120
+
+
+def _truncate_agent_claim(evidence: str) -> str:
+    text = str(evidence or "").strip()
+    if len(text) <= _AGENT_CLAIM_EVIDENCE_CHARS:
+        return text
+    return text[:_AGENT_CLAIM_EVIDENCE_CHARS].rstrip() + "…"
 
 
 # ---- #480 slice 1: resolve handles on open-loop-class items ----
@@ -171,6 +186,17 @@ def _line(item, degraded: bool = False, briefable: bool = False) -> str:
             base += (f" — confirm: daimon resolve {item_id} "
                      f"--status {wc.get('status') or 'resolved'}"
                      f"\n    reject: daimon reverify {item_id}")
+    claim = item.get("_agent_claim")
+    if claim:
+        # #480 slice 4: a still-pending agent resolve candidate (#480 slice
+        # 2/3) — same never-withheld, always-flagged philosophy as the #14/
+        # #365 blocks above, its own confirm/reject pair. ADDED lines only;
+        # the pinned prefix above never changes.
+        item_id = item.get("id") or "?"
+        base += (f'\n  ⚠ agent claims resolved — unverified: '
+                 f'"{_truncate_agent_claim(claim)}"'
+                 f"\n    confirm: daimon resolve {item_id} --status resolved"
+                 f"\n    reject: daimon reverify {item_id}")
     return base
 
 
@@ -277,7 +303,22 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
     can flag it — id-bearing only, by construction (candidates are only ever
     emitted against ids).
 
-    No resolved/candidate events, or a non-dict checkpoint ->
+    #480 slice 4: a FOURTH outcome — a still-pending agent resolve candidate
+    (#480 slice 2/3: latest event is `resolving-candidate`, source="agent",
+    not yet confirmed by serialize-time verification or a human). Same
+    never-withheld shape as the #14 candidate above, its own transient stamp:
+    the RETURNED COPY's item gets `_agent_claim = "<evidence quote>"`. Reuses
+    capture._pending_agent_candidates over `resolutions` rather than
+    re-deriving the status/source filter here — the fold that decides
+    idempotence (a confirmed ref's latest event is no longer
+    resolving-candidate) and the human-reopen case stays in exactly one
+    place. Kept OUT of the `candidates` return list on purpose: that list is
+    #14's own "likely superseded (unconfirmed)" subsection
+    (`status --suppressed`), a different machine suggestion with a different
+    confirm/reject pair — mixing the two would blur what a human is being
+    asked to confirm.
+
+    No resolved/candidate/pending-claim events, or a non-dict checkpoint ->
     (checkpoint, [], []) UNCHANGED, same no-op idiom as carry.merge: no copy
     is made unless something actually withholds or is stamped, so the common
     case (nothing resolved yet) costs nothing."""
@@ -302,8 +343,9 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
             # attacker-adjacent input wants bounded quantifiers).
             if new_id and _CANDIDATE_ID_SHAPE.fullmatch(new_id):
                 candidate_refs[ref] = new_id
+    agent_claim_refs = capture._pending_agent_candidates(resolutions)
 
-    if not resolved_refs and not candidate_refs:
+    if not resolved_refs and not candidate_refs and not agent_claim_refs:
         return checkpoint, [], []
     # #145: the fuzzy pool holds ONLY resolutions whose own ref is not
     # id-shaped (legacy, pre-id-stamping events). An id-bearing resolution is
@@ -324,6 +366,7 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
     # stamped before paying for a deepcopy (most briefs resolve nothing).
     to_drop = []  # [(section, key, index, item, event)]
     to_stamp = []  # [(section, key, index, event, new_id)]
+    to_stamp_claim = []  # [(section, key, index, evidence)] — #480 slice 4
     for section, key in store._ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
@@ -337,11 +380,18 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
                 # here already guarantees resolutions[item_id] exists (M1: the
                 # old `evt is not None and ...` check was redundant — a subset
                 # check never needs the superset's own membership re-verified).
+                # A ref can match at most one of these three: resolutions is
+                # {ref: LATEST event}, and is_resolved/#14's shape gate/#480's
+                # pending-candidate filter are mutually exclusive readings of
+                # that one event's status.
                 if item_id in resolved_refs:
                     to_drop.append((section, key, idx, item, resolutions[item_id]))
                 elif item_id in candidate_refs:
                     to_stamp.append((section, key, idx, resolutions[item_id],
                                       candidate_refs[item_id]))
+                elif item_id in agent_claim_refs:
+                    to_stamp_claim.append(
+                        (section, key, idx, agent_claim_refs[item_id]))
                 continue  # id-bearing: bound exactly or not at all, never fuzzy
             text = str(item.get("text") or "").strip()
             if not text or not resolved_texts:
@@ -354,21 +404,23 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
                     to_drop.append((section, key, idx, item, evt))
                     break
 
-    if not to_drop and not to_stamp:
+    if not to_drop and not to_stamp and not to_stamp_claim:
         return checkpoint, [], []
 
     out = copy.deepcopy(checkpoint)
 
-    # Stamp BEFORE dropping: to_stamp/to_drop indices both refer to the
-    # ORIGINAL (pre-removal) list positions, and stamping never changes list
-    # length — so stamping first keeps every index valid for the drop pass
-    # that follows, regardless of whether a stamped and a dropped item share
-    # a section/key list.
+    # Stamp BEFORE dropping: to_stamp/to_stamp_claim/to_drop indices all refer
+    # to the ORIGINAL (pre-removal) list positions, and stamping never changes
+    # list length — so stamping first keeps every index valid for the drop
+    # pass that follows, regardless of whether a stamped and a dropped item
+    # share a section/key list.
     candidates = []
     for section, key, idx, evt, new_id in to_stamp:
         item = out[section][key][idx]
         item["_supersede_candidate"] = new_id
         candidates.append((key, item, evt))
+    for section, key, idx, evidence in to_stamp_claim:
+        out[section][key][idx]["_agent_claim"] = evidence
 
     withheld = []
     drop_idx_by_list: dict[tuple[str, str], set] = {}

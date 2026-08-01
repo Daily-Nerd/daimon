@@ -66,6 +66,10 @@ this as a `prev` pointer). So it does not need to be perfect to be useful, and i
 
 ## Rules
 
+- Before writing, consider whether any briefed loop was closed this session
+  — if so, resolve it with evidence: `daimon resolve <id> --by agent
+  --evidence "<exact contiguous transcript quote>"` (see the daimon-briefing
+  skill's "Closing loops" section for the full quote-discipline rule).
 - **Write-only.** Do NOT exit/quit the session — that is the user's action.
 - **Do not remove or disable the automatic hook.** This accelerates; it never
   replaces. The reconstruction's verbatim fidelity is still the authoritative

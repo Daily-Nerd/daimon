@@ -29,6 +29,29 @@ keeps getting restated session after session is not corroborated just
 because it agrees with itself — check the world (code, git, issue tracker)
 before treating it as current fact.
 
+## Closing loops
+
+Briefed open loops (open questions, uncertainties) carry an inline ` [id]`
+handle — that id is what `daimon resolve` and `daimon reverify` take.
+`daimon loops` lists every open, addressable loop with its id.
+
+When this session's work answers a briefed loop, close it:
+
+```bash
+daimon resolve <id> --by agent --evidence "<exact contiguous transcript quote>"
+```
+
+The evidence must be a verbatim copy-paste of one contiguous span of THIS
+transcript — the same QUOTE DISCIPLINE the serializer itself enforces
+(rule 17) — and it is byte-checked against the transcript at session end.
+A quote that cannot be found leaves the loop open; nothing is withheld
+until the quote verifies or a human confirms. A briefing showing a
+`⚠ agent claims resolved — unverified: "..."` line means an earlier claim
+is still pending that check.
+
+Do not resolve what you merely believe is stale — that is `reverify`/
+worldcheck territory, not a resolve claim. `forget` stays human-only.
+
 ## Automatic behavior
 
 You do not need to invoke anything. The plugin wires the host's native session

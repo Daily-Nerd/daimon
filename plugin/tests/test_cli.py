@@ -5784,6 +5784,198 @@ def test_stats_events_scoped_to_current_project(
     assert json.loads(capsys.readouterr().out)["events"]["lines"] == 1
 
 
+# ---- #480 slice 5: resolutions credit — human / agent-verified / agent-pending / refused ----
+
+
+def test_stats_json_resolutions_key_present_existing_keys_untouched(
+        tmp_checkpoint_dir, capsys):
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert set(data) >= {"usage", "capture", "store", "retention", "events",
+                         "verification", "rescue_posture", "resolutions"}
+    assert set(data["resolutions"]) == {"human", "agent_verified",
+                                        "agent_pending", "refused"}
+
+
+def test_stats_resolutions_empty_world_is_all_zeroes(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res == {"human": 0, "agent_verified": 0, "agent_pending": 0, "refused": 0}
+
+
+def test_stats_resolutions_counts_all_four_states(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import capture, store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
+    cp = {"working_context": {"open_questions": [
+        {"text": "human resolves this one"},
+        {"text": "agent claims and it verifies"},
+        {"text": "agent claims and it stays pending"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    human_item, verified_item, pending_item = written["working_context"]["open_questions"]
+
+    assert cli.main(["resolve", human_item["id"], "--project", "/repo/x"]) == 0
+
+    quote = "the deploy finished clean"
+    assert cli.main(["resolve", verified_item["id"], "--by", "agent",
+                     "--evidence", quote, "--project", "/repo/x"]) == 0
+    assert capture._verify_agent_resolutions("/repo/x", [{"content": quote}]) == 1
+
+    assert cli.main(["resolve", pending_item["id"], "--by", "agent",
+                     "--evidence", "unverifiable claim",
+                     "--project", "/repo/x"]) == 0
+
+    assert cli.main(["resolve", "anything", "--by", "agent",
+                     "--project", "/repo/x"]) == 1  # refused, no evidence
+
+    capsys.readouterr()
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res["human"] == 1
+    assert res["agent_verified"] == 1
+    assert res["agent_pending"] == 1
+    assert res["refused"] == 1
+
+
+def test_stats_resolutions_human_counts_events_not_refs(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # #480 slice 5's own wording: "count EVENTS, not refs" — two human
+    # resolutions on the SAME ref (e.g. a later correction) must count as 2,
+    # not fold down to 1 the way store.resolutions()'s latest-wins view would.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
+    store.append_event("o-a", "superseded-by:o-b", source="cli", project_dir="/p/A")
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res["human"] == 2
+    # sanity: the fold really does collapse them to one ref
+    assert len(store.resolutions(project_dir="/p/A")) == 1
+
+
+def test_stats_resolutions_skips_garbage_lines_and_counts_the_rest(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # events.jsonl is append-only under concurrent writers — a torn/garbage
+    # line must be skipped, never crash the counter or eat the valid lines
+    # around it (same reader stance as store.resolutions itself).
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
+    slug = store.project_slug("/p/A")
+    events_path = tmp_checkpoint_dir / slug / "events.jsonl"
+    with events_path.open("a", encoding="utf-8") as f:
+        f.write("{not json at all\n")
+        f.write('"a json string, not an object"\n')
+        f.write('{"status": "resolved", "source": "cli", "kind": "resolution"}\n')  # no item_ref
+    store.append_event("o-b", "resolved", source="cli", project_dir="/p/A")
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res["human"] == 2  # both real resolves, none of the garbage
+
+
+def test_stats_resolutions_pending_count_fails_open_on_fold_error(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # The pending count re-reads the fold; a broken fold must cost only that
+    # one number (stays 0), never the stats command — same fail-open stance
+    # as the loops listing.
+    from daimon_briefing import capture, store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
+    def boom(events):
+        raise RuntimeError("corrupt fold")
+    # Scoped to the guarded call: store.resolutions itself is also used by
+    # _stats_events, deliberately unguarded there — breaking it globally
+    # tests a different section's (absent) error handling, not this one's.
+    monkeypatch.setattr(capture, "_pending_agent_candidates", boom)
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res["agent_pending"] == 0
+    assert res["human"] == 1  # the direct line scan is untouched by the fold
+
+
+def test_stats_resolutions_human_excludes_forget_and_log_events(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # forget's tombstone and daimon log's freeform row both default to
+    # source="cli" too, and forget's is_resolved reads True — neither is a
+    # `daimon resolve` decision, so both must stay out of the human count.
+    # Both go through the real CLI commands, not a raw store call with an
+    # arbitrary event kind — scar 0025: any kind other than tombstone or
+    # corroboration, written against a REAL item_ref, silently resolves it
+    # via the same fold this test exercises. `daimon log`'s ref is hardcoded
+    # "" (cli._cmd_log), which is what keeps it inert here, and routing
+    # through the command is the honest way to prove that rather than
+    # asserting it via a hand-picked literal.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.append_event("o-a", "forgotten:abc123", kind="tombstone", project_dir="/p/A")
+    assert cli.main(["log", "--text", "an ordinary log line", "--kind", "note",
+                     "--project", "/p/A"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res["human"] == 0
+
+
+def test_stats_resolutions_human_excludes_reopen_and_pending_candidate(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.append_event("o-a", "reopened", source="cli", project_dir="/p/A")
+    store.append_event("o-b", "resolving-candidate", source="agent",
+                       note="quote", project_dir="/p/A")
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res["human"] == 0
+    assert res["agent_verified"] == 0
+    assert res["agent_pending"] == 1
+
+
+def test_stats_resolutions_scoped_to_current_project(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
+    store.append_event("o-b", "resolved", source="cli", project_dir="/p/OTHER")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    rc = cli.main(["stats", "--json"])
+    assert rc == 0
+    res = json.loads(capsys.readouterr().out)["resolutions"]
+    assert res["human"] == 1
+
+
+def test_stats_plain_renders_resolutions_section(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["stats"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "resolutions (this project, lifetime):" in out
+    assert "human: 0" in out
+    assert "agent-verified: 0" in out
+    assert "agent-pending: 0" in out
+    assert "refused (this machine): 0" in out
+
+
+def test_stats_rich_renders_resolutions_section(tmp_checkpoint_dir, capsys, monkeypatch):
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    rc = cli.main(["stats"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "resolutions" in out.lower()
+    assert "agent-verified" in out.lower()
+    assert "agent-pending" in out.lower()
+    assert "refused (this machine)" in out.lower()
+
+
 # ---- retention: hook briefings vs deliberate re-reads ----
 
 
@@ -6825,6 +7017,116 @@ def test_resolve_by_agent_ambiguous_target_still_refuses_with_candidates(
     assert store.resolutions(project_dir="/p/A") == {}
     lines = (tmp_log_dir / "usage.log").read_text().splitlines()
     assert lines[0].split()[1] == "resolve:ambiguous"
+
+
+# ---- #480 slice 4: briefing renders the pending agent-claim flavor ----
+
+
+def test_brief_shows_agent_claim_annotation_unverified(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["working_context"]["open_questions"][0]
+    quote = "the user merged PR #6 from the GitHub UI"
+    rc = cli.main(["resolve", item["id"], "--by", "agent",
+                   "--evidence", quote, "--project", "/repo/x"])
+    assert rc == 0
+    capsys.readouterr()  # discard the "claim recorded" output
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f'⚠ agent claims resolved — unverified: "{quote}"' in out
+    assert f"confirm: daimon resolve {item['id']} --status resolved" in out
+    assert f"reject: daimon reverify {item['id']}" in out
+
+
+def test_brief_ordinary_item_unaffected_by_agent_claim_render(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    claimed = written["working_context"]["open_questions"][0]
+    untouched = written["working_context"]["open_questions"][1]
+    rc = cli.main(["resolve", claimed["id"], "--by", "agent",
+                   "--evidence", "shipped it", "--project", "/repo/x"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if untouched["text"] in ln]
+    assert lines
+    assert "agent claims resolved" not in lines[0]
+
+
+def test_brief_agent_verified_item_shows_no_claim_annotation(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #480 slice 4, required property: a VERIFIED (withheld) item renders
+    # nothing at all — no claim lines, and (since withhold drops it whole)
+    # not even the item's own text.
+    from daimon_briefing import capture, store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item = written["working_context"]["open_questions"][0]
+    quote = "the user merged PR #6 from the GitHub UI"
+    rc = cli.main(["resolve", item["id"], "--by", "agent",
+                   "--evidence", quote, "--project", "/repo/x"])
+    assert rc == 0
+    n = capture._verify_agent_resolutions("/repo/x", [{"content": quote}])
+    assert n == 1
+    capsys.readouterr()
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "agent claims resolved" not in out
+    assert item["text"] not in out
+
+
+def test_agent_claim_stamp_never_persisted(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # Mirrors test_transient_field_never_persisted (#14's own stamp-hygiene
+    # test): the `_agent_claim` stamp lives ONLY on withhold's returned copy.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    item_id = written["working_context"]["open_questions"][0]["id"]
+    rc = cli.main(["resolve", item_id, "--by", "agent",
+                   "--evidence", "the deploy finished clean",
+                   "--project", "/repo/x"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    capsys.readouterr()
+
+    path = store.project_latest_path("/repo/x")
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert "_agent_claim" not in json.dumps(on_disk)
+
+
+def test_loops_marks_pending_agent_claim(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    claimed_id = cp["working_context"]["open_questions"][0]["id"]
+    other_id = cp["working_context"]["open_questions"][1]["id"]
+    rc = cli.main(["resolve", claimed_id, "--by", "agent",
+                   "--evidence", "shipped it"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = cli.main(["loops"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    claim_line = next(ln for ln in lines if claimed_id in ln)
+    other_line = next(ln for ln in lines if other_id in ln)
+    assert "(agent claim pending)" in claim_line
+    assert "(agent claim pending)" not in other_line
 
 
 # ---- #103: daimon reverify — evidence-gated reopen ----
