@@ -1187,32 +1187,96 @@ def _seen_path(session: str):
     return config.recall_seen_dir() / f"{session}.json"
 
 
-def _load_seen(path) -> tuple[set, set]:
-    """(origin session ids, content keys) already injected this host session.
+# Sentinel for "argument not supplied", where None is itself a meaningful
+# value: an unknown age (never gate) and a disabled origin cooldown both use
+# None deliberately, so neither can double as "use the default".
+_UNSET = object()
 
-    Two on-disk shapes are read. The pre-#451 file is a flat JSON list of
-    origin ids; it loads as origins with NO content keys, so an in-flight
-    session keeps every suppression it had and simply starts collecting
-    content keys from its next injection. The current shape is
-    {"origins": [...], "content_keys": [...]}. Anything else — corrupt,
-    truncated, a bare scalar — is state we cannot trust, and cooldown is
-    best-effort: fall open to an empty set and pay one extra suggestion."""
+# Rows ONE prior session may supply across a host session (not per prompt —
+# _INJECT_BUDGET already caps that at 2). Was effectively 1: injecting a row
+# retired its whole origin.
+#
+# Measured on the replay corpus, the rows that ban was suppressing are the
+# GOOD ones: lifting it to 3 restores 138 injections of which 40 are <=1d and
+# only 3 are older than a week — an age mix whose calibrated relevance is ~39%
+# against a ~20% baseline. The ban was spending its suppression on the freshest
+# material in the store.
+#
+# 3 is a judgement bounded by evidence, not a measured optimum: 2 and "no cap"
+# are both defensible (they recover 116 and 160 rows at 37% and 43%). The cap
+# exists for the concern the ban encoded — one dense prior session must not
+# crowd out everything else — and unlimited lets a single origin supply 7 rows
+# in one working session. Crowding harm itself is UNMEASURED, so the cap is
+# deliberately conservative rather than tuned.
+_ORIGIN_BUDGET = 3
+
+
+def cooled_origins(origin_counts: dict, budget=_UNSET) -> set:
+    """Origins that have spent their budget and must not be offered again.
+
+    ONE definition, called by the injection path and by the replay harness —
+    the same reason #491 extracted the age gate. A hand-copied cooldown drifts,
+    and a harness enforcing last week's cooldown reports confident numbers
+    about a system that no longer exists.
+
+    #500: this used to be a session-wide BAN. Injecting a single row retired
+    its whole origin, so a decision about one row silently cost every other row
+    that session could supply — and any change upstream reshuffled which
+    sessions got burned. Measured while shipping #491, 12 injections <=7d old
+    vanished that way, including a 1-day-old exact-match decision that appeared
+    nowhere else in the run. The age gate cannot have touched them.
+
+    A budget keeps the intent the ban encoded — one dense prior session must
+    not crowd out everything else — at the granularity the decision is actually
+    made at. `budget=None` disables origin cooldown entirely (the measurement
+    arm); `budget=1` is the pre-#500 ban, kept exactly reachable so the change
+    is provably behaviour-preserving at the old default.
+    """
+    # Resolved at CALL time, not bound as a def-time default: a default
+    # argument freezes the module constant at import and silently ignores any
+    # later change, which makes the knob untunable and every sweep over it a
+    # measurement of the same arm.
+    if budget is _UNSET:
+        budget = _ORIGIN_BUDGET
+    if budget is None:
+        return set()
+    return {sid for sid, n in origin_counts.items() if n >= budget}
+
+
+def _load_seen(path) -> tuple[dict, set]:
+    """(origin session id -> injected count, content keys) for this host
+    session.
+
+    Three on-disk shapes are read. The pre-#451 file is a flat JSON list of
+    origin ids; the pre-#500 file is {"origins": [...], "content_keys": [...]}.
+    Neither records a per-origin COUNT, so both load as EXHAUSTED (budget
+    reached) rather than as one: guessing low would hand an in-flight session
+    extra slots it may already have spent, and an upgrade must never loosen
+    suppression a session already earned. The current shape carries
+    {"origins": {sid: count}, ...}.
+
+    Anything else — corrupt, truncated, a bare scalar — is state we cannot
+    trust, and cooldown is best-effort: fall open and pay one extra
+    suggestion."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, list):
-            return {str(s) for s in raw}, set()
-        return ({str(s) for s in raw["origins"]},
-                {str(k) for k in raw["content_keys"]})
-    except (OSError, json.JSONDecodeError, TypeError, KeyError):
-        return set(), set()
+            return {str(s): _ORIGIN_BUDGET for s in raw}, set()
+        origins = raw["origins"]
+        keys = {str(k) for k in raw["content_keys"]}
+        if isinstance(origins, dict):
+            return ({str(s): int(n) for s, n in origins.items()}, keys)
+        return ({str(s): _ORIGIN_BUDGET for s in origins}, keys)
+    except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError):
+        return {}, set()
 
 
-def _save_seen(path, origins: set, content_keys: set) -> None:
+def _save_seen(path, origin_counts: dict, content_keys: set) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"origins": sorted(origins),
-                                    "content_keys": sorted(content_keys)}),
-                        encoding="utf-8")
+        path.write_text(json.dumps(
+            {"origins": {s: origin_counts[s] for s in sorted(origin_counts)},
+             "content_keys": sorted(content_keys)}), encoding="utf-8")
         # Opportunistic prune: cooldown state for long-dead sessions.
         cutoff = time.time() - _SEEN_PRUNE_SECONDS
         for p in path.parent.iterdir():
@@ -1223,9 +1287,6 @@ def _save_seen(path, origins: set, content_keys: set) -> None:
                 pass
     except OSError:
         pass  # cooldown is best-effort; losing it means one extra suggestion
-
-
-_UNSET = object()   # "compute it yourself"; None is a MEANINGFUL age here
 
 
 def _row_age_days(m, now: float):
@@ -1340,11 +1401,12 @@ def _cmd_recall_inject(args) -> int:
             if sid:
                 exclude.add(str(sid))
         seen_file = _seen_path(session)
-        seen_origins, seen_keys = (_load_seen(seen_file) if seen_file
-                                   else (set(), set()))
+        origin_counts, seen_keys = (_load_seen(seen_file) if seen_file
+                                    else ({}, set()))
         matches = recall.suggest(prompt, project_dir=project,
                                  current_session=session,
-                                 exclude_sessions=exclude | seen_origins,
+                                 exclude_sessions=(
+                                     exclude | cooled_origins(origin_counts)),
                                  limit=_INJECT_FETCH)
         # #451: an origin id is not a content identity. The same claim carried
         # by two checkpoints (sibling-id copies — the read-side twin of the
@@ -1402,9 +1464,14 @@ def _cmd_recall_inject(args) -> int:
         for m in chosen:
             print(_suggest_line(m, terms, now))
         if seen_file:
-            _save_seen(seen_file,
-                       seen_origins | {str(m["session_id"]) for m in chosen},
-                       seen_keys | chosen_keys)
+            # #500: count what each origin supplied instead of retiring it
+            # outright, so a later, stronger row from the same session stays
+            # reachable until that session has had its share.
+            spent = dict(origin_counts)
+            for m in chosen:
+                sid = str(m["session_id"])
+                spent[sid] = spent.get(sid, 0) + 1
+            _save_seen(seen_file, spent, seen_keys | chosen_keys)
     except Exception:  # noqa: BLE001 — see docstring: fail-open, always rc 0
         pass
     return 0
