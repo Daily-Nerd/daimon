@@ -243,6 +243,18 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
                              f"--status {wc.get('status') or 'resolved'}\n"
                              f"    reject: daimon reverify {item_id}")
                 body.append(flag + "\n", style="yellow")
+            claim = i.get("_agent_claim")
+            if claim:
+                # #480 slice 4: parity with briefing._line's agent-claim flag,
+                # same repeated-here reasoning as the candidate/worldcheck
+                # blocks above (this panel builds its own Text body).
+                item_id = i.get("id") or "?"
+                quote = briefing._truncate_agent_claim(claim)
+                body.append(
+                    f'    ⚠ agent claims resolved — unverified: "{quote}"\n'
+                    f"    confirm: daimon resolve {item_id} --status resolved\n"
+                    f"    reject: daimon reverify {item_id}\n",
+                    style="yellow")
         if key == "decisions":
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:
@@ -1055,6 +1067,18 @@ def _plain_stats(data: dict) -> None:
         print("verification (this project):")
         print(f"  rejections: {v['total']}  " + ", ".join(
             f"{k} {n}" for k, n in sorted(v["by_check"].items())))
+    res = data.get("resolutions")
+    if res:
+        # #480 slice 5: the credit block — who is closing loops. Always shown
+        # (like events, unlike verification's non-zero gate): zero here is
+        # the design's own pre-registered failure signal, not noise.
+        print("resolutions (this project, lifetime):")
+        print(f"  human: {res['human']}  agent-verified: {res['agent_verified']}  "
+              f"agent-pending: {res['agent_pending']}")
+        # #477 lesson: refused comes from usage.log, a DIFFERENT (per-machine)
+        # population than the three counters above (per-project) — labeled
+        # apart, on its own line, never summed with them.
+        print(f"  refused (this machine): {res['refused']}")
 
 
 def _rich_stats(data: dict) -> None:
@@ -1177,3 +1201,19 @@ def _rich_stats(data: dict) -> None:
             ver_table.add_row(check, str(n))
         ver_table.add_row("total", str(v["total"]))
         console.print(ver_table)
+
+    res = data.get("resolutions")
+    if res:
+        # #480 slice 5: mirrors the plain renderer — always shown, and the
+        # refused row keeps its (this machine) label so the two populations
+        # never read as one number (#477).
+        res_table = Table(title="resolutions (this project, lifetime)",
+                          title_justify="left", show_header=True,
+                          header_style="bold")
+        res_table.add_column("metric")
+        res_table.add_column("value")
+        res_table.add_row("human", str(res["human"]))
+        res_table.add_row("agent-verified", str(res["agent_verified"]))
+        res_table.add_row("agent-pending", str(res["agent_pending"]))
+        res_table.add_row("refused (this machine)", str(res["refused"]))
+        console.print(res_table)
