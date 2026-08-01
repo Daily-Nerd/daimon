@@ -701,7 +701,7 @@ def test_cli_status_json_shape(
                          "siblings", "health", "team", "crash", "disabled",
                          "skipped_recent", "recall_error", "recall_index",
                          "receipts", "capture_alarm", "hook_drift",
-                         "rescue_gap", "forget_hits"}
+                         "rescue_gap", "rescue_posture", "forget_hits"}
     assert data["capture_alarm"] is None  # #265 FAIL-only probe silent by default
     assert data["forget_hits"]["count"] == 0  # #404 nothing suppressed yet
     assert data["team"] is None  # no team remote configured -> explicit null (#113)
@@ -5129,6 +5129,187 @@ def test_status_no_rescue_warning_when_command_resolves(tmp_checkpoint_dir,
     cli.main(["status"])   # rc reflects checkpoint health, not this warning
     out = capsys.readouterr().out
     assert "no fallback backend resolves" not in out
+
+
+# ---- #475 part 2: rescue posture — the fact missing from the fallback
+# counter is whether a rescue was ever POSSIBLE, not just whether it fired.
+
+
+@pytest.mark.parametrize(
+    "backend, fallback, api_key, command, expected_posture",
+    [
+        ("auto", "1", None, None, "no-backend"),
+        ("command", "1", "k", ("claude -p", "text", "stdin"), "none"),
+        ("claude-cli", "1", "k", ("claude -p", "text", "stdin"), "none"),
+        ("litellm", "0", "k", ("claude -p", "text", "stdin"), "disabled"),
+        ("litellm", "1", "k", ("claude -p", "text", "stdin"), "covered"),
+        ("litellm", "1", "k", None, "gap"),
+    ],
+    ids=["no-backend", "none-command", "none-claude-cli", "disabled",
+         "covered", "gap"],
+)
+def test_cli_status_rescue_gap_matches_posture_across_all_rows(
+        tmp_checkpoint_dir, monkeypatch, backend, fallback, api_key, command,
+        expected_posture):
+    # Design test 7: rescue_gap must stay JSON-back-compatible across every
+    # posture row — it is exactly `posture == "gap"`, never anything else.
+    from daimon_briefing import config, llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", backend)
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", fallback)
+    monkeypatch.setattr(config, "llm_api_key", lambda: api_key)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: command)
+    payload, _ = cli.status_payload(None)
+    assert payload["rescue_posture"] == expected_posture
+    assert payload["rescue_gap"] == (expected_posture == "gap")
+
+
+def test_status_none_warning_silent_when_no_window_errors(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch, capsys):
+    # #349/#477 shape: an operator who pinned `command` deliberately must not
+    # see a permanent warning about a permanent property of their own
+    # choice. No in-window errors -> no line at all (#84 rule).
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    # Anchor the state FIRST. Asserting only the absence of a string passes
+    # vacuously — it would still pass if the posture never reached "none", if
+    # the window were not actually error-free, or if the warning did not exist
+    # at all. Pin both halves of the gate's input before testing its output.
+    payload, _ = cli.status_payload()
+    assert payload["rescue_posture"] == "none"
+    assert cli._stats_capture()["window"]["errors"] == 0
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    assert "no rescue path" not in out
+
+
+def test_status_none_warning_fires_when_window_has_errors(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch, capsys):
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "error: boom (transcript: /t/A.jsonl) after 3s",
+    ])
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    assert "⚠ the `command` backend has no rescue path" in out
+    assert "Run `daimon status` for the recorded failure cause." in out
+
+
+def test_status_covered_disabled_no_backend_stay_silent(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch, capsys):
+    # covered / disabled / no-backend never warn, even with in-window errors
+    # (#84: "no line, no false alarms" — these are not rescue-gap states).
+    from daimon_briefing import config, llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "k")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "error: boom (transcript: /t/A.jsonl) after 3s",
+    ])
+    # Anchor the state: errors ARE present in the window, so silence here is
+    # the posture's doing and not an empty fixture. Without this the assertion
+    # below passes vacuously.
+    payload, _ = cli.status_payload()
+    assert payload["rescue_posture"] == "covered"
+    assert cli._stats_capture()["window"]["errors"] > 0
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    assert "no rescue path" not in out
+
+
+def test_stats_plain_fallback_line_suffix_covered(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import config, llm, store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "k")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "fallback: attempted 0, succeeded 0  (rescue available, not needed)" in out
+
+
+def test_stats_rich_fallback_line_suffix_covered(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import config, llm, store
+    monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "k")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "rescue available, not needed" in out
+
+
+def test_stats_plain_fallback_line_suffix_none(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import llm, store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert ("fallback: attempted 0, succeeded 0  (no rescue path — a "
+            "`command` backend has no fallback direction)") in out
+
+
+def test_stats_rich_fallback_line_suffix_none(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import llm, store
+    monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    store.write_checkpoint("S1", sample_checkpoint)
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    # Rich wraps the table cell at column width, so the phrase can land on
+    # two lines — assert the halves rather than one brittle exact substring
+    # (the file's own convention for rich output: content, not format).
+    assert "no rescue path" in out
+    assert "no fallback direction" in out
+
+
+def test_stats_plain_fallback_line_historical_disclaimer_when_posture_none(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
+    # The history/config trap (#477 shape): an install that ran on litellm
+    # and then switched to `command` shows historical attempts under a
+    # current no-rescue posture. Do not infer which config produced them —
+    # render both facts and let them disagree visibly.
+    from daimon_briefing import llm, store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    lines = []
+    for i in range(30):
+        lines.append(f"{_iso(now - timedelta(days=1))} WARNING daimon_briefing.llm: "
+                     "llm.fallback backend=command (litellm failed)")
+        if i < 6:
+            lines.append(f"wrote checkpoint: /c/{i}.json (took 9s) [fallback backend]")
+    _write_log(tmp_log_dir, lines)
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "fallback: attempted 30, succeeded 6" in out
+    assert ("counts are historical; the current `command` backend has no "
+            "rescue path") in out
+    # The plain "no rescue path" suffix must NOT also appear standalone —
+    # the historical disclaimer replaces it, it doesn't sit alongside it.
+    assert out.count("no rescue path") == 1
 
 
 def test_stats_capture_does_not_dedupe_spawn_lines(tmp_log_dir):

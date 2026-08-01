@@ -253,6 +253,59 @@ def resolve_backend() -> dict:
     return {"backend": "litellm", "source": "auto-none"}
 
 
+def rescue_posture() -> str:
+    """Whether a rescue path exists for the CURRENTLY CONFIGURED primary
+    (daimon#475 part 2) — derived from resolve_backend(), never re-derived.
+
+    Field evidence: a `command`-backend install ran a 78% capture error rate
+    for 14 days while `daimon stats` showed `attempted 0, succeeded 0` —
+    indistinguishable from "a rescue existed and was never needed". Posture
+    is the missing fact: `chat()` returns from `_chat_command` at the top of
+    its dispatch, before the litellm/fallback try block even exists, so a
+    `command` primary has NO rescue direction by construction — no flag can
+    conjure one.
+
+    Five states, checked in this order (order matters):
+    - "none": the resolved backend is "command" or "claude-cli" — both
+      dispatch through _chat_command, which has no fallback branch at all.
+      Checked FIRST because a command backend needs no credentials, so the
+      no-backend test below must not claim it. An unknown backend string
+      (config.llm_backend() is free text) is NOT "command" or "claude-cli",
+      so it falls through to the litellm-family checks below — mirroring
+      chat()'s own dispatch, which treats any other string as the litellm
+      branch. Same rule, same edge case, same answer: no crash, no sixth
+      state.
+    - "no-backend": litellm family with neither credentials nor a resolvable
+      command — nothing can serve a call, so there is no rescue question to
+      answer and this must NOT nag about a missing fallback.
+
+      This deliberately does NOT key on resolve_backend()'s "auto-none"
+      source, which covers only the `auto` route to that state. Explicit
+      `DAIMON_LLM_BACKEND=litellm` with no key reaches the identical reality
+      by a different route, and keying on the source alone reported it as
+      "gap" — advising the operator to install a fallback when what they
+      actually lack is an API key. Verified against every backend/key/
+      fallback/command combination: the source-only test changed
+      rescue_gap's answer on real configurations, this one does not.
+    - "disabled": litellm family, but config.llm_fallback() is off — the
+      operator turned rescue off deliberately.
+    - "covered": litellm family, fallback on, and a command backend
+      resolves — a rescue path exists.
+    - "gap": litellm family, fallback on, nothing resolves — the #341
+      warning case.
+    """
+    resolved = resolve_backend()
+    if resolved["backend"] in ("command", "claude-cli"):
+        return "none"
+    if not config.llm_api_key() and _resolve_command() is None:
+        return "no-backend"
+    if not config.llm_fallback():
+        return "disabled"
+    if _resolve_command() is not None:
+        return "covered"
+    return "gap"
+
+
 def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """Dispatch to the configured backend. litellm (default) falls back to a
     command backend on ChatError when fallback is enabled and one resolves."""

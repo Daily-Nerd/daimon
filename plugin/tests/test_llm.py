@@ -714,6 +714,107 @@ def test_resolve_backend_agrees_with_chat_dispatch(
     assert invoked["backend"] == _dispatch_family(llm.resolve_backend()["backend"])
 
 
+# ---- #475 slice 2: rescue_posture() — whether a rescue path exists for the
+# CURRENT configuration, derived from resolve_backend() (never re-derived).
+
+
+def test_rescue_posture_no_backend(monkeypatch):
+    # resolve_backend()'s auto-none branch: nothing resolves at all. Must read
+    # as "no-backend", never "gap" — a machine with no LLM configured at all
+    # should not nag about a missing fallback.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
+    monkeypatch.setattr(config, "llm_api_key", lambda: None)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    assert llm.rescue_posture() == "no-backend"
+
+
+def test_rescue_posture_no_backend_for_explicit_litellm_without_a_key(monkeypatch):
+    # The SAME reality as the auto-none case, reached by a different route.
+    # Keying "no-backend" on resolve_backend()'s source alone reported this
+    # config as "gap" — telling an operator to install a fallback when what
+    # they actually lack is an API key, and flipping rescue_gap's answer on a
+    # real configuration. The condition is "no credentials AND no command",
+    # not "how did we get here".
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "llm_api_key", lambda: None)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    assert llm.rescue_posture() == "no-backend"
+
+
+def test_rescue_posture_keyless_litellm_with_a_command_is_covered(monkeypatch):
+    # No key, but a command resolves and fallback is on: every call fails over
+    # to the command and succeeds. That is a rescue path, not an absent
+    # backend — the no-backend test must require BOTH halves to be missing.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "llm_api_key", lambda: None)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    assert llm.rescue_posture() == "covered"
+
+
+def test_rescue_posture_none_for_explicit_command_backend(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    assert llm.rescue_posture() == "none"
+
+
+def test_rescue_posture_none_for_explicit_claude_cli_backend(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    assert llm.rescue_posture() == "none"
+
+
+def test_rescue_posture_command_primary_stays_none_even_with_fallback_and_key(monkeypatch):
+    # Test 3 of the design's plan: flags cannot conjure a rescue direction
+    # that does not exist. A `command` primary has no fallback direction by
+    # construction, regardless of DAIMON_LLM_FALLBACK or an available litellm
+    # key.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
+    assert llm.rescue_posture() == "none"
+
+
+def test_rescue_posture_disabled(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "0")
+    assert llm.rescue_posture() == "disabled"
+
+
+def test_rescue_posture_covered(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    assert llm.rescue_posture() == "covered"
+
+
+def test_rescue_posture_gap(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    assert llm.rescue_posture() == "gap"
+
+
+def test_rescue_posture_unknown_backend_string_joins_litellm_family(monkeypatch):
+    # chat() treats anything not in ("command", "claude-cli") as the litellm
+    # branch (config.llm_backend() is free text) — posture must mirror that
+    # exactly: no crash, no sixth state, same litellm-family resolution.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "bogus")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    # A key must be present to exercise the FAMILY question. Without one the
+    # honest answer is "no-backend" regardless of which family the string
+    # joins, and this test would be asking two questions at once.
+    monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    assert llm.rescue_posture() == "covered"
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    assert llm.rescue_posture() == "gap"
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "0")
+    assert llm.rescue_posture() == "disabled"
+
+
 # ---- #28 S6: fallback must be observable, not just logged to a dead-drop ----
 
 
