@@ -255,6 +255,10 @@ def test_pending_agent_candidates_filters_source_and_status():
         "o-c": {"status": "supersede-candidate:o-x", "source": "serializer"},
         "o-d": {"status": "resolving-candidate", "source": "agent", "note": "   "},
         "o-e": {"status": "resolving-candidate", "source": "agent"},  # no note at all
+        # right status, WRONG source: a hand-written candidate-status event
+        # from the CLI must not enter the serializer's verification set —
+        # only the --by agent path earns the pending classification.
+        "o-f": {"status": "resolving-candidate", "source": "cli", "note": "quote"},
         "not-a-dict": "garbage",
     }
     out = capture._pending_agent_candidates(events)
