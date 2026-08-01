@@ -1817,3 +1817,76 @@ def test_lowercased_marker_is_not_machine():
     # Literal and case-sensitive on purpose: the hosts emit exactly one casing,
     # and loosening it only buys false skips.
     assert recall.is_machine_prompt("[system notification] all done") is False
+
+
+# ---- #490: the coverage/hit-count gates must match on TOKEN BOUNDARIES ----
+
+
+def test_match_units_keeps_compounds_and_inflections_kills_mid_word():
+    # Retrieval is FTS5 MATCH (unicode61, strict token equality); the gates
+    # counted SUBSTRING containment, a strict superset, so every threshold
+    # stated in "distinct salient terms" was read off an inflated statistic —
+    # one-sided, always permissive.
+    #
+    # Raw token equality is the wrong correction here: the tokenizer is
+    # \w[\w-]*, so compound identifiers are SINGLE tokens and substring
+    # matching was the only reason a query for `token` ever reached
+    # `auth_token`. Split on identifier boundaries and stem instead.
+    keep = [("daimon", "daimon_team"), ("output", "empty-output"),
+            ("merge", "merged"), ("user", "users"), ("token", "auth_token"),
+            ("start", "session-start"), ("status", "statuses"),
+            ("command", "commands")]
+    kill = [("one", "honest"), ("read", "already"), ("cli", "client"),
+            ("port", "transport"), ("api", "rapid"), ("test", "latest"),
+            ("key", "monkey"), ("sent", "representative")]
+    for term, text in keep:
+        assert recall.credited_terms({term}, text) == {term}, \
+            f"{term} should match {text}"
+    for term, text in kill:
+        assert recall.credited_terms({term}, text) == set(), \
+            f"{term} must NOT match {text}"
+
+
+def test_match_units_folds_accents_like_salient_terms():
+    # Same fold as the query side, or accented content FTS5 already matched
+    # goes uncounted (#27).
+    assert recall.credited_terms({"sesion"}, "la sesión anterior") == {"sesion"}
+
+
+def test_suggest_does_not_credit_a_mid_word_substring(tmp_checkpoint_dir,
+                                                      monkeypatch):
+    # The gate is session-level >=2 distinct terms. Here exactly one term
+    # ("gateway") genuinely matches; "port" appears only inside "transport",
+    # which used to buy the second term and the injection with it.
+    store.write_checkpoint(
+        "S-sub",
+        _cp125("S-sub", questions=[{
+            "text": "the gateway transport layer reconnects on idle",
+            "trust": "inferred", "importance": 7,
+            "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("which gateway port should the proxy bind",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out == [], f"mid-word substring bought a slot: {out}"
+
+
+def test_suggest_still_credits_a_compound_identifier(tmp_checkpoint_dir,
+                                                     monkeypatch):
+    # The other direction, and the reason raw token equality was rejected: in
+    # a code corpus the nouns are compound identifiers, and a query for the
+    # bare word must still reach them.
+    store.write_checkpoint(
+        "S-comp",
+        _cp125("S-comp", questions=[{
+            "text": "auth_token refresh races with the session-start hook",
+            "trust": "inferred", "importance": 7,
+            "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("the token refresh during session start",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-comp"
+    assert out[0]["term_hits"] >= 2

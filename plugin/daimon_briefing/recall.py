@@ -817,6 +817,97 @@ def _fold(tok: str) -> str:
         c for c in unicodedata.normalize("NFD", tok) if not unicodedata.combining(c))
 
 
+_TOKEN_RE = re.compile(r"\w[\w\-]*")
+# Identifier separators + camelCase: `auth_token`, `session-start`, `parseJSON`.
+_SUBTOKEN_SPLIT_RE = re.compile(r"[_\-./:]+")
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+# Cheap pre-check: does this token have any boundary worth splitting on?
+_SPLITTABLE_RE = re.compile(r"[_\-./:]|[a-z0-9][A-Z]")
+# Longest first so `-ies` is tried before `-s`.
+_INFLECTIONS = ("ings", "edly", "ing", "ies", "ers", "est", "ed", "es", "er",
+                "ly", "s", "d")
+_STEM_MIN = 3   # never stem down to a stub shorter than a salient term
+
+
+def _match_units(text: str) -> set:
+    """Every whole word-unit a salient term may legitimately match (#490).
+
+    Retrieval is FTS5 `MATCH` under unicode61 — strict token equality — while
+    the gates that judge it (`_MIN_OVERLAP` here, cli's `_STALE_MIN_HITS` via
+    `term_hits`) used substring containment. Substring hits are a strict
+    superset of token hits, so every threshold stated in "distinct salient
+    terms" was evaluated on an inflated statistic, one-sided and always
+    permissive: `port` was credited against `transport`, `one` against
+    `honest`, `cli` against `client`.
+
+    Raw token equality is the wrong correction. `salient_terms` tokenizes on
+    `\\w[\\w-]*`, so compound identifiers are SINGLE tokens and substring
+    matching was the only reason a query for `token` reached `auth_token` — in
+    a code corpus that is the vocabulary, not noise. Measured on the real
+    corpus, only ~14% of substring-only credits were genuine mid-word false
+    positives; the rest were compounds (~72%) and inflections (~15%).
+
+    So: split each token on identifier separators and camelCase, add cheap
+    inflection stems, and credit a term only when it equals a whole unit. A
+    term is never credited for matching the middle of a word.
+    """
+    units = set()
+    for m in _TOKEN_RE.finditer(text):
+        raw = m.group(0)
+        # Fast path: this runs over every candidate row on the per-prompt
+        # critical path, and _fold's NFD normalize dominates. Almost every
+        # token is plain ASCII with no identifier boundary, so check for both
+        # before paying for either.
+        low = raw.lower() if raw.isascii() else _fold(raw).lower()
+        units.add(low)
+        if not _SPLITTABLE_RE.search(raw):
+            continue
+        for part in _SUBTOKEN_SPLIT_RE.split(_CAMEL_RE.sub("-", raw)):
+            if part:
+                units.add(part.lower() if part.isascii()
+                          else _fold(part).lower())
+    return units
+
+
+def _term_variants(term: str) -> set:
+    """Inflected forms of ONE salient term.
+
+    Morphology is folded on the QUERY side, not the haystack side, and that is
+    a performance decision with teeth: `suggest` compares <=24 terms against up
+    to 256 candidate rows, so expanding the terms once per prompt costs ~24
+    small sets while stemming every haystack token costs thousands. Measured on
+    real rows, haystack-side stemming ran ~7x slower than the substring
+    matching it replaced; this direction is ~1.4x.
+
+    Over-generous in one direction only: a form that is not a real word can be
+    generated (`statuss`), which at worst credits a term a stemmer would also
+    credit. It never removes a form.
+    """
+    forms = {term}
+    for suf in _INFLECTIONS:
+        forms.add(term + suf)
+        if term.endswith(suf) and len(term) - len(suf) >= _STEM_MIN:
+            base = term[:-len(suf)]
+            forms.add(base)
+            if suf == "ies":
+                forms.add(base + "y")
+            elif suf in ("es", "ed", "er", "est", "ing"):
+                forms.add(base + "e")
+    if term.endswith("y") and len(term) > _STEM_MIN:
+        forms.add(term[:-1] + "ies")
+    if not term.endswith("e"):
+        forms.add(term + "es")
+    else:
+        forms.add(term + "s")
+    return forms
+
+
+def credited_terms(terms, text: str) -> set:
+    """Which of `terms` the text legitimately answers, on word boundaries."""
+    units = _match_units(text)
+    return {t for t in terms if _term_variants(t) & units}
+
+
 def salient_terms(prompt: str) -> list[str]:
     """Prompt -> deduped lowercase retrieval terms, prompt order preserved.
     Tokens are word runs (unicode: "sesión" stays one token, never "sesi"+"n";
@@ -919,6 +1010,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     if current_session:
         excluded.add(str(current_session))
 
+    # Term variants are computed ONCE per prompt (<=24 terms) and reused across
+    # every candidate row — the whole point of folding morphology on the query
+    # side rather than the haystack side (#490).
+    variants = {t: _term_variants(t) for t in terms}
     expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
     try:
         _ensure_fresh()
@@ -958,11 +1053,13 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     for r in rows:
         if r["session_id"] in excluded:
             continue
-        # Fold the haystack like the terms (#27): salient_terms folds
-        # "sesión"->"sesion", so an unfolded haystack silences accented
-        # content that FTS5 (remove_diacritics) already matched.
-        haystack = _fold(f"{r['text']} {r['quote'] or ''}".lower())
-        hit = {t for t in terms if t in haystack}
+        # #490: match on WORD BOUNDARIES, not substrings — the candidate set
+        # came from a token-based MATCH, so a gate counting substrings reads a
+        # statistic the retrieval never granted. _match_units folds the
+        # haystack the same way salient_terms folds the query (#27), so
+        # accented content FTS5 already matched still counts.
+        hit = {t for t, forms in variants.items()
+               if forms & _match_units(f"{r['text']} {r['quote'] or ''}")}
         if not hit:
             continue
         coverage.setdefault(r["session_id"], set()).update(hit)
