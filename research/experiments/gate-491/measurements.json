@@ -1,0 +1,57 @@
+{
+  "issue": 491,
+  "claim": "the age gate's open-question exemption admits a class that performs no better than the rows the gate already blocks",
+  "privacy": "AGGREGATES ONLY. The graded units and every replayed prompt are the maintainer's own transcripts and are never committed. Counts and intervals are reproducible from the harness; the text is not shareable.",
+  "index_composition": {
+    "question_rows": 1343,
+    "with_logged_resolution": 63,
+    "exempt_share_pct": 95.3,
+    "note": "superseded_by is also set by typed supersedes links, so rows with an actual logged resolution are <= the reported count \u2014 conservative in the direction that weakens the finding"
+  },
+  "blind_grading": {
+    "n": 30,
+    "relevant": 3,
+    "tangential": 16,
+    "irrelevant": 11,
+    "relevant_pct": 10.0,
+    "wilson_95_ci_pct": [
+      3.5,
+      25.6
+    ],
+    "sample": "deterministic, seed 491, drawn from exemption-admitted injections in a snapshot-correct harness replay; ages 8-42d, median 18",
+    "judge": "blind to the hypothesis, to arm structure, and to any prior grading; wrote verdicts before the key was opened",
+    "interpretation": "10% sits inside the 6-10% band the gate already blocks for stale rows. The 40% bar originally pre-registered is NOT used: it is not derivable from anything measured, and the gate admits the 2-7d band at ~24%, so 40% held exempt rows to a higher standard than the policy applies to rows it keeps."
+  },
+  "rejected_alternatives": {
+    "carry_depth": {
+      "exempt_single_checkpoint_pct": 33,
+      "earned_single_checkpoint_pct": 54,
+      "verdict": "separates the WRONG way \u2014 the exempt class is the more re-asserted one"
+    },
+    "frontier_by_content": {
+      "exempt": "1/68",
+      "earned": "15/272",
+      "verdict": "would gate 67 of 68, indistinguishable from removal, and points the same wrong way",
+      "caveat": "recall.suggest does not SELECT frontier (only search does), so this describes a hypothetical column, not shipped behaviour"
+    }
+  },
+  "corpus_effect": {
+    "dataset": "659 recorded prompts, 342 unique, 215 replayed (127 machine-skipped)",
+    "injections_before": 340,
+    "injections_after": 274,
+    "exemption_admitted_injections_before": 68,
+    "exemption_admitted_all_questions": true,
+    "exemption_admitted_pinned": 0,
+    "prompts_speaking_before": 189,
+    "prompts_speaking_after": 151,
+    "prompts_silenced": 38,
+    "prompts_newly_speaking": 0,
+    "note": "purely subtractive at the prompt level. The instrument measures precision of what IS injected and is structurally blind to the value of what is now withheld."
+  },
+  "not_measured": [
+    "relevance of the 38 prompts' lost injections (the silence cost)",
+    "whether the pinned exemption earns its keep \u2014 it fires zero times on this corpus, so it rests on #452's original observation",
+    "13 of the suppressed rows are <=7d old and were lost to per-session origin cooldown divergence rather than to the gate; filed separately"
+  ],
+  "reproduce": "research/experiments/recall-replay-ab/replay_ab.py --variant none against the maintainer's ~/.daimon; see that README for the resolution block (MDE 9.2pp at n=344) before reading any delta off a run"
+}

@@ -3352,9 +3352,12 @@ _AGE_FRESH_A = "ocelot pipeline warmup skips staging"
 _AGE_FRESH_B = "ocelot pipeline purge blocks staging"
 
 
-def _iso_days_ago(days: float) -> str:
+def _iso_days_ago(days: float, now: float | None = None) -> str:
+    """`now` pins the reference epoch so a test can assert against a fixed
+    clock; it defaults to wall time for the fixtures that seed real files."""
+    base = time.time() if now is None else now
     return time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                         time.gmtime(time.time() - days * 86400))
+                         time.gmtime(base - days * 86400))
 
 
 def _seed_aged(session, text, importance, *, days_old, kind="decision",
@@ -3442,8 +3445,8 @@ def test_recall_inject_stale_open_question_is_age_gated(
     # resolution" as "still open", and the premise was measured false: 1280 of
     # 1343 question rows (95.3%) carry no resolution, so survival is the
     # DEFAULT, not a signal. Blind-graded, the injections it admitted came back
-    # 3/30 = 10% relevant (95% CI [3.5%, 25.6%]) against a pre-registered 40%
-    # bar — the same band as the stale rows the gate already blocks.
+    # 3/30 = 10% relevant (95% CI [3.5%, 25.6%]) — inside the 6-10% band this
+    # gate already blocks, which is the argument that needs no invented bar.
     #
     # A question now clears the same bar as anything else its age. It is not
     # banned (see the >=3-hit test below); it just stops being waved through.
@@ -3464,13 +3467,18 @@ def test_recall_inject_stale_question_with_a_strong_match_still_injects(
     assert rc == 0 and _AGE_STRONG in out
 
 
-def test_recall_inject_superseded_question_is_age_gated(
+def test_recall_inject_resolved_question_with_a_strong_match_still_injects(
         tmp_checkpoint_dir, capsys, monkeypatch):
-    # ...but a RESOLVED question lost that evidence: the exemption reads the
-    # row's superseded_by, so it gates like any other stale low-hit item.
+    # #491 made the gate stop reading superseded_by (the exemption that
+    # consulted it is gone), which would leave the old "resolved question is
+    # gated" assertion a duplicate of the inverted test above plus dead
+    # scaffolding. Repurposed to the thing that IS now surprising and
+    # untested: a RESOLVED question that matches strongly still injects.
+    # #112 — an overturned decision is still evidence, ranked down and
+    # flagged, never hidden.
     from daimon_briefing import config, store
 
-    _seed_aged("S-q", _AGE_WEAK, 9, days_old=30, kind="question",
+    _seed_aged("S-q", _AGE_STRONG, 9, days_old=30, kind="question",
                item_id="o-452aaa")
     _seed_age_decoy()
     slug = store.project_slug("/repo/x")
@@ -3481,7 +3489,7 @@ def test_recall_inject_superseded_question_is_age_gated(
                     "item_ref": "o-452aaa", "status": "resolved",
                     "source": "cli"}) + "\n", encoding="utf-8")
     rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
-    assert rc == 0 and out == ""
+    assert rc == 0 and _AGE_STRONG in out
 
 
 def test_recall_inject_pinned_item_survives_age_gate(
@@ -8113,3 +8121,91 @@ def test_preflight_still_fails_litellm_no_key_when_nothing_resolves(monkeypatch)
     monkeypatch.setattr(llm, "_resolve_command", lambda: None)
     err = cli._preflight_error(Path("/t/x.md"))
     assert err is not None and "DAIMON_LLM_API_KEY" in err
+
+
+# ---- #491: age_gate_blocks is a CROSS-BOUNDARY contract ----
+# The replay harness imports this predicate instead of hand-copying the gate
+# (the copy silently kept the old policy through #491). That makes its
+# semantics an API: a change here alters what every future experiment
+# measures while the plugin suite stays green. Pinned directly, not only
+# through the injection path — which cannot reach the term_hits guard at all,
+# since recall.suggest sets term_hits on every row it returns.
+
+_GATE_NOW = 1_800_000_000.0
+
+
+def _row(**kw):
+    row = {"first_seen": _iso_days_ago(30, now=_GATE_NOW), "term_hits": 1,
+           "kind": "question"}
+    row.update(kw)
+    return row
+
+
+def test_age_gate_blocks_a_stale_weak_row():
+    assert cli.age_gate_blocks(_row(), _GATE_NOW) is True
+
+
+def test_age_gate_passes_a_stale_row_with_enough_hits():
+    assert cli.age_gate_blocks(
+        _row(term_hits=cli._STALE_MIN_HITS), _GATE_NOW) is False
+
+
+def test_age_gate_passes_anything_inside_the_age_window():
+    assert cli.age_gate_blocks(
+        _row(first_seen=_iso_days_ago(1, now=_GATE_NOW)), _GATE_NOW) is False
+
+
+def test_age_gate_exempts_pinned_however_stale_and_weak():
+    assert cli.age_gate_blocks(_row(pinned=True), _GATE_NOW) is False
+
+
+def test_age_gate_no_longer_exempts_an_unresolved_question():
+    # The #491 flip, asserted on the predicate itself: kind and superseded_by
+    # are not read at all any more.
+    assert cli.age_gate_blocks(_row(kind="question"), _GATE_NOW) is True
+    assert cli.age_gate_blocks(
+        _row(kind="question", superseded_by=""), _GATE_NOW) is True
+    assert cli.age_gate_blocks(
+        _row(kind="decision"), _GATE_NOW) is True
+
+
+@pytest.mark.parametrize("hits", [None, "3", 3.0, True, [], {}])
+def test_age_gate_fails_open_when_term_hits_is_not_an_int(hits):
+    # Unreachable through suggest(), which always sets an int — so this guard
+    # exists only for callers that do not, and only a direct test covers it.
+    # Absent match-strength evidence is not evidence of weakness: never gate.
+    # `True` is included deliberately: bool is an int subclass, and gating on
+    # it would compare True < 3 and silence the row.
+    assert cli.age_gate_blocks(_row(term_hits=hits), _GATE_NOW) is (
+        hits is True)
+
+
+@pytest.mark.parametrize("stamp", [None, "", "not-a-date", "2026-13-45",
+                                   "20260101", 17])
+def test_age_gate_fails_open_on_an_unusable_stamp(stamp):
+    # Same fail-open direction as unknown hits (#450): a missing or malformed
+    # first_seen is not evidence of staleness.
+    assert cli.age_gate_blocks(_row(first_seen=stamp), _GATE_NOW) is False
+
+
+def test_age_gate_fails_open_on_a_future_stamp():
+    future = _iso_days_ago(-30, now=_GATE_NOW)
+    assert cli.age_gate_blocks(_row(first_seen=future), _GATE_NOW) is False
+
+
+def test_age_gate_on_an_empty_row_never_silences():
+    assert cli.age_gate_blocks({}, _GATE_NOW) is False
+
+
+def test_age_gate_accepts_a_precomputed_age_and_agrees_with_itself():
+    # The caller hoists the age so the gate and the #452 stats bucket cannot
+    # read different clocks. Passing it must not change the verdict, and None
+    # must stay MEANINGFUL (unknown age -> never gate), which is why the
+    # sentinel is not None.
+    for row in (_row(), _row(term_hits=9), _row(pinned=True),
+                _row(first_seen="garbage"), {}):
+        computed = cli._row_age_days(row, _GATE_NOW)
+        assert cli.age_gate_blocks(row, _GATE_NOW) == \
+            cli.age_gate_blocks(row, _GATE_NOW, age_days=computed)
+    # an explicit None age is "unknown", not "compute it for me"
+    assert cli.age_gate_blocks(_row(), _GATE_NOW, age_days=None) is False
