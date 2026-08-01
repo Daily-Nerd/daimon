@@ -2010,6 +2010,12 @@ def _cmd_audit_quotes(args) -> int:
         for sid, text in failures[:top]:
             lines.append(f"    [{sid}] {text[:80]}")
     print("\n".join(lines))
+    # #504: the only read-side verification verb recorded nothing, so there was
+    # no evidence either way about whether anyone reaches for it. The unpaired
+    # variant is a distinct event, not a detail of this one: a run that resolved
+    # no transcript verified nothing, and it is also how a host whose
+    # transcripts live outside `_find_audit_transcript`'s reach shows up at all.
+    _note_usage("audit-quotes:unpaired" if not paired else "audit-quotes")
     return 0
 
 
