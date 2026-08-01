@@ -1591,14 +1591,24 @@ def _status_world(project_arg=None) -> dict:
     # One-line pointer only when installed hook copies have drifted (#266);
     # silent on a clean machine. Cheap: hashes a handful of small files.
     hook_drift = _hook_drift_present()
-    # #341: a remote-gateway primary with no resolvable command backend has
-    # zero rescue coverage — surface it here, not in a post-mortem.
-    rescue_gap = bool(
-        config.llm_backend() in ("litellm", "auto")
-        and config.llm_api_key()
-        and config.llm_fallback()
-        and llm._resolve_command() is None
-    )
+    # #341/#475 part 2: whether a rescue path exists for the CURRENTLY
+    # CONFIGURED primary. llm.rescue_posture() is the single resolver (it
+    # calls resolve_backend(), the same decision chat() dispatches on) —
+    # rescue_gap is re-expressed through it rather than re-implementing the
+    # "auto" cascade inline a second time (two copies of one decision drift
+    # the moment either changes). rescue_gap keeps its EXACT existing
+    # meaning (posture == "gap") for JSON back-compat; rescue_posture is the
+    # richer value new consumers get.
+    rescue_posture = llm.rescue_posture()
+    rescue_gap = rescue_posture == "gap"
+    # #475 part 2: the "none" warning below is gated on real errors, not on
+    # posture alone (the #349/#477 false-positive shape) — an operator who
+    # pinned a `command` backend deliberately must not see a permanent
+    # warning about a permanent property of their own choice. The 14-day
+    # capture window _stats_capture() already computes is the same window
+    # `daimon stats` reports, so "no errors yet" here means the same thing
+    # it means there.
+    rescue_window_errors = _stats_capture()["window"]["errors"]
     health = _status_health(proj, glob, outstanding, siblings, now=now,
                             disabled=disabled)
     # ONE objective team line (#113), only when a team remote exists — the #84
@@ -1627,6 +1637,7 @@ def _status_world(project_arg=None) -> dict:
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
         "hook_drift": hook_drift, "rescue_gap": rescue_gap,
+        "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
         "forget_hits": forget_hits, "rc": rc,
     }
 
@@ -1644,6 +1655,7 @@ def status_payload(project_arg=None) -> tuple:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "rescue_posture": w["rescue_posture"],
         "forget_hits": w["forget_hits"],
     }
     return payload, w["rc"]
@@ -1666,6 +1678,8 @@ def _cmd_status(args) -> int:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "rescue_posture": w["rescue_posture"],
+        "rescue_window_errors": w["rescue_window_errors"],
         "forget_hits": w["forget_hits"],
     })
     return w["rc"]
@@ -2361,7 +2375,10 @@ def _cmd_stats(args) -> int:
     data = {"usage": _stats_usage(), "capture": _stats_capture(),
             "store": _stats_store(), "retention": _stats_retention(),
             "events": _stats_events(_resolve_project(None)),
-            "verification": _stats_verification(_resolve_project(None))}
+            "verification": _stats_verification(_resolve_project(None)),
+            # #475 part 2: current-configuration posture, rendered next to
+            # (never merged into) the historical fallback counts above.
+            "rescue_posture": llm.rescue_posture()}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0

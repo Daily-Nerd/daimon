@@ -530,6 +530,20 @@ def _capture_alarm_lines(alarm: dict) -> list[str]:
     ]
 
 
+def _rescue_none_warns(data: dict) -> bool:
+    """#475 part 2: the "none" posture warning ("`command` backend has no
+    rescue path") fires ONLY when there is a real failure to point at.
+
+    Gated on posture == "none" AND the 14-day capture window has errors > 0
+    — same shape as the #349 false positive removed and the #477 fix that
+    just landed: an operator who pinned `command` deliberately must not see
+    a permanent warning about a permanent property of their own choice.
+    `covered` / `disabled` / `no-backend` never warn at all (#84: no line,
+    no false alarms)."""
+    return (data.get("rescue_posture") == "none"
+            and (data.get("rescue_window_errors") or 0) > 0)
+
+
 def _forget_hits_line(data: dict) -> str | None:
     """#404: one line when the value-keyed tombstone has caught a re-assertion
     on this install; silent otherwise (same 'quiet by default' rule as the team
@@ -565,6 +579,10 @@ def _plain_status(data: dict) -> None:
         print("⚠ primary is a remote gateway and no fallback backend resolves "
               "— gateway failures won't be rescued (install claude or set "
               "DAIMON_LLM_COMMAND)")
+    if _rescue_none_warns(data):
+        print("⚠ the `command` backend has no rescue path — a failing "
+              "command is not retried or substituted. Run `daimon status` "
+              "for the recorded failure cause.")
     if data.get("team"):
         print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
@@ -651,6 +669,10 @@ def _rich_status(data: dict) -> None:
         console.print("[yellow]⚠ primary is a remote gateway and no fallback "
                       "backend resolves — gateway failures won't be rescued "
                       "(install claude or set DAIMON_LLM_COMMAND)[/yellow]")
+    if _rescue_none_warns(data):
+        console.print("[yellow]⚠ the `command` backend has no rescue path — "
+                      "a failing command is not retried or substituted. Run "
+                      "`daimon status` for the recorded failure cause.[/yellow]")
     if data.get("team"):
         console.print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
@@ -929,6 +951,35 @@ def _capture_window_lines(c: dict) -> list[str]:
     return lines
 
 
+# #475 part 2: `fallback: attempted 0, succeeded 0` reads identically whether
+# a rescue existed and was never needed OR no rescue path can exist for this
+# backend at all — the counter isn't wrong, it's unreadable. This suffix adds
+# the missing fact (current-configuration posture) next to the historical
+# counts, never merged into them.
+_RESCUE_SUFFIXES = {
+    "covered": "rescue available, not needed",
+    "disabled": "fallback disabled by config",
+    "gap": "no fallback resolves — gateway failures won't be rescued",
+    "none": "no rescue path — a `command` backend has no fallback direction",
+}
+
+
+def _rescue_suffix(posture, fallback_attempts: int) -> str | None:
+    """The `(...)` parenthetical for the stats fallback line, or None for a
+    posture with nothing to add (e.g. "no-backend", where there is no LLM
+    configured at all).
+
+    History-versus-config disagreement wins over the plain "none" text: an
+    install that ran on litellm and later pinned `command` shows historical
+    attempts under a current no-rescue posture. Same shape as #477 — do not
+    infer which config produced the counts, state both facts and let them
+    disagree visibly."""
+    if posture == "none" and fallback_attempts > 0:
+        return ("counts are historical; the current `command` backend has "
+                "no rescue path")
+    return _RESCUE_SUFFIXES.get(posture)
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -959,10 +1010,13 @@ def _plain_stats(data: dict) -> None:
                   "SessionStart hook may predate --auto; re-run `daimon hooks "
                   "install` (or update the plugin)")
     print("capture:")
+    fallback_attempts = c.get("fallback_attempts", 0)
+    suffix = _rescue_suffix(data.get("rescue_posture"), fallback_attempts)
     print(f"  serialized: {c['success']}  skipped: {c['skipped']}  "
           f"errors: {c['errors']}  fallback: "
-          f"attempted {c.get('fallback_attempts', 0)}, "
-          f"succeeded {c['fallback_serializes']}")
+          f"attempted {fallback_attempts}, "
+          f"succeeded {c['fallback_serializes']}"
+          + (f"  ({suffix})" if suffix else ""))
     for line in _capture_window_lines(c):
         print(f"  {line}")
     if c["hosts"]:
@@ -1051,8 +1105,11 @@ def _rich_stats(data: dict) -> None:
     capture_table.add_row("serialized", str(c["success"]))
     capture_table.add_row("skipped", str(c["skipped"]))
     capture_table.add_row("errors", str(c["errors"]))
-    capture_table.add_row("fallback", f"attempted {c.get('fallback_attempts', 0)}, "
-                                      f"succeeded {c['fallback_serializes']}")
+    fallback_attempts = c.get("fallback_attempts", 0)
+    suffix = _rescue_suffix(data.get("rescue_posture"), fallback_attempts)
+    capture_table.add_row("fallback", f"attempted {fallback_attempts}, "
+                                      f"succeeded {c['fallback_serializes']}"
+                                      + (f"  ({suffix})" if suffix else ""))
     window_lines = _capture_window_lines(c)
     if window_lines:
         # first line is `last Nd: <values>` — split it into the two columns
