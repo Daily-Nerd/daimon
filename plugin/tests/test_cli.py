@@ -6596,6 +6596,45 @@ def test_loops_no_checkpoint_exits_0_with_friendly_message(tmp_checkpoint_dir, c
     assert "no checkpoint" in out.lower()
 
 
+def test_loops_skips_idless_and_empty_text_items(tmp_checkpoint_dir, capsys, monkeypatch):
+    # A legacy item with no id has no handle to print; an id-bearing item with
+    # blank text would render as a bare handle. Both skip, neither crashes.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"session_id": "S1", "working_context": {"open_questions": [
+        {"text": "legacy loop without an id", "trust": "inferred"},
+        {"text": "live loop with an id", "trust": "inferred"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    # Strip the id write_checkpoint stamped on the first item, blank the text
+    # path via a raw edit of the stored checkpoint.
+    stored = store.read_latest(project_dir="/p/A", fallback=False)
+    items = stored["working_context"]["open_questions"]
+    items[0].pop("id", None)
+    items[1]["text"] = "   "
+    import json
+    p = store.project_latest_path("/p/A")
+    p.write_text(json.dumps(stored), encoding="utf-8")
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert "no open loops" in out
+    assert "legacy loop" not in out
+
+
+def test_loops_fails_open_when_resolutions_fold_raises(tmp_checkpoint_dir, capsys, monkeypatch):
+    # Same stance as _print_suppressed: a broken events.jsonl must not take
+    # the listing down with it — the loops still print, unfiltered.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    def boom(project_dir=None):
+        raise RuntimeError("corrupt events log")
+    monkeypatch.setattr(store, "resolutions", boom)
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert cp["working_context"]["open_questions"][0]["id"] in out
+
+
 def test_loops_no_open_loops_exits_0_with_friendly_message(tmp_checkpoint_dir, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
