@@ -108,6 +108,46 @@ bug, not a finding.
 - `run-meta.json` — runtime/wall-clock (kept out of `summary.json` so the
   determinism self-check can byte-compare every analytical artifact).
 
+## Before you pre-register: can this corpus answer the question?
+
+A pre-registered decision rule is worthless if the run could never satisfy it.
+Every `summary.json` arm now carries a `resolution` block:
+
+    "resolution": {
+      "baseline_assumed_pct": 20.0, "power": 0.8, "alpha": 0.05,
+      "mde_pp": 9.2, "detectable_b_precision_pct": 29.2,
+      "n_per_arm_for_5pp": 1092
+    }
+
+Read it FIRST. On the 07-30 dataset (344 injections per arm) the minimum
+detectable effect is **9.2pp** — arm B has to reach ~29% precision against a
+20% control before the difference is readable, and resolving 5pp would need
+~1092 injections per arm. A hypothesis that perturbs a few percent of volume
+cannot be settled here at any grading budget, and knowing that *before* the
+run is the difference between an answer and a month of confident noise.
+
+Note the asymmetry: **comparing two arms is expensive; characterising one
+class is cheap.** Blind-grading "how relevant is the class this gate admits?"
+is a one-sample question that lands inside a useful interval at n≈30. Prefer
+it when the goal is to indict a rule rather than rank two of them.
+
+## The null control: `--variant placebo`
+
+    --variant placebo --sweep "0.12"                      # uniform rate
+    --variant placebo --sweep "<=1d:0,2-7d:0.07,>7d:0.11" # matched to a
+                                                          # treatment's drops
+
+The placebo suppresses rows at random (deterministically, hashed per row) at a
+per-age-band rate. It exists because **any scoring proxy keyed on item age is
+a function of the age histogram of the rows a rule drops, and of nothing
+else** — so every rule dropping the same profile scores identically, including
+random ones. A hypothesis that does not beat a placebo matched to its own drop
+histogram has measured the histogram, not the hypothesis. This is not
+hypothetical: it invalidated a gate sweep that appeared to move precision
+20.6% → 21.8%, where the age-matched placebo scored the same to two decimals.
+
+Run it for any variant that suppresses. It costs one extra arm.
+
 ## The method: pre-register before you run
 
 This is the part worth reusing. **Write the criteria down, in the issue,

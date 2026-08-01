@@ -44,10 +44,13 @@ Registering a hypothesis: add a function here and name it in `BUILTIN`, or
 keep it out of the repo entirely and pass `--variant mymodule:myfunc`.
 """
 
+import hashlib
 import importlib
 import re
 import sys
 from pathlib import Path
+
+from daimon_briefing import store
 
 # ---------------------------------------------------------------------------
 # stance_gate (#483): does the prompt APPROACH the memory's territory (needs
@@ -164,7 +167,87 @@ def none(ctx, suggest):
     return suggest()
 
 
-BUILTIN = {"none": none, "stance_gate": stance_gate}
+# ---------------------------------------------------------------------------
+# placebo (#495): the NULL CONTROL. Suppresses rows at random, optionally at a
+# different rate per age band, so a real hypothesis can be compared against
+# "drop this many rows of this age and nothing else".
+#
+# It exists because a scoring proxy keyed on item age — the cheap way to score
+# a policy without blind grading — is a function of the age HISTOGRAM of the
+# rows a rule drops, and of nothing else. Every rule dropping the same profile
+# scores identically, including this one. A hypothesis that does not beat its
+# own placebo has measured the histogram, not the hypothesis.
+# ---------------------------------------------------------------------------
+
+_BANDS = ("<=1d", "2-7d", ">7d", "unknown")
+
+
+def _age_band(row, now) -> str:
+    epoch = store._created_epoch(row.get("first_seen"))
+    if epoch is None or epoch > now:
+        return "unknown"
+    age = (now - epoch) / 86400.0
+    return "<=1d" if age <= 1 else "2-7d" if age <= 7 else ">7d"
+
+
+def _placebo_rates(param):
+    """`param` is either a bare probability applied to every band ("0.15"), or
+    comma-separated per-band rates ("<=1d:0,2-7d:0.07,>7d:0.11") so a placebo
+    can be matched to a treatment arm's observed drop histogram. Unnamed bands
+    default to 0 — a placebo must never suppress more than it was asked to."""
+    if param is None:
+        return {}
+    token = str(param).strip()
+    if not token:
+        return {}
+    if ":" not in token:
+        try:
+            rate = float(token)
+        except ValueError:
+            raise SystemExit(
+                f"replay-ab: placebo param {param!r} is neither a probability "
+                f"nor band:rate pairs")
+        return {b: rate for b in _BANDS}
+    rates = {}
+    for piece in token.split(","):
+        band, _, value = piece.partition(":")
+        band = band.strip()
+        if band not in _BANDS:
+            raise SystemExit(
+                f"replay-ab: placebo band {band!r} unknown; expected "
+                f"{list(_BANDS)}")
+        rates[band] = float(value)
+    return rates
+
+
+def placebo(ctx, suggest):
+    """Null control: suppress rows at random, per-band, deterministically.
+
+    The draw is a hash of (prompt, row text, param) rather than a PRNG, so it
+    is stable under replay and re-entry — verify.py byte-compares two runs of
+    every artifact, and a stateful generator would drift the moment the arm
+    order or the prompt set changed. Rows are only ever REMOVED: like every
+    gate, the placebo can decline what `suggest()` returned and can never
+    invent a row it did not.
+    """
+    rows = suggest()
+    rates = _placebo_rates(ctx.get("param"))
+    if not rates or not rows:
+        return rows
+    kept = []
+    for row in rows:
+        rate = rates.get(_age_band(row, ctx["ts"]), 0.0)
+        if rate <= 0.0:
+            kept.append(row)
+            continue
+        seed = f"{ctx['prompt']}\x00{row.get('text') or ''}\x00{ctx['param']}"
+        draw = int(hashlib.sha1(seed.encode("utf-8")).hexdigest()[:8], 16)
+        if draw / 0xFFFFFFFF >= rate:
+            kept.append(row)
+    return kept
+
+
+BUILTIN = {"none": none, "stance_gate": stance_gate, "placebo": placebo}
 
 
 def resolve(spec: str):
