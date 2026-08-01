@@ -455,6 +455,75 @@ def test_line_carried_marker_precedes_quote():
     assert line.index("[carried]") < line.index("the exact words")
 
 
+# ---- #480 slice 1: resolve handles on open-loop-class items ----
+
+
+def test_line_renders_id_suffix_when_briefable():
+    item = {"text": "chunk threshold unclear", "trust": "inferred", "id": "o-3f2a9c"}
+    assert "[o-3f2a9c]" in briefing._line(item, briefable=True)
+
+
+def test_line_omits_id_suffix_when_not_briefable():
+    item = {"text": "adopt the D-007 prompt", "trust": "verbatim", "id": "r-aa11bb"}
+    assert "[r-aa11bb]" not in briefing._line(item, briefable=False)
+
+
+def test_line_legacy_item_without_id_unaffected_by_briefable_flag():
+    # A legacy item (no id yet) must render identically whether or not its
+    # section is briefable — no suffix, no crash.
+    item = {"text": "old loop, no id yet", "trust": "inferred"}
+    assert briefing._line(item, briefable=True) == briefing._line(item, briefable=False)
+
+
+def test_render_plain_shows_handle_for_open_loop_item():
+    cp = {"working_context": {"open_questions": [
+              {"text": "chunk threshold unclear", "trust": "inferred", "id": "o-3f2a9c"}]},
+          "epistemic_snapshot": {}}
+    out = briefing.render_plain(briefing.build(cp))
+    assert "[o-3f2a9c]" in out
+
+
+def test_render_plain_shows_handle_for_uncertainty_item():
+    cp = {"working_context": {}, "epistemic_snapshot": {"uncertainties": [
+              {"text": "not sure retries are safe", "trust": "inferred", "id": "u-11aa22"}]}}
+    out = briefing.render_plain(briefing.build(cp))
+    assert "[u-11aa22]" in out
+
+
+def test_render_plain_shows_handle_for_external_item():
+    cp = {"working_context": {"open_questions": [
+              {"text": "PR #6 state", "trust": "verbatim", "quote": "I'll merge it",
+               "external_state": True, "id": "o-77bb88"}]},
+          "epistemic_snapshot": {}}
+    out = briefing.render_plain(briefing.build(cp))
+    assert "[o-77bb88]" in out
+
+
+def test_render_plain_never_suffixes_decisions_with_id():
+    cp = {"working_context": {"recent_decisions": [
+              {"text": "adopt D-007 prompt", "trust": "verbatim", "id": "r-abc123"}]},
+          "epistemic_snapshot": {}}
+    out = briefing.render_plain(briefing.build(cp))
+    assert "[r-abc123]" not in out
+
+
+def test_render_plain_never_suffixes_beliefs_with_id():
+    cp = {"working_context": {}, "epistemic_snapshot": {"strong_beliefs": [
+              {"text": "extractive pinning prevents fact loss", "trust": "inferred",
+               "id": "s-99aa88"}]}}
+    out = briefing.render_plain(briefing.build(cp))
+    assert "[s-99aa88]" not in out
+
+
+def test_render_plain_legacy_open_loop_without_id_renders_unchanged():
+    cp = {"working_context": {"open_questions": [
+              {"text": "chunk threshold unclear", "trust": "inferred"}]},
+          "epistemic_snapshot": {}}
+    out = briefing.render_plain(briefing.build(cp))
+    lines = out.splitlines()
+    assert "- [~ inferred] chunk threshold unclear" in lines
+
+
 # ---- #134: null text/quote must render, not crash (torn/legacy checkpoint) ----
 
 

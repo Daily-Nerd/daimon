@@ -394,6 +394,12 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_log():
         run(["log", "--text", "cut the release"], 0)
 
+    def r_loops():
+        # #480 slice 1: pure read — lists open, briefable loop items with ids.
+        # No write path of its own, but drive it anyway so a future regression
+        # (e.g. it starts writing) trips this guard immediately.
+        run(["loops"], 0)
+
     def r_recall_inject():
         run(["recall-inject", "--session", "S-live"], 0,
             stdin="anything about the gateway seam?")
@@ -476,6 +482,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("reverify",): r_reverify,
         ("forget",): r_forget,
         ("log",): r_log,
+        ("loops",): r_loops,
         ("recall-inject",): r_recall_inject,
         ("status",): r_status,
         ("verify-receipt",): r_verify_receipt,

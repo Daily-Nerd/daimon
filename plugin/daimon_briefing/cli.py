@@ -1029,6 +1029,54 @@ def _cmd_reverify(args) -> int:
     return 0
 
 
+def _cmd_loops(args) -> int:
+    """`daimon loops` (#480 slice 1): list open, briefable loop items with
+    ids for this project — the read-only counterpart to the id handles
+    briefing._line now renders inline (an agent, or a human, needs something
+    to pass to `daimon resolve`).
+
+    Reuses the SAME item walk `_cmd_resolve` builds (store._ITEM_LISTS over
+    the latest checkpoint) and the SAME withhold classification `daimon
+    status --suppressed` uses (briefing.withhold over store.resolutions) —
+    the resolved/live split must stay in exactly one place, or this listing
+    could show an item the briefing itself would withhold (an agent would
+    then "resolve" a ghost).
+
+    Briefable = briefing.BRIEFABLE_ITEM_KEYS (open_questions — external and
+    non-external both — plus uncertainties). Decisions/beliefs/
+    contradictions are valid `daimon resolve` targets too, but are not
+    loop-shaped; listing them here would invite resolving settled facts
+    (#480 scope guard, mirrors briefing._line's new suffix)."""
+    _note_usage("loops")
+    project = _resolve_project(args.project)
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    if not isinstance(checkpoint, dict):
+        print("no checkpoint for this project yet — nothing to list")
+        return 0
+    try:
+        events = store.resolutions(project_dir=project)
+        checkpoint, _, _ = briefing.withhold(checkpoint, events)
+    except Exception:
+        pass  # fail-open, same stance as _print_suppressed
+    rows = []
+    for section, key in store._ITEM_LISTS:
+        if key not in briefing.BRIEFABLE_ITEM_KEYS:
+            continue
+        for item in ((checkpoint.get(section) or {}).get(key) or []):
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            rows.append((item["id"], key, text, briefing._mark(item)))
+    if not rows:
+        print("no open loops")
+        return 0
+    for item_id, key, text, mark in rows:
+        print(f"  {item_id}  [{key}] [{mark}] {text}")
+    return 0
+
+
 def _cmd_log(args) -> int:
     """Freeform zero-LLM event append (#102): a timeline fact worth keeping
     that is not tied to one item. The fold ignores ref-less lines; readers
@@ -2838,6 +2886,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_reverify.add_argument("--evidence", help="why this claim can be trusted again")
     p_reverify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_reverify.set_defaults(func=_cmd_reverify)
+
+    p_loops = sub.add_parser(
+        "loops", help="list open, briefable loop items with ids for this "
+        "project (#480) — the read counterpart to daimon resolve's write path",
+        epilog="Examples:\n  daimon loops\n  daimon loops --project .\n",
+    )
+    p_loops.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_loops.set_defaults(func=_cmd_loops)
 
     p_log = sub.add_parser(
         "log", help="append a freeform timeline event (zero-LLM) to this project's event log (#102)",

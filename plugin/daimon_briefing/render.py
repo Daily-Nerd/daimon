@@ -196,6 +196,10 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
         if not items:
             continue
         body = Text()
+        # #480 slice 1: whether THIS section's items earn a resolve handle —
+        # same set briefing._line's plain path keys off of, so the two
+        # renders agree on which items are actionable.
+        briefable = key in briefing.BRIEFABLE_SECTIONS
         for i in items:
             trust = _trust_key(i)
             # Degrade a verbatim item's confident green — its integrity is
@@ -207,7 +211,13 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
             # before the quote) — one shared literal, so the two renders state
             # the witness count in identical bytes.
             body.append(f"• {i.get('text', '').strip()}"
-                        f"{briefing.corroboration_badge(i)}\n", style=item_style)
+                        f"{briefing.corroboration_badge(i)}", style=item_style)
+            # #480 slice 1: the id handle, dim like the quote below — it is
+            # a supplementary resolve target, not part of the claim itself.
+            handle = briefing._handle_suffix(i, briefable)
+            if handle:
+                body.append(handle, style="dim")
+            body.append("\n", style=item_style)
             quote = i.get("quote", "").strip()
             if quote:
                 body.append(f'    "{quote}"\n', style="dim italic")

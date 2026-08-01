@@ -6561,6 +6561,116 @@ def test_log_appends_freeform_event(tmp_checkpoint_dir, capsys, monkeypatch):
     assert line["item_ref"] == ""
 
 
+# ---- #480 slice 1: daimon loops — the resolve-handle listing ----
+
+
+def test_loops_lists_open_loop_items_with_ids(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    for item in cp["working_context"]["open_questions"]:
+        assert item["id"] in out
+        assert item["text"] in out
+
+
+def test_loops_excludes_item_withheld_by_resolution(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    resolved_id = cp["working_context"]["open_questions"][0]["id"]
+    live_id = cp["working_context"]["open_questions"][1]["id"]
+    assert cli.main(["resolve", resolved_id]) == 0
+    capsys.readouterr()  # discard resolve's own output
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert resolved_id not in out
+    assert live_id in out
+
+
+def test_loops_no_checkpoint_exits_0_with_friendly_message(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert "no checkpoint" in out.lower()
+
+
+def test_loops_skips_idless_and_empty_text_items(tmp_checkpoint_dir, capsys, monkeypatch):
+    # A legacy item with no id has no handle to print; an id-bearing item with
+    # blank text would render as a bare handle. Both skip, neither crashes.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"session_id": "S1", "working_context": {"open_questions": [
+        {"text": "legacy loop without an id", "trust": "inferred"},
+        {"text": "live loop with an id", "trust": "inferred"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    # Strip the id write_checkpoint stamped on the first item, blank the text
+    # path via a raw edit of the stored checkpoint.
+    stored = store.read_latest(project_dir="/p/A", fallback=False)
+    items = stored["working_context"]["open_questions"]
+    items[0].pop("id", None)
+    items[1]["text"] = "   "
+    import json
+    p = store.project_latest_path("/p/A")
+    p.write_text(json.dumps(stored), encoding="utf-8")
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert "no open loops" in out
+    assert "legacy loop" not in out
+
+
+def test_loops_fails_open_when_resolutions_fold_raises(tmp_checkpoint_dir, capsys, monkeypatch):
+    # Same stance as _print_suppressed: a broken events.jsonl must not take
+    # the listing down with it — the loops still print, unfiltered.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    def boom(project_dir=None):
+        raise RuntimeError("corrupt events log")
+    monkeypatch.setattr(store, "resolutions", boom)
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert cp["working_context"]["open_questions"][0]["id"] in out
+
+
+def test_loops_no_open_loops_exits_0_with_friendly_message(tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"recent_decisions": [
+        {"text": "adopt D-007 prompt", "trust": "verbatim"}]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert "no open loops" in out.lower()
+
+
+def test_loops_excludes_decisions_scope_guard(tmp_checkpoint_dir, capsys, monkeypatch):
+    # #480 slice 1 scope guard: decisions are valid `daimon resolve` targets
+    # too, but are not loop-shaped — `daimon loops` must not list them.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {
+        "open_questions": [{"text": "chunk threshold unclear", "trust": "inferred"}],
+        "recent_decisions": [{"text": "adopt D-007 prompt", "trust": "verbatim"}],
+    }}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert "chunk threshold unclear" in out
+    assert "adopt D-007 prompt" not in out
+
+
+def test_loops_records_usage_event(tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_cp_with_ids(store)
+    assert cli.main(["loops"]) == 0
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "loops"
+
+
 # ---- #103: daimon reverify — evidence-gated reopen ----
 
 

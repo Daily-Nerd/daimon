@@ -94,7 +94,39 @@ def corroboration_badge(item) -> str:
     return f" [≈ corroborated ×{n}]"
 
 
-def _line(item, degraded: bool = False) -> str:
+# ---- #480 slice 1: resolve handles on open-loop-class items ----
+
+# build()'s section keys that render a resolve handle — the single source of
+# truth both render paths (plain _line below, rich render._rich_brief) and
+# `daimon loops` key off of. Decisions/beliefs/contradictions are valid
+# `daimon resolve` targets too (resolve accepts any item id), but are not
+# loop-shaped: stamping a handle there would invite resolving settled facts,
+# which is out of this slice's scope.
+BRIEFABLE_SECTIONS = frozenset({"external", "open_loops", "uncertainties"})
+
+# The raw checkpoint field keys underlying BRIEFABLE_SECTIONS above — build()
+# splits ONE field (open_questions) into "external"/"open_loops" by the
+# external_state flag, so the raw-checkpoint view collapses back to two keys.
+# `daimon loops` walks store._ITEM_LISTS (raw section/key pairs), not the
+# built briefing dict, so it needs this mapping rather than BRIEFABLE_SECTIONS
+# itself.
+BRIEFABLE_ITEM_KEYS = frozenset({"open_questions", "uncertainties"})
+
+
+def _handle_suffix(item, briefable: bool) -> str:
+    """The compact ` [id]` handle appended to a briefable item's rendered
+    line — the read side of the #480 write path: an agent (or a human via
+    `daimon loops`) needs something to pass to `daimon resolve`. A legacy
+    item with no id renders unchanged (empty string), and a non-briefable
+    item (decision/belief/contradiction) never earns one in this slice
+    regardless of whether it happens to carry an id."""
+    if not briefable:
+        return ""
+    item_id = item.get("id")
+    return f" [{item_id}]" if item_id else ""
+
+
+def _line(item, degraded: bool = False, briefable: bool = False) -> str:
     # #134: dict.get returns the stored None for a present-but-null key (the
     # default only fires for an ABSENT key), so a torn/legacy checkpoint could
     # crash the whole render here. Use the codebase's str(x or "") idiom
@@ -113,6 +145,7 @@ def _line(item, degraded: bool = False) -> str:
     base += corroboration_badge(item)
     if quote:
         base += f'  — "{quote}"'
+    base += _handle_suffix(item, briefable)
     candidate = item.get("_supersede_candidate")
     if candidate:
         # #14: a machine-suggested (unconfirmed) supersession — never
@@ -573,7 +606,8 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False) -> str:
             return
         parts.append("")
         parts.append(header)
-        parts.extend(_line(i, degraded) for i in items)
+        briefable = key in BRIEFABLE_SECTIONS
+        parts.extend(_line(i, degraded, briefable) for i in items)
         if key == "decisions":
             overflow = _overflow_note(b.get("decisions_overflow", 0))
             if overflow:
@@ -584,7 +618,7 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False) -> str:
     if b["external"]:
         parts.append("")
         parts.append("VERIFY BEFORE TRUSTING (state may have changed outside this session):")
-        parts.extend(_line(i, degraded) for i in b["external"])
+        parts.extend(_line(i, degraded, "external" in BRIEFABLE_SECTIONS) for i in b["external"])
 
     _section("Open loops:", "open_loops")
     _section("Decisions made:", "decisions")
