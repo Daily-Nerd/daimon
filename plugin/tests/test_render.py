@@ -614,6 +614,43 @@ def test_rich_brief_shows_contradictions_section(capsys):
     assert "cache cold vs warm" in out
 
 
+# ---- #480 slice 1: rich path renders the same id handle as the plain path ----
+
+
+def test_rich_brief_shows_handle_for_open_loop(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    b = {
+        "external": [],
+        "open_loops": [{"text": "chunk threshold unclear", "trust": "inferred",
+                        "id": "o-3f2a9c"}],
+        "decisions": [], "decisions_overflow": 0,
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+    }
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "o-3f2a9c" in out
+
+
+def test_rich_brief_does_not_show_handle_for_decisions(capsys):
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    b = {
+        "external": [], "open_loops": [],
+        "decisions": [{"text": "adopt D-007 prompt", "trust": "verbatim",
+                       "id": "r-abc123"}],
+        "decisions_overflow": 0,
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+    }
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "r-abc123" not in out
+
+
 def _identity_status_data(identity, health):
     return {
         "project": identity["git_root"],
