@@ -326,8 +326,8 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
                 flags = {}
                 for label, param in arms_spec:  # fixed order: A then each B
                     state = (seen_state[label].setdefault(
-                        row["session"], {"origins": set(), "keys": set()})
-                        if seen_ok else {"origins": set(), "keys": set()})
+                        row["session"], {"origins": {}, "keys": set()})
+                        if seen_ok else {"origins": {}, "keys": set()})
 
                     def _call(_state=state, **override):
                         """The shipped call for this prompt/arm. A variant
@@ -336,7 +336,11 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
                         kw = dict(
                             prompt=row["prompt"], project_dir=row["project"],
                             current_session=row["session"],
-                            exclude_sessions=exclude | _state["origins"],
+                            # #500: the cooldown rule is cli's, not a copy
+                            # — same reason the age gate is shared.
+                            exclude_sessions=(
+                                exclude | cli.cooled_origins(
+                                    _state["origins"])),
                             limit=cli._INJECT_FETCH, now=row["ts"])
                         kw.update(override)
                         return recall.suggest(**kw)
@@ -353,8 +357,10 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
                     chosen, chosen_keys, suppressed, age_gated = _postfilter(
                         matches, state["keys"], row["ts"])
                     if seen_ok and chosen:  # cli saves only when it injected
-                        state["origins"] |= {str(m["session_id"])
-                                             for m in chosen}
+                        for m in chosen:
+                            sid = str(m["session_id"])
+                            state["origins"][sid] = (
+                                state["origins"].get(sid, 0) + 1)
                         state["keys"] |= chosen_keys
                     arms[label] = [{
                         "session_id": str(m["session_id"]),

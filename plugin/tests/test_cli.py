@@ -3237,7 +3237,10 @@ def test_recall_inject_origin_cooldown_survives_content_keying(
 def test_recall_inject_reads_legacy_flat_list_seen_file_and_upgrades_it(
         tmp_checkpoint_dir, capsys, monkeypatch):
     # Pre-#451 state on disk is a flat JSON list of origin ids. It must be read
-    # as origins (suppression preserved) and rewritten in the new shape.
+    # as origins (suppression preserved) and rewritten in the new shape. #500
+    # made that shape a per-origin COUNT; a legacy entry carries no count, so
+    # it loads EXHAUSTED — an upgrade must never hand a session slots it may
+    # already have spent.
     from daimon_briefing import config, normalize
 
     _seed_item("S-dup-hi", _CK_DUP, 10)
@@ -3252,7 +3255,8 @@ def test_recall_inject_reads_legacy_flat_list_seen_file_and_upgrades_it(
     assert _CK_DUP not in out  # legacy origin entry still suppresses
     assert _CK_DISTINCT_A in out
     upgraded = json.loads(seen.read_text(encoding="utf-8"))
-    assert upgraded["origins"] == ["S-distinct-a", "S-dup-hi"]
+    assert upgraded["origins"] == {"S-dup-hi": cli._ORIGIN_BUDGET,
+                                   "S-distinct-a": 1}
     assert upgraded["content_keys"] == [normalize.content_key(_CK_DISTINCT_A)]
 
 
@@ -3592,10 +3596,10 @@ def test_save_seen_prunes_week_old_cooldown_files(tmp_checkpoint_dir):
     old = time.time() - (8 * 86400)
     os.utime(stale, (old, old))
 
-    cli_mod._save_seen(seen_dir / "S-fresh.json", {"S-o"}, {"deadbeef"})
+    cli_mod._save_seen(seen_dir / "S-fresh.json", {"S-o": 1}, {"deadbeef"})
     assert not stale.exists()
     assert json.loads((seen_dir / "S-fresh.json").read_text()) == {
-        "origins": ["S-o"], "content_keys": ["deadbeef"]}
+        "origins": {"S-o": 1}, "content_keys": ["deadbeef"]}
 
 
 # ---- #33 Phase 2: deterministic carry wired into the serialize path ----
@@ -8209,3 +8213,74 @@ def test_age_gate_accepts_a_precomputed_age_and_agrees_with_itself():
             cli.age_gate_blocks(row, _GATE_NOW, age_days=computed)
     # an explicit None age is "unknown", not "compute it for me"
     assert cli.age_gate_blocks(_row(), _GATE_NOW, age_days=None) is False
+
+
+# ---- #500: origin cooldown is a BUDGET, not a session-wide ban ----
+# Injecting one row used to ban its entire origin session for the rest of the
+# host session, so a gate decision about ONE row silently cost every other row
+# that session could supply. Measured while shipping #491: 12 injections <=7d
+# old disappeared, including a 1-day-old exact-match decision that appeared
+# nowhere else in the run — collateral the age gate cannot have caused.
+
+
+def test_cooled_origins_at_budget_one_reproduces_the_old_ban(tmp_path):
+    # budget=1 IS the pre-#500 policy: one injection retires the origin. Pinned
+    # so the refactor is provably behaviour-preserving at the old default.
+    counts = {"S-a": 1, "S-b": 2, "S-c": 0}
+    assert cli.cooled_origins(counts, budget=1) == {"S-a", "S-b"}
+
+
+def test_cooled_origins_lets_a_second_row_through_at_budget_two():
+    counts = {"S-a": 1, "S-b": 2, "S-c": 3}
+    assert cli.cooled_origins(counts, budget=2) == {"S-b", "S-c"}
+
+
+def test_cooled_origins_with_no_budget_never_excludes():
+    # budget=None is "no origin cooldown at all" — the measurement arm, and
+    # the shape the content-key cooldown (#451) would carry alone.
+    assert cli.cooled_origins({"S-a": 9}, budget=None) == set()
+
+
+def test_seen_state_round_trips_origin_counts(tmp_path):
+    p = tmp_path / "sess.json"
+    cli._save_seen(p, {"S-a": 1, "S-b": 3}, {"k1", "k2"})
+    counts, keys = cli._load_seen(p)
+    assert counts == {"S-a": 1, "S-b": 3}
+    assert keys == {"k1", "k2"}
+
+
+def test_seen_state_reads_the_pre_500_shape_as_exhausted(tmp_path):
+    # A file written before this change stored a SET, so the per-origin count
+    # is unknowable. Load it as exhausted rather than as one: guessing low
+    # would hand an in-flight session extra slots it may already have spent.
+    p = tmp_path / "sess.json"
+    p.write_text(json.dumps({"origins": ["S-a", "S-b"],
+                             "content_keys": ["k1"]}), encoding="utf-8")
+    counts, keys = cli._load_seen(p)
+    assert cli.cooled_origins(counts) == {"S-a", "S-b"}
+    assert keys == {"k1"}
+
+
+def test_seen_state_reads_the_pre_451_list_as_exhausted(tmp_path):
+    p = tmp_path / "sess.json"
+    p.write_text(json.dumps(["S-a"]), encoding="utf-8")
+    counts, keys = cli._load_seen(p)
+    assert cli.cooled_origins(counts) == {"S-a"}
+    assert keys == set()
+
+
+def test_seen_state_falls_open_on_unreadable_state(tmp_path):
+    p = tmp_path / "sess.json"
+    p.write_text("{not json", encoding="utf-8")
+    assert cli._load_seen(p) == ({}, set())
+
+
+def test_cooled_origins_reads_the_budget_at_call_time(monkeypatch):
+    # A def-time default would freeze _ORIGIN_BUDGET at import, making the knob
+    # untunable — and silently turning any sweep over it into four runs of the
+    # same arm. Found exactly that way.
+    counts = {"S-a": 1}
+    monkeypatch.setattr(cli, "_ORIGIN_BUDGET", 1)
+    assert cli.cooled_origins(counts) == {"S-a"}
+    monkeypatch.setattr(cli, "_ORIGIN_BUDGET", 2)
+    assert cli.cooled_origins(counts) == set()
