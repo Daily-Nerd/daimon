@@ -230,3 +230,16 @@ def test_soft_clip_preserves_the_cross_class_band():
     verbatim = scoring.effective_weight(
         {**shape, "trust": "verbatim"}, "open_question", _NOW)
     assert inferred < scoring.trust_ceiling("inferred") < verbatim
+
+
+def test_soft_clip_at_a_zero_ceiling_silences_without_a_special_case():
+    # A trust class with no authority is expressible in the table (nothing
+    # forbids a 0.0 lid). The closed form handles it: the knee collapses to 0,
+    # the gap term vanishes, and every weight maps to 0.0 — so no guard branch
+    # is needed, and none exists to rot untested.
+    for w in (0.0, 0.5, 1.0, 3.0):
+        assert scoring._soft_clip(w, 0.0) == 0.0, w
+    # and the live table has no non-positive lid, which is why the above is a
+    # statement about the formula rather than about production behavior.
+    assert all(v > 0 for v in scoring.TRUST_CEILING.values())
+    assert scoring._DEFAULT_CEILING > 0

@@ -132,9 +132,11 @@ def _soft_clip(weight: float, ceiling: float) -> float:
     - C1-continuous at the knee: f(K) = K and f'(K+) = 1.
     - identity below K, so the great majority of items are untouched and the
       carry_floor comparisons that sit far below the knee cannot move.
+
+    A zero ceiling needs no special case: K collapses to 0, the gap term
+    vanishes, and every weight maps to 0.0 — so a trust class with no
+    authority silences its items by arithmetic rather than by a guard.
     """
-    if ceiling <= 0.0:
-        return 0.0
     knee = ceiling * (1.0 - _SOFT_CLIP_DELTA)
     if weight <= knee:
         return weight
