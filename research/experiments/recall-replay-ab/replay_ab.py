@@ -224,10 +224,15 @@ def _session_seen_ok(session: str) -> bool:
 
 
 def _postfilter(matches, seen_keys, now):
-    """Replica of cli._cmd_recall_inject's chosen-loop (cli.py ~1194-1238):
-    #451 content-key dedup (within the injection AND across the session),
-    #452 age gate with open-question/pinned exemptions, _INJECT_BUDGET slots,
-    a suppressed/gated candidate yields its slot to the next distinct one."""
+    """Replica of cli._cmd_recall_inject's chosen-loop: #451 content-key dedup
+    (within the injection AND across the session), #452 age gate,
+    _INJECT_BUDGET slots, a suppressed/gated candidate yields its slot to the
+    next distinct one.
+
+    The gate itself is NOT replicated — it calls `cli.age_gate_blocks`, the
+    same predicate the injection path uses. A hand-copied gate drifts the
+    moment either side changes, and a harness measuring last week's policy
+    reports confident numbers about a system that no longer exists (#491)."""
     chosen, chosen_keys = [], set()
     suppressed = age_gated = False
     for m in matches:
@@ -235,16 +240,7 @@ def _postfilter(matches, seen_keys, now):
         if key in seen_keys or key in chosen_keys:
             suppressed = True
             continue
-        epoch = store._created_epoch(m.get("first_seen"))
-        age_days = ((now - epoch) / 86400.0
-                    if epoch is not None and epoch <= now else None)
-        hits = m.get("term_hits")
-        exempt = ((m.get("kind") == "question"
-                   and not m.get("superseded_by"))
-                  or bool(m.get("pinned")))
-        if (age_days is not None and age_days > cli._AGE_GATE_DAYS
-                and not exempt
-                and isinstance(hits, int) and hits < cli._STALE_MIN_HITS):
+        if cli.age_gate_blocks(m, now):
             age_gated = True
             continue
         chosen_keys.add(key)

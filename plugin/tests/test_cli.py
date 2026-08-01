@@ -3436,14 +3436,32 @@ def test_recall_inject_stale_strong_match_injects(
     assert rc == 0 and _AGE_STRONG in out
 
 
-def test_recall_inject_open_question_survives_age_gate(
+def test_recall_inject_stale_open_question_is_age_gated(
         tmp_checkpoint_dir, capsys, monkeypatch):
-    # A still-open question's survival is evidence (scoring's auto_escalation
-    # philosophy): the pure-age penalty never applies to it.
+    # #491 INVERTS #452's question exemption. That exemption read "no logged
+    # resolution" as "still open", and the premise was measured false: 1280 of
+    # 1343 question rows (95.3%) carry no resolution, so survival is the
+    # DEFAULT, not a signal. Blind-graded, the injections it admitted came back
+    # 3/30 = 10% relevant (95% CI [3.5%, 25.6%]) against a pre-registered 40%
+    # bar — the same band as the stale rows the gate already blocks.
+    #
+    # A question now clears the same bar as anything else its age. It is not
+    # banned (see the >=3-hit test below); it just stops being waved through.
     _seed_aged("S-q", _AGE_WEAK, 9, days_old=30, kind="question")
     _seed_age_decoy()
     rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
-    assert rc == 0 and _AGE_WEAK in out
+    assert rc == 0 and out == ""
+
+
+def test_recall_inject_stale_question_with_a_strong_match_still_injects(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # The other half of #491: questions are held to the bar, not excluded from
+    # it. A stale question matching _STALE_MIN_HITS distinct terms earns its
+    # slot exactly like a stale decision does.
+    _seed_aged("S-q", _AGE_STRONG, 9, days_old=30, kind="question")
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and _AGE_STRONG in out
 
 
 def test_recall_inject_superseded_question_is_age_gated(
