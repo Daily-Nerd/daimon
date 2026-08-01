@@ -700,6 +700,69 @@ def test_audit_quotes_counts_unpaired_when_transcript_missing(
     assert "unpaired" in out
 
 
+@pytest.fixture
+def _log_dir(tmp_path):
+    # The autouse fixture already points DAIMON_LOG_DIR here; expose the path.
+    return tmp_path / ".daimon" / "logs"
+
+
+def test_audit_quotes_records_usage(
+    tmp_checkpoint_dir, _projects_dir, _log_dir, capsys
+):
+    """#504: the only read-side verification verb recorded nothing, so there was
+    no evidence either way about whether anyone reaches for it."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA",
+                      [("user", "alpha decision text that is quoted exactly")])
+    cp = _stored_checkpoint("SA", slug, [
+        {"text": "d", "trust": "verbatim",
+         "quote": "alpha decision text that is quoted exactly", "id": "d-a"},
+    ])
+    store.write_checkpoint("SA", cp, project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    usage = (_log_dir / "usage.log").read_text(encoding="utf-8")
+    assert "audit-quotes" in usage
+    # A run that paired a transcript is NOT the unpaired variant.
+    assert "audit-quotes:unpaired" not in usage
+
+
+def test_audit_quotes_records_unpaired_variant_when_nothing_pairs(
+    tmp_checkpoint_dir, _projects_dir, _log_dir, capsys
+):
+    """A run that resolved no transcript at all is a materially different event
+    from one that verified a corpus — and doubles as passive detection for a
+    host whose transcripts live somewhere the resolver does not look."""
+    slug = store.project_slug("/p/A")
+    # No transcript written -> nothing pairs.
+    cp = _stored_checkpoint("SNO", slug, [
+        {"text": "d", "trust": "verbatim", "quote": "some quoted text here", "id": "d-c"},
+    ])
+    store.write_checkpoint("SNO", cp, project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    usage = (_log_dir / "usage.log").read_text(encoding="utf-8")
+    assert "audit-quotes:unpaired" in usage
+
+
+def test_audit_quotes_usage_respects_kill_switch(
+    tmp_checkpoint_dir, _projects_dir, _log_dir, capsys, monkeypatch
+):
+    """Disabled means daimon writes nothing — the audit verb is no exception."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA",
+                      [("user", "alpha decision text that is quoted exactly")])
+    cp = _stored_checkpoint("SA", slug, [
+        {"text": "d", "trust": "verbatim",
+         "quote": "alpha decision text that is quoted exactly", "id": "d-a"},
+    ])
+    store.write_checkpoint("SA", cp, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+
+    cli.main(["audit-quotes", "--project", "/p/A"])
+    assert not (_log_dir / "usage.log").exists()
+
+
 def test_audit_quotes_all_flag_spans_projects(
     tmp_checkpoint_dir, _projects_dir, capsys
 ):
