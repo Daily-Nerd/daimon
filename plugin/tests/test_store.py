@@ -1475,7 +1475,11 @@ def test_item_id_hashes_redacted_text(tmp_checkpoint_dir):
     item = cp["working_context"]["open_questions"][0]
     digest = hashlib.sha1(
         f"open_questions:{item['text']}".encode("utf-8")).hexdigest()
-    assert item["id"] == f"o-{digest[:6]}"  # id derived from REDACTED text
+    # id derived from REDACTED text. Width is #487's 12-hex slice; what this
+    # test is pinning is WHAT is hashed, so it reads the width off the id
+    # rather than restating it and failing on an unrelated change.
+    hexpart = item["id"].partition("-")[2]
+    assert item["id"] == f"o-{digest[:len(hexpart)]}"
 
 
 def test_rewrite_merges_redaction_counts(tmp_checkpoint_dir):

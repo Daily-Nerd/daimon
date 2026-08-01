@@ -11,10 +11,12 @@ promise that outranks "disabled means daimon writes nothing").
 """
 
 import ast
+import hashlib
 import json
 from pathlib import Path
 
-from daimon_briefing import cli, normalize, redact, store
+from daimon_briefing import (briefing, carry, cli, normalize, policy, recall,
+                             redact, store)
 from tests.conftest import FIXTURES
 
 _A = "/repo/policy-A"
@@ -497,3 +499,96 @@ def test_origin_survives_two_carry_hops_while_carried_from_only_names_the_last(
     assert sqlite_item.get("carried_from") in ("S-B", "S-C")
     assert sqlite_item["origin_session"] == "S-A"
     assert sqlite_item["origin_author"] == "ada"
+
+
+# --- #487: minted id width -------------------------------------------------
+# The id is a PROJECT-GLOBAL key (store.resolutions folds events by bare ref,
+# briefing.withhold binds on exact equality, recall's rebuild scrub runs
+# UPDATE ... WHERE item_id = ? bucket-wide) while collision detection is scoped
+# to ONE checkpoint. At 6 hex the birthday probability over ~2k distinct texts
+# per project is ~2.4% and grows quadratically; a collision silently withholds
+# an unrelated live memory, which briefing.withhold's own docstring names as
+# the worst failure this feature can have.
+
+def _stamp_one(text, kind="open_questions"):
+    cp = {"working_context": {kind: [{"text": text}]}}
+    policy.stamp_item_ids(cp)
+    return cp["working_context"][kind][0]["id"]
+
+
+def test_minted_item_id_carries_twelve_hex_chars():
+    item_id = _stamp_one("adopt sqlite for the recall index cache")
+    prefix, _, hexpart = item_id.partition("-")
+    assert prefix == "o"
+    assert len(hexpart) == 12, f"expected a 12-hex slice, got {item_id!r}"
+    assert all(c in "0123456789abcdef" for c in hexpart)
+
+
+def test_minted_id_is_still_a_stable_hash_of_kind_and_text():
+    # Widening must not change WHAT is hashed: same kind+text -> same id, and
+    # the slice must remain a prefix of the same digest.
+    text = "adopt sqlite for the recall index cache"
+    first = _stamp_one(text)
+    assert first == _stamp_one(text)
+    digest = hashlib.sha1(f"open_questions:{text}".encode("utf-8")).hexdigest()
+    assert first == f"o-{digest[:12]}"
+
+
+def test_existing_ids_are_never_restamped_at_the_new_width():
+    # setdefault semantics: a 6-hex id minted by an older version survives
+    # rotation and re-serialization untouched. Both widths coexist forever.
+    legacy = "o-a1b2c3"
+    cp = {"working_context": {"open_questions": [
+        {"text": "an item stamped before the widening", "id": legacy}]}}
+    policy.stamp_item_ids(cp)
+    assert cp["working_context"]["open_questions"][0]["id"] == legacy
+
+
+def test_both_widths_satisfy_every_consumer_id_shape():
+    # carry/recall accept {6,}; briefing's candidate shape accepts {6,40}.
+    # Nothing needed to change for the wider id, and the legacy width must
+    # keep working — assert both rather than trusting the regex by eye.
+    minted = _stamp_one("adopt sqlite for the recall index cache")
+    for ident in (minted, "o-a1b2c3"):
+        assert carry._ID_SHAPE.fullmatch(ident), ident
+        assert recall._ID_SHAPE.fullmatch(ident), ident
+        assert briefing._CANDIDATE_ID_SHAPE.fullmatch(ident), ident
+
+
+def test_identical_text_twins_are_separated_by_the_width_ladder():
+    # Same kind + same text = same digest, so the ladder cannot break the tie
+    # by hashing differently — it breaks it by WIDTH. The twins end up as two
+    # different-length prefixes of one digest (not the counter suffix, which
+    # only fires once every rung is taken). Pinned because the widening
+    # changes which rungs those are.
+    text = "the very same wording"
+    cp = {"working_context": {"open_questions": [{"text": text},
+                                                 {"text": text}]}}
+    policy.stamp_item_ids(cp)
+    ids = [i["id"] for i in cp["working_context"]["open_questions"]]
+    assert len(set(ids)) == 2
+    digest = hashlib.sha1(f"open_questions:{text}".encode("utf-8")).hexdigest()
+    widths = []
+    for ident in ids:
+        hexpart = ident.partition("-")[2]
+        assert digest.startswith(hexpart), ident
+        widths.append(len(hexpart))
+    assert widths[0] < widths[1], f"expected widening, got {ids!r}"
+    assert min(widths) >= 12, f"first rung must be the wide one, got {ids!r}"
+
+
+def test_counter_fallback_never_mints_a_narrow_id():
+    # Five identical texts exhaust the width ladder (12/16/24/40) and force the
+    # counter suffix. That fallback must be based on the FIRST rung: minting a
+    # short slice here would put the collision surface back exactly where ids
+    # are least distinct.
+    text = "one wording repeated past every rung"
+    cp = {"working_context": {"open_questions": [{"text": text}
+                                                 for _ in range(5)]}}
+    policy.stamp_item_ids(cp)
+    ids = [i["id"] for i in cp["working_context"]["open_questions"]]
+    assert len(set(ids)) == 5, ids
+    suffixed = [i for i in ids if i.endswith("-2")]
+    assert suffixed, f"expected the counter to fire, got {ids!r}"
+    hexpart = suffixed[0].partition("-")[2].rpartition("-")[0]
+    assert len(hexpart) >= 12, f"counter minted a narrow id: {suffixed[0]!r}"
