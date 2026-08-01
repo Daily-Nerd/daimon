@@ -1928,12 +1928,62 @@ def _find_audit_transcript(session_id: str, slug):
     return None
 
 
+def _load_audit_transcript(tpath):
+    """Parse one transcript file into the (haystack, texts_by_id) pair
+    audit-quotes checks quotes against — the one place #503's per-session
+    cache calls into transcript.from_file, so it is charged once per session
+    no matter how many items or checkpoints resolve to it."""
+    msgs = transcript.from_file(tpath)
+    # #440: the same stripped haystacks verify_quotes used at serialize time.
+    # Audit re-blesses stored items, so reading the raw render here would
+    # certify exactly the echo verification rejected — and do it with the
+    # CLI's authority.
+    haystack = serializer.stripped_transcript(msgs)
+    texts_by_id = {
+        mid: serializer.strip_injected(text) for mid, text
+        in serializer.message_texts_by_id(msgs).items()}
+    return haystack, texts_by_id
+
+
+def _resolve_audit_transcript(session_id: str, slug, cache: dict):
+    """Resolve one session's (haystack, texts_by_id) pair and cache it by
+    session id (#503). A corpus scan hits the same session many times — once
+    as a checkpoint's own transcript, and once per carried item in every
+    LATER checkpoint whose origin_session names it — and `--all` walks the
+    whole corpus, so re-parsing per hit would make it quadratic. A miss is
+    cached too (None), so an unresolvable session is not retried on every
+    item that names it."""
+    if session_id in cache:
+        return cache[session_id]
+    tpath = _find_audit_transcript(session_id, slug)
+    result = None
+    if tpath is not None:
+        try:
+            result = _load_audit_transcript(tpath)
+        except (OSError, FileNotFoundError):
+            result = None
+    cache[session_id] = result
+    return result
+
+
 def _cmd_audit_quotes(args) -> int:
     """Read-only audit (#125): re-check every stored verbatim quote against its
     source transcript with the SAME tier-f matcher serialize uses, and REPORT.
-    Never rewrites a trust tag — a blind backfill would flip a large share of the
-    historical corpus, many of them wrongly (quotes crossing content the current
-    renderer no longer emits). Default scope is the current project; --all spans
+
+    #503: resolved per ITEM, from the item's own `origin_session` stamp, not
+    from the checkpoint that merely contains it — carry.merge copies `quote`
+    and `source_message_ids` forward when an item survives into a later
+    checkpoint, but never the transcript identity they came from, so a carried
+    item checked against its containing checkpoint's transcript is checked
+    against a transcript it was never in. Falls back to the containing
+    checkpoint's own session when the stamp is absent (pre-#268 items) or its
+    transcript cannot be resolved.
+
+    Never rewrites a trust tag — a blind backfill would flip a large share of
+    the historical corpus. Measured (#503): the overwhelming majority of
+    failures on an unpatched checker were exactly this resolution bug, not
+    quotes crossing content the current renderer no longer emits — that class
+    is a small minority. Default scope is the current project; --all spans
     the whole corpus."""
     project = _resolve_project(args.project)
     want_slug = store.project_slug(project)
@@ -1943,6 +1993,8 @@ def _cmd_audit_quotes(args) -> int:
     except OSError:
         files = []
     scanned = paired = unpaired = items = verified = failed = id_resolved = 0
+    origin_resolved = 0
+    transcripts: dict = {}
     failures: list[tuple[str, str]] = []
     for f in sorted(files):
         try:
@@ -1956,33 +2008,44 @@ def _cmd_audit_quotes(args) -> int:
             continue
         scanned += 1
         session_id = str(cp.get("session_id") or f.stem)
-        tpath = _find_audit_transcript(session_id, slug)
-        haystack = None
-        texts_by_id = {}
-        if tpath is not None:
-            try:
-                msgs = transcript.from_file(tpath)
-                # #440: the same stripped haystacks verify_quotes used at
-                # serialize time. Audit re-blesses stored items, so reading
-                # the raw render here would certify exactly the echo
-                # verification rejected — and do it with the CLI's authority.
-                haystack = serializer.stripped_transcript(msgs)
-                texts_by_id = {
-                    mid: serializer.strip_injected(text) for mid, text
-                    in serializer.message_texts_by_id(msgs).items()}
-            except (OSError, FileNotFoundError):
-                haystack = None
-        if haystack is None:
+        own = _resolve_audit_transcript(session_id, slug, transcripts)
+        if own is not None:
+            paired += 1
+        else:
             unpaired += 1
-            continue
-        paired += 1
         for item in serializer.iter_items(cp):
             if item.get("trust") != "verbatim":
                 continue
             quote = item.get("quote")
             if not isinstance(quote, str) or not quote.strip():
                 continue
+            # #503: try the item's OWN origin first. origin_session equal to
+            # the containing session (the common native-item case, stamped
+            # onto itself at write) is just `own` again — skip the lookup and
+            # go straight there. A present-but-different stamp that fails to
+            # resolve (GC'd transcript, wrong host layout) falls through to
+            # `own` too, the pre-#503 verdict, byte-identical.
+            resolved, carried = own, False
+            origin = item.get("origin_session")
+            if (isinstance(origin, str) and origin.strip()
+                    and origin != session_id):
+                origin_slug = None
+                if origin not in transcripts:
+                    origin_cp = store.read_checkpoint(origin)
+                    if isinstance(origin_cp, dict):
+                        origin_slug = origin_cp.get("project_slug")
+                from_origin = _resolve_audit_transcript(
+                    origin, origin_slug, transcripts)
+                if from_origin is not None:
+                    resolved, carried = from_origin, True
+            if resolved is None:
+                continue  # neither the origin nor the containing session's
+                          # transcript resolves -> unverifiable, uncounted,
+                          # same as today's unpaired-checkpoint skip.
+            haystack, texts_by_id = resolved
             items += 1
+            if carried:
+                origin_resolved += 1
             # #358: an item bound to source message id(s) resolves the id and
             # compares bytes against just that message. Missing/invalid ids
             # (old checkpoints, moved/truncated transcripts) fall back to the
@@ -2002,7 +2065,8 @@ def _cmd_audit_quotes(args) -> int:
         f"audit-quotes ({scope})",
         f"  checkpoints scanned: {scanned}  paired: {paired}  unpaired: {unpaired}",
         f"  verbatim quotes checked: {items}  verified: {verified}  "
-        f"failed: {failed}  id-resolved: {id_resolved}  rate: {rate:.1%}",
+        f"failed: {failed}  id-resolved: {id_resolved}  "
+        f"origin-resolved: {origin_resolved}  rate: {rate:.1%}",
     ]
     if failures:
         top = max(0, args.top)
@@ -2015,7 +2079,12 @@ def _cmd_audit_quotes(args) -> int:
     # variant is a distinct event, not a detail of this one: a run that resolved
     # no transcript verified nothing, and it is also how a host whose
     # transcripts live outside `_find_audit_transcript`'s reach shows up at all.
-    _note_usage("audit-quotes:unpaired" if not paired else "audit-quotes")
+    # #503: keyed on ANY resolved transcript, not on `paired`. Once resolution
+    # is per item, a checkpoint whose own transcript is gone still verifies its
+    # carried items through origin_session — `paired` counts containing
+    # checkpoints and would report that run as silence.
+    resolved_any = any(v is not None for v in transcripts.values())
+    _note_usage("audit-quotes" if resolved_any else "audit-quotes:unpaired")
     return 0
 
 
