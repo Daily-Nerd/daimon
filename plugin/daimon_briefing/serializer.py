@@ -800,17 +800,24 @@ def quote_matches(quote, haystack) -> bool:
     span), drops fragments shorter than _MIN_FRAGMENT chars after normalization,
     and requires every surviving fragment to appear IN ORDER — each searched
     from the previous fragment's match end. A quote left with no usable fragment
-    is unverifiable and returns False (conservative: never auto-pass). Redaction
-    placeholders are stripped from fragments first, so a stored quote already
-    carrying a `[redacted:...]` marker still matches."""
+    is unverifiable and returns False (conservative: never auto-pass).
+
+    A `[redacted:...]` marker is a fragment boundary, exactly like an ellipsis
+    (#505). Stored quotes are redacted at capture while the transcript still
+    holds the real secret, so the marker stands where bytes we cannot reproduce
+    used to be — the same situation as an elided span. DELETING it instead
+    (the pre-#505 behavior) joined two spans that are not adjacent in the
+    source, so any quote with a secret in the MIDDLE could never match: the
+    contract the docstring described was only ever met at the quote's edges."""
     if not isinstance(quote, str) or not isinstance(haystack, str):
         return False
     hay = _normalize_for_match(haystack)
     fragments = []
     for raw in _ELLIPSIS_RE.split(quote):
-        frag = _normalize_for_match(_REDACTED_RE.sub("", raw))
-        if len(frag) >= _MIN_FRAGMENT:
-            fragments.append(frag)
+        for piece in _REDACTED_RE.split(raw):
+            frag = _normalize_for_match(piece)
+            if len(frag) >= _MIN_FRAGMENT:
+                fragments.append(frag)
     if not fragments:
         return False
     pos = 0
