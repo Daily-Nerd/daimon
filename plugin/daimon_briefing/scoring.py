@@ -106,6 +106,42 @@ def _age_days(item, now: float) -> float | None:
     return max(0.0, (now - epoch) / 86400.0)
 
 
+_SOFT_CLIP_DELTA = 0.1   # knee at C*(1-delta): below it, nothing changes
+
+
+def _soft_clip(weight: float, ceiling: float) -> float:
+    """Saturate `weight` toward `ceiling` without ever reaching it, preserving
+    order (#488).
+
+    #408 applied the lid with min(), which caps correctly and is not injective
+    on [C, inf): every accumulation at or above the ceiling collapsed onto the
+    same number, so importance stopped separating exactly the items the lid was
+    protecting. Measured on the real corpus, fresh inferred items at importance
+    8, 9 and 10 all scored 0.700, leaving briefing._by_weight's stable sort to
+    fall back on serializer emission order.
+
+    The invariant #408 states is sup(w) <= C. It never required collapsing the
+    domain. With K = C(1-delta):
+
+        f(w) = w                              for w <= K
+        f(w) = C - (C-K)^2 / (w - 2K + C)     for w > K
+
+    - bounded, strictly: w > K => w-2K+C > C-K > 0, so f(w) < C, approaching C
+      from below. Tighter than min(), which ATTAINS C.
+    - strictly increasing: f'(w) = (C-K)^2 / (w-2K+C)^2 > 0. Order-preserving.
+    - C1-continuous at the knee: f(K) = K and f'(K+) = 1.
+    - identity below K, so the great majority of items are untouched and the
+      carry_floor comparisons that sit far below the knee cannot move.
+    """
+    if ceiling <= 0.0:
+        return 0.0
+    knee = ceiling * (1.0 - _SOFT_CLIP_DELTA)
+    if weight <= knee:
+        return weight
+    gap = ceiling - knee
+    return ceiling - (gap * gap) / (weight - 2.0 * knee + ceiling)
+
+
 def effective_weight(item, item_type: str, now: float) -> float:
     """Ordering key for one checkpoint item. Tolerant of everything a legacy or
     torn checkpoint can throw: missing/malformed first_seen -> neutral recency,
@@ -122,8 +158,8 @@ def effective_weight(item, item_type: str, now: float) -> float:
     ceiling = trust_ceiling(item.get("trust"))
     age = _age_days(item, now)
     if age is None:
-        return min(base * _NEUTRAL_RECENCY, ceiling)
+        return _soft_clip(base * _NEUTRAL_RECENCY, ceiling)
     weight = base * recency_weight(age) * _type_decay(age, rules)
     if rules["auto_escalation"] and age > rules["expected_lifespan"]:
         weight *= _overdue_boost(age - rules["expected_lifespan"])
-    return min(weight, ceiling)
+    return _soft_clip(weight, ceiling)
