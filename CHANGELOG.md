@@ -5,6 +5,42 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0](https://github.com/Daily-Nerd/daimon/compare/v0.22.1...v0.23.0) (2026-08-01)
+
+
+### Features
+
+* **briefing:** render pending agent claims, credit resolutions by source, teach the verbs ([#486](https://github.com/Daily-Nerd/daimon/issues/486)) ([ca27d5d](https://github.com/Daily-Nerd/daimon/commit/ca27d5d80c65bd001923b7fd4d5bdf3e51502f69))
+* **cli:** agent-initiated resolve — evidence-gated claim that never withholds ([#482](https://github.com/Daily-Nerd/daimon/issues/482)) ([c07c291](https://github.com/Daily-Nerd/daimon/commit/c07c2914d1c9a18de4a484e91ff5ed3ae765ff4b))
+* **cli:** loop handles — ids inline and a daimon loops listing ([#481](https://github.com/Daily-Nerd/daimon/issues/481)) ([30744e6](https://github.com/Daily-Nerd/daimon/commit/30744e69bf29df5d17bcdaccdf291d6d89af55d4))
+* **provenance:** stamp the served model from the LLM response ([#460](https://github.com/Daily-Nerd/daimon/issues/460)) ([7ceb422](https://github.com/Daily-Nerd/daimon/commit/7ceb422fba2b60a13fa92e055ef0f8d5330855f4))
+* **research:** general replay A/B instrument for recall-scoring hypotheses — [#470](https://github.com/Daily-Nerd/daimon/issues/470) measured and refuted ([#472](https://github.com/Daily-Nerd/daimon/issues/472)) ([114a2fa](https://github.com/Daily-Nerd/daimon/commit/114a2fac305f21a2345c9a55b675c96749701518))
+* **research:** stance-gate recall variant — [#483](https://github.com/Daily-Nerd/daimon/issues/483) measured and refuted ([#484](https://github.com/Daily-Nerd/daimon/issues/484)) ([f6a83d1](https://github.com/Daily-Nerd/daimon/commit/f6a83d12b3bf39d73ff6e7f6243c05f52ca70eb7))
+* **serializer:** verify pending agent resolve claims against the transcript ([#485](https://github.com/Daily-Nerd/daimon/issues/485)) ([81eea67](https://github.com/Daily-Nerd/daimon/commit/81eea67daea0f0a7d387bc2adc481e9d0dae2919))
+* **worldcheck:** receipt-validity spot-check class — sampled vitni verification of origin receipts ([#467](https://github.com/Daily-Nerd/daimon/issues/467)) ([4d18129](https://github.com/Daily-Nerd/daimon/commit/4d18129389715a7ffc75c3e968ccaebcd87b7fe6))
+
+
+### Bug Fixes
+
+* **bench:** verify the served model — run-pinned receipts, producer-verified cache ([#463](https://github.com/Daily-Nerd/daimon/issues/463)) ([54b67f8](https://github.com/Daily-Nerd/daimon/commit/54b67f8f4751a6ee19d7078b6acaaf2d88422cc7))
+* **briefing:** cut inside the sections when they overflow the budget ([#493](https://github.com/Daily-Nerd/daimon/issues/493)) ([770ba93](https://github.com/Daily-Nerd/daimon/commit/770ba9324dd2602b540b84c1b3388f0e7648382b))
+* **cli:** origin cooldown is a budget, not a session-wide ban ([#501](https://github.com/Daily-Nerd/daimon/issues/501)) ([c29c5da](https://github.com/Daily-Nerd/daimon/commit/c29c5da06bc5a7eec0567dc7157d1fb0df554557))
+* **cli:** the age gate no longer waves stale questions through ([#499](https://github.com/Daily-Nerd/daimon/issues/499)) ([93306cf](https://github.com/Daily-Nerd/daimon/commit/93306cf4d1e6de3d39c0b3fe1ab2158212349fba))
+* **policy:** mint item ids at 12 hex, not 6 ([#494](https://github.com/Daily-Nerd/daimon/issues/494)) ([9a4be4b](https://github.com/Daily-Nerd/daimon/commit/9a4be4b447b1ea57e903b27c550b5b3c4a4b5242))
+* **recall:** age-gate stale injections — &gt;7d items need a 3-term match to fire ([#455](https://github.com/Daily-Nerd/daimon/issues/455)) ([71cd2af](https://github.com/Daily-Nerd/daimon/commit/71cd2afed5b488d27294c37681a29c53deaa3084))
+* **recall:** count matched terms on word boundaries, not substrings ([#498](https://github.com/Daily-Nerd/daimon/issues/498)) ([c42ad43](https://github.com/Daily-Nerd/daimon/commit/c42ad437f322336b3a75ffcc843f20e8b63edfdc))
+* **scoring:** soft-clip the trust ceiling so it bounds order instead of erasing it ([#497](https://github.com/Daily-Nerd/daimon/issues/497)) ([5e8f1d0](https://github.com/Daily-Nerd/daimon/commit/5e8f1d03252e1a818aee227db3549bdd879151fe))
+* **serializer:** verify the chunk-cache producer — served-model envelope, replay attribution ([#466](https://github.com/Daily-Nerd/daimon/issues/466)) ([4598f27](https://github.com/Daily-Nerd/daimon/commit/4598f27d8d2481ecb159152e63ac5e54d542db89))
+* **stats:** say when no rescue path exists, instead of reporting it as unused ([#479](https://github.com/Daily-Nerd/daimon/issues/479)) ([e66caf6](https://github.com/Daily-Nerd/daimon/commit/e66caf67e56f532b3293f2e7db5e4ac08c390169))
+* **stats:** stop mixing host populations in the retention ratio ([#478](https://github.com/Daily-Nerd/daimon/issues/478)) ([431b151](https://github.com/Daily-Nerd/daimon/commit/431b151546876f5111ac4b990ed5030be53c2336))
+* **status:** show why a serialize failed, and stop the backend log erasing itself ([#476](https://github.com/Daily-Nerd/daimon/issues/476)) ([f057ed1](https://github.com/Daily-Nerd/daimon/commit/f057ed12df347caeb8ff2073e6bf522c22a8389c))
+* **test:** reset llm fallback flag per test — file-pair runs leaked _fallback_used ([#462](https://github.com/Daily-Nerd/daimon/issues/462)) ([3788109](https://github.com/Daily-Nerd/daimon/commit/3788109a52a3373cd68e4f2b9f3c8c17b87c83e8))
+
+
+### Documentation
+
+* **brand:** wire the phyllotaxis brand mark through README and docs site ([#469](https://github.com/Daily-Nerd/daimon/issues/469)) ([7080adb](https://github.com/Daily-Nerd/daimon/commit/7080adb4f249f31a4d4ae8839335b586fd82f3f4))
+
 ## [0.22.1](https://github.com/Daily-Nerd/daimon/compare/v0.22.0...v0.22.1) (2026-07-30)
 
 
