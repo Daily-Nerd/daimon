@@ -127,12 +127,24 @@ def drop_forgotten(checkpoint: dict, forgotten_keys: set) -> list:
 
 
 def stamp_item_ids(checkpoint: dict) -> None:
-    """Stable per-item ids (#102): sha1 of kind:text, 6 hex chars, prefixed
+    """Stable per-item ids (#102): sha1 of kind:text, 12 hex chars, prefixed
     with the kind's initial. setdefault semantics — an item that already
     carries an id (a carried twin, a re-write) is never re-stamped, so
     identity survives rotation and re-serialization. Collisions within one
     checkpoint widen the slice; identical-text twins fall through to a
-    counter suffix (same text, same kind, still two loops)."""
+    counter suffix (same text, same kind, still two loops).
+
+    #487: the slice is 12 hex, not 6, because the id is a PROJECT-GLOBAL key
+    (store.resolutions folds events by bare ref, briefing.withhold binds on
+    exact equality, recall's rebuild scrub updates bucket-wide) while `seen`
+    below is scoped to ONE checkpoint — so a cross-session collision is
+    undetectable here by construction. At 6 hex that is ~2.4% over ~2k
+    distinct texts per project and grows quadratically; the consequence is a
+    `resolve` or `forget` silently withholding an unrelated live memory, which
+    briefing.withhold's docstring names as the worst failure it can have.
+    Narrowing the hash is free, so the width carries the guarantee instead.
+    Ids already stamped keep their width forever and both shapes coexist:
+    every consumer regex accepts {6,} (briefing's bounds it at {6,40})."""
     seen: set = set()
     for section, key in _ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
@@ -147,13 +159,18 @@ def stamp_item_ids(checkpoint: dict) -> None:
             digest = hashlib.sha1(
                 f"{key}:{item['text']}".encode("utf-8")).hexdigest()
             cand = ""
-            for width in (6, 8, 12, 40):
+            widths = (12, 16, 24, 40)
+            for width in widths:
                 cand = f"{key[0]}-{digest[:width]}"
                 if cand not in seen:
                     break
             n = 2
             while cand in seen:
-                cand = f"{key[0]}-{digest[:6]}-{n}"
+                # The counter base must be the FIRST rung, not a narrower
+                # slice: a fallback that mints a shorter id would reintroduce
+                # the collision surface the width exists to remove, and it
+                # would do it on the twins path where ids are least distinct.
+                cand = f"{key[0]}-{digest[:widths[0]]}-{n}"
                 n += 1
             item["id"] = cand
             seen.add(cand)
