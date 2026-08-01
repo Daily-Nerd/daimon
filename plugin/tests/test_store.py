@@ -1539,6 +1539,46 @@ def test_is_resolved_supersede_candidate_is_live():
     assert store.is_resolved({"status": "REOPENED"}) is False                 # regression
 
 
+def test_is_resolved_agent_resolving_candidate_is_live():
+    # #480 slice 2: an agent's unverified claim is a machine SUGGESTION, same
+    # shape as #14's supersede-candidate — it must never withhold on its own,
+    # only after serialize-time verification or a human confirm.
+    from daimon_briefing import store
+    assert store.is_resolved({"status": "resolving-candidate", "source": "agent"}) is False
+    assert store.is_resolved({"status": "RESOLVING-CANDIDATE"}) is False  # case-insensitive
+
+
+def test_resolutions_equal_timestamp_agent_candidate_loses_both_orders(tmp_checkpoint_dir):
+    # An agent's resolving-candidate is a machine SUGGESTION too — it must
+    # not shadow a same-second definitive statement, mirroring the
+    # supersede-candidate tie-break directly above (#480 slice 2).
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    # The note fields are load-bearing: an agent candidate always carries a
+    # non-empty evidence quote while a human resolve may carry note "". At
+    # equal _tie_rank the fold falls to canonical-JSON, where the non-empty
+    # note sorts ABOVE the empty one — so without the rank-0 exemption the
+    # candidate would win this tie and shadow the human's real resolution.
+    # A fixture without notes passes vacuously (source "agent" < "cli"
+    # happens to favor the right outcome for the wrong reason).
+    cand = ('{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a",'
+            ' "note": "verbatim evidence quote here",'
+            ' "status": "resolving-candidate", "source": "agent"}\n')
+    reopen = ('{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a",'
+              ' "note": "", "status": "reopened", "source": "cli"}\n')
+    resolve = ('{"ts": "2026-07-07T10:00:00Z", "item_ref": "o-a",'
+               ' "note": "", "status": "resolved", "source": "cli"}\n')
+
+    for log in (cand + reopen, reopen + cand):
+        (d / "events.jsonl").write_text(log)
+        assert store.resolutions(project_dir="/p/A")["o-a"]["status"] == "reopened"
+    for log in (cand + resolve, resolve + cand):
+        (d / "events.jsonl").write_text(log)
+        assert store.resolutions(project_dir="/p/A")["o-a"]["status"] == "resolved"
+
+
 def test_redact_scrubs_link_targets(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"recent_decisions": [

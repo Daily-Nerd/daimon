@@ -1121,11 +1121,12 @@ def append_event(item_ref: str, status: str, note: str = "",
 def _tie_rank(evt: dict) -> int:
     """Same-second precedence (#143), from event content only. reopen beats
     resolving: when order is unknowable the item stays visible — hiding a
-    live item costs more than showing a resolved one. supersede-candidate
-    loses to everything: a machine SUGGESTION must never shadow a same-second
-    definitive statement (mirrors is_resolved's no-suppression rule)."""
+    live item costs more than showing a resolved one. supersede-candidate and
+    resolving-candidate (#480 slice 2) lose to everything: a machine
+    SUGGESTION must never shadow a same-second definitive statement (mirrors
+    is_resolved's no-suppression rule)."""
     status = str(evt.get("status") or "").lower()
-    if status.startswith("supersede-candidate"):
+    if status.startswith(("supersede-candidate", "resolving-candidate")):
         return 0
     if status.startswith("reopen"):
         return 2
@@ -1187,15 +1188,15 @@ def resolutions(project_dir=None) -> dict:
 
 def is_resolved(event) -> bool:
     """Liveness rule (#102, #14): latest event wins; three states — a status
-    starting with 'reopen' returns the item to live; 'supersede-candidate'
-    and 'corroborat*' are non-resolving by construction (see below);
-    anything else means resolved. Status is free-form text by design — never
-    an enum, so unknown statuses resolve (the writer bothered to record a
-    lifecycle fact) rather than vanish."""
+    starting with 'reopen' returns the item to live; 'supersede-candidate',
+    'corroborat*', and 'resolving-candidate' (#480 slice 2) are non-resolving
+    by construction (see below); anything else means resolved. Status is
+    free-form text by design — never an enum, so unknown statuses resolve
+    (the writer bothered to record a lifecycle fact) rather than vanish."""
     if not isinstance(event, dict):
         return False
     status = str(event.get("status") or "").lower()
-    if status.startswith(("supersede-candidate", "corroborat")):
+    if status.startswith(("supersede-candidate", "corroborat", "resolving-candidate")):
         return False  # a machine SUGGESTION is live by construction (#14):
                       # every consumer (carry, withhold, future) inherits
                       # no-suppression without knowing candidates exist.
@@ -1206,6 +1207,10 @@ def is_resolved(event) -> bool:
                       # can equal, so this branch is the belt to that brace —
                       # scar 0025 (any event kind on a bare ref hides its
                       # item) is too expensive a failure to guard once.
+                      # #480 slice 2: resolving-candidate is the SAME shape —
+                      # an agent's unverified claim — one status further; it
+                      # withholds only once slice 3's serialize-time
+                      # verification (or a human) writes the next event.
     return not status.startswith("reopen")
 
 

@@ -6671,6 +6671,162 @@ def test_loops_records_usage_event(tmp_checkpoint_dir, tmp_log_dir, capsys, monk
     assert lines[0].split()[1] == "loops"
 
 
+# ---- #480 slice 2: daimon resolve --by agent --evidence — the agent write path ----
+
+
+def test_resolve_by_agent_without_evidence_refuses_and_writes_nothing(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid, "--by", "agent"]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve:no-evidence"
+
+
+def test_resolve_by_agent_with_whitespace_evidence_refuses(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid, "--by", "agent", "--evidence", "   "]) == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve:no-evidence"
+
+
+def test_resolve_by_agent_with_evidence_appends_candidate_event(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    rc = cli.main(["resolve", iid, "--by", "agent",
+                   "--evidence", "we shipped the manual approval step in 0.9"])
+    assert rc == 0
+    evt = store.resolutions(project_dir="/p/A")[iid]
+    assert evt["source"] == "agent"
+    assert evt["note"] == "we shipped the manual approval step in 0.9"
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve:agent"
+
+
+def test_resolve_by_agent_candidate_never_withholds_human_resolve_still_does(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #480 slice 2 core safety property: an agent candidate must not shadow
+    # the item from brief/loops — the same "never withheld" guarantee #14
+    # supersede-candidates already have. A human `resolve` on the SAME KIND
+    # of item withholds exactly as it always has.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest(project_dir="/repo/x")
+    agent_item = written["working_context"]["open_questions"][0]
+    human_item = written["working_context"]["open_questions"][1]
+
+    rc = cli.main(["resolve", agent_item["id"], "--by", "agent",
+                   "--evidence", "the user merged PR #6 from the GitHub UI",
+                   "--project", "/repo/x"])
+    assert rc == 0
+
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert agent_item["text"] in out  # agent candidate: still shown, unverified
+
+    rc = cli.main(["loops", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert agent_item["id"] in out  # loops: still listed
+
+    rc = cli.main(["resolve", human_item["id"], "--project", "/repo/x"])
+    assert rc == 0
+    capsys.readouterr()
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert human_item["text"] not in out  # human resolve: withheld as always
+
+
+def test_resolve_human_path_unchanged_source_status_and_message(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Regression: the human path must remain byte-identical after the #480
+    # slice 2 agent branch is added.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    rc = cli.main(["resolve", iid])
+    assert rc == 0
+    out = capsys.readouterr().out
+    text = cp["working_context"]["open_questions"][0]["text"]
+    assert out == f"resolved {iid}: {text} [resolved]\n"
+    evt = store.resolutions(project_dir="/p/A")[iid]
+    assert evt["source"] == "cli"
+    assert evt["status"] == "resolved"
+    assert store.is_resolved(evt)
+
+
+def test_resolve_evidence_without_by_agent_is_rejected(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    rc = cli.main(["resolve", iid, "--evidence", "some quote"])
+    assert rc == 1
+    assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_resolve_by_agent_evidence_dry_run_writes_nothing(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    rc = cli.main(["resolve", iid, "--by", "agent", "--evidence", "quote",
+                   "--dry-run"])
+    assert rc == 0
+    assert store.resolutions(project_dir="/p/A") == {}
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve:dry-run"
+
+
+def test_resolve_by_agent_fuzzy_target_binds_uniquely(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    rc = cli.main(["resolve", "release pipeline manual approval", "--by", "agent",
+                   "--evidence", "shipped the approval step"])
+    assert rc == 0
+    evt = store.resolutions(project_dir="/p/A")[iid]
+    assert evt["source"] == "agent"
+
+
+def test_resolve_by_agent_ambiguous_target_still_refuses_with_candidates(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = {"working_context": {"open_questions": [
+        {"text": "gateway retry budget for serializer chunks"},
+        {"text": "serializer chunk retry budget unclear"},
+    ]}}
+    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    rc = cli.main(["resolve", "serializer chunk retry budget", "--by", "agent",
+                   "--evidence", "quote"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    for item in cp["working_context"]["open_questions"]:
+        assert item["id"] in out
+    assert store.resolutions(project_dir="/p/A") == {}
+    lines = (tmp_log_dir / "usage.log").read_text().splitlines()
+    assert lines[0].split()[1] == "resolve:ambiguous"
+
+
 # ---- #103: daimon reverify — evidence-gated reopen ----
 
 

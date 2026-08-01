@@ -797,7 +797,38 @@ def _cmd_resolve(args) -> int:
     across checkpoints; resolve: carry._same_item over this checkpoint
     only), and a preview that disagrees with the writer is worse than none.
     Ambiguous/no-match refusals return before this point either way, so
-    their output is identical with or without the flag."""
+    their output is identical with or without the flag.
+
+    #480 slice 2 — the agent write path: `--by agent --evidence "<quote>"`
+    appends a `resolving-candidate` event, `source="agent"`, instead of the
+    human path's immediate `resolved`/`source="cli"`. Evidence is mandatory
+    with `--by agent` (mirrors #103 reverify's evidence gate on the reopen
+    side) — a call without it is refused before any checkpoint I/O, nothing
+    written, logged as `resolve:no-evidence` (extends #303). `--evidence`
+    without `--by agent` is rejected too: it is not a `--note` synonym on
+    the human path. The bind (exact id, unique fuzzy match, ambiguous/
+    no-match refusal, --dry-run) is identical on both paths — only what gets
+    written at the end differs. `resolving-candidate` is deliberately NOT
+    'resolved': store.is_resolved/_tie_rank exempt it exactly as they exempt
+    #14's supersede-candidate, so an agent's claim never withholds the item
+    on its own (the #13 false-merge lesson) until slice 3's serializer
+    verifies the quote or a human confirms."""
+    by_agent = getattr(args, "by", None) == "agent"
+    raw_evidence = getattr(args, "evidence", None)
+    if raw_evidence is not None and not by_agent:
+        print("--evidence requires --by agent — the human path vouches by "
+              "calling resolve directly, no evidence needed")
+        return 1
+    evidence = (raw_evidence or "").strip()
+    if by_agent and not evidence:
+        # Same #303 stance as the ambiguous/no-match refusals below: a
+        # refused attempt must leave its own trace, so "no agent ever tried"
+        # and "an agent tried and was refused for lacking evidence" stay
+        # distinguishable in `daimon stats`.
+        _note_usage("resolve:no-evidence")
+        print("--by agent requires --evidence \"<verbatim transcript quote>\" "
+              "— refused, nothing written")
+        return 1
     project = _resolve_project(args.project)
     checkpoint = store.read_latest(project_dir=project, fallback=False)
     if not isinstance(checkpoint, dict):
@@ -829,6 +860,10 @@ def _cmd_resolve(args) -> int:
                 print(f"  {it['id']}  [{key}] {it.get('text', '')}")
             print("resolve by exact id: daimon resolve <id>")
             return 1
+    # #480 slice 2: the agent path writes a candidate status, credited to
+    # source="agent" — NOT args.status/"cli", which stay exactly what the
+    # human path has always written (byte-identical human behavior).
+    effective_status = "resolving-candidate" if by_agent else args.status
     if getattr(args, "dry_run", False):
         # A distinct tag, not "resolve": nothing was written, so folding this
         # into the success counter would inflate it with attempts that never
@@ -836,13 +871,21 @@ def _cmd_resolve(args) -> int:
         # exists to expose. Not silent either: the tag still shows up in
         # `daimon stats` usage counts, just apart from resolve/resolve:*.
         _note_usage("resolve:dry-run")
-        print(f"would resolve {target['id']}: {target.get('text', '')} [{args.status}]")
+        print(f"would resolve {target['id']}: {target.get('text', '')} [{effective_status}]")
         return 0
-    ok = store.append_event(target["id"], args.status, note=args.note or "",
-                            project_dir=project, item_text=str(target.get("text") or ""))
+    ok = store.append_event(
+        target["id"], effective_status,
+        note=(evidence if by_agent else (args.note or "")),
+        source=("agent" if by_agent else "cli"),
+        project_dir=project, item_text=str(target.get("text") or ""))
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
+    if by_agent:
+        _note_usage("resolve:agent")
+        print(f"claim recorded {target['id']}: {target.get('text', '')} "
+              "— pending verification at session end")
+        return 0
     _note_usage("resolve")
     print(f"resolved {target['id']}: {target.get('text', '')} [{args.status}]")
     return 0
@@ -2853,6 +2896,14 @@ def build_parser() -> argparse.ArgumentParser:
                            help="free-form lifecycle status (default: resolved; "
                                 "a status starting with 'reopen' revives the item)")
     p_resolve.add_argument("--note", help="optional context recorded on the event")
+    p_resolve.add_argument(
+        "--by", choices=["agent"],
+        help="declare an agent-initiated claim (requires --evidence); "
+             "omit for the human path (default)")
+    p_resolve.add_argument(
+        "--evidence",
+        help="verbatim transcript quote proving the claim — required with "
+             "--by agent, rejected without it")
     p_resolve.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_resolve.add_argument(
         "--dry-run", action="store_true",
