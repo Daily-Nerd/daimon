@@ -964,6 +964,94 @@ def test_audit_quotes_source_ids_resolve_against_origin_transcript(
     assert "failed: 0" in out
 
 
+def test_audit_quotes_skips_verbatim_items_with_no_usable_quote(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """A stored item tagged verbatim but carrying no quote (legacy or
+    hand-edited checkpoint) is uncheckable, not a failure — counting it as
+    failed would report fabrication where there is simply nothing to check."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [
+        ("user", "a real sentence that one item genuinely quotes"),
+    ])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": "no quote at all", "trust": "verbatim", "id": "d-1"},
+        {"text": "blank quote", "trust": "verbatim", "quote": "   ", "id": "d-2"},
+        {"text": "real", "trust": "verbatim",
+         "quote": "a real sentence that one item genuinely quotes", "id": "d-3"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    # Only the one checkable item is counted, and it verified.
+    assert "verbatim quotes checked: 1" in out
+    assert "verified: 1" in out
+    assert "failed: 0" in out
+
+
+def test_audit_quotes_reads_origin_slug_from_the_origin_checkpoint(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """The real shape: the origin session has a checkpoint of its own, and it
+    is the one that knows which project slug its transcript lives under. An
+    item can be carried into a checkpoint in a DIFFERENT project, so the
+    containing checkpoint's slug is not usable for the lookup."""
+    slug_a = store.project_slug("/p/A")
+    slug_b = store.project_slug("/p/B")
+    # Origin session SA belongs to project B, and its transcript lives there.
+    _write_transcript(_projects_dir, slug_b, "SA", [
+        ("user", "the origin sentence recorded in the other project"),
+    ])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug_b, [
+        {"text": "native", "trust": "verbatim",
+         "quote": "the origin sentence recorded in the other project",
+         "id": "d-native"},
+    ]), project_dir="/p/B")
+    # The carried twin now lives in project A with no transcript of its own.
+    store.write_checkpoint("SB", _stored_checkpoint("SB", slug_a, [
+        {"text": "carried", "trust": "verbatim",
+         "quote": "the origin sentence recorded in the other project",
+         "origin_session": "SA", "id": "d-carried"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    assert "verified: 1" in out
+    assert "origin-resolved: 1" in out
+
+
+def test_audit_quotes_unreadable_origin_transcript_falls_back(
+    tmp_checkpoint_dir, _projects_dir, capsys, monkeypatch
+):
+    """A transcript that resolves to a path but cannot be READ (permissions,
+    truncation mid-read) must degrade to the containing session, not crash the
+    whole corpus scan."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [("user", "origin text here")])
+    _write_transcript(_projects_dir, slug, "SB", [
+        ("user", "the containing session also holds this quoted sentence"),
+    ])
+    store.write_checkpoint("SB", _stored_checkpoint("SB", slug, [
+        {"text": "carried", "trust": "verbatim",
+         "quote": "the containing session also holds this quoted sentence",
+         "origin_session": "SA", "id": "d-1"},
+    ]), project_dir="/p/A")
+
+    real_from_file = transcript.from_file
+
+    def exploding_from_file(path):
+        if str(path).endswith("SA.jsonl"):
+            raise OSError("simulated unreadable transcript")
+        return real_from_file(path)
+    monkeypatch.setattr(transcript, "from_file", exploding_from_file)
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    # Fell back to SB's own transcript, which does contain the quote.
+    assert "verified: 1" in out
+    assert "origin-resolved: 0" in out
+
+
 def test_audit_quotes_usage_is_not_unpaired_when_only_origins_resolve(
     tmp_checkpoint_dir, _projects_dir, _log_dir, capsys
 ):
