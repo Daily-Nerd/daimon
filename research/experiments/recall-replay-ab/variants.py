@@ -45,8 +45,111 @@ keep it out of the repo entirely and pass `--variant mymodule:myfunc`.
 """
 
 import importlib
+import re
 import sys
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# stance_gate (#483): does the prompt APPROACH the memory's territory (needs
+# it) or REPORT from inside it (already has it)? Overlap-based matching
+# cannot tell the two apart — both share the vocabulary. This is a
+# deterministic SURFACE classifier of epistemic stance: no LLM, no new deps.
+# ---------------------------------------------------------------------------
+
+# Sentence-initial interrogative forms named in #483's pre-registration.
+_QUESTION_OPENERS = frozenset({
+    "how", "why", "what", "when", "where", "which", "who",
+    "can", "could", "should", "does", "is",
+})
+# Phrase markers named in #483's pre-registration: "trying to", "can't get",
+# "doesn't work", "need to figure", plus imperative help-requests.
+_QUESTION_PHRASES = (
+    "trying to", "can't get", "doesn't work", "need to figure",
+    "help me", "figure out",
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_LEAD_WORD_RE = re.compile(r"^[\s\"'(*_-]*([a-zA-Z']+)")
+
+
+def classify_stance(prompt: str) -> str:
+    """Deterministic surface classification of a prompt's epistemic stance.
+
+    Returns ``"question"`` for prompts that show question-shaped surface
+    markers, else ``"statement"`` (completed-work reports and declarations —
+    the default when no marker fires). Case-insensitive. The trailing '?'
+    check looks at the whole prompt; opener/phrase markers look at the
+    first ~2 sentences only, so a late aside inside a long statement-shaped
+    report doesn't flip the whole prompt.
+
+    Markers (per #483's pre-registration):
+      - trailing '?' anywhere in the prompt
+      - sentence-initial interrogative: how/why/what/when/where/which/who/
+        can/could/should/does/is (covers "is it ...")
+      - phrase markers: "trying to", "can't get", "doesn't work",
+        "need to figure"
+      - imperative help-requests: "help me", "figure out"
+
+    >>> classify_stance("How do I handle network timeouts?")
+    'question'
+    >>> classify_stance("Why does the retry loop spin forever")
+    'question'
+    >>> classify_stance("I implemented idempotent retry with exponential backoff")
+    'statement'
+    >>> classify_stance("Shipped the retry logic and closed the ticket.")
+    'statement'
+    >>> classify_stance("trying to get the retry logic working")
+    'question'
+    >>> classify_stance("The deploy doesn't work on the staging box")
+    'question'
+    >>> classify_stance("Deployed the staging box, all green.")
+    'statement'
+    >>> classify_stance("need to figure out why the index rebuild is slow")
+    'question'
+    >>> classify_stance("help me debug this stack trace")
+    'question'
+    >>> classify_stance("Merged #470, refuted and closed.")
+    'statement'
+    >>> classify_stance("Is it safe to rerun the migration")
+    'question'
+    >>> classify_stance("")
+    'statement'
+    """
+    text = (prompt or "").strip()
+    if not text:
+        return "statement"
+    if "?" in text:
+        return "question"
+    sentences = _SENTENCE_SPLIT_RE.split(text)[:2]
+    lead = " ".join(sentences).lower()
+    if any(p in lead for p in _QUESTION_PHRASES):
+        return "question"
+    for sentence in sentences:
+        m = _LEAD_WORD_RE.match(sentence)
+        if m and m.group(1).lower() in _QUESTION_OPENERS:
+            return "question"
+    return "statement"
+
+
+def stance_gate(ctx, suggest):
+    """H (#483): gate injection on the prompt's epistemic stance.
+
+    Question-shaped prompts pass through unchanged — arm B is arm A for
+    that prompt. Statement-shaped prompts suppress injection entirely (the
+    pre-registered PRIMARY form; downweighting is a follow-up hypothesis,
+    not this variant).
+
+    Prompt-level gate — but NOT leak-free, the run proved (#483, run-04):
+    when arm B suppresses an earlier statement-shaped prompt, it never marks
+    that origin session "seen", so a LATER question-shaped prompt in the
+    same session faces a different candidate pool than arm A's — 38 of 166
+    diff prompts carried b_only injections through exactly this seen-state
+    drift. Session-cooldown-layer analog of #470's slot-promotion trap: any
+    suppressing variant inherits it, and "pass-through prompts are
+    identical to arm A" is only true until a session runs long enough.
+    """
+    if classify_stance(ctx["prompt"]) == "question":
+        return suggest()
+    return []
 
 
 def none(ctx, suggest):
@@ -61,7 +164,7 @@ def none(ctx, suggest):
     return suggest()
 
 
-BUILTIN = {"none": none}
+BUILTIN = {"none": none, "stance_gate": stance_gate}
 
 
 def resolve(spec: str):
