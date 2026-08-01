@@ -217,6 +217,58 @@ def main() -> int:
             id_arm["a_injections"] > 0,
             f"a={id_arm['a_injections']}")
 
+        # 2b. #495: the rig must state what it can RESOLVE. A delta smaller
+        #     than the minimum detectable effect is unreadable no matter how
+        #     confidently it is reported, and that has to be visible in the
+        #     artifact people share rather than rediscovered afterwards.
+        res_block = id_arm.get("resolution")
+        ok &= _check(
+            "resolution: summary.json states the minimum detectable effect",
+            isinstance(res_block, dict)
+            and isinstance(res_block.get("mde_pp"), (int, float))
+            and res_block["mde_pp"] > 0,
+            f"block={res_block}")
+        ok &= _check(
+            "resolution: states n required to resolve 5pp, and it exceeds n",
+            isinstance(res_block, dict)
+            and isinstance(res_block.get("n_per_arm_for_5pp"), int)
+            and res_block["n_per_arm_for_5pp"] > 0
+            and res_block["n_per_arm_for_5pp"] > id_arm["a_injections"],
+            f"need={(res_block or {}).get('n_per_arm_for_5pp')} "
+            f"have={id_arm['a_injections']}")
+
+        # 2c. #495: the null control. A placebo suppressing nothing must be
+        #     the identity; a placebo suppressing rows must only ever REMOVE
+        #     (it cannot invent a row suggest() did not return).
+        res_p0 = replay_ab.run(dataset, home, ["0.0"], root / "out-p0",
+                               seed=470, variant=variants.placebo,
+                               variant_name="placebo")
+        p0 = res_p0["summary"]["arms"]["B@0.0"]
+        ok &= _check(
+            "placebo at p=0 is the identity: B == A",
+            p0["diff_prompts"] == 0 and p0["a_only"] == 0
+            and p0["b_only"] == 0,
+            f"a={p0['a_injections']} b={p0['b_injections']}")
+
+        res_p1 = replay_ab.run(dataset, home, ["1.0"], root / "out-p1",
+                               seed=470, variant=variants.placebo,
+                               variant_name="placebo")
+        p1 = res_p1["summary"]["arms"]["B@1.0"]
+        ok &= _check(
+            "placebo at p=1 suppresses everything and adds nothing",
+            p1["b_injections"] == 0 and p1["b_only"] == 0
+            and p1["a_injections"] > 0,
+            f"a={p1['a_injections']} b={p1['b_injections']} "
+            f"b_only={p1['b_only']}")
+
+        res_p1b = replay_ab.run(dataset, home, ["1.0"], root / "out-p1b",
+                                seed=470, variant=variants.placebo,
+                                variant_name="placebo")
+        ok &= _check(
+            "placebo is deterministic for a given (seed, param)",
+            (root / "out-p1" / "summary.json").read_bytes()
+            == (root / "out-p1b" / "summary.json").read_bytes())
+
         prompts = {p["idx"]: p for p in res1["prompts"]}
         summ = res1["summary"]
         arms = summ["arms"]

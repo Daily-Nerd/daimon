@@ -26,6 +26,7 @@ are executable via `--verify` (see verify.py).
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import shutil
@@ -392,6 +393,43 @@ def _inj_ids(injs) -> set:
     return {(i["session_id"], i["content_key"]) for i in injs}
 
 
+# #495: what this corpus can RESOLVE. A delta smaller than the minimum
+# detectable effect is unreadable however confidently it is reported, and that
+# has to be visible in the artifact people share — a pre-registered decision
+# rule is worthless if the run could never satisfy it.
+#
+# Arcsine (Cohen's h): 2*asin(sqrt(p)) has variance 1/n, so the difference of
+# two arms has variance 1/n_a + 1/n_b. Stdlib only, no scipy: the two z values
+# are the fixed 5% two-sided / 80% power constants.
+_Z_SUM = 1.959964 + 0.841621   # z(alpha/2=0.025) + z(power=0.80)
+_RESOLUTION_BASELINE = 0.20    # assumed control precision; stated, not hidden
+
+
+def _phi(p: float) -> float:
+    return 2.0 * math.asin(math.sqrt(p))
+
+
+def _resolution(n_a: int, n_b: int, baseline: float = _RESOLUTION_BASELINE):
+    """Smallest arm-B precision this run could distinguish from `baseline`,
+    and the per-arm n a 5pp difference would actually need."""
+    if n_a <= 0 or n_b <= 0:
+        return None
+    h_detectable = _Z_SUM * math.sqrt(1.0 / n_a + 1.0 / n_b)
+    p2 = math.sin(min(math.pi / 2, _phi(baseline) / 2 + h_detectable / 2)) ** 2
+    h_5pp = _phi(min(1.0, baseline + 0.05)) - _phi(baseline)
+    return {
+        "baseline_assumed_pct": round(100 * baseline, 1),
+        "power": 0.80,
+        "alpha": 0.05,
+        "mde_pp": round(100 * (p2 - baseline), 1),
+        "detectable_b_precision_pct": round(100 * p2, 1),
+        "n_per_arm_for_5pp": math.ceil(2 * (_Z_SUM / h_5pp) ** 2),
+        "note": ("a delta below mde_pp is not readable from this corpus; "
+                 "compare any suppressing arm against the `placebo` variant "
+                 "before attributing a difference to the hypothesis"),
+    }
+
+
 def _build_outputs(prompts, b_labels, counters, snap, n_rebuilds,
                    seed, holdout_min, variant_name, sweep_tokens,
                    out: Path) -> dict:
@@ -428,6 +466,8 @@ def _build_outputs(prompts, b_labels, counters, snap, n_rebuilds,
             agg["b_dedup_prompts"] += int(p["flags"][label]["dedup"])
             agg["a_agegate_prompts"] += int(p["flags"]["A"]["age_gate"])
             agg["b_agegate_prompts"] += int(p["flags"][label]["age_gate"])
+        agg["resolution"] = _resolution(agg["a_injections"],
+                                        agg["b_injections"])
         arm_aggs[label] = agg
 
     # ---- diffs.jsonl (private: carries prompt text) ----
