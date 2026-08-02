@@ -124,6 +124,28 @@ command, and the `chunk_cache_days` reaper (default 3 days) remains the
 independent upper bound for anything written after a forget. The claim is
 scoped to this machine: the cache never syncs anywhere.
 
+## The redaction boundary, stated exactly
+
+"A quoted secret never reaches disk" is easily heard as "secrets never leave
+the machine". Those are different claims, and only the first is made:
+
+- Redaction is a **disk boundary**. It runs where bytes are persisted or
+  displayed from disk — checkpoint writes, the team dual-write, event notes,
+  and the status lines read back from crash/error logs.
+- It is **not a network boundary**. The serialize call ships the **raw
+  session transcript** to whatever LLM backend you configured — a local
+  backend sees everything, and so does a hosted one. Pick the backend with
+  that in mind.
+- It catches **secret shapes, not sensitive meaning**. The pattern list is
+  deliberately narrow (see [team sharing](../team/team.md) for the exact
+  inventory): filesystem paths, usernames, hostnames, and emails are not
+  secret shapes, and a stored quote is arbitrary transcript bytes that syncs
+  verbatim to a team remote. `forget` is the tool for content the patterns
+  cannot know about.
+- The one bounded exception on disk is the pre-redaction **chunk cache**
+  described above: local-only, mode 0600, age-reaped, purged wholesale by
+  `forget`.
+
 ## Supersession candidates
 
 When a newer session contradicts a carried item, the briefing presents a

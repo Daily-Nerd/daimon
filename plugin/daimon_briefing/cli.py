@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, llm, normalize, recall, receipts, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, llm, normalize, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -1628,7 +1628,11 @@ def _tail_log_info(path: Path, now: float) -> dict | None:
     if not lines:
         return None
     age = int(now - st.st_mtime)
-    return {"last_line": lines[-1], "age_seconds": age,
+    # #513: raw disk bytes reach stdout via status — the one display path
+    # that never passed redact_text. Redacted at construction so the plain,
+    # rich, and --json renders all inherit it.
+    logged, _ = redact.redact_text(lines[-1])
+    return {"last_line": logged, "age_seconds": age,
             "age": _format_age(age), "path": str(path)}
 
 
@@ -1678,7 +1682,11 @@ def _crash_log_info(path: Path, now: float) -> dict | None:
             pass  # unstamped/foreign header: fall back to file mtime
     if age is None:
         age = int(now - st.st_mtime)
-    return {"last_line": last_line, "age_seconds": age,
+    # #513: same rule as _tail_log_info — the traceback's exception line is
+    # raw child stderr and can embed a credential (requests errors echo URLs,
+    # config errors echo the offending value).
+    logged, _ = redact.redact_text(last_line)
+    return {"last_line": logged, "age_seconds": age,
             "age": _format_age(age), "path": str(path)}
 
 

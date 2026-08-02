@@ -134,6 +134,31 @@ superior independiente para todo lo escrito después de un forget. La
 afirmación se limita a esta máquina: la caché nunca se sincroniza a ningún
 lado.
 
+## El límite de la redacción, dicho con exactitud
+
+"Un secreto citado nunca llega al disco" se escucha fácil como "los secretos
+nunca salen de la máquina". Son afirmaciones distintas, y solo la primera se
+hace:
+
+- La redacción es un **límite de disco**. Corre donde los bytes se persisten
+  o se muestran desde disco — escrituras de checkpoint, el dual-write de
+  equipo, notas de eventos, y las líneas de estado leídas de los logs de
+  crash/error.
+- **No es un límite de red.** La llamada de serialización envía la
+  **transcripción cruda de la sesión** al backend LLM que hayas configurado —
+  un backend local lo ve todo, y uno hospedado también. Elegí el backend con
+  eso en mente.
+- Atrapa **formas de secreto, no significado sensible**. La lista de patrones
+  es deliberadamente estrecha (mirá [compartir en equipo](../team/team.md)
+  para el inventario exacto): rutas de archivos, nombres de usuario, hosts y
+  correos no son formas de secreto, y una cita almacenada son bytes
+  arbitrarios de transcripción que se sincronizan literales a un remoto de
+  equipo. `forget` es la herramienta para contenido que los patrones no
+  pueden conocer.
+- La única excepción acotada en disco es la **caché de chunks**
+  pre-redacción descrita arriba: solo local, modo 0600, cosechada por edad,
+  purgada por completo por `forget`.
+
 ## Candidatos a supersesión
 
 Cuando una sesión nueva contradice un ítem arrastrado, el briefing presenta
