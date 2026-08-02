@@ -129,28 +129,19 @@ def _daimon_tool_use_ids(objects: list[dict]) -> set[str]:
     return ids
 
 
-def _tool_use_ids_of(obj: dict) -> set[str]:
-    """The tool_use ids a tool_result row answers, tolerant of absent ids."""
-    msg = obj.get("message")
-    content = msg.get("content") if isinstance(msg, dict) else None
-    if not isinstance(content, list):
-        return set()
-    return {str(b.get("tool_use_id") or "").strip()
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "tool_result"
-            and str(b.get("tool_use_id") or "").strip()}
-
-
-def _tool_result_of(obj: dict) -> tuple[str, bool] | None:
-    """(flattened text, is_error) for a row whose payload is tool_result
-    blocks, or None when the row carries none. `content` inside a block can be
-    a plain string or a nested block list — both flatten. Empty output is
-    still a signal ("ran, said nothing"), kept via a placeholder."""
+def _tool_result_of(obj: dict) -> tuple[str, bool, set[str]] | None:
+    """(flattened text, is_error, answered tool_use ids) for a row whose
+    payload is tool_result blocks, or None when the row carries none.
+    `content` inside a block can be a plain string or a nested block list —
+    both flatten. Empty output is still a signal ("ran, said nothing"), kept
+    via a placeholder. The ids ride along from the same block walk (#512) so
+    the caller can resolve the row's provenance without a second pass."""
     msg = obj.get("message")
     content = msg.get("content") if isinstance(msg, dict) else None
     if not isinstance(content, list):
         return None
     parts: list[str] = []
+    use_ids: set[str] = set()
     is_error = False
     found = False
     for block in content:
@@ -159,6 +150,9 @@ def _tool_result_of(obj: dict) -> tuple[str, bool] | None:
         found = True
         if block.get("is_error"):
             is_error = True
+        use_id = str(block.get("tool_use_id") or "").strip()
+        if use_id:
+            use_ids.add(use_id)
         inner = block.get("content")
         if isinstance(inner, str):
             parts.append(inner.strip())
@@ -167,7 +161,7 @@ def _tool_result_of(obj: dict) -> tuple[str, bool] | None:
     if not found:
         return None
     text = "\n".join(p for p in parts if p).strip()[:_TOOL_RESULT_MAX_CHARS]
-    return (text or "(no output)", is_error)
+    return (text or "(no output)", is_error, use_ids)
 
 
 def _from_jsonl(text: str) -> list[dict]:
@@ -278,7 +272,7 @@ def _from_jsonl(text: str) -> list[dict]:
         if mid is not None:
             tool = _tool_result_of(obj)
             if tool is not None:
-                text, is_error = tool
+                text, is_error, use_ids = tool
                 tool_msg: dict = {"role": "tool", "content": text, "id": mid,
                                   "tool_result": True}
                 if is_error:
@@ -286,7 +280,7 @@ def _from_jsonl(text: str) -> list[dict]:
                 # #512: provenance flag, resolved via the tool_use pairing.
                 # Discriminating FIELD again (deadend #20) — downstream strips
                 # key on this, never on the rendered shape.
-                if _tool_use_ids_of(obj) & daimon_uses:
+                if use_ids & daimon_uses:
                     tool_msg["daimon_output"] = True
                 messages.append(tool_msg)
     return messages
