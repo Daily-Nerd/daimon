@@ -1002,6 +1002,22 @@ def _rescue_suffix(posture, fallback_attempts: int) -> str | None:
     return _RESCUE_SUFFIXES.get(posture)
 
 
+def _generation_lines(s: dict) -> list[str]:
+    """#514: corpus generation composition, shared by the plain and rich
+    stats renderers. Shown only when MORE than one generation coexists —
+    a uniform corpus is the healthy default and needs no line; "unknown"
+    buckets (pre-stamp checkpoints) count as their own generation, because
+    unknown-vs-current is exactly the mix worth surfacing."""
+    lines = []
+    for label, key in (("format versions", "format_versions"),
+                       ("extraction versions", "extraction_versions")):
+        counts = s.get(key) or {}
+        if len(counts) > 1:
+            lines.append(f"{label}: " + ", ".join(
+                f"{v}: {n}" for v, n in sorted(counts.items())))
+    return lines
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -1049,6 +1065,8 @@ def _plain_stats(data: dict) -> None:
               f"avg {c['total_serialize_seconds'] // c['success']}")
     print("store:")
     print(f"  checkpoints: {s['checkpoints']}  project buckets: {s['project_buckets']}")
+    for line in _generation_lines(s):
+        print(f"  {line}")
     if s["items_by_kind"]:
         print("  items by kind: " + ", ".join(
             f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))
@@ -1168,6 +1186,9 @@ def _rich_stats(data: dict) -> None:
     store_table.add_column("value")
     store_table.add_row("checkpoints", str(s["checkpoints"]))
     store_table.add_row("project buckets", str(s["project_buckets"]))
+    for line in _generation_lines(s):
+        label, _, rest = line.partition(": ")
+        store_table.add_row(label, rest)
     if s["items_by_kind"]:
         store_table.add_row("items by kind", ", ".join(
             f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))

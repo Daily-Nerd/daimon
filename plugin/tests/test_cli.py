@@ -1625,6 +1625,46 @@ def test_cli_write_checkpoint_downgrades_unverifiable_verbatim(
     assert q["trust"] == "inferred"
 
 
+def test_cli_write_checkpoint_does_not_stamp_extraction_version(
+        tmp_checkpoint_dir, monkeypatch):
+    # #514: no extraction ran on the introspection path, so no extractor
+    # version may be claimed — absent means unknown, same posture as the
+    # missing hashes. A model-emitted value is code-owned and stripped.
+    from daimon_briefing import store
+
+    cp = json.loads(_valid_json("S-intro"))
+    cp["extraction_version"] = 999
+    _stdin(monkeypatch, json.dumps(cp))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest(project_dir="/p/A")
+    assert "extraction_version" not in ck
+
+
+def test_stats_store_counts_version_generations(tmp_checkpoint_dir):
+    # #514: a mixed-generation corpus must be visible, not assumed uniform.
+    # One modern checkpoint (both stamps), one legacy file (neither) — the
+    # absent buckets render as "unknown" rather than vanishing.
+    import json as _json
+
+    from daimon_briefing import config, store
+
+    modern = _json.loads(_valid_json("S-new"))
+    modern["format_version"] = "D-017"
+    modern["extraction_version"] = 2
+    store.write_checkpoint("S-new", modern, project_dir="/p/A")
+    legacy_dir = config.checkpoint_dir()
+    (legacy_dir / "S-old.json").write_text(_json.dumps(
+        {"session_id": "S-old", "working_context": {}, "epistemic_snapshot": {}}))
+
+    s = cli._stats_store()
+
+    assert s["format_versions"]["D-017"] == 1
+    assert s["format_versions"]["unknown"] == 1
+    assert s["extraction_versions"]["2"] == 1
+    assert s["extraction_versions"]["unknown"] == 1
+
+
 def test_top_level_help_has_examples(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])

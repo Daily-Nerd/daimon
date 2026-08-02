@@ -2511,7 +2511,7 @@ def _stats_store() -> dict:
     Reuses recall's section map so a new cognitive kind shows up here for free."""
     out = {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
            "items_verbatim": 0, "items_inferred": 0, "items_untagged": 0,
-           "items_carried": 0}
+           "items_carried": 0, "format_versions": {}, "extraction_versions": {}}
     d = config.checkpoint_dir()
     try:
         out["project_buckets"] = sum(1 for p in d.iterdir() if p.is_dir())
@@ -2526,6 +2526,13 @@ def _stats_store() -> dict:
         if not isinstance(cp, dict):
             continue
         out["checkpoints"] += 1
+        # #514: corpus generation composition — absent stamps count as
+        # "unknown" (pre-stamp checkpoints cannot be retroactively dated),
+        # so a mixed-generation corpus is visible instead of assumed uniform.
+        for field, bucket in (("format_version", "format_versions"),
+                              ("extraction_version", "extraction_versions")):
+            key = str(cp.get(field)) if cp.get(field) is not None else "unknown"
+            out[bucket][key] = out[bucket].get(key, 0) + 1
         for section, key, kind in recall._KIND_SOURCES:
             block = cp.get(section)
             raw = block.get(key) if isinstance(block, dict) else None
