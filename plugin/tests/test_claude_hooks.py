@@ -626,6 +626,35 @@ def test_hook_lib_failure_regexes_stay_in_sync_with_ledger():
     assert lib._LOG_ERR_TRANSCRIPT_RE.pattern == ledger._HEAL_TRANSCRIPT_RE.pattern
 
 
+def test_hook_lib_slug_and_created_epoch_stay_in_sync_with_store():
+    # #510: same risk class as the #299 regexes, same treatment. slug decides
+    # which checkpoint bucket the SessionStart hook reads; created_epoch
+    # decides staleness rendering. A drift in either degrades silently (wrong
+    # bucket reads as "no briefing", not as an error), so behavioral equality
+    # is locked over inputs chosen to discriminate plausible drifts —
+    # character-class changes, unicode handling, empty/None, timestamp format
+    # tightening. Behavioral, not byte, equality: the copies may legitimately
+    # differ in style while agreeing in result — the contract is agreement.
+    from daimon_briefing import store
+
+    slug_samples = (
+        "/Users/dev/proj", "/Users/dev/proj/", "C:\\work\\repo",
+        "/tmp/a b/c.d", "/home/dev/ünïcode-プロジェクト", "rel/path",
+        "----", "...", "", "   ", None,
+    )
+    for sample in slug_samples:
+        assert lib.slug(sample) == store.project_slug(sample), sample
+
+    epoch_samples = (
+        "2026-08-02T10:00:00Z", "2026-08-02T10:00:00",       # missing Z
+        "2026-08-02T10:00:00.123Z",                          # fractional
+        "2026-08-02 10:00:00Z", "not-a-date", "", None,
+        1754128800, 1754128800.5,                            # non-string
+    )
+    for sample in epoch_samples:
+        assert lib.created_epoch(sample) == store._created_epoch(sample), sample
+
+
 def test_failed_session_stems_matches_real_serialize_failure_output(
     tmp_path, monkeypatch, tmp_checkpoint_dir, fake_chat_factory
 ):
