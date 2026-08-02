@@ -1361,10 +1361,16 @@ def age_gate_blocks(m, now: float, age_days=_UNSET) -> bool:
 
 
 def _suggest_line(r: dict, terms, now: float) -> str:
-    """One compact, attributed, trust-preserving injection line (#125)."""
+    """One compact, attributed, trust-preserving injection line (#125).
+
+    ONE line is a contract, not a hope (#512): the echo strip that removes
+    this line from the verification haystack is line-scoped, so item text
+    carrying a newline would leave its tail behind as a fake witness.
+    Internal whitespace collapses here, at the emitter."""
     age = _format_age(now - r["created"]) if r.get("created") else "?"
     trust = r.get("trust") or "untagged"
-    text = r["text"] if len(r["text"]) <= 160 else r["text"][:157] + "..."
+    text = " ".join(str(r["text"]).split())
+    text = text if len(text) <= 160 else text[:157] + "..."
     # v3 (#234): the flag is item-level evidence — a typed supersedes link
     # or a logged resolution — not the old whole-checkpoint recency.
     sup = r.get("superseded_by")
@@ -1944,11 +1950,13 @@ def _load_audit_transcript(tpath):
     # #440: the same stripped haystacks verify_quotes used at serialize time.
     # Audit re-blesses stored items, so reading the raw render here would
     # certify exactly the echo verification rejected — and do it with the
-    # CLI's authority.
+    # CLI's authority. #512: daimon-output tool rows blank here too, for the
+    # same reason and by the same rule.
     haystack = serializer.stripped_transcript(msgs)
+    daimon_ids = serializer.daimon_output_ids(msgs)
     texts_by_id = {
-        mid: serializer.strip_injected(text) for mid, text
-        in serializer.message_texts_by_id(msgs).items()}
+        mid: "" if mid in daimon_ids else serializer.strip_injected(text)
+        for mid, text in serializer.message_texts_by_id(msgs).items()}
     return haystack, texts_by_id
 
 

@@ -887,6 +887,18 @@ def strip_injected(text: str) -> str:
     return _BRIEF_HEAD_RE.sub("", text)
 
 
+def daimon_output_ids(messages) -> set:
+    """Ids of rows transcript.py flagged as daimon's own tool output (#512):
+    a tool result born from a daimon invocation (CLI or MCP), resolved by
+    provenance at parse time. Verification must never read these as
+    witnesses — same principle as strip_injected, keyed on the invocation
+    instead of the render shape, so every daimon subcommand present or
+    future is covered without pattern enumeration."""
+    return {mid for m in (messages or [])
+            if isinstance(m, dict) and m.get("daimon_output")
+            and (mid := _message_id(m)) is not None}
+
+
 def stripped_transcript(messages) -> str:
     """`_render_transcript`'s text with every message's injected spans removed
     — the whole-transcript VERIFICATION haystack (#440).
@@ -894,6 +906,9 @@ def stripped_transcript(messages) -> str:
     Renders shallow message copies whose flattened text has been stripped, so
     markers, role labels and joins stay byte-identical to the haystack
     verification read before this fix: only the injected bytes go missing.
+    #512: a daimon-output tool row is BLANKED, never dropped — [mN] markers
+    are positional over the full list and a dropped row would renumber every
+    later citation.
 
     No non-dict guard on purpose: `serialize_strict` renders the SAME list
     through `_render_transcript` before verification runs, and that raises on
@@ -903,7 +918,8 @@ def stripped_transcript(messages) -> str:
     stripped = []
     for m in messages or []:
         copy = dict(m)
-        copy["content"] = strip_injected(_message_text(m))
+        copy["content"] = ("" if m.get("daimon_output")
+                           else strip_injected(_message_text(m)))
         stripped.append(copy)
     return _render_transcript(stripped)
 
@@ -950,8 +966,12 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     under `echo-only` rather than the generic absent-quote reason."""
     # #440: the RAW pair survives alongside the stripped haystacks, read on
     # the failure path only — to tell an echoed quote from an absent one.
+    # #512: daimon-output tool rows are blanked in the STRIPPED map (their
+    # bytes are daimon's own, not a witness) but kept raw, so a quote living
+    # only there downgrades under the honest `echo-only` reason code.
     raw_texts_by_id = message_texts_by_id(messages) if messages else {}
-    texts_by_id = {mid: strip_injected(text)
+    daimon_ids = daimon_output_ids(messages) if messages else set()
+    texts_by_id = {mid: "" if mid in daimon_ids else strip_injected(text)
                    for mid, text in raw_texts_by_id.items()}
     haystack = (stripped_transcript(messages) if messages
                 else strip_injected(transcript_text))

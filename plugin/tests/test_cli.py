@@ -1581,6 +1581,18 @@ def test_cli_write_checkpoint_strips_model_claimed_grounded(
     assert "grounded" not in dec
 
 
+def test_suggest_line_collapses_multiline_item_text():
+    # #512: the injection line's echo strip is line-scoped (`[^\n]*`), so item
+    # text carrying a newline would leave its tail in the verification
+    # haystack. The emitter owns the one-line contract: internal whitespace
+    # collapses to single spaces.
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "first clause\nsecond clause\n\tthird"}
+    line = cli._suggest_line(r, ["clause"], 2000.0)
+    assert "\n" not in line
+    assert "first clause second clause third" in line
+
+
 def test_cli_write_checkpoint_downgrades_unverifiable_verbatim(
         tmp_checkpoint_dir, monkeypatch):
     # #511: the introspection path has NO transcript, so `verify_quotes`
