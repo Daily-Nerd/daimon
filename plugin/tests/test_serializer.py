@@ -1344,6 +1344,28 @@ def test_downgrade_unverifiable_verbatim_reclasses_every_verbatim_item():
     assert ckpt["epistemic_snapshot"]["strong_beliefs"][0]["trust"] == "inferred"
 
 
+def test_serialize_stamps_extraction_version(fake_chat_factory):
+    """#514: EXTRACTION_VERSION rotates the chunk cache but was written to
+    ZERO checkpoints, so a bump without a coincident PROMPT_VERSION bump
+    would leave two extraction-incomparable populations looking identical.
+    Stamped at serialize (not in store): only a real extraction may claim
+    an extractor version — the introspection path stays absent = unknown."""
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt["extraction_version"] == serializer.EXTRACTION_VERSION
+
+
+def test_strip_code_owned_keys_clears_model_claimed_extraction_version():
+    """#514: same #292 discipline as format_version — the model never gets
+    to date its own extraction."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["extraction_version"] = 999
+
+    serializer.strip_code_owned_keys(ckpt)
+
+    assert "extraction_version" not in ckpt
+
+
 def test_serialize_strip_survives_the_validation_retry_pass(fake_chat_factory):
     # A spoofed format_version alongside output that FAILS validation forces
     # the #118 resample retry — the strip must apply to the retried output

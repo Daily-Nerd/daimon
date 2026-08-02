@@ -908,6 +908,11 @@ def _stats_sample():
             "items_by_kind": {"decision": 2, "belief": 1},
             "items_verbatim": 2, "items_inferred": 1, "items_untagged": 0,
             "items_carried": 1,
+            # #514: mixed on purpose — the generation lines render only when
+            # more than one generation coexists, and this fixture must drive
+            # them in BOTH the plain and rich paths.
+            "format_versions": {"D-017": 2, "unknown": 1},
+            "extraction_versions": {"2": 2, "unknown": 1},
         },
     }
 
@@ -937,6 +942,8 @@ def test_render_stats_plain_exact_format(capsys):
         "  serialize seconds: max 42, avg 25\n"
         "store:\n"
         "  checkpoints: 3  project buckets: 2\n"
+        "  format versions: D-017: 2, unknown: 1\n"
+        "  extraction versions: 2: 2, unknown: 1\n"
         "  items by kind: belief: 1, decision: 2\n"
         "  trust: verbatim 2, inferred 1, untagged 0  (carried: 1)\n"
     )
@@ -963,6 +970,10 @@ def test_render_stats_rich_smoke(monkeypatch, capsys):
     assert "usage" in out.lower()
     assert "brief" in out
     assert "verbatim" in out
+    # #514: the mixed-generation fixture must drive the generation rows in
+    # the rich table too, not only the plain path.
+    assert "format versions" in out
+    assert "extraction versions" in out
 
 
 def test_render_stats_plain_events_section(capsys):
