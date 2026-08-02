@@ -1307,6 +1307,43 @@ def test_strip_code_owned_keys_clears_item_origin_on_the_introspection_path():
     assert item["text"] == "q"  # nothing else disturbed
 
 
+def test_strip_code_owned_keys_clears_model_claimed_verification_stamps():
+    """#511: `quote_verified`/`last_verified` are verify_quotes' verdicts —
+    code-derived attestations, same class as `origin_*`. A model emitting
+    them must never persist: on the serialize path verify_quotes re-derives
+    both AFTER this strip; on the introspection path there is no transcript,
+    so nothing may hold either stamp at all."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    item = ckpt["working_context"]["recent_decisions"][0]
+    item["quote_verified"] = True
+    item["last_verified"] = "2026-01-01T00:00:00Z"
+
+    serializer.strip_code_owned_keys(ckpt)
+
+    assert "quote_verified" not in item
+    assert "last_verified" not in item
+    assert item["text"] == "d"  # nothing else disturbed
+
+
+def test_downgrade_unverifiable_verbatim_reclasses_every_verbatim_item():
+    """#511: a path with no transcript cannot byte-check any quote, so a
+    model-claimed `verbatim` is a trust class the code cannot justify —
+    downgraded to inferred. The quote itself survives as a claim (same as
+    any other model-authored text), it just buys nothing."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["epistemic_snapshot"]["strong_beliefs"] = [
+        {"text": "b", "trust": "inferred"}]
+
+    downgraded = serializer.downgrade_unverifiable_verbatim(ckpt)
+
+    assert downgraded == 1
+    dec = ckpt["working_context"]["recent_decisions"][0]
+    assert dec["trust"] == "inferred"
+    assert dec["quote"] == "line 3 from assistant"  # claim kept, not trusted
+    # untouched non-verbatim items keep their class
+    assert ckpt["epistemic_snapshot"]["strong_beliefs"][0]["trust"] == "inferred"
+
+
 def test_serialize_strip_survives_the_validation_retry_pass(fake_chat_factory):
     # A spoofed format_version alongside output that FAILS validation forces
     # the #118 resample retry — the strip must apply to the retried output
