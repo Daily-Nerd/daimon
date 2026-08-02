@@ -287,6 +287,85 @@ def test_from_file_tool_result_error_rows_carry_the_error_flag(tmp_path):
     ]
 
 
+def test_from_file_flags_tool_results_of_daimon_invocations(tmp_path):
+    # #512: a tool result born from a `daimon` invocation is daimon's own
+    # output echoed back through the transcript — verification must never
+    # treat it as a witness. The flag is provenance (tool_use pairing), not
+    # output shape, so every daimon subcommand — current or future — is
+    # covered without enumerating render formats.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "assistant", "uuid": "a-1",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "TU-1", "name": "Bash",
+              "input": {"command": "daimon recall \"auth pin\""}}]}},
+        {"type": "user", "uuid": "t-2",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "TU-1",
+              "content": "[me] [verbatim] [decision] freeze the pin (S-1, 3d ago)"}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "tool",
+         "content": "[me] [verbatim] [decision] freeze the pin (S-1, 3d ago)",
+         "id": "t-2", "tool_result": True, "daimon_output": True},
+    ]
+
+
+def test_from_file_does_not_flag_ordinary_tool_results(tmp_path):
+    # pytest output and a grep ABOUT daimon are genuine witnesses — `daimon`
+    # as an argument is not `daimon` as the invoked command.
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "assistant", "uuid": "a-1",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "TU-1", "name": "Bash",
+              "input": {"command": "rg -n daimon cli.py"}}]}},
+        {"type": "user", "uuid": "t-2",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "TU-1",
+              "content": "12: daimon recall wiring"}]}},
+    ])
+    assert transcript.from_file(p) == [
+        {"role": "tool", "content": "12: daimon recall wiring", "id": "t-2",
+         "tool_result": True},
+    ]
+
+
+def test_from_file_flags_daimon_mcp_tool_results(tmp_path):
+    p = _write_jsonl(tmp_path / "session.jsonl", [
+        {"type": "assistant", "uuid": "a-1",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "TU-9",
+              "name": "mcp__daimon__daimon_recall",
+              "input": {"query": "auth"}}]}},
+        {"type": "user", "uuid": "t-2",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "TU-9",
+              "content": "[{\"text\": \"freeze the pin\"}]"}]}},
+    ])
+    rows = transcript.from_file(p)
+    assert rows[-1]["daimon_output"] is True
+
+
+def test_from_file_flags_daimon_behind_wrappers_and_chains(tmp_path):
+    # The invocation idioms real sessions use: uv run, env prefixes, `&&`
+    # chains, absolute paths. All are daimon as the invoked binary.
+    for cmd in ("uv run --project plugin daimon loops",
+                "cd /repo && daimon brief",
+                "DAIMON_ENV_FILE=/tmp/e daimon status --suppressed",
+                "/usr/local/bin/daimon recall --json foo | head"):
+        p = _write_jsonl(tmp_path / "session.jsonl", [
+            {"type": "assistant", "uuid": "a-1",
+             "message": {"role": "assistant", "content": [
+                 {"type": "tool_use", "id": "TU-1", "name": "Bash",
+                  "input": {"command": cmd}}]}},
+            {"type": "user", "uuid": "t-2",
+             "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": "TU-1",
+                  "content": "output"}]}},
+        ])
+        rows = transcript.from_file(p)
+        assert rows[-1].get("daimon_output") is True, cmd
+
+
 def test_from_file_tool_result_rows_without_uuid_stay_dropped(tmp_path):
     # No uuid means no [mN] marker and no way to cite the row — grounding is
     # pointer-based, so an id-less tool result stays dropped: byte-identical

@@ -83,16 +83,65 @@ def _text_of(content) -> str:
 _TOOL_RESULT_MAX_CHARS = 500
 
 
-def _tool_result_of(obj: dict) -> tuple[str, bool] | None:
-    """(flattened text, is_error) for a row whose payload is tool_result
-    blocks, or None when the row carries none. `content` inside a block can be
-    a plain string or a nested block list — both flatten. Empty output is
-    still a signal ("ran, said nothing"), kept via a placeholder."""
+# #512: `daimon` as the INVOKED binary — start of command or after a shell
+# separator / substitution, tolerating env-var prefixes, sudo, uv run (with
+# flags), python -m, and path prefixes. Deliberately NOT a bare substring:
+# `rg daimon cli.py` greps ABOUT daimon and its output is a genuine witness
+# (measured: a blanket tool-row strip costs 9.5% of the corpus's verifiable
+# quotes; this invocation-scoped rule costs 0.06%).
+_DAIMON_CMD_RE = re.compile(
+    r"(?:^|[|;&(`]|\&\&|\|\|)\s*"
+    r"(?:\S+=\S+\s+)*(?:sudo\s+)?"
+    r"(?:uv\s+run\s+(?:--?[\w-]+(?:[= ]\S+)?\s+)*(?:python\s+-m\s+)?)?"
+    r"(?:\S*/)?daimon(?:\s|$)", re.MULTILINE)
+
+
+def _is_daimon_tool_use(block: dict) -> bool:
+    """True when a tool_use block invokes daimon: an MCP tool whose name
+    carries `daimon`, or a shell command with daimon in command position."""
+    if "daimon" in str(block.get("name") or "").lower():
+        return True
+    inp = block.get("input")
+    cmd = inp.get("command") if isinstance(inp, dict) else None
+    return isinstance(cmd, str) and bool(_DAIMON_CMD_RE.search(cmd))
+
+
+def _daimon_tool_use_ids(objects: list[dict]) -> set[str]:
+    """ids of every tool_use block that invokes daimon, across the file —
+    the prepass that lets a tool_result row know its own provenance (#512).
+    A tool result born from a daimon invocation is daimon's own output
+    echoed back through the transcript; quote verification must never treat
+    it as a witness, and keying on the INVOCATION (not the output shape)
+    means every daimon subcommand — current or future — is covered without
+    enumerating render formats."""
+    ids: set[str] = set()
+    for obj in objects:
+        msg = obj.get("message")
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if (isinstance(block, dict) and block.get("type") == "tool_use"
+                    and _is_daimon_tool_use(block)):
+                bid = str(block.get("id") or "").strip()
+                if bid:
+                    ids.add(bid)
+    return ids
+
+
+def _tool_result_of(obj: dict) -> tuple[str, bool, set[str]] | None:
+    """(flattened text, is_error, answered tool_use ids) for a row whose
+    payload is tool_result blocks, or None when the row carries none.
+    `content` inside a block can be a plain string or a nested block list —
+    both flatten. Empty output is still a signal ("ran, said nothing"), kept
+    via a placeholder. The ids ride along from the same block walk (#512) so
+    the caller can resolve the row's provenance without a second pass."""
     msg = obj.get("message")
     content = msg.get("content") if isinstance(msg, dict) else None
     if not isinstance(content, list):
         return None
     parts: list[str] = []
+    use_ids: set[str] = set()
     is_error = False
     found = False
     for block in content:
@@ -101,6 +150,9 @@ def _tool_result_of(obj: dict) -> tuple[str, bool] | None:
         found = True
         if block.get("is_error"):
             is_error = True
+        use_id = str(block.get("tool_use_id") or "").strip()
+        if use_id:
+            use_ids.add(use_id)
         inner = block.get("content")
         if isinstance(inner, str):
             parts.append(inner.strip())
@@ -109,7 +161,7 @@ def _tool_result_of(obj: dict) -> tuple[str, bool] | None:
     if not found:
         return None
     text = "\n".join(p for p in parts if p).strip()[:_TOOL_RESULT_MAX_CHARS]
-    return (text or "(no output)", is_error)
+    return (text or "(no output)", is_error, use_ids)
 
 
 def _from_jsonl(text: str) -> list[dict]:
@@ -186,6 +238,7 @@ def _from_jsonl(text: str) -> list[dict]:
         return windsurf_messages
 
     messages: list[dict] = []
+    daimon_uses = _daimon_tool_use_ids(objects)  # #512 provenance prepass
     for obj in objects:
         if obj.get("isSidechain") or obj.get("isMeta"):
             continue
@@ -219,11 +272,16 @@ def _from_jsonl(text: str) -> list[dict]:
         if mid is not None:
             tool = _tool_result_of(obj)
             if tool is not None:
-                text, is_error = tool
+                text, is_error, use_ids = tool
                 tool_msg: dict = {"role": "tool", "content": text, "id": mid,
                                   "tool_result": True}
                 if is_error:
                     tool_msg["tool_error"] = True
+                # #512: provenance flag, resolved via the tool_use pairing.
+                # Discriminating FIELD again (deadend #20) — downstream strips
+                # key on this, never on the rendered shape.
+                if use_ids & daimon_uses:
+                    tool_msg["daimon_output"] = True
                 messages.append(tool_msg)
     return messages
 

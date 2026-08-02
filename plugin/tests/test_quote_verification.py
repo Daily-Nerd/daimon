@@ -1317,6 +1317,77 @@ def test_quote_absent_entirely_is_not_flagged_echo_only():
     assert "quote_echo_only" not in item
 
 
+# ---- #512: tool results born from daimon invocations are not witnesses ----
+#
+# `daimon recall`, `daimon loops`, MCP daimon_recall (and every other daimon
+# subcommand, current or future) print prior-session item text into the
+# transcript as TOOL RESULTS. Coverage is keyed on the row's provenance flag
+# (transcript.py pairs tool_result -> tool_use invocation), never on output
+# shape — a new emitter cannot escape by changing its render format.
+
+
+def _daimon_tool_row(content, mid):
+    return {"role": "tool", "content": content, "id": mid,
+            "tool_result": True, "daimon_output": True}
+
+
+def test_quote_only_in_daimon_tool_output_downgrades_as_echo():
+    msgs = _msgs(("user", "what did we decide about the pin?", "u-1"))
+    msgs.append(_daimon_tool_row(f"[me] [verbatim] [decision] {_ECHOED} "
+                                 "(S-old, 3d ago)", "t-2"))
+    cp = _decision()
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 1
+    assert item["trust"] == "inferred"
+    assert item["quote_verified"] is False
+    assert item["quote_echo_only"] is True
+
+
+def test_quote_in_ordinary_tool_output_still_verifies():
+    # The measured reason this is provenance-scoped, not a blanket tool-row
+    # strip: 9.5% of the corpus's verifiable quotes live only in genuine tool
+    # output (test summaries, error lines, file reads) and must keep verifying.
+    genuine = "FAILED tests/test_auth.py - expired token accepted by refresh"
+    msgs = _msgs(("user", "run the auth suite", "u-1"))
+    msgs.append({"role": "tool", "content": genuine, "id": "t-2",
+                 "tool_result": True})
+    cp = _decision(text="auth suite is red", quote=genuine)
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 0
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+
+
+def test_daimon_tool_row_does_not_shift_marker_numbering():
+    # The strip BLANKS a daimon row's content; it never drops the row, because
+    # [mN] markers are positional over the full message list and a dropped row
+    # would renumber every later citation.
+    genuine = "let us cut the release once the write guard lands"
+    msgs = _msgs(("user", "where were we?", "u-1"))
+    msgs.append(_daimon_tool_row(f"[me] [verbatim] [decision] {_ECHOED}", "t-2"))
+    msgs.append({"role": "user", "content": genuine, "id": "u-3"})
+    cp = _decision(text="cut the release", quote=genuine,
+                   source_message_ids=["u-3"])
+    n = serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert n == 0
+    assert item["quote_verified"] is True
+    assert item["source_message_ids"] == ["u-3"]
+
+
+def test_daimon_tool_quote_bound_to_the_tool_row_loses_its_binding():
+    msgs = _msgs(("user", "carry on", "u-1"))
+    msgs.append(_daimon_tool_row(f"[me] [verbatim] [decision] {_ECHOED}", "t-2"))
+    cp = _decision(source_message_ids=["t-2"])
+    serializer.verify_quotes(cp, serializer._render_transcript(msgs), msgs)
+    item = _only_decision(cp)
+    assert item["quote_verified"] is False
+    assert item["quote_echo_only"] is True
+    assert "source_message_ids" not in item
+
+
 def test_a_corroboration_badge_quoted_out_of_a_brief_is_echo_only():
     # #268 slice 4 x #440: the badge is daimon's own render, so a quote that
     # copies a badged briefing line back out of the transcript is an echo of
