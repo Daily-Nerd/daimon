@@ -1759,6 +1759,9 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
 _CODE_OWNED_KEYS = (
     "format_version", "created", "author",
     "transcript_hash", "project_slug", "git_branch", "receipts",
+    # #514: the extractor dates its own run at serialize time; a model never
+    # gets to claim one (and the introspection path stays absent = unknown).
+    "extraction_version",
     # #268: origin binding is asserted by policy.bind_origin at the write
     # boundary. No code path reads a top-level copy, but a model naming the
     # key must not leave one lying beside the real per-item stamps.
@@ -2153,6 +2156,13 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.
     _stamp_llm_provenance(checkpoint)
+    # #514: date the extraction. PROMPT_VERSION and EXTRACTION_VERSION are two
+    # independent levers; without this stamp a lone EXTRACTION_VERSION bump
+    # would leave extraction-incomparable checkpoints whose only visible
+    # version field (format_version) looks identical. Stamped HERE, not in
+    # store.write_checkpoint: only a path that actually ran the extractor may
+    # claim its version — introspection checkpoints stay absent = unknown.
+    checkpoint["extraction_version"] = EXTRACTION_VERSION
     # #48: success does NOT consume the chunk cache — persistence across
     # successful serializes is the feature (grown transcripts and resume
     # forks reuse their prefix chunks). Age-based reaping bounds the store.
