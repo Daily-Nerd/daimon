@@ -381,6 +381,13 @@ def _cmd_write_checkpoint(args) -> int:
     # there are no signals, so a model-claimed verdict is stripped (empty
     # signal set = strip-only, no downgrade).
     serializer.ground_outcomes(checkpoint, set())
+    # #511, the last field of the same discipline: with no transcript,
+    # verify_quotes never runs here — a model-claimed `verbatim` is a
+    # byte-check this path cannot perform, and carry's #22 freeze would
+    # prefer it over genuinely extracted content. Unconditional (not keyed
+    # to --source): the path never has a transcript regardless of what the
+    # caller claims the checkpoint is.
+    serializer.downgrade_unverifiable_verbatim(checkpoint)
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
     out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))

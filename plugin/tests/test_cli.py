@@ -1581,6 +1581,38 @@ def test_cli_write_checkpoint_strips_model_claimed_grounded(
     assert "grounded" not in dec
 
 
+def test_cli_write_checkpoint_downgrades_unverifiable_verbatim(
+        tmp_checkpoint_dir, monkeypatch):
+    # #511: the introspection path has NO transcript, so `verify_quotes`
+    # never runs here — a model-claimed `trust: "verbatim"` is a byte-check
+    # this path cannot perform. Without a downgrade the item stores
+    # indistinguishable from a #125-verified capture, briefing._mark renders
+    # it verbatim, and carry's #22 freeze prefers it over a genuinely
+    # extracted twin. Same discipline as #358 (source ids) and #359
+    # (grounded), one field further: verbatim -> inferred, and the
+    # model-claimed verification stamps are stripped as code-owned.
+    from daimon_briefing import store
+
+    cp = json.loads(_valid_json("S-intro"))
+    cp["working_context"]["recent_decisions"] = [{
+        "text": "d", "trust": "verbatim", "quote": "fabricated exact words",
+        "quote_verified": True, "last_verified": "2026-01-01T00:00:00Z",
+    }]
+    _stdin(monkeypatch, json.dumps(cp))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest(project_dir="/p/A")
+    dec = ck["working_context"]["recent_decisions"][0]
+    assert dec["trust"] == "inferred"
+    assert "quote_verified" not in dec
+    assert "last_verified" not in dec
+    assert dec["quote"] == "fabricated exact words"  # claim kept, not trusted
+    # _valid_json's own verbatim open question gets the same downgrade —
+    # the rule is unconditional on this path, not keyed to spoofed stamps.
+    q = ck["working_context"]["open_questions"][0]
+    assert q["trust"] == "inferred"
+
+
 def test_top_level_help_has_examples(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])

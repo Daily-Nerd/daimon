@@ -1751,7 +1751,13 @@ _CODE_OWNED_KEYS = (
 # so a model-emitted one is a self-issued witness that corroboration counting
 # would then treat as an independent session. Stripped from freshly authored
 # model output only, exactly like `grounded`/`pinned` (#292 discipline).
-_CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author")
+# #511: `quote_verified`/`last_verified` are verify_quotes' verdicts — on the
+# serialize path they are re-derived AFTER this strip, and on the introspection
+# path (no transcript, verify_quotes never runs) nothing may hold either stamp.
+# Safe to strip on both paths because carry.merge folds prev items in AFTER
+# serialize_strict returns — a carried item's genuine stamps never pass here.
+_CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
+                         "quote_verified", "last_verified")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:
@@ -1782,6 +1788,32 @@ def strip_code_owned_keys(checkpoint: dict) -> None:
         for key in _CODE_OWNED_ITEM_KEYS:
             if item.pop(key, None) is not None:
                 log.info("serialize: discarding model-supplied item key %r", key)
+
+
+def downgrade_unverifiable_verbatim(checkpoint) -> int:
+    """Downgrade every `trust: "verbatim"` item to `inferred`, in place, and
+    return the count (#511). For paths with NO transcript (cli's
+    `write-checkpoint` introspection path) — nothing there can byte-check a
+    quote, so `verbatim` is a trust class the code cannot justify. Without
+    this the item stores indistinguishable from a #125-verified capture,
+    `briefing._mark` renders it verbatim, `scoring.trust_ceiling` grants the
+    full escalation band, and carry's #22 freeze prefers it over a genuinely
+    extracted twin at the next rotation.
+
+    The quote itself survives as a claim, exactly like the item's text — it
+    just buys nothing until a real serialize re-extracts and verifies it.
+    Never call this on the serialize path: there verify_quotes IS the gate,
+    and it downgrades misses individually instead of wholesale.
+    """
+    downgraded = 0
+    for item in iter_items(checkpoint):
+        if item.get("trust") == "verbatim":
+            item["trust"] = "inferred"
+            downgraded += 1
+    if downgraded:
+        log.info("introspection path: %d unverifiable verbatim item(s) "
+                 "downgraded to inferred (#511)", downgraded)
+    return downgraded
 
 
 def _stamp_llm_provenance(checkpoint: dict) -> None:

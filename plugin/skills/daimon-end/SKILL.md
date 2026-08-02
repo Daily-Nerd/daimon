@@ -47,9 +47,15 @@ this as a `prev` pointer). So it does not need to be perfect to be useful, and i
 2. **HONESTY RULE (load-bearing).** Mark `trust: "verbatim"` and include a `quote`
    ONLY if you can reproduce the EXACT transcript text. Anything from an earlier,
    **compacted/summarized** part of the session you can no longer quote verbatim →
-   `trust: "inferred"`, no `quote`. Do not fabricate quotes. (This is the known
-   weakness of introspection vs the full-transcript reconstruction — be honest and
-   the merge/supersession handles the rest.)
+   `trust: "inferred"`, no `quote`. Do not fabricate quotes.
+
+   Know what the code does with it (#511): this path has no transcript to check
+   your quote against, so the CLI **records every item as `inferred`** regardless
+   of the trust you claim — the quote is kept as a claim, it just earns no
+   verbatim mark. Byte-verified `verbatim` comes only from the automatic
+   full-transcript reconstruction that supersedes this checkpoint. Still follow
+   the rule above: an honest quote helps the later merge; a fabricated one is
+   noise either way.
 
 3. **Write it** via the CLI (reads JSON on stdin, validates the schema, routes to
    this project + global + a per-session file, atomically, with rotation). Write
