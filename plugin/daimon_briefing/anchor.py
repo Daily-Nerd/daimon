@@ -48,9 +48,20 @@ def body_hash_of(source: str, symbol: str) -> str | None:
 
 
 def resolve(project_root, file: str, symbol: str) -> dict | None:
-    """Snapshot an anchor for (file, symbol), or None if it can't be resolved."""
+    """Snapshot an anchor for (file, symbol), or None if it can't be resolved.
+
+    #513: `file` must stay INSIDE project_root. Pathlib join semantics make
+    `root / "/abs/path"` the absolute path itself, so an absolute (or
+    `../`-traversing) --file would escape the root and the leaked path would
+    land in `anchored_to` — which syncs verbatim to the team remote.
+    Containment refuses instead; symlink escapes fall to the same resolve().
+    """
     try:
-        source = (Path(project_root) / file).read_text(encoding="utf-8")
+        root = Path(project_root).resolve()
+        target = (root / file).resolve()
+        if not target.is_relative_to(root):
+            return None
+        source = target.read_text(encoding="utf-8")
     except OSError:
         return None
     h = body_hash_of(source, symbol)

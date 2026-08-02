@@ -4542,6 +4542,33 @@ def test_crash_log_info_reports_last_line_and_header_age(tmp_path):
     assert info["path"] == str(p)
 
 
+def test_crash_log_info_redacts_secrets_in_the_exception_line(tmp_path):
+    # #513: the crash log holds raw child stderr, and status prints its
+    # exception line — the one disk-read-to-display path that never passed
+    # redact_text. An exception message can embed a live credential
+    # (requests errors echo URLs, config errors echo the offending value).
+    p = tmp_path / "serialize-crash.log"
+    p.write_text(
+        "--- crash 2026-07-09T00:00:00Z pid=123 cmd=serialize ---\n"
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 1, in <module>\n'
+        "ValueError: bad credential AKIA1234567890ABCDEF rejected\n"
+    )
+    info = cli._crash_log_info(p, now=0.0)
+    assert "AKIA1234567890ABCDEF" not in info["last_line"]
+    assert "[redacted:aws-key]" in info["last_line"]
+
+
+def test_tail_log_info_redacts_secrets_in_the_error_line(tmp_path):
+    # #513: same rule for recall-error.log's breadcrumb tail.
+    p = tmp_path / "recall-error.log"
+    p.write_text("2026-07-09T00:00:00Z rebuild failed: "
+                 "token xoxb-1234567890-abcdefghij leaked into the error\n")
+    info = cli._tail_log_info(p, now=0.0)
+    assert "xoxb-1234567890-abcdefghij" not in info["last_line"]
+    assert "[redacted:slack-token]" in info["last_line"]
+
+
 def test_crash_log_info_warnings_only_is_none(tmp_path):
     # #194: pre-fix, lastResort dumped serializer WARNINGs into this file and
     # status misreported them as a crash. No `--- crash ` header -> no crash.

@@ -37,6 +37,33 @@ def test_resolve_missing_symbol_returns_none(tmp_path):
     assert anchor.resolve(tmp_path, "m.py", "nope") is None
 
 
+def test_resolve_rejects_an_absolute_file_outside_the_project(tmp_path):
+    # #513: pathlib join semantics make `root / "/abs/path"` resolve to the
+    # absolute path itself, so an absolute --file escaped the project root
+    # and the leaked path landed in anchored_to, which syncs to the team
+    # remote. Containment refuses instead.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write(outside, "secret.py", _SRC)
+    project = tmp_path / "project"
+    project.mkdir()
+    assert anchor.resolve(project, str(outside / "secret.py"), "foo") is None
+
+
+def test_resolve_rejects_parent_traversal(tmp_path):
+    _write(tmp_path, "escape.py", _SRC)
+    project = tmp_path / "project"
+    project.mkdir()
+    assert anchor.resolve(project, "../escape.py", "foo") is None
+
+
+def test_resolve_still_accepts_nested_relative_paths(tmp_path):
+    _write(tmp_path, "pkg/mod.py", _SRC)
+    a = anchor.resolve(tmp_path, "pkg/mod.py", "foo")
+    assert a is not None
+    assert a["qualified_name"] == "pkg/mod.py::foo"
+
+
 def test_check_live_when_unchanged(tmp_path):
     _write(tmp_path, "m.py", _SRC)
     a = anchor.resolve(tmp_path, "m.py", "foo")
