@@ -1697,6 +1697,44 @@ def test_cli_handoff_clear_retracts(tmp_checkpoint_dir, capsys):
     assert store.active_handoff("/p/A") is None
 
 
+def test_cli_handoff_clear_refuses_text(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["handoff", "some text", "--clear", "--project", "/p/A"])
+    assert rc != 0
+    assert "--clear takes no text" in capsys.readouterr().err
+
+
+def test_cli_handoff_empty_text_refused(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["handoff", "   ", "--project", "/p/A"])
+    assert rc != 0
+    assert "nothing to hand off" in capsys.readouterr().err
+
+
+def test_cli_handoff_reports_disabled(tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    rc = cli.main(["handoff", "do X", "--project", "/p/A"])
+    assert rc != 0
+    assert "not recorded" in capsys.readouterr().err
+    rc = cli.main(["handoff", "--clear", "--project", "/p/A"])
+    assert rc != 0
+    assert "not recorded" in capsys.readouterr().err
+
+
+def test_cli_brief_survives_broken_handoff_read(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch, capsys):
+    # Fail-open: a broken events read must never take the briefing down.
+    from daimon_briefing import store
+
+    monkeypatch.chdir("/")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setattr(cli.store, "active_handoff",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+    rc = cli.main(["brief", "--project", "/p/A"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "HANDOFF" not in out
+    assert "left off" in out
+
+
 def test_cli_brief_renders_handoff_above_everything(
         tmp_checkpoint_dir, sample_checkpoint, monkeypatch, capsys):
     from daimon_briefing import store

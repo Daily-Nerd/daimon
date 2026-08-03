@@ -1389,6 +1389,49 @@ def test_active_handoff_same_session_counts_once(tmp_checkpoint_dir):
     assert store.active_handoff("/p/A") is not None
 
 
+def test_active_handoff_fail_open_on_unreadable_events(tmp_checkpoint_dir):
+    # events.jsonl replaced by a directory: the read raises OSError and the
+    # accessor answers "no baton", never an exception.
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    (d / "events.jsonl").mkdir(parents=True)
+    assert store.active_handoff("/p/A") is None
+
+
+def test_active_handoff_skips_malformed_and_reffed_lines(tmp_checkpoint_dir):
+    # Garbage lines are skipped; a handoff-kind line CARRYING a ref is
+    # ignored by contract (scar 0025) — only ref-less batons count.
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "events.jsonl").write_text(
+        "not json at all\n"
+        + json.dumps({"ts": "2026-08-02T12:00:00Z", "kind": "handoff",
+                      "item_ref": "o-abc123", "status": "active",
+                      "note": "reffed baton must not count"}) + "\n"
+        + _handoff_line("2026-08-02T10:00:00Z", note="real baton"))
+    h = store.active_handoff("/p/A")
+    assert h["note"] == "real baton"
+
+
+def test_active_handoff_unknown_project_is_none(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    assert store.active_handoff(None) is None
+
+
+def test_active_handoff_survives_unreadable_bucket_pointer(tmp_checkpoint_dir):
+    # A torn pointer file is skipped by the consumption count, not fatal.
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "events.jsonl").write_text(_handoff_line("2026-08-02T10:00:00Z"))
+    (d / "latest.json").write_text("{torn")
+    assert store.active_handoff("/p/A") is not None
+
+
 def test_handoff_event_never_resolves_an_item(tmp_checkpoint_dir):
     # Belt for scar 0025: the baton is REF-LESS by contract, so the
     # resolutions fold must not see it and no item may vanish because a

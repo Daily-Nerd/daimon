@@ -972,7 +972,9 @@ def active_handoff(project_dir=None) -> dict | None:
         d = config.checkpoint_dir() / slug
         try:
             entries = list(d.iterdir())
-        except OSError:
+        except OSError:  # pragma: no cover — TOCTOU only: the events file
+            # was just read from this dir, so it exists; the guard is for a
+            # bucket deleted mid-call, and the fail-open promise must hold.
             entries = []
         for p in entries:
             if not _POINTER_RE.match(p.name):
