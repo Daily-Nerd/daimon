@@ -135,6 +135,27 @@ def _parse_sse(raw: bytes):
     return ("".join(parts) if saw_content else None), served, usage
 
 
+def _provider_field_flags(usage: dict) -> str:
+    """#535: name which provider-specific usage fields the response carried.
+
+    The served-model stamp is a gateway alias and proves nothing (scar 0032);
+    Anthropic-served responses carry usage fields typical local
+    OpenAI-compatible servers do not. Logging their PRESENCE (never their
+    values — presence is the discriminator) makes a silent model substitution
+    catchable from the log with one grep: an alias claiming an Anthropic
+    model whose calls all say `provider_fields=none` was not served by one.
+    Absence must be stated explicitly ("none") — the signal cannot be
+    expressed by omission."""
+    present = []
+    if "cache_creation_input_tokens" in usage:
+        present.append("cache_creation")
+    if "cache_read_input_tokens" in usage:
+        present.append("cache_read")
+    if "reasoning_tokens" in (usage.get("completion_tokens_details") or {}):
+        present.append("reasoning")
+    return ",".join(present) if present else "none"
+
+
 def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """POST /v1/chat/completions. Returns the assistant message content (str).
 
@@ -225,9 +246,10 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
             # Surface token cost — the serializer discards the rest of the
             # response, so this log line is the only record of per-call spend.
             if usage:
-                log.info("LLM usage model=%s served=%s total_tokens=%s prompt=%s completion=%s",
+                log.info("LLM usage model=%s served=%s total_tokens=%s prompt=%s completion=%s provider_fields=%s",
                          mdl, served, usage.get("total_tokens"),
-                         usage.get("prompt_tokens"), usage.get("completion_tokens"))
+                         usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                         _provider_field_flags(usage))
             return content
         except urllib.error.HTTPError as e:
             if 500 <= e.code < 600 and attempt < retries - 1:
