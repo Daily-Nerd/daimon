@@ -550,7 +550,14 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     # for v1 (degrades safely); origin-project gating is future work (#60 follow-up).
     drift = (anchor.drifted(checkpoint, drift_project)
              if checkpoint and drift_project else [])
-    render.render_brief(checkpoint, drift=drift, teammates=teammates)
+    # #523: the baton leads the briefing. Fail-open like withhold — a broken
+    # events file must never take the briefing down.
+    try:
+        handoff = store.active_handoff(route)
+    except Exception:
+        handoff = None
+    render.render_brief(checkpoint, drift=drift, teammates=teammates,
+                        handoff=handoff)
     if withheld:
         render.render_brief_note([
             f"{len(withheld)} resolved item(s) withheld — "
@@ -1129,6 +1136,49 @@ def _cmd_loops(args) -> int:
         return 0
     for item_id, key, text, mark in rows:
         print(f"  {item_id}  [{key}] [{mark}] {text}")
+    return 0
+
+
+# #523: a baton is small on purpose — "do X first, beware Y", not a second
+# checkpoint. Over-cap input is REFUSED, never silently truncated: it is an
+# authored artifact and the author trims it.
+_HANDOFF_MAX_CHARS = 2000
+
+
+def _cmd_handoff(args) -> int:
+    """Leave (or retract) the project's baton (#523). Ref-less by contract —
+    scar 0025: an event kind carrying an item_ref silently resolves that
+    item, so a handoff must never name one. The resolutions fold ignores
+    ref-less lines (guarded by test_handoff_event_never_resolves_an_item)."""
+    _note_usage("handoff")
+    project = _resolve_project(args.project)
+    if args.clear:
+        if args.text:
+            print("error: --clear takes no text", file=sys.stderr)
+            return 1
+        if not store.append_event("", "cleared", note="", kind="handoff",
+                                  project_dir=project):
+            print("error: handoff not recorded (daimon disabled or project "
+                  "unknown)", file=sys.stderr)
+            return 1
+        print("handoff cleared")
+        return 0
+    text = (args.text or "").strip()
+    if not text:
+        print("error: nothing to hand off — pass the baton text or --clear",
+              file=sys.stderr)
+        return 1
+    if len(text) > _HANDOFF_MAX_CHARS:
+        print(f"error: baton exceeds {_HANDOFF_MAX_CHARS} chars "
+              f"({len(text)}) — a handoff is \"do X first, beware Y\", not a "
+              "second checkpoint; trim it", file=sys.stderr)
+        return 1
+    if not store.append_event("", "active", note=text, kind="handoff",
+                              project_dir=project):
+        print("error: handoff not recorded (daimon disabled or project "
+              "unknown)", file=sys.stderr)
+        return 1
+    print("handoff recorded — will lead the next briefing for this project.")
     return 0
 
 
@@ -3242,6 +3292,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_loops.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_loops.set_defaults(func=_cmd_loops)
+
+    p_handoff = sub.add_parser(
+        "handoff",
+        help="leave an authored baton for the next session — renders above "
+             "everything in its next briefing (#523)",
+    )
+    p_handoff.add_argument("text", nargs="?", default=None,
+                           help="the baton: imperative, small — what to do "
+                                "first and what to beware")
+    p_handoff.add_argument("--clear", action="store_true",
+                           help="retract the active baton")
+    p_handoff.add_argument("--project", help="project directory (default: "
+                           "DAIMON_PROJECT_DIR, then cwd)")
+    p_handoff.set_defaults(func=_cmd_handoff)
 
     p_log = sub.add_parser(
         "log", help="append a freeform timeline event (zero-LLM) to this project's event log (#102)",

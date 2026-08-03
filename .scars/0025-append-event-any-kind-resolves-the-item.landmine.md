@@ -14,9 +14,10 @@ anchors:
   - path: plugin/daimon_briefing/briefing.py
   - path: plugin/tests/
   - pattern: "append_event[(][^)]{0,200}kind="
-violation: "append_event\([^)]{0,200}kind=(?!["'](tombstone|corroboration)["']|args\.kind)"
+violation: "append_event\([^)]{0,200}kind=(?!["'](tombstone|corroboration|handoff)["']|args\.kind)"
 evidence:
   - note: 2026-07-28 probe while designing #376: append_event(ref, 'quote-verification-failed', kind='verification') then resolutions() then is_resolved() returned True — the item would vanish from briefing, recall and carry
+  - note: "2026-08-02 whitelist amendment (#523): kind='handoff' added — the baton is REF-LESS by contract (item_ref always \"\"), and the resolutions fold ignores ref-less lines, so a handoff event cannot resolve anything; guarded by test_handoff_event_never_resolves_an_item in test_store.py"
 expires:
   condition: "resolutions() filters by kind (or the ledger moves to its own stream) AND is_resolved() no longer treats unknown statuses as resolved"
   review_after: 2027-07-28

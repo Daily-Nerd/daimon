@@ -925,6 +925,73 @@ def _events_path(project_dir=None):
     return config.checkpoint_dir() / slug / "events.jsonl"
 
 
+def active_handoff(project_dir=None) -> dict | None:
+    """The project's active baton (#523), or None.
+
+    A handoff is an AUTHORED, ref-less `handoff` event — never a cognitive
+    item, so it cannot enter ranking, dedup, carry or budget trimming, and
+    (scar 0025) it must never name an `item_ref`: the resolutions fold
+    ignores ref-less lines, so a baton can never resolve an item. Latest
+    handoff-kind event wins; `status: cleared` (or an empty note) retracts.
+
+    Consumption: the baton stays active until TWO distinct non-introspection
+    sessions have serialized after its write — the first post-write
+    checkpoint is the writer's own session end, the second belongs to the
+    session that was briefed with it. A crashed session on either side never
+    serializes, so it never eats the baton; under same-project concurrency
+    the baton can over-survive one session, which is the safe direction for
+    a baton. Introspection checkpoints are excluded: a /daimon-end
+    provisional plus its superseding reconstruction would otherwise count
+    one session twice and kill the baton before any consumer saw it.
+    Fail-open: unreadable files read as "no baton", never an exception."""
+    path = _events_path(project_dir)
+    if path is None or not path.exists():
+        return None
+    latest = None
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                evt = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (not isinstance(evt, dict) or evt.get("kind") != "handoff"
+                    or evt.get("item_ref")):
+                continue
+            if latest is None or (str(evt.get("ts") or "")
+                                  >= str(latest.get("ts") or "")):
+                latest = evt
+    except OSError:
+        return None
+    if (latest is None or latest.get("status") == "cleared"
+            or not str(latest.get("note") or "").strip()):
+        return None
+    ts = str(latest.get("ts") or "")
+    slug = project_slug(project_dir)
+    consumers = set()
+    if slug:
+        d = config.checkpoint_dir() / slug
+        try:
+            entries = list(d.iterdir())
+        except OSError:  # pragma: no cover — TOCTOU only: the events file
+            # was just read from this dir, so it exists; the guard is for a
+            # bucket deleted mid-call, and the fail-open promise must hold.
+            entries = []
+        for p in entries:
+            if not _POINTER_RE.match(p.name):
+                continue
+            try:
+                ck = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(ck, dict) or ck.get("source") == "introspection":
+                continue
+            if str(ck.get("created") or "") > ts and ck.get("session_id"):
+                consumers.add(str(ck["session_id"]))
+    if len(consumers) >= 2:
+        return None
+    return {"ts": ts, "note": str(latest["note"])}
+
+
 def _ledger_path(project_dir=None):
     slug = project_slug(project_dir)
     if not slug:

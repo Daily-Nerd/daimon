@@ -115,6 +115,11 @@ withheld early. Never use this for a loop you merely SUSPECT is stale —
 that is `reverify`/worldcheck territory, not a resolve claim. `forget`
 stays human-only.
 
+## Handing off
+
+A checkpoint holds what HAPPENED, not what you INTENDED. Before ending with
+unfinished work: `daimon handoff "Do X. Beware: Y."` — leads the next briefing.
+
 ## Context switching (other projects)
 
 Memory is per-project. To deliberately read another project's memory:

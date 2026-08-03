@@ -1665,6 +1665,93 @@ def test_stats_store_counts_version_generations(tmp_checkpoint_dir):
     assert s["extraction_versions"]["unknown"] == 1
 
 
+# ---- #523: daimon handoff — the baton verb ----
+
+
+def test_cli_handoff_records_event_and_confirms(tmp_checkpoint_dir, capsys):
+    from daimon_briefing import store
+
+    rc = cli.main(["handoff", "Build the MCP server next. Gotcha: cd plugin first.",
+                   "--project", "/p/A"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "handoff recorded" in out
+    h = store.active_handoff("/p/A")
+    assert h["note"] == "Build the MCP server next. Gotcha: cd plugin first."
+
+
+def test_cli_handoff_refuses_over_cap(tmp_checkpoint_dir, capsys):
+    from daimon_briefing import store
+
+    rc = cli.main(["handoff", "x" * 2001, "--project", "/p/A"])
+    assert rc != 0
+    assert "2000" in capsys.readouterr().err
+    assert store.active_handoff("/p/A") is None
+
+
+def test_cli_handoff_clear_retracts(tmp_checkpoint_dir, capsys):
+    from daimon_briefing import store
+
+    assert cli.main(["handoff", "do X", "--project", "/p/A"]) == 0
+    assert cli.main(["handoff", "--clear", "--project", "/p/A"]) == 0
+    assert store.active_handoff("/p/A") is None
+
+
+def test_cli_handoff_clear_refuses_text(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["handoff", "some text", "--clear", "--project", "/p/A"])
+    assert rc != 0
+    assert "--clear takes no text" in capsys.readouterr().err
+
+
+def test_cli_handoff_empty_text_refused(tmp_checkpoint_dir, capsys):
+    rc = cli.main(["handoff", "   ", "--project", "/p/A"])
+    assert rc != 0
+    assert "nothing to hand off" in capsys.readouterr().err
+
+
+def test_cli_handoff_reports_disabled(tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    rc = cli.main(["handoff", "do X", "--project", "/p/A"])
+    assert rc != 0
+    assert "not recorded" in capsys.readouterr().err
+    rc = cli.main(["handoff", "--clear", "--project", "/p/A"])
+    assert rc != 0
+    assert "not recorded" in capsys.readouterr().err
+
+
+def test_cli_brief_survives_broken_handoff_read(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch, capsys):
+    # Fail-open: a broken events read must never take the briefing down.
+    from daimon_briefing import store
+
+    monkeypatch.chdir("/")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setattr(cli.store, "active_handoff",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+    rc = cli.main(["brief", "--project", "/p/A"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "HANDOFF" not in out
+    assert "left off" in out
+
+
+def test_cli_brief_renders_handoff_above_everything(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch, capsys):
+    from daimon_briefing import store
+
+    monkeypatch.chdir("/")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    assert cli.main(["handoff", "Ship the baton first.", "--project", "/p/A"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["brief", "--project", "/p/A"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "HANDOFF" in out
+    assert "Ship the baton first." in out
+    # above everything: the baton block precedes the briefing header
+    assert out.index("Ship the baton first.") < out.index("left off")
+
+
 def test_top_level_help_has_examples(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])

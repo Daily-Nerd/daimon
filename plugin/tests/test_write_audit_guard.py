@@ -394,6 +394,12 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_log():
         run(["log", "--text", "cut the release"], 0)
 
+    def r_handoff():
+        # #523: the baton writes a ref-less handoff event; append_event's
+        # policy.admit_row is the frame. Clear writes a second event.
+        run(["handoff", "ship the baton first"], 0)
+        run(["handoff", "--clear"], 0)
+
     def r_loops():
         # #480 slice 1: pure read — lists open, briefable loop items with ids.
         # No write path of its own, but drive it anyway so a future regression
@@ -482,6 +488,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("reverify",): r_reverify,
         ("forget",): r_forget,
         ("log",): r_log,
+        ("handoff",): r_handoff,
         ("loops",): r_loops,
         ("recall-inject",): r_recall_inject,
         ("status",): r_status,
