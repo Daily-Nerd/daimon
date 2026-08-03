@@ -23,6 +23,16 @@ jobs:
           # .claude-plugin/plugin.json and marketplace.json in version lock-step.
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          # #517: PRs created with the default GITHUB_TOKEN never trigger
+          # other workflows (GitHub suppresses events from that token to
+          # prevent recursion), so the release PR sat at BLOCKED with "no
+          # checks reported" and every release needed an --admin merge. A
+          # fine-grained PAT (contents: write, pull-requests: write on this
+          # repo, stored as RELEASE_PLEASE_TOKEN) makes the release PR
+          # trigger the same six required checks as any human PR. Falls back
+          # to the default token when the secret is absent — behavior then
+          # degrades to the old --admin flow instead of breaking.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN != '' && secrets.RELEASE_PLEASE_TOKEN || github.token }}
 
   publish:
     needs: release-please
