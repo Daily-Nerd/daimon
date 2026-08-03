@@ -158,6 +158,13 @@ def _line(item, degraded: bool = False, briefable: bool = False) -> str:
         # inferred; state both facts — claimed verbatim, unverifiable here.
         base += f" {FOREIGN_VERBATIM_NOTE}"
     base += corroboration_badge(item)
+    if item.get("_worldcheck_confirmed") and not item.get("_worldcheck"):
+        # #525: trusted ground — worldcheck agreed with this claim during
+        # THIS brief. A separate axis from the trust class (how it was
+        # captured) and from corroboration (how many sessions witnessed it):
+        # this says the world itself just agreed. A contradiction on any
+        # other axis suppresses it — quicksand outranks ground.
+        base += " [✓ world-checked]"
     if quote:
         base += f'  — "{quote}"'
     base += _handle_suffix(item, briefable)

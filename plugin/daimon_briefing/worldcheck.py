@@ -802,6 +802,11 @@ def check(checkpoint, project_dir) -> dict:
             outcome = "skipped"
         elif _satisfied(cls, claim, value):
             outcome = "confirmed"
+            # #525: the quiet inverse of the contradiction stamp — transient,
+            # in-memory, same lifecycle as `_worldcheck`. The render marks
+            # solid ground with it; a contradiction on ANY axis outranks it
+            # at render time, so stamping here stays unconditional.
+            item.setdefault("_worldcheck_confirmed", True)
         else:
             outcome = "contradicted"
             note, status = _flag(cls, claim, value)
