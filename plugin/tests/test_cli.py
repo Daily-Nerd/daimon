@@ -8482,3 +8482,102 @@ def test_cooled_origins_reads_the_budget_at_call_time(monkeypatch):
     assert cli.cooled_origins(counts) == {"S-a"}
     monkeypatch.setattr(cli, "_ORIGIN_BUDGET", 2)
     assert cli.cooled_origins(counts) == set()
+
+
+# ---- #534: a serialize in flight means the briefing is one session behind —
+# say so, keyed on liveness (a crashed serialize must never pin a permanent
+# false staleness line; live -> one line, stuck or absent -> silence).
+
+
+def test_heartbeat_slug_stamp_and_preserve(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-p", project_slug="-p-A")
+    f = tmp_log_dir / "heartbeats" / "S-p"
+    assert f.read_text() == "-p-A"
+    ledger.touch_heartbeat("S-p")  # step touches carry no slug
+    assert f.read_text() == "-p-A", "plain touch must preserve the slug stamp"
+
+
+def test_serialize_in_flight_true_for_fresh_matching_slug(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-p", project_slug="-p-A")
+    assert ledger.serialize_in_flight("-p-A") is True
+
+
+def test_serialize_in_flight_false_for_other_project(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-p", project_slug="-p-B")
+    assert ledger.serialize_in_flight("-p-A") is False
+
+
+def test_serialize_in_flight_false_when_stale(tmp_log_dir):
+    from daimon_briefing import ledger, config
+    ledger.touch_heartbeat("S-p", project_slug="-p-A")
+    f = tmp_log_dir / "heartbeats" / "S-p"
+    old = time.time() - config.hung_after_seconds() - 60
+    os.utime(f, (old, old))
+    assert ledger.serialize_in_flight("-p-A") is False, \
+        "a stuck serialize must not pin a permanent staleness line"
+
+
+def test_serialize_in_flight_false_for_legacy_empty_stamp(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-legacy")  # no slug content, pre-#534 shape
+    assert ledger.serialize_in_flight("-p-A") is False, \
+        "an unattributable stamp fails toward silence, never cross-project noise"
+
+
+def test_serialize_in_flight_false_with_no_heartbeat_dir(tmp_log_dir):
+    from daimon_briefing import ledger
+    assert ledger.serialize_in_flight("-p-A") is False
+
+
+def test_brief_notes_in_flight_serialize(tmp_checkpoint_dir, sample_checkpoint,
+                                         capsys, monkeypatch):
+    from daimon_briefing import store, ledger
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setattr(ledger, "serialize_in_flight", lambda slug, now=None: True)
+    rc = cli.main(["brief"])
+    assert rc == 0
+    assert "one session behind" in capsys.readouterr().out
+
+
+def test_brief_silent_when_no_serialize_in_flight(tmp_checkpoint_dir,
+                                                  sample_checkpoint, capsys,
+                                                  monkeypatch):
+    from daimon_briefing import store, ledger
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setattr(ledger, "serialize_in_flight", lambda slug, now=None: False)
+    rc = cli.main(["brief"])
+    assert rc == 0
+    assert "one session behind" not in capsys.readouterr().out
+
+
+def test_serialize_in_flight_blank_slug_is_false(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-p", project_slug="-p-A")
+    assert ledger.serialize_in_flight("") is False
+    assert ledger.serialize_in_flight("   ") is False
+
+
+def test_serialize_in_flight_skips_unreadable_entry(tmp_log_dir):
+    from daimon_briefing import ledger
+    # A directory inside heartbeats/ stats fine but fails read_text with an
+    # OSError — the scan must skip it and still find the real stamp.
+    (tmp_log_dir / "heartbeats").mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "heartbeats" / "not-a-file").mkdir()
+    ledger.touch_heartbeat("S-p", project_slug="-p-A")
+    assert ledger.serialize_in_flight("-p-A") is True
+
+
+def test_serialize_in_flight_unreadable_only_entry_is_false(tmp_log_dir):
+    from daimon_briefing import ledger
+    # The unreadable entry is the ONLY candidate, so the OSError-skip path
+    # MUST execute regardless of iterdir() order (the two-entry variant above
+    # can return True off the real stamp first on filesystems that iterate
+    # it earlier — this one cannot).
+    (tmp_log_dir / "heartbeats").mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "heartbeats" / "only-a-dir").mkdir()
+    assert ledger.serialize_in_flight("-p-A") is False

@@ -351,16 +351,27 @@ def _heartbeat_dir() -> Path:
     return config.log_dir() / "heartbeats"
 
 
-def touch_heartbeat(session_id: str) -> None:
+def touch_heartbeat(session_id: str, project_slug: str | None = None) -> None:
     """Stamp liveness for a running serialize (#342). Best-effort: a full
     disk or unwritable dir must never break the serialize doing the
     touching. Old stamps are reaped opportunistically here — result lines
     end a session's classification, so a leftover file is disk hygiene,
-    never a liveness signal."""
+    never a liveness signal.
+
+    `project_slug` (#534): the serialize entry point stamps which project
+    the run belongs to as the file's CONTENT, so the briefing can answer
+    "is a serialize in flight for THIS project" without a session->project
+    map. Step touches omit it — Path.touch() updates mtime and preserves
+    content, so one stamped entry touch attributes the whole trail. A
+    pre-#534 stamp has empty content and stays unattributable on purpose."""
     try:
         d = _heartbeat_dir()
         d.mkdir(parents=True, exist_ok=True)
-        (d / Path(session_id).name).touch()
+        p = d / Path(session_id).name
+        if project_slug is not None:
+            p.write_text(str(project_slug), encoding="utf-8")
+        else:
+            p.touch()
         now = time.time()
         for p in d.iterdir():
             try:
@@ -381,6 +392,37 @@ def heartbeat_age(session_id: str, now: float | None = None) -> float | None:
     except OSError:
         return None
     return max(0.0, (now if now is not None else time.time()) - mtime)
+
+
+def serialize_in_flight(project_slug: str, now: float | None = None) -> bool:
+    """#534: is a serialize LIVE for this project right now? True only for a
+    heartbeat whose content matches `project_slug` and whose age is inside
+    the hung ceiling — the same liveness bar heal uses, so brief and heal
+    never disagree about what "alive" means.
+
+    Every other shape answers False on purpose: a stale stamp is a stuck or
+    crashed serialize (heal's case, and a permanent false "one session
+    behind" line would be worse than the silence this exists to fix), an
+    empty stamp is a pre-#534 trail nothing can attribute, and a missing
+    dir is simply no activity."""
+    slug = str(project_slug or "").strip()
+    if not slug:
+        return False
+    ceiling = config.hung_after_seconds()
+    t = now if now is not None else time.time()
+    try:
+        entries = list(_heartbeat_dir().iterdir())
+    except OSError:
+        return False
+    for p in entries:
+        try:
+            if t - p.stat().st_mtime > ceiling:
+                continue
+            if p.read_text(encoding="utf-8").strip() == slug:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 # Host prefix on a spawn line, for per-host capture counts. Deliberately the
