@@ -5,6 +5,32 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0](https://github.com/Daily-Nerd/daimon/compare/v0.23.0...v0.24.0) (2026-08-03)
+
+
+### Features
+
+* **cli:** daimon handoff — an authored baton that leads the next briefing ([#524](https://github.com/Daily-Nerd/daimon/issues/524)) ([877f9f5](https://github.com/Daily-Nerd/daimon/commit/877f9f55512ae1945cc1700897c522dfa466b362))
+* **cli:** record audit-quotes usage ([#506](https://github.com/Daily-Nerd/daimon/issues/506)) ([d473e01](https://github.com/Daily-Nerd/daimon/commit/d473e0141203c277f6358f830013b3fa4d70c19a))
+* **llm:** stream litellm-backend responses so the timeout guards the connection, not the completion length ([#538](https://github.com/Daily-Nerd/daimon/issues/538)) ([247bbc4](https://github.com/Daily-Nerd/daimon/commit/247bbc45321a490494f4eff5801186e10c842fd8))
+* **serializer:** decisions carry their because — stated reasoning rides the item ([#528](https://github.com/Daily-Nerd/daimon/issues/528)) ([3e5133e](https://github.com/Daily-Nerd/daimon/commit/3e5133ead749291cc0d5e13bd01b2f08d970e584))
+* **serializer:** stamp extraction_version on checkpoints and surface generations in stats ([#520](https://github.com/Daily-Nerd/daimon/issues/520)) ([d8a9ac3](https://github.com/Daily-Nerd/daimon/commit/d8a9ac37f2aa39cf7727df53bcf1a34976bacf86))
+* **worldcheck:** render confirmed items as ground, not only contradicted ones as quicksand ([#526](https://github.com/Daily-Nerd/daimon/issues/526)) ([2557671](https://github.com/Daily-Nerd/daimon/commit/255767139bf571ce9248f1d33eed13f72bf69aaa))
+
+
+### Bug Fixes
+
+* **cli:** audit-quotes verifies carried quotes against their origin transcript ([#508](https://github.com/Daily-Nerd/daimon/issues/508)) ([40b47e9](https://github.com/Daily-Nerd/daimon/commit/40b47e9ed02c3d34c3f31063a66e215b5c0826d0))
+* **cli:** write-checkpoint downgrades unverifiable verbatim to inferred ([#515](https://github.com/Daily-Nerd/daimon/issues/515)) ([f68933e](https://github.com/Daily-Nerd/daimon/commit/f68933e8fd81ba8958a2ec741ea7d2981a49ef7c))
+* **redact:** route status log tails through redact_text and contain anchor paths ([#519](https://github.com/Daily-Nerd/daimon/issues/519)) ([7b839df](https://github.com/Daily-Nerd/daimon/commit/7b839dfd4df6a3da8f041f879ebad32ffac25cda))
+* **serializer:** tool output of daimon's own commands is not a witness ([#518](https://github.com/Daily-Nerd/daimon/issues/518)) ([7d1054a](https://github.com/Daily-Nerd/daimon/commit/7d1054a61cc25c69c6c516186e0168c426f9a9a0))
+* **serializer:** treat a redaction marker as a fragment boundary, not as text to delete ([#509](https://github.com/Daily-Nerd/daimon/issues/509)) ([d93f531](https://github.com/Daily-Nerd/daimon/commit/d93f53129fef4bb66da3af0de4a8740cfc5f0199))
+
+
+### Documentation
+
+* **site:** CLI reference page and the undocumented briefing annotations ([#530](https://github.com/Daily-Nerd/daimon/issues/530)) ([3025ee3](https://github.com/Daily-Nerd/daimon/commit/3025ee3edecd1958e9e9181fe607a5b1a30309bf))
+
 ## [0.23.0](https://github.com/Daily-Nerd/daimon/compare/v0.22.1...v0.23.0) (2026-08-01)
 
 
