@@ -1523,3 +1523,55 @@ def test_command_backend_deadline_exhausted_raises_the_subclass(monkeypatch):
     with pytest.raises(llm.DeadlineExhausted):
         llm._chat_command([{"role": "user", "content": "x"}],
                           deadline=time.monotonic() - 1)
+# ---- #535: the served-model stamp is a gateway alias (scar 0032) — log the
+# presence of provider-specific usage fields so a silent model substitution
+# is detectable from the log, permanently, going forward.
+
+
+def test_usage_log_names_present_provider_fields(llm_env, monkeypatch, caplog):
+    def fake_urlopen(req, timeout=None):
+        return _ok_response_with_usage("ok", {
+            "total_tokens": 10, "prompt_tokens": 5, "completion_tokens": 5,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "completion_tokens_details": {"reasoning_tokens": 0},
+        })
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with caplog.at_level(logging.INFO, logger="daimon_briefing.llm"):
+        llm.chat([{"role": "user", "content": "hi"}])
+    msgs = [r.getMessage() for r in caplog.records if "LLM usage" in r.getMessage()]
+    assert msgs, "usage log line missing"
+    line = msgs[0]
+    assert "provider_fields=cache_creation,cache_read,reasoning" in line
+
+
+def test_usage_log_says_none_when_provider_fields_absent(llm_env, monkeypatch, caplog):
+    # A typical local OpenAI-compatible server carries none of the fields —
+    # the log must say so explicitly (absence is the discriminator's signal,
+    # so it cannot be expressed by omission).
+    def fake_urlopen(req, timeout=None):
+        return _ok_response_with_usage("ok", {
+            "total_tokens": 10, "prompt_tokens": 5, "completion_tokens": 5,
+        })
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with caplog.at_level(logging.INFO, logger="daimon_briefing.llm"):
+        llm.chat([{"role": "user", "content": "hi"}])
+    msgs = [r.getMessage() for r in caplog.records if "LLM usage" in r.getMessage()]
+    assert msgs and "provider_fields=none" in msgs[0]
+
+
+def test_usage_log_partial_provider_fields(llm_env, monkeypatch, caplog):
+    # Only what is actually present gets named — never inferred to a full set.
+    def fake_urlopen(req, timeout=None):
+        return _ok_response_with_usage("ok", {
+            "total_tokens": 10,
+            "cache_read_input_tokens": 3,
+        })
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with caplog.at_level(logging.INFO, logger="daimon_briefing.llm"):
+        llm.chat([{"role": "user", "content": "hi"}])
+    msgs = [r.getMessage() for r in caplog.records if "LLM usage" in r.getMessage()]
+    assert msgs and "provider_fields=cache_read" in msgs[0]
