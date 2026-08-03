@@ -309,6 +309,32 @@ def test_verbatim_freeze_pops_twin_ids_when_prev_has_none():
     assert "source_message_ids" not in qs[0]
 
 
+def test_verbatim_freeze_because_travels_with_frozen_text():
+    # F4: `because` explains ITS text. When the freeze restores prev's
+    # original wording, the twin's own reasoning would explain a sentence
+    # that no longer renders — prev's because replaces it, absent pops.
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45,
+        because="the clamp erased ordering")])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, days=0, because="a reworded reason for reworded text")])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["because"] == "the clamp erased ordering"
+
+
+def test_verbatim_freeze_pops_twin_because_when_prev_has_none():
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, days=0, because="reasoning for text the freeze replaces")])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert "because" not in qs[0]
+
+
 def test_verbatim_freeze_inherits_older_first_seen():
     # first_seen birth-stamp inheritance still works on the freeze path: the
     # native twin has a NEWER stamp; the older prev original stamp must win,

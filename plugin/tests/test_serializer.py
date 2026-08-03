@@ -756,7 +756,7 @@ def test_validation_retry_note_restates_copy_paste_contract(
     assert "elisions marked with `...`" in second
 
 
-def test_prompt_version_is_d017():
+def test_prompt_version_history_and_current_pin():
     # D-008 -> D-010 (#101: emotional_valence dropped from the schema).
     # D-009 is taken by the host-adapter decision. D-010 -> D-011 (#126:
     # per-item importance added to the emitted schema). D-011 -> D-012 (#5:
@@ -767,9 +767,14 @@ def test_prompt_version_is_d017():
     # claims ground in tool-result signals). D-016 -> D-017 (#416: prefer a
     # quote span that preserves a temporal span the transcript states —
     # data-gathering for the deferred bi-temporal design, no new schema).
+    # D-017 -> D-018 (#527: decisions carry a `because` clause of stated
+    # reasoning — new schema field AND new extraction target, so
+    # EXTRACTION_VERSION bumped alongside for the first time since the
+    # #514 stamp made a lone bump visible).
     # Pre-bump checkpoints firing the format_version mismatch warning (#93)
     # is DESIRED behavior.
-    assert serializer.PROMPT_VERSION == "D-017"
+    assert serializer.PROMPT_VERSION == "D-018"
+    assert serializer.EXTRACTION_VERSION == 3
 
 
 def test_serialize_prompt_prefers_temporal_span_preserving_quote():
@@ -1305,6 +1310,30 @@ def test_strip_code_owned_keys_clears_item_origin_on_the_introspection_path():
     assert "origin_session" not in item
     assert "origin_author" not in item
     assert item["text"] == "q"  # nothing else disturbed
+
+
+def test_validate_accepts_decision_with_because():
+    """#525 follow-on (F4): decisions may carry a `because` clause — the
+    stated reasoning, extracted only when the transcript states it."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["working_context"]["recent_decisions"][0]["because"] = (
+        "the hard clamp erased ordering in tied groups")
+    assert serializer.validate(ckpt)
+
+
+def test_validate_rejects_non_str_because():
+    # #134 lesson: presence != usable value — a null/list `because` must be
+    # rejected at the boundary, not crash a later render.
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["working_context"]["recent_decisions"][0]["because"] = ["not", "str"]
+    assert not serializer.validate(ckpt)
+
+
+def test_serialize_prompt_extracts_because():
+    # The prompt must name the field and the schema template must carry it,
+    # or the extractor can never emit one.
+    assert '"because"' in serializer.SERIALIZE_SYS
+    assert "because" in serializer.SERIALIZE_SYS.lower()
 
 
 def test_strip_code_owned_keys_clears_model_claimed_verification_stamps():
