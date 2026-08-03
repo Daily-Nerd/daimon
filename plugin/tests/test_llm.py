@@ -1291,3 +1291,176 @@ def test_command_backend_records_no_served_model(monkeypatch):
                         lambda argv, stdin_text, timeout, env, cwd: (0, "OK", ""))
     assert llm.chat([{"role": "user", "content": "hi"}]) == "OK"
     assert llm.served_models() == []
+
+
+# ---- #531: streaming. Non-streaming requests emit zero bytes until the whole
+# completion is done, which turns DAIMON_TIMEOUT into a hard ceiling on total
+# server-side generation time — merge calls emitting 30-40k completion tokens
+# cross the default 420s at normal throughput and get killed healthy. With
+# streaming, urlopen's socket timeout bounds the INTER-FRAME gap instead, and
+# no healthy gap approaches the timeout.
+
+
+def _sse_response(frames):
+    """An OpenAI-style SSE body: one `data:` line per frame, blank-line
+    separated, closed by `data: [DONE]`."""
+    lines = []
+    for f in frames:
+        payload = f if isinstance(f, str) else json.dumps(f)
+        lines.append(f"data: {payload}")
+        lines.append("")
+    lines.append("data: [DONE]")
+    lines.append("")
+    return io.BytesIO("\n".join(lines).encode())
+
+
+def test_chat_payload_requests_streaming_by_default(llm_env, monkeypatch):
+    monkeypatch.delenv("DAIMON_LLM_STREAM", raising=False)
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data)
+        return _ok_response("ok")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    llm.chat([{"role": "user", "content": "hi"}])
+    assert captured["body"]["stream"] is True
+    # Without stream_options the usage block never arrives on a stream, and
+    # the usage log line (the only per-call spend record) goes dark.
+    assert captured["body"]["stream_options"] == {"include_usage": True}
+
+
+def test_chat_stream_opt_out_keeps_body_unchanged(llm_env, monkeypatch):
+    # Strict upstreams may reject unknown fields (the llm_no_cache precedent):
+    # DAIMON_LLM_STREAM=0 must restore the exact pre-#531 body shape.
+    monkeypatch.setenv("DAIMON_LLM_STREAM", "0")
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data)
+        return _ok_response("ok")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    llm.chat([{"role": "user", "content": "hi"}])
+    assert "stream" not in captured["body"]
+    assert "stream_options" not in captured["body"]
+
+
+def test_chat_parses_sse_streamed_response(llm_env, monkeypatch):
+    def fake_urlopen(req, timeout=None):
+        return _sse_response([
+            {"choices": [{"delta": {"role": "assistant"}}], "model": "served-x"},
+            {"choices": [{"delta": {"content": "Hel"}}], "model": "served-x"},
+            {"choices": [{"delta": {"content": "lo"}}], "model": "served-x"},
+        ])
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "Hello"
+
+
+def test_chat_sse_records_served_model(llm_env, monkeypatch):
+    llm.reset_served_models()
+
+    def fake_urlopen(req, timeout=None):
+        return _sse_response([
+            {"choices": [{"delta": {"content": "ok"}}], "model": "served-y"},
+            {"choices": [{"delta": {"content": "!"}}], "model": "served-y"},
+        ])
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    llm.chat([{"role": "user", "content": "hi"}])
+    assert llm.served_models() == ["served-y"]
+
+
+def test_chat_sse_logs_usage_from_final_frame(llm_env, monkeypatch, caplog):
+    # stream_options.include_usage delivers usage in a trailing frame that has
+    # no choices — the spend log line must survive the streaming switch.
+    def fake_urlopen(req, timeout=None):
+        return _sse_response([
+            {"choices": [{"delta": {"content": "ok"}}], "model": "served-z"},
+            {"choices": [], "usage": {"total_tokens": 42, "prompt_tokens": 30,
+                                      "completion_tokens": 12}},
+        ])
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with caplog.at_level(logging.INFO, logger="daimon_briefing.llm"):
+        assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+    assert any("total_tokens=42" in r.getMessage() for r in caplog.records)
+
+
+def test_chat_sse_skips_comments_and_garbled_frames(llm_env, monkeypatch):
+    # Gateways interleave `: ping` comment lines, and a torn frame must skip,
+    # not sink the call.
+    body = (
+        ": ping\n\n"
+        'data: {"choices":[{"delta":{"content":"a"}}]}\n\n'
+        "data: {torn json\n\n"
+        'data: {"choices":[{"delta":{"content":"b"}}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+
+    def fake_urlopen(req, timeout=None):
+        return io.BytesIO(body.encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ab"
+
+
+def test_chat_plain_json_answer_to_a_stream_request_still_parses(llm_env, monkeypatch):
+    # A gateway may ignore `stream: true` and answer with one JSON object —
+    # the client must serve it, not die on an SSE parse.
+    def fake_urlopen(req, timeout=None):
+        return _ok_response_with_usage("plain", {"total_tokens": 7})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "plain"
+
+
+def test_chat_sse_empty_content_raises_chat_error(llm_env, monkeypatch):
+    # A stream that closes having delivered no content is the SSE twin of an
+    # empty HTTP 200 body — surface it as ChatError, never return "".
+    def fake_urlopen(req, timeout=None):
+        return _sse_response([{"choices": [{"delta": {}}], "model": "m"}])
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "hi"}])
+
+
+def test_chat_sse_detection_skips_leading_blank_lines(llm_env, monkeypatch):
+    # Keep-alive newlines before the first frame must not defeat detection.
+    body = '\n\n\ndata: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n'
+
+    def fake_urlopen(req, timeout=None):
+        return io.BytesIO(body.encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+
+
+def test_chat_all_blank_body_is_not_sse_and_surfaces_as_chat_error(llm_env, monkeypatch):
+    # A body of pure whitespace is neither a stream nor JSON — it must fail
+    # loud as a ChatError-family parse failure, never be mistaken for SSE.
+    def fake_urlopen(req, timeout=None):
+        return io.BytesIO(b"\n\n  \n")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(Exception) as exc:
+        llm.chat([{"role": "user", "content": "hi"}])
+    assert not isinstance(exc.value, AssertionError)
+
+
+def test_chat_sse_non_dict_frame_is_skipped(llm_env, monkeypatch):
+    # A frame that parses as JSON but is not an object (e.g. a bare array)
+    # has no fields to read — skip it, keep the stream's real content.
+    body = (
+        'data: [1, 2, 3]\n\n'
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+        "data: [DONE]\n"
+    )
+
+    def fake_urlopen(req, timeout=None):
+        return io.BytesIO(body.encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
