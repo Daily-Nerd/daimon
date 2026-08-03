@@ -1464,3 +1464,55 @@ def test_chat_sse_non_dict_frame_is_skipped(llm_env, monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+
+
+# ---- #533: deadline expiry is daimon's own budget, not a backend failure —
+# the fallback log line must say which one happened, or the reader hunts a
+# gateway problem that does not exist.
+
+
+def test_deadline_exhausted_is_a_chat_error_subclass():
+    # Existing `except ChatError` callers must keep catching it unchanged.
+    assert issubclass(llm.DeadlineExhausted, llm.ChatError)
+
+
+def test_chat_fallback_log_names_deadline_expiry(monkeypatch, caplog):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+
+    def budget_gone(*a, **k):
+        raise llm.DeadlineExhausted("LLM deadline exhausted after 1 tries: x")
+
+    monkeypatch.setattr(llm, "_chat_litellm", budget_gone)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FALLBACK")
+    llm.reset_fallback()
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
+        llm.chat([{"role": "user", "content": "x"}])
+    msgs = [r.getMessage() for r in caplog.records if "llm.fallback" in r.getMessage()]
+    assert msgs and "deadline" in msgs[0]
+    assert "litellm failed" not in msgs[0]
+
+
+def test_chat_fallback_log_still_names_backend_failure(monkeypatch, caplog):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+
+    def boom(*a, **k):
+        raise llm.ChatError("gateway down")
+
+    monkeypatch.setattr(llm, "_chat_litellm", boom)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FALLBACK")
+    llm.reset_fallback()
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
+        llm.chat([{"role": "user", "content": "x"}])
+    msgs = [r.getMessage() for r in caplog.records if "llm.fallback" in r.getMessage()]
+    assert msgs and "litellm failed" in msgs[0]
+
+
+def test_deadline_exhaustion_sites_raise_the_subclass(llm_env, monkeypatch):
+    # The pre-first-call site: deadline already in the past.
+    with pytest.raises(llm.DeadlineExhausted):
+        llm._chat_litellm([{"role": "user", "content": "x"}],
+                          deadline=time.monotonic() - 1)

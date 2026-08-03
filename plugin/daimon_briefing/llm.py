@@ -34,6 +34,13 @@ class ChatError(RuntimeError):
     """A chat call failed after retries. Callers catch this to give up gracefully."""
 
 
+class DeadlineExhausted(ChatError):
+    """The shared serialize budget ran out — daimon's own clock, not a backend
+    failure (#533). A ChatError subclass so every `except ChatError` caller is
+    unaffected; distinguishable so chat()'s fallback branch can log budget
+    expiry as budget expiry instead of blaming a healthy gateway."""
+
+
 class EmptyOutputError(ChatError):
     """The command backend returned rc=0 with empty (or whitespace-only) stdout.
 
@@ -61,7 +68,7 @@ def _read_within_deadline(r, deadline, attempt, last):
     chunks = []
     while True:
         if deadline is not None and time.monotonic() >= deadline:
-            raise ChatError(f"LLM deadline exhausted after {attempt} tries: {last}")
+            raise DeadlineExhausted(f"LLM deadline exhausted after {attempt} tries: {last}")
         chunk = r.read1(_READ_CHUNK_BYTES)
         if not chunk:
             break
@@ -185,7 +192,7 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
         if deadline is not None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ChatError(f"LLM deadline exhausted after {attempt} tries: {last}")
+                raise DeadlineExhausted(f"LLM deadline exhausted after {attempt} tries: {last}")
             attempt_timeout = min(timeout, remaining)
         req = urllib.request.Request(
             base + "/v1/chat/completions",
@@ -233,7 +240,7 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
                 raise ChatError(f"LLM unreachable/timeout after {retries} tries at {base}: {last}")
         backoff = 3 * (attempt + 1)
         if deadline is not None and time.monotonic() + backoff >= deadline:
-            raise ChatError(f"LLM deadline exhausted after {attempt + 1} tries: {last}")
+            raise DeadlineExhausted(f"LLM deadline exhausted after {attempt + 1} tries: {last}")
         # `last` is "HTTP <code>" or the transport reason — never the response
         # body (it can echo request contents/secrets; see docstring).
         log.warning("LLM %s (attempt %d/%d), backing off %ds",
@@ -397,9 +404,13 @@ def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadli
     try:
         return _chat_litellm(messages, model=model, temperature=temperature,
                              timeout=timeout, retries=retries, deadline=deadline)
-    except ChatError:
+    except ChatError as e:
         if config.llm_fallback() and _resolve_command() is not None:
-            log.warning("llm.fallback backend=command (litellm failed)")
+            # #533: budget expiry is daimon's own clock, not a gateway error —
+            # the label decides which of two very different things gets debugged.
+            reason = ("serialize deadline expired"
+                      if isinstance(e, DeadlineExhausted) else "litellm failed")
+            log.warning("llm.fallback backend=command (%s)", reason)
             _fallback_used = True
             if deadline is not None:
                 # #341: the primary just drained the shared budget retrying
@@ -631,7 +642,7 @@ def _chat_command(messages, deadline):
     if deadline is not None:
         timeout = min(timeout, max(0.0, deadline - time.monotonic()))
         if timeout <= 0:
-            raise ChatError("LLM deadline exhausted before command backend")
+            raise DeadlineExhausted("LLM deadline exhausted before command backend")
     env = {**os.environ, "DAIMON_DISABLE": "1"}
     cwd = tempfile.mkdtemp(prefix="daimon-cli-")
     try:
