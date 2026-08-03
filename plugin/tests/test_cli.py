@@ -8553,3 +8553,20 @@ def test_brief_silent_when_no_serialize_in_flight(tmp_checkpoint_dir,
     rc = cli.main(["brief"])
     assert rc == 0
     assert "one session behind" not in capsys.readouterr().out
+
+
+def test_serialize_in_flight_blank_slug_is_false(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.touch_heartbeat("S-p", project_slug="-p-A")
+    assert ledger.serialize_in_flight("") is False
+    assert ledger.serialize_in_flight("   ") is False
+
+
+def test_serialize_in_flight_skips_unreadable_entry(tmp_log_dir):
+    from daimon_briefing import ledger
+    # A directory inside heartbeats/ stats fine but fails read_text with an
+    # OSError — the scan must skip it and still find the real stamp.
+    (tmp_log_dir / "heartbeats").mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "heartbeats" / "not-a-file").mkdir()
+    ledger.touch_heartbeat("S-p", project_slug="-p-A")
+    assert ledger.serialize_in_flight("-p-A") is True
