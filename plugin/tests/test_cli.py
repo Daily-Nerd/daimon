@@ -8570,3 +8570,14 @@ def test_serialize_in_flight_skips_unreadable_entry(tmp_log_dir):
     (tmp_log_dir / "heartbeats" / "not-a-file").mkdir()
     ledger.touch_heartbeat("S-p", project_slug="-p-A")
     assert ledger.serialize_in_flight("-p-A") is True
+
+
+def test_serialize_in_flight_unreadable_only_entry_is_false(tmp_log_dir):
+    from daimon_briefing import ledger
+    # The unreadable entry is the ONLY candidate, so the OSError-skip path
+    # MUST execute regardless of iterdir() order (the two-entry variant above
+    # can return True off the real stamp first on filesystems that iterate
+    # it earlier — this one cannot).
+    (tmp_log_dir / "heartbeats").mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "heartbeats" / "only-a-dir").mkdir()
+    assert ledger.serialize_in_flight("-p-A") is False
