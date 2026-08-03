@@ -1425,3 +1425,42 @@ def test_chat_sse_empty_content_raises_chat_error(llm_env, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(llm.ChatError):
         llm.chat([{"role": "user", "content": "hi"}])
+
+
+def test_chat_sse_detection_skips_leading_blank_lines(llm_env, monkeypatch):
+    # Keep-alive newlines before the first frame must not defeat detection.
+    body = '\n\n\ndata: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n'
+
+    def fake_urlopen(req, timeout=None):
+        return io.BytesIO(body.encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
+
+
+def test_chat_all_blank_body_is_not_sse_and_surfaces_as_chat_error(llm_env, monkeypatch):
+    # A body of pure whitespace is neither a stream nor JSON — it must fail
+    # loud as a ChatError-family parse failure, never be mistaken for SSE.
+    def fake_urlopen(req, timeout=None):
+        return io.BytesIO(b"\n\n  \n")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(Exception) as exc:
+        llm.chat([{"role": "user", "content": "hi"}])
+    assert not isinstance(exc.value, AssertionError)
+
+
+def test_chat_sse_non_dict_frame_is_skipped(llm_env, monkeypatch):
+    # A frame that parses as JSON but is not an object (e.g. a bare array)
+    # has no fields to read — skip it, keep the stream's real content.
+    body = (
+        'data: [1, 2, 3]\n\n'
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+        "data: [DONE]\n"
+    )
+
+    def fake_urlopen(req, timeout=None):
+        return io.BytesIO(body.encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
