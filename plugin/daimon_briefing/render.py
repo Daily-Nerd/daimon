@@ -121,7 +121,21 @@ def _print_version_note(checkpoint) -> None:
               f"schema changed; some sections may render partially.")
 
 
-def render_brief(checkpoint, drift=None, teammates=None) -> None:
+def _print_handoff(handoff) -> None:
+    """The baton block (#523): authored, imperative, rendered ABOVE every
+    briefing section on both render paths — it must never lose position to
+    ambient sections. Multi-line batons keep one arrow per line."""
+    if not handoff:
+        return
+    print(f"HANDOFF (left deliberately by previous session, {handoff['ts']}):")
+    for line in str(handoff["note"]).splitlines():
+        if line.strip():
+            print(f"→ {line.strip()}")
+    print("")
+
+
+def render_brief(checkpoint, drift=None, teammates=None, handoff=None) -> None:
+    _print_handoff(handoff)
     b = briefing.build(checkpoint)
     if b is None:
         # Point at the real flow (#29): checkpoints come from the hooks; bare
