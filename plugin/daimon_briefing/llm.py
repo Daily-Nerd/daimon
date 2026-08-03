@@ -69,6 +69,65 @@ def _read_within_deadline(r, deadline, attempt, last):
     return b"".join(chunks)
 
 
+def _looks_like_sse(raw: bytes) -> bool:
+    """True when a response body is an SSE stream rather than one JSON object.
+
+    Sniffs the first non-blank line for the two things a stream can open with:
+    a `data:` field or a `:` comment (gateways send `: ping` keep-alives).
+    Sniffing the body instead of trusting a Content-Type header keeps the
+    fake-response test seam (io.BytesIO, no headers) and misbehaving gateways
+    on the same honest path."""
+    for line in raw.split(b"\n"):
+        s = line.strip()
+        if not s:
+            continue
+        return s.startswith(b"data:") or s.startswith(b":")
+    return False
+
+
+def _parse_sse(raw: bytes):
+    """Fold an OpenAI-style SSE body into (content, served_model, usage).
+
+    `content` is the concatenated `choices[0].delta.content` across frames,
+    or None when no frame carried any (distinct from "" — callers must treat
+    a content-free stream as an error, not an answer). `served_model` is the
+    first frame's `model` field; `usage` the last frame that carried one
+    (stream_options.include_usage delivers it in a trailing frame with no
+    choices). Torn or non-JSON frames are skipped — one bad frame must not
+    sink a call whose remaining frames carry the completion."""
+    parts = []
+    served = None
+    usage = {}
+    saw_content = False
+    for line in raw.decode("utf-8", errors="replace").split("\n"):
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue  # blank separators and `:` comment lines
+        payload = line[len("data:"):].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            frame = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(frame, dict):
+            continue
+        if served is None:
+            m = frame.get("model")
+            if isinstance(m, str) and m.strip():
+                served = m
+        if frame.get("usage"):
+            usage = frame["usage"]
+        choices = frame.get("choices") or []
+        if choices:
+            delta = choices[0].get("delta") or {}
+            piece = delta.get("content")
+            if isinstance(piece, str):
+                parts.append(piece)
+                saw_content = True
+    return ("".join(parts) if saw_content else None), served, usage
+
+
 def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
     """POST /v1/chat/completions. Returns the assistant message content (str).
 
@@ -108,6 +167,17 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
         # LiteLLM per-request cache bypass. Opt-in only: strict upstreams may
         # reject unknown fields, so the default body must stay unchanged.
         payload["cache"] = {"no-cache": True}
+    if config.llm_stream():
+        # #531: without streaming the server emits zero bytes until the whole
+        # completion is done, so urlopen's socket timeout becomes a hard
+        # ceiling on total generation time — merge-sized completions cross it
+        # at normal throughput and get killed healthy. Streamed, the socket
+        # timeout bounds the inter-frame gap (measured max 0.31s on a live
+        # gateway) and guards what it was always meant to: a dead connection.
+        # stream_options keeps the usage block arriving (in a trailing
+        # frame), so the per-call spend log line below stays lit.
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
     body = json.dumps(payload).encode()
     last = None
     for attempt in range(retries):
@@ -124,23 +194,34 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
         )
         try:
             with urllib.request.urlopen(req, timeout=attempt_timeout) as r:
-                data = json.loads(_read_within_deadline(r, deadline, attempt, last))
+                raw = _read_within_deadline(r, deadline, attempt, last)
+            if _looks_like_sse(raw):
+                content, served, usage = _parse_sse(raw)
+                if content is None:
+                    # A stream that closed having delivered no content is the
+                    # SSE twin of an empty HTTP 200 body — never return "".
+                    raise ChatError("LLM stream closed with no content (body suppressed)")
+            else:
+                # Plain JSON — either streaming is off, or the gateway ignored
+                # `stream: true` and answered with one object. Serve it.
+                data = json.loads(raw)
+                content = data["choices"][0]["message"]["content"]
+                served = data.get("model")
+                usage = data.get("usage") or {}
             # #458 / scar 0032: record the model the response SAYS served this
             # call — the requested `mdl` is a gateway alias and proves nothing.
             # list.append is atomic under the GIL, so concurrent chunk threads
             # record safely; served_models() dedupes/sorts on read. Absent or
             # non-string field -> record nothing (honest absence, no guessing).
-            served = data.get("model")
             if isinstance(served, str) and served.strip():
                 _served_models.append(served.strip())
             # Surface token cost — the serializer discards the rest of the
             # response, so this log line is the only record of per-call spend.
-            usage = data.get("usage") or {}
             if usage:
                 log.info("LLM usage model=%s served=%s total_tokens=%s prompt=%s completion=%s",
                          mdl, served, usage.get("total_tokens"),
                          usage.get("prompt_tokens"), usage.get("completion_tokens"))
-            return data["choices"][0]["message"]["content"]
+            return content
         except urllib.error.HTTPError as e:
             if 500 <= e.code < 600 and attempt < retries - 1:
                 last = f"HTTP {e.code}"

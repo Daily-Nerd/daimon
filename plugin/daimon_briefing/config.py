@@ -530,6 +530,16 @@ def llm_no_cache() -> bool:
     return _flag("DAIMON_LLM_NO_CACHE")
 
 
+def llm_stream() -> bool:
+    """#531: request streamed responses from the litellm backend. Default ON —
+    a non-streaming request emits zero bytes until the whole completion is
+    done, which turns DAIMON_TIMEOUT into a hard ceiling on total generation
+    time; merge-sized completions cross it at normal throughput and get
+    killed healthy. Set 0 for strict upstreams that reject `stream` or
+    `stream_options` (restores the exact pre-#531 body)."""
+    return (_get("DAIMON_LLM_STREAM") or "1").strip() in ("1", "true", "yes", "on")
+
+
 def llm_base_url() -> str:
     return (
         _get("DAIMON_LLM_BASE_URL")

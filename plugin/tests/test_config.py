@@ -606,3 +606,13 @@ def test_chunk_cache_days_default_override_and_bad_value(monkeypatch):
     assert config.chunk_cache_days() == 7
     monkeypatch.setenv("DAIMON_CHUNK_CACHE_DAYS", "not-a-number")
     assert config.chunk_cache_days() == 3
+
+
+def test_llm_stream_default_on_with_opt_out(monkeypatch):
+    # #531: streaming default ON (the timeout-cliff fix must not require
+    # config), DAIMON_LLM_STREAM=0 restores the pre-streaming body for strict
+    # upstreams.
+    monkeypatch.delenv("DAIMON_LLM_STREAM", raising=False)
+    assert config.llm_stream() is True
+    monkeypatch.setenv("DAIMON_LLM_STREAM", "0")
+    assert config.llm_stream() is False
