@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, llm, normalize, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, ledger, llm, normalize, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -273,6 +273,13 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # none at all, so a manual `daimon serialize` had no bound even in
     # principle while the SessionEnd hook did (#298).
     deadline = start + config.timeout_seconds()
+    # #534: one slug-stamped entry touch attributes this run's whole
+    # heartbeat trail to its project (step touches preserve the content), so
+    # a brief in another shell can say "a serialize for THIS project is in
+    # flight". Before the pipeline so the stamp exists for the entire run;
+    # a too-short skip writes its result line immediately, which ends the
+    # session's classification exactly as before.
+    ledger.touch_heartbeat(session_id, project_slug=store.project_slug(project))
     try:
         # THE shared pipeline (#432): serialize -> stamps -> carry+fold ->
         # bind_links -> supersede emission -> write -> rejection ledger.
@@ -644,6 +651,16 @@ def _cmd_brief(args) -> int:
     if fallback_used:
         render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
                                   "checkpoint (fallback), possibly another project's."])
+    # #534: a LIVE serialize for this project means a fresher checkpoint is
+    # being written right now — say so instead of silently briefing one
+    # session behind (measured at 10% of runs on one field machine). Keyed on
+    # the ledger's liveness bar, never heartbeat existence: a stuck or
+    # crashed serialize is heal's case, and a permanent false staleness line
+    # would be worse than the silence this fixes.
+    if ledger.serialize_in_flight(store.project_slug(project) or ""):
+        render.render_brief_note([
+            "⏳ a serialize is in flight — this briefing may be one session "
+            "behind; re-run `daimon brief` in a few minutes for the fresh one."])
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
     teammates = _team_briefings(project) if getattr(args, "team", False) else None
