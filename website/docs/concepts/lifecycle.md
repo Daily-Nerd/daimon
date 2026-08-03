@@ -124,6 +124,44 @@ command, and the `chunk_cache_days` reaper (default 3 days) remains the
 independent upper bound for anything written after a forget. The claim is
 scoped to this machine: the cache never syncs anywhere.
 
+## `daimon handoff` — the baton
+
+Checkpoints are reconstructive: extracted from the transcript, ranked,
+budget-trimmed, competing for slots. The moment of deliberate handoff —
+"next session: do THIS first, watch out for THAT" — has different semantics:
+intentional, small, imperative, and it must never lose rank to ambient noise.
+
+```sh
+daimon handoff "Ship the release first. Beware: the cache key rotated."
+daimon handoff --clear
+```
+
+The baton leads the next briefing, above every section:
+
+```text
+HANDOFF (left deliberately by previous session, 2026-08-03T03:43:58Z):
+→ Ship the release first. Beware: the cache key rotated.
+```
+
+It is stored as an event, never as a cognitive item — so it cannot enter
+ranking, dedup, or carry scoring, and it cannot resolve anything. One baton
+per project; a new one supersedes the old (the event trail keeps history).
+It stays active until the session that read it ends and serializes — a
+crashed session never consumes it. Capped small on purpose: a baton is
+"do X, beware Y", not a second checkpoint.
+
+## Decisions carry their because
+
+A decision without its reasoning invites the next session to re-litigate it.
+When the transcript *states* the why, capture keeps one short clause of it:
+
+```text
+- [✓ verbatim] soft-clip over hard clamp — because the clamp erased ordering in tied groups
+```
+
+The honesty bar matches everything else: stated reasoning only, never
+invented — a decision whose why was never said arrives without one.
+
 ## The redaction boundary, stated exactly
 
 "A quoted secret never reaches disk" is easily heard as "secrets never leave

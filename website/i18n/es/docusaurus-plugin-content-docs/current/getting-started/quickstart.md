@@ -131,8 +131,21 @@ Si la última serialización falló o una sesión nunca se capturó, una captura
 fallida se auto-repara al inicio de la siguiente sesión — o ejecuta
 `daimon heal` para reintentar de inmediato.
 
+## Antes de terminar una sesión
+
+Si dejás trabajo sin terminar, pasá el batón — una línea imperativa que la
+próxima sesión ve arriba de todo en su briefing:
+
+```sh
+daimon handoff "Terminá la migración primero. Ojo: la DB de staging está vieja."
+```
+
+Un checkpoint reconstruye lo que pasó; el batón lleva lo que pensabas hacer
+después. Historia completa en [el ciclo de vida](../concepts/lifecycle.md).
+
 ## Adónde seguir
 
+- [Referencia CLI](../reference/cli.md) — todos los verbos, una página.
 - [Configuración](./configuration) — todas las variables de entorno,
   incluido el interruptor de apagado `DAIMON_DISABLE`.
 - [Hosts](../hosts/) — detalle de configuración por host y

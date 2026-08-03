@@ -163,3 +163,24 @@ por igual:
 
 Un briefing es contexto, no instrucciones — nunca prevalece sobre lo que el
 usuario pide ahora.
+
+## Suelo firme, no solo arena movediza
+
+El marcador inverso también existe. Al momento del brief, daimon verifica por
+muestreo los ítems arrastrados con afirmaciones comprobables contra la
+realidad — estado de PRs, existencia de ramas y archivos, validez de recibos.
+Una contradicción reemplaza el render del ítem con lo que cambió. Una
+*confirmación* antes no renderizaba nada, lo que hacía indistinguible una
+afirmación recién verificada de una nunca revisada; ahora gana un sufijo
+discreto:
+
+```text
+- [~ inferred] PR #60 awaiting review [carried] [✓ world-checked]
+```
+
+`[✓ world-checked]` significa que el mundo mismo coincidió con esta
+afirmación durante este brief — un eje separado de la clase de confianza
+(cómo se capturó) y de la corroboración (cuántas sesiones la atestiguaron).
+Sobre estas podés apoyarte sin re-verificar. Una asimetría es deliberada: una
+contradicción en cualquier eje suprime la insignia — la arena movediza
+siempre le gana al suelo firme.
