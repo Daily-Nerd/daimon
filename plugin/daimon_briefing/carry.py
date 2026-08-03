@@ -407,6 +407,14 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 # killed the #128 overdue boost) — keep the older birth stamp.
                 if item.get("trust") == "verbatim":
                     twin["text"] = item["text"]
+                    # F4 (#527): `because` explains ITS text. The freeze
+                    # restores prev's wording, so prev's reasoning rides
+                    # along and the twin's own — written for a sentence that
+                    # no longer renders — must not survive attached to it.
+                    if item.get("because"):
+                        twin["because"] = item["because"]
+                    else:
+                        twin.pop("because", None)
                     if item.get("quote"):
                         twin["quote"] = item["quote"]
                         # source_message_ids travel WITH the quote (#358),

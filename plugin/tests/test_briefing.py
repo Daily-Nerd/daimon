@@ -473,6 +473,20 @@ def test_line_marks_carried_items():
     assert "[carried]" not in briefing._line(native)
 
 
+def test_line_renders_because_clause():
+    # F4: the decision travels WITH its reasoning — a decision whose why got
+    # compacted away invites re-litigation.
+    item = {"text": "soft-clip over hard clamp", "trust": "inferred",
+            "because": "the clamp erased ordering in tied groups"}
+    line = briefing._line(item)
+    assert "— because the clamp erased ordering in tied groups" in line
+
+
+def test_line_no_because_renders_clean():
+    item = {"text": "soft-clip over hard clamp", "trust": "inferred"}
+    assert "because" not in briefing._line(item)
+
+
 def test_line_renders_world_checked_badge():
     # #525: trusted ground — the world agreed with this item moments ago.
     item = {"text": "PR #60 awaiting review", "trust": "inferred",

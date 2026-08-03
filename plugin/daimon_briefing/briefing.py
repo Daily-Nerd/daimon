@@ -158,6 +158,11 @@ def _line(item, degraded: bool = False, briefable: bool = False) -> str:
         # inferred; state both facts — claimed verbatim, unverifiable here.
         base += f" {FOREIGN_VERBATIM_NOTE}"
     base += corroboration_badge(item)
+    because = str(item.get("because") or "").strip()
+    if because:
+        # F4 (#527): the decision travels with its stated reasoning — a
+        # decision whose why got compacted away invites re-litigation.
+        base += f" — because {because}"
     if item.get("_worldcheck_confirmed") and not item.get("_worldcheck"):
         # #525: trusted ground — worldcheck agreed with this claim during
         # THIS brief. A separate axis from the trust class (how it was

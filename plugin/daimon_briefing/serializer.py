@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-017"
+PROMPT_VERSION = "D-018"
 
 # #367: the chunk-cache rotation lever, deliberately SEPARATE from
 # PROMPT_VERSION. Bump ONLY when extraction semantics change — the output
@@ -64,7 +64,11 @@ PROMPT_VERSION = "D-017"
 # chunk pass extracts, so the cache must rotate. Serving a pre-#416 cached
 # extraction that dropped the date would poison the later citable-date
 # re-measurement the whole change exists to make honest.
-EXTRACTION_VERSION = 2
+# 2 -> 3 (#527): rule 22 adds the `because` field to decisions — a new
+# extraction target, so a cached pre-#527 chunk would silently produce
+# because-less decisions forever. First bump since the #514 checkpoint
+# stamp shipped, so the corpus generation split is finally visible.
+EXTRACTION_VERSION = 3
 
 
 class SerializeError(Exception):
@@ -214,13 +218,20 @@ RULES — follow every one exactly; this is the point of the exercise:
     transcript does not state. Add nothing when no temporal detail is present; this rule only
     stops you from discarding one that is.
 
+22. THE BECAUSE CLAUSE (D-018): when the transcript STATES the reasoning behind a decision
+    ("chose X because Y", "X — the alternative would have Z"), put ONE short clause of that
+    stated reasoning in the decision's `because` field. Reasoning only, not a restatement of
+    the decision. If the transcript states no reasoning, OMIT the field entirely — a decision
+    without a stated why must arrive without one, never with an invented one. Same honesty
+    bar as rule 1.
+
 Schema shape:
 {
   "session_id": "<id>",
   "working_context": {
     "active_topic": {"text": "", "trust": "", "quote": "", "importance": 0},
     "open_questions": [{"text": "", "trust": "", "quote": "", "external_state": false, "importance": 0}],
-    "recent_decisions": [{"text": "", "trust": "", "quote": "", "importance": 0, "links": [{"type": "", "target": ""}]}]
+    "recent_decisions": [{"text": "", "trust": "", "quote": "", "because": "", "importance": 0, "links": [{"type": "", "target": ""}]}]
   },
   "epistemic_snapshot": {
     "strong_beliefs": [{"text": "", "trust": "", "quote": "", "importance": 0}],
@@ -341,13 +352,17 @@ MERGE RULES — follow every one exactly:
     is the more specific quote. Never invent, alter, or normalize a date while merging; this
     rule only prevents dropping a temporal detail a chunk already captured.
 
+- BECAUSE clauses (D-018): when partial checkpoints hold the same decision and one carries a
+  `because`, keep it. Never merge two reasons into a new sentence and never invent one for a
+  decision that arrived without.
+
 Schema shape:
 {
   "session_id": "<id>",
   "working_context": {
     "active_topic": {"text": "", "trust": "", "quote": "", "importance": 0},
     "open_questions": [{"text": "", "trust": "", "quote": "", "external_state": false, "importance": 0}],
-    "recent_decisions": [{"text": "", "trust": "", "quote": "", "importance": 0, "links": [{"type": "", "target": ""}]}]
+    "recent_decisions": [{"text": "", "trust": "", "quote": "", "because": "", "importance": 0, "links": [{"type": "", "target": ""}]}]
   },
   "epistemic_snapshot": {
     "strong_beliefs": [{"text": "", "trust": "", "quote": "", "importance": 0}],
@@ -552,6 +567,11 @@ def _valid_item(item) -> bool:
         # D-006: a verbatim claim without a real quote is an unpinned claim.
         if not isinstance(quote, str) or not quote.strip():
             return False
+    because = item.get("because")
+    if because is not None and not isinstance(because, str):
+        # F4 (#527), same #134 lesson as text: present-but-non-str would
+        # reach disk and crash a later render — reject at the boundary.
+        return False
     anchor = item.get("anchored_to")
     if anchor is not None:
         if not isinstance(anchor, dict):
