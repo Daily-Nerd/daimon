@@ -1516,3 +1516,10 @@ def test_deadline_exhaustion_sites_raise_the_subclass(llm_env, monkeypatch):
     with pytest.raises(llm.DeadlineExhausted):
         llm._chat_litellm([{"role": "user", "content": "x"}],
                           deadline=time.monotonic() - 1)
+
+
+def test_command_backend_deadline_exhausted_raises_the_subclass(monkeypatch):
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    with pytest.raises(llm.DeadlineExhausted):
+        llm._chat_command([{"role": "user", "content": "x"}],
+                          deadline=time.monotonic() - 1)
