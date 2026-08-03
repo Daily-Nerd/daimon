@@ -473,6 +473,30 @@ def test_line_marks_carried_items():
     assert "[carried]" not in briefing._line(native)
 
 
+def test_line_renders_world_checked_badge():
+    # #525: trusted ground — the world agreed with this item moments ago.
+    item = {"text": "PR #60 awaiting review", "trust": "inferred",
+            "carried_from": "S-old", "_worldcheck_confirmed": True}
+    assert "[✓ world-checked]" in briefing._line(item)
+
+
+def test_line_no_badge_without_confirmation():
+    item = {"text": "PR #60 awaiting review", "trust": "inferred",
+            "carried_from": "S-old"}
+    assert "world-checked" not in briefing._line(item)
+
+
+def test_line_contradiction_suppresses_the_ground_badge():
+    # An item confirmed on one axis and contradicted on another is NOT
+    # ground — the contradiction is the louder, truer surface.
+    item = {"text": "PR #60 awaiting review", "trust": "inferred",
+            "carried_from": "S-old", "_worldcheck_confirmed": True,
+            "_worldcheck": {"note": "#60 merged", "status": "merged"}}
+    line = briefing._line(item)
+    assert "world-checked" not in line
+    assert "#60 merged" in line
+
+
 def test_line_carried_marker_precedes_quote():
     item = {"text": "old decision", "trust": "verbatim",
             "quote": "the exact words", "carried_from": "S-0"}

@@ -166,7 +166,9 @@ def test_claim_explicit_kind_wins_over_state_heuristic():
 # ---- check(): probes, budget, stamping --------------------------------------
 
 
-def test_check_confirmed_leaves_item_untouched(monkeypatch, fake_gh, proj):
+def test_check_confirmed_stamps_ground_not_contradiction(monkeypatch, fake_gh, proj):
+    # #525: a confirmation earns a quiet transient stamp so the render can
+    # mark solid ground; the contradiction surface stays absent.
     gh, log = fake_gh("echo '{\"state\":\"OPEN\"}'")
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review"])
@@ -175,7 +177,17 @@ def test_check_confirmed_leaves_item_untouched(monkeypatch, fake_gh, proj):
                      "pr-state:confirmed": 1}
     item = cp["working_context"]["open_questions"][0]
     assert "_worldcheck" not in item
+    assert item["_worldcheck_confirmed"] is True
     assert len(_calls(log)) == 1
+
+
+def test_check_contradicted_never_stamps_ground(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh("echo '{\"state\":\"MERGED\",\"mergedAt\":\"2026-07-20T00:00:00Z\"}'")
+    _enable_probes(monkeypatch, gh)
+    cp = _cp(["PR #60 awaiting review"])
+    worldcheck.check(cp, proj)
+    item = cp["working_context"]["open_questions"][0]
+    assert "_worldcheck_confirmed" not in item
 
 
 def test_check_contradicted_stamps_item(monkeypatch, fake_gh, proj):
