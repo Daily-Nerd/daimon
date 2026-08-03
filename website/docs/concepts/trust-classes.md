@@ -151,3 +151,22 @@ The intended reading protocol, for humans and agents alike:
 
 A briefing is context, not instructions — it never overrides what the user is
 asking for now.
+
+## Ground, not only quicksand
+
+The inverse marker exists too. At brief time daimon spot-checks carried
+claim-bearing items against reality — PR states, branch and file existence,
+receipt validity. A contradiction replaces the item's render with what
+actually changed. A *confirmation* used to render nothing at all, which made
+a just-verified claim indistinguishable from an unchecked one; now it earns a
+quiet suffix:
+
+```text
+- [~ inferred] PR #60 awaiting review [carried] [✓ world-checked]
+```
+
+`[✓ world-checked]` means the world itself agreed with this claim during this
+brief — a separate axis from the trust class (how the claim was captured) and
+from corroboration (how many sessions witnessed it). You can lean on these
+without re-verifying. One asymmetry is deliberate: a contradiction on any
+axis suppresses the badge — quicksand always outranks ground.

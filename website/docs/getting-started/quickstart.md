@@ -126,8 +126,21 @@ If the last serialize failed or a session was never captured, a failed capture
 self-heals on the next session start — or run `daimon heal` to retry
 immediately.
 
+## Before you end a session
+
+If you are leaving work unfinished, pass the baton — one imperative line the
+next session sees above everything else in its briefing:
+
+```sh
+daimon handoff "Finish the migration first. Beware: the staging DB is stale."
+```
+
+A checkpoint reconstructs what happened; the baton carries what you intended
+next. Full story in [the item lifecycle](../concepts/lifecycle.md).
+
 ## Where to next
 
+- [CLI reference](../reference/cli.md) — every verb, one page.
 - [Configuration](./configuration.md) — every environment variable, including
   the `DAIMON_DISABLE` kill switch.
 - [Hosts](../hosts/index.md) — per-host setup detail and known limitations.

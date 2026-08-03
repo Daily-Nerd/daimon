@@ -134,6 +134,46 @@ superior independiente para todo lo escrito después de un forget. La
 afirmación se limita a esta máquina: la caché nunca se sincroniza a ningún
 lado.
 
+## `daimon handoff` — el batón
+
+Los checkpoints son reconstructivos: extraídos de la transcripción,
+rankeados, recortados por presupuesto, compitiendo por lugares. El momento
+del traspaso deliberado — "próxima sesión: hacé ESTO primero, ojo con
+AQUELLO" — tiene otra semántica: intencional, chico, imperativo, y no debe
+perder rango jamás frente al ruido ambiente.
+
+```sh
+daimon handoff "Cortá el release primero. Ojo: la clave de caché rotó."
+daimon handoff --clear
+```
+
+El batón encabeza el próximo briefing, arriba de todas las secciones:
+
+```text
+HANDOFF (left deliberately by previous session, 2026-08-03T03:43:58Z):
+→ Cortá el release primero. Ojo: la clave de caché rotó.
+```
+
+Se guarda como evento, nunca como ítem cognitivo — no puede entrar al
+ranking, al dedup ni al scoring de carry, y no puede resolver nada. Un batón
+por proyecto; uno nuevo reemplaza al anterior (el rastro de eventos guarda la
+historia). Sigue activo hasta que la sesión que lo leyó termina y serializa —
+una sesión que crashea nunca lo consume. Acotado chico a propósito: un batón
+es "hacé X, ojo con Y", no un segundo checkpoint.
+
+## Las decisiones llevan su porqué
+
+Una decisión sin su razonamiento invita a la próxima sesión a re-litigarla.
+Cuando la transcripción *declara* el porqué, la captura conserva una cláusula
+corta:
+
+```text
+- [✓ verbatim] soft-clip over hard clamp — because the clamp erased ordering in tied groups
+```
+
+La vara de honestidad es la misma de siempre: solo razonamiento declarado,
+nunca inventado — una decisión cuyo porqué nunca se dijo llega sin él.
+
 ## El límite de la redacción, dicho con exactitud
 
 "Un secreto citado nunca llega al disco" se escucha fácil como "los secretos
