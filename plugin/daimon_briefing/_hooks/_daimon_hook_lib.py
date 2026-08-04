@@ -244,6 +244,64 @@ _LOG_RESULT_ERR_RE = re.compile(r"^error: .*?(?: after (\d+)s)?$")
 _LOG_ERR_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)(?: after \d+s|$)")
 
 
+def hung_after_seconds() -> int:
+    """Age (seconds) past which a serialize heartbeat is treated as hung or
+    killed rather than still-running. A second copy of
+    daimon_briefing.config.hung_after_seconds(), because hooks cannot import
+    the package; tests lock the two to behavioral equality.
+
+    Reads the PROCESS env only. The package form also consults ~/.daimon/env,
+    so a DAIMON_HUNG_AFTER set only in that file is invisible here — the same
+    documented boundary as LOG_DIR, which the hooks hardcode while the CLI
+    honors DAIMON_LOG_DIR. A disagreement costs at most a delayed or an extra
+    sweep, never a lost transcript."""
+    try:
+        return int(os.environ.get("DAIMON_HUNG_AFTER") or "1800")
+    except ValueError:
+        return 1800
+
+
+def _in_flight_stems() -> set:
+    """Transcript stems (session ids) with a LIVE serialize right now (#545).
+
+    A serialize stamps a heartbeat named for its session (ledger.touch_heartbeat)
+    and only writes its checkpoint at the very end, so between those two moments
+    the transcript looks exactly like a never-captured orphan: no checkpoint on
+    disk, nothing in the failure ledger. sweep_orphans then spawned a SECOND
+    full serialize of the same transcript, and whichever finished last
+    overwrote the other — last-writer-wins, uncorrelated with quality (field
+    case: the surviving checkpoint had 28 decisions against the discarded
+    one's 32).
+
+    sweep_orphans' own idempotency argument does not cover this: the #185
+    identical-bytes guard compares against an EXISTING checkpoint, and an
+    unfinished serialize has not written one yet, so the guard cannot fire.
+
+    A STALE stamp is deliberately not in-flight — that is a crashed serialize
+    and heal's territory, and treating it as live would make the transcript
+    permanently unsweepable, strictly worse than the double-spawn this
+    prevents. Same liveness bar as ledger.serialize_in_flight, but keyed
+    per-session (the stamp's filename) rather than per-project (its content),
+    so a live serialize for one session never starves an orphaned sibling.
+
+    Fails open to an empty set on any read error, matching
+    _failed_session_stems: a missing heartbeat dir must never block the
+    genuine #185/#188 recovery sweep."""
+    stems = set()
+    try:
+        ceiling = hung_after_seconds()
+        now = time.time()
+        for p in (LOG_DIR / "heartbeats").iterdir():
+            try:
+                if now - p.stat().st_mtime <= ceiling:
+                    stems.add(p.name)
+            except OSError:
+                continue
+    except OSError:
+        return set()
+    return stems
+
+
 def _failed_session_stems() -> set:
     """Transcript stems (session ids) whose LATEST serialize.log outcome is a
     recorded failure — a lightweight, read-only echo of
@@ -320,6 +378,7 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
         cutoff = time.time() - _ORPHAN_MAX_AGE_SECONDS
         ckpt_dir = checkpoint_dir()
         failed_stems = _failed_session_stems()
+        in_flight_stems = _in_flight_stems()
         best_path = None
         best_mtime = None
         for candidate in directory.glob("*.jsonl"):
@@ -333,6 +392,8 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
                 continue  # outside the bounded scan window
             if candidate.stem in failed_stems:
                 continue  # attempted and failed -> heal's job, not an orphan (#299)
+            if candidate.stem in in_flight_stems:
+                continue  # serialize RUNNING right now -> not an orphan yet (#545)
             ckpt_path = ckpt_dir / f"{candidate.stem}.json"
             try:
                 if ckpt_path.stat().st_mtime >= mtime:
