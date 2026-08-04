@@ -1,22 +1,22 @@
 ---
-id: 0
+id: 41
 type: landmine
 title: Squash-merge replaces the local commit body with the PR body, so conventional-commits footers must live in the PR
-severity: medium
+severity: high
 confidence: 0.95
 created: 2026-08-04
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: release-please-config.json
   - path: .github/workflows/pr-validation.yml
   - path: .github/workflows/release.yml
 evidence:
-  - note: "PR #551 was authored specifically to add a BREAKING CHANGE footer. Its local commit carried the footer; the squashed commit on main (0d3d1a8) carries the PR body instead, with no footer. The Release workflow ran green and left the release PR at 0.24.1."
-  - note: ".github/workflows/pr-validation.yml:70 states the rule for the subject line: 'squash-merge makes the PR title the commit subject on main'. The same substitution applies to the body, which is the half that is easy to miss."
+  - note: PR #551 was authored specifically to add a BREAKING CHANGE footer. Its local commit carried the footer; the squashed commit on main (0d3d1a8) carries the PR body instead, with no footer. The Release workflow ran green and left the release PR at 0.24.1.
+  - note: .github/workflows/pr-validation.yml:70 states the rule for the subject line: 'squash-merge makes the PR title the commit subject on main'. The same substitution applies to the body, which is the half that is easy to miss.
 expires:
   condition: "the repository stops squash-merging, or release-please starts reading PR bodies/labels for breaking-change markers instead of commit footers"
   review_after: 2027-02-04
-status: candidate
+status: active
 ---
 
 This repository squash-merges. GitHub composes the squashed commit message from
@@ -51,4 +51,16 @@ Do not rely on prose. A `## Breaking change` heading in a PR body is invisible
 to release-please; only `!` in the subject and a `BREAKING CHANGE:` footer are
 parsed. Related: `bump-minor-pre-major` must be true in
 `release-please-config.json` for a 0.x breaking change to bump the minor rather
-than jumping to 1.0.0.
+than jumping to 1.0.0. That key is set as of `0d3d1a8`.
+
+A note on this scar's own reach. Scars fire before you edit anchored code, but
+this trap fires while AUTHORING A PR, which touches no file. The anchors below
+catch someone editing release configuration, which is adjacent but not the
+moment of danger, so this scar cannot be relied on to fire when it matters.
+
+Two things would close that reach gap, neither shipped at the time of writing:
+a reminder in `.github/PULL_REQUEST_TEMPLATE.md` beside the conventional-title
+rule, since that is what an author actually has in front of them, and the real
+fix, which is mechanical rather than documentary: a PR-convention check that
+fails when a body carries breaking-change prose while the title carries no `!`.
+That check is the thing to build. This scar is the record of why.
