@@ -549,39 +549,49 @@ def signal_message_ids(messages) -> set[str]:
     return out
 
 
-def _valid_item(item) -> bool:
+def _item_reason(item) -> str | None:
+    """None when the item is valid, else WHICH predicate rejected it (#555).
+
+    Names the predicate only. Never the item's text, quote, or trust value —
+    the reason is logged verbatim and the payload is exactly what the boundary
+    is refusing to vouch for.
+    """
     if not isinstance(item, dict):
-        return False
+        return "not a dict"
     if "text" not in item or "trust" not in item:
-        return False
+        return "missing text or trust"
     # #134: presence != a usable value. A present-but-null (or non-str) text
     # passed this check, reached disk, then crashed briefing.render on the next
     # session. Reject at the boundary. Empty str stays valid — active_topic MAY
     # carry empty text (test_validate_allows_empty_active_topic_text).
     if not isinstance(item["text"], str):
-        return False
+        return "text is not a str"
     if item["trust"] not in _TRUST_CLASSES:
-        return False
+        return "trust is not a known trust class"
     if item["trust"] == "verbatim":
         quote = item.get("quote")
         # D-006: a verbatim claim without a real quote is an unpinned claim.
         if not isinstance(quote, str) or not quote.strip():
-            return False
+            return "trust=verbatim item has no quote"
     because = item.get("because")
     if because is not None and not isinstance(because, str):
         # F4 (#527), same #134 lesson as text: present-but-non-str would
         # reach disk and crash a later render — reject at the boundary.
-        return False
+        return "because is not a str"
     anchor = item.get("anchored_to")
     if anchor is not None:
         if not isinstance(anchor, dict):
-            return False
+            return "anchored_to is not a dict"
         if not all(
             isinstance(anchor.get(k), str) and anchor.get(k)
             for k in ("file", "symbol", "body_hash")
         ):
-            return False
-    return True
+            return "anchored_to is missing file, symbol, or body_hash"
+    return None
+
+
+def _valid_item(item) -> bool:
+    return _item_reason(item) is None
 
 
 def iter_items(checkpoint):
@@ -637,37 +647,59 @@ def sanitize_scene(checkpoint) -> None:
             del item["scene"]
 
 
-def validate(checkpoint) -> bool:
-    """Light validation: required keys + trust-class integrity (D-006).
+def validation_reason(checkpoint) -> str | None:
+    """None when the checkpoint is valid, else WHICH predicate rejected it.
 
-    Not full JSON-schema validation — just enough to refuse garbage before storing.
+    Light validation: required keys + trust-class integrity (D-006). Not full
+    JSON-schema validation — just enough to refuse garbage before storing.
 
     Contract: active_topic MAY have empty text (sessions without a single clear
     topic); briefing.render() skips the empty section. Trust rules still apply.
+
+    #555: the bool this used to return threw away the one fact a failure is
+    diagnosed by. The causes are not equivalent — a bad trust class means the
+    model ignored an instruction, a verbatim item with no quote means D-006
+    caught a genuinely unpinned claim (the machinery working), a non-str text
+    means junk arrived from upstream. Predicate order is unchanged, so the
+    accept/reject verdict is byte-identical to the bool version.
     """
     if not isinstance(checkpoint, dict):
-        return False
+        return "checkpoint is not a dict"
     if "session_id" not in checkpoint:
-        return False
+        return "missing session_id"
     wc = checkpoint.get("working_context")
     es = checkpoint.get("epistemic_snapshot")
-    if not isinstance(wc, dict) or not isinstance(es, dict):
-        return False
+    if not isinstance(wc, dict):
+        return "working_context is not a dict"
+    if not isinstance(es, dict):
+        return "epistemic_snapshot is not a dict"
     if "active_topic" not in wc:
-        return False
+        return "missing working_context.active_topic"
     for key in ("open_questions", "recent_decisions"):
         items = wc.get(key)
         if not isinstance(items, list):
-            return False
-        if not all(_valid_item(i) for i in items):
-            return False
-    if not _valid_item(wc["active_topic"]):
-        return False
+            return f"working_context.{key} is not a list"
+        for i, item in enumerate(items):
+            reason = _item_reason(item)
+            if reason is not None:
+                return f"working_context.{key}[{i}]: {reason}"
+    reason = _item_reason(wc["active_topic"])
+    if reason is not None:
+        return f"working_context.active_topic: {reason}"
     for key in ("strong_beliefs", "uncertainties"):
         items = es.get(key, [])
-        if not isinstance(items, list) or not all(_valid_item(i) for i in items):
-            return False
-    return True
+        if not isinstance(items, list):
+            return f"epistemic_snapshot.{key} is not a list"
+        for i, item in enumerate(items):
+            reason = _item_reason(item)
+            if reason is not None:
+                return f"epistemic_snapshot.{key}[{i}]: {reason}"
+    return None
+
+
+def validate(checkpoint) -> bool:
+    """True when the checkpoint passes validation_reason()'s predicates."""
+    return validation_reason(checkpoint) is None
 
 
 # ---- #358: verbatim items bind to transcript message ids ----
@@ -2136,8 +2168,10 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     checkpoint = _produce("")
     strip_code_owned_keys(checkpoint)
     checkpoint["session_id"] = session_id
-    if not validate(checkpoint):
-        log.info("checkpoint failed validation — one resample with attempt nonce (#118)")
+    first_reason = validation_reason(checkpoint)
+    if first_reason is not None:
+        log.info("checkpoint failed validation: %s — one resample with attempt "
+                 "nonce (#118)", first_reason)
         # #553: the rejected attempt has already spent the budget the resample
         # is about to need, so guarantee it one call's worth. max(), never
         # assignment — a caller who granted more keeps it. _produce reads
@@ -2152,10 +2186,14 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
         checkpoint = _produce(_RETRY_NOTE)
         strip_code_owned_keys(checkpoint)
         checkpoint["session_id"] = session_id
-    if not validate(checkpoint):
+    reason = validation_reason(checkpoint)
+    if reason is not None:
+        # #555: both attempts, because the FIRST reason is usually the
+        # interesting one — the resample runs against a nonce'd prompt and can
+        # fail a different predicate than the output that triggered it.
         raise SchemaValidationError(
-            "checkpoint failed schema/trust validation (missing keys, bad trust "
-            "class, or verbatim item without a quote)"
+            f"checkpoint failed schema/trust validation twice. "
+            f"attempt 1: {first_reason}; attempt 2: {reason}"
         )
     sanitize_importance(checkpoint)
     sanitize_scene(checkpoint)
