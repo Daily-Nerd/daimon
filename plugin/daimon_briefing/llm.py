@@ -405,45 +405,69 @@ def rescue_posture() -> str:
       warning case.
     """
     resolved = resolve_backend()
+    fallback = _resolve_fallback_command()
     if resolved["backend"] in ("command", "claude-cli"):
-        return "none"
+        # #475: a command primary DOES have a rescue direction now, but only
+        # when one is configured. Absent a fallback this must still read
+        # "none" — #479 shipped that honesty and a chain of unverified CLIs
+        # reading as "covered" would undo it.
+        if not config.llm_fallback():
+            return "disabled"
+        return "covered" if fallback is not None else "none"
     if not config.llm_api_key() and _resolve_command() is None:
         return "no-backend"
     if not config.llm_fallback():
         return "disabled"
-    if _resolve_command() is not None:
+    if fallback is not None:
         return "covered"
     return "gap"
 
 
-def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
-    """Dispatch to the configured backend. litellm (default) falls back to a
-    command backend on ChatError when fallback is enabled and one resolves."""
+def _rescue(messages, deadline, exc, primary_label):
+    """Hand a failed primary to THE configured fallback command, or re-raise.
+
+    Shared by both dispatch edges (#475) so the three things that must travel
+    together can never drift apart: the ledger-matched log literal, the
+    _fallback_used flag, and the #341 deadline re-arm."""
     global _fallback_used
+    fallback = _resolve_fallback_command()
+    if not (config.llm_fallback() and fallback is not None):
+        raise exc
+    # #533: budget expiry is daimon's own clock, not a backend error — the
+    # label decides which of two very different things gets debugged.
+    reason = ("serialize deadline expired"
+              if isinstance(exc, DeadlineExhausted) else primary_label)
+    # The "llm.fallback backend=command" prefix is a ledger contract
+    # (ledger.py counts attempts by matching this literal). Extend it, never
+    # reword it — a rescue that logs anything else counts as zero attempts
+    # and reproduces the "attempted 0" unreadability #475 was filed about.
+    log.warning("llm.fallback backend=command (%s)", reason)
+    _fallback_used = True
+    if deadline is not None:
+        # #341: the primary just drained the shared budget retrying the very
+        # failure the fallback exists to rescue — handing the fallback the
+        # remainder kills it on arrival. Re-arm to at least the configured
+        # floor; a healthy remaining budget is never shrunk.
+        deadline = max(deadline,
+                       time.monotonic() + config.fallback_min_seconds())
+    return _chat_command(messages, deadline, resolved=fallback)
+
+
+def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):
+    """Dispatch to the configured backend. Either primary falls back to THE
+    configured rescue command (DAIMON_LLM_COMMAND_FALLBACK) on ChatError when
+    fallback is enabled and one resolves — one hop, never a chain (#475)."""
     backend = resolve_backend()["backend"]
     if backend in ("command", "claude-cli"):
-        return _chat_command(messages, deadline)
+        try:
+            return _chat_command(messages, deadline)
+        except ChatError as e:
+            return _rescue(messages, deadline, e, "command backend failed")
     try:
         return _chat_litellm(messages, model=model, temperature=temperature,
                              timeout=timeout, retries=retries, deadline=deadline)
     except ChatError as e:
-        if config.llm_fallback() and _resolve_command() is not None:
-            # #533: budget expiry is daimon's own clock, not a gateway error —
-            # the label decides which of two very different things gets debugged.
-            reason = ("serialize deadline expired"
-                      if isinstance(e, DeadlineExhausted) else "litellm failed")
-            log.warning("llm.fallback backend=command (%s)", reason)
-            _fallback_used = True
-            if deadline is not None:
-                # #341: the primary just drained the shared budget retrying
-                # the failing gateway — handing the fallback the remainder
-                # kills it on arrival in exactly the outage it exists to
-                # rescue. Re-arm to at least the configured floor; a healthy
-                # remaining budget is never shrunk.
-                deadline = max(deadline,
-                               time.monotonic() + config.fallback_min_seconds())
-            return _chat_command(messages, deadline)
-        raise
+        return _rescue(messages, deadline, e, "litellm failed")
 
 
 def extract_json(text):
@@ -519,6 +543,30 @@ def _resolve_command():
         return cmd, (config.llm_command_output() or "text"), config.llm_command_input()
     if shutil.which("claude"):
         return (*_CLAUDE_PRESET, "stdin")
+    return None
+
+
+def _resolve_fallback_command():
+    """Resolve THE rescue command (command_str, output_spec, input_spec) or
+    None — one fallback per config, for every backend (#475).
+
+    Explicit DAIMON_LLM_COMMAND_FALLBACK wins. Failing that, a compat shim:
+    a litellm-family primary keeps falling back to _resolve_command(), which
+    is what DAIMON_LLM_COMMAND meant before this existed. Without the shim,
+    upgrading would silently delete the rescue path of every install that
+    already had one (field data on one such install: 30 attempts, 6 rescues).
+
+    The shim deliberately does NOT apply to a `command` primary: there
+    DAIMON_LLM_COMMAND is the thing that just failed, and re-running the
+    identical invocation is a retry wearing a rescue's clothes. That
+    asymmetry is the whole reason the overload had to be split."""
+    cmd = config.llm_command_fallback()
+    if cmd:
+        return (cmd,
+                (config.llm_command_fallback_output() or "text"),
+                config.llm_command_fallback_input())
+    if resolve_backend()["backend"] not in ("command", "claude-cli"):
+        return _resolve_command()
     return None
 
 
@@ -648,13 +696,19 @@ def _log_backend_stderr(argv0, err, header, out=None) -> str:
     return hint
 
 
-def _chat_command(messages, deadline):
+def _chat_command(messages, deadline, resolved=None):
     """Serialize via a headless LLM CLI. Prompt reaches it per the resolved
     input spec — stdin by default, or arg/file:<flag> for CLIs that don't
     read stdin (DAIMON_LLM_COMMAND_INPUT, #58); runs isolated
     (DAIMON_DISABLE=1, temp cwd). Raises ChatError on any failure — never
-    echoes prompt/stdout/stderr (they can carry secrets)."""
-    resolved = _resolve_command()
+    echoes prompt/stdout/stderr (they can carry secrets).
+
+    `resolved` lets the caller supply an already-resolved
+    (command, output_spec, input_spec) triple instead of re-deriving the
+    primary — that is how the #475 rescue runs the FALLBACK's own specs
+    rather than the primary's."""
+    if resolved is None:
+        resolved = _resolve_command()
     if not resolved:
         raise ChatError("No command backend (set DAIMON_LLM_COMMAND or install claude).")
     command, output_spec, input_spec = resolved

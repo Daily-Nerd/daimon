@@ -155,12 +155,17 @@ uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida.
 | `DAIMON_LLM_API_KEY` | sin definir | API key del endpoint. Cae a `LITELLM_API_KEY`. |
 | `DAIMON_LLM_MODEL` | sin definir | Nombre de modelo a enviar. Cae a `LITELLM_MODEL`. |
 | `DAIMON_LLM_TEMPERATURE` | `0.0` | Temperatura de muestreo de cada llamada de chat. `0.0` para extracción determinista; algunos upstreams rechazan cualquier valor que no sea uno fijo. |
-| `DAIMON_LLM_FALLBACK` | on | Cuando el backend litellm falla, cae automáticamente a un backend de comando (resiliencia ante fallas del gateway). Ponlo en `0` para desactivarlo. |
+| `DAIMON_LLM_FALLBACK` | on | Cuando el backend primario falla, cae automáticamente al comando de rescate (`DAIMON_LLM_COMMAND_FALLBACK`). Aplica tanto a un primario litellm como a uno `command`. Ponlo en `0` para desactivarlo. |
+| `DAIMON_FALLBACK_MIN_SECONDS` | `DAIMON_TIMEOUT` | Presupuesto mínimo garantizado al comando de rescate al entrar. El primario pudo haber agotado el deadline compartido reintentando la misma falla que el rescate existe para resolver, lo que lo mataría al llegar; un presupuesto restante sano nunca se recorta. |
+| `DAIMON_LLM_STREAM` | on | Transmite la respuesta de litellm para que el timeout del socket acote el intervalo entre frames y no la longitud total de la respuesta. Sin esto, una respuesta larga dispara el timeout y reintenta desde cero. Ponlo en `0` para desactivarlo. |
 | `DAIMON_LLM_NO_CACHE` | off | Cuando es verdadero, evita el cache de respuestas del gateway por request — necesario cuando una respuesta mala cacheada fija una falla o cuando las corridas deben ser estadísticamente independientes. |
 | `DAIMON_LLM_BRIEFING` | off | Cuando es verdadero, renderiza el briefing vía LLM en lugar de la plantilla determinista. |
 | `DAIMON_LLM_COMMAND` | sin definir | Invocación completa del CLI para el backend `command` (binario + modelo + flags). |
 | `DAIMON_LLM_COMMAND_OUTPUT` | sin definir | Cómo extraer el texto del asistente del stdout del comando: `text` (stdout crudo) o `json:<key>` (parsear JSON, leer `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | Cómo llega el prompt al backend de comando: `stdin` (por tubería), `arg` (anexado como último elemento de argv) o `file:<flag>` (escrito a un archivo temporal, luego se anexa `<flag> <path>`). Un valor no reconocido registra una advertencia y cae a `stdin`. |
+| `DAIMON_LLM_COMMAND_FALLBACK` | sin definir | El único CLI de rescate, usado cuando el backend primario falla. Sirve tanto para un primario litellm como para uno `command`, que antes no tenía ninguna dirección de rescate. Un solo fallback, nunca una cadena: si el primario y este fallan, la causa casi siempre es del entorno, y un tercer CLI gasta presupuesto para llegar al mismo error mientras hace que la instalación parezca más protegida de lo que está. Si no se define, un primario litellm sigue cayendo a `DAIMON_LLM_COMMAND` como antes. |
+| `DAIMON_LLM_COMMAND_FALLBACK_OUTPUT` | sin definir | Especificación de salida del CLI de rescate, misma gramática que `DAIMON_LLM_COMMAND_OUTPUT`. Se lleva por separado porque el rescate es otro binario. |
+| `DAIMON_LLM_COMMAND_FALLBACK_INPUT` | `stdin` | Especificación de entrada del CLI de rescate, misma gramática que `DAIMON_LLM_COMMAND_INPUT`. |
 
 ## Chunking del serializador
 

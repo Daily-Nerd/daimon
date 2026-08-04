@@ -617,7 +617,8 @@ def _plain_status(data: dict) -> None:
               "DAIMON_LLM_COMMAND)")
     if _rescue_none_warns(data):
         print("⚠ the `command` backend has no rescue path — a failing "
-              "command is not retried or substituted. Run `daimon status` "
+              "command is not retried or substituted. Set "
+              "DAIMON_LLM_COMMAND_FALLBACK, or run `daimon status` "
               "for the recorded failure cause.")
     if data.get("team"):
         print(data["team"])  # one objective line; absent when team unused (#113)
@@ -707,8 +708,9 @@ def _rich_status(data: dict) -> None:
                       "(install claude or set DAIMON_LLM_COMMAND)[/yellow]")
     if _rescue_none_warns(data):
         console.print("[yellow]⚠ the `command` backend has no rescue path — "
-                      "a failing command is not retried or substituted. Run "
-                      "`daimon status` for the recorded failure cause.[/yellow]")
+                      "a failing command is not retried or substituted. Set "
+                      "DAIMON_LLM_COMMAND_FALLBACK, or run `daimon status` "
+                      "for the recorded failure cause.[/yellow]")
     if data.get("team"):
         console.print(data["team"])  # one objective line; absent when team unused (#113)
     if data.get("receipts"):
@@ -996,7 +998,10 @@ _RESCUE_SUFFIXES = {
     "covered": "rescue available, not needed",
     "disabled": "fallback disabled by config",
     "gap": "no fallback resolves — gateway failures won't be rescued",
-    "none": "no rescue path — a `command` backend has no fallback direction",
+    # #475 split DAIMON_LLM_COMMAND's overload, so a command backend now HAS
+    # a fallback direction — this posture means none is configured, which is
+    # a fixable state and must name its fix rather than assert an absence.
+    "none": "no rescue path — set DAIMON_LLM_COMMAND_FALLBACK",
 }
 
 
@@ -1012,7 +1017,7 @@ def _rescue_suffix(posture, fallback_attempts: int) -> str | None:
     disagree visibly."""
     if posture == "none" and fallback_attempts > 0:
         return ("counts are historical; the current `command` backend has "
-                "no rescue path")
+                "no rescue configured")
     return _RESCUE_SUFFIXES.get(posture)
 
 
