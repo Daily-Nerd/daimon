@@ -1007,6 +1007,46 @@ def test_validation_reason_names_the_field_path_and_the_predicate():
     )
 
 
+def _checkpoint_with(**overrides):
+    cp = json.loads(_valid_checkpoint_json("S1"))
+    cp.update(overrides)
+    return cp
+
+
+@pytest.mark.parametrize("mutate,expected", [
+    (lambda cp: "not a dict at all", "checkpoint is not a dict"),
+    (lambda cp: {k: v for k, v in cp.items() if k != "session_id"},
+     "missing session_id"),
+    (lambda cp: {**cp, "working_context": []}, "working_context is not a dict"),
+    (lambda cp: {**cp, "epistemic_snapshot": []}, "epistemic_snapshot is not a dict"),
+    (lambda cp: {**cp, "working_context": {"open_questions": [],
+                                           "recent_decisions": []}},
+     "missing working_context.active_topic"),
+    (lambda cp: {**cp, "working_context": {**cp["working_context"],
+                                           "open_questions": "nope"}},
+     "working_context.open_questions is not a list"),
+    (lambda cp: {**cp, "epistemic_snapshot": {**cp["epistemic_snapshot"],
+                                              "strong_beliefs": "nope"}},
+     "epistemic_snapshot.strong_beliefs is not a list"),
+    (lambda cp: {**cp, "working_context": {**cp["working_context"],
+                                           "active_topic": "nope"}},
+     "working_context.active_topic: not a dict"),
+    (lambda cp: {**cp, "working_context": {**cp["working_context"],
+                                           "open_questions": [{"text": "t"}]}},
+     "working_context.open_questions[0]: missing text or trust"),
+    (lambda cp: {**cp, "working_context": {
+        **cp["working_context"],
+        "open_questions": [{"text": "t", "trust": "inferred",
+                            "anchored_to": "nope"}]}},
+     "working_context.open_questions[0]: anchored_to is not a dict"),
+])
+def test_validation_reason_covers_every_structural_predicate(mutate, expected):
+    # Each predicate is a separate contract: the whole point of #555 is that
+    # these are NOT interchangeable. They were untested while they returned a
+    # bare False, so they are pinned here now that they say something.
+    assert serializer.validation_reason(mutate(_checkpoint_with())) == expected
+
+
 def test_validation_reason_never_leaks_item_text():
     # The reason is logged verbatim, so it names the predicate and the path and
     # nothing from the payload. The fixture's text carries a quoted phrase.
