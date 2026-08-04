@@ -1897,6 +1897,11 @@ def _status_world(project_arg=None) -> dict:
     # One-line pointer only when installed hook copies have drifted (#266);
     # silent on a clean machine. Cheap: hashes a handful of small files.
     hook_drift = _hook_drift_present()
+    # #554: the same pointer for the one host `hooks status` cannot audit —
+    # Claude Code's hooks ship inside the plugin, which updates on its own
+    # schedule. None on a machine with no plugin, so non-plugin users stay
+    # silent.
+    plugin_drift = _plugin_drift_present()
     # #341/#475 part 2: whether a rescue path exists for the CURRENTLY
     # CONFIGURED primary. llm.rescue_posture() is the single resolver (it
     # calls resolve_backend(), the same decision chat() dispatches on) —
@@ -1942,7 +1947,8 @@ def _status_world(project_arg=None) -> dict:
         "disabled": disabled, "skipped_recent": skipped_recent,
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
-        "hook_drift": hook_drift, "rescue_gap": rescue_gap,
+        "hook_drift": hook_drift, "plugin_drift": plugin_drift,
+        "rescue_gap": rescue_gap,
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
         "forget_hits": forget_hits, "rc": rc,
     }
@@ -1960,7 +1966,8 @@ def status_payload(project_arg=None) -> tuple:
         "disabled": w["disabled"], "skipped_recent": w["skipped_recent"],
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
-        "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "hook_drift": w["hook_drift"], "plugin_drift": w.get("plugin_drift"),
+        "rescue_gap": w["rescue_gap"],
         "rescue_posture": w["rescue_posture"],
         "forget_hits": w["forget_hits"],
     }
@@ -1983,7 +1990,8 @@ def _cmd_status(args) -> int:
         "crash": w["crash"], "skipped_recent": w["skipped_recent"],
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
-        "hook_drift": w["hook_drift"], "rescue_gap": w["rescue_gap"],
+        "hook_drift": w["hook_drift"], "plugin_drift": w.get("plugin_drift"),
+        "rescue_gap": w["rescue_gap"],
         "rescue_posture": w["rescue_posture"],
         "rescue_window_errors": w["rescue_window_errors"],
         "forget_hits": w["forget_hits"],
@@ -3013,6 +3021,80 @@ def _hooks_status_report(home: Path) -> list[dict]:
     pkg = resources.files("daimon_briefing._hooks")
     return [_host_status_entry(host, spec, pkg, home)
             for host, spec in sorted(_HOOK_HOSTS.items())]
+
+
+def _version_tuple(v: str) -> tuple:
+    """Loose numeric compare, stdlib only (no packaging dependency). Trailing
+    non-digits in a component are ignored, so '1.0.0rc1' sorts as (1, 0, 0)."""
+    out = []
+    for chunk in str(v).split("."):
+        digits = ""
+        for ch in chunk:
+            if not ch.isdigit():
+                break
+            digits += ch
+        out.append(int(digits) if digits else 0)
+    return tuple(out)
+
+
+def _plugin_drift(home: Path, cli_version: str) -> dict | None:
+    """The installed Claude Code plugin's version vs this CLI's, or None when
+    they agree or no plugin is installed (#554).
+
+    Claude Code's hooks ship INSIDE the plugin rather than through
+    `hooks install`, so #266's byte-hash audit never sees them: the host with
+    the most users was the only one whose drift nothing reported. The two
+    halves also move under different commands (`uv tool upgrade` for the CLI,
+    the host's own plugin update for the hooks), and neither notices the other.
+
+    The version comes from daimon's OWN manifest inside the installed tree.
+    That file ships with the code that will actually execute; the host's record
+    only says what it meant to install, and the two can disagree.
+    """
+    state = home / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        data = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    if not isinstance(plugins, dict):
+        return None
+    installed = None
+    for key, entries in plugins.items():
+        if key.split("@")[0] != "daimon" or not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            installed = _plugin_manifest_version(entry.get("installPath")) \
+                or entry.get("version")
+            if installed:
+                break
+        if installed:
+            break
+    if not installed or installed == cli_version:
+        return None
+    return {"installed": installed, "cli": cli_version,
+            "behind": _version_tuple(installed) < _version_tuple(cli_version)}
+
+
+def _plugin_manifest_version(install_path) -> str | None:
+    if not install_path:
+        return None
+    manifest = Path(install_path) / ".claude-plugin" / "plugin.json"
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _plugin_drift_present() -> dict | None:
+    """Same swallow-everything contract as _hook_drift_present: status must
+    never crash on another tool's file format."""
+    try:
+        return _plugin_drift(Path.home(), __version__)
+    except Exception:
+        return None
 
 
 def _hook_drift_present() -> bool:
