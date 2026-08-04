@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from daimon_briefing import configure, llm
+from daimon_briefing import configure, llm, render
 
 
 _LLM_VARS = (
@@ -35,15 +35,31 @@ def _set_claude(monkeypatch, present):
 # ---- resolved_backend / status detection matrix (mirrors llm.chat() `auto`) ----
 
 
-def test_claude_on_path_no_key_resolves_command(clean_llm_env):
+def test_named_claude_cli_backend_resolves_the_zero_config_preset(clean_llm_env):
+    # #546: naming the backend IS the consent, so claude-cli keeps resolving
+    # the preset off PATH with no further configuration.
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "claude-cli")
     _set_claude(clean_llm_env, True)
-    assert configure.resolved_backend() == "command"
+    assert configure.resolved_backend() == "claude-cli"
     st = configure.status()
-    assert st["resolved_backend"] == "command"
+    assert st["resolved_backend"] == "claude-cli"
     assert st["ready"] is True
     assert st["claude_on_path"] is True
     assert st["command_source"] == "claude-cli"
     assert st["command"] == llm._CLAUDE_PRESET[0]
+
+
+def test_claude_on_path_alone_no_longer_resolves_a_command_backend(clean_llm_env):
+    # #546: the (b) population. `auto` with no key and a claude on PATH used
+    # to become a command backend nobody chose. It now reports the real
+    # problem — no credentials — instead of silently adopting a binary.
+    _set_claude(clean_llm_env, True)
+    assert configure.resolved_backend() == "litellm"
+    st = configure.status()
+    assert st["ready"] is False
+    assert st["claude_on_path"] is True      # still REPORTED, just not adopted
+    assert st["command"] is None
+    assert st["command_source"] is None
 
 
 def test_api_key_and_model_no_claude_resolves_litellm(clean_llm_env):
@@ -104,7 +120,31 @@ def test_explicit_command_source(clean_llm_env):
 # ---- #58: DAIMON_LLM_COMMAND_INPUT surfaced in status() ----
 
 
+def test_status_names_the_path_resolved_binary(clean_llm_env):
+    # #546 surfacing half: naming the backend is consent, but the operator
+    # still never chose WHICH claude. Report the resolved path so "zero-config"
+    # is auditable without shelling out to `which`.
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["command_path"] == "/usr/bin/claude"
+    assert "/usr/bin/claude" in render._explain(st)
+    assert "zero-config" in render._explain(st)
+
+
+def test_status_command_path_absent_for_an_explicit_command(clean_llm_env):
+    # An explicitly named command needs no PATH provenance — the operator
+    # wrote the string themselves.
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "command")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "mycli -p")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["command_path"] is None
+    assert "from PATH" not in render._explain(st)
+
+
 def test_status_input_defaults_to_stdin_for_claude_cli(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "claude-cli")  # #546: named intent
     _set_claude(clean_llm_env, True)
     st = configure.status()
     assert st["input"] == "stdin"

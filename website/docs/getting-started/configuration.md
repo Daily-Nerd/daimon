@@ -143,7 +143,7 @@ the `DAIMON_*` form is unset.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_LLM_BACKEND` | `auto` | Transport: `auto` (litellm if credentials exist, else a command CLI if one resolves), `litellm`, `command`, or `claude-cli`. |
+| `DAIMON_LLM_BACKEND` | `auto` | Transport: `auto` (litellm if credentials exist, else a named command CLI if one resolves), `litellm`, `command`, or `claude-cli`. `claude-cli` is the zero-config option: it runs a `claude` found on PATH with a built-in preset and needs nothing else set. `command` requires `DAIMON_LLM_COMMAND`. |
 | `DAIMON_LLM_BASE_URL` | `http://localhost:4000` | OpenAI-compatible endpoint URL (trailing slash trimmed). Falls back to `LITELLM_BASE_URL`. |
 | `DAIMON_LLM_API_KEY` | unset | API key for the endpoint. Falls back to `LITELLM_API_KEY`. |
 | `DAIMON_LLM_MODEL` | unset | Model name to send. Falls back to `LITELLM_MODEL`. |
@@ -153,7 +153,15 @@ the `DAIMON_*` form is unset.
 | `DAIMON_LLM_STREAM` | on | Stream the litellm response so the socket timeout bounds the inter-frame gap rather than the whole completion. Without it, a long completion trips the timeout and retries from scratch. Set to `0` to disable. |
 | `DAIMON_LLM_NO_CACHE` | off | When truthy, bypass gateway response caching per request — needed when a cached bad response pins a failure or runs must be statistically independent. |
 | `DAIMON_LLM_BRIEFING` | off | When truthy, render the briefing via the LLM instead of the deterministic template. |
-| `DAIMON_LLM_COMMAND` | unset | Full CLI invocation for the `command` backend (binary + model + flags). |
+| `DAIMON_LLM_COMMAND` | unset | Full CLI invocation for the `command` backend (binary + model + flags). Required for `command`, and required for a `claude` on PATH to be used by any backend other than `claude-cli`. |
+
+:::note Which process receives your transcript
+
+A `claude` binary merely present on PATH is **not** adopted automatically. Serializing sends the full session transcript to whichever CLI is configured, so that CLI has to be named: either `DAIMON_LLM_COMMAND`, or `DAIMON_LLM_BACKEND=claude-cli` to opt into the built-in preset.
+
+Previously an unset `DAIMON_LLM_COMMAND` plus a `claude` anywhere on PATH was enough for `auto` installs and for the litellm rescue path. If you relied on that, set one of the two variables above. `daimon configure` and `daimon doctor` name the resolved binary and its path so you can see exactly which one is in use.
+
+:::
 | `DAIMON_LLM_COMMAND_OUTPUT` | unset | How to extract assistant text from the command's stdout: `text` (raw stdout) or `json:<key>` (parse JSON, read `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | How the prompt reaches the command backend: `stdin` (piped), `arg` (appended as the final argv element), or `file:<flag>` (written to a tempfile, then `<flag> <path>` appended). An unrecognized value logs a warning and falls back to `stdin`. |
 | `DAIMON_LLM_COMMAND_FALLBACK` | unset | The one rescue CLI, used when the primary backend fails. Works for both a litellm primary and a `command` primary, which previously had no rescue direction at all. One fallback, never a chain: if the primary and this both fail the cause is almost always environmental, and a third CLI spends budget reaching the same error while making the install look better protected than it is. When unset, a litellm primary still falls back to `DAIMON_LLM_COMMAND` as before. |

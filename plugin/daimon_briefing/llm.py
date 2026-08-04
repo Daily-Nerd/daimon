@@ -534,14 +534,27 @@ def _resolve_command():
     """Resolve the command backend (command_str, output_spec, input_spec) or
     None.
 
-    Order: explicit DAIMON_LLM_COMMAND, else claude-cli preset if claude is
-    on PATH, else None (no fallback possible). The claude-cli preset always
+    Order: explicit DAIMON_LLM_COMMAND, else the claude-cli preset ONLY when
+    the operator asked for that backend by name, else None. The preset always
     stays on stdin — `claude -p` reads the prompt from stdin, so the input
-    axis (#58) only matters for explicit commands."""
+    axis (#58) only matters for explicit commands.
+
+    #546: the preset used to resolve on PATH presence alone, which handed the
+    full transcript to whichever `claude` happened to be first on PATH with no
+    opt-in anywhere. The asymmetry gave it away: how the prompt is delivered
+    (DAIMON_LLM_COMMAND_INPUT) and how output is read
+    (DAIMON_LLM_COMMAND_OUTPUT) both require explicit configuration, while the
+    identity of the process RECEIVING the transcript did not.
+
+    DAIMON_LLM_BACKEND=claude-cli is a named, deliberate choice, so it keeps
+    the zero-config preset — that backend has no other implementation, and the
+    consent is the naming. `auto` and the litellm rescue are not choices at
+    all (PATH picked, not the operator), so they now require naming a
+    command."""
     cmd = config.llm_command()
     if cmd:
         return cmd, (config.llm_command_output() or "text"), config.llm_command_input()
-    if shutil.which("claude"):
+    if config.llm_backend().strip() == "claude-cli" and shutil.which("claude"):
         return (*_CLAUDE_PRESET, "stdin")
     return None
 
@@ -710,7 +723,11 @@ def _chat_command(messages, deadline, resolved=None):
     if resolved is None:
         resolved = _resolve_command()
     if not resolved:
-        raise ChatError("No command backend (set DAIMON_LLM_COMMAND or install claude).")
+        raise ChatError(
+            "No command backend: set DAIMON_LLM_COMMAND to the CLI that should "
+            "receive the transcript, or set DAIMON_LLM_BACKEND=claude-cli to use "
+            "the zero-config claude preset. Since #546 a claude on PATH is no "
+            "longer adopted implicitly.")
     command, output_spec, input_spec = resolved
     argv = shlex.split(command)
     prompt_text = _flatten_messages(messages)

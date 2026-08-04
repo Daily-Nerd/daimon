@@ -358,11 +358,94 @@ def test_resolve_command_prefers_explicit(monkeypatch):
 
 
 def test_resolve_command_claude_preset(monkeypatch):
+    # #546: the preset is the IMPLEMENTATION of the claude-cli backend, so it
+    # resolves when the operator named that backend.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
     monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
     monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
     cmd, out, inp = llm._resolve_command()
     assert cmd.startswith("claude -p") and out == "json:result"
     assert inp == "stdin"  # #58: the claude-cli preset never changes off stdin
+
+
+# ---- #546: PATH presence is not consent.
+#
+# _resolve_command() handed the full transcript to whatever `claude` happened
+# to be first on PATH, with no opt-in — while the sibling axes (how the prompt
+# is delivered, how output is parsed) both REQUIRE explicit configuration. The
+# asymmetry was the tell: everything about the command was configurable except
+# WHICH BINARY RECEIVES THE TRANSCRIPT.
+#
+# The split: DAIMON_LLM_BACKEND=claude-cli is a named, deliberate choice and
+# keeps its zero-config preset. `auto` and the litellm rescue are not choices
+# at all — PATH picked for the operator — and now require naming the command.
+
+
+def test_resolve_command_auto_backend_does_not_adopt_a_path_claude(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
+    assert llm._resolve_command() is None
+
+
+def test_resolve_command_command_backend_requires_naming_the_command(monkeypatch):
+    # Picking `command` without saying which command is under-specified; the
+    # wizard asks for it. claude-cli is the zero-config alias for that intent.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
+    assert llm._resolve_command() is None
+
+
+def test_resolve_command_explicit_command_still_wins_on_any_backend(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "mycli")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_OUTPUT", raising=False)
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_INPUT", raising=False)
+    assert llm._resolve_command() == ("mycli", "text", "stdin")
+
+
+def test_auto_cascade_no_longer_resolves_to_command_via_path_alone(monkeypatch):
+    # The (b) population: `auto`, no key, a claude on PATH. Previously this
+    # silently became a command backend. Now it reaches litellm's own
+    # helpful no-key error instead of a binary nobody named.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
+    monkeypatch.setattr(config, "llm_api_key", lambda: None)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
+    assert llm.resolve_backend() == {"backend": "litellm", "source": "auto-none"}
+
+
+def test_litellm_rescue_no_longer_adopts_a_path_claude(monkeypatch):
+    # The (c) population: a gateway primary quietly rescued by whatever claude
+    # was on PATH. The rescue must now be named.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_FALLBACK", raising=False)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
+    assert llm._resolve_fallback_command() is None
+
+
+def test_claude_cli_backend_keeps_its_zero_config_rescue_shim(monkeypatch):
+    # claude-cli is a named choice, so a litellm primary explicitly rescued by
+    # DAIMON_LLM_COMMAND still works — the shim is unaffected by #546.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "legacycli")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_FALLBACK", raising=False)
+    assert llm._resolve_fallback_command() == ("legacycli", "text", "stdin")
+
+
+def test_chat_command_error_names_the_consent_fix(monkeypatch):
+    # The (b) break must be loud and actionable, never a silent stop.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
+    with pytest.raises(llm.ChatError) as e:
+        llm._chat_command([{"role": "user", "content": "x"}], deadline=None)
+    msg = str(e.value)
+    assert "DAIMON_LLM_COMMAND" in msg
+    assert "claude-cli" in msg  # names the zero-config route too
 
 
 def test_resolve_command_none(monkeypatch):
