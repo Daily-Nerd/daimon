@@ -1,20 +1,20 @@
 ---
-id: 0
+id: 36
 type: landmine
 title: Clearing os.environ does NOT unset a daimon config value — config._get falls back to ~/.daimon/env on disk
 severity: high
 confidence: 0.95
 created: 2026-07-31
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/config.py
   - pattern: "os\.environ\.pop|monkeypatch\.delenv"
 evidence:
-  - note: "daimon#475 part 2 review. An exhaustive parity harness compared the old inline rescue_gap formula against rescue_posture() across 40 backend/key/fallback/command combinations. Every 'no API key' row was produced with os.environ.pop('DAIMON_LLM_API_KEY') + pop('LITELLM_API_KEY'). The harness reported rows where config.llm_api_key() was truthy despite the pops, and the first run's conclusions were wrong in BOTH directions: it hid the real defect (2 rows) and invented 2 fake ones. Caught only because a row was internally inconsistent (OLD=True is impossible when the formula requires a truthy key). Re-run with the accessors patched directly, the true answer was 3 changed rows, one of which was a genuine design defect."
+  - note: daimon#475 part 2 review. An exhaustive parity harness compared the old inline rescue_gap formula against rescue_posture() across 40 backend/key/fallback/command combinations. Every 'no API key' row was produced with os.environ.pop('DAIMON_LLM_API_KEY') + pop('LITELLM_API_KEY'). The harness reported rows where config.llm_api_key() was truthy despite the pops, and the first run's conclusions were wrong in BOTH directions: it hid the real defect (2 rows) and invented 2 fake ones. Caught only because a row was internally inconsistent (OLD=True is impossible when the formula requires a truthy key). Re-run with the accessors patched directly, the true answer was 3 changed rows, one of which was a genuine design defect.
 expires:
   condition: "config._get stops falling back to the env file, or an official test helper lands that neutralises both sources at once"
   review_after: 2027-01-31
-status: candidate
+status: active
 ---
 
 `config._get()` is `process env, then env file`:

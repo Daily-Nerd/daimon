@@ -1,21 +1,21 @@
 ---
-id: 0
+id: 37
 type: deadend
 title: Prompt-stance surface markers do not predict recall relevance — gating injection on question-vs-statement shape refuted (#483)
 severity: medium
 confidence: 0.9
 created: 2026-08-01
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/experiments/recall-replay-ab/variants.py
   - path: plugin/daimon_briefing/recall.py
   - pattern: "classify_stance|question.?shaped|statement.?shaped"
 evidence:
-  - note: "#483 pre-registered run (run-04-stance-gate, 2026-08-01, same 342-prompt corpus as #470's run-03; arm A reproduced run-03's 344 injections exactly). Holdout blind judging: relevant rate in rows the gate DROPPED = 38.5%, vs 39.9% in arm A's full pool and 39.4% in what the gate kept — statistically indistinguishable. Both pre-registered ship clauses failed; kill condition met. Classifier itself was reliable (spot-checked); the markers simply do not carry relevance signal."
+  - note: #483 pre-registered run (run-04-stance-gate, 2026-08-01, same 342-prompt corpus as #470's run-03; arm A reproduced run-03's 344 injections exactly). Holdout blind judging: relevant rate in rows the gate DROPPED = 38.5%, vs 39.9% in arm A's full pool and 39.4% in what the gate kept — statistically indistinguishable. Both pre-registered ship clauses failed; kill condition met. Classifier itself was reliable (spot-checked); the markers simply do not carry relevance signal.
 expires:
   condition: "a stance signal richer than surface markers (e.g. trained intent classification) is tested and shows the dropped-row relevant rate materially below the kept-row rate"
   review_after: 2027-02-01
-status: candidate
+status: active
 ---
 
 Hypothesis (#483, from the remnant collision-detector critique): overlap
