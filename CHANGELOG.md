@@ -5,6 +5,22 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0](https://github.com/Daily-Nerd/daimon/compare/v0.25.0...v0.26.0) (2026-08-04)
+
+
+### Features
+
+* **brief:** render the HANDOFF baton as a rich panel ([#567](https://github.com/Daily-Nerd/daimon/issues/567)) ([af8e969](https://github.com/Daily-Nerd/daimon/commit/af8e96974931a82273b648526bd789d84d4363c0))
+* **serializer:** report which predicate rejected a checkpoint ([#558](https://github.com/Daily-Nerd/daimon/issues/558)) ([75a67c9](https://github.com/Daily-Nerd/daimon/commit/75a67c93e3e5fa7912c9ffb3f451079f82309522))
+* **status:** report Claude Code plugin staleness ([#559](https://github.com/Daily-Nerd/daimon/issues/559)) ([05d1103](https://github.com/Daily-Nerd/daimon/commit/05d11030cb9f13341a371a7ee425bef9716656b7))
+
+
+### Bug Fixes
+
+* **brief:** clear serialize heartbeat when the run ends ([#565](https://github.com/Daily-Nerd/daimon/issues/565)) ([4b77f79](https://github.com/Daily-Nerd/daimon/commit/4b77f79bc962bb5cceaaf4854a6095efa9431b88))
+* **serializer:** guarantee the validation resample a minimum budget ([#556](https://github.com/Daily-Nerd/daimon/issues/556)) ([0415d41](https://github.com/Daily-Nerd/daimon/commit/0415d41391bdcdce11087154cda280d1a7dbb777))
+* **stats:** say when agent credit became recordable ([#563](https://github.com/Daily-Nerd/daimon/issues/563)) ([66c6c58](https://github.com/Daily-Nerd/daimon/commit/66c6c5874970e9eb424b85a23f7f5fb3611d44d7))
+
 ## [0.25.0](https://github.com/Daily-Nerd/daimon/compare/v0.24.0...v0.25.0) (2026-08-04)
 
 
