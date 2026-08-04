@@ -74,6 +74,36 @@ def test_render_brief_rich_smoke(monkeypatch, sample_checkpoint, capsys):
     assert "PR #6" in out
 
 
+def test_render_brief_rich_handoff_is_a_panel(monkeypatch, sample_checkpoint, capsys):
+    # #566: the baton is the highest-priority block; on the rich path it must
+    # render as a bordered panel like every ambient section, not bare stdout.
+    # Content-only-ish assertion per the rich smoke idiom — except the one
+    # format fact under test: the HANDOFF header sits ON a panel border line.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "merge PR first\nthen review"}
+    render.render_brief(sample_checkpoint, handoff=handoff)
+    out = capsys.readouterr().out
+    header_lines = [ln for ln in out.splitlines() if "HANDOFF" in ln]
+    assert header_lines, "handoff header missing from rich output"
+    assert any("╭" in ln for ln in header_lines), \
+        "HANDOFF must be a panel title, not a bare print above the panels"
+    assert "→ merge PR first" in out
+    assert "→ then review" in out
+
+
+def test_render_brief_plain_handoff_unchanged(monkeypatch, sample_checkpoint, capsys):
+    # #566: the plain path is a compatibility surface (non-TTY hosts, hook
+    # briefings) — byte-identical to the pre-#566 shape.
+    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "merge PR first\nthen review"}
+    render.render_brief(sample_checkpoint, handoff=handoff)
+    out = capsys.readouterr().out
+    assert out.startswith(
+        "HANDOFF (left deliberately by previous session, 2026-08-04T18:09:41Z):\n"
+        "→ merge PR first\n"
+        "→ then review\n"
+    )
+
+
 def test_render_brief_no_content(capsys):
     # #29: the old hint said "Run `serialize` first" — a dead end (serialize
     # needs a transcript path and is hook-internal). Point at the real flow.
