@@ -459,6 +459,127 @@ def test_sweep_orphans_spawns_for_uncaptured_transcript(tmp_path, monkeypatch):
     assert calls == [str(orphan)]
 
 
+def test_sweep_orphans_skips_a_transcript_whose_serialize_is_in_flight(tmp_path, monkeypatch):
+    # #545: the sweep classified an IN-FLIGHT serialize as an orphan. Its
+    # idempotency argument ("the spawned serialize hits the #185
+    # identical-bytes guard and no-ops if the transcript actually WAS
+    # captured") compares against an EXISTING checkpoint — an unfinished
+    # serialize has not written one yet, so the guard cannot fire. The second
+    # run then overwrote the first's checkpoint with a worse one.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    beats = tmp_path / "logs" / "heartbeats"
+    beats.mkdir(parents=True)
+    (beats / "S-orphan").write_text("some-project-slug")  # fresh: serialize live
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == []
+
+
+def test_sweep_orphans_still_spawns_when_the_heartbeat_is_stale(tmp_path, monkeypatch):
+    # A crashed serialize leaves its stamp behind forever. Treating a stale
+    # stamp as "in flight" would make the transcript permanently unsweepable —
+    # strictly worse than the double-spawn this fixes. Same liveness bar the
+    # package uses.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    beats = tmp_path / "logs" / "heartbeats"
+    beats.mkdir(parents=True)
+    stamp = beats / "S-orphan"
+    stamp.write_text("some-project-slug")
+    _age(stamp, 4000)  # past the 1800s hung ceiling
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == [str(orphan)]
+
+
+def test_sweep_orphans_in_flight_check_is_per_session_not_per_project(tmp_path, monkeypatch):
+    # A live serialize for ONE session must not starve a genuinely orphaned
+    # sibling. The heartbeat FILENAME is the session id, so the filter is
+    # per-candidate rather than the project-level question `daimon brief` asks.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    busy = transcripts / "S-busy.jsonl"
+    busy.write_text("{}\n")
+    _age(busy, 1800)          # newer candidate, but its serialize is running
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    beats = tmp_path / "logs" / "heartbeats"
+    beats.mkdir(parents=True)
+    (beats / "S-busy").write_text("some-project-slug")
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == [str(orphan)]
+
+
+def test_sweep_orphans_survives_a_missing_heartbeat_dir(tmp_path, monkeypatch):
+    # Fail-open, same rule as _failed_session_stems: no heartbeat dir must
+    # never block the genuine #185/#188 recovery sweep.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcripts = tmp_path / "proj"
+    transcripts.mkdir()
+    current = transcripts / "S-new.jsonl"
+    current.write_text("{}\n")
+    orphan = transcripts / "S-orphan.jsonl"
+    orphan.write_text("{}\n")
+    _age(orphan, 3600)
+
+    calls = []
+    monkeypatch.setattr(lib, "spawn_serialize", lambda cli, path, env: calls.append(path))
+    lib.sweep_orphans("daimon", "/p/A", "S-new", str(current))
+    assert calls == [str(orphan)]
+
+
+def test_hook_lib_hung_ceiling_stays_in_sync_with_config():
+    # Same drift-lock treatment as the #521 slug/created_epoch pair. The hook
+    # lib cannot import daimon_briefing, so the ceiling is a second copy; if
+    # the two disagree, the sweep and `daimon status` disagree about what
+    # "still running" means and the #545 double-spawn returns silently.
+    # Behavioral equality over inputs chosen to discriminate plausible drifts.
+    from daimon_briefing import config
+
+    # Locks the PROCESS-env axis, which is the only one the hook lib reads:
+    # config also consults ~/.daimon/env, a documented boundary stated in
+    # lib.hung_after_seconds' own docstring.
+    for raw in (None, "", "   ", "1800", "60", "0", "-5", "not-an-int", "12.5"):
+        os.environ.pop("DAIMON_HUNG_AFTER", None)
+        if raw is not None:
+            os.environ["DAIMON_HUNG_AFTER"] = raw
+        try:
+            assert lib.hung_after_seconds() == config.hung_after_seconds(), raw
+        finally:
+            os.environ.pop("DAIMON_HUNG_AFTER", None)
+
+
 def test_sweep_orphans_spawns_only_the_newest_candidate(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
     monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")  # a spawn also logs a breadcrumb
