@@ -2138,6 +2138,17 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     checkpoint["session_id"] = session_id
     if not validate(checkpoint):
         log.info("checkpoint failed validation — one resample with attempt nonce (#118)")
+        # #553: the rejected attempt has already spent the budget the resample
+        # is about to need, so guarantee it one call's worth. max(), never
+        # assignment — a caller who granted more keeps it. _produce reads
+        # `deadline` from this scope at call time, so rebinding here is what
+        # every call underneath it sees.
+        if deadline is not None:
+            floor = time.monotonic() + config.resample_min_seconds()
+            if floor > deadline:
+                log.info("resample budget re-armed to %ds (#553)",
+                         config.resample_min_seconds())
+                deadline = floor
         checkpoint = _produce(_RETRY_NOTE)
         strip_code_owned_keys(checkpoint)
         checkpoint["session_id"] = session_id

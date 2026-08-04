@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -987,6 +988,39 @@ def test_validation_failure_retries_once_with_nonce(fake_chat_factory, monkeypat
     assert first != second  # never byte-identical — gateway caches replay garbage
     assert "attempt 2" in second
     assert "quote" in second  # the reminder names the observed failure mode
+
+
+def test_validation_resample_is_guaranteed_a_minimum_budget(fake_chat_factory, monkeypatch):
+    # #553: the resample reused the SAME deadline the first attempt had already
+    # drained, so a validation failure late in the budget died of arithmetic
+    # before its socket opened (field case: 262s left against a 371s merge).
+    # Same lesson #341 learned for the rescue path (fallback_min_seconds).
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_TIMEOUT", "420")
+    chat = fake_chat_factory([_invalid_checkpoint_json(), _valid_checkpoint_json("S1")])
+    # The shape that failed in the field: budget all but spent when validation
+    # rejects the first attempt.
+    serializer.serialize_strict("S1", make_messages(6), chat=chat,
+                                deadline=time.monotonic() + 5)
+    assert len(chat.calls) == 2
+    # Guard: the FIRST attempt really did run on the drained budget, so this
+    # test exercises the starved state rather than a fresh one.
+    assert chat.calls[0]["kwargs"]["deadline"] - time.monotonic() <= 5
+    remaining = chat.calls[1]["kwargs"]["deadline"] - time.monotonic()
+    assert remaining >= 419, f"resample got {remaining:.0f}s, needs a full call budget"
+
+
+def test_validation_resample_never_shortens_a_healthy_deadline(fake_chat_factory,
+                                                               monkeypatch):
+    # The floor is a guarantee, not an assignment: a caller who already granted
+    # more than one call's worth keeps it.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_TIMEOUT", "420")
+    chat = fake_chat_factory([_invalid_checkpoint_json(), _valid_checkpoint_json("S1")])
+    serializer.serialize_strict("S1", make_messages(6), chat=chat,
+                                deadline=time.monotonic() + 5000)
+    remaining = chat.calls[1]["kwargs"]["deadline"] - time.monotonic()
+    assert remaining >= 4990, f"resample budget shrank to {remaining:.0f}s"
 
 
 def test_validation_failure_twice_raises(fake_chat_factory, monkeypatch):
