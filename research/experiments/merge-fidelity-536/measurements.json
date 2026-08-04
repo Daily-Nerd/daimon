@@ -1,0 +1,69 @@
+{
+  "issue": 536,
+  "claim": "run-attributed merge-fidelity measurement; pre-registration frozen in the issue #536 comment before any data was read",
+  "privacy": "AGGREGATES ONLY. Chunk partials are pre-redaction by design and item texts never leave the measuring process; run-output.local.json (counts per session) stays uncommitted.",
+  "status": {
+    "joined_sessions": 2,
+    "pre_registered_minimum_for_rates": 5,
+    "verdict": "BELOW MINIMUM — counts reported, no rate claim, decision rule NOT evaluated. The chunk cache reaps at 3 days, so the joinable population accrues forward; re-run as clean serializes accumulate.",
+    "measured": "2026-08-04, single machine"
+  },
+  "population": {
+    "sessions_in_log": 172,
+    "exclusions": {
+      "no-flat-checkpoint": 36,
+      "single-pass (no merge ran, out of scope)": 37,
+      "rule1-multi-spawn (retry present)": 22,
+      "rule1-no-write (failed or skipped serialize)": 50,
+      "rule1-ambiguous-window (concurrent serializes)": 11,
+      "rule2-cache-miss (3-day reap or key drift)": 11,
+      "rule2-chunk-count-mismatch": 3
+    },
+    "note": "exclusions are counted, never partially joined, per the pre-registration"
+  },
+  "pooled_counts": {
+    "union_items": 177,
+    "native_items": 154,
+    "survived": 73,
+    "reworded": 70,
+    "freeze_explained": 0,
+    "emitted_new": 11,
+    "true_lost": 34,
+    "true_lost_by_trust": {"verbatim": 11, "inferred": 23},
+    "emitted_new_by_trust": {"verbatim": 10, "inferred": 1},
+    "cross_chunk_twin_items": 7,
+    "containment_flags": 1
+  },
+  "if_rates_were_claimable_they_are_not": {
+    "true_lost_over_union_pct": 19.2,
+    "wilson_95_ci_pct": [14.1, 25.6],
+    "twin_rate_pct": 4.0,
+    "twin_wilson_95_ci_pct": [1.9, 7.9],
+    "interpretation": "directionally consistent with the n=1 specimen that motivated the issue (23.6% loss), and the twin rate sits near the 5% boundary that separates the two redesign forks — exactly why the 5-join minimum must be honored before any decision fires"
+  },
+  "per_session_counts": [
+    {"session": "3aaaf828", "chunks": 2, "native": 74, "union": 74, "survived": 33, "reworded": 30, "freeze_explained": 0, "emitted_new": 11, "true_lost": 11, "twin_items": 0},
+    {"session": "ff27204a", "chunks": 5, "native": 80, "union": 103, "survived": 40, "reworded": 40, "freeze_explained": 0, "emitted_new": 0, "true_lost": 23, "twin_items": 7}
+  ],
+  "observations_not_decision_bearing": {
+    "emitted_new_verbatim": "10 of 11 emitted-new items carry trust=verbatim — the merge emitting verbatim-tagged items with no chunk ancestor is the invention shape the trust model exists to prevent; worth its own eyeball pass once n grows",
+    "freeze_explained_zero": "pass 3 never fired on these two joins; the freeze-artifact control has not yet been exercised on real data"
+  },
+  "not_measured": {
+    "rewording_quality": "a fuzzy pair says the text changed, not whether it got worse",
+    "importance_trust_mutations": "field-level drift through the merge is not compared",
+    "corpus_scope": "single machine, single user, 3-day cache window",
+    "silence_costs_discovered": [
+      "pre-#565-era `wrote checkpoint:` lines lack the `(took Ns)` suffix; a strict parser silently never closes those windows and poisons all later attribution",
+      "silently-killed serializes leave zombie log windows; reaped only when a later spawn->write cycle completes",
+      "the 08-04 kill-test's concurrent serializes made 11 windows genuinely ambiguous — correct exclusions, but a reminder that rapid-close bursts blind this instrument",
+      "cache keys must be reconstructed from the producing checkpoint's own stamps (llm_backend, extraction_version); live-config keys silently dropped 7 of 12 candidate joins after the 08-04 backend flip"
+    ]
+  },
+  "artifacts": {
+    "rubric": "classify.py (frozen thresholds, pure functions)",
+    "join": "join.py (attribution + key reconstruction + disk walk)",
+    "tests": "test_classify.py (17), test_join.py (21)",
+    "local_only": "run-output.local.json"
+  }
+}
