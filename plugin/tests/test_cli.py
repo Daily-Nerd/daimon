@@ -8738,3 +8738,39 @@ def test_serialize_in_flight_unreadable_only_entry_is_false(tmp_log_dir):
     (tmp_log_dir / "heartbeats").mkdir(parents=True, exist_ok=True)
     (tmp_log_dir / "heartbeats" / "only-a-dir").mkdir()
     assert ledger.serialize_in_flight("-p-A") is False
+
+
+# ---- #564: a COMPLETED serialize must not read as in-flight — the run clears
+# its heartbeat with its result, so brief never tells the reader to wait for a
+# checkpoint that already landed (false positive lasted the full hung ceiling).
+
+
+def test_run_serialize_success_clears_heartbeat(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    from daimon_briefing import ledger
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli._run_serialize(FIXTURES / "sample_transcript.md", "/p")
+    assert rc == 0
+    assert not (tmp_log_dir / "heartbeats" / "sample_transcript").exists(), \
+        "a finished serialize must not leave its heartbeat behind"
+    assert ledger.serialize_in_flight("-p") is False, \
+        "success already wrote the checkpoint — nothing is in flight"
+
+
+def test_run_serialize_error_clears_heartbeat(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    from daimon_briefing import ledger
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory("prose, not JSON"))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    rc = cli._run_serialize(FIXTURES / "sample_transcript.md", "/p")
+    assert rc != 0
+    assert ledger.serialize_in_flight("-p") is False, \
+        "a failed serialize is heal's case, not an in-flight one"
+
+
+def test_clear_heartbeat_missing_file_is_noop(tmp_log_dir):
+    from daimon_briefing import ledger
+    ledger.clear_heartbeat("S-never-stamped")  # must not raise
