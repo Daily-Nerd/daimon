@@ -5425,7 +5425,10 @@ def test_status_none_warning_fires_when_window_has_errors(
     cli.main(["status"])
     out = capsys.readouterr().out
     assert "⚠ the `command` backend has no rescue path" in out
-    assert "Run `daimon status` for the recorded failure cause." in out
+    assert "run `daimon status` for the recorded failure cause." in out
+    # #475: the warning must name the fix, not just the condition — a
+    # command backend CAN be rescued now, it just has nothing configured.
+    assert "DAIMON_LLM_COMMAND_FALLBACK" in out
 
 
 def test_status_covered_disabled_no_backend_stay_silent(
@@ -5491,8 +5494,8 @@ def test_stats_plain_fallback_line_suffix_none(
     store.write_checkpoint("S1", sample_checkpoint)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
-    assert ("fallback: attempted 0, succeeded 0  (no rescue path — a "
-            "`command` backend has no fallback direction)") in out
+    assert ("fallback: attempted 0, succeeded 0  (no rescue path — set "
+            "DAIMON_LLM_COMMAND_FALLBACK)") in out
 
 
 def test_stats_rich_fallback_line_suffix_none(
@@ -5508,7 +5511,7 @@ def test_stats_rich_fallback_line_suffix_none(
     # two lines — assert the halves rather than one brittle exact substring
     # (the file's own convention for rich output: content, not format).
     assert "no rescue path" in out
-    assert "no fallback direction" in out
+    assert "DAIMON_LLM_COMMAND_FALLBACK" in out
 
 
 def test_stats_plain_fallback_line_historical_disclaimer_when_posture_none(
@@ -5534,10 +5537,12 @@ def test_stats_plain_fallback_line_historical_disclaimer_when_posture_none(
     out = capsys.readouterr().out
     assert "fallback: attempted 30, succeeded 6" in out
     assert ("counts are historical; the current `command` backend has no "
-            "rescue path") in out
-    # The plain "no rescue path" suffix must NOT also appear standalone —
-    # the historical disclaimer replaces it, it doesn't sit alongside it.
-    assert out.count("no rescue path") == 1
+            "rescue configured") in out
+    # The plain "none" suffix must NOT also appear — the historical
+    # disclaimer replaces it, it doesn't sit alongside it. Since #475 the two
+    # strings are distinguishable, so assert the plain one is absent rather
+    # than counting a phrase they used to share.
+    assert "no rescue path — set DAIMON_LLM_COMMAND_FALLBACK" not in out
 
 
 def test_stats_capture_does_not_dedupe_spawn_lines(tmp_log_dir):

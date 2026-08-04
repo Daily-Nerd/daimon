@@ -148,12 +148,17 @@ the `DAIMON_*` form is unset.
 | `DAIMON_LLM_API_KEY` | unset | API key for the endpoint. Falls back to `LITELLM_API_KEY`. |
 | `DAIMON_LLM_MODEL` | unset | Model name to send. Falls back to `LITELLM_MODEL`. |
 | `DAIMON_LLM_TEMPERATURE` | `0.0` | Sampling temperature for every chat call. `0.0` for deterministic extraction; some upstreams reject anything but a fixed value. |
-| `DAIMON_LLM_FALLBACK` | on | When the litellm backend fails, auto-fall-back to a command backend (gateway-failure resilience). Set to `0` to disable. |
+| `DAIMON_LLM_FALLBACK` | on | When the primary backend fails, auto-fall-back to the rescue command (`DAIMON_LLM_COMMAND_FALLBACK`). Applies to both a litellm and a `command` primary. Set to `0` to disable. |
+| `DAIMON_FALLBACK_MIN_SECONDS` | `DAIMON_TIMEOUT` | Minimum budget the rescue command is guaranteed on entry. The primary may have drained the shared serialize deadline retrying the very failure the rescue exists to fix, which would kill the rescue on arrival; a healthy remaining budget is never shrunk. |
+| `DAIMON_LLM_STREAM` | on | Stream the litellm response so the socket timeout bounds the inter-frame gap rather than the whole completion. Without it, a long completion trips the timeout and retries from scratch. Set to `0` to disable. |
 | `DAIMON_LLM_NO_CACHE` | off | When truthy, bypass gateway response caching per request — needed when a cached bad response pins a failure or runs must be statistically independent. |
 | `DAIMON_LLM_BRIEFING` | off | When truthy, render the briefing via the LLM instead of the deterministic template. |
 | `DAIMON_LLM_COMMAND` | unset | Full CLI invocation for the `command` backend (binary + model + flags). |
 | `DAIMON_LLM_COMMAND_OUTPUT` | unset | How to extract assistant text from the command's stdout: `text` (raw stdout) or `json:<key>` (parse JSON, read `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | How the prompt reaches the command backend: `stdin` (piped), `arg` (appended as the final argv element), or `file:<flag>` (written to a tempfile, then `<flag> <path>` appended). An unrecognized value logs a warning and falls back to `stdin`. |
+| `DAIMON_LLM_COMMAND_FALLBACK` | unset | The one rescue CLI, used when the primary backend fails. Works for both a litellm primary and a `command` primary, which previously had no rescue direction at all. One fallback, never a chain: if the primary and this both fail the cause is almost always environmental, and a third CLI spends budget reaching the same error while making the install look better protected than it is. When unset, a litellm primary still falls back to `DAIMON_LLM_COMMAND` as before. |
+| `DAIMON_LLM_COMMAND_FALLBACK_OUTPUT` | unset | Output spec for the rescue CLI, same grammar as `DAIMON_LLM_COMMAND_OUTPUT`. Carried separately because the rescue is a different binary. |
+| `DAIMON_LLM_COMMAND_FALLBACK_INPUT` | `stdin` | Input spec for the rescue CLI, same grammar as `DAIMON_LLM_COMMAND_INPUT`. |
 
 ## Serializer chunking
 

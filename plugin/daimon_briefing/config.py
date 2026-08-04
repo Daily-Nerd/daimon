@@ -608,6 +608,29 @@ def llm_command_output() -> str | None:
     return _get("DAIMON_LLM_COMMAND_OUTPUT") or None
 
 
+def _command_input_spec(var: str) -> str:
+    """Shared parser for the command-input axis, used by both the primary
+    (DAIMON_LLM_COMMAND_INPUT) and the #475 rescue
+    (DAIMON_LLM_COMMAND_FALLBACK_INPUT). One parser, so a fix to the
+    normalization rules can never apply to only one of the two commands."""
+    val = (_get(var) or "stdin").strip()
+    if val == "stdin" or val == "arg":
+        return val
+    if val.startswith("file:"):
+        # Normalize the flag: "file:  --prompt-file " would otherwise survive
+        # into argv as "  --prompt-file" — not an injection risk, but a silent
+        # misconfiguration most CLIs won't match. A flag that strips to empty
+        # is the empty-flag case in disguise and falls through to the warning.
+        flag = val[len("file:"):].strip()
+        if flag:
+            return f"file:{flag}"
+    log.warning(
+        "%s=%r not recognized (expected stdin|arg|file:<flag>) "
+        "— falling back to stdin", var, val,
+    )
+    return "stdin"
+
+
 def llm_command_input() -> str:
     """How the prompt reaches the command backend: 'stdin' (default —
     piped via subprocess input=, current/original behavior) | 'arg' (appended
@@ -624,19 +647,35 @@ def llm_command_input() -> str:
     silently (a bad output spec still returns *something*; a bad input spec
     on a stdin-only CLI runs the command with an empty argv-facing prompt).
     """
-    val = (_get("DAIMON_LLM_COMMAND_INPUT") or "stdin").strip()
-    if val == "stdin" or val == "arg":
-        return val
-    if val.startswith("file:"):
-        # Normalize the flag: "file:  --prompt-file " would otherwise survive
-        # into argv as "  --prompt-file" — not an injection risk, but a silent
-        # misconfiguration most CLIs won't match. A flag that strips to empty
-        # is the empty-flag case in disguise and falls through to the warning.
-        flag = val[len("file:"):].strip()
-        if flag:
-            return f"file:{flag}"
-    log.warning(
-        "DAIMON_LLM_COMMAND_INPUT=%r not recognized (expected stdin|arg|file:<flag>) "
-        "— falling back to stdin", val,
-    )
-    return "stdin"
+    return _command_input_spec("DAIMON_LLM_COMMAND_INPUT")
+
+
+def llm_command_fallback() -> str | None:
+    """The ONE rescue CLI, for every backend (#475).
+
+    Before #475, DAIMON_LLM_COMMAND meant two different things depending on
+    DAIMON_LLM_BACKEND: the primary when the backend was `command`, the
+    rescue when it was litellm. That overload is why a `command` install had
+    no rescue direction at all — the variable that would have named its
+    fallback was already naming its primary.
+
+    One fallback per config, never a chain: if the primary and this both
+    fail, the cause is almost always environmental (auth, host,
+    workspace-trust) and a third CLI spends budget to reach the same error
+    while making the install *look* better protected than it is."""
+    return _get("DAIMON_LLM_COMMAND_FALLBACK") or None
+
+
+def llm_command_fallback_output() -> str | None:
+    """Output spec for the rescue CLI — same grammar as
+    llm_command_output(). Carried separately because the rescue is a
+    different binary: chaining a CLI that emits 'json:result' to one that
+    emits raw text is the ordinary case, not the exotic one."""
+    return _get("DAIMON_LLM_COMMAND_FALLBACK_OUTPUT") or None
+
+
+def llm_command_fallback_input() -> str:
+    """Input spec for the rescue CLI — same grammar as llm_command_input(),
+    same #58 reasoning, its own variable for the same reason as the output
+    axis above."""
+    return _command_input_spec("DAIMON_LLM_COMMAND_FALLBACK_INPUT")

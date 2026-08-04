@@ -15,22 +15,21 @@ from . import config, llm
 
 
 def resolved_backend() -> str:
-    """The backend llm.chat() would actually use. Mirrors its `auto` branch
-    exactly — if these diverge, the doctor lies."""
-    setting = config.llm_backend()
-    if setting != "auto":
-        return setting
-    if config.llm_api_key():
-        return "litellm"
-    if llm._resolve_command() is not None:
-        return "command"
-    return "litellm"   # let _chat_litellm raise the helpful no-key error
+    """The backend llm.chat() would actually use.
+
+    Delegates to llm.resolve_backend() rather than mirroring its cascade.
+    This function used to re-implement that logic inline, which is exactly
+    what this module's docstring forbids and what llm.resolve_backend()'s own
+    docstring warns against ("two copies of one decision drift the moment
+    either changes"). The copies had already survived one cascade change."""
+    return llm.resolve_backend()["backend"]
 
 
 def status() -> dict:
     """Detection snapshot for the doctor view. No LLM call."""
     rb = resolved_backend()
     cmd = llm._resolve_command()  # (command_str, output_spec, input_spec) | None
+    fb = llm._resolve_fallback_command()  # #475 rescue, same triple shape
     if rb in ("command", "claude-cli"):
         ready = cmd is not None
     else:  # litellm needs BOTH key and model (matches the serialize pre-flight)
@@ -46,6 +45,16 @@ def status() -> dict:
         "command_source": (
             "explicit" if config.llm_command()
             else ("claude-cli" if cmd else None)
+        ),
+        # #475: the rescue is a second binary now. The doctor showed only the
+        # primary, so a misconfigured fallback was invisible on the one
+        # surface built to catch misconfiguration before a detached hook
+        # child fails minutes later.
+        "fallback_command": fb[0] if fb else None,
+        "fallback_input": fb[2] if fb else None,
+        "fallback_source": (
+            "explicit" if config.llm_command_fallback()
+            else ("legacy-command" if fb else None)
         ),
         "env_file": str(config._env_file_path()),
         "env_file_exists": config._env_file_path().exists(),

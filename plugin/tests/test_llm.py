@@ -552,7 +552,7 @@ def test_chat_command_nonzero_exit_raises(monkeypatch):
 
 def test_chat_routes_to_command_backend(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
-    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FROM_CMD")
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FROM_CMD")
     called = {"litellm": False}
     monkeypatch.setattr(llm, "_chat_litellm", lambda *a, **k: called.__setitem__("litellm", True))
     assert llm.chat([{"role": "user", "content": "x"}]) == "FROM_CMD"
@@ -566,7 +566,7 @@ def test_chat_litellm_falls_back_on_error(monkeypatch):
         raise llm.ChatError("gateway down")
     monkeypatch.setattr(llm, "_chat_litellm", boom)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
-    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FALLBACK")
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     assert llm.chat([{"role": "user", "content": "x"}]) == "FALLBACK"
 
 
@@ -592,7 +592,7 @@ def test_chat_auto_uses_litellm_when_key_present(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
     monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
     monkeypatch.setattr(llm, "_chat_litellm", lambda *a, **k: "FROM_LITELLM")
-    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FROM_CMD")
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FROM_CMD")
     assert llm.chat([{"role": "user", "content": "x"}]) == "FROM_LITELLM"
 
 
@@ -600,7 +600,7 @@ def test_chat_auto_uses_command_when_no_key_and_cli(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "auto")
     monkeypatch.setattr(config, "llm_api_key", lambda: None)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
-    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FROM_CMD")
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FROM_CMD")
     monkeypatch.setattr(llm, "_chat_litellm",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not call litellm")))
     assert llm.chat([{"role": "user", "content": "x"}]) == "FROM_CMD"
@@ -702,7 +702,7 @@ def test_resolve_backend_agrees_with_chat_dispatch(
         invoked["backend"] = "litellm"
         return "FROM_LITELLM"
 
-    def fake_command(m, deadline):
+    def fake_command(m, deadline, resolved=None):
         invoked["backend"] = "command"
         return "FROM_CMD"
 
@@ -825,7 +825,7 @@ def test_chat_fallback_sets_flag(monkeypatch):
         raise llm.ChatError("gateway down")
     monkeypatch.setattr(llm, "_chat_litellm", boom)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
-    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FALLBACK")
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     llm.reset_fallback()
     assert llm.fallback_used() is False
     llm.chat([{"role": "user", "content": "x"}])
@@ -1147,7 +1147,7 @@ def test_chat_fallback_extends_drained_deadline(monkeypatch):
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
     seen = {}
 
-    def fake_command(messages, deadline):
+    def fake_command(messages, deadline, resolved=None):
         seen["deadline"] = deadline
         return "OK"
 
@@ -1167,7 +1167,7 @@ def test_chat_fallback_keeps_larger_remaining_budget(monkeypatch):
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
     seen = {}
 
-    def fake_command(messages, deadline):
+    def fake_command(messages, deadline, resolved=None):
         seen["deadline"] = deadline
         return "OK"
 
@@ -1186,7 +1186,7 @@ def test_chat_fallback_no_deadline_stays_none(monkeypatch):
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
     seen = {}
 
-    def fake_command(messages, deadline):
+    def fake_command(messages, deadline, resolved=None):
         seen["deadline"] = deadline
         return "OK"
 
@@ -1485,7 +1485,7 @@ def test_chat_fallback_log_names_deadline_expiry(monkeypatch, caplog):
 
     monkeypatch.setattr(llm, "_chat_litellm", budget_gone)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
-    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FALLBACK")
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     llm.reset_fallback()
     with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
         llm.chat([{"role": "user", "content": "x"}])
@@ -1503,7 +1503,7 @@ def test_chat_fallback_log_still_names_backend_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(llm, "_chat_litellm", boom)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
-    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline: "FALLBACK")
+    monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     llm.reset_fallback()
     with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
         llm.chat([{"role": "user", "content": "x"}])
@@ -1575,3 +1575,225 @@ def test_usage_log_partial_provider_fields(llm_env, monkeypatch, caplog):
         llm.chat([{"role": "user", "content": "hi"}])
     msgs = [r.getMessage() for r in caplog.records if "LLM usage" in r.getMessage()]
     assert msgs and "provider_fields=cache_read" in msgs[0]
+
+
+# ---- #475 slice 3: ONE rescue command, for every backend.
+#
+# Before this slice DAIMON_LLM_COMMAND meant two different things depending on
+# DAIMON_LLM_BACKEND: the primary when the backend was `command`, the rescue
+# when it was litellm. A `command` primary therefore had no rescue direction at
+# all (chat() returned from _chat_command before the try block existed) and an
+# install ran a 78% capture error rate for 14 days with nothing to fall back to.
+#
+# The rule now: each backend has exactly ONE fallback, and it is always
+# DAIMON_LLM_COMMAND_FALLBACK. No chains. A compat shim keeps pre-#475 litellm
+# installs rescued by DAIMON_LLM_COMMAND alone.
+
+
+def test_resolve_fallback_command_reads_its_own_triple(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "rescuecli")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK_OUTPUT", "json:answer")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK_INPUT", "arg")
+    assert llm._resolve_fallback_command() == ("rescuecli", "json:answer", "arg")
+
+
+def test_resolve_fallback_command_output_defaults_to_text(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "rescuecli")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_FALLBACK_OUTPUT", raising=False)
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_FALLBACK_INPUT", raising=False)
+    assert llm._resolve_fallback_command() == ("rescuecli", "text", "stdin")
+
+
+def test_resolve_fallback_command_shim_keeps_pre_475_litellm_installs_rescued(monkeypatch):
+    # The whole installed base configured its litellm rescue as
+    # DAIMON_LLM_COMMAND. Upgrading must not silently delete that rescue.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_FALLBACK", raising=False)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("legacycli", "text", "stdin"))
+    assert llm._resolve_fallback_command() == ("legacycli", "text", "stdin")
+
+
+def test_resolve_fallback_command_explicit_wins_over_the_shim(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "rescuecli")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("legacycli", "text", "stdin"))
+    assert llm._resolve_fallback_command()[0] == "rescuecli"
+
+
+def test_resolve_fallback_command_never_self_falls_back_on_a_command_primary(monkeypatch):
+    # The shim must NOT apply when DAIMON_LLM_COMMAND is the primary — that
+    # would retry the identical failing invocation and call it a rescue.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_FALLBACK", raising=False)
+    monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    assert llm._resolve_fallback_command() is None
+
+
+def test_chat_command_primary_falls_back_on_error(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+
+    def dispatch(messages, deadline, resolved=None):
+        if resolved is None:
+            raise llm.ChatError("primary cli exited 1")
+        return "FROM_RESCUE"
+
+    monkeypatch.setattr(llm, "_chat_command", dispatch)
+    assert llm.chat([{"role": "user", "content": "x"}]) == "FROM_RESCUE"
+
+
+def test_chat_command_primary_fallback_sets_the_flag(monkeypatch):
+    # NOT cosmetic: serializer._save_chunk_cache gates on fallback_used(). A
+    # rescue that leaves the flag clear caches the RESCUE cli's output under
+    # the primary's key (scar 0015, and it defeats the #465 multi-producer
+    # gate).
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_chat_command",
+                        lambda m, deadline, resolved=None: (
+                            "OK" if resolved else (_ for _ in ()).throw(llm.ChatError("x"))))
+    llm.chat([{"role": "user", "content": "x"}])
+    assert llm.fallback_used() is True
+
+
+def test_chat_command_primary_raises_when_nothing_to_fall_back_to(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command", lambda: None)
+    monkeypatch.setattr(llm, "_chat_command",
+                        lambda m, deadline, resolved=None: (
+                            _ for _ in ()).throw(llm.ChatError("primary down")))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "x"}])
+    assert llm.fallback_used() is False
+
+
+def test_chat_command_primary_respects_fallback_disabled(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "0")
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_chat_command",
+                        lambda m, deadline, resolved=None: (
+                            _ for _ in ()).throw(llm.ChatError("primary down")))
+    with pytest.raises(llm.ChatError):
+        llm.chat([{"role": "user", "content": "x"}])
+
+
+def test_chat_command_primary_fallback_rearms_a_drained_deadline(monkeypatch):
+    # #341 on the new edge: the primary may have burned the whole budget
+    # before failing, which would kill the rescue on arrival.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "fallback_min_seconds", lambda: 300)
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+    seen = {}
+
+    def dispatch(messages, deadline, resolved=None):
+        if resolved is None:
+            raise llm.ChatError("primary down")
+        seen["deadline"] = deadline
+        return "OK"
+
+    monkeypatch.setattr(llm, "_chat_command", dispatch)
+    llm.chat([{"role": "user", "content": "x"}], deadline=time.monotonic() - 5)
+    assert seen["deadline"] >= time.monotonic() + 290
+
+
+def test_chat_command_primary_fallback_log_keeps_the_ledger_literal(monkeypatch, caplog):
+    # ledger.py counts fallback attempts by matching the literal
+    # "llm.fallback backend=command". A new edge that logs anything else
+    # counts zero and reproduces the exact "attempted 0" unreadability #475
+    # was filed about.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_chat_command",
+                        lambda m, deadline, resolved=None: (
+                            "OK" if resolved else (_ for _ in ()).throw(llm.ChatError("x"))))
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
+        llm.chat([{"role": "user", "content": "x"}])
+    assert any(r.getMessage().startswith("llm.fallback backend=command")
+               for r in caplog.records)
+
+
+def test_chat_command_uses_the_resolved_fallback_triple(monkeypatch):
+    # The rescue must run the FALLBACK's own command/output/input specs, not
+    # the primary's — a chain whose hops need different input axes (#58) is
+    # exactly why the fallback carries its own triple.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    triple = ("rescuecli --json", "json:answer", "arg")
+    monkeypatch.setattr(llm, "_resolve_fallback_command", lambda: triple)
+    seen = {}
+
+    def dispatch(messages, deadline, resolved=None):
+        if resolved is None:
+            raise llm.ChatError("primary down")
+        seen["resolved"] = resolved
+        return "OK"
+
+    monkeypatch.setattr(llm, "_chat_command", dispatch)
+    llm.chat([{"role": "user", "content": "x"}])
+    assert seen["resolved"] == triple
+
+
+def test_chat_command_backend_honours_an_explicit_resolution(monkeypatch):
+    # _chat_command must run what it is handed rather than re-resolving.
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "primarycli")
+    seen = {}
+
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen["argv"] = argv
+        return 0, "hello", ""
+
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    out = llm._chat_command([{"role": "user", "content": "hi"}], deadline=None,
+                            resolved=("rescuecli", "text", "stdin"))
+    assert out == "hello"
+    assert seen["argv"][0] == "rescuecli"
+
+
+def test_rescue_posture_command_backend_is_covered_with_a_fallback(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+    assert llm.rescue_posture() == "covered"
+
+
+def test_rescue_posture_command_backend_stays_none_without_a_fallback(monkeypatch):
+    # #479's honesty fix must survive: no configured rescue still reads
+    # "none", never "covered".
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command", lambda: None)
+    assert llm.rescue_posture() == "none"
+
+
+def test_rescue_posture_command_backend_reports_disabled_when_turned_off(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "0")
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+    assert llm.rescue_posture() == "disabled"
+
+
+def test_rescue_posture_reresolves_liveness_every_call(monkeypatch):
+    # Posture must be derived from a CURRENT resolution, never cached from
+    # config presence: a fallback binary removed in a workstation refresh must
+    # stop reading as "covered".
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    live = {"resolves": True}
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin") if live["resolves"] else None)
+    assert llm.rescue_posture() == "covered"
+    live["resolves"] = False
+    assert llm.rescue_posture() == "none"
