@@ -75,6 +75,23 @@ jobs:
             exit 1
           fi
 
+      # #561: squash-merge composes main's commit from PR title + body and
+      # discards local commit footers (scar 0041 — it mis-versioned a release
+      # twice). release-please reads exactly two markers: `!` in the subject or
+      # a BREAKING CHANGE: footer line; prose counts for nothing. If the body
+      # DESCRIBES a breaking change, at least one machine-readable marker must
+      # survive the squash — the title `!` is the one a squash cannot eat.
+      - name: Check Breaking-Change Marker
+        run: |
+          body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
+          title="$(gh pr view "$PR" --repo "$REPO" --json title -q .title)"
+          if grep -qiE 'breaking[ -]change' <<<"$body" \
+             && ! grep -qE '^[a-z]+(\([a-z0-9._-]+\))?!: ' <<<"$title" \
+             && ! grep -qiE '^BREAKING[- ]CHANGE: ' <<<"$body"; then
+            echo "::error::PR body mentions a breaking change but the title has no '!' and the body has no 'BREAKING CHANGE:' footer line. Neither marker survives the squash to release-please, so this would ship as an ordinary bump. Add '!' to the title (preferred: a squash cannot eat it), add the footer line, or reword the body if it is not actually breaking."
+            exit 1
+          fi
+
       - name: Check Branch Name
         run: |
           branch="${{ github.head_ref }}"

@@ -8,6 +8,10 @@ CI gates on this PR (pr-validation.yml):
 - exactly one type:* label on the PR
 - conventional title — squash-merge makes it the commit subject on main
 - branch named type/description (lowercase)
+- breaking change? put the `!` in the TITLE (`feat!:` / `fix(scope)!:`).
+  Local commit footers do NOT survive the squash; a body that says
+  "breaking change" without a title `!` or a `BREAKING CHANGE:` body
+  footer fails validation (#561, scar 0041)
 -->
 
 ## What
