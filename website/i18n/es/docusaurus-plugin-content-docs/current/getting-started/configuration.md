@@ -150,7 +150,7 @@ uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida.
 
 | Variable | Default | Qué hace |
 |---|---|---|
-| `DAIMON_LLM_BACKEND` | `auto` | Transporte: `auto` (litellm si hay credenciales, si no un CLI de comando si alguno resuelve), `litellm`, `command` o `claude-cli`. |
+| `DAIMON_LLM_BACKEND` | `auto` | Transporte: `auto` (litellm si hay credenciales, si no un CLI de comando **nombrado** si alguno resuelve), `litellm`, `command` o `claude-cli`. `claude-cli` es la opción sin configuración: ejecuta un `claude` encontrado en el PATH con un preset incorporado y no necesita nada más. `command` requiere `DAIMON_LLM_COMMAND`. |
 | `DAIMON_LLM_BASE_URL` | `http://localhost:4000` | URL del endpoint compatible con OpenAI (se recorta la barra final). Cae a `LITELLM_BASE_URL`. |
 | `DAIMON_LLM_API_KEY` | sin definir | API key del endpoint. Cae a `LITELLM_API_KEY`. |
 | `DAIMON_LLM_MODEL` | sin definir | Nombre de modelo a enviar. Cae a `LITELLM_MODEL`. |
@@ -160,7 +160,15 @@ uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida.
 | `DAIMON_LLM_STREAM` | on | Transmite la respuesta de litellm para que el timeout del socket acote el intervalo entre frames y no la longitud total de la respuesta. Sin esto, una respuesta larga dispara el timeout y reintenta desde cero. Ponlo en `0` para desactivarlo. |
 | `DAIMON_LLM_NO_CACHE` | off | Cuando es verdadero, evita el cache de respuestas del gateway por request — necesario cuando una respuesta mala cacheada fija una falla o cuando las corridas deben ser estadísticamente independientes. |
 | `DAIMON_LLM_BRIEFING` | off | Cuando es verdadero, renderiza el briefing vía LLM en lugar de la plantilla determinista. |
-| `DAIMON_LLM_COMMAND` | sin definir | Invocación completa del CLI para el backend `command` (binario + modelo + flags). |
+| `DAIMON_LLM_COMMAND` | sin definir | Invocación completa del CLI para el backend `command` (binario + modelo + flags). Obligatoria para `command`, y obligatoria para que un `claude` en el PATH sea usado por cualquier backend que no sea `claude-cli`. |
+
+:::note Qué proceso recibe tu transcripción
+
+Un binario `claude` que simplemente esté en el PATH **no** se adopta automáticamente. Serializar envía la transcripción completa de la sesión al CLI configurado, así que ese CLI debe nombrarse: o `DAIMON_LLM_COMMAND`, o `DAIMON_LLM_BACKEND=claude-cli` para optar por el preset incorporado.
+
+Antes bastaba con dejar `DAIMON_LLM_COMMAND` sin definir y tener un `claude` en cualquier parte del PATH, tanto para instalaciones en `auto` como para la ruta de rescate de litellm. Si dependías de eso, definí una de las dos variables de arriba. `daimon configure` y `daimon doctor` nombran el binario resuelto y su ruta para que puedas ver exactamente cuál está en uso.
+
+:::
 | `DAIMON_LLM_COMMAND_OUTPUT` | sin definir | Cómo extraer el texto del asistente del stdout del comando: `text` (stdout crudo) o `json:<key>` (parsear JSON, leer `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | Cómo llega el prompt al backend de comando: `stdin` (por tubería), `arg` (anexado como último elemento de argv) o `file:<flag>` (escrito a un archivo temporal, luego se anexa `<flag> <path>`). Un valor no reconocido registra una advertencia y cae a `stdin`. |
 | `DAIMON_LLM_COMMAND_FALLBACK` | sin definir | El único CLI de rescate, usado cuando el backend primario falla. Sirve tanto para un primario litellm como para uno `command`, que antes no tenía ninguna dirección de rescate. Un solo fallback, nunca una cadena: si el primario y este fallan, la causa casi siempre es del entorno, y un tercer CLI gasta presupuesto para llegar al mismo error mientras hace que la instalación parezca más protegida de lo que está. Si no se define, un primario litellm sigue cayendo a `DAIMON_LLM_COMMAND` como antes. |

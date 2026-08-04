@@ -367,7 +367,12 @@ def _explain(st: dict) -> str:
         if st["ready"]:
             src = st["command_source"]
             if src == "claude-cli":
-                return f"backend: {rb} (claude CLI, zero-config)"
+                # #546: name the binary PATH resolved. "zero-config" is a
+                # feature, but the operator should be able to see WHICH claude
+                # is about to receive the transcript without running `which`.
+                path = st.get("command_path")
+                where = f" from PATH: {path}" if path else ""
+                return f"backend: {rb} (claude CLI{where}, zero-config)"
             base = f"backend: {rb} ({st['command']})"
             # #58: only note the input spec when it's not the stdin default —
             # keeps the common case's one-liner unchanged.

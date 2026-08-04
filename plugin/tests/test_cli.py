@@ -1282,18 +1282,26 @@ def _set_claude(monkeypatch, present):
 def test_cli_configure_claude_zero_config_writes_nothing(
     capsys, monkeypatch, tmp_path
 ):
-    # claude on PATH, no API key -> zero-config ready; nothing must be written.
+    # claude-cli NAMED, claude on PATH, no API key -> zero-config ready;
+    # nothing must be written.
+    #
+    # #546: this used to leave the backend at `auto` and rely on PATH alone to
+    # produce a command backend. That path no longer exists, and the loose
+    # substring assertions below kept passing against an unrelated
+    # "missing: api_key, model" line — a test whose name had stopped matching
+    # what it exercised. Naming the backend restores the intent.
     env_file = tmp_path / "env"
     monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
     _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
     _set_claude(monkeypatch, True)
 
     rc = cli.main(["configure"])
     assert rc == 0
-    out = capsys.readouterr().out.lower()
-    assert "ready" in out
-    assert "command" in out  # the resolved backend is named
-    assert not env_file.exists()  # zero-config writes nothing
+    out = capsys.readouterr().out
+    assert "claude CLI" in out          # the zero-config preset is what resolved
+    assert "missing:" not in out        # genuinely ready, not a degraded read
+    assert not env_file.exists()        # zero-config writes nothing
 
 
 def test_cli_configure_litellm_flags_write_env(capsys, monkeypatch, tmp_path):

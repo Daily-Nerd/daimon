@@ -46,6 +46,13 @@ def status() -> dict:
             "explicit" if config.llm_command()
             else ("claude-cli" if cmd else None)
         ),
+        # #546: when the preset resolved, the operator named the BACKEND but
+        # not the binary — PATH chose that. Naming the resolved path is what
+        # turns "zero-config" from opaque into auditable.
+        "command_path": (
+            shutil.which("claude")
+            if (cmd and not config.llm_command()) else None
+        ),
         # #475: the rescue is a second binary now. The doctor showed only the
         # primary, so a misconfigured fallback was invisible on the one
         # surface built to catch misconfiguration before a detached hook
