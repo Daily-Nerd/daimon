@@ -594,6 +594,24 @@ def fallback_min_seconds() -> int:
     return timeout_seconds()
 
 
+def resample_min_seconds() -> int:
+    """#553: minimum budget the #118 validation resample is guaranteed on
+    entry. Exactly the failure #341 fixed for the command fallback, one path
+    over: the shared deadline is drained by the attempt whose output just got
+    rejected, so handing the resample the remainder made it dead on arrival
+    (field case: 262s left against a merge that had taken 371s). Defaults to
+    timeout_seconds() for the same reason fallback_min_seconds() does — the
+    operator has already declared how long one backend call may take.
+    Override with DAIMON_RESAMPLE_MIN_SECONDS."""
+    raw = _get("DAIMON_RESAMPLE_MIN_SECONDS")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return timeout_seconds()
+
+
 def llm_command() -> str | None:
     """Full CLI invocation for the command backend (binary + model + flags).
     How the prompt reaches it is controlled separately by

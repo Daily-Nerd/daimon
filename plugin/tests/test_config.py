@@ -599,6 +599,29 @@ def test_fallback_min_seconds_bad_value_falls_back_to_timeout(monkeypatch):
     assert config.fallback_min_seconds() == 222
 
 
+# ---- #553: DAIMON_RESAMPLE_MIN_SECONDS ---------------------------------------
+
+
+def test_resample_min_seconds_defaults_to_timeout(monkeypatch):
+    # Same inheritance as the #341 fallback floor: DAIMON_TIMEOUT is already
+    # the operator's answer to "how long may one backend call take".
+    monkeypatch.delenv("DAIMON_RESAMPLE_MIN_SECONDS", raising=False)
+    monkeypatch.setenv("DAIMON_TIMEOUT", "111")
+    assert config.resample_min_seconds() == 111
+
+
+def test_resample_min_seconds_env_override(monkeypatch):
+    monkeypatch.setenv("DAIMON_TIMEOUT", "111")
+    monkeypatch.setenv("DAIMON_RESAMPLE_MIN_SECONDS", "77")
+    assert config.resample_min_seconds() == 77
+
+
+def test_resample_min_seconds_bad_value_falls_back_to_timeout(monkeypatch):
+    monkeypatch.setenv("DAIMON_TIMEOUT", "222")
+    monkeypatch.setenv("DAIMON_RESAMPLE_MIN_SECONDS", "not-a-number")
+    assert config.resample_min_seconds() == 222
+
+
 def test_chunk_cache_days_default_override_and_bad_value(monkeypatch):
     monkeypatch.delenv("DAIMON_CHUNK_CACHE_DAYS", raising=False)
     assert config.chunk_cache_days() == 3
