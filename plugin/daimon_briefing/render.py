@@ -124,13 +124,32 @@ def _print_version_note(checkpoint) -> None:
 def _print_handoff(handoff) -> None:
     """The baton block (#523): authored, imperative, rendered ABOVE every
     briefing section on both render paths — it must never lose position to
-    ambient sections. Multi-line batons keep one arrow per line."""
+    ambient sections. Multi-line batons keep one arrow per line.
+
+    #566: on the rich path the baton gets a bordered panel like every ambient
+    section below it — bare stdout above the panels inverted the visual
+    hierarchy for the one block a human wrote deliberately. Magenta border:
+    distinct from red (drift/external warnings) so "read this first" never
+    reads as "something is wrong". The plain path stays byte-identical — it is
+    a compatibility surface for non-TTY hosts and hook briefings."""
     if not handoff:
         return
+    lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
+    if supports_rich():
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        body = Text("\n".join(f"→ {ln}" for ln in lines), style="bold")
+        Console().print(Panel(
+            body,
+            title=f"HANDOFF (left deliberately by previous session, {handoff['ts']})",
+            border_style="magenta", title_align="left",
+        ))
+        return
     print(f"HANDOFF (left deliberately by previous session, {handoff['ts']}):")
-    for line in str(handoff["note"]).splitlines():
-        if line.strip():
-            print(f"→ {line.strip()}")
+    for line in lines:
+        print(f"→ {line}")
     print("")
 
 
