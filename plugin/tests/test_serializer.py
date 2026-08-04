@@ -990,6 +990,31 @@ def test_validation_failure_retries_once_with_nonce(fake_chat_factory, monkeypat
     assert "quote" in second  # the reminder names the observed failure mode
 
 
+# ---- #555: validation reports WHICH predicate rejected the checkpoint ----
+
+
+def test_validation_reason_is_none_for_a_valid_checkpoint():
+    assert serializer.validation_reason(json.loads(_valid_checkpoint_json("S1"))) is None
+
+
+def test_validation_reason_names_the_field_path_and_the_predicate():
+    # The live failure shape: a verbatim item whose quote was inlined into text.
+    # "missing keys, bad trust class, or verbatim item without a quote" cannot
+    # tell an operator which of the three happened; this can.
+    reason = serializer.validation_reason(json.loads(_invalid_checkpoint_json()))
+    assert reason == (
+        "working_context.recent_decisions[0]: trust=verbatim item has no quote"
+    )
+
+
+def test_validation_reason_never_leaks_item_text():
+    # The reason is logged verbatim, so it names the predicate and the path and
+    # nothing from the payload. The fixture's text carries a quoted phrase.
+    bad = json.loads(_invalid_checkpoint_json())
+    bad["working_context"]["recent_decisions"][0]["text"] = "SECRET-abc123"
+    assert "SECRET" not in serializer.validation_reason(bad)
+
+
 def test_validation_resample_is_guaranteed_a_minimum_budget(fake_chat_factory, monkeypatch):
     # #553: the resample reused the SAME deadline the first attempt had already
     # drained, so a validation failure late in the budget died of arithmetic
@@ -1021,6 +1046,35 @@ def test_validation_resample_never_shortens_a_healthy_deadline(fake_chat_factory
                                 deadline=time.monotonic() + 5000)
     remaining = chat.calls[1]["kwargs"]["deadline"] - time.monotonic()
     assert remaining >= 4990, f"resample budget shrank to {remaining:.0f}s"
+
+
+def test_validation_failure_logs_which_predicate_rejected_it(fake_chat_factory,
+                                                             monkeypatch, caplog):
+    # #555: the resample line said only THAT validation failed. Without the
+    # predicate there is nothing to diagnose from afterwards, because the
+    # rejected checkpoint is never written to disk.
+    import logging
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory([_invalid_checkpoint_json(), _valid_checkpoint_json("S1")])
+    with caplog.at_level(logging.INFO, logger="daimon_briefing.serializer"):
+        serializer.serialize_strict("S1", make_messages(6), chat=chat)
+    assert "working_context.recent_decisions[0]: trust=verbatim item has no quote" \
+        in caplog.text
+
+
+def test_validation_failure_twice_names_both_reasons(fake_chat_factory, monkeypatch):
+    # When the resample ALSO fails, the first attempt's reason is the
+    # interesting one, so the error carries both rather than only the last.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    second = json.loads(_invalid_checkpoint_json())
+    second["working_context"]["recent_decisions"] = []
+    second["epistemic_snapshot"]["strong_beliefs"] = [{"text": 5, "trust": "inferred"}]
+    chat = fake_chat_factory([_invalid_checkpoint_json(), json.dumps(second)])
+    with pytest.raises(serializer.SchemaValidationError) as exc:
+        serializer.serialize_strict("S1", make_messages(6), chat=chat)
+    msg = str(exc.value)
+    assert "working_context.recent_decisions[0]: trust=verbatim item has no quote" in msg
+    assert "epistemic_snapshot.strong_beliefs[0]: text is not a str" in msg
 
 
 def test_validation_failure_twice_raises(fake_chat_factory, monkeypatch):
