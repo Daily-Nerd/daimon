@@ -383,6 +383,18 @@ def touch_heartbeat(session_id: str, project_slug: str | None = None) -> None:
         pass
 
 
+def clear_heartbeat(session_id: str) -> None:
+    """#564: a run's result ends its liveness — the serialize door clears the
+    stamp alongside writing its result line, so a completed run can never read
+    as in-flight for the rest of the hung ceiling. Best-effort like the touch:
+    a leftover stamp (kill -9 before the clear) is still bounded by the
+    ceiling, and heal's spawn-no-result classification never needed it."""
+    try:
+        (_heartbeat_dir() / Path(session_id).name).unlink()
+    except OSError:
+        pass
+
+
 def heartbeat_age(session_id: str, now: float | None = None) -> float | None:
     """Seconds since this session's serialize last proved liveness, or None
     when it never has (no stamp — pre-#342 host hook or a child that died

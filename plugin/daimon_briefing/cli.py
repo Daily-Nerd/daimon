@@ -300,6 +300,12 @@ def _run_serialize(transcript_path: Path, project: str | None,
         print(msg, file=sys.stderr)
         _append_serialize_log(msg)
         return 1
+    finally:
+        # #564: the pipeline is over on every path out of this try — success
+        # (checkpoint already on disk), skip, error, or an unexpected raise —
+        # so the liveness stamp must go with it. Leaving it made every brief
+        # inside the hung ceiling claim a finished serialize was in flight.
+        ledger.clear_heartbeat(session_id)
     if out is None:
         # #421: the write boundary refused (kill switch). Same "skipped" shape
         # as the hash-match short-circuit above — matches neither _RESULT_OK_RE
