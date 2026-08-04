@@ -6038,14 +6038,18 @@ def test_stats_json_resolutions_key_present_existing_keys_untouched(
     assert set(data) >= {"usage", "capture", "store", "retention", "events",
                          "verification", "rescue_posture", "resolutions"}
     assert set(data["resolutions"]) == {"human", "agent_verified",
-                                        "agent_pending", "refused"}
+                                        "agent_pending", "refused",
+                                        "agent_since", "human_before_agent"}
 
 
 def test_stats_resolutions_empty_world_is_all_zeroes(tmp_checkpoint_dir, capsys):
     rc = cli.main(["stats", "--json"])
     assert rc == 0
     res = json.loads(capsys.readouterr().out)["resolutions"]
-    assert res == {"human": 0, "agent_verified": 0, "agent_pending": 0, "refused": 0}
+    assert res == {"human": 0, "agent_verified": 0, "agent_pending": 0,
+                   "refused": 0, "agent_since": None,
+                   # nothing recorded, so nothing predates anything (#562)
+                   "human_before_agent": 0}
 
 
 def test_stats_resolutions_counts_all_four_states(
@@ -6083,6 +6087,144 @@ def test_stats_resolutions_counts_all_four_states(
     assert res["agent_verified"] == 1
     assert res["agent_pending"] == 1
     assert res["refused"] == 1
+
+
+def _write_events(tmp_checkpoint_dir, project, rows):
+    """Append raw event rows with controlled timestamps (#562 needs ordering)."""
+    from daimon_briefing import store
+    slug = store.project_slug(project)
+    path = tmp_checkpoint_dir / slug / "events.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+def _res(capsys, monkeypatch, project):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    return json.loads(capsys.readouterr().out)["resolutions"]
+
+
+def test_stats_resolutions_reports_when_agent_credit_became_possible(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # #562: a lifetime fold spanning the agent path's arrival reads as human
+    # credit. Absence of agent credit BEFORE the first agent-attributable
+    # event is unfalsifiable, so the counter has to say where that line is.
+    _write_events(tmp_checkpoint_dir, "/p/562a", [
+        {"item_ref": "a", "kind": "resolution", "status": "resolved",
+         "source": "cli", "ts": "2026-07-10T00:00:00Z"},
+        {"item_ref": "b", "kind": "resolution", "status": "resolved",
+         "source": "cli", "ts": "2026-07-20T00:00:00Z"},
+        {"item_ref": "c", "kind": "resolution", "status": "resolving-candidate",
+         "source": "agent", "ts": "2026-08-01T00:00:00Z"},
+        {"item_ref": "d", "kind": "resolution", "status": "resolved",
+         "source": "cli", "ts": "2026-08-02T00:00:00Z"},
+    ])
+    res = _res(capsys, monkeypatch, "/p/562a")
+    assert res["human"] == 3  # unchanged: lifetime still counts every one
+    assert res["agent_since"] == "2026-08-01T00:00:00Z"
+    assert res["human_before_agent"] == 2  # only the two that predate it
+
+
+def test_stats_resolutions_agent_since_is_none_when_no_agent_event_exists(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # The whole population predates any agent credit, so EVERY human count is
+    # uncomparable — the render layer needs to be able to say exactly that.
+    _write_events(tmp_checkpoint_dir, "/p/562b", [
+        {"item_ref": "a", "kind": "resolution", "status": "resolved",
+         "source": "cli", "ts": "2026-07-10T00:00:00Z"},
+    ])
+    res = _res(capsys, monkeypatch, "/p/562b")
+    assert res["agent_since"] is None
+    assert res["human_before_agent"] == 1
+
+
+def test_stats_resolutions_agent_since_counts_a_verified_stamp_too(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # An agent claim can be pruned while its serializer verification stamp
+    # survives; that stamp is equally proof the path existed.
+    from daimon_briefing import capture
+    _write_events(tmp_checkpoint_dir, "/p/562c", [
+        {"item_ref": "a", "kind": "resolution", "status": "resolved",
+         "source": "cli", "ts": "2026-07-10T00:00:00Z"},
+        {"item_ref": "b", "kind": "resolution",
+         "status": capture.AGENT_VERIFIED_STATUS,
+         "source": "serializer", "ts": "2026-07-25T00:00:00Z"},
+    ])
+    res = _res(capsys, monkeypatch, "/p/562c")
+    assert res["agent_since"] == "2026-07-25T00:00:00Z"
+    assert res["human_before_agent"] == 1
+
+
+def test_stats_render_flags_human_credit_that_predates_agent_capability(capsys):
+    # #562: the number itself is not wrong, the missing context is. A reader
+    # must not be able to take "human 36 / agent 2" as a ratio when most of
+    # the 36 landed before agent credit could be recorded at all.
+    from daimon_briefing import render
+    render.render_stats({"usage": {}, "store": {"items_by_kind": {}, "checkpoints": 0,
+                                   "project_buckets": 0, "items_verbatim": 0,
+                                   "items_inferred": 0, "items_untagged": 0,
+                                   "items_carried": 0},
+                         "capture": {"success": 0, "skipped": 0, "errors": 0,
+                                     "fallback_serializes": 0, "hosts": {}},
+                         "resolutions": {
+        "human": 36, "agent_verified": 2, "agent_pending": 0, "refused": 0,
+        "agent_since": "2026-07-31T00:00:00Z", "human_before_agent": 36}})
+    out = capsys.readouterr().out
+    assert "36" in out
+    assert "2026-07-31" in out
+    assert "predate" in out
+
+
+def test_stats_render_says_nothing_extra_once_the_populations_overlap(capsys):
+    # Once human credit accrues after the agent path exists, the comparison is
+    # legitimate and the caveat must disappear rather than nag forever.
+    from daimon_briefing import render
+    render.render_stats({"usage": {}, "store": {"items_by_kind": {}, "checkpoints": 0,
+                                   "project_buckets": 0, "items_verbatim": 0,
+                                   "items_inferred": 0, "items_untagged": 0,
+                                   "items_carried": 0},
+                         "capture": {"success": 0, "skipped": 0, "errors": 0,
+                                     "fallback_serializes": 0, "hosts": {}},
+                         "resolutions": {
+        "human": 36, "agent_verified": 2, "agent_pending": 0, "refused": 0,
+        "agent_since": "2026-07-31T00:00:00Z", "human_before_agent": 0}})
+    assert "predate" not in capsys.readouterr().out
+
+
+def test_stats_resolutions_agent_event_without_a_stamp_does_not_set_the_line(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # events.jsonl is append-only and older writers may have omitted ts. An
+    # undated agent event still proves the path exists, but it cannot date it,
+    # so the boundary stays unknown rather than being guessed as "the epoch".
+    _write_events(tmp_checkpoint_dir, "/p/562d", [
+        {"item_ref": "a", "kind": "resolution", "status": "resolved",
+         "source": "cli", "ts": "2026-07-10T00:00:00Z"},
+        {"item_ref": "b", "kind": "resolution",
+         "status": "resolving-candidate", "source": "agent"},  # no ts
+    ])
+    res = _res(capsys, monkeypatch, "/p/562d")
+    assert res["agent_since"] is None
+    assert res["human_before_agent"] == 1
+
+
+def test_rich_stats_renders_the_same_predate_note(capsys, monkeypatch):
+    # Both renderers carry the caveat or half the readers never see it.
+    from daimon_briefing import render
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_stats({"usage": {}, "store": {"items_by_kind": {},
+                         "checkpoints": 0, "project_buckets": 0,
+                         "items_verbatim": 0, "items_inferred": 0,
+                         "items_untagged": 0, "items_carried": 0},
+                         "capture": {"success": 0, "skipped": 0, "errors": 0,
+                                     "fallback_serializes": 0, "hosts": {}},
+                         "resolutions": {
+        "human": 36, "agent_verified": 2, "agent_pending": 0, "refused": 0,
+        "agent_since": "2026-07-31T00:00:00Z", "human_before_agent": 36}})
+    out = capsys.readouterr().out
+    assert "predate" in out and "2026-07-31" in out
 
 
 def test_stats_resolutions_human_counts_events_not_refs(

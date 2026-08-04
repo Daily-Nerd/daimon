@@ -2767,6 +2767,15 @@ def _stats_verification(project_dir) -> dict:
     return {"total": sum(by_check.values()), "by_check": by_check}
 
 
+def _earlier(current: str | None, ts: str) -> str | None:
+    """Earliest of two event stamps, ignoring empties. Stamps are written by
+    one helper in a single UTC format, so lexicographic order is chronological
+    (#562)."""
+    if not ts:
+        return current
+    return ts if current is None or ts < current else current
+
+
 def _stats_resolutions(project_dir, usage: dict) -> dict:
     """Resolution credit, by source (#480 slice 5) — who is closing loops,
     and whether their receipts hold. Two populations, kept honestly apart
@@ -2799,7 +2808,21 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
 
     Fails open to zeroes on a broken/missing/unknown-project log, same
     stance as every other stats instrument here."""
-    out = {"human": 0, "agent_verified": 0, "agent_pending": 0, "refused": 0}
+    # #562: the lifetime fold spans the arrival of agent credit, so a store
+    # older than the agent write path reports its whole history as human
+    # credit. Before the first agent-attributable event the absence of agent
+    # credit is UNFALSIFIABLE — the path may simply not have existed — so the
+    # counter reports where that line falls instead of implying a comparison
+    # across it. Derived from the events themselves rather than a hardcoded
+    # release, so it generalizes to the next credit source added.
+    #
+    # Counters stay plain locals and the result dict is built once at the end:
+    # a literal mixing ints with a nullable stamp types the whole mapping as
+    # optional, and every `+= 1` below then reads as arithmetic on None.
+    human = 0
+    agent_verified = 0
+    agent_since: str | None = None
+    human_stamps: list[str] = []
     path = store._events_path(project_dir)
     if path is not None:
         try:
@@ -2816,17 +2839,33 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
             source = str(evt.get("source") or "")
             status = str(evt.get("status") or "")
             kind = str(evt.get("kind") or "")
+            ts = str(evt.get("ts") or "")
             if source == "cli" and kind == "resolution" and store.is_resolved(evt):
-                out["human"] += 1
+                human += 1
+                human_stamps.append(ts)
             elif source == "serializer" and status == capture.AGENT_VERIFIED_STATUS:
-                out["agent_verified"] += 1
+                agent_verified += 1
+                agent_since = _earlier(agent_since, ts)
+            elif source == "agent" and kind == "resolution":
+                # A claim the serializer has not verified yet is still proof
+                # the path existed, which is the only question here.
+                agent_since = _earlier(agent_since, ts)
+    # No agent event at all: the whole human population predates any agent
+    # credit, because there is none to have predated.
+    human_before_agent = (human if agent_since is None
+                          else sum(1 for t in human_stamps
+                                   if t and t < agent_since))
+    agent_pending = 0
     try:
-        out["agent_pending"] = len(capture._pending_agent_candidates(
+        agent_pending = len(capture._pending_agent_candidates(
             store.resolutions(project_dir=project_dir)))
     except Exception:
         pass
-    out["refused"] = usage.get("resolve:no-evidence", 0)
-    return out
+    return {"human": human, "agent_verified": agent_verified,
+            "agent_pending": agent_pending,
+            "refused": usage.get("resolve:no-evidence", 0),
+            "agent_since": agent_since,
+            "human_before_agent": human_before_agent}
 
 
 def _cmd_stats(args) -> int:

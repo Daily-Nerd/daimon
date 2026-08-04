@@ -1137,6 +1137,16 @@ def _plain_stats(data: dict) -> None:
         print("resolutions (this project, lifetime):")
         print(f"  human: {res['human']}  agent-verified: {res['agent_verified']}  "
               f"agent-pending: {res['agent_pending']}")
+        # #562: the counters above are a lifetime fold. Human credit recorded
+        # before agent credit could exist is not evidence that humans out-close
+        # agents — the comparison had no other side. Say so, and only while it
+        # is true; the line disappears on its own once both populations overlap.
+        pre = res.get("human_before_agent") or 0
+        if pre:
+            since = res.get("agent_since")
+            when = f", first seen {since[:10]}" if since else ""
+            print(f"  note: {pre} of those predate any agent-recorded "
+                  f"resolution{when} — not a human-vs-agent ratio")
         # #477 lesson: refused comes from usage.log, a DIFFERENT (per-machine)
         # population than the three counters above (per-project) — labeled
         # apart, on its own line, never summed with them.
@@ -1282,3 +1292,11 @@ def _rich_stats(data: dict) -> None:
         res_table.add_row("agent-pending", str(res["agent_pending"]))
         res_table.add_row("refused (this machine)", str(res["refused"]))
         console.print(res_table)
+        # #562: same caveat as the plain renderer, same disappearing condition.
+        pre = res.get("human_before_agent") or 0
+        if pre:
+            since = res.get("agent_since")
+            when = f", first seen {since[:10]}" if since else ""
+            console.print(f"[yellow]note: {pre} of those predate any "
+                          f"agent-recorded resolution{when} — not a "
+                          f"human-vs-agent ratio[/yellow]")
