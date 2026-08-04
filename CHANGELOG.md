@@ -5,6 +5,23 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0](https://github.com/Daily-Nerd/daimon/compare/v0.24.0...v0.25.0) (2026-08-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **llm:** a `claude` binary present on PATH is no longer adopted implicitly as the command backend. Serializing sends the full session transcript to the configured CLI, so that CLI must now be named: set `DAIMON_LLM_COMMAND` to the invocation that should receive it, or set `DAIMON_LLM_BACKEND=claude-cli` to opt into the built-in zero-config preset. Installs that already set either variable are unaffected. The two configurations that previously resolved a command from PATH alone were `auto` installs with no API key and the litellm rescue path; both now fail with an error naming the remedy instead of using a binary nobody chose.
+
+### Bug Fixes
+
+* **brief:** say when a serialize is in flight instead of silently briefing one session behind ([#542](https://github.com/Daily-Nerd/daimon/issues/542)) ([09e67d6](https://github.com/Daily-Nerd/daimon/commit/09e67d613ae8f270aad71d3c0e0123ab801bb3fc))
+* **hooks:** the orphan sweep must not spawn a serialize that is already running ([#548](https://github.com/Daily-Nerd/daimon/issues/548)) ([1a57dc6](https://github.com/Daily-Nerd/daimon/commit/1a57dc659d9b266ad6d992f18ebca6e7955b3f7f))
+* **llm:** a claude on PATH is no longer adopted implicitly as the command backend ([#552](https://github.com/Daily-Nerd/daimon/issues/552)) ([a161239](https://github.com/Daily-Nerd/daimon/commit/a1612397e67226987cb6f55fa737701179af8167))
+* **llm:** deadline expiry logs as budget expiry, not backend failure ([#539](https://github.com/Daily-Nerd/daimon/issues/539)) ([9a281e8](https://github.com/Daily-Nerd/daimon/commit/9a281e89cd51edebfb81b5a7a18412771784cbfe))
+* **llm:** give a command backend a rescue path by splitting DAIMON_LLM_COMMAND's overload ([#547](https://github.com/Daily-Nerd/daimon/issues/547)) ([856cc9c](https://github.com/Daily-Nerd/daimon/commit/856cc9c48056a047dc967616cc7070f6b52695d4))
+* **llm:** PATH presence is not consent — name the CLI that receives the transcript ([#549](https://github.com/Daily-Nerd/daimon/issues/549)) ([0f1cbd6](https://github.com/Daily-Nerd/daimon/commit/0f1cbd6ce5bd7ee4ed5832468baf90b75cf8fae0))
+* **release:** version the PATH-consent change as breaking, not as a patch ([#551](https://github.com/Daily-Nerd/daimon/issues/551)) ([0d3d1a8](https://github.com/Daily-Nerd/daimon/commit/0d3d1a8b673c1319ef5f3947bbf0669c6c4a7744))
+
 ## [0.24.0](https://github.com/Daily-Nerd/daimon/compare/v0.23.0...v0.24.0) (2026-08-03)
 
 
