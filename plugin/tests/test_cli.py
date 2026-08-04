@@ -701,7 +701,9 @@ def test_cli_status_json_shape(
                          "siblings", "health", "team", "crash", "disabled",
                          "skipped_recent", "recall_error", "recall_index",
                          "receipts", "capture_alarm", "hook_drift",
-                         "rescue_gap", "rescue_posture", "forget_hits"}
+                         "plugin_drift", "rescue_gap", "rescue_posture",
+                         "forget_hits"}
+    assert data["plugin_drift"] is None  # #554 no plugin installed -> null
     assert data["capture_alarm"] is None  # #265 FAIL-only probe silent by default
     assert data["forget_hits"]["count"] == 0  # #404 nothing suppressed yet
     assert data["team"] is None  # no team remote configured -> explicit null (#113)

@@ -601,6 +601,22 @@ def _forget_hits_line(data: dict) -> str | None:
             f"re-assertion{'s' if n != 1 else ''}, most recent {ts}")
 
 
+def _plugin_drift_line(pd: dict) -> str:
+    """#554: name BOTH versions and the command that moves the stale half.
+    "out of date" alone does not say which half, and the two are updated by
+    different tools. The restart is part of the fix, not a footnote: hooks
+    resolve at session start, so an updated plugin changes nothing until then.
+    """
+    if pd.get("behind"):
+        fix = ("run /plugin in Claude Code and update daimon, then restart the "
+               "session — hooks resolve at session start")
+    else:
+        fix = ("upgrade the CLI with `uv tool upgrade daimon-briefing`, then "
+               "restart the session — hooks resolve at session start")
+    return (f"⚠ Claude Code plugin is {pd['installed']} but the daimon CLI is "
+            f"{pd['cli']} — {fix}")
+
+
 def _plain_status(data: dict) -> None:
     alarm = data.get("capture_alarm")
     if alarm:
@@ -616,6 +632,8 @@ def _plain_status(data: dict) -> None:
             print(f"  ⚠ {w}")
     if data.get("hook_drift"):
         print("⚠ installed hooks out of date — run daimon hooks status")
+    if data.get("plugin_drift"):
+        print(_plugin_drift_line(data["plugin_drift"]))
     if data.get("rescue_gap"):
         print("⚠ primary is a remote gateway and no fallback backend resolves "
               "— gateway failures won't be rescued (install claude or set "
@@ -707,6 +725,8 @@ def _rich_status(data: dict) -> None:
     if data.get("hook_drift"):
         console.print("[red]⚠ installed hooks out of date — "
                       "run daimon hooks status[/red]")
+    if data.get("plugin_drift"):
+        console.print(f"[red]{_plugin_drift_line(data['plugin_drift'])}[/red]")
     if data.get("rescue_gap"):
         console.print("[yellow]⚠ primary is a remote gateway and no fallback "
                       "backend resolves — gateway failures won't be rescued "
