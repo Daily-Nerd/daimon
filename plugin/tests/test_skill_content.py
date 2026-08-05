@@ -13,9 +13,26 @@ def test_compact_fits_budget():
     assert len(body) <= 2000, f"compact body is {len(body)} chars (cap 2000)"
 
 
-def test_full_fits_line_budget():
+def test_full_fits_size_budget():
+    # #579: this was a 150-LINE cap, and a line count is not what the budget
+    # is protecting.  It was satisfied by folding a section into one 454-char
+    # line, which left the body BIGGER and less readable while the gauge read
+    # green.  Measure the size, and cap line length separately so re-wrapping
+    # is free and only real growth has to argue for itself.
+    #
+    # Where 8,000 comes from, since the number is fair to ask about: unlike
+    # the 2,000-char compact cap above, this is NOT a host or product limit.
+    # Nothing truncates a SKILL.md.  It is a RATCHET, and the thing it
+    # ratchets against is the only failure mode this file has ever had —
+    # growing because every single addition was individually small and
+    # individually reasonable.  The number is the size at the last deliberate
+    # review (7,569 chars, 2026-08-05) plus about six percent: loose enough
+    # that rewrapping and wording fixes never trip it, tight enough that a
+    # new SECTION has to be argued for in review instead of absorbed.  Raising
+    # it is allowed; doing so silently, as part of a change about something
+    # else, is what this is here to prevent.
     full = skill_content.render_full()
-    assert len(full.splitlines()) <= 150
+    assert len(full) <= 8000, f"full body is {len(full)} chars (cap 8000)"
 
 
 def test_full_has_trigger_only_frontmatter():
@@ -127,6 +144,60 @@ def test_compact_teaches_recall_and_resolve():
     body = skill_content.render_compact()
     assert "daimon recall" in body
     assert "daimon resolve" in body
+
+
+def test_full_teaches_deliberation_guard_without_hard_veto():
+    full = skill_content.render_full()
+    section = full.split("## Checking rejected approaches")[1].split("## Closing loops")[0]
+    assert "daimon refute guard" in section
+    assert "--anchor" in section
+    assert "not a command veto" in section
+    assert "--by agent" in section
+    assert "--by human" in section
+
+
+def test_compact_keeps_the_rules_a_character_budget_would_evict():
+    # #579: these four were deleted to fund the refutation guard paragraph.
+    # Each one is load-bearing behaviour, and none had a test, so the trade
+    # was invisible in review.  Pin them: the next budget squeeze must show
+    # up as a failure here, not as a silent behaviour change on every install.
+    body = skill_content.render_compact()
+    assert "do not mention daimon" in body      # silent degradation
+    assert "never transmitted" in body          # privacy assurance
+    assert "all rules above apply" in body      # trust rules bind MCP use
+    assert "CLI-only" in body                   # read-only tools cannot write
+
+
+def test_full_body_budget_cannot_be_bought_with_long_lines():
+    # The 150-line cap was satisfied by folding a section into one 454-char
+    # line, so the budget measured newlines rather than size.  Cap the line
+    # length too, or the next author faces the same pressure with no room.
+    # Body only: the frontmatter `description` is a single unwrappable field
+    # and is not what this guards.
+    #
+    # 100 is this file's own prose convention plus slack, not a guess.  The
+    # body wraps by hand: median line 70, p90 77, and after the intro
+    # paragraph was wrapped the longest real line is 91.  The first version of
+    # this guard shipped at 200 — which was not derived from anything, it was
+    # just above the one 192-char line the body still had, an UNWRAPPED line,
+    # which is precisely the shape the cap exists to catch.  A cap set above
+    # the defect it is watching for is decoration.  At 100 a folded section
+    # fails on sight, an over-long sentence gets rewrapped for free, and a
+    # genuinely unwrappable line (a long command example) still fits.
+    longest = max(skill_content._FULL_BODY.splitlines(), key=len)
+    assert len(longest) <= 100, (
+        f"{len(longest)}-char line defeats the size budget: {longest[:70]}...")
+
+
+def test_compact_teaches_deliberation_guard_and_authority_boundary():
+    body = skill_content.render_compact()
+    assert "daimon refute guard" in body
+    assert "advisory" in body
+    assert "refute add --by" in body
+    # #576/#579: the prohibition now names the verb, not just the flag —
+    # `ratify` had no --by at all, so "never claim human" left the one
+    # transition that creates load-bearing state unaddressed.
+    assert "never ratify" in body
 
 
 def test_compact_must_rule_stays_last():
