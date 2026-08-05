@@ -944,18 +944,31 @@ def _cmd_forget(args) -> int:
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to forget")
         return 1
+    # Every surface this project holds, not just the live checkpoint (#419
+    # scope): a value that had been superseded still sits in prev-N and in its
+    # session file, and resolving only against `latest` made forget answer "no
+    # item matches" about plaintext that was demonstrably on disk.
+    seen_ids: set[str] = set()
     items = []
-    for section, key in store._ITEM_LISTS:
-        for item in ((checkpoint.get(section) or {}).get(key) or []):
-            if isinstance(item, dict) and item.get("id"):
-                items.append((section, key, item))
+    for _path, section, key, item in store.items_for_project(project):
+        if item["id"] in seen_ids:
+            continue          # one item, several surfaces — not several items
+        seen_ids.add(item["id"])
+        items.append((section, key, item))
     target = next((it for _, _, it in items if it["id"] == args.target), None)
     if target is None:
         texts = [str(it.get("text") or "") for _, _, it in items]
         generic = carry._generic_terms(texts)
         hits = [(s, k, it) for s, k, it in items
                 if carry._same_item(args.target, str(it.get("text") or ""), generic)]
-        if len(hits) == 1:
+        # Ambiguity is about distinct VALUES, not hit count. The same sentence
+        # carried by sibling ids or held on several surfaces is one thing to
+        # forget; #418 already splices sibling ids from a single key. Only
+        # genuinely different values leave the user a choice to make, and there
+        # never-guess still refuses.
+        distinct = {normalize.content_key(str(it.get("text") or ""))
+                    for _, _, it in hits}
+        if len(distinct) == 1:
             target = hits[0][2]
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")

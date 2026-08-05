@@ -61,9 +61,6 @@ def test_forget_leaves_no_plaintext_in_pointer_history(tmp_checkpoint_dir):
         "forget reported success while the value survived on disk")
 
 
-@pytest.mark.xfail(reason="stage 2: target resolution cannot see superseded "
-                          "state, so forget denies a value that is on disk",
-                   strict=True)
 def test_forget_reaches_a_value_only_in_superseded_state(tmp_checkpoint_dir):
     _write("S1", CANARY, KEEPER)
     _write("S2", KEEPER)
@@ -116,3 +113,61 @@ def test_pointer_files_stay_readable_after_a_scrub(tmp_checkpoint_dir, pointer):
         pytest.skip(f"{pointer} not present in this layout")
     payload = json.loads(path.read_text())
     assert payload.get("session_id"), f"{pointer} lost its session_id"
+
+
+OTHER = "zqxcanary7788 a different sentence that also mentions migration"
+
+
+def test_one_value_across_two_surfaces_is_not_ambiguous(tmp_checkpoint_dir):
+    # The hazard of widening the candidate pool. The SAME value in latest and
+    # in prev-1 is one value in two places, not two candidates to choose
+    # between. Counting hits would turn the ordinary case into a refusal.
+    _write("S1", CANARY, KEEPER)
+    _write("S2", CANARY, KEEPER)
+
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert _holding(tmp_checkpoint_dir, CANARY) == []
+
+
+def test_two_distinct_values_across_surfaces_still_refuse(tmp_checkpoint_dir):
+    # never-guess (#418) has to survive the wider pool: distinct VALUES that
+    # both match the query are still ambiguous, and forget must refuse rather
+    # than pick one.
+    _write("S1", CANARY, KEEPER)
+    _write("S2", OTHER, KEEPER)
+
+    rc = cli.main(["forget", "zqxcanary7788", "--project", PROJECT])
+
+    assert rc == 1
+    assert _holding(tmp_checkpoint_dir, CANARY), "refusal must change nothing"
+    assert _holding(tmp_checkpoint_dir, OTHER), "refusal must change nothing"
+
+
+def test_exact_id_resolves_from_a_superseded_surface(tmp_checkpoint_dir):
+    import json as _json
+    _write("S1", CANARY, KEEPER)
+    _write("S2", KEEPER)
+    old = _json.loads((tmp_checkpoint_dir / "S1.json").read_text())
+    target = next(i["id"] for i in old["working_context"]["recent_decisions"]
+                  if i["text"] == CANARY)
+
+    assert cli.main(["forget", target, "--project", PROJECT]) == 0
+    assert _holding(tmp_checkpoint_dir, CANARY) == []
+
+
+OTHER_PROJECT = "/p/forget-pointers-neighbour"
+
+
+def test_scrub_never_crosses_a_project_boundary(tmp_checkpoint_dir):
+    # forget is project-scoped: the tombstone is written to one project's
+    # ledger. A scrub that walked the whole store would delete an identical
+    # sentence out of an unrelated project that never asked for it.
+    _write("S1", CANARY, KEEPER)
+    _write("N1", CANARY, KEEPER, project_dir=OTHER_PROJECT)
+
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+
+    neighbour = tmp_checkpoint_dir / store.project_slug(OTHER_PROJECT)
+    survived = [p for p in neighbour.rglob("*")
+                if p.is_file() and CANARY.encode() in p.read_bytes()]
+    assert survived, "forget deleted an unrelated project's data"

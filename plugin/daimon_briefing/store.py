@@ -263,6 +263,56 @@ def _plaintext_surfaces(d: Path) -> list[Path]:
     return out
 
 
+def project_surfaces(project_dir=None) -> list[Path]:
+    """`_plaintext_surfaces` narrowed to ONE project.
+
+    forget is project-scoped — its tombstone lands in one project's ledger — so
+    every surface it reads or rewrites must belong to that project. The flat
+    dir is shared: `latest.json` there is the GLOBAL pointer and may hold any
+    project's session, and session files sit side by side regardless of origin.
+    Membership is therefore decided by the payload's own `project_slug`, never
+    by the file's location.
+
+    A file whose slug cannot be read is EXCLUDED. Deleting from a surface whose
+    ownership is unknown is the failure this function exists to prevent."""
+    slug = project_slug(project_dir)
+    if not slug:
+        return []
+    out: list[Path] = []
+    for path in _plaintext_surfaces(config.checkpoint_dir()):
+        if path.parent.name == slug:
+            out.append(path)
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict) and payload.get("project_slug") == slug:
+            out.append(path)
+    return out
+
+
+def items_for_project(project_dir=None) -> list[tuple[Path, str, str, dict]]:
+    """Every identified item this project holds on ANY surface, live or not.
+
+    forget resolved targets against the live checkpoint alone, so a value that
+    had been superseded was reported as "no item matches" while its plaintext
+    sat in prev-N. Resolution has to see what deletion has to reach."""
+    found: list[tuple[Path, str, str, dict]] = []
+    for path in project_surfaces(project_dir):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for section, key in _ITEM_LISTS:
+            for item in ((payload.get(section) or {}).get(key) or []):
+                if isinstance(item, dict) and item.get("id"):
+                    found.append((path, section, key, item))
+    return found
+
+
 def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
     """Remove every item folding to `content_hash` from all plaintext surfaces.
 
@@ -274,9 +324,8 @@ def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
     """
     if not content_hash:
         return []
-    d = config.checkpoint_dir()
     rewritten: list[str] = []
-    for path in _plaintext_surfaces(d):
+    for path in project_surfaces(project_dir):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
