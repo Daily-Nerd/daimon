@@ -19,6 +19,18 @@ def test_full_fits_size_budget():
     # line, which left the body BIGGER and less readable while the gauge read
     # green.  Measure the size, and cap line length separately so re-wrapping
     # is free and only real growth has to argue for itself.
+    #
+    # Where 8,000 comes from, since the number is fair to ask about: unlike
+    # the 2,000-char compact cap above, this is NOT a host or product limit.
+    # Nothing truncates a SKILL.md.  It is a RATCHET, and the thing it
+    # ratchets against is the only failure mode this file has ever had —
+    # growing because every single addition was individually small and
+    # individually reasonable.  The number is the size at the last deliberate
+    # review (7,569 chars, 2026-08-05) plus about six percent: loose enough
+    # that rewrapping and wording fixes never trip it, tight enough that a
+    # new SECTION has to be argued for in review instead of absorbed.  Raising
+    # it is allowed; doing so silently, as part of a change about something
+    # else, is what this is here to prevent.
     full = skill_content.render_full()
     assert len(full) <= 8000, f"full body is {len(full)} chars (cap 8000)"
 
@@ -162,8 +174,18 @@ def test_full_body_budget_cannot_be_bought_with_long_lines():
     # length too, or the next author faces the same pressure with no room.
     # Body only: the frontmatter `description` is a single unwrappable field
     # and is not what this guards.
+    #
+    # 100 is this file's own prose convention plus slack, not a guess.  The
+    # body wraps by hand: median line 70, p90 77, and after the intro
+    # paragraph was wrapped the longest real line is 91.  The first version of
+    # this guard shipped at 200 — which was not derived from anything, it was
+    # just above the one 192-char line the body still had, an UNWRAPPED line,
+    # which is precisely the shape the cap exists to catch.  A cap set above
+    # the defect it is watching for is decoration.  At 100 a folded section
+    # fails on sight, an over-long sentence gets rewrapped for free, and a
+    # genuinely unwrappable line (a long command example) still fits.
     longest = max(skill_content._FULL_BODY.splitlines(), key=len)
-    assert len(longest) <= 200, (
+    assert len(longest) <= 100, (
         f"{len(longest)}-char line defeats the size budget: {longest[:70]}...")
 
 

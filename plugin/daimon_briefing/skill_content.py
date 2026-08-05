@@ -24,7 +24,9 @@ _DESCRIPTION = (
 _FULL_BODY = """\
 # Using daimon memory
 
-Daimon keeps cross-session memory on this machine: sessions are serialized into local checkpoints; `daimon brief` renders what past sessions knew. Everything is local — nothing is transmitted.
+Daimon keeps cross-session memory on this machine: sessions are serialized
+into local checkpoints; `daimon brief` renders what past sessions knew.
+Everything is local — nothing is transmitted.
 
 ## Session start
 
