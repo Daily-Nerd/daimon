@@ -982,15 +982,22 @@ def _cmd_refute_add(args) -> int:
     else:
         _print_refutation(record, detailed=True)
         if record["state"] == "candidate":
-            print(f"  Next: daimon refute ratify {ref_id} --project {project}")
+            # An agent-authored candidate never gets handed its own escalation
+            # command; activation is a decision the human has to reach.
+            if args.by == "human":
+                print(f"  Next: daimon refute ratify {ref_id} "
+                      f"--by human --project {project}")
+            else:
+                print("  Candidate recorded. Activation requires an explicit "
+                      "human decision.")
     return 0
 
 
 def _cmd_refute_ratify(args) -> int:
     project = _resolve_project(args.project)
     try:
-        refutations.ratify(args.refutation_id, note=args.note or "",
-                           project_dir=project)
+        refutations.ratify(args.refutation_id, authority=args.by,
+                           note=args.note or "", project_dir=project)
     except refutations.RefutationError as exc:
         print(f"refutation not ratified: {exc}")
         return 1
@@ -3687,6 +3694,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr_ratify = refute_sub.add_parser(
         "ratify", help="explicitly activate a candidate as a human decision")
     pr_ratify.add_argument("refutation_id", help="exact r-… id")
+    pr_ratify.add_argument(
+        "--by", choices=["agent", "human"], required=True,
+        help="declared authority; only --by human may ratify")
     pr_ratify.add_argument("--note", help="optional ratification rationale")
     pr_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pr_ratify.add_argument("--json", action="store_true", help="machine-readable output")

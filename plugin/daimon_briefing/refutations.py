@@ -163,6 +163,24 @@ def _scrub_list(values: list[str]) -> list[str]:
     return out
 
 
+def _is_torn(path) -> bool:
+    """True when the last append died before writing its terminator.
+
+    Appending onto an unterminated line fuses two rows into one unparseable
+    line, and `events` drops malformed lines silently — so the new row would
+    vanish while its command still reported success.  A torn write must cost
+    exactly the torn row.
+    """
+    try:
+        if path.stat().st_size == 0:
+            return False
+        with path.open("rb") as handle:
+            handle.seek(-1, 2)
+            return handle.read(1) != b"\n"
+    except OSError:
+        return False
+
+
 def append(row: dict, project_dir=None) -> bool:
     """Append one admitted lifecycle row.  Never mutates another ledger."""
     if config.is_disabled():
@@ -173,8 +191,14 @@ def append(row: dict, project_dir=None) -> bool:
     # Nested free-text arrays are scrubbed before the flat row crosses the
     # policy seam.  The admitted row object itself is the one written, keeping
     # the write-audit correlation exact.
-    row["anchors"] = _scrub_list(list(row.get("anchors") or []))
-    row["evidence"] = _scrub_list(list(row.get("evidence") or []))
+    #
+    # Only keys the caller actually set are scrubbed.  `revise` uses absence to
+    # mean "unchanged" and `fold` reads key presence as "replace", so forging
+    # an empty list here would silently clear the field on every revision that
+    # did not name it — which is how an active guard loses its anchors.
+    for key in ("anchors", "evidence"):
+        if key in row:
+            row[key] = _scrub_list(list(row[key] or []))
     admitted = policy.admit_row(
         row,
         redact_fields=(
@@ -183,6 +207,8 @@ def append(row: dict, project_dir=None) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
+            if _is_torn(path):
+                handle.write("\n")
             handle.write(json.dumps(admitted, ensure_ascii=False) + "\n")
         return True
     except OSError:
@@ -280,7 +306,14 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             if "anchors" in row:
                 current["anchors"] = list(row.get("anchors") or [])
             if "evidence" in row:
-                current["evidence"] = list(row.get("evidence") or [])
+                # New evidence accrues; it never replaces.  Dropping the
+                # citation that justified the original verdict would leave an
+                # active record no one can check against what it was built on.
+                merged = list(current.get("evidence") or [])
+                for source in row.get("evidence") or []:
+                    if source not in merged:
+                        merged.append(source)
+                current["evidence"] = merged
             current["state"] = (
                 "active" if row.get("ratified") is True
                 and row.get("authority") == "human" else "candidate")
@@ -355,14 +388,21 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     return ref_id
 
 
-def ratify(refutation_id: str, *, note: str = "", project_dir=None) -> None:
+def ratify(refutation_id: str, *, authority: str, note: str = "",
+           project_dir=None) -> None:
+    # Ratification is the transition that makes a record load-bearing, so it
+    # carries the same declared authority every other mutation does.  Stamping
+    # "human" unconditionally would leave the fold checking a constant this
+    # module had just written to itself.
+    if authority != "human":
+        raise RefutationError("only --by human may ratify a refutation")
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")
     if current["state"] == "overturned":
         raise RefutationError(
             "an overturned refutation cannot be ratified; revise it with new evidence first")
-    row = _stamp("ratified", refutation_id, "human")
+    row = _stamp("ratified", refutation_id, authority)
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir):
         raise RefutationError("ratification not written")

@@ -394,7 +394,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ctx["refutation_id"] = refutations.make_id(subject, scope)
 
     def r_refute_ratify():
-        run(["refute", "ratify", ctx["refutation_id"]], 0)
+        run(["refute", "ratify", ctx["refutation_id"], "--by", "human"], 0)
 
     def r_refute_revise():
         run([

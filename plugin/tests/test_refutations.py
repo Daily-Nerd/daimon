@@ -44,7 +44,8 @@ def test_human_must_explicitly_ratify_for_active_state(tmp_checkpoint_dir):
     candidate = _assert(authority="human")
     assert refutations.get(candidate, project_dir=PROJECT)["state"] == "candidate"
 
-    refutations.ratify(candidate, note="scope accepted", project_dir=PROJECT)
+    refutations.ratify(candidate, authority="human", note="scope accepted",
+                       project_dir=PROJECT)
     record = refutations.get(candidate, project_dir=PROJECT)
     assert record["state"] == "active"
     assert record["activation"] == "human-ratified"
@@ -110,7 +111,7 @@ def test_guard_fires_on_exact_issue_anchor_not_broad_topic(tmp_checkpoint_dir):
 def test_guard_excludes_candidates_and_overturned_records(tmp_checkpoint_dir):
     ref_id = _assert()
     assert refutations.guard("revisit #502", project_dir=PROJECT) == []
-    refutations.ratify(ref_id, project_dir=PROJECT)
+    refutations.ratify(ref_id, authority="human", project_dir=PROJECT)
     refutations.overturn(
         ref_id, authority="human", evidence=["measurement:valid replacement"],
         project_dir=PROJECT)
@@ -206,7 +207,7 @@ def test_cli_refute_lifecycle_and_json_output(
     assert candidate["state"] == "candidate"
 
     ref_id = candidate["refutation_id"]
-    assert cli.main(["refute", "ratify", ref_id, "--json"]) == 0
+    assert cli.main(["refute", "ratify", ref_id, "--by", "human", "--json"]) == 0
     active = json.loads(capsys.readouterr().out)
     assert active["state"] == "active"
 
@@ -335,7 +336,7 @@ def test_unknown_and_terminal_lifecycle_transitions_are_refused(
         tmp_checkpoint_dir):
     unknown = "r-000000000000"
     with pytest.raises(refutations.RefutationError, match="unknown refutation"):
-        refutations.ratify(unknown, project_dir=PROJECT)
+        refutations.ratify(unknown, authority="human", project_dir=PROJECT)
     with pytest.raises(refutations.RefutationError, match="unknown refutation"):
         refutations.revise(
             unknown, authority="agent", verdict="new verdict",
@@ -350,7 +351,7 @@ def test_unknown_and_terminal_lifecycle_transitions_are_refused(
         ref_id, authority="human", evidence=["measurement:run-2"],
         project_dir=PROJECT)
     with pytest.raises(refutations.RefutationError, match="cannot be ratified"):
-        refutations.ratify(ref_id, project_dir=PROJECT)
+        refutations.ratify(ref_id, authority="human", project_dir=PROJECT)
     with pytest.raises(refutations.RefutationError, match="already overturned"):
         refutations.overturn(
             ref_id, authority="human", evidence=["measurement:run-3"],
@@ -386,7 +387,7 @@ def test_lifecycle_write_failures_are_visible(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setattr(refutations, "append", lambda *_args, **_kwargs: False)
 
     with pytest.raises(refutations.RefutationError, match="ratification not written"):
-        refutations.ratify(ref_id, project_dir=PROJECT)
+        refutations.ratify(ref_id, authority="human", project_dir=PROJECT)
     with pytest.raises(refutations.RefutationError, match="revision not written"):
         refutations.revise(
             ref_id, authority="agent", verdict="new verdict",
@@ -407,7 +408,7 @@ def test_search_rejects_unknown_state_and_skips_nonmatches(tmp_checkpoint_dir):
 
 
 @pytest.mark.parametrize(("args", "message"), (
-    (["refute", "ratify", "r-000000000000"], "not ratified"),
+    (["refute", "ratify", "r-000000000000", "--by", "human"], "not ratified"),
     (["refute", "revise", "r-000000000000", "--verdict", "new verdict",
       "--evidence", "measurement:run-2", "--by", "agent"], "not revised"),
     (["refute", "overturn", "r-000000000000", "--evidence",
@@ -492,3 +493,72 @@ def test_cli_guard_renders_revisit_condition_and_multiple_exact_matches(
     assert "Revisit when:" in output
     assert "+ 1 more exact match(es)" in output
     assert first in output or second in output
+
+
+def test_revision_without_anchors_keeps_the_guard_rail(tmp_checkpoint_dir):
+    # A revision that never mentions anchors must not disarm the guard: the
+    # `is not None` sentinel in revise() means "unchanged", and append() must
+    # not forge the key into the row and make fold() read it as a replacement.
+    ref_id = _assert(authority="human", ratified=True)
+    assert refutations.guard("should we revisit #502?", project_dir=PROJECT)
+
+    refutations.revise(
+        ref_id, authority="human", ratified=True,
+        revisit_when="a second receipt corpus exists",
+        evidence=["measurement:second corpus"], project_dir=PROJECT)
+
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["anchors"] == ["issue:502", "command:daimon-why"]
+    assert refutations.guard("should we revisit #502?", project_dir=PROJECT)
+
+
+def test_revision_keeps_the_founding_evidence(tmp_checkpoint_dir):
+    # An evidence ledger that drops the citation which justified the verdict
+    # leaves an unfalsifiable active record.  New evidence accrues, it does
+    # not replace.
+    ref_id = _assert(authority="human", ratified=True)
+
+    refutations.revise(
+        ref_id, authority="human", ratified=True,
+        verdict="whole-file hashes prove files, never individual claims",
+        evidence=["measurement:second corpus"], project_dir=PROJECT)
+
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record["evidence"] == [
+        "measurement:566/623 origin misses", "measurement:second corpus"]
+
+
+def test_ratify_requires_declared_human_authority(tmp_checkpoint_dir):
+    # `ratify` is the transition that creates load-bearing state, so it must
+    # carry the same declared authority every other mutation does.
+    ref_id = _assert(authority="agent")
+    with pytest.raises(refutations.RefutationError, match="only --by human"):
+        refutations.ratify(ref_id, authority="agent", project_dir=PROJECT)
+    assert refutations.get(ref_id, project_dir=PROJECT)["state"] == "candidate"
+
+
+def test_cli_ratify_requires_an_explicit_by(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    ref_id = _assert(authority="agent")
+    with pytest.raises(SystemExit):
+        cli.main(["refute", "ratify", ref_id])
+    assert refutations.get(ref_id, project_dir=PROJECT)["state"] == "candidate"
+
+
+def test_a_torn_trailing_line_never_swallows_the_next_event(tmp_checkpoint_dir):
+    # An append interrupted before its terminator must cost exactly the torn
+    # row.  Concatenating onto it would fuse two rows into one unparseable
+    # line, and events() drops malformed lines silently — so a human overturn
+    # would report success while the guard stayed armed.
+    ref_id = _assert(authority="human", ratified=True)
+    path = refutations._path(PROJECT)
+    path.write_text(path.read_text(encoding="utf-8")[:-1], encoding="utf-8")
+
+    refutations.overturn(
+        ref_id, authority="human",
+        evidence=["measurement:contrary replay"], project_dir=PROJECT)
+
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record is not None, "the torn line swallowed the overturn"
+    assert record["state"] == "overturned"
