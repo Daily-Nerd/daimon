@@ -129,19 +129,44 @@ Consequently extraction has not earned write authority. V1 must be authored.
 A later independent run can test whether extraction may propose candidates;
 it can never activate them by itself.
 
-## Decision against the issue's original gate
+## Deviation from the registered stop rule
 
-Issue #573 said:
+**This section records a protocol deviation, not a finding.** The rule below was
+registered before the data were seen. It was not followed. What follows is the
+argument for departing from it, offered so a reader can judge the departure
+rather than discover it.
+
+The registered gate, verbatim:
 
 - study 1 fires and study 2 fires → full design;
 - study 1 fires and study 2 does not → rendering only;
 - study 1 does not fire → close with numbers.
 
-The stricter preregistration exposed a fourth state: **insufficient recurrence
-sample, one real failure, and a falsified prevention mechanism**. Closing would
-discard a verified cross-session failure. Approving the full design would
-overstate weak evidence.
+Study 1 did not fire (1/13, 7.7%, Wilson 95% [1.4%, 33.3%]; the rule required
+two independent re-arms or one `re_run`/`rebuilt`). **Under the rule as
+registered, the outcome is "close with numbers."** Shipping a v1 instead is a
+departure decided after the results were known.
 
-The justified move is a smaller, instrumented v1: authored ledger, explicit
-rendering, exact-anchor lookup, and deliberation-time guarding. Its own usage,
-false-veto, and prevention receipts decide whether proactive surfaces expand.
+The argument for departing: the preregistration admitted only three states and
+the observed one is a fourth — insufficient recurrence sample, one real verified
+failure, and a falsified prevention mechanism. Closing would discard a verified
+cross-session failure; approving the full design would overstate weak evidence.
+The chosen move is a smaller, instrumented v1: authored ledger, explicit
+rendering, exact-anchor lookup, and deliberation-time guarding, whose own usage,
+false-veto and prevention receipts decide whether proactive surfaces expand.
+
+That argument may well be right. It is still a post-hoc amendment to a rule
+written to prevent exactly this, and the honest label for the evidence behind v1
+is **permitted by amendment**, not **preregistered**. A reader who wants the
+stricter reading should treat study 1 as closed and v1 as unjustified by it.
+
+Two auditability defects follow from this, both real:
+
+- The gate above is quoted here because it **no longer appears in issue #573**.
+  The only surviving copy of the registered stop rule is inside the document that
+  departs from it, which is precisely the arrangement preregistration exists to
+  prevent. It should be restored to the issue verbatim.
+- A fourth state discovered after unblinding cannot be distinguished, from the
+  outside, from a state constructed to fit the result. Future studies in this
+  repository should register an explicit "none of the above" branch and name in
+  advance who may invoke it.

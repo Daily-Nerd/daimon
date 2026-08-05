@@ -15,10 +15,14 @@ one machine. Every fire below is a false positive by construction.
 The single fire came from a refutation anchored `issue:48` matching a bare `#48`
 in an unrelated project's text.
 
-**The subject rail never fired.** That includes the entry deliberately seeded
-with the short generic subject `add caching`. The eight-character floor plus the
-verbatim-substring requirement makes that rail very conservative on real data.
-A false subject hit is constructible by hand, but it did not occur once here.
+**The subject rail did not fire on any of these six probes.** That includes the
+entry deliberately seeded with the short generic subject `add caching`. The
+eight-character floor plus the verbatim-substring requirement makes that rail
+conservative on real data. A false subject hit is constructible by hand, but it
+did not occur here.
+
+Six probes is the whole of the subject-rail evidence in this study. The scaling
+run below cannot add to it, for a reason given there.
 
 ## Scaling with ledger size
 
@@ -32,8 +36,23 @@ received at least one fire.
 | 60 | 1.209% | 1.092% | 0.364–2.427% | 0.121–3.641% |
 | 100 | 2.014% | 2.002% | 0.971–3.519% | 0.728–4.733% |
 
-The subject rail did not fire in any of the 800 runs. Every fire in this table
-is the anchor rail.
+Every fire in this table is the anchor rail.
+
+**The subject rail's silence here carries no information, and an earlier version
+of this document reported it as though it did.** The scaling run seeds subjects
+as `rejected approach number {i} in the daimon serialize path`. The subject rail
+requires the record's whole subject as a verbatim substring of the query, and
+this corpus is by construction drawn from projects other than this repository,
+so that string cannot occur in it. The 800 runs contain zero informative subject
+comparisons, not 800 passing ones. "The subject rail did not fire in any of the
+800 runs" has been removed from this section.
+
+This study also has **no positive control for the subject rail**: nothing in it
+demonstrates that the rail can fire at all, so a silent rail and a broken rail
+are indistinguishable from these results alone. The only evidence the rail works
+is a unit test (`plugin/tests/test_refutations.py`). A future revision should
+seed at least one subject drawn from the corpus itself, so that a zero is a
+measurement rather than a construction.
 
 ### The previous slope is withdrawn
 
@@ -43,10 +62,32 @@ active refutations". That seed sits near the bottom of the distribution: at 60
 records it drew 0.607% against a mean of 1.209%, so the published curve
 understated the rate by about half.
 
-**The linearity survives, and is now much better supported.** Per active
-refutation the mean rate is 0.0188, 0.0204, 0.0202 and 0.0201 percent at the
-four sizes: flat across a sixteenfold range of ledger size. The corrected slope
-is about **two percent per hundred active refutations** on this corpus, not one.
+Per active refutation the mean rate is 0.0188, 0.0204, 0.0202 and 0.0201 percent
+at the four sizes: flat across a sixteenfold range of ledger size. The corrected
+slope is about **two percent per hundred active refutations** on this corpus,
+not one.
+
+**That flatness is not a measurement of the rails, and an earlier version of this
+document read it as one.** The whole table reproduces from a model containing no
+guard code, no ledger and no records, using only "sample k anchors from 1-581,
+do any of them appear in this text's `#N` set": 0.117 / 0.394 / 1.180 / 1.973
+percent against the 0.113 / 0.407 / 1.209 / 2.014 above. For sampling without
+replacement against a fixed target set, the hit rate is approximately
+`k · |S| / 581` while coverage is low, so it is linear **by construction**. The
+flat per-record figures are the sampling design restated, not a property the
+guard was measured to have. The claim "the linearity survives, and is now much
+better supported" is withdrawn.
+
+What the scaling run does establish is the **constant**, roughly 0.0197 percent
+per active refutation on this corpus, and the spread around it. Those are real
+and are what the rest of this document uses.
+
+Where the linear reading dies is computable and was not stated: only 83 of the
+824 texts contain any in-range `#N` at all, so the rate has a **hard ceiling of
+10.073 percent** no ledger size can exceed. Saturation is still mild at the sizes
+discussed below (at 200 records the true mean is 3.810 percent against 4.03 from
+the linear reading), so the extrapolation there survives; by 300 records the gap
+is wider (5.598 percent actual) and past that the linear reading is wrong.
 
 **A point estimate is not usable here.** At 60 records the p05–p95 interval
 spans 0.364% to 2.427%, nearly sevenfold. Which issues a project's refutations
@@ -146,8 +187,14 @@ primary instrument, and this study is not evidence that it works.
   distinct numbers; a handful of new texts referencing a high `#N` would move it.
   Nothing here should be turned into a hard-coded safe range.
 - Sizes 6 through 100 are measured. The two-hundred-record reading above is an
-  extrapolation from a slope that is flat over the measured range, and nothing
-  here establishes that it stays flat.
+  extrapolation. It is checked against the saturating model rather than assumed
+  (3.810 percent actual against 4.03 linear), but it remains an extrapolation.
+- The scaling table measures the **anchor draw**, not the guard. Its shape is
+  fixed by the sampling design, and a model with no guard in it reproduces the
+  table. Only the constant and the spread are results.
+- **Nothing here measures the subject rail.** The scaling run cannot fire it by
+  construction, and there is no positive control. Six probes in the fixed arm are
+  the entire subject-rail evidence.
 
 ## Follow-on
 

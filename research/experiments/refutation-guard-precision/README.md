@@ -53,8 +53,14 @@ seeded all 60 once and filtered hits down to the anchors nominally active at
 each size. That filter passed every *subject*-rail hit through unconditionally,
 so all 60 subject records were live in the size-6 and size-20 conditions too,
 and only the anchor rail actually scaled. It did not corrupt the published
-counts, because the subject rail never fired at all, but the design could not
-have detected it if it had.
+counts, because no subject-rail hit occurred, but the design could not have
+detected it if one had.
+
+That the subject rail records no hits in the scaling run is a property of how
+the run seeds subjects, not evidence about the rail. See `RESULTS.md`: the run
+has no positive control for the subject rail, and a zero there is not a
+measurement. Adding a subject drawn from the corpus itself, so a zero becomes
+informative, is owed and would require re-running all 200 seeds.
 
 **One seed is one draw, and the draw dominates.** A sample that lands on `#3`
 and `#12` measures a different world from one that lands on `#481` and `#522`,
