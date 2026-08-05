@@ -1690,6 +1690,61 @@ def test_cli_handoff_records_event_and_confirms(tmp_checkpoint_dir, capsys):
     assert h["note"] == "Build the MCP server next. Gotcha: cd plugin first."
 
 
+def test_cli_handoff_warns_when_superseding_unconsumed_baton(
+        tmp_checkpoint_dir, capsys):
+    # #571: latest-wins is the contract, but replacing a baton no session has
+    # consumed yet must SAY so — the superseded text never surfaces again
+    # (batons are ref-less events, outside ranking/recall/carry).
+    assert cli.main(["handoff", "Finish the adapter. Beware: flaky test.",
+                     "--project", "/p/A"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["handoff", "Ship the release next.", "--project", "/p/A"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "supersed" in captured.err
+    assert "Finish the adapter. Beware: flaky test." in captured.err
+    assert "handoff recorded" in captured.out
+    from daimon_briefing import store
+    assert store.active_handoff("/p/A")["note"] == "Ship the release next."
+
+
+def test_cli_handoff_no_warning_on_first_baton(tmp_checkpoint_dir, capsys):
+    assert cli.main(["handoff", "do X", "--project", "/p/A"]) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_cli_handoff_no_warning_after_baton_consumed(
+        tmp_checkpoint_dir, capsys):
+    # Consumed = two distinct non-introspection sessions serialized after the
+    # write (store.active_handoff's own rule) — a consumed baton did its job,
+    # replacing it is not a supersede.
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "events.jsonl").write_text(json.dumps(
+        {"ts": "2026-08-02T10:00:00Z", "kind": "handoff", "item_ref": "",
+         "status": "active", "note": "old consumed baton",
+         "source": "cli"}) + "\n")
+    for name, created, sid in (("prev-1.json", "2026-08-02T10:05:00Z",
+                                "S-writer"),
+                               ("latest.json", "2026-08-02T12:00:00Z",
+                                "S-consumer")):
+        (d / name).write_text(json.dumps(
+            {"session_id": sid, "created": created,
+             "working_context": {}, "epistemic_snapshot": {}}))
+    assert store.active_handoff("/p/A") is None
+    assert cli.main(["handoff", "fresh baton", "--project", "/p/A"]) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_cli_handoff_clear_never_warns(tmp_checkpoint_dir, capsys):
+    # --clear is explicit retraction intent; warning would be noise.
+    assert cli.main(["handoff", "do X", "--project", "/p/A"]) == 0
+    assert cli.main(["handoff", "--clear", "--project", "/p/A"]) == 0
+    assert capsys.readouterr().err == ""
+
+
 def test_cli_handoff_refuses_over_cap(tmp_checkpoint_dir, capsys):
     from daimon_briefing import store
 

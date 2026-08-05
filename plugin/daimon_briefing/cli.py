@@ -1196,6 +1196,17 @@ def _cmd_handoff(args) -> int:
               f"({len(text)}) — a handoff is \"do X first, beware Y\", not a "
               "second checkpoint; trim it", file=sys.stderr)
         return 1
+    # #571: latest-wins stays the contract, but replacing a baton no session
+    # has consumed yet must not be silent — the superseded text never
+    # surfaces again (ref-less events sit outside ranking/recall/carry).
+    # active_handoff already encodes "unconsumed" (None after two distinct
+    # non-introspection serializes) and is fail-open, so a broken read warns
+    # about nothing rather than blocking the write.
+    prior = store.active_handoff(project)
+    if prior:
+        print("warning: superseding an unconsumed baton — its text below "
+              "never surfaces again; fold anything still relevant into the "
+              f"new baton:\n  {prior['note']}", file=sys.stderr)
     if not store.append_event("", "active", note=text, kind="handoff",
                               project_dir=project):
         print("error: handoff not recorded (daimon disabled or project "
