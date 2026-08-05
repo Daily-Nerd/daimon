@@ -1,22 +1,22 @@
 ---
-id: 0
+id: 42
 type: landmine
 title: "A ledger writer must normalise only keys the caller set — in an append-only stream the ABSENCE of a key is data, and a fold that reads presence as intent will silently clear the field"
 severity: high
 confidence: 0.9
 created: 2026-08-05
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/refutations.py
   - path: plugin/daimon_briefing/policy.py
   - path: plugin/daimon_briefing/store.py
 evidence:
   - pr: 575
-  - note: "2026-08-05 review of #575: `refute revise` without --anchor cleared every anchor, so guard() stopped matching while `refute show` still rendered [active . human-ratified]. Reproduced independently by two reviewers in isolated DAIMON_CHECKPOINT_DIR dirs; the repo's own suite drove the failing sequence and passed."
+  - note: 2026-08-05 review of #575: `refute revise` without --anchor cleared every anchor, so guard() stopped matching while `refute show` still rendered [active . human-ratified]. Reproduced independently by two reviewers in isolated DAIMON_CHECKPOINT_DIR dirs; the repo's own suite drove the failing sequence and passed.
 expires:
   condition: "no ledger fold distinguishes replace-from-unchanged by key presence (e.g. every partial update carries an explicit clear flag)"
   review_after: 2027-02-05
-status: candidate
+status: active
 ---
 
 `refutations.append` normalised every row with an unconditional
