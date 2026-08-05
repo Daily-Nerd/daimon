@@ -1122,7 +1122,13 @@ def _cmd_refute_guard(args) -> int:
     except refutations.RefutationError as exc:
         print(f"refutation guard refused: {exc}")
         return 1
-    _note_usage("refute:guard")
+    # #581: split by outcome and rail, the way `resolve` splits its tags. One
+    # aggregate count cannot separate a hit from a miss, so the false-veto rate
+    # the design named as its own expansion gate is uncomputable from field
+    # data. The rails also differ in precision, so the hit tag names which one
+    # fired: an aggregate cannot say which rail generates the noise.
+    _note_usage(f"refute:guard:hit:{rows[0]['guard_match']['rail']}"
+                if rows else "refute:guard:miss")
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, sort_keys=True))
     elif not rows:

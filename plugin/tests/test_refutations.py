@@ -495,6 +495,44 @@ def test_cli_guard_renders_revisit_condition_and_multiple_exact_matches(
     assert first in output or second in output
 
 
+def _usage_tags():
+    from daimon_briefing import config
+    path = config.log_dir() / "usage.log"
+    if not path.exists():
+        return []
+    return [parts[1] for parts in
+            (line.split() for line in path.read_text(encoding="utf-8").splitlines())
+            if len(parts) == 2]
+
+
+def test_guard_records_hit_and_miss_separately(tmp_checkpoint_dir, monkeypatch):
+    # #581: a single `refute:guard` tag makes a hit and a miss
+    # indistinguishable, so the false-veto rate the design named as its own
+    # gate cannot be computed from field data.  `resolve` already splits its
+    # tags by outcome; this follows it.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _assert(authority="human", ratified=True)
+
+    assert cli.main(["refute", "guard", "revisit", "#502"]) == 0
+    assert cli.main(["refute", "guard", "an unrelated question about colours"]) == 0
+
+    tags = _usage_tags()
+    assert "refute:guard:hit:anchor" in tags
+    assert "refute:guard:miss" in tags
+
+
+def test_guard_attributes_the_subject_rail(tmp_checkpoint_dir, monkeypatch):
+    # The two rails have different precision, so an aggregate hit count cannot
+    # tell you which one is generating the noise.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _assert(subject="the abandoned receipt redesign", scope="receipt tiers",
+            authority="human", ratified=True)
+
+    assert cli.main(
+        ["refute", "guard", "should we do the abandoned receipt redesign"]) == 0
+    assert "refute:guard:hit:subject" in _usage_tags()
+
+
 def test_show_states_that_evidence_is_unverified(tmp_checkpoint_dir, monkeypatch, capsys):
     # #576: the evidence line sits in the same Label: value register as
     # Provenance and Authority, which ARE derived from recorded lifecycle
