@@ -951,6 +951,42 @@ def daimon_output_ids(messages) -> set:
             and (mid := _message_id(m)) is not None}
 
 
+def extraction_messages(messages):
+    """Messages as the EXTRACTOR should see them: daimon's own tool output
+    blanked (#577).
+
+    Until this existed the two halves disagreed. `stripped_transcript` blanked
+    a `daimon_output` row so quote verification could not accept daimon as a
+    witness for its own claim, while the extractor kept reading the same rows
+    raw. Verification is quote-scoped, so an item could carry a real assistant
+    sentence in `quote` and daimon's own output in `text`/`because`/`scene`,
+    and arrive at `verbatim` with content the defense was built to keep out.
+    Measured on #575's guard: one derived belief was correctly downgraded to
+    `inferred`, one derived decision landed `verbatim`.
+
+    Blanked, never dropped: `[mN]` markers are positional over the full list,
+    so removing a row would renumber every later citation.
+
+    What this costs, measured rather than assumed. Chunk-cache keys derive from
+    chunk text (#48), so blanking shifts chunk boundaries and invalidates
+    entries: 28.6% of chunks over 1,166 real transcripts, against a cache that
+    reaps itself every `chunk_cache_days` (3). It is a one-time re-extraction
+    of a store that fully rotates twice a week.
+
+    What it does NOT cost: content. Of 616 items across 12 checkpoint chains,
+    156 had text appearing verbatim in the brief rendered from their own prior
+    checkpoint, and 156 of 156 were already stored in that bucket. Nothing here
+    is the only copy of anything. Carry works off checkpoint data, not off the
+    extractor's input, so carried items are untouched either way.
+
+    Open and deliberately not claimed: whether the brief as CONTEXT helps the
+    extractor interpret the session's own content. Substring matching cannot
+    see reworded reuse, and no retrospective can measure a context effect.
+    """
+    return [dict(m, content="") if isinstance(m, dict) and m.get("daimon_output")
+            else m for m in (messages or [])]
+
+
 def stripped_transcript(messages) -> str:
     """`_render_transcript`'s text with every message's injected spans removed
     — the whole-transcript VERIFICATION haystack (#440).
@@ -2020,7 +2056,11 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise LLMCallError("deadline exhausted before the first LLM call")
 
-    transcript_text = _render_transcript(messages)
+    # #577: the extractor reads daimon's own tool output blanked, the same way
+    # verification already refuses to read it as a witness. `messages` stays
+    # unblanked below — verification, grounding and the [mN] markers all key on
+    # the original list.
+    transcript_text = _render_transcript(extraction_messages(messages))
     chunks = chunk_transcript(transcript_text, config.chunk_lines(), config.chunk_overlap())
 
     # #314: DAIMON_TIMEOUT is the field-derived floor for ONE slow call (#284,
