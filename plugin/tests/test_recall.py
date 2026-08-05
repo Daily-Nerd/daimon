@@ -1737,9 +1737,16 @@ def test_rebuild_scrubs_forgotten_value_sibling_id_in_older_session(
     assert d_id != q_id  # sibling ids: one value, two sections
 
     assert cli.main(["forget", q_id]) == 0  # the real path, latest session
-    # forget rewrote only the latest session; the older checkpoint still holds
-    # the value verbatim under the sibling id — exactly what rebuild re-indexes.
-    assert s in old_file.read_text(encoding="utf-8")
+    # This assertion used to require the OPPOSITE: it pinned that the older
+    # checkpoint still held the value verbatim under the sibling id, because
+    # forget only ever rewrote the live checkpoint. That made the residue
+    # expected behaviour, which is how it survived to a release — the byte-level
+    # defect was load-bearing in a passing test.
+    #
+    # forget now scrubs every plaintext surface, so the value is gone from the
+    # superseded file too. What this test is actually for is unchanged and still
+    # asserted below: rebuild must not resurrect a forgotten value under ANY id.
+    assert s not in old_file.read_text(encoding="utf-8")
 
     recall.rebuild()
     texts = [h["text"] for h in recall.search("adopt", all_projects=True)]

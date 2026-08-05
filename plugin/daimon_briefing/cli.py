@@ -1007,8 +1007,16 @@ def _cmd_forget(args) -> int:
                                    == content_hash))]
     # allow_disabled (#421): the ONE write_checkpoint call that may run under
     # the kill switch — the rewrite that makes the deletion real on disk.
+    # rotate=False: rotation copies the CURRENT latest into prev-1 before
+    # writing, and the current latest is the PRE-forget bytes. Rotating here
+    # made the deletion manufacture a fresh copy of the value it was asked to
+    # remove, in a file that did not exist when the user ran the command.
     store.write_checkpoint(sid, checkpoint, project_dir=project,
-                           allow_disabled=True)
+                           allow_disabled=True, rotate=False)
+    # The live checkpoint is one surface of several. prev-N and superseded
+    # session files hold the same plaintext and were never in the contract
+    # (#419: plaintext is what puts a file inside it, not its role).
+    store.scrub_content_key(content_hash, project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
