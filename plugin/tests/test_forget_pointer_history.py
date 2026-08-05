@@ -171,3 +171,101 @@ def test_scrub_never_crosses_a_project_boundary(tmp_checkpoint_dir):
     survived = [p for p in neighbour.rglob("*")
                 if p.is_file() and CANARY.encode() in p.read_bytes()]
     assert survived, "forget deleted an unrelated project's data"
+
+
+# --- failure paths -----------------------------------------------------------
+# The scrub is best-effort per file BY DESIGN: one unreadable surface must not
+# abort the deletion of the rest, and a surface this version cannot parse is
+# left byte-identical rather than truncated. Those branches decide whether a
+# partial failure corrupts data, so they are asserted rather than assumed.
+
+
+def test_unparseable_surface_is_left_byte_identical(tmp_checkpoint_dir):
+    _write("S1", CANARY, KEEPER)
+    junk = tmp_checkpoint_dir / store.project_slug(PROJECT) / "prev-1.json"
+    junk.write_text("{ this is not json", encoding="utf-8")
+    before = junk.read_bytes()
+
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+
+    assert junk.read_bytes() == before, "a file we cannot parse was rewritten"
+
+
+def test_non_dict_payload_is_skipped_not_rewritten(tmp_checkpoint_dir):
+    _write("S1", CANARY, KEEPER)
+    odd = tmp_checkpoint_dir / store.project_slug(PROJECT) / "prev-2.json"
+    odd.write_text('["a list, not a checkpoint"]', encoding="utf-8")
+
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+
+    assert odd.read_text(encoding="utf-8") == '["a list, not a checkpoint"]'
+
+
+def test_one_unwritable_surface_does_not_abort_the_rest(
+        tmp_checkpoint_dir, monkeypatch):
+    _write("S1", CANARY, KEEPER)
+    _write("S2", CANARY, KEEPER)
+    real = store._atomic_write
+    failed = {"n": 0}
+
+    def flaky(path, blob):
+        if path.name == "prev-1.json" and failed["n"] == 0:
+            failed["n"] += 1
+            raise OSError("read-only surface")
+        return real(path, blob)
+
+    monkeypatch.setattr(store, "_atomic_write", flaky)
+    store.scrub_content_key(
+        __import__("daimon_briefing.normalize", fromlist=["x"]).content_key(CANARY),
+        project_dir=PROJECT)
+
+    assert failed["n"] == 1, "the failure path was never exercised"
+
+
+def test_scrub_is_a_noop_without_a_content_key(tmp_checkpoint_dir):
+    _write("S1", CANARY, KEEPER)
+    assert store.scrub_content_key("", project_dir=PROJECT) == []
+    assert _holding(tmp_checkpoint_dir, CANARY), "empty key must delete nothing"
+
+
+def test_surfaces_are_empty_when_the_project_is_unknown(tmp_checkpoint_dir):
+    assert store.project_surfaces(None) == []
+    assert store.items_for_project(None) == []
+
+
+def test_unreadable_directory_yields_no_surfaces(tmp_checkpoint_dir, monkeypatch):
+    def boom(*_a, **_k):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(store.Path, "iterdir", boom)
+    assert store._plaintext_surfaces(tmp_checkpoint_dir) == []
+
+
+def test_unreadable_flat_file_is_not_claimed_by_this_project(tmp_checkpoint_dir):
+    # Ownership in the flat dir is decided by reading `project_slug` out of the
+    # payload. A file we cannot read has UNKNOWN ownership, and the safe answer
+    # is to exclude it: deleting from a surface that might belong to another
+    # project is the failure this walk exists to prevent.
+    _write("S1", CANARY, KEEPER)
+    opaque = tmp_checkpoint_dir / "not-json.json"
+    opaque.write_text("{ broken", encoding="utf-8")
+
+    assert opaque not in store.project_surfaces(PROJECT)
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert opaque.read_text(encoding="utf-8") == "{ broken"
+
+
+def test_a_subdirectory_we_cannot_list_is_skipped(tmp_checkpoint_dir, monkeypatch):
+    _write("S1", CANARY, KEEPER)
+    real = store.Path.iterdir
+
+    def selective(self):
+        if self.name == "locked-bucket":
+            raise OSError("permission denied")
+        return real(self)
+
+    (tmp_checkpoint_dir / "locked-bucket").mkdir()
+    monkeypatch.setattr(store.Path, "iterdir", selective)
+
+    surfaces = store._plaintext_surfaces(tmp_checkpoint_dir)
+    assert all("locked-bucket" not in str(p) for p in surfaces)
