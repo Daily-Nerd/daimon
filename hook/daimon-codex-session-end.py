@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Codex Stop hook: checkpoint the current transcript opportunistically.
+"""Codex SessionEnd hook: checkpoint the true end of a session.
 
-Codex exposes `Stop` at turn scope. `SessionEnd` is the clean end-of-session
-event and is handled by daimon-codex-session-end.py; this hook remains as
-crash insurance, because SessionEnd cannot fire on a crash or SIGKILL.
-Serializing after every turn would be expensive, so this hook is throttled by
-DAIMON_CODEX_MIN_SERIALIZE_INTERVAL (default: 300 seconds per session). Set it
-to 0 to serialize on every Stop, or DAIMON_CODEX_SERIALIZE_ON_STOP=0 to disable
-this hook while keeping SessionStart briefing injection.
+`Stop` fires at turn scope and is throttled, so the final tail of a session is
+whatever the throttle happened to allow rather than the real end state. This
+hook is the event the Stop hook has been apologising for not having: it fires
+once, on graceful teardown, with the complete transcript.
 
-The LLM work runs detached via `daimon serialize <transcript_path>` so
-the hook returns immediately. Diagnostics land in ~/.daimon/logs/serialize.log.
+It does NOT replace the Stop hook. `run_session_end_hooks` is the last statement
+in graceful teardown, so a crash, a SIGKILL or a closed terminal window means it
+never runs. Stop stays as crash insurance for exactly that case.
+
+Deliberately unthrottled: this is the real end, not a heartbeat. It still writes
+the Stop hook's marker, so a Stop arriving moments earlier or later does not
+serialize the same transcript twice.
+
+Set DAIMON_CODEX_SERIALIZE_ON_SESSION_END=0 to disable. The LLM work runs
+detached via `daimon serialize <transcript_path>`, so the hook returns
+immediately against Codex's 3 second cap. Diagnostics land in
+~/.daimon/logs/serialize.log.
 """
 
 import json
@@ -30,6 +37,7 @@ except Exception:  # noqa: BLE001 — missing/corrupt lib must never crash the h
     lib = None
 
 STATE_DIR = Path.home() / ".daimon" / "codex"
+TAG = "codex-session-end"
 
 
 def _fallback_log(line: str) -> None:
@@ -49,54 +57,32 @@ def _fallback_log(line: str) -> None:
 def _enabled() -> bool:
     if lib.disabled():
         return False
-    val = os.environ.get("DAIMON_CODEX_SERIALIZE_ON_STOP", "1").strip().lower()
+    val = os.environ.get("DAIMON_CODEX_SERIALIZE_ON_SESSION_END", "1").strip().lower()
     return val not in ("0", "false", "no", "off")
-
-
-def _interval_seconds() -> int:
-    raw = os.environ.get("DAIMON_CODEX_MIN_SERIALIZE_INTERVAL", "300").strip()
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return 300
 
 
 def _safe_name(session_id: str) -> str:
     return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
 
 
-def _marker_path(session_id: str) -> Path:
-    return STATE_DIR / f"{_safe_name(session_id)}.last-stop"
-
-
-def _should_spawn(session_id: str) -> bool:
-    interval = _interval_seconds()
-    if interval <= 0:
-        return True
-    try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        marker = _marker_path(session_id)
-        now = time.time()
-        if marker.exists() and now - marker.stat().st_mtime < interval:
-            return False
-        return True
-    except OSError:
-        return True
-
-
 def _mark_spawned(session_id: str) -> None:
-    if _interval_seconds() <= 0:
-        return
+    """Write the marker the Stop hook throttles against.
+
+    Unconditional, unlike the Stop hook's own version, which skips the write
+    when the interval is 0. The point here is not throttling this hook but
+    suppressing a redundant Stop for the same transcript, and that suppression
+    has to hold regardless of how the interval is configured."""
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        _marker_path(session_id).write_text(str(int(time.time())), encoding="utf-8")
+        marker = STATE_DIR / f"{_safe_name(session_id)}.last-stop"
+        marker.write_text(str(int(time.time())), encoding="utf-8")
     except OSError:
         pass
 
 
 def main() -> int:
     if lib is None:
-        _fallback_log("codex-stop: hook library missing (_daimon_hook_lib.py) - skipped")
+        _fallback_log(f"{TAG}: hook library missing (_daimon_hook_lib.py) - skipped")
         return 0
     if not _enabled():
         return 0
@@ -104,22 +90,19 @@ def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
-        lib.log("codex-stop: unparseable stdin payload - skipped")
+        lib.log(f"{TAG}: unparseable stdin payload - skipped")
         return 0
 
     transcript_path = payload.get("transcript_path", "")
     if not transcript_path or not Path(transcript_path).exists():
-        lib.log(f"codex-stop: transcript not found ({transcript_path!r}) - skipped")
+        lib.log(f"{TAG}: transcript not found ({transcript_path!r}) - skipped")
         return 0
 
     session_id = str(payload.get("session_id") or Path(transcript_path).stem)
-    if not _should_spawn(session_id):
-        lib.log(f"codex-stop: skipped serialize for {session_id} (throttled)")
-        return 0
 
     cli = lib.resolve_cli()
     if cli is None:
-        lib.log("codex-stop: `daimon` CLI not found - checkpoint skipped")
+        lib.log(f"{TAG}: `daimon` CLI not found - checkpoint skipped")
         return 0
 
     cwd = str(payload.get("cwd") or "").strip()
@@ -127,10 +110,10 @@ def main() -> int:
     try:
         lib.spawn_serialize(cli, transcript_path, child_env)
         _mark_spawned(session_id)
-        lib.log(f"codex-stop: spawned serialize for {session_id} "
+        lib.log(f"{TAG}: spawned serialize for {session_id} "
                 f"(project: {cwd or '?'}) (transcript: {transcript_path})")
     except OSError as exc:
-        lib.log(f"codex-stop: spawn failed ({type(exc).__name__}: {exc})")
+        lib.log(f"{TAG}: spawn failed ({type(exc).__name__}: {exc})")
     return 0
 
 
@@ -139,7 +122,7 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception as exc:
         if lib is not None:
-            lib.log(f"codex-stop: hook error ({type(exc).__name__}: {exc})")
+            lib.log(f"{TAG}: hook error ({type(exc).__name__}: {exc})")
         else:
-            _fallback_log(f"codex-stop: hook error ({type(exc).__name__}: {exc})")
+            _fallback_log(f"{TAG}: hook error ({type(exc).__name__}: {exc})")
         sys.exit(0)

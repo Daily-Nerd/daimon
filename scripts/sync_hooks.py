@@ -27,6 +27,7 @@ SYNC_PAIRS = (
     ("hook/daimon-windsurf-hooks.py", "plugin/daimon_briefing/_hooks/daimon-windsurf-hooks.py"),
     ("hook/daimon-codex-session-start.py", "plugin/daimon_briefing/_hooks/daimon-codex-session-start.py"),
     ("hook/daimon-codex-stop.py", "plugin/daimon_briefing/_hooks/daimon-codex-stop.py"),
+    ("hook/daimon-codex-session-end.py", "plugin/daimon_briefing/_hooks/daimon-codex-session-end.py"),
     ("hook/_daimon_hook_lib.py", "plugin/daimon_briefing/_hooks/_daimon_hook_lib.py"),
 )
 

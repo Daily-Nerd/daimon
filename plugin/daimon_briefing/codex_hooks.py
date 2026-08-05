@@ -40,6 +40,21 @@ HOOKS = (
         },
     },
     {
+        "script": "daimon-codex-session-end.py",
+        "event": "SessionEnd",
+        "entry": {
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.codex/hooks/daimon-codex-session-end.py",
+                # Codex clamps a timeout above 3 with a user-visible warning,
+                # and omitting it silently yields 1, which a cold interpreter
+                # start on a loaded machine can exceed. Set it explicitly.
+                "timeout": 3,
+                "statusMessage": "Checkpointing session...",
+            }],
+        },
+    },
+    {
         "script": "daimon-codex-stop.py",
         "event": "Stop",
         "entry": {
