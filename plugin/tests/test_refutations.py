@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -237,3 +238,257 @@ def test_disabled_refutation_write_fails_visibly(
     ])
     assert rc == 1
     assert "not written" in capsys.readouterr().out
+
+
+def test_validation_limits_and_stamp_contracts(tmp_checkpoint_dir):
+    ref_id = refutations.make_id("bad gate", "current replay")
+
+    assert refutations._path(None) is None
+    assert refutations.canonical_anchor(
+        "https://github.com/Daily-Nerd/daimon/issues/573") == "issue:573"
+
+    with pytest.raises(refutations.RefutationError, match="subject is required"):
+        refutations._text("subject", "")
+    with pytest.raises(refutations.RefutationError, match="too long"):
+        refutations._text("subject", "x" * 2001)
+    with pytest.raises(refutations.RefutationError, match="too many anchors"):
+        refutations._anchors([f"command:trial-{i}" for i in range(25)])
+    with pytest.raises(refutations.RefutationError, match="at least one"):
+        refutations._evidence([])
+    with pytest.raises(refutations.RefutationError, match="too many evidence"):
+        refutations._evidence([f"measurement:trial-{i}" for i in range(25)])
+    with pytest.raises(refutations.RefutationError, match="unknown refutation event"):
+        refutations._stamp("deleted", ref_id, "human")
+    with pytest.raises(refutations.RefutationError, match="invalid refutation id"):
+        refutations._stamp("asserted", "not-an-id", "human")
+    with pytest.raises(refutations.RefutationError, match="authority must be"):
+        refutations._stamp("asserted", ref_id, "narrator")
+
+
+def test_append_and_read_fail_soft_on_missing_scope_and_io_errors(
+        tmp_checkpoint_dir, monkeypatch):
+    row = {"anchors": [], "evidence": []}
+    assert refutations.append(row, project_dir=None) is False
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(Path, "open", fail_open)
+    assert refutations.append(row, project_dir=PROJECT) is False
+
+
+def test_events_fail_soft_on_unreadable_ledger(tmp_checkpoint_dir, monkeypatch):
+    path = refutations._path(PROJECT)
+    path.parent.mkdir(parents=True)
+    path.touch()
+
+    def fail_read(*_args, **_kwargs):
+        raise UnicodeDecodeError("utf-8", b"x", 0, 1, "invalid")
+
+    monkeypatch.setattr(Path, "read_text", fail_read)
+    assert refutations.events(project_dir=PROJECT) == []
+
+
+def test_events_ignore_structurally_invalid_rows(tmp_checkpoint_dir):
+    ref_id = refutations.make_id("bad gate", "current replay")
+    valid = refutations._stamp(
+        "asserted", ref_id, "agent", now_ns=1, event_id="valid")
+    path = refutations._path(PROJECT)
+    path.parent.mkdir(parents=True)
+    path.write_text("\n".join((
+        json.dumps([]),
+        json.dumps({"event": "deleted", "refutation_id": ref_id}),
+        json.dumps({"event": "asserted", "refutation_id": "bad"}),
+        json.dumps(valid),
+    )) + "\n", encoding="utf-8")
+
+    assert refutations.events(project_dir=PROJECT) == [dict(valid, _line=3)]
+
+
+def test_fold_ignores_duplicate_assertions_and_accepts_mechanical_activation():
+    ref_id = refutations.make_id("bad gate", "current replay")
+    asserted = refutations._stamp(
+        "asserted", ref_id, "agent", now_ns=1, event_id="asserted")
+    asserted.update({
+        "subject": "bad gate", "verdict": "does not work",
+        "scope": "current replay", "evidence": ["measurement:run-1"],
+    })
+    duplicate = dict(asserted, order=2, event_id="duplicate",
+                     verdict="a duplicate must not replace the first assertion")
+    activated = refutations._stamp(
+        "activated", ref_id, "mechanical", now_ns=3, event_id="activated")
+
+    record = refutations.fold([duplicate, activated, asserted])[ref_id]
+    assert record["verdict"] == "does not work"
+    assert record["state"] == "active"
+    assert record["activation"] == "mechanically-activated"
+
+
+def test_duplicate_assertion_requires_revision(tmp_checkpoint_dir):
+    ref_id = _assert()
+    with pytest.raises(refutations.RefutationError, match="already exists"):
+        _assert()
+    assert refutations.get(ref_id, project_dir=PROJECT)["revision"] == 1
+
+
+def test_unknown_and_terminal_lifecycle_transitions_are_refused(
+        tmp_checkpoint_dir):
+    unknown = "r-000000000000"
+    with pytest.raises(refutations.RefutationError, match="unknown refutation"):
+        refutations.ratify(unknown, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="unknown refutation"):
+        refutations.revise(
+            unknown, authority="agent", verdict="new verdict",
+            evidence=["measurement:run-2"], project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="unknown refutation"):
+        refutations.overturn(
+            unknown, authority="human", evidence=["measurement:run-2"],
+            project_dir=PROJECT)
+
+    ref_id = _assert(authority="human", ratified=True)
+    refutations.overturn(
+        ref_id, authority="human", evidence=["measurement:run-2"],
+        project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="cannot be ratified"):
+        refutations.ratify(ref_id, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="already overturned"):
+        refutations.overturn(
+            ref_id, authority="human", evidence=["measurement:run-3"],
+            project_dir=PROJECT)
+
+
+def test_revision_authority_fields_and_noop_contract(tmp_checkpoint_dir):
+    ref_id = _assert()
+    with pytest.raises(refutations.RefutationError, match="only --by human"):
+        refutations.revise(
+            ref_id, authority="agent", verdict="new verdict",
+            evidence=["measurement:run-2"], ratified=True,
+            project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="changes nothing"):
+        refutations.revise(
+            ref_id, authority="agent", evidence=["measurement:run-2"],
+            project_dir=PROJECT)
+
+    refutations.revise(
+        ref_id, authority="human", subject="narrow bad gate",
+        scope="new replay only", anchors=["issue:573"],
+        revisit_when="the replay engine changes",
+        evidence=["measurement:run-3"], project_dir=PROJECT)
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record["subject"] == "narrow bad gate"
+    assert record["scope"] == "new replay only"
+    assert record["anchors"] == ["issue:573"]
+    assert record["revisit_when"] == "the replay engine changes"
+
+
+def test_lifecycle_write_failures_are_visible(tmp_checkpoint_dir, monkeypatch):
+    ref_id = _assert()
+    monkeypatch.setattr(refutations, "append", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(refutations.RefutationError, match="ratification not written"):
+        refutations.ratify(ref_id, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="revision not written"):
+        refutations.revise(
+            ref_id, authority="agent", verdict="new verdict",
+            evidence=["measurement:run-2"], project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="overturn event not written"):
+        refutations.overturn(
+            ref_id, authority="agent", evidence=["measurement:run-2"],
+            project_dir=PROJECT)
+
+
+def test_search_rejects_unknown_state_and_skips_nonmatches(tmp_checkpoint_dir):
+    _assert()
+    with pytest.raises(refutations.RefutationError, match="unknown state"):
+        refutations.search("receipt", states={"deleted"}, project_dir=PROJECT)
+    assert refutations.search(
+        "receipt", states={"active"}, project_dir=PROJECT) == []
+    assert refutations.search("cosmic platypus", project_dir=PROJECT) == []
+
+
+@pytest.mark.parametrize(("args", "message"), (
+    (["refute", "ratify", "r-000000000000"], "not ratified"),
+    (["refute", "revise", "r-000000000000", "--verdict", "new verdict",
+      "--evidence", "measurement:run-2", "--by", "agent"], "not revised"),
+    (["refute", "overturn", "r-000000000000", "--evidence",
+      "measurement:run-2", "--by", "human"], "not overturned"),
+    (["refute", "show", "r-000000000000"], "unknown refutation"),
+))
+def test_cli_refute_reports_lifecycle_errors(
+        tmp_checkpoint_dir, monkeypatch, capsys, args, message):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    assert cli.main(args) == 1
+    assert message in capsys.readouterr().out
+
+
+def test_cli_refute_covers_json_empty_and_candidate_surfaces(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    ref_id = _assert()
+
+    assert cli.main(["refute", "show", ref_id, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["refutation_id"] == ref_id
+
+    assert cli.main(["refute", "list", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["refutation_id"] == ref_id
+
+    assert cli.main(["refute", "search", "receipt", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["refutation_id"] == ref_id
+
+    assert cli.main([
+        "refute", "revise", ref_id, "--verdict", "narrower verdict",
+        "--evidence", "measurement:run-2", "--by", "agent", "--json",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out)["revision"] == 2
+
+    assert cli.main([
+        "refute", "revise", ref_id, "--scope", "new replay only",
+        "--evidence", "measurement:run-3", "--by", "agent",
+    ]) == 0
+    assert "not load-bearing" in capsys.readouterr().out
+
+    assert cli.main([
+        "refute", "overturn", ref_id, "--evidence", "measurement:run-4",
+        "--by", "agent", "--json",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out)["refutation_id"] == ref_id
+
+    assert cli.main([
+        "refute", "list", "--project", "/p/empty-refutations",
+    ]) == 0
+    assert "no refutations" in capsys.readouterr().out
+
+    assert cli.main(["refute", "search", "cosmic", "platypus"]) == 0
+    assert "no matching refutations" in capsys.readouterr().out
+
+
+def test_cli_refute_reports_search_and_guard_errors(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+
+    def fail_search(*_args, **_kwargs):
+        raise refutations.RefutationError("search contract failed")
+
+    monkeypatch.setattr(refutations, "search", fail_search)
+    assert cli.main(["refute", "search", "receipt"]) == 1
+    assert "search contract failed" in capsys.readouterr().out
+
+    assert cli.main(["refute", "guard", "receipt", "--anchor", ""]) == 1
+    assert "anchor is required" in capsys.readouterr().out
+
+
+def test_cli_guard_renders_revisit_condition_and_multiple_exact_matches(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    first = _assert(authority="human", ratified=True)
+    second = _assert(
+        subject="second rejected receipt design", scope="second receipt tier",
+        evidence=["measurement:run-2"], anchors=["issue:502"],
+        revisit_when="the second verifier changes", authority="human",
+        ratified=True)
+
+    assert cli.main(["refute", "guard", "revisit", "#502"]) == 0
+    output = capsys.readouterr().out
+    assert "Revisit when:" in output
+    assert "+ 1 more exact match(es)" in output
+    assert first in output or second in output
