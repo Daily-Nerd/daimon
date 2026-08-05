@@ -311,14 +311,16 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             if "anchors" in row:
                 current["anchors"] = list(row.get("anchors") or [])
             if "evidence" in row:
-                # New evidence accrues; it never replaces.  Dropping the
-                # citation that justified the original verdict would leave an
-                # active record no one can check against what it was built on.
-                merged = list(current.get("evidence") or [])
-                for source in row.get("evidence") or []:
-                    if source not in merged:
-                        merged.append(source)
-                current["evidence"] = merged
+                # Replacement, not accrual.  A folded record states what is
+                # believed NOW, so `evidence` names the citations backing the
+                # CURRENT verdict; the founding citation is not lost, it is
+                # in the append-only stream that `events()` returns.
+                # Accrual shipped first and was wrong twice over: reviving an
+                # overturned record carried forward the very citation whose
+                # invalidity justified the overturn, and merging across
+                # revisions walked straight through the per-row _MAX_EVIDENCE
+                # cap (74 sources against a limit of 24).
+                current["evidence"] = list(row.get("evidence") or [])
             current["state"] = (
                 "active" if row.get("ratified") is True
                 and row.get("authority") == "human" else "candidate")

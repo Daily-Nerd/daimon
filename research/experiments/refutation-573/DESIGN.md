@@ -16,7 +16,9 @@ attention budget and makes semantic state look like ranking metadata.
 V1 should provide:
 
 1. a dedicated append-only `refutations.jsonl` stream per project;
-2. authored proposals and evidence-bound activation;
+2. authored proposals and human-ratified activation, each carrying cited
+   evidence (#576: cited, not verified — daimon shape-checks a source string
+   and never resolves the referent or judges entailment);
 3. explicit query and distinct rendering;
 4. exact-anchor guards for direct matches;
 5. a deliberation check over approaches an agent is about to recommend;

@@ -931,8 +931,24 @@ def _cmd_resolve(args) -> int:
 # ---- refute: project-level negative-knowledge ledger (#573) ----
 
 
-def _refutation_json(record: dict) -> str:
-    return json.dumps(record, ensure_ascii=False, sort_keys=True)
+def _refutation_json(record) -> str:
+    """JSON for one folded record or a list of them.
+
+    #576: every record carries `evidence_status: "cited"`.  `evidence` holds
+    typed source strings that were shape-checked and redacted on the way in and
+    never resolved — daimon does not open them, does not confirm the referent
+    exists, and does not judge whether it entails the verdict.  The text
+    renderer says so in a parenthetical; without this key a machine consumer
+    read sourced-looking strings under a key called `evidence` with nothing to
+    contradict the obvious reading.  The value is a constant today because
+    `cited` is the only status the ledger can currently earn (#581 would add a
+    resolved one).
+    """
+    def stamped(row: dict) -> dict:
+        return {**row, "evidence_status": "cited"}
+    payload = ([stamped(row) for row in record]
+               if isinstance(record, list) else stamped(record))
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _print_refutation(record: dict, *, detailed: bool = False) -> None:
@@ -1084,7 +1100,7 @@ def _cmd_refute_list(args) -> int:
                                row["refutation_id"]))
     _note_usage("refute:list")
     if args.json:
-        print(json.dumps(rows, ensure_ascii=False, sort_keys=True))
+        print(_refutation_json(rows))
     elif not rows:
         print("no refutations for this project")
     else:
@@ -1104,7 +1120,7 @@ def _cmd_refute_search(args) -> int:
         return 1
     _note_usage("refute:search")
     if args.json:
-        print(json.dumps(rows, ensure_ascii=False, sort_keys=True))
+        print(_refutation_json(rows))
     elif not rows:
         print("no matching refutations")
     else:
@@ -1130,7 +1146,7 @@ def _cmd_refute_guard(args) -> int:
     _note_usage(f"refute:guard:hit:{rows[0]['guard_match']['rail']}"
                 if rows else "refute:guard:miss")
     if args.json:
-        print(json.dumps(rows, ensure_ascii=False, sort_keys=True))
+        print(_refutation_json(rows))
     elif not rows:
         if not args.quiet:
             print("no active refutation matched exact anchors or subject")
@@ -3737,11 +3753,13 @@ def build_parser() -> argparse.ArgumentParser:
     pr_revise.set_defaults(func=_cmd_refute_revise)
 
     pr_overturn = refute_sub.add_parser(
-        "overturn", help="append contrary evidence; agent calls propose, humans deactivate")
+        "overturn",
+        help="cite evidence against the verdict; agent calls propose, humans deactivate")
     pr_overturn.add_argument("refutation_id", help="exact r-… id")
     pr_overturn.add_argument(
         "--evidence", action="append", required=True, metavar="SOURCE",
-        help="new evidence contradicting the active verdict; repeatable")
+        help="evidence cited against the active verdict; recorded, not "
+             "verified; repeatable")
     pr_overturn.add_argument("--note", help="optional explanation")
     pr_overturn.add_argument("--by", choices=["agent", "human"], required=True)
     pr_overturn.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")

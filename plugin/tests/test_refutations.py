@@ -216,6 +216,38 @@ def test_cli_refute_lifecycle_and_json_output(
     assert guarded[0]["refutation_id"] == ref_id
 
 
+def test_every_json_surface_labels_evidence_as_cited(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #576: the text renderer says "recorded as cited; daimon does not verify
+    # them", but --json shipped a bare `evidence` list.  A machine consumer saw
+    # sourced-looking strings under a key called evidence with nothing to say
+    # daimon never resolved them.  Every JSON surface carries the status the
+    # human surface prints.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    add = [
+        "refute", "add", "--subject", "original #502 receipt design",
+        "--verdict", "whole-file hashes do not prove spans",
+        "--scope", "carried receipt tiers",
+        "--evidence", "measurement:566/623 misses",
+        "--anchor", "#502", "--by", "human", "--ratify", "--json",
+    ]
+    assert cli.main(add) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["evidence_status"] == "cited"
+    ref_id = record["refutation_id"]
+
+    for argv in (["refute", "show", ref_id, "--json"],
+                 ["refute", "list", "--json"],
+                 ["refute", "search", "receipt", "--json"],
+                 ["refute", "guard", "revisit", "#502", "--json"]):
+        assert cli.main(argv) == 0
+        payload = json.loads(capsys.readouterr().out)
+        rows = payload if isinstance(payload, list) else [payload]
+        assert rows, f"{argv} returned nothing to check"
+        for row in rows:
+            assert row["evidence_status"] == "cited", argv
+
+
 def test_cli_refute_rejects_agent_self_ratification(
         tmp_checkpoint_dir, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
@@ -554,6 +586,23 @@ def test_evidence_help_does_not_claim_verification():
     assert "evidence-bound" not in help_text
 
 
+@pytest.mark.parametrize(
+    "sub", ["add", "revise", "overturn", "show", "list", "search", "guard"])
+def test_no_refute_subcommand_help_claims_a_verified_relationship(sub, capsys):
+    # #576 first pass only reached the top-level parser, which never renders a
+    # nested subparser's own help — so `refute overturn` went on offering
+    # "contrary evidence" and "evidence contradicting the active verdict".
+    # Both name a relationship between source and verdict that daimon has not
+    # established and, for entailment, never can.  A caller may CITE evidence
+    # against a verdict; daimon may not say the evidence contradicts it.
+    with pytest.raises(SystemExit):
+        cli.main(["refute", sub, "--help"])
+    help_text = capsys.readouterr().out.lower()
+    for claim in ("evidence-bound", "contrary evidence", "contradicting",
+                  "supporting evidence", "verified evidence"):
+        assert claim not in help_text, f"`refute {sub} --help` claims: {claim}"
+
+
 def test_revision_without_anchors_keeps_the_guard_rail(tmp_checkpoint_dir):
     # A revision that never mentions anchors must not disarm the guard: the
     # `is not None` sentinel in revise() means "unchanged", and append() must
@@ -572,10 +621,12 @@ def test_revision_without_anchors_keeps_the_guard_rail(tmp_checkpoint_dir):
     assert refutations.guard("should we revisit #502?", project_dir=PROJECT)
 
 
-def test_revision_keeps_the_founding_evidence(tmp_checkpoint_dir):
-    # An evidence ledger that drops the citation which justified the verdict
-    # leaves an unfalsifiable active record.  New evidence accrues, it does
-    # not replace.
+def test_revision_replaces_the_evidence_it_supersedes(tmp_checkpoint_dir):
+    # The fold is a snapshot of what is believed NOW, so `evidence` names the
+    # citations backing the CURRENT verdict.  Accrual was tried and reverted:
+    # it made the snapshot a union of every citation ever filed, which is what
+    # the append-only stream is already for.  Nothing is lost — `events()`
+    # still carries the founding row verbatim.
     ref_id = _assert(authority="human", ratified=True)
 
     refutations.revise(
@@ -584,8 +635,52 @@ def test_revision_keeps_the_founding_evidence(tmp_checkpoint_dir):
         evidence=["measurement:second corpus"], project_dir=PROJECT)
 
     record = refutations.get(ref_id, project_dir=PROJECT)
-    assert record["evidence"] == [
-        "measurement:566/623 origin misses", "measurement:second corpus"]
+    assert record["evidence"] == ["measurement:second corpus"]
+
+    founding = [e for e in refutations.events(project_dir=PROJECT)
+                if e.get("event") == "asserted"]
+    assert founding[0]["evidence"] == ["measurement:566/623 origin misses"]
+
+
+def test_revived_record_does_not_carry_the_discredited_citation(
+        tmp_checkpoint_dir):
+    # Reviving an overturned record is the sanctioned path (`ratify` refuses
+    # and points here).  Under accrual the citation whose invalidity WAS the
+    # stated reason for the overturn came back on the newly active record,
+    # indistinguishable from the fresh one — an active verdict advertising
+    # support that had already been withdrawn.
+    ref_id = _assert(authority="human", ratified=True)
+    refutations.overturn(
+        ref_id, authority="human", note="that corpus was mis-sampled",
+        evidence=["measurement:566/623 was mis-sampled"], project_dir=PROJECT)
+    assert refutations.get(ref_id, project_dir=PROJECT)["state"] == "overturned"
+
+    refutations.revise(
+        ref_id, authority="human", ratified=True,
+        verdict="refuted again, on a corpus that was sampled correctly",
+        evidence=["measurement:third corpus"], project_dir=PROJECT)
+
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["evidence"] == ["measurement:third corpus"]
+    assert "measurement:566/623 origin misses" not in record["evidence"]
+
+
+def test_folded_evidence_cannot_exceed_the_per_row_cap(tmp_checkpoint_dir):
+    # `_evidence` caps a single row at _MAX_EVIDENCE, so a fold that merged
+    # across revisions let any number of revisions walk straight through it.
+    # Replacement makes the cap true of the folded record by construction.
+    ref_id = _assert(authority="human", ratified=True)
+    for revision in range(3):
+        refutations.revise(
+            ref_id, authority="human", ratified=True,
+            verdict=f"restated, revision {revision}",
+            evidence=[f"measurement:r{revision}-{i}"
+                      for i in range(refutations._MAX_EVIDENCE)],
+            project_dir=PROJECT)
+
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert len(record["evidence"]) == refutations._MAX_EVIDENCE
 
 
 def test_ratify_requires_declared_human_authority(tmp_checkpoint_dir):
