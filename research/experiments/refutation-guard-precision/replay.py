@@ -32,13 +32,15 @@ import json
 import os
 import pathlib
 import random
+import statistics
 import sys
 import tempfile
 
 from daimon_briefing import refutations
 
 SEED = 573
-LEDGER_SIZES = (6, 20, 60)
+SEEDS = int(os.environ.get("REPLAY_SEEDS", "200"))
+LEDGER_SIZES = (6, 20, 60, 100)
 ISSUE_RANGE = 582  # exclusive upper bound on this repository's issue numbers
 
 # Real refuted work from this repository's history. The last entry is a short
@@ -95,16 +97,24 @@ def _seed(project: str, records) -> None:
             authority="human", ratified=True, project_dir=project)
 
 
-def _replay(project: str, texts: list[str], active: set[str] | None = None):
+def _replay(project: str, texts: list[str]):
+    """Replay every corpus text against whatever is seeded in `project`.
+
+    There is deliberately no post-hoc "active subset" filter here.  The first
+    version of this script seeded all 60 scaling records once and then filtered
+    hits down to the anchors nominally active at each ledger size — but the
+    filter passed every SUBJECT-rail hit through unconditionally, so all 60
+    subject records were live in the size-6 and size-20 conditions too.  Only
+    the anchor rail actually scaled.  It did not corrupt the published numbers,
+    because the subject rail never fired at all, but the design could not have
+    detected it if it had.  Ledger size is now varied by seeding exactly that
+    many records, which is the thing the condition claims to be.
+    """
     fires = {"anchor": 0, "subject": 0}
     hit_texts = 0
     per_subject: dict[str, int] = {}
     for text in texts:
         hits = refutations.guard(text[:1900], project_dir=project)
-        if active is not None:
-            hits = [h for h in hits
-                    if h["guard_match"]["rail"] == "subject"
-                    or set(h["guard_match"]["anchors"]) & active]
         if hits:
             hit_texts += 1
         for hit in hits:
@@ -132,23 +142,41 @@ def main() -> None:
             "by_subject": per_subject,
         }
 
-    random.seed(SEED)
-    numbers = random.sample(range(1, ISSUE_RANGE), max(LEDGER_SIZES))
-    with tempfile.TemporaryDirectory() as scale_project:
-        _seed(scale_project, [
-            (f"rejected approach number {i} in the daimon serialize path",
-             f"scope {i}", f"issue:{n}")
-            for i, n in enumerate(numbers)])
-        out["scaling"] = []
-        for size in LEDGER_SIZES:
-            active = {f"issue:{n}" for n in numbers[:size]}
-            fires, hit_texts, _ = _replay(scale_project, texts, active)
-            out["scaling"].append({
-                "ledger_size": size,
-                "fires": fires["anchor"] + fires["subject"],
-                "texts_hit": hit_texts,
-                "rate_pct": round(100 * hit_texts / len(texts), 3),
-            })
+    # One seed is one draw of "which issue numbers did this project's
+    # refutations land on", and that draw dominates the result: low issue
+    # numbers appear as bare `#N` in unrelated prose far more often than high
+    # ones, so a seed that happens to sample #3 and #12 measures a different
+    # world from one that samples #481 and #522.  The first version reported
+    # seed 573 alone and read its three points as a slope.  Report the
+    # distribution instead, and let the spread speak for itself.
+    out["seeds"] = SEEDS
+    out["scaling"] = []
+    for size in LEDGER_SIZES:
+        rates = []
+        rail_totals = {"anchor": 0, "subject": 0}
+        for seed in range(SEEDS):
+            rng = random.Random(SEED + seed)
+            numbers = rng.sample(range(1, ISSUE_RANGE), size)
+            with tempfile.TemporaryDirectory() as scale_project:
+                _seed(scale_project, [
+                    (f"rejected approach number {i} in the daimon serialize path",
+                     f"scope {i}", f"issue:{n}")
+                    for i, n in enumerate(numbers)])
+                fires, hit_texts, _ = _replay(scale_project, texts)
+            rates.append(100 * hit_texts / len(texts))
+            for rail in rail_totals:
+                rail_totals[rail] += fires[rail]
+        rates.sort()
+        out["scaling"].append({
+            "ledger_size": size,
+            "mean_rate_pct": round(statistics.fmean(rates), 3),
+            "median_rate_pct": round(statistics.median(rates), 3),
+            "min_rate_pct": round(rates[0], 3),
+            "max_rate_pct": round(rates[-1], 3),
+            "p05_rate_pct": round(rates[int(0.05 * (len(rates) - 1))], 3),
+            "p95_rate_pct": round(rates[int(0.95 * (len(rates) - 1))], 3),
+            "fires_by_rail": rail_totals,
+        })
 
     here = pathlib.Path(__file__).parent
     (here / "measurements.json").write_text(
@@ -160,10 +188,13 @@ def main() -> None:
           f"{fixed['texts_hit']}/{len(texts)} texts hit "
           f"({fixed['rate_pct']}%), anchor={fixed['fires']['anchor']} "
           f"subject={fixed['fires']['subject']}\n")
-    print("scaling:")
+    print(f"scaling ({SEEDS} seeds per size):")
     for row in out["scaling"]:
-        print(f"  ledger {row['ledger_size']:>3}: {row['fires']:>3} fires on "
-              f"{row['texts_hit']:>3}/{len(texts)} texts ({row['rate_pct']}%)")
+        print(f"  ledger {row['ledger_size']:>3}: mean {row['mean_rate_pct']}% "
+              f"median {row['median_rate_pct']}% "
+              f"[{row['min_rate_pct']}–{row['max_rate_pct']}] "
+              f"p05–p95 [{row['p05_rate_pct']}–{row['p95_rate_pct']}] "
+              f"rails={row['fires_by_rail']}")
 
 
 if __name__ == "__main__":

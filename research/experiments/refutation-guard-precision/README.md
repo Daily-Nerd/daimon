@@ -42,7 +42,26 @@ Two runs:
 1. **fixed** — six refutations on real anchors, including one deliberately
    short generic subject (`add caching`) to probe the subject rail's floor.
 2. **scaling** — anchors sampled from this repository's issue-number range,
-   evaluated at ledger sizes 6, 20 and 60.
+   evaluated at ledger sizes 6, 20, 60 and 100, over 200 random draws per size
+   (`REPLAY_SEEDS` overrides the count).
+
+Two things about the scaling run are corrections to its first version, and both
+matter more than the numbers they changed.
+
+**A ledger size is created by seeding that many records.** The first version
+seeded all 60 once and filtered hits down to the anchors nominally active at
+each size. That filter passed every *subject*-rail hit through unconditionally,
+so all 60 subject records were live in the size-6 and size-20 conditions too,
+and only the anchor rail actually scaled. It did not corrupt the published
+counts, because the subject rail never fired at all, but the design could not
+have detected it if it had.
+
+**One seed is one draw, and the draw dominates.** Low issue numbers appear as
+bare `#N` in unrelated prose far more often than high ones, so a sample that
+lands on `#3` and `#12` measures a different world from one that lands on `#481`
+and `#522`. The first version reported a single seed and read its three points
+as a slope. At 60 records the spread across draws is roughly sixfold, which is
+larger than the effect the three points were being used to establish.
 
 ## Reproducing
 
