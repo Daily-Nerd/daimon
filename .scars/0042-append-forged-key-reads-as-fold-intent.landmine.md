@@ -9,7 +9,6 @@ authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/refutations.py
   - path: plugin/daimon_briefing/policy.py
-  - path: plugin/daimon_briefing/store.py
 evidence:
   - pr: 575
   - note: 2026-08-05 review of #575: `refute revise` without --anchor cleared every anchor, so guard() stopped matching while `refute show` still rendered [active . human-ratified]. Reproduced independently by two reviewers in isolated DAIMON_CHECKPOINT_DIR dirs; the repo's own suite drove the failing sequence and passed.
@@ -31,11 +30,18 @@ The rule: normalise only keys the caller actually set (`if key in row:`), and
 never let a writer and a fold disagree about what absence means. If the fold
 reads presence as intent, the writer must not manufacture presence.
 
-`policy.admit_row` is anchored because it is the shared admission seam for
-every stream — adding list-field normalisation there would inject this into
-events.jsonl, verification.jsonl and forget-hits.jsonl at once. `store.py` is
-anchored because it owns those writers. Neither has the defect today; they are
-where it would be made next.
+`policy.admit_row` is anchored because it is the shared admission seam —
+adding list-field normalisation there would inject this into events.jsonl and
+verification.jsonl at once. It does not have the defect today; it is where it
+would be made next.
+
+Corrected 2026-08-05 after review: this scar first also claimed forget-hits.jsonl
+crosses `admit_row`, and anchored `store.py` as the owner of those writers. Both
+were wrong. `store.record_forget_hits` (store.py:1085) writes its rows with a
+bare `json.dumps` and never reaches the seam, so that stream is out of scope;
+and the injection risk lives at the seam rather than at its callers, so a
+high-severity anchor on a 1,445-line file with 31 commits in 90 days bought
+false fires and no coverage. Anchor the seam, not everything downstream of it.
 
 Sibling of scar 0025 (fold ignores `kind`, so any event resolves the item).
 Same family: an append-only writer and its fold disagreeing, failing silent.
