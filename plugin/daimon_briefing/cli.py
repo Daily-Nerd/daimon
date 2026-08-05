@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, ledger, llm, normalize, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, ledger, llm, normalize, recall, receipts, redact, refutations, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -925,6 +925,201 @@ def _cmd_resolve(args) -> int:
         return 0
     _note_usage("resolve")
     print(f"resolved {target['id']}: {target.get('text', '')} [{args.status}]")
+    return 0
+
+
+# ---- refute: project-level negative-knowledge ledger (#573) ----
+
+
+def _refutation_json(record: dict) -> str:
+    return json.dumps(record, ensure_ascii=False, sort_keys=True)
+
+
+def _print_refutation(record: dict, *, detailed: bool = False) -> None:
+    state = record.get("state") or "candidate"
+    activation = record.get("activation") or f"{record.get('asserted_by', '?')}-proposed"
+    mark = "✗" if state == "active" else ("×" if state == "overturned" else "?")
+    print(f"[{mark} {state} · {activation}] {record['refutation_id']}  "
+          f"{record.get('subject', '')}")
+    if not detailed:
+        return
+    print(f"  Verdict: {record.get('verdict', '')}")
+    print(f"  Scope: {record.get('scope', '')}")
+    anchors = record.get("anchors") or []
+    if anchors:
+        print(f"  Anchors: {', '.join(anchors)}")
+    revisit = record.get("revisit_when") or ""
+    if revisit:
+        print(f"  Revisit when: {revisit}")
+    evidence = record.get("evidence") or []
+    for item in evidence:
+        print(f"  Evidence: {item}")
+    print(f"  Provenance: asserted by {record.get('asserted_by', '?')} "
+          f"({record.get('asserted_author') or 'unknown'})")
+    if record.get("activation"):
+        print(f"  Authority: {record['activation']} "
+              f"({record.get('activation_author') or 'unknown'})")
+    pending = record.get("overturn_proposed")
+    if isinstance(pending, dict):
+        print(f"  Overturn proposed by {pending.get('by', '?')} — still active")
+
+
+def _cmd_refute_add(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        ref_id = refutations.assert_refutation(
+            subject=args.subject, verdict=args.verdict, scope=args.scope,
+            evidence=args.evidence, authority=args.by, anchors=args.anchor,
+            revisit_when=args.revisit_when or "", ratified=args.ratify,
+            project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not recorded: {exc}")
+        return 1
+    record = refutations.get(ref_id, project_dir=project)
+    _note_usage("refute:add")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+        if record["state"] == "candidate":
+            print(f"  Next: daimon refute ratify {ref_id} --project {project}")
+    return 0
+
+
+def _cmd_refute_ratify(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        refutations.ratify(args.refutation_id, note=args.note or "",
+                           project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not ratified: {exc}")
+        return 1
+    record = refutations.get(args.refutation_id, project_dir=project)
+    _note_usage("refute:ratify")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+    return 0
+
+
+def _cmd_refute_revise(args) -> int:
+    project = _resolve_project(args.project)
+    anchors = args.anchor if args.anchor is not None else None
+    try:
+        refutations.revise(
+            args.refutation_id, authority=args.by, evidence=args.evidence,
+            subject=args.subject, verdict=args.verdict, scope=args.scope,
+            anchors=anchors, revisit_when=args.revisit_when,
+            ratified=args.ratify, project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not revised: {exc}")
+        return 1
+    record = refutations.get(args.refutation_id, project_dir=project)
+    _note_usage("refute:revise")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+        if record["state"] == "candidate":
+            print("  Revision is not load-bearing until explicit human ratification.")
+    return 0
+
+
+def _cmd_refute_overturn(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        event = refutations.overturn(
+            args.refutation_id, authority=args.by, evidence=args.evidence,
+            note=args.note or "", project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not overturned: {exc}")
+        return 1
+    record = refutations.get(args.refutation_id, project_dir=project)
+    _note_usage("refute:overturn")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+        if event == "overturn-proposed":
+            print("  Agent evidence recorded; the active guard remains until human ratification.")
+    return 0
+
+
+def _cmd_refute_show(args) -> int:
+    project = _resolve_project(args.project)
+    record = refutations.get(args.refutation_id, project_dir=project)
+    if record is None:
+        print(f"unknown refutation: {args.refutation_id}")
+        return 1
+    _note_usage("refute:show")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+    return 0
+
+
+def _cmd_refute_list(args) -> int:
+    project = _resolve_project(args.project)
+    wanted = set(args.state or refutations.STATES)
+    rows = [row for row in refutations.records(project_dir=project).values()
+            if row["state"] in wanted]
+    rows.sort(key=lambda row: (row.get("state") != "active",
+                               row.get("updated_at") or "",
+                               row["refutation_id"]))
+    _note_usage("refute:list")
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, sort_keys=True))
+    elif not rows:
+        print("no refutations for this project")
+    else:
+        for row in rows:
+            _print_refutation(row)
+    return 0
+
+
+def _cmd_refute_search(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        rows = refutations.search(
+            " ".join(args.query), project_dir=project,
+            states=set(args.state or refutations.STATES))
+    except refutations.RefutationError as exc:
+        print(f"refutation search refused: {exc}")
+        return 1
+    _note_usage("refute:search")
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, sort_keys=True))
+    elif not rows:
+        print("no matching refutations")
+    else:
+        for row in rows:
+            _print_refutation(row)
+    return 0
+
+
+def _cmd_refute_guard(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        rows = refutations.guard(
+            " ".join(args.query), anchors=args.anchor,
+            project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation guard refused: {exc}")
+        return 1
+    _note_usage("refute:guard")
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, sort_keys=True))
+    elif not rows:
+        if not args.quiet:
+            print("no active refutation matched exact anchors or subject")
+    else:
+        # One warning is the v1 attention budget. JSON retains every exact hit
+        # for deliberation integrations that can reconcile them in batch.
+        _print_refutation(rows[0], detailed=True)
+        if len(rows) > 1:
+            print(f"  + {len(rows) - 1} more exact match(es); use --json to inspect")
     return 0
 
 
@@ -3447,6 +3642,121 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_loops.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_loops.set_defaults(func=_cmd_loops)
+
+    p_refute = sub.add_parser(
+        "refute",
+        help="author and query evidence-bound negative knowledge (#573)",
+        epilog="Examples:\n"
+               "  daimon refute list\n"
+               "  daimon refute search receipt verification\n"
+               "  daimon refute guard 'should we revisit #502?'\n",
+    )
+    refute_sub = p_refute.add_subparsers(dest="refute_cmd", required=True)
+    refute_sub.add_parser = functools.partial(
+        refute_sub.add_parser, formatter_class=fmt)
+
+    pr_add = refute_sub.add_parser(
+        "add", help="assert a scoped refutation; agent assertions stay candidates",
+        epilog="Example:\n"
+               "  daimon refute add --subject 'original #502 receipt design' "
+               "--verdict 'whole-file hashes do not prove span claims' "
+               "--scope 'carried-item receipt tiers' --anchor issue:502 "
+               "--evidence 'measurement:566/623 origin misses' --by human "
+               "--ratify\n",
+    )
+    pr_add.add_argument("--subject", required=True, help="approach or claim rejected")
+    pr_add.add_argument("--verdict", required=True, help="what no longer holds")
+    pr_add.add_argument("--scope", required=True, help="where the verdict applies")
+    pr_add.add_argument(
+        "--evidence", action="append", required=True, metavar="SOURCE",
+        help="supporting measurement, artifact, issue, or transcript source; repeatable")
+    pr_add.add_argument(
+        "--anchor", action="append", default=[], metavar="ANCHOR",
+        help="stable exact-match key such as issue:502 or command:daimon-why; repeatable")
+    pr_add.add_argument(
+        "--revisit-when", help="condition that makes reconsideration legitimate")
+    pr_add.add_argument("--by", choices=["agent", "human"], required=True,
+                        help="declared authoring authority; never inferred from prose")
+    pr_add.add_argument(
+        "--ratify", action="store_true",
+        help="activate immediately; valid only with --by human")
+    pr_add.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_add.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_add.set_defaults(func=_cmd_refute_add)
+
+    pr_ratify = refute_sub.add_parser(
+        "ratify", help="explicitly activate a candidate as a human decision")
+    pr_ratify.add_argument("refutation_id", help="exact r-… id")
+    pr_ratify.add_argument("--note", help="optional ratification rationale")
+    pr_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_ratify.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_ratify.set_defaults(func=_cmd_refute_ratify)
+
+    pr_revise = refute_sub.add_parser(
+        "revise", help="append a new evidence-bound version; inactive until ratified")
+    pr_revise.add_argument("refutation_id", help="exact r-… id")
+    pr_revise.add_argument("--subject", help="replacement subject")
+    pr_revise.add_argument("--verdict", help="replacement verdict")
+    pr_revise.add_argument("--scope", help="replacement scope")
+    pr_revise.add_argument(
+        "--anchor", action="append", default=None, metavar="ANCHOR",
+        help="replacement anchor set; repeatable")
+    pr_revise.add_argument("--revisit-when", help="replacement revisit condition")
+    pr_revise.add_argument(
+        "--evidence", action="append", required=True, metavar="SOURCE",
+        help="new evidence supporting the revision; repeatable")
+    pr_revise.add_argument("--by", choices=["agent", "human"], required=True)
+    pr_revise.add_argument(
+        "--ratify", action="store_true",
+        help="activate the revision immediately; valid only with --by human")
+    pr_revise.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_revise.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_revise.set_defaults(func=_cmd_refute_revise)
+
+    pr_overturn = refute_sub.add_parser(
+        "overturn", help="append contrary evidence; agent calls propose, humans deactivate")
+    pr_overturn.add_argument("refutation_id", help="exact r-… id")
+    pr_overturn.add_argument(
+        "--evidence", action="append", required=True, metavar="SOURCE",
+        help="new evidence contradicting the active verdict; repeatable")
+    pr_overturn.add_argument("--note", help="optional explanation")
+    pr_overturn.add_argument("--by", choices=["agent", "human"], required=True)
+    pr_overturn.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_overturn.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_overturn.set_defaults(func=_cmd_refute_overturn)
+
+    pr_show = refute_sub.add_parser("show", help="show one refutation and its trust signals")
+    pr_show.add_argument("refutation_id", help="exact r-… id")
+    pr_show.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_show.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_show.set_defaults(func=_cmd_refute_show)
+
+    pr_list = refute_sub.add_parser("list", help="list project refutations")
+    pr_list.add_argument("--state", action="append", choices=sorted(refutations.STATES),
+                         help="filter by state; repeatable")
+    pr_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_list.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_list.set_defaults(func=_cmd_refute_list)
+
+    pr_search = refute_sub.add_parser(
+        "search", help="search the complete ledger without age decay")
+    pr_search.add_argument("query", nargs="+", help="subject, verdict, scope, or anchor terms")
+    pr_search.add_argument("--state", action="append", choices=sorted(refutations.STATES),
+                           help="filter by state; repeatable")
+    pr_search.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_search.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_search.set_defaults(func=_cmd_refute_search)
+
+    pr_guard = refute_sub.add_parser(
+        "guard", help="check active refutations by exact anchor or subject phrase")
+    pr_guard.add_argument("query", nargs="+", help="the proposed approach or user prompt")
+    pr_guard.add_argument("--anchor", action="append", default=[], metavar="ANCHOR",
+                          help="candidate action anchor; repeatable")
+    pr_guard.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_guard.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_guard.add_argument("--quiet", action="store_true",
+                          help="print nothing when no active refutation matches")
+    pr_guard.set_defaults(func=_cmd_refute_guard)
 
     p_handoff = sub.add_parser(
         "handoff",

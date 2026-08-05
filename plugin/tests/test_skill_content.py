@@ -129,6 +129,24 @@ def test_compact_teaches_recall_and_resolve():
     assert "daimon resolve" in body
 
 
+def test_full_teaches_deliberation_guard_without_hard_veto():
+    full = skill_content.render_full()
+    section = full.split("## Checking rejected approaches")[1].split("## Closing loops")[0]
+    assert "daimon refute guard" in section
+    assert "--anchor" in section
+    assert "not a command veto" in section
+    assert "--by agent" in section
+    assert "--by human" in section
+
+
+def test_compact_teaches_deliberation_guard_and_authority_boundary():
+    body = skill_content.render_compact()
+    assert "daimon refute guard" in body
+    assert "advisory" in body
+    assert "refute add --by agent" in body
+    assert "never claim human" in body
+
+
 def test_compact_must_rule_stays_last():
     # rules hosts resolve conflicts later-wins — the MUST line must stay the
     # final line no matter what sections are added above it

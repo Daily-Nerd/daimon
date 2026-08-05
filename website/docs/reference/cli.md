@@ -25,6 +25,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon reverify <id>` | Assert a carried item is still true — evidence-gated, resets its staleness clock. Also the reject half of a supersession candidate. |
 | `daimon forget <id or text>` | Remove one item's content from disk and index, leaving a hash-only tombstone. The deletion survives re-serialization of the original transcript. |
 | `daimon log --text "…"` | Append a freeform timeline event to the project's event log — zero-LLM, audit-trail only. |
+| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only explicit human ratification activates a guard. Revisions require new typed evidence, and agent overturns remain proposals. |
 
 ## Trust and audit
 
@@ -33,6 +34,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon verify-receipt` | Verify a checkpoint's signed provenance receipt (full cryptographic check via the vitni CLI). |
 | `daimon audit-quotes` | Re-check every stored verbatim quote against its source transcript and report mismatches. Read-only — it never rewrites trust tags. |
 | `daimon anchor <file> <symbol>` | Bind a cognitive item to a code symbol; briefings then warn when the anchored code drifts. |
+| `daimon refute list\|show\|search\|guard` | Read the negative-knowledge ledger without decay. `guard` emits active exact-anchor/subject matches only; it is advisory and never blocks a command. Add `--json` for deliberation integrations. |
 
 ## Setup and operations
 

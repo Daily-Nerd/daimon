@@ -25,6 +25,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon reverify <id>` | Afirma que un ítem arrastrado sigue siendo cierto — exige evidencia y reinicia su reloj de vencimiento. También es la mitad de rechazo de un candidato a supersesión. |
 | `daimon forget <id o texto>` | Elimina el contenido de un ítem del disco y del índice, dejando una lápida de solo-hash. La eliminación sobrevive a re-serializar la transcripción original. |
 | `daimon log --text "…"` | Agrega un evento libre a la línea de tiempo del proyecto — cero LLM, solo rastro de auditoría. |
+| `daimon refute add\|ratify\|revise\|overturn` | Gestiona conocimiento negativo con alcance en su propio ledger append-only. Las escrituras de agentes quedan como candidatas; solo una ratificación humana explícita activa un guard. Las revisiones exigen evidencia tipada nueva y los overturns de agentes siguen siendo propuestas. |
 
 ## Confianza y auditoría
 
@@ -33,6 +34,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon verify-receipt` | Verifica el recibo firmado de procedencia de un checkpoint (chequeo criptográfico completo vía el CLI de vitni). |
 | `daimon audit-quotes` | Re-verifica cada cita verbatim almacenada contra su transcripción de origen y reporta discrepancias. Solo lectura — nunca reescribe etiquetas. |
 | `daimon anchor <archivo> <símbolo>` | Ancla un ítem cognitivo a un símbolo de código; los briefings avisan cuando el código anclado cambió. |
+| `daimon refute list\|show\|search\|guard` | Lee el ledger de conocimiento negativo sin decaimiento. `guard` emite solo matches activos por ancla exacta o frase de sujeto; es consultivo y nunca bloquea un comando. Sumá `--json` para integraciones de deliberación. |
 
 ## Setup y operación
 
