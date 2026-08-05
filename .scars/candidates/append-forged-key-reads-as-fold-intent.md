@@ -1,40 +1,44 @@
 ---
 id: 0
 type: landmine
-title: A writer that forges an absent key destroys the sentinel a fold reads as replacement intent
+title: "A ledger writer must normalise only keys the caller set — in an append-only stream the ABSENCE of a key is data, and a fold that reads presence as intent will silently clear the field"
 severity: high
 confidence: 0.9
 created: 2026-08-05
 authors: ["claude-code"]
 anchors:
   - path: plugin/daimon_briefing/refutations.py
+  - path: plugin/daimon_briefing/policy.py
+  - path: plugin/daimon_briefing/store.py
 evidence:
   - pr: 575
-  - note: "Reproduced in isolated DAIMON_CHECKPOINT_DIR by two independent reviewers; the repo's own suite executed the bug and passed."
+  - note: "2026-08-05 review of #575: `refute revise` without --anchor cleared every anchor, so guard() stopped matching while `refute show` still rendered [active . human-ratified]. Reproduced independently by two reviewers in isolated DAIMON_CHECKPOINT_DIR dirs; the repo's own suite drove the failing sequence and passed."
 expires:
-  condition: "append() and fold() no longer split the meaning of a key between 'absent = unchanged' and 'present = replace'"
+  condition: "no ledger fold distinguishes replace-from-unchanged by key presence (e.g. every partial update carries an explicit clear flag)"
   review_after: 2027-02-05
 status: candidate
 ---
 
-`append()` normalised every row with an unconditional
-`row["anchors"] = _scrub_list(list(row.get("anchors") or []))`, which forges the
-key as `[]` when the caller never set it. `fold()`'s `revised` branch decides
-replacement by key PRESENCE (`if "anchors" in row`), and `revise()` uses
-`is not None` to mean "unchanged". The writer therefore destroyed the sentinel
-before the fold could read it: any revision that did not pass `--anchor` cleared
-every anchor, so `guard()` stopped matching while `refute show` still rendered
-`[✗ active · human-ratified]`. A guard that reads as armed and is not.
+`refutations.append` normalised every row with an unconditional
+`row["anchors"] = _scrub_list(list(row.get("anchors") or []))`, forging the key
+as `[]` when the caller never set it. `fold` decides replacement by key PRESENCE
+(`if "anchors" in row`) and `revise` uses `is not None` to mean "unchanged", so
+the writer destroyed the sentinel before the fold could read it. Any revision
+that did not pass `--anchor` cleared every anchor: the guard stopped firing
+while the record still displayed as active and human-ratified.
 
-Two rules for anyone touching a ledger writer here. Normalise only keys the
-caller actually set — `if key in row:` — because in an append-only stream the
-absence of a key is data. And never let a writer and a fold disagree about what
-absence means: if the fold reads presence as intent, the writer must not
-manufacture presence.
+The rule: normalise only keys the caller actually set (`if key in row:`), and
+never let a writer and a fold disagree about what absence means. If the fold
+reads presence as intent, the writer must not manufacture presence.
 
-This is the second silent-suppression fold bug in this repo (scar 0025 was the
-`events.jsonl` resolution fold ignoring event kind). Both had green CI. Patch
-coverage does not catch this class: every line of `fold()` executed, on the
-wrong data, and `test_write_audit_guard.py` drove the exact failing sequence
-while asserting only `rc == 0` — which `_cmd_refute_guard` also returns on zero
-matches. When you touch a fold, assert on the FOLDED STATE, never on exit code.
+`policy.admit_row` is anchored because it is the shared admission seam for
+every stream — adding list-field normalisation there would inject this into
+events.jsonl, verification.jsonl and forget-hits.jsonl at once. `store.py` is
+anchored because it owns those writers. Neither has the defect today; they are
+where it would be made next.
+
+Sibling of scar 0025 (fold ignores `kind`, so any event resolves the item).
+Same family: an append-only writer and its fold disagreeing, failing silent.
+Both shipped green. Patch coverage cannot catch this class — every line of the
+fold executes, on the wrong data. When you touch a fold, assert on the FOLDED
+STATE, never on an exit code.
