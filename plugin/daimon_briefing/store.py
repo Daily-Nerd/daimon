@@ -235,6 +235,126 @@ def _session_files(d: Path) -> list[Path]:
     ]
 
 
+def _plaintext_surfaces(d: Path) -> list[Path]:
+    """Every file under the store that holds checkpoint items as PLAINTEXT:
+    per-session checkpoints and the rotation pointers, in the flat dir and in
+    every per-project bucket.
+
+    This list is the deletion contract's surface set. #419 settled that holding
+    plaintext — not being append-only, not being "history" — is what puts a file
+    inside it. `forget` previously reasoned only about the LIVE checkpoint, so
+    prev-N and superseded session files kept the value after a successful
+    deletion. Anything added here later must be added to this walk, or it
+    silently inherits the same hole."""
+    out: list[Path] = []
+    try:
+        entries = list(d.iterdir())
+    except OSError:
+        return out
+    for entry in entries:
+        try:
+            if entry.is_file() and entry.suffix == ".json":
+                out.append(entry)
+            elif entry.is_dir():
+                out.extend(p for p in entry.iterdir()
+                           if p.is_file() and p.suffix == ".json")
+        except OSError:
+            continue
+    return out
+
+
+def project_surfaces(project_dir=None) -> list[Path]:
+    """`_plaintext_surfaces` narrowed to ONE project.
+
+    forget is project-scoped — its tombstone lands in one project's ledger — so
+    every surface it reads or rewrites must belong to that project. The flat
+    dir is shared: `latest.json` there is the GLOBAL pointer and may hold any
+    project's session, and session files sit side by side regardless of origin.
+    Membership is therefore decided by the payload's own `project_slug`, never
+    by the file's location.
+
+    A file whose slug cannot be read is EXCLUDED. Deleting from a surface whose
+    ownership is unknown is the failure this function exists to prevent."""
+    slug = project_slug(project_dir)
+    if not slug:
+        return []
+    out: list[Path] = []
+    for path in _plaintext_surfaces(config.checkpoint_dir()):
+        if path.parent.name == slug:
+            out.append(path)
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict) and payload.get("project_slug") == slug:
+            out.append(path)
+    return out
+
+
+def items_for_project(project_dir=None) -> list[tuple[Path, str, str, dict]]:
+    """Every identified item this project holds on ANY surface, live or not.
+
+    forget resolved targets against the live checkpoint alone, so a value that
+    had been superseded was reported as "no item matches" while its plaintext
+    sat in prev-N. Resolution has to see what deletion has to reach."""
+    found: list[tuple[Path, str, str, dict]] = []
+    for path in project_surfaces(project_dir):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for section, key in _ITEM_LISTS:
+            for item in ((payload.get(section) or {}).get(key) or []):
+                if isinstance(item, dict) and item.get("id"):
+                    found.append((path, section, key, item))
+    return found
+
+
+def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
+    """Remove every item folding to `content_hash` from all plaintext surfaces.
+
+    Returns the paths rewritten, so the caller can report what deletion
+    actually reached instead of asserting it. Best-effort per file: one
+    unreadable or unwritable surface must not abort the rest of the scrub, and
+    a file that cannot be parsed is left byte-identical rather than truncated —
+    the same posture the ledger rewrite takes toward rows it cannot interpret.
+    """
+    if not content_hash:
+        return []
+    rewritten: list[str] = []
+    for path in project_surfaces(project_dir):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        changed = False
+        for section, key in _ITEM_LISTS:
+            lst = (payload.get(section) or {}).get(key)
+            if not isinstance(lst, list):
+                continue
+            kept = [i for i in lst
+                    if not (isinstance(i, dict)
+                            and normalize.content_key(i.get("text") or "")
+                            == content_hash)]
+            if len(kept) != len(lst):
+                lst[:] = kept
+                changed = True
+        if not changed:
+            continue
+        try:
+            _atomic_write(path, json.dumps(payload, indent=2,
+                                           ensure_ascii=False) + "\n")
+        except OSError:
+            continue
+        rewritten.append(str(path))
+    return rewritten
+
+
 def checkpoints_written_since(cutoff: float) -> int:
     """How many per-session checkpoints were WRITTEN since `cutoff` (epoch
     seconds), counted by file mtime — the write-side signal for the silent-
@@ -398,7 +518,8 @@ _stamp_item_ids = policy.stamp_item_ids
 
 
 def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
-                     allow_disabled: bool = False) -> Path | None:
+                     allow_disabled: bool = False,
+                     rotate: bool = True) -> Path | None:
     """Write the session checkpoint + the global latest pointer, and — when the
     project is known — the per-project latest pointer too. The global pointer is
     kept for backward compatibility (pre-routing consumers and the fallback).
@@ -498,14 +619,16 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     # sequence proceeds unguarded (pre-lock behavior, fail-open).
     with _pointer_lock(d):
         if not _pointer_regresses(d, new_epoch):
-            _rotate_pointers(d, history)
+            if rotate:
+                _rotate_pointers(d, history)
             _atomic_write(d / _LATEST, blob)
     if slug:
         pdir = d / slug
         pdir.mkdir(parents=True, exist_ok=True)
         with _pointer_lock(pdir):
             if not _pointer_regresses(pdir, new_epoch):
-                _rotate_pointers(pdir, history)
+                if rotate:
+                    _rotate_pointers(pdir, history)
                 _atomic_write(pdir / _LATEST, blob)
     # Mint the receipt now that the checkpoint file is durably on disk (#204):
     # outputs_hash covers those exact bytes. Best-effort and self-contained —

@@ -944,18 +944,31 @@ def _cmd_forget(args) -> int:
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to forget")
         return 1
+    # Every surface this project holds, not just the live checkpoint (#419
+    # scope): a value that had been superseded still sits in prev-N and in its
+    # session file, and resolving only against `latest` made forget answer "no
+    # item matches" about plaintext that was demonstrably on disk.
+    seen_ids: set[str] = set()
     items = []
-    for section, key in store._ITEM_LISTS:
-        for item in ((checkpoint.get(section) or {}).get(key) or []):
-            if isinstance(item, dict) and item.get("id"):
-                items.append((section, key, item))
+    for _path, section, key, item in store.items_for_project(project):
+        if item["id"] in seen_ids:
+            continue          # one item, several surfaces — not several items
+        seen_ids.add(item["id"])
+        items.append((section, key, item))
     target = next((it for _, _, it in items if it["id"] == args.target), None)
     if target is None:
         texts = [str(it.get("text") or "") for _, _, it in items]
         generic = carry._generic_terms(texts)
         hits = [(s, k, it) for s, k, it in items
                 if carry._same_item(args.target, str(it.get("text") or ""), generic)]
-        if len(hits) == 1:
+        # Ambiguity is about distinct VALUES, not hit count. The same sentence
+        # carried by sibling ids or held on several surfaces is one thing to
+        # forget; #418 already splices sibling ids from a single key. Only
+        # genuinely different values leave the user a choice to make, and there
+        # never-guess still refuses.
+        distinct = {normalize.content_key(str(it.get("text") or ""))
+                    for _, _, it in hits}
+        if len(distinct) == 1:
             target = hits[0][2]
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
@@ -1007,8 +1020,16 @@ def _cmd_forget(args) -> int:
                                    == content_hash))]
     # allow_disabled (#421): the ONE write_checkpoint call that may run under
     # the kill switch — the rewrite that makes the deletion real on disk.
+    # rotate=False: rotation copies the CURRENT latest into prev-1 before
+    # writing, and the current latest is the PRE-forget bytes. Rotating here
+    # made the deletion manufacture a fresh copy of the value it was asked to
+    # remove, in a file that did not exist when the user ran the command.
     store.write_checkpoint(sid, checkpoint, project_dir=project,
-                           allow_disabled=True)
+                           allow_disabled=True, rotate=False)
+    # The live checkpoint is one surface of several. prev-N and superseded
+    # session files hold the same plaintext and were never in the contract
+    # (#419: plaintext is what puts a file inside it, not its role).
+    store.scrub_content_key(content_hash, project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
