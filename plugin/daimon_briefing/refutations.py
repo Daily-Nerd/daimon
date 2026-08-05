@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 import uuid
 from datetime import datetime, timezone
 
-from . import config, policy, redact, store
+from . import config, normalize, policy, redact, store
 
 
 VERSION = 1
@@ -218,6 +219,86 @@ def append(row: dict, project_dir=None) -> bool:
         return True
     except OSError:
         return False
+
+
+def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
+    """Remove every record whose subject folds to `content_key` (#578).
+
+    The ONE path that rewrites this ledger rather than appending to it, and it
+    exists because `forget` promises the content leaves the audit trail (#321,
+    restated in `cli._cmd_forget`).  Daimon sorts its stores by whether they
+    hold PLAINTEXT, not by whether they are append-only: events.jsonl is never
+    rewritten because it carries hashes, and #419 was filed as a defect the
+    moment plaintext reached it.  This ledger carries plaintext by design, so
+    it is in the checkpoint's category and a removal must reach the bytes.
+
+    Matches on the SAME canonical key the checkpoint splice uses, never on
+    substring containment: `forget` removes a value, and has never claimed to
+    scrub a phrase out of records that were not targeted.
+
+    Every row of a matched record goes, not only the row that matched.  A
+    revision rewrites the subject, so an earlier row can hold an older subject
+    the folded record no longer renders; keeping it would leave forgotten text
+    on disk in a row nothing displays.
+
+    No kill-switch check: forget is the ratified deletion exemption (#421), so
+    the write that makes the deletion real must run while daimon is disabled.
+
+    Atomic or nothing.  A half-written rewrite would truncate history, which is
+    strictly worse than the value surviving, so the replacement is staged in the
+    same directory and swapped with os.replace.  Returns the ids removed, or []
+    when nothing matched, the ledger is absent, or the rewrite failed.
+    """
+    path = _path(project_dir)
+    if path is None or not path.exists():
+        return []
+    doomed = {
+        str(row.get("refutation_id") or "")
+        for row in events(project_dir=project_dir)
+        if "subject" in row
+        and normalize.content_key(str(row.get("subject") or "")) == content_key
+    }
+    doomed.discard("")
+    if not doomed:
+        return []
+    # Rewrite RAW LINES, never `events()` output. That reader is deliberately
+    # tolerant — it drops malformed lines and rows whose `event` it does not
+    # recognise, and it stamps a `_line` key onto what it returns. Round-tripping
+    # through it would silently delete every row a future daimon added and write
+    # `_line` into the ledger. Scars 0025 and 0042 are both this shape: a
+    # forgiving read feeding a write.
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    kept: list[str] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            # Already invisible to every read path, and `_is_torn` establishes
+            # that a torn row is expendable. Keeping it would leave forgotten
+            # bytes on disk for no reachable benefit.
+            continue
+        if (isinstance(row, dict)
+                and str(row.get("refutation_id") or "") in doomed):
+            continue
+        # Anything else is written back BYTE-IDENTICAL, including rows this
+        # version cannot interpret.
+        kept.append(line)
+    tmp = path.with_name(path.name + ".forget-tmp")
+    try:
+        tmp.write_text("".join(line + "\n" for line in kept), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return []
+    return sorted(doomed)
 
 
 def events(project_dir=None) -> list[dict]:

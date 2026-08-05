@@ -1172,27 +1172,67 @@ def _cmd_forget(args) -> int:
     checkpoint re-mints its receipt, so the post-removal state is signed."""
     project = _resolve_project(args.project)
     checkpoint = store.read_latest(project_dir=project, fallback=False)
-    if not isinstance(checkpoint, dict):
+    # #578: the refutation ledger is a second plaintext store, so a value can
+    # live there with no checkpoint at all. Bailing on a missing checkpoint
+    # would leave that value permanently unreachable.
+    # Every subject the record has EVER carried, not only the folded one: a
+    # revision rewrites the subject, so the forgotten value can sit in an
+    # earlier row that nothing renders. Matching only the current subject would
+    # leave exactly the text `forget` exists to reach unreachable. One entry per
+    # record, so a record whose old and new subjects both match is one hit.
+    ledger_subjects: dict[str, list[str]] = {}
+    for row in refutations.events(project_dir=project):
+        ref_id = str(row.get("refutation_id") or "")
+        subject = str(row.get("subject") or "")
+        if ref_id and subject:
+            ledger_subjects.setdefault(ref_id, [])
+            if subject not in ledger_subjects[ref_id]:
+                ledger_subjects[ref_id].append(subject)
+    ledger = [
+        (None, "refutation", {"id": ref_id, "text": subjects[-1],
+                              "_texts": subjects})
+        for ref_id, subjects in ledger_subjects.items()
+    ]
+    if not isinstance(checkpoint, dict) and not ledger:
         print("no checkpoint for this project yet — nothing to forget")
         return 1
     items = []
-    for section, key in store._ITEM_LISTS:
-        for item in ((checkpoint.get(section) or {}).get(key) or []):
-            if isinstance(item, dict) and item.get("id"):
-                items.append((section, key, item))
-    target = next((it for _, _, it in items if it["id"] == args.target), None)
+    if isinstance(checkpoint, dict):
+        for section, key in store._ITEM_LISTS:
+            for item in ((checkpoint.get(section) or {}).get(key) or []):
+                if isinstance(item, dict) and item.get("id"):
+                    items.append((section, key, item))
+    # Refutation ids and checkpoint `recent_decisions` ids SHARE the namespace
+    # `r-<12 hex>`, so an exact-id lookup can legitimately hit both surfaces.
+    # forget's never-guess contract decides it: an ambiguous id is refused, not
+    # resolved by preferring a store.
+    candidates = items + ledger
+    exact = [it for _, _, it in candidates if it["id"] == args.target]
+    target = exact[0] if len(exact) == 1 else None
     if target is None:
-        texts = [str(it.get("text") or "") for _, _, it in items]
+        texts = [t for _, _, it in candidates
+                 for t in (it.get("_texts") or [str(it.get("text") or "")])]
         generic = carry._generic_terms(texts)
-        hits = [(s, k, it) for s, k, it in items
-                if carry._same_item(args.target, str(it.get("text") or ""), generic)]
-        if len(hits) == 1:
+        hits = ([(s, k, it) for s, k, it in candidates if it["id"] == args.target]
+                if len(exact) > 1 else
+                [(s, k, it) for s, k, it in candidates
+                 if any(carry._same_item(args.target, t, generic)
+                        for t in (it.get("_texts")
+                                  or [str(it.get("text") or "")]))])
+        # Several hits are only ambiguous when they are different VALUES.
+        # Removal is content removal (#418 splices sibling ids on one key), so
+        # the same sentence held in the checkpoint and in the ledger is one
+        # value in two stores, not a question for the user. Resolve on the
+        # canonical key, the same one the splices use.
+        keys = {normalize.content_key(str(it.get("text") or ""))
+                for _, _, it in hits}
+        if len(hits) == 1 or (hits and len(keys) == 1):
             target = hits[0][2]
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
             print(f"{label} {args.target!r}; candidates:")
-            for _, key, it in (hits or items):
+            for _, key, it in (hits or candidates):
                 print(f"  {it['id']}  [{key}] {it.get('text', '')}")
             print("forget by exact id: daimon forget <id>")
             return 1
@@ -1206,8 +1246,11 @@ def _cmd_forget(args) -> int:
     # suppressed at capture. Still a hash, never the text: removal means the
     # content leaves the audit trail too (#321).
     content_hash = normalize.content_key(target.get("text") or "")
-    sid = str(checkpoint.get("session_id") or "")
-    if not sid:
+    sid = str((checkpoint or {}).get("session_id") or "")
+    # A checkpoint-bearing project still needs its session id to rewrite. A
+    # ledger-only value has no checkpoint to rewrite, so the missing id is not
+    # an error there.
+    if isinstance(checkpoint, dict) and not sid:
         print("checkpoint has no session_id — cannot rewrite")
         return 1
     # Tombstone BEFORE the rewrite (#418): write_checkpoint's forget gate
@@ -1228,18 +1271,25 @@ def _cmd_forget(args) -> int:
     # (store._stamp_item_ids). Removal is content removal, so every item
     # folding to the tombstoned key goes. Id kept in the predicate as a belt
     # for non-string text, which content_key canonicalizes to "".
-    for section, key in store._ITEM_LISTS:
-        lst = (checkpoint.get(section) or {}).get(key)
-        if isinstance(lst, list):
-            lst[:] = [i for i in lst
-                      if not (isinstance(i, dict)
-                              and (i.get("id") == target["id"]
-                                   or normalize.content_key(i.get("text") or "")
-                                   == content_hash))]
-    # allow_disabled (#421): the ONE write_checkpoint call that may run under
-    # the kill switch — the rewrite that makes the deletion real on disk.
-    store.write_checkpoint(sid, checkpoint, project_dir=project,
-                           allow_disabled=True)
+    if isinstance(checkpoint, dict):
+        for section, key in store._ITEM_LISTS:
+            lst = (checkpoint.get(section) or {}).get(key)
+            if isinstance(lst, list):
+                lst[:] = [i for i in lst
+                          if not (isinstance(i, dict)
+                                  and (i.get("id") == target["id"]
+                                       or normalize.content_key(i.get("text") or "")
+                                       == content_hash))]
+        # allow_disabled (#421): the ONE write_checkpoint call that may run under
+        # the kill switch — the rewrite that makes the deletion real on disk.
+        store.write_checkpoint(sid, checkpoint, project_dir=project,
+                               allow_disabled=True)
+    # #578: same value, second plaintext store. The ledger splices on the SAME
+    # canonical key for the same reason the checkpoint splices on it rather than
+    # on the id — removal is content removal, so a refutation asserting the
+    # forgotten value goes with it whether or not it was the named target.
+    forgotten_refutations = refutations.forget_content_key(
+        content_hash, project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -1252,8 +1302,15 @@ def _cmd_forget(args) -> int:
     except Exception as e:  # belt: purge_chunk_cache itself never raises
         purged, purge_err = 0, str(e)
     _note_usage("forget")
+    surfaces = []
+    if isinstance(checkpoint, dict):
+        surfaces.append("the live checkpoint")
+    if forgotten_refutations:
+        surfaces.append(f"{len(forgotten_refutations)} refutation(s) "
+                        f"({', '.join(forgotten_refutations)})")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
-          "item removed from the live checkpoint; tombstone recorded")
+          f"removed from {' and '.join(surfaces) or 'no store'}; "
+          "tombstone recorded")
     if purge_err is not None:
         print(f"warning: chunk cache purge failed: {purge_err} — "
               "cached pre-redaction chunks may persist up to "
