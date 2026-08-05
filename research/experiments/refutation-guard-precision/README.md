@@ -56,12 +56,17 @@ and only the anchor rail actually scaled. It did not corrupt the published
 counts, because the subject rail never fired at all, but the design could not
 have detected it if it had.
 
-**One seed is one draw, and the draw dominates.** Low issue numbers appear as
-bare `#N` in unrelated prose far more often than high ones, so a sample that
-lands on `#3` and `#12` measures a different world from one that lands on `#481`
-and `#522`. The first version reported a single seed and read its three points
-as a slope. At 60 records the spread across draws is roughly sixfold, which is
-larger than the effect the three points were being used to establish.
+**One seed is one draw, and the draw dominates.** A sample that lands on `#3`
+and `#12` measures a different world from one that lands on `#481` and `#522`,
+because the corpus's own `#N` tokens are concentrated at the low end. The first
+version reported a single seed and read its three points as a slope. At 60
+records the spread across draws is roughly sevenfold, larger than the effect the
+three points were being used to establish.
+
+The run therefore also reports a **collision surface**: every `#N` in the corpus,
+counted by magnitude. `guard` promotes each one to an `issue:N` anchor, so those
+tokens are the whole false-positive surface of the anchor rail, and their
+distribution is the mechanism behind the spread rather than a story about it.
 
 ## Reproducing
 

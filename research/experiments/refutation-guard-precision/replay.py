@@ -32,6 +32,7 @@ import json
 import os
 import pathlib
 import random
+import re
 import statistics
 import sys
 import tempfile
@@ -89,6 +90,33 @@ def corpus(exclude: str = "Daily-Nerd-daimon") -> list[str]:
     return out
 
 
+def collision_surface(texts: list[str], band: int = 100) -> dict:
+    """Where the anchor rail's false positives can come from at all.
+
+    `guard` promotes every `#N` it finds in the query to an `issue:N` anchor
+    (refutations.py, `_ISSUE_RE`), so the corpus's `#N` tokens ARE the entire
+    false-positive surface of that rail — an anchor can only collide with a
+    number some unrelated project already writes.  Counting them by magnitude
+    turns "which issues a refutation anchors on" from a hand-waved explanation
+    of the seed spread into a measured property of the corpus.
+
+    Counts only, never the surrounding text.
+    """
+    nums = [int(n) for text in texts
+            for n in re.findall(r"(?:issue:|#)(\d+)\b", text, re.IGNORECASE)]
+    in_range = [n for n in nums if 1 <= n < ISSUE_RANGE]
+    bands: dict[str, int] = {}
+    for n in in_range:
+        low = (n - 1) // band * band + 1
+        bands[f"{low}-{low + band - 1}"] = bands.get(f"{low}-{low + band - 1}", 0) + 1
+    return {
+        "tokens_total": len(nums),
+        "tokens_in_issue_range": len(in_range),
+        "distinct_in_issue_range": len(set(in_range)),
+        "by_band": bands,
+    }
+
+
 def _seed(project: str, records) -> None:
     for subject, scope, anchor in records:
         refutations.assert_refutation(
@@ -129,7 +157,8 @@ def main() -> None:
         print("no corpus found in the local checkpoint store", file=sys.stderr)
         raise SystemExit(1)
 
-    out: dict = {"corpus_texts": len(texts), "seed": SEED}
+    out: dict = {"corpus_texts": len(texts), "seed": SEED,
+                 "collision_surface": collision_surface(texts)}
 
     with tempfile.TemporaryDirectory() as fixed_project:
         _seed(fixed_project, FIXED)
@@ -182,7 +211,13 @@ def main() -> None:
     (here / "measurements.json").write_text(
         json.dumps(out, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    print(f"corpus (non-daimon projects): {len(texts)} item texts\n")
+    print(f"corpus (non-daimon projects): {len(texts)} item texts")
+    surface = out["collision_surface"]
+    print(f"anchor-rail collision surface: {surface['tokens_in_issue_range']} "
+          f"in-range #N tokens, {surface['distinct_in_issue_range']} distinct")
+    for band in sorted(surface["by_band"], key=lambda b: int(b.split("-")[0])):
+        print(f"  {band:>9}: {surface['by_band'][band]}")
+    print()
     fixed = out["fixed"]
     print(f"fixed ledger ({fixed['refutations']} refutations): "
           f"{fixed['texts_hit']}/{len(texts)} texts hit "

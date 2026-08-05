@@ -1,4 +1,16 @@
 {
+  "collision_surface": {
+    "by_band": {
+      "1-100": 45,
+      "101-200": 37,
+      "201-300": 19,
+      "401-500": 1,
+      "501-600": 3
+    },
+    "distinct_in_issue_range": 51,
+    "tokens_in_issue_range": 105,
+    "tokens_total": 111
+  },
   "corpus_texts": 824,
   "fixed": {
     "by_subject": {
