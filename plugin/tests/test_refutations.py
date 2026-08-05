@@ -495,6 +495,27 @@ def test_cli_guard_renders_revisit_condition_and_multiple_exact_matches(
     assert first in output or second in output
 
 
+def test_show_states_that_evidence_is_unverified(tmp_checkpoint_dir, monkeypatch, capsys):
+    # #576: the evidence line sits in the same Label: value register as
+    # Provenance and Authority, which ARE derived from recorded lifecycle
+    # facts.  A reader must be able to tell that this one was never checked.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    ref_id = _assert(authority="human", ratified=True)
+
+    assert cli.main(["refute", "show", ref_id]) == 0
+    output = capsys.readouterr().out
+    assert "Evidence: measurement:566/623 origin misses" in output
+    assert "daimon does not verify" in output
+
+
+def test_evidence_help_does_not_claim_verification():
+    # The word "supporting" reads as a checked property.  Shape validation
+    # cannot establish that a source supports anything.
+    parser = cli.build_parser()
+    help_text = parser.format_help()
+    assert "evidence-bound" not in help_text
+
+
 def test_revision_without_anchors_keeps_the_guard_rail(tmp_checkpoint_dir):
     # A revision that never mentions anchors must not disarm the guard: the
     # `is not None` sentinel in revise() means "unchanged", and append() must

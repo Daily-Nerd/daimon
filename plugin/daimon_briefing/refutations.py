@@ -7,8 +7,13 @@ append-only stream and a deterministic lifecycle fold.
 
 The write path is deliberately zero-LLM.  Agent assertions remain candidates;
 only explicit human ratification (or a future typed mechanical verifier) makes
-one active.  A matching quote proves provenance, not entailment, so evidence
-text alone never activates a permanent negative guard.
+one active.
+
+Evidence is CITED, not verified (#576).  `_evidence` validates the shape of a
+`kind:payload` source and nothing else: it does not resolve the reference, does
+not check that the measurement or artifact exists, and cannot establish that it
+entails the verdict.  That is why evidence text alone never activates a
+permanent negative guard, and why every surface that renders a source says so.
 """
 
 from __future__ import annotations
@@ -118,7 +123,7 @@ def _evidence(values, *, required: bool = True) -> list[str]:
     if required and not out:
         raise RefutationError(
             "at least one --evidence source is required; name the measurement, "
-            "artifact, issue, or transcript span supporting the verdict")
+            "artifact, issue, or transcript span cited for the verdict")
     if len(out) > _MAX_EVIDENCE:
         raise RefutationError(
             f"too many evidence sources ({len(out)} > {_MAX_EVIDENCE})")

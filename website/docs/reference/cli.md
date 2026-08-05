@@ -25,7 +25,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon reverify <id>` | Assert a carried item is still true — evidence-gated, resets its staleness clock. Also the reject half of a supersession candidate. |
 | `daimon forget <id or text>` | Remove one item's content from disk and index, leaving a hash-only tombstone. The deletion survives re-serialization of the original transcript. |
 | `daimon log --text "…"` | Append a freeform timeline event to the project's event log — zero-LLM, audit-trail only. |
-| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only explicit human ratification activates a guard. Revisions require new typed evidence, and agent overturns remain proposals. |
+| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires `--by human`. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active record to candidate until it is ratified again. Agent overturns remain proposals. |
 
 ## Trust and audit
 

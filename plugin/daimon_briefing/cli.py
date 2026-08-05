@@ -954,6 +954,13 @@ def _print_refutation(record: dict, *, detailed: bool = False) -> None:
     evidence = record.get("evidence") or []
     for item in evidence:
         print(f"  Evidence: {item}")
+    if evidence:
+        # #576: Evidence sits in the same Label: value register as Provenance
+        # and Authority, which ARE derived from recorded lifecycle facts.  The
+        # source string is shape-checked and never resolved, so say so here —
+        # this is the only surface a reader of `refute show` actually reads.
+        print("  (evidence sources are recorded as cited; "
+              "daimon does not verify them)")
     print(f"  Provenance: asserted by {record.get('asserted_by', '?')} "
           f"({record.get('asserted_author') or 'unknown'})")
     if record.get("activation"):
@@ -3652,7 +3659,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_refute = sub.add_parser(
         "refute",
-        help="author and query evidence-bound negative knowledge (#573)",
+        help="author and query evidence-cited negative knowledge (#573)",
         epilog="Examples:\n"
                "  daimon refute list\n"
                "  daimon refute search receipt verification\n"
@@ -3676,7 +3683,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr_add.add_argument("--scope", required=True, help="where the verdict applies")
     pr_add.add_argument(
         "--evidence", action="append", required=True, metavar="SOURCE",
-        help="supporting measurement, artifact, issue, or transcript source; repeatable")
+        help="cited measurement, artifact, issue, or transcript source; recorded verbatim, not resolved or verified; repeatable")
     pr_add.add_argument(
         "--anchor", action="append", default=[], metavar="ANCHOR",
         help="stable exact-match key such as issue:502 or command:daimon-why; repeatable")
@@ -3703,7 +3710,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr_ratify.set_defaults(func=_cmd_refute_ratify)
 
     pr_revise = refute_sub.add_parser(
-        "revise", help="append a new evidence-bound version; inactive until ratified")
+        "revise", help="append a new evidence-cited version; inactive until ratified")
     pr_revise.add_argument("refutation_id", help="exact r-… id")
     pr_revise.add_argument("--subject", help="replacement subject")
     pr_revise.add_argument("--verdict", help="replacement verdict")
@@ -3714,7 +3721,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr_revise.add_argument("--revisit-when", help="replacement revisit condition")
     pr_revise.add_argument(
         "--evidence", action="append", required=True, metavar="SOURCE",
-        help="new evidence supporting the revision; repeatable")
+        help="new evidence cited for the revision; recorded, not verified; repeatable")
     pr_revise.add_argument("--by", choices=["agent", "human"], required=True)
     pr_revise.add_argument(
         "--ratify", action="store_true",
