@@ -27,7 +27,7 @@ def _refute(subject=SUBJECT, scope="migrations", project_dir=PROJECT):
     return refutations.assert_refutation(
         subject=subject, verdict="it deadlocked under concurrent writes",
         scope=scope, evidence=["measurement:deadlock-trace-1"],
-        authority="human", ratified=True, project_dir=project_dir)
+        channel="cli-tty", ratified=True, project_dir=project_dir)
 
 
 def _checkpoint(*texts, project_dir=PROJECT):
@@ -76,7 +76,7 @@ def test_forget_removes_every_row_of_the_record_not_only_the_matching_one(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _checkpoint("an unrelated decision about logging")
     ref_id = _refute()
-    refutations.revise(ref_id, authority="human", ratified=True,
+    refutations.revise(ref_id, channel="cli-tty", ratified=True,
                        subject="a differently worded restatement",
                        evidence=["measurement:deadlock-trace-2"],
                        project_dir=PROJECT)
@@ -138,7 +138,7 @@ def test_forget_refuses_when_an_id_matches_a_decision_and_a_refutation(
     monkeypatch.setattr(refutations, "make_id", lambda *a, **k: decision_id)
     collided = refutations.assert_refutation(
         subject="a subject whose id was forced to collide", verdict="refuted",
-        scope="collision", evidence=["measurement:x"], authority="human",
+        scope="collision", evidence=["measurement:x"], channel="cli-tty",
         ratified=True, project_dir=PROJECT)
     assert collided == decision_id
 

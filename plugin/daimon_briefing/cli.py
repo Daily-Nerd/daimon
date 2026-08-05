@@ -987,12 +987,31 @@ def _print_refutation(record: dict, *, detailed: bool = False) -> None:
         print(f"  Overturn proposed by {pending.get('by', '?')} — still active")
 
 
+def _refute_channel(args) -> str:
+    """The channel this invocation actually arrived through.
+
+    `--by agent` is a self-declaration of the NARROWER authority, mirroring
+    `resolve`, where the human path is likewise the ABSENCE of the flag. A
+    human path has to show an interactive terminal, and the CLI can mint
+    nothing stronger: `ui` and `signed` are in-process-only, because a channel
+    an agent can reach by shelling out is the deleted `--by human` renamed.
+    """
+    if getattr(args, "by", None) == "agent":
+        return "cli-agent"
+    if not sys.stdin.isatty():
+        raise refutations.RefutationError(
+            "this is the human path and there is no interactive terminal; "
+            "pass --by agent to record a candidate, or run it from a terminal")
+    return "cli-tty"
+
+
 def _cmd_refute_add(args) -> int:
     project = _resolve_project(args.project)
     try:
         ref_id = refutations.assert_refutation(
             subject=args.subject, verdict=args.verdict, scope=args.scope,
-            evidence=args.evidence, authority=args.by, anchors=args.anchor,
+            evidence=args.evidence, channel=_refute_channel(args),
+            anchors=args.anchor,
             revisit_when=args.revisit_when or "", ratified=args.ratify,
             project_dir=project)
     except refutations.RefutationError as exc:
@@ -1007,9 +1026,9 @@ def _cmd_refute_add(args) -> int:
         if record["state"] == "candidate":
             # An agent-authored candidate never gets handed its own escalation
             # command; activation is a decision the human has to reach.
-            if args.by == "human":
+            if getattr(args, "by", None) != "agent":
                 print(f"  Next: daimon refute ratify {ref_id} "
-                      f"--by human --project {project}")
+                      f"--project {project}")
             else:
                 print("  Candidate recorded. Activation requires an explicit "
                       "human decision.")
@@ -1019,7 +1038,7 @@ def _cmd_refute_add(args) -> int:
 def _cmd_refute_ratify(args) -> int:
     project = _resolve_project(args.project)
     try:
-        refutations.ratify(args.refutation_id, authority=args.by,
+        refutations.ratify(args.refutation_id, channel=_refute_channel(args),
                            note=args.note or "", project_dir=project)
     except refutations.RefutationError as exc:
         print(f"refutation not ratified: {exc}")
@@ -1038,8 +1057,8 @@ def _cmd_refute_revise(args) -> int:
     anchors = args.anchor if args.anchor is not None else None
     try:
         refutations.revise(
-            args.refutation_id, authority=args.by, evidence=args.evidence,
-            subject=args.subject, verdict=args.verdict, scope=args.scope,
+            args.refutation_id, channel=_refute_channel(args),
+            evidence=args.evidence, subject=args.subject, verdict=args.verdict, scope=args.scope,
             anchors=anchors, revisit_when=args.revisit_when,
             ratified=args.ratify, project_dir=project)
     except refutations.RefutationError as exc:
@@ -1060,7 +1079,8 @@ def _cmd_refute_overturn(args) -> int:
     project = _resolve_project(args.project)
     try:
         event = refutations.overturn(
-            args.refutation_id, authority=args.by, evidence=args.evidence,
+            args.refutation_id, channel=_refute_channel(args),
+            evidence=args.evidence,
             note=args.note or "", project_dir=project)
     except refutations.RefutationError as exc:
         print(f"refutation not overturned: {exc}")
@@ -3768,8 +3788,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="stable exact-match key such as issue:502 or command:daimon-why; repeatable")
     pr_add.add_argument(
         "--revisit-when", help="condition that makes reconsideration legitimate")
-    pr_add.add_argument("--by", choices=["agent", "human"], required=True,
-                        help="declared authoring authority; never inferred from prose")
+    pr_add.add_argument("--by", choices=["agent"], default=None,
+                        help="declare yourself an agent; omit it only from an "
+                             "interactive terminal, which is the human path")
     pr_add.add_argument(
         "--ratify", action="store_true",
         help="activate immediately; valid only with --by human")
@@ -3781,8 +3802,9 @@ def build_parser() -> argparse.ArgumentParser:
         "ratify", help="explicitly activate a candidate as a human decision")
     pr_ratify.add_argument("refutation_id", help="exact r-… id")
     pr_ratify.add_argument(
-        "--by", choices=["agent", "human"], required=True,
-        help="declared authority; only --by human may ratify")
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; ratification then refuses, because "
+             "activation requires a human channel")
     pr_ratify.add_argument("--note", help="optional ratification rationale")
     pr_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pr_ratify.add_argument("--json", action="store_true", help="machine-readable output")
@@ -3801,7 +3823,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr_revise.add_argument(
         "--evidence", action="append", required=True, metavar="SOURCE",
         help="new evidence cited for the revision; recorded, not verified; repeatable")
-    pr_revise.add_argument("--by", choices=["agent", "human"], required=True)
+    pr_revise.add_argument("--by", choices=["agent"], default=None)
     pr_revise.add_argument(
         "--ratify", action="store_true",
         help="activate the revision immediately; valid only with --by human")
@@ -3818,7 +3840,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="evidence cited against the active verdict; recorded, not "
              "verified; repeatable")
     pr_overturn.add_argument("--note", help="optional explanation")
-    pr_overturn.add_argument("--by", choices=["agent", "human"], required=True)
+    pr_overturn.add_argument("--by", choices=["agent"], default=None)
     pr_overturn.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pr_overturn.add_argument("--json", action="store_true", help="machine-readable output")
     pr_overturn.set_defaults(func=_cmd_refute_overturn)

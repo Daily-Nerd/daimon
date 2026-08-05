@@ -74,7 +74,17 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import cli, config, policy, refutations, store, teamsync
+
 from tests.conftest import FIXTURES, FakeChat
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _interactive_terminal(monkeypatch):
+    """These recipes drive the ratifying and overturning verbs, which are now
+    the human path: the flag that used to declare humanity is gone and an
+    observed terminal took its place."""
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
 
 # ---------------------------------------------------------------------------
 # The ratchet. Every entry is (command, path pattern) with its justification.
@@ -394,13 +404,13 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ctx["refutation_id"] = refutations.make_id(subject, scope)
 
     def r_refute_ratify():
-        run(["refute", "ratify", ctx["refutation_id"], "--by", "human"], 0)
+        run(["refute", "ratify", ctx["refutation_id"]], 0)
 
     def r_refute_revise():
         run([
             "refute", "revise", ctx["refutation_id"],
             "--verdict", "file hashes still do not prove individual claims",
-            "--evidence", "measurement:second corpus", "--by", "human",
+            "--evidence", "measurement:second corpus",
             "--ratify",
         ], 0)
 

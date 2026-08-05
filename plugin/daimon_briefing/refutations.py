@@ -36,6 +36,39 @@ EVENTS = frozenset({
 })
 STATES = frozenset({"candidate", "active", "overturned"})
 AUTHORITIES = frozenset({"agent", "human", "mechanical"})
+# Authority is a property of the WRITE PATH, never a caller's claim about
+# itself. `--by human` was a flag whose only function was to let the caller
+# assert its own authority, which is the echo-defense hole (#512) and the
+# self-assigned-identity hole (scar 0032) one layer up: an actor acting as
+# witness for its own claim.
+#
+# A channel is OBSERVED by the writer and recorded on every row, so authority
+# follows from it rather than from an argument. The CLI can observe only two of
+# these. `ui` and `signed` are reachable exclusively from an in-process writer,
+# which is what forces a future UI to be a WRITER rather than a wrapper around
+# the deleted flag: if the CLI could emit `ui`, an agent shelling out could too.
+#
+# Nothing local is unforgeable. A caller with machine access can allocate a pty
+# or drive a UI. The claim this earns is not proof but provenance: forgery costs
+# deliberate impersonation instead of one word, and the channel stays auditable
+# afterwards. That is strictly more than the zero bits recorded before.
+CHANNEL_AUTHORITY = {
+    "cli-agent": "agent",
+    "cli-tty": "human",
+    "ui": "human",
+    "signed": "human",
+    "mechanical": "mechanical",
+}
+CHANNELS = frozenset(CHANNEL_AUTHORITY)
+# What each channel is allowed to say about itself when rendered. Never
+# "human-ratified" unqualified: the tier is the honest part.
+CHANNEL_LABEL = {
+    "cli-agent": "agent-proposed",
+    "cli-tty": "ratified (interactive)",
+    "ui": "ratified (ui)",
+    "signed": "ratified (signed)",
+    "mechanical": "mechanically-activated",
+}
 _EVENT_RANK = {
     # Same-order ambiguity fails toward less authority: ratification before a
     # revision leaves the revision candidate; overturn remains last.
@@ -137,15 +170,18 @@ def make_id(subject: str, scope: str) -> str:
     return "r-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def _stamp(event: str, refutation_id: str, authority: str,
+def _stamp(event: str, refutation_id: str, channel: str,
            *, now_ns: int | None = None, event_id: str | None = None) -> dict:
     if event not in EVENTS:
         raise RefutationError(f"unknown refutation event: {event}")
     if not _REF_ID_RE.fullmatch(str(refutation_id or "")):
         raise RefutationError(f"invalid refutation id: {refutation_id!r}")
-    if authority not in AUTHORITIES:
+    if channel not in CHANNELS:
         raise RefutationError(
-            f"authority must be one of: {', '.join(sorted(AUTHORITIES))}")
+            f"channel must be one of: {', '.join(sorted(CHANNELS))}")
+    # Derived, never accepted: there is no way to name one channel and claim
+    # the authority of another.
+    authority = CHANNEL_AUTHORITY[channel]
     order = time.time_ns() if now_ns is None else int(now_ns)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
@@ -156,6 +192,7 @@ def _stamp(event: str, refutation_id: str, authority: str,
         "event_id": event_id or uuid.uuid4().hex,
         "event": event,
         "refutation_id": refutation_id,
+        "channel": channel,
         "authority": authority,
         "author": config.author(),
     }
@@ -350,7 +387,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 continue  # duplicate logical assertion, first writer wins
             state = (
                 "active" if row.get("ratified") is True
-                and row.get("authority") == "human" else "candidate")
+                and CHANNEL_AUTHORITY.get(row.get("channel")) == "human" else "candidate")
             out[ref_id] = {
                 "refutation_id": ref_id,
                 "state": state,
@@ -362,7 +399,10 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "evidence": list(row.get("evidence") or []),
                 "asserted_by": row.get("authority"),
                 "asserted_author": row.get("author"),
-                "activation": ("human-ratified" if state == "active" else None),
+                "activation": (CHANNEL_LABEL.get(row.get("channel"))
+                               if state == "active" else None),
+                "activation_channel": (row.get("channel")
+                                       if state == "active" else None),
                 "activation_author": (
                     row.get("author") if state == "active" else None),
                 "created_at": row.get("ts"),
@@ -376,14 +416,16 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
         if event == "ratified":
-            if current["state"] != "overturned" and row.get("authority") == "human":
+            if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
                 current["state"] = "active"
-                current["activation"] = "human-ratified"
+                current["activation"] = CHANNEL_LABEL.get(row.get("channel"))
+                current["activation_channel"] = row.get("channel")
                 current["activation_author"] = row.get("author")
         elif event == "activated":
-            if current["state"] != "overturned" and row.get("authority") == "mechanical":
+            if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(row.get("channel")) == "mechanical":
                 current["state"] = "active"
                 current["activation"] = "mechanically-activated"
+                current["activation_channel"] = "mechanical"
                 current["activation_author"] = row.get("author")
         elif event == "revised":
             for key in ("subject", "verdict", "scope", "revisit_when"):
@@ -404,9 +446,12 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 current["evidence"] = list(row.get("evidence") or [])
             current["state"] = (
                 "active" if row.get("ratified") is True
-                and row.get("authority") == "human" else "candidate")
+                and CHANNEL_AUTHORITY.get(row.get("channel")) == "human" else "candidate")
             current["activation"] = (
-                "human-ratified" if current["state"] == "active" else None)
+                CHANNEL_LABEL.get(row.get("channel"))
+                if current["state"] == "active" else None)
+            current["activation_channel"] = (
+                row.get("channel") if current["state"] == "active" else None)
             current["activation_author"] = (
                 row.get("author") if current["state"] == "active" else None)
             current["revision"] += 1
@@ -419,9 +464,10 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                     "note": str(row.get("note") or ""),
                 }
         elif event == "overturned":
-            if row.get("authority") == "human":
+            if CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
                 current["state"] = "overturned"
                 current["activation"] = None
+                current["activation_channel"] = None
                 current["activation_author"] = None
                 current["overturned_by"] = "human"
                 current["overturned_author"] = row.get("author")
@@ -440,7 +486,7 @@ def get(refutation_id: str, project_dir=None) -> dict | None:
 
 
 def assert_refutation(*, subject: str, verdict: str, scope: str,
-                      evidence, authority: str, anchors=(), revisit_when: str = "",
+                      evidence, channel: str, anchors=(), revisit_when: str = "",
                       ratified: bool = False, project_dir=None) -> str:
     subject = _text("subject", subject)
     verdict = _text("verdict", verdict)
@@ -454,13 +500,15 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     subject, _ = redact.redact_text(subject)
     verdict, _ = redact.redact_text(verdict)
     scope, _ = redact.redact_text(scope)
-    if ratified and authority != "human":
-        raise RefutationError("only --by human may activate with --ratify")
+    if ratified and CHANNEL_AUTHORITY.get(channel) != "human":
+        raise RefutationError(
+            "activating with --ratify requires a human channel; this call "
+            f"arrived through {channel!r}")
     ref_id = make_id(subject, scope)
     if get(ref_id, project_dir=project_dir) is not None:
         raise RefutationError(
             f"{ref_id} already exists; use `daimon refute revise {ref_id}`")
-    row = _stamp("asserted", ref_id, authority)
+    row = _stamp("asserted", ref_id, channel)
     row.update({
         "subject": subject,
         "verdict": verdict,
@@ -476,35 +524,39 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     return ref_id
 
 
-def ratify(refutation_id: str, *, authority: str, note: str = "",
+def ratify(refutation_id: str, *, channel: str, note: str = "",
            project_dir=None) -> None:
     # Ratification is the transition that makes a record load-bearing, so it
-    # carries the same declared authority every other mutation does.  Stamping
-    # "human" unconditionally would leave the fold checking a constant this
-    # module had just written to itself.
-    if authority != "human":
-        raise RefutationError("only --by human may ratify a refutation")
+    # is the one that must not be self-declarable.  The caller names the
+    # channel it OBSERVED; authority is derived from that, so an agent cannot
+    # reach this state by describing itself differently.
+    if CHANNEL_AUTHORITY.get(channel) != "human":
+        raise RefutationError(
+            "ratification requires a human channel; this call arrived "
+            f"through {channel!r}")
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")
     if current["state"] == "overturned":
         raise RefutationError(
             "an overturned refutation cannot be ratified; revise it with new evidence first")
-    row = _stamp("ratified", refutation_id, authority)
+    row = _stamp("ratified", refutation_id, channel)
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir):
         raise RefutationError("ratification not written")
 
 
-def revise(refutation_id: str, *, authority: str, evidence,
+def revise(refutation_id: str, *, channel: str, evidence,
            subject=None, verdict=None, scope=None, anchors=None,
            revisit_when=None, ratified: bool = False, project_dir=None) -> None:
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")
-    if ratified and authority != "human":
-        raise RefutationError("only --by human may activate a revision with --ratify")
-    row = _stamp("revised", refutation_id, authority)
+    if ratified and CHANNEL_AUTHORITY.get(channel) != "human":
+        raise RefutationError(
+            "activating a revision requires a human channel; this call "
+            f"arrived through {channel!r}")
+    row = _stamp("revised", refutation_id, channel)
     row["evidence"] = _evidence(evidence)
     if subject is not None:
         row["subject"] = _text("subject", subject)
@@ -528,15 +580,16 @@ def revise(refutation_id: str, *, authority: str, evidence,
         raise RefutationError("revision not written")
 
 
-def overturn(refutation_id: str, *, authority: str, evidence, note: str = "",
+def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
              project_dir=None) -> str:
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")
     if current["state"] == "overturned":
         raise RefutationError(f"{refutation_id} is already overturned")
-    event = "overturned" if authority == "human" else "overturn-proposed"
-    row = _stamp(event, refutation_id, authority)
+    event = ("overturned" if CHANNEL_AUTHORITY.get(channel) == "human"
+             else "overturn-proposed")
+    row = _stamp(event, refutation_id, channel)
     row["evidence"] = _evidence(evidence)
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir):
