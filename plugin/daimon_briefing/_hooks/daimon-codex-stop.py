@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Codex Stop hook: checkpoint the current transcript opportunistically.
 
-Codex currently exposes `Stop` at turn scope, not a clean session-end event.
+Codex exposes `Stop` at turn scope. `SessionEnd` is the clean end-of-session
+event and is handled by daimon-codex-session-end.py; this hook remains as
+crash insurance, because SessionEnd cannot fire on a crash or SIGKILL.
 Serializing after every turn would be expensive, so this hook is throttled by
 DAIMON_CODEX_MIN_SERIALIZE_INTERVAL (default: 300 seconds per session). Set it
 to 0 to serialize on every Stop, or DAIMON_CODEX_SERIALIZE_ON_STOP=0 to disable

@@ -6,7 +6,8 @@ Adds Daimon's capture -> inject loop to Codex.
   project checkpoint and returns Codex `additionalContext` JSON, so the briefing
   is injected as developer context.
 - `daimon-codex-stop.py` — `Stop` hook. Codex exposes `Stop` at turn scope, not
-  as a clean session-end event, so this hook serializes opportunistically and is
+  as a clean session-end event. `SessionEnd` now covers the graceful end, so
+  this hook serializes opportunistically as crash insurance and is
   throttled by `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` (default `300` seconds per
   session). Set it to `0` to serialize every turn, or set
   `DAIMON_CODEX_SERIALIZE_ON_STOP=0` to disable Codex capture while leaving

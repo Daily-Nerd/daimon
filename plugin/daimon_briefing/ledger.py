@@ -69,7 +69,8 @@ def _append_retry_log(session_id: str, prior: str) -> None:
 # host and the verb are alternations. A new host adapter MUST add its prefix
 # here or its serializes are invisible to status/hung detection/heal.
 _SPAWN_RE = re.compile(
-    r"^(\S+) (?:gemini-session-end|session-end|codex-stop|windsurf-cascade|"
+    r"^(\S+) (?:gemini-session-end|codex-session-end|session-end|codex-stop|"
+    r"windsurf-cascade|"
     r"windsurf-finalizer|session-start): "
     r"(?:spawned|retry) serialize for (\S+)"
 )
@@ -440,7 +441,8 @@ def serialize_in_flight(project_slug: str, now: float | None = None) -> bool:
 # Host prefix on a spawn line, for per-host capture counts. Deliberately the
 # same alternation as _SPAWN_RE (a new host adapter updates both).
 _STATS_HOST_RE = re.compile(
-    r"^\S+ (gemini-session-end|session-end|codex-stop|windsurf-cascade|"
+    r"^\S+ (gemini-session-end|codex-session-end|session-end|codex-stop|"
+    r"windsurf-cascade|"
     r"windsurf-finalizer): "
     r"spawned serialize for "
 )

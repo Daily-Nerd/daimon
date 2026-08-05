@@ -51,7 +51,7 @@ python3 hook/codex-hooks.py status
   project checkpoint and returns Codex `additionalContext` JSON, so the
   briefing is injected as developer context.
 - **`daimon-codex-stop.py`** — `Stop` hook. Codex exposes `Stop` at turn
-  scope, not as a clean session-end event, so this hook serializes
+  scope. `SessionEnd` covers the graceful end of a session, so this hook serializes
   opportunistically and is throttled by `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL`
   (default `300` seconds per session). Set it to `0` to serialize every turn,
   or set `DAIMON_CODEX_SERIALIZE_ON_STOP=0` to disable Codex capture while
