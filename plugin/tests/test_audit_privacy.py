@@ -421,3 +421,47 @@ def test_render_never_prints_plaintext(tmp_checkpoint_dir, capsys):
     out = capsys.readouterr().out
     assert CANARY not in out
     assert key in out
+
+
+def _daimon_home_snapshot():
+    """(relative_path, bytes) for everything under ~/.daimon except logs/."""
+    home = config.checkpoint_dir().parent
+    out = {}
+    for p in sorted(home.rglob("*")):
+        if p.is_file() and "logs" not in p.relative_to(home).parts:
+            out[str(p.relative_to(home))] = p.read_bytes()
+    return out
+
+
+def test_cli_audit_privacy_runs_and_exits_by_contract(tmp_checkpoint_dir):
+    _write("S1", CANARY)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    assert cli.main(["audit", "privacy", "--project", PROJECT]) == 1
+    # After a REAL forget (which scrubs), audit proves clean.
+    _forget(CANARY)
+    assert cli.main(["audit", "privacy", "--project", PROJECT]) == 0
+
+
+def test_cli_audit_is_read_only_outside_logs(tmp_checkpoint_dir):
+    _write("S1", CANARY)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    before = _daimon_home_snapshot()
+    cli.main(["audit", "privacy", "--project", PROJECT])
+    assert _daimon_home_snapshot() == before
+
+
+def test_audit_quotes_moved_and_alias_deprecated(tmp_checkpoint_dir, capsys):
+    _write("S1", KEEPER)
+    assert cli.main(["audit", "quotes", "--project", PROJECT]) == 0
+    capsys.readouterr()
+    assert cli.main(["audit-quotes", "--project", PROJECT]) == 0
+    assert "deprecated" in capsys.readouterr().out.lower()
+
+
+def test_cli_audit_all_flag(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    assert cli.main(["audit", "privacy", "--all"]) in (0, 3)

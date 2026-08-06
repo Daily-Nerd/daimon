@@ -423,6 +423,15 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_audit_quotes():
         run(["audit-quotes"], 0)
 
+    def r_audit_quotes_grouped():
+        # #598: same command, moved under the `audit` group.
+        run(["audit", "quotes"], 0)
+
+    def r_audit_privacy():
+        # #598: read-only tombstone residue audit. r_forget already scrubbed
+        # one item for real by this point in the drive.
+        run(["audit", "privacy"], 0)
+
     def r_heal():
         # Seed a FAILED session with the ledger's own documented line shapes
         # (spawn + error result), then heal re-serializes it for real. The
@@ -499,6 +508,8 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("status",): r_status,
         ("verify-receipt",): r_verify_receipt,
         ("audit-quotes",): r_audit_quotes,
+        ("audit", "quotes"): r_audit_quotes_grouped,
+        ("audit", "privacy"): r_audit_privacy,
         ("heal",): r_heal,
         ("team", "sync"): r_team_sync,
         ("team", "status"): r_team_status,
