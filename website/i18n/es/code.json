@@ -52,5 +52,26 @@
   },
   "landing.verify.title": {
     "message": "Mira cómo se verifica un checkpoint"
+  },
+  "landing.anatomy.title": {
+    "message": "Cada ítem se gana su clase"
+  },
+  "landing.anatomy.class": {
+    "message": "la clase — ganada, no auto-declarada"
+  },
+  "landing.anatomy.words": {
+    "message": "las palabras exactas — citadas, no parafraseadas"
+  },
+  "landing.anatomy.receipt": {
+    "message": "el receipt — dónde comprobarlo"
+  },
+  "landing.quickstart.title": {
+    "message": "Dos comandos"
+  },
+  "landing.copy": {
+    "message": "copiar"
+  },
+  "landing.copy.done": {
+    "message": "copiado"
   }
 }

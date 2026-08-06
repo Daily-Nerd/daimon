@@ -9,6 +9,27 @@ import VerifyReplay from '@site/src/components/VerifyReplay';
 
 const HOSTS = ['claude', 'codex', 'gemini', 'windsurf'];
 
+function CopyCmd({cmd, children}: {cmd: string; children: ReactNode}): ReactNode {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="cmdLine">
+      <code>{children}</code>
+      <button
+        type="button"
+        className="copyBtn"
+        onClick={() => {
+          navigator.clipboard.writeText(cmd);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }}>
+        {copied
+          ? translate({id: 'landing.copy.done', message: 'copied'})
+          : translate({id: 'landing.copy', message: 'copy'})}
+      </button>
+    </div>
+  );
+}
+
 function InstallBlock(): ReactNode {
   const [i, setI] = useState(0);
   const [fading, setFading] = useState(false);
@@ -28,11 +49,13 @@ function InstallBlock(): ReactNode {
   return (
     <pre className="installBlock">
       <code>
-        {'uv tool install daimon-briefing\n'}
-        {'daimon hooks install '}
-        <span className={fading ? 'hostToken hostFade' : 'hostToken'}>
-          {HOSTS[i]}
-        </span>
+        <CopyCmd cmd="uv tool install daimon-briefing">{'uv tool install daimon-briefing'}</CopyCmd>
+        <CopyCmd cmd="daimon hooks install claude">
+          {'daimon hooks install '}
+          <span className={fading ? 'hostToken hostFade' : 'hostToken'}>
+            {HOSTS[i]}
+          </span>
+        </CopyCmd>
       </code>
     </pre>
   );
@@ -140,6 +163,29 @@ export default function Home(): ReactNode {
             {translate({id: 'landing.verify.title', message: 'Watch a checkpoint get verified'})}
           </h2>
           <VerifyReplay />
+        </section>
+        <section className="sectionBand text--center">
+          <h2 className="sectionTitle">
+            {translate({id: 'landing.anatomy.title', message: 'Every item earns its class'})}
+          </h2>
+          <div className="anatomy">
+            <div className="anatomyItem">
+              <span className="tv">✔ verbatim</span> "retry uses exponential backoff, cap 30s"<br />
+              <span className="anatomyDim">└ transcript line 214 · checked at write time</span>
+            </div>
+            <div className="anatomyLegend">
+              <div><span className="tv">↑</span> {translate({id: 'landing.anatomy.class', message: 'the class — earned, not self-declared'})}</div>
+              <div><span className="tv">↑</span> {translate({id: 'landing.anatomy.words', message: 'the exact words — quoted, not paraphrased'})}</div>
+              <div><span className="tv">↑</span> {translate({id: 'landing.anatomy.receipt', message: 'the receipt — where to look it up'})}</div>
+            </div>
+          </div>
+        </section>
+        <section className="sectionBand text--center">
+          <h2 className="sectionTitle">
+            {translate({id: 'landing.quickstart.title', message: 'Two commands'})}
+          </h2>
+          <InstallBlock />
+          <p className="hostRow">Claude Code · Codex · Gemini CLI · Windsurf</p>
         </section>
         <p className="quoteRow">
           {translate({
