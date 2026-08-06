@@ -504,6 +504,51 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
 
 
+# A dead snapshot is unambiguous after this long: a live rebuild holds its
+# tmp for seconds, and store._TMP_REAP_SECONDS set the same one-hour
+# precedent for checkpoint staging twins.
+_SNAPSHOT_REAP_SECONDS = 3600
+
+
+def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
+    """Delete index snapshots left by crashed rebuilds (#601).
+
+    rebuild() stages into `recall.db.<pid>.tmp` and only unlinks ITS OWN
+    pid's leftover — a crash under any other pid strands the snapshot (plus
+    sqlite's `-journal` sidecar) forever: store._reap_stale_tmps never visits
+    this directory and its filter is `.endswith(".tmp")`, which the sidecars
+    fail. The strands are full plaintext copies, and the unopenable sidecars
+    pinned real installs at `daimon audit privacy` exit 3 (cannot-prove).
+
+    Registry contract (surfaces.py): shape `recall.db.{pid}.tmp*`, strategy
+    `reap`. Age-gated like the checkpoint reaper — anything older than an
+    hour is dead by construction; the live db itself never matches the
+    glob's `.tmp` requirement. `apply=False` only lists (heal --dry-run).
+    Best-effort per file; returns the paths reaped (or would-reap)."""
+    db = config.recall_db()
+    if now is None:
+        now = time.time()
+    reaped: list = []
+    try:
+        candidates = sorted(db.parent.glob(db.name + ".*"))
+    except OSError:
+        return reaped
+    for p in candidates:
+        if ".tmp" not in p.name:
+            continue
+        try:
+            if not p.is_file():
+                continue
+            if now - p.stat().st_mtime < _SNAPSHOT_REAP_SECONDS:
+                continue
+            if apply:
+                p.unlink()
+        except OSError:
+            continue
+        reaped.append(p)
+    return reaped
+
+
 def rebuild() -> int:
     """Drop + rebuild the whole index by scanning local + team checkpoints.
     Atomic: builds into a sibling temp file, then os.replace — a concurrent
