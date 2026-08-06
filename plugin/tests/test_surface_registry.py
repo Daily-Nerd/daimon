@@ -79,6 +79,17 @@ def test_match_classifies_write_audit_patterns():
 # ---- derivations ----------------------------------------------------------
 
 
+def test_exempt_suffix_refuses_a_registry_without_one(monkeypatch):
+    """A registry stripped of its suffix exemption must fail loudly — a
+    silent empty string would quietly un-exempt every receipt sidecar and
+    flood the audit with false residue."""
+    import pytest
+
+    monkeypatch.setattr(surfaces, "SURFACES", ())
+    with pytest.raises(LookupError):
+        surfaces.exempt_suffix()
+
+
 def test_privacy_exemptions_derive_from_the_registry():
     """The auditor's name-based exemption set is a VIEW of the registry, not
     a fourth parallel list."""
@@ -110,6 +121,37 @@ def test_reap_removes_dead_snapshots_and_spares_fresh_ones(tmp_path):
     assert sorted(p.name for p in reaped) == [dead.name, journal.name]
     assert not dead.exists() and not journal.exists()
     assert fresh.exists(), "a fresh in-flight rebuild tmp must survive"
+
+
+def test_reap_skips_non_tmp_siblings_directories_and_glob_errors(
+        tmp_path, monkeypatch):
+    db = config.recall_db()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    backup = db.parent / f"{db.name}.backup"      # no .tmp — never a target
+    backup.write_text("user's own backup")
+    dirlike = db.parent / f"{db.name}.olddir.tmp"  # directory, not a file
+    dirlike.mkdir()
+    old = time.time() - 2 * 3600
+    os.utime(backup, (old, old))
+    os.utime(dirlike, (old, old))
+    assert recall.reap_dead_snapshots() == []
+    assert backup.exists() and dirlike.is_dir()
+    # an undeletable strand is skipped, not fatal, and not reported reaped
+    dead, journal, _fresh = _plant_orphans()
+    real_unlink = type(dead).unlink
+
+    def deny_dead(self, missing_ok=False):
+        if self.name == dead.name:
+            raise OSError("EPERM")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(type(dead), "unlink", deny_dead)
+    assert [p.name for p in recall.reap_dead_snapshots()] == [journal.name]
+    monkeypatch.undo()
+    # an unreadable parent aborts quietly with nothing reaped
+    monkeypatch.setattr(type(db.parent), "glob",
+                        lambda self, pat: (_ for _ in ()).throw(OSError()))
+    assert recall.reap_dead_snapshots() == []
 
 
 def test_reap_never_touches_the_live_db(tmp_path):
