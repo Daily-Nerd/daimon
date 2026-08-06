@@ -68,6 +68,19 @@ def test_capture_source_ref_rejects_unsafe_session_id(tmp_path):
         assert provenance.capture_source_ref(value, tmp_path / "x") is None
 
 
+def test_capture_source_ref_marks_hermes_host_api_without_transcript():
+    source = provenance.capture_source_ref(
+        "S-hermes", host_hint="hermes", author="alice")
+
+    assert source["host"] == "hermes"
+    assert source["locator"] == "host-api"
+
+
+def test_source_ref_rejects_unknown_host_and_unsafe_session():
+    assert not provenance.valid_source_ref(dict(_source(), host="other"))
+    assert not provenance.valid_source_ref(dict(_source(), session_id="../escape"))
+
+
 def test_quote_receipt_is_complete_valid_and_bounded():
     receipt = _receipt()
     assert provenance.valid_quote_receipt(receipt)
@@ -90,6 +103,41 @@ def test_quote_receipt_rejects_malformed_time_and_unbounded_bindings():
     too_many = json.loads(json.dumps(_receipt()))
     too_many["binding"]["message_ids"] = [f"m-{i}" for i in range(65)]
     assert not provenance.valid_quote_receipt(too_many)
+
+
+def test_quote_receipt_rejects_invalid_constructor_binding_mode():
+    assert provenance.quote_receipt(
+        _source(),
+        {"algorithm": "sha256", "scope": "raw-file", "value": _HASH},
+        outcome="verified", checked_at="2026-08-05T10:00:00Z",
+        binding_mode="other") is None
+
+
+def test_quote_receipt_rejects_every_malformed_evidence_component():
+    mutations = (
+        ("source", None),
+        ("digest", None),
+        ("digest.algorithm", "md5"),
+        ("verifier", None),
+        ("verifier.id", "other"),
+        ("outcome", "unknown"),
+        ("checked_at", None),
+        ("binding", None),
+        ("binding.message_ids", ["msg-1", "msg-1"]),
+    )
+
+    for dotted, value in mutations:
+        receipt = json.loads(json.dumps(_receipt()))
+        target = receipt
+        parts = dotted.split(".")
+        for part in parts[:-1]:
+            target = target[part]
+        target[parts[-1]] = value
+        assert not provenance.valid_quote_receipt(receipt), dotted
+
+
+def test_binding_message_ids_rejects_invalid_receipt():
+    assert provenance.binding_message_ids({}) == []
 
 
 def test_verify_quotes_stamps_receipt_and_compatibility_mirrors():
@@ -189,6 +237,51 @@ def test_resolver_supports_codex_recursive_sessions(tmp_path):
 
     result = resolver.resolve(_source("S-codex", host="codex"))
     assert result.state == "resolved" and result.path == target
+
+
+def test_resolver_supports_windsurf_roots_and_skips_missing_candidate(tmp_path):
+    target = tmp_path / ".windsurf" / "transcripts" / "S-wind.jsonl"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+    resolver = provenance.SourceResolver(home=tmp_path)
+
+    result = resolver.resolve(_source("S-wind", host="windsurf"))
+
+    assert result.state == "resolved" and result.path == target
+
+
+def test_resolver_rejects_managed_host_without_registered_roots(tmp_path):
+    resolver = provenance.SourceResolver(home=tmp_path)
+    source = dict(_source("S-gemini", host="gemini"), locator="managed")
+
+    assert resolver._roots("gemini") is None
+    assert resolver.resolve(source).state == "unsupported"
+
+
+def test_resolver_treats_index_scan_oserror_as_absent(tmp_path, monkeypatch):
+    claude = tmp_path / ".claude" / "projects"
+    resolver = provenance.SourceResolver(home=tmp_path, claude_projects=claude)
+
+    def denied_glob(path, pattern):
+        if path == claude:
+            raise OSError("denied")
+        return ()
+
+    monkeypatch.setattr(Path, "glob", denied_glob)
+
+    assert resolver.resolve(_source("S-denied")).state == "absent-local"
+
+
+def test_resolver_skips_candidate_path_runtime_errors(tmp_path, monkeypatch):
+    resolver = provenance.SourceResolver(home=tmp_path)
+
+    def broken_is_file(path):
+        raise RuntimeError(f"cannot inspect {path}")
+
+    monkeypatch.setattr(Path, "is_file", broken_is_file)
+
+    assert resolver.resolve(
+        _source("S-broken", host="windsurf")).state == "absent-local"
 
 
 def test_resolver_reports_unreadable_without_fallback(tmp_path, monkeypatch):

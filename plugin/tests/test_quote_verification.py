@@ -952,6 +952,25 @@ def test_audit_quotes_resolves_codex_receipt_source(
     assert "origin-resolved: 1" in out
 
 
+def test_audit_source_helpers_reject_unbound_items_and_use_origin_source(
+    monkeypatch,
+):
+    source = {
+        "version": provenance.SOURCE_REF_VERSION,
+        "host": "codex",
+        "session_id": "S-origin",
+        "locator": "managed",
+    }
+    monkeypatch.setattr(
+        store, "read_checkpoint", lambda session_id: {"source_ref": source})
+
+    assert cli._legacy_audit_source("../escape") is None
+    assert cli._audit_item_source({}) == (None, None)
+    assert cli._audit_item_source({"origin_session": "S-origin"}) == (
+        source, None)
+    assert cli._resolve_audit_source({}, object(), {}) is None
+
+
 # ---- #503: audit resolves a CARRIED item against its ORIGIN transcript ----
 #
 # carry.merge copies `quote` and `source_message_ids` forward when an item
