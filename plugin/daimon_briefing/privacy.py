@@ -247,3 +247,31 @@ def audit_project(project_dir=None) -> dict:
         pass
     result["cache"] = {"entries": entries, "oldest_days": oldest}
     return result
+
+
+def audit_all() -> list[dict]:
+    """One audit per local bucket — each against ITS OWN tombstone set.
+
+    Never the global union for local rows: project B legitimately holding a
+    sentence project A forgot is not residue (shipped deletion is per-bucket,
+    recall.py:479; the union governs only the inbound foreign gate)."""
+    results: list[dict] = []
+    try:
+        buckets = sorted(e.name for e in config.checkpoint_dir().iterdir()
+                         if e.is_dir() and e.name != ".chunk-cache")
+    except OSError:
+        buckets = []
+    for slug in buckets:
+        results.append(audit_project(project_dir=slug))
+    return results
+
+
+def exit_code(results: list[dict]) -> int:
+    """0 proven clean / 1 residue / 3 cannot-prove. 2 belongs to argparse and
+    the house hard-error convention. Cannot-prove NEVER folds to clean —
+    that is scripted false confidence, the exact thing #583 shipped."""
+    if any(r["findings"] for r in results):
+        return 1
+    if any(r["unscannable"] or r["zero_surfaces"] for r in results):
+        return 3
+    return 0

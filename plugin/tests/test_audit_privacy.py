@@ -371,3 +371,48 @@ def test_tombstone_own_note_detected(tmp_checkpoint_dir):
              if f["surface"] == "events-note" and f["content_hash"] == key]
     assert len(found) > 0, "tombstone note containing value must be detected"
     assert found[0]["item_id"] == "i-x", "item_id must match tombstone event's id"
+
+
+def test_exit_code_semantics():
+    clean = {"findings": [], "informational": [], "unscannable": [],
+             "surfaces_scanned": 3, "zero_surfaces": False, "cache": {}}
+    residue = dict(clean, findings=[{"path": "p", "item_id": None,
+                                     "content_hash": "h",
+                                     "surface": "checkpoint"}])
+    unscan = dict(clean, unscannable=["p"])
+    zero = dict(clean, zero_surfaces=True, surfaces_scanned=0)
+    assert privacy.exit_code([clean]) == 0
+    assert privacy.exit_code([residue]) == 1
+    assert privacy.exit_code([unscan]) == 3
+    assert privacy.exit_code([zero]) == 3
+    assert privacy.exit_code([residue, unscan]) == 1   # residue dominates
+
+
+def test_audit_all_uses_per_project_tombstones(tmp_checkpoint_dir):
+    # CANARY legitimately lives in project B; forgotten only in project A.
+    # A per-bucket audit must NOT read that as B's residue (the global union
+    # would — that is the false positive the reviewer refuted).
+    _write("S1", KEEPER)                       # project A (PROJECT)
+    other = "/p/other-project"
+    _write("S3", CANARY, project_dir=other)    # project B
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    results = privacy.audit_all()
+    b = next(r for r in results
+             if r["slug"] == store.project_slug(other))
+    assert not any(f["content_hash"] == key for f in b["findings"])
+
+
+def test_render_never_prints_plaintext(tmp_checkpoint_dir, capsys):
+    from daimon_briefing import render
+    _write("S1", CANARY)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert result["findings"], "fixture must produce residue"
+    render.render_privacy_audit([result])
+    out = capsys.readouterr().out
+    assert CANARY not in out
+    assert key in out
