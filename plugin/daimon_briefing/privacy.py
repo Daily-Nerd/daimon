@@ -178,6 +178,16 @@ def audit_project(project_dir=None) -> dict:
             result["findings"].extend(findings)
     result["surfaces_scanned"] = members
     result["zero_surfaces"] = members == 0
+    try:
+        team_files = sorted(config.team_dir().rglob("*.json"))
+    except OSError:
+        team_files = []
+    for path in team_files:
+        findings, member = _scan_json_surface(path, slug, keys, "team-copy")
+        if member is None:
+            result["unscannable"].append(str(path))
+        elif member:
+            result["findings"].extend(findings)
     res, info, readable = _scan_recall_db(config.recall_db(), slug, keys)
     if readable is None:
         result["unscannable"].append(str(config.recall_db()))

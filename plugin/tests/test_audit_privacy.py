@@ -5,6 +5,7 @@ tombstoned content key, no plaintext copy may survive on any surface —
 including the `quote`/`scene` fields forget itself does not yet reach,
 and files forget's walk does not recognise.
 """
+import json
 import sqlite3
 from daimon_briefing import cli, config, normalize, privacy, store
 
@@ -256,3 +257,22 @@ def test_corrupt_orphan_is_unscannable_not_crash(tmp_checkpoint_dir):
     orphan.write_bytes(b"not a sqlite file")
     result = privacy.audit_project(project_dir=PROJECT)
     assert str(orphan) in result["unscannable"]
+
+
+def test_residue_in_team_copy_detected(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    slug = store.project_slug(PROJECT)
+    team_file = (config.team_dir() / "github-com-example-memories" / "projects"
+                 / "x" / "y" / "authors" / "someone" / "S9.json")
+    team_file.parent.mkdir(parents=True, exist_ok=True)
+    team_file.write_text(json.dumps({
+        "session_id": "S9", "project_slug": slug,
+        "working_context": {"recent_decisions": [
+            {"text": CANARY, "id": "i-t", "trust": "inferred"}]},
+    }), encoding="utf-8")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["surface"] == "team-copy" and f["content_hash"] == key
+               for f in result["findings"])
