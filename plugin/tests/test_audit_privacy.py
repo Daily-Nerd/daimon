@@ -5,7 +5,8 @@ tombstoned content key, no plaintext copy may survive on any surface —
 including the `quote`/`scene` fields forget itself does not yet reach,
 and files forget's walk does not recognise.
 """
-from daimon_briefing import cli, normalize, privacy, store
+import sqlite3
+from daimon_briefing import cli, config, normalize, privacy, store
 
 
 PROJECT = "/p/audit-privacy"
@@ -102,3 +103,74 @@ def test_zero_surfaces_is_not_clean(tmp_checkpoint_dir):
     # No checkpoint ever written for this project — scar 0023 class.
     result = privacy.audit_project(project_dir="/p/never-existed")
     assert result["zero_surfaces"] is True
+
+
+def _make_recall_db(tmp_path, rows, fingerprint):
+    """Build a minimal real recall.db shape at the isolated test location."""
+    db = config.recall_db()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);"
+        "CREATE TABLE items(id INTEGER PRIMARY KEY, text TEXT NOT NULL,"
+        " quote TEXT, scene TEXT, trust TEXT, kind TEXT, author TEXT,"
+        " project_slug TEXT, session_id TEXT, created REAL,"
+        " superseded_by TEXT, invalidated_by TEXT, importance INTEGER,"
+        " first_seen TEXT, item_id TEXT,"
+        " pinned INTEGER NOT NULL DEFAULT 0,"
+        " frontier INTEGER NOT NULL DEFAULT 0);")
+    conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
+    for text, slug in rows:
+        conn.execute(
+            "INSERT INTO items(text, project_slug, item_id) VALUES (?, ?, 'i-r')",
+            (text, slug))
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_recall_residue_with_current_fingerprint_is_a_finding(tmp_checkpoint_dir):
+    from daimon_briefing import recall
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    slug = store.project_slug(PROJECT)
+    _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)], recall._fingerprint())
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["surface"] == "recall-index-residue"
+               and f["content_hash"] == key for f in result["findings"])
+
+
+def test_recall_residue_with_stale_fingerprint_is_informational(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    slug = store.project_slug(PROJECT)
+    _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)], "stale-fp")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert not any(f["surface"] == "recall-index-residue"
+                   for f in result["findings"])
+    assert any(f["surface"] == "stale-index-pending-rebuild"
+               and f["content_hash"] == key for f in result["informational"])
+
+
+def test_null_slug_row_reported_as_unattributed(tmp_checkpoint_dir):
+    from daimon_briefing import recall
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    _make_recall_db(tmp_checkpoint_dir, [(CANARY, None)], recall._fingerprint())
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["surface"] == "unattributed"
+               and f["content_hash"] == key for f in result["findings"])
+
+
+def test_missing_recall_db_is_not_created_by_audit(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    db = config.recall_db()
+    assert not db.exists()
+    privacy.audit_project(project_dir=PROJECT)
+    assert not db.exists(), "audit must never create the recall db"
