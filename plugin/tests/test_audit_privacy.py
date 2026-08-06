@@ -276,3 +276,61 @@ def test_residue_in_team_copy_detected(tmp_checkpoint_dir):
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["surface"] == "team-copy" and f["content_hash"] == key
                for f in result["findings"])
+
+
+def test_team_cross_project_leak_prevented(tmp_checkpoint_dir):
+    """Team file under author dir NAMED the project slug, but different payload slug → not flagged."""
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    slug = store.project_slug(PROJECT)
+    other_slug = "different-project-slug"
+    # Author dir named SAME as audited project's slug, but payload is different project
+    team_file = (config.team_dir() / "github-com-example-memories" / "projects"
+                 / "x" / "y" / "authors" / slug / "S9.json")
+    team_file.parent.mkdir(parents=True, exist_ok=True)
+    team_file.write_text(json.dumps({
+        "session_id": "S9", "project_slug": other_slug,
+        "working_context": {"recent_decisions": [
+            {"text": CANARY, "id": "i-t", "trust": "inferred"}]},
+    }), encoding="utf-8")
+    result = privacy.audit_project(project_dir=PROJECT)
+    # Must NOT be in findings (payload slug is different, so team file is not this project's)
+    assert not any(f["surface"] == "team-copy" and f["content_hash"] == key
+                   for f in result["findings"])
+
+
+def test_corrupt_team_file_is_unscannable(tmp_checkpoint_dir):
+    """Malformed JSON in team dir → path in unscannable, not a crash."""
+    _write("S1", KEEPER)
+    corrupt_file = config.team_dir() / "github-com-example-memories" / "projects" / "a" / "b"
+    corrupt_file.mkdir(parents=True, exist_ok=True)
+    (corrupt_file / "corrupt.json").write_text("{this is not valid json", encoding="utf-8")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert str(corrupt_file / "corrupt.json") in result["unscannable"]
+
+
+def test_team_findings_dont_count_toward_surfaces_scanned(tmp_checkpoint_dir):
+    """Team surfaces don't move surfaces_scanned/zero_surfaces; those are checkpoint-only metrics."""
+    # Project with NO local checkpoints, one matching team file
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    slug = store.project_slug(PROJECT)
+    team_file = (config.team_dir() / "github-com-example-memories" / "projects"
+                 / "x" / "y" / "authors" / "someone" / "S9.json")
+    team_file.parent.mkdir(parents=True, exist_ok=True)
+    team_file.write_text(json.dumps({
+        "session_id": "S9", "project_slug": slug,
+        "working_context": {"recent_decisions": [
+            {"text": CANARY, "id": "i-t", "trust": "inferred"}]},
+    }), encoding="utf-8")
+    result = privacy.audit_project(project_dir=PROJECT)
+    # surfaces_scanned should be 0 (no local checkpoints)
+    assert result["surfaces_scanned"] == 0
+    # zero_surfaces should be True (no local checkpoints)
+    assert result["zero_surfaces"] is True
+    # But team finding should still be present
+    assert any(f["surface"] == "team-copy" and f["content_hash"] == key
+               for f in result["findings"])

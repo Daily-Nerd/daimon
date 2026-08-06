@@ -68,20 +68,27 @@ def _checkpoint_candidates() -> tuple[list[Path], list[Path]]:
 
 
 def _scan_json_surface(path: Path, slug: str, keys: set[str],
-                       surface: str) -> tuple[list[dict], bool | None]:
+                       surface: str, by_payload_only: bool = False) -> tuple[list[dict], bool | None]:
     """Findings + membership. None membership = unreadable (unscannable).
 
     Membership mirrors store.project_surfaces: bucket location OR payload
     project_slug — but unreadable files are SURFACED here, not silently
-    excluded, because "could not check" must never fold into "clean"."""
+    excluded, because "could not check" must never fold into "clean".
+
+    When by_payload_only=True, membership is solely by payload project_slug.
+    This prevents author-dir-name collisions from false-matching team files."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return [], None
     if not isinstance(payload, dict):
         return [], None
-    if path.parent.name != slug and payload.get("project_slug") != slug:
-        return [], False
+    if by_payload_only:
+        if payload.get("project_slug") != slug:
+            return [], False
+    else:
+        if path.parent.name != slug and payload.get("project_slug") != slug:
+            return [], False
     findings: list[dict] = []
     for section, key in store._ITEM_LISTS:
         for item in ((payload.get(section) or {}).get(key) or []):
@@ -183,7 +190,8 @@ def audit_project(project_dir=None) -> dict:
     except OSError:
         team_files = []
     for path in team_files:
-        findings, member = _scan_json_surface(path, slug, keys, "team-copy")
+        findings, member = _scan_json_surface(path, slug, keys, "team-copy",
+                                              by_payload_only=True)
         if member is None:
             result["unscannable"].append(str(path))
         elif member:
