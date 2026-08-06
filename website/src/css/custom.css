@@ -123,5 +123,4 @@
 }
 @media (max-width: 640px) {
   .hero--daimon { padding: var(--dm-space-12) var(--dm-space-4) var(--dm-space-8); }
-  .hero--daimon h1 { font-size: 1.875rem; }
 }
