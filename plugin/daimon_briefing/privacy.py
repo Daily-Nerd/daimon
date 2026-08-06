@@ -95,6 +95,18 @@ def _scan_json_surface(path: Path, slug: str, keys: set[str],
     return findings, True
 
 
+def _orphan_index_files() -> list[Path]:
+    """Crashed rebuilds leave `recall.db.<pid>.tmp` (+`-journal`) beside the
+    index — near-complete plaintext snapshots (four live multi-MB examples
+    existed on the dev machine the day this was specced). They are the same
+    sqlite shape, so they get the same scan, not a hand-wave."""
+    db = config.recall_db()
+    try:
+        return sorted(p for p in db.parent.glob(db.name + ".*") if p.is_file())
+    except OSError:
+        return []
+
+
 def _scan_recall_db(db_path: Path, slug: str,
                     keys: set[str]) -> tuple[list[dict], list[dict], bool | None]:
     """Scan the derived index WITHOUT the recall API (which rebuilds).
@@ -172,4 +184,12 @@ def audit_project(project_dir=None) -> dict:
     else:
         result["findings"].extend(res)
         result["informational"].extend(info)
+    for orphan in _orphan_index_files():
+        res, info, readable = _scan_recall_db(orphan, slug, keys)
+        if readable is None:
+            result["unscannable"].append(str(orphan))
+            continue
+        for f in res + info:
+            f["surface"] = "orphan-tmp"
+            result["findings"].append(f)
     return result

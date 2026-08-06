@@ -231,3 +231,28 @@ def test_null_slug_row_with_stale_fingerprint_is_informational(tmp_checkpoint_di
                    for f in result["findings"])
     assert any(f["surface"] == "stale-index-pending-rebuild"
                and f["content_hash"] == key for f in result["informational"])
+
+
+def test_residue_in_orphan_tmp_detected(tmp_checkpoint_dir):
+    from daimon_briefing import recall
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    slug = store.project_slug(PROJECT)
+    db = _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)],
+                         recall._fingerprint())
+    orphan = db.with_name("recall.db.99999.tmp")
+    db.rename(orphan)          # the crashed-write shape: full snapshot, tmp name
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["surface"] == "orphan-tmp" and f["content_hash"] == key
+               for f in result["findings"])
+
+
+def test_corrupt_orphan_is_unscannable_not_crash(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    orphan = config.recall_db().with_name("recall.db.11111.tmp")
+    orphan.parent.mkdir(parents=True, exist_ok=True)
+    orphan.write_bytes(b"not a sqlite file")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert str(orphan) in result["unscannable"]
