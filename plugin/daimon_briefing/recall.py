@@ -521,20 +521,26 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     pinned real installs at `daimon audit privacy` exit 3 (cannot-prove).
 
     Registry contract (surfaces.py): shape `recall.db.{pid}.tmp*`, strategy
-    `reap`. Age-gated like the checkpoint reaper — anything older than an
-    hour is dead by construction; the live db itself never matches the
-    glob's `.tmp` requirement. `apply=False` only lists (heal --dry-run).
-    Best-effort per file; returns the paths reaped (or would-reap)."""
+    `reap`. The filter is EXACTLY that shape — `<db>.<digits>.tmp` plus a
+    dash-sidecar tail — never a substring test: `recall.db.tmp`,
+    `recall.db.bak.tmp`, `recall.db.tmp.gz` beside a DAIMON_RECALL_DB
+    override are a user's own files (adversarial-review finding), and the
+    live db's sqlite sidecars are dash-named (`recall.db-journal`) so they
+    cannot match either. Age-gated like the checkpoint reaper — anything
+    older than an hour is dead by construction. `apply=False` only lists
+    (heal --dry-run). Best-effort per file; returns the paths reaped (or
+    would-reap)."""
     db = config.recall_db()
     if now is None:
         now = time.time()
     reaped: list = []
+    strand = re.compile(re.escape(db.name) + r"\.\d+\.tmp(-[a-z]+)?$")
     try:
         candidates = sorted(db.parent.glob(db.name + ".*"))
     except OSError:
         return reaped
     for p in candidates:
-        if ".tmp" not in p.name:
+        if not strand.fullmatch(p.name):
             continue
         try:
             if not p.is_file():

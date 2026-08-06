@@ -95,6 +95,10 @@ def test_privacy_exemptions_derive_from_the_registry():
     a fourth parallel list."""
     assert privacy._EXEMPT_NAMES == surfaces.exempt_names()
     assert privacy._EXEMPT_SUFFIX == surfaces.exempt_suffix()
+    # The registry hardcodes the lock filename in a shape string — this pin
+    # is what breaks if store._LOCK_NAME is ever renamed without the
+    # registry following (the shape is a copy, not a reference).
+    assert store._LOCK_NAME in surfaces.exempt_names()
 
 
 # ---- the reap verb --------------------------------------------------------
@@ -129,13 +133,39 @@ def test_reap_skips_non_tmp_siblings_directories_and_glob_errors(
     db.parent.mkdir(parents=True, exist_ok=True)
     backup = db.parent / f"{db.name}.backup"      # no .tmp — never a target
     backup.write_text("user's own backup")
-    dirlike = db.parent / f"{db.name}.olddir.tmp"  # directory, not a file
+    dirlike = db.parent / f"{db.name}.44594.tmp"   # directory, not a file
     dirlike.mkdir()
     old = time.time() - 2 * 3600
     os.utime(backup, (old, old))
     os.utime(dirlike, (old, old))
     assert recall.reap_dead_snapshots() == []
     assert backup.exists() and dirlike.is_dir()
+
+
+def test_reap_takes_only_pid_shaped_strands_never_user_files(
+        tmp_path, monkeypatch):
+    """Adversarial finding: the first filter (`.tmp` substring) was a strict
+    superset of the declared shape `recall.db.{pid}.tmp*` — a user backup
+    named recall.db.tmp / recall.db.bak.tmp / recall.db.tmp.gz beside a
+    DAIMON_RECALL_DB override would have been silently deleted. The reaper
+    deletes ONLY what rebuild() manufactures: <db>.<digits>.tmp plus its
+    sqlite dash-sidecars."""
+    db = config.recall_db()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    old = time.time() - 2 * 3600
+    spared = []
+    for name in (f"{db.name}.tmp", f"{db.name}.bak.tmp",
+                 f"{db.name}.tmp.gz", f"{db.name}.tmpl"):
+        p = db.parent / name
+        p.write_text("not daimon's to delete")
+        os.utime(p, (old, old))
+        spared.append(p)
+    dead = db.parent / f"{db.name}.44594.tmp-journal"
+    dead.write_text("strand")
+    os.utime(dead, (old, old))
+    assert [p.name for p in recall.reap_dead_snapshots()] == [dead.name]
+    for p in spared:
+        assert p.exists(), f"{p.name} is a user file, not a strand"
     # an undeletable strand is skipped, not fatal, and not reported reaped
     dead, journal, _fresh = _plant_orphans()
     real_unlink = type(dead).unlink

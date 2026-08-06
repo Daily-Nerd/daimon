@@ -90,6 +90,12 @@ SURFACES: tuple[Surface, ...] = (
             "store.write_checkpoint / store._rotate_pointers",
             True, "rewrite", "forget"),
     # store._atomic_write staging twins; reaped by store._reap_stale_tmps.
+    # Honest bounds (adversarial-review finding): the reaper walks the flat
+    # dir plus ONE level of bucket subdirs, so a depth-2+ .tmp has no live
+    # deletion mechanism; and any future .tmp-suffixed store auto-classifies
+    # here, blinding the declaration ratchet — the conservative inherited
+    # contract (plaintext=True, never audit_exempt) keeps the auditor
+    # scanning such files regardless.
     Surface("checkpoints/**/*.tmp", "store._atomic_write",
             True, "wholesale-purge", "reaper"),
     # -- team mirror: forward plaintext copies, no tombstone propagation
