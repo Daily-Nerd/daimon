@@ -13,6 +13,7 @@ export default function VerifyReplay(): ReactNode {
   const [shown, setShown] = useState(LINES.length);
   const [played, setPlayed] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
@@ -26,12 +27,16 @@ export default function VerifyReplay(): ReactNode {
         const t = setInterval(() => {
           i += 1;
           setShown(i);
-          if (i >= LINES.length) { clearInterval(t); setPlayed(true); }
+          if (i >= LINES.length) { clearInterval(t); timer.current = null; setPlayed(true); }
         }, 700);
+        timer.current = t;
       }
     }, {threshold: 0.5});
     obs.observe(el);
-    return () => obs.disconnect();
+    return () => {
+      obs.disconnect();
+      if (timer.current) clearInterval(timer.current);
+    };
   }, []);
 
   return (
