@@ -51,16 +51,26 @@ def run(session_id: str, messages, *, project, chat, deadline,
         session_id, transcript_path, author=config.author(),
         host_hint=capture_host or config.capture_host(),
         claude_projects=config.claude_projects_dir())
+    # #604: compute the session-end stamp BEFORE serializing so quote
+    # verification can stamp from it too. Every other time that lands on
+    # disk is threaded from this clock (`created` below, carry's `now`);
+    # verify_quotes read the wall clock instead, so two captures of one
+    # transcript disagreed whenever they straddled a second boundary and a
+    # re-serialize could not reproduce its own receipts. None (no transcript
+    # file) leaves the serializer on its wall-clock fallback.
+    session_end = (_session_end_stamp(transcript_path)
+                   if transcript_path is not None else None)
     checkpoint = serializer.serialize_strict(
         session_id, messages, chat=chat, deadline=deadline, escalate=escalate,
-        source_ref=source_ref, transcript_hash=transcript_sha)
+        source_ref=source_ref, transcript_hash=transcript_sha,
+        now=session_end)
     # `created` = when the SESSION ended, not when this write happens (#123).
     # Stamped here — not left to store's setdefault-now — so a heal/re-serialize
     # of an old transcript carries its true age and store's pointer guard can
     # keep it from stealing `latest` from a newer session. Needs a transcript
     # FILE; a hook host that provides none falls through to setdefault-now.
-    if transcript_path is not None:
-        checkpoint["created"] = _session_end_stamp(transcript_path)
+    if session_end is not None:
+        checkpoint["created"] = session_end
     # Bind the checkpoint to its exact source content (#125). The sha is
     # computed by the caller at read time, before any LLM work; absent
     # (unreadable file / no file) means no stamp — readers tolerate that.

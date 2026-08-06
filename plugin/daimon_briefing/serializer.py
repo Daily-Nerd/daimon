@@ -1013,7 +1013,7 @@ def stripped_transcript(messages) -> str:
 
 
 def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
-                  source_ref=None, transcript_hash=None) -> int:
+                  source_ref=None, transcript_hash=None, now=None) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
     place (#125). On a hit the item gets `quote_verified: true` AND a
     `last_verified` ISO-8601 UTC stamp (#215: the staleness-budget's freshest
@@ -1070,6 +1070,14 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     signals = signal_message_ids(messages) if messages else set()
     downgraded = echoed = 0
     digest = provenance.source_digest(transcript_hash, transcript_text)
+    # #604: ONE stamp for the whole pass, threaded from the caller's clock —
+    # the session-end stamp `created` also uses. Reading the wall clock per
+    # item made two captures of the same transcript differ whenever they
+    # straddled a second boundary (the capture-parity flake), and left a
+    # re-serialize unable to reproduce its own receipts. Scar 0016's rule:
+    # a now-consumer takes the clock, it does not fetch one. Wall clock
+    # stays the fallback for callers with no transcript stamp to thread.
+    stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=()):
         receipt = provenance.quote_receipt(
@@ -1091,8 +1099,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
             continue
         scoped = scoped_haystack(item, texts_by_id, exclude=signals)
         if scoped is not None and quote_matches(quote, scoped):
-            checked_at = datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ")
+            checked_at = stamp
             item["quote_verified"] = True
             item["last_verified"] = checked_at
             quote_ids = [i for i in item.get(SOURCE_IDS_KEY) or []
@@ -1113,8 +1120,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
                 log.warning("quote verification: quote not found in its cited "
                             "message(s) — binding dropped, verified via "
                             "whole-transcript scan (#358)")
-            checked_at = datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ")
+            checked_at = stamp
             item["quote_verified"] = True
             item["last_verified"] = checked_at
             stamp_receipt(item, "verified", checked_at, "transcript-scan")
@@ -1133,8 +1139,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
             item["quote_verified"] = False
             # A downgraded quote is not evidence; a binding for it is noise.
             item.pop(SOURCE_IDS_KEY, None)
-            checked_at = datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ")
+            checked_at = stamp
             stamp_receipt(item, "not-verified", checked_at,
                           "transcript-scan")
             downgraded += 1
@@ -2039,7 +2044,8 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
 
 
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
-                     escalate=False, source_ref=None, transcript_hash=None) -> dict:
+                     escalate=False, source_ref=None, transcript_hash=None,
+                     now=None) -> dict:
     """Transcript -> validated checkpoint, or a named SerializeError.
 
     `chat` is an injectable callable (messages, **kwargs) -> str; defaults to the
@@ -2278,7 +2284,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # validated binding resolve their id and compare bytes against just that
     # message, whole-transcript scan as fallback.
     verify_quotes(checkpoint, transcript_text, messages,
-                  source_ref=source_ref, transcript_hash=transcript_hash)
+                  source_ref=source_ref, transcript_hash=transcript_hash,
+                  now=now)
     # #359: derive the code-owned `grounded` verdict AFTER verification (it
     # must judge the surviving bindings) — outcome claims with a validated
     # signal pointer are marked grounded; unwitnessed verbatim outcome
