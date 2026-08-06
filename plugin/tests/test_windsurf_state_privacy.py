@@ -34,6 +34,19 @@ def _state_dir():
     return config.windsurf_state_dir()
 
 
+def _hook_module():
+    """The Windsurf adapter, loaded as a module (it is a standalone script
+    with a hyphenated name, so it cannot be imported normally)."""
+    import importlib.util
+    from pathlib import Path as _P
+    src = (_P(__file__).parent.parent / "daimon_briefing" / "_hooks"
+           / "daimon-windsurf-hooks.py")
+    spec = importlib.util.spec_from_file_location("_ws_hook_under_test", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _seed_state(turns=("user", "assistant"), age_days=0.0):
     tdir = _state_dir() / "transcripts"
     tdir.mkdir(parents=True, exist_ok=True)
@@ -61,7 +74,97 @@ def _write_checkpoint():
     }, project_dir=PROJECT)
 
 
+# ---- the writer and the deleter must agree on WHERE ----------------------
+
+
+def test_hook_and_package_resolve_the_same_state_dir(tmp_path, monkeypatch):
+    """Adversarial finding (MAJOR): the hook hardcoded ~/.daimon/windsurf
+    while the package honored DAIMON_WINDSURF_DIR, so with the var set the
+    hook kept writing plaintext into one directory while purge, reap and
+    audit all reported cleanly on an empty other one. Two halves of one
+    feature, tested against two different directories, agreeing about
+    nothing. Pin them together."""
+    hook = _hook_module()
+    override = tmp_path / "elsewhere"
+    monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(override))
+    assert config.windsurf_state_dir() == override
+    assert hook.state_dir() == override
+    assert hook.transcript_dir() == override / "transcripts"
+
+
+def test_both_sides_default_under_the_real_daimon_home(tmp_path, monkeypatch):
+    """The DEFAULT path is the field path — with the var redirected suite-wide
+    by conftest, nothing else asserts it. A typo in either default is
+    otherwise invisible (it survived a `windsurf` -> `windsurfXX` mutant)."""
+    hook = _hook_module()
+    monkeypatch.delenv("DAIMON_WINDSURF_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(hook.Path, "home", lambda: tmp_path)
+    expected = tmp_path / ".daimon" / "windsurf"
+    assert config.windsurf_state_dir() == expected
+    assert hook.state_dir() == expected
+
+
+def test_state_window_defaults_to_seven_days_and_never_goes_below_one(
+        monkeypatch):
+    """0 means DISABLE for every other DAIMON_WINDSURF_* knob; here an
+    unclamped 0 made the cutoff `now`, so a live capture buffer was deleted
+    at the next heal. Clamp at 1 — the reaper has no off switch, and
+    silently deleting live state is the wrong reading of an ambiguous 0."""
+    monkeypatch.delenv("DAIMON_WINDSURF_STATE_DAYS", raising=False)
+    assert config.windsurf_state_days() == 7
+    for raw in ("0", "-1", "not-a-number"):
+        monkeypatch.setenv("DAIMON_WINDSURF_STATE_DAYS", raw)
+        assert config.windsurf_state_days() >= 1, raw
+
+
 # ---- purge on forget ------------------------------------------------------
+
+
+def test_forget_dry_run_never_purges(tmp_checkpoint_dir):
+    """The higher-blast-radius call site had no test at all: a purge
+    inserted into the dry-run branch passed 580 tests."""
+    path, dump, _stamp = _seed_state()
+    _write_checkpoint()
+    assert cli.main(["forget", CANARY, "--project", PROJECT, "--dry-run"]) == 0
+    assert path.exists() and dump.exists()
+
+
+def test_a_refused_forget_never_purges(tmp_checkpoint_dir):
+    path, dump, _stamp = _seed_state()
+    _write_checkpoint()
+    assert cli.main(["forget", "no such value here", "--project", PROJECT]) == 1
+    assert path.exists() and dump.exists()
+
+
+def test_purge_never_follows_a_symlinked_directory_out_of_its_root(
+        tmp_checkpoint_dir, tmp_path):
+    """provenance.SourceResolver already refuses to READ outside this root;
+    the deleting path must not be laxer than the reading one."""
+    outside = tmp_path / "my-notes"
+    outside.mkdir()
+    (outside / "important.md").write_text("a user file", encoding="utf-8")
+    _state_dir().mkdir(parents=True, exist_ok=True)
+    (_state_dir() / "transcripts").symlink_to(outside, target_is_directory=True)
+    purged, _err = store.purge_windsurf_state()
+    assert purged == 0
+    assert (outside / "important.md").exists(), "escaped its own root"
+
+
+def test_forget_states_the_purge_is_machine_wide(tmp_checkpoint_dir, capsys):
+    """The store is keyed by trajectory, not project — a forget in ANY
+    project purges every Windsurf transcript on the machine. That is the
+    only option (the files carry no project attribution), so it must be
+    said out loud rather than discovered."""
+    _seed_state()
+    _write_checkpoint()
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "all projects" in out or "machine-wide" in out
+
+
+
 
 
 def test_forget_purges_the_daimon_authored_transcript_store(

@@ -223,9 +223,15 @@ def windsurf_state_days() -> int:
     source conversation lingers. 7 days rather than the chunk cache's 3 —
     the transcript is what quote provenance resolves against, and
     provenance already degrades to `absent-local` rather than failing when
-    it is gone. Override with DAIMON_WINDSURF_STATE_DAYS."""
+    it is gone. Override with DAIMON_WINDSURF_STATE_DAYS.
+
+    Clamped at 1 (the checkpoint_history / carry_max posture). Every other
+    DAIMON_WINDSURF_* knob reads 0 as "disable", so an unclamped 0 here
+    would make the cutoff `now` and delete the LIVE capture buffer at the
+    next heal — reading an ambiguous 0 as "delete everything" is the wrong
+    direction for a knob a user reaches for to turn something off."""
     try:
-        return int(_get("DAIMON_WINDSURF_STATE_DAYS") or "7")
+        return max(1, int(_get("DAIMON_WINDSURF_STATE_DAYS") or "7"))
     except ValueError:
         return 7
 

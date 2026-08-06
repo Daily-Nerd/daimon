@@ -1106,9 +1106,16 @@ def _cmd_forget(args) -> int:
         print(f"warning: windsurf transcript purge failed: {ws_err} — "
               "daimon-authored conversation text may persist up to "
               f"{config.windsurf_state_days()} day(s) (age reaper)")
-    elif ws_purged:
+    else:
+        # Always printed, like the chunk-cache line: a silent zero is how a
+        # misconfigured store (writer and deleter disagreeing about the
+        # directory) stays invisible. The scope note is not decoration —
+        # the store is keyed by trajectory and carries no project
+        # attribution, so this purge is machine-wide by construction.
         print(f"purged {ws_purged} daimon-authored windsurf transcript "
-              "file(s); host-authored transcripts are untouched")
+              "file(s) across all projects (machine-wide: the store is keyed "
+              "by trajectory, not project); host-authored transcripts are "
+              "untouched")
     return 0
 
 

@@ -133,6 +133,8 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Codex. `0` serializa en cada `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Windsurf (Windsurf no tiene evento de fin de sesión, así que la captura corre con este throttle). `0` serializa cada turno. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Periodo de silencio tras la última actividad de Windsurf antes de que un finalizador con debounce serialice el estado final del transcript de la trayectoria — cubre sesiones cuyos últimos turnos caen dentro de la ventana del throttle. Acepta valores fraccionarios; `0` desactiva el finalizador. |
+| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Dónde guarda el adaptador de Windsurf los transcripts que acumula. Lo leen tanto el hook que los escribe como las rutas de `forget`/`heal` que los borran — cámbialo en un solo sitio, o el que escribe y el que borra dejan de coincidir. |
+| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Ventana de antigüedad para los transcripts de Windsurf que escribe daimon y los volcados `unparsed`, recogidos por `daimon heal`. Es un límite de privacidad: un valor olvidado no puede localizarse dentro de la prosa, así que esto acota cuánto tiempo permanece la conversación de origen entre ejecuciones de `forget`. Con mínimo 1 — a diferencia de los otros ajustes de Windsurf, `0` no lo desactiva. |
 
 ## Operación y diagnóstico
 

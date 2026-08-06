@@ -451,11 +451,28 @@ _WINDSURF_TEXT_GLOBS = ("transcripts/*.md", "unparsed-*.json")
 
 
 def _windsurf_text_files() -> list:
+    """Containment before deletion: a symlinked `transcripts` directory
+    would otherwise have the purge unlink files outside the state root
+    entirely. provenance.SourceResolver already resolves-and-contains
+    before merely READING this directory; the deleting path must not be
+    laxer than the reading one."""
     root = config.windsurf_state_dir()
+    try:
+        real_root = root.resolve()
+    except OSError:
+        return []
     out: list = []
     for pattern in _WINDSURF_TEXT_GLOBS:
-        out.extend(root.glob(pattern))
-    return sorted(p for p in out if p.is_file())
+        for path in root.glob(pattern):
+            try:
+                if not path.is_file():
+                    continue
+                if real_root not in path.resolve().parents:
+                    continue
+            except OSError:
+                continue
+            out.append(path)
+    return sorted(set(out))
 
 
 def purge_windsurf_state() -> tuple:
