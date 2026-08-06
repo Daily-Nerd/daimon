@@ -1055,6 +1055,11 @@ def _cmd_forget(args) -> int:
     # session files hold the same plaintext and were never in the contract
     # (#419: plaintext is what puts a file inside it, not its role).
     store.scrub_content_key(content_hash, project_dir=project)
+    # #599: rows appended BEFORE this forget can carry the value in
+    # `item_text`/`status`/`note` — redacted in place, rows never dropped
+    # (the one ratified rewrite of the append-only ledger).
+    events_scrubbed = store.scrub_event_fields(content_hash,
+                                               project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -1069,6 +1074,9 @@ def _cmd_forget(args) -> int:
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
+    if events_scrubbed:
+        print(f"redacted {events_scrubbed} event-ledger field(s) "
+              "carrying the value (rows kept, field replaced)")
     if purge_err is not None:
         print(f"warning: chunk cache purge failed: {purge_err} — "
               "cached pre-redaction chunks may persist up to "

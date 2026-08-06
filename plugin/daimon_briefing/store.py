@@ -332,18 +332,10 @@ def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
             continue
         if not isinstance(payload, dict):
             continue
-        changed = False
-        for section, key in _ITEM_LISTS:
-            lst = (payload.get(section) or {}).get(key)
-            if not isinstance(lst, list):
-                continue
-            kept = [i for i in lst
-                    if not (isinstance(i, dict)
-                            and normalize.content_key(i.get("text") or "")
-                            == content_hash)]
-            if len(kept) != len(lst):
-                lst[:] = kept
-                changed = True
+        # #599: one predicate for every path — the same full-enumeration
+        # scrub the write gate runs (items by text, survivors' quote/scene,
+        # links[].target, the active_topic singleton).
+        _, changed = policy.scrub_forgotten_payload(payload, {content_hash})
         if not changed:
             continue
         try:
@@ -1272,7 +1264,10 @@ def append_event(item_ref: str, status: str, note: str = "",
                  allow_disabled: bool = False) -> bool:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
-    audit trail must stay byte-stable. Silent no-op under the kill switch
+    audit trail must stay byte-stable. The ONE exception is
+    scrub_event_fields (#599), forget's redaction-in-place, which replaces a
+    field VALUE but never drops, adds, or reorders rows. Silent no-op under
+    the kill switch
     and when the project is unknown (an event without a bucket has no
     reader). `allow_disabled` (#421) is the narrow deletion exemption:
     passed ONLY by cli._cmd_forget's tombstone append — forget must work
@@ -1306,6 +1301,108 @@ def append_event(item_ref: str, status: str, note: str = "",
         return True
     except OSError:
         return False
+
+
+# The in-place redaction marker for event fields (#599). Carries the
+# tombstoned key so the row stays auditable — and a hash can never collide
+# with the plaintext it names, so re-running the scrub is idempotent.
+_FORGOTTEN_FIELD_MARKER = "[forgotten:{}]"
+
+# Every status reader classifies by PREFIX (is_resolved, _tie_rank, _demotes,
+# recall's fold) — so a scrubbed status must keep its class token or the
+# redaction re-classifies the row: a revival whose free-form wording IS the
+# forgotten sentence would fold back to "resolved" and hide an unrelated
+# item forever. Longest-match order: candidate forms before their shorter
+# cousins. The kept token is generic lifecycle vocabulary, not the value.
+_STATUS_CLASS_PREFIXES = ("supersede-candidate", "superseded-by:",
+                          "resolving-candidate", "reopen", "forgotten")
+
+
+def _class_preserving_marker(status: str, marker: str) -> str:
+    low = status.lower()
+    for prefix in _STATUS_CLASS_PREFIXES:
+        if low.startswith(prefix):
+            return f"{status[:len(prefix)]} {marker}"
+    return marker
+
+
+def scrub_event_fields(content_hash: str, project_dir=None) -> int:
+    """#599: the narrow carve-out to append_event's append-only contract,
+    called ONLY by cli._cmd_forget after the tombstone lands. events.jsonl
+    rows written BEFORE a forget can carry the value in `item_text` (resolve/
+    reopen pass the item's full text), free-form `status`, or `note` — and an
+    append-only file is otherwise unreachable by deletion (#419: holding
+    plaintext is what puts a file inside the contract).
+
+    Redaction-in-place, never row removal: the resolutions fold keys on
+    `item_ref`/`status`/row order (scar 0025 — a dropped row changes what
+    counts as resolved), so only a field whose WHOLE value folds to the
+    tombstoned key is replaced with the visible marker; every other byte of
+    every row survives verbatim, and uninterpretable lines are copied through
+    untouched. Best-effort like scrub_content_key: an unreadable or
+    unwritable ledger returns 0 rather than aborting the forget. Known
+    window: an append racing the read→rename pair is lost. A lock exists
+    (_pointer_lock) but is deliberately not taken — append_event locks
+    nothing, so locking only this side closes nothing, and adding a lock to
+    every append buys a per-event cost for a window one rare interactive
+    command opens. The atomic replace keeps the file parseable either way.
+
+    Accepted residuals (adversarial review, #599): (1) a same-second tie
+    (_tie_wins) involving a scrubbed row can flip its content tie-break —
+    class rank is preserved, only the arbitrary-but-deterministic byte
+    comparison moves, and content removal cannot leave content unchanged;
+    (2) briefing.withhold's legacy fuzzy pool loses entries whose item_text
+    was scrubbed, so an id-less PARAPHRASE of the value may resurface —
+    that suppression only ever worked because this plaintext residue
+    existed, and keeping it would mean keeping the value.
+    Returns the number of rows redacted."""
+    if not content_hash:
+        return 0
+    path = _events_path(project_dir)
+    if path is None:
+        return 0
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    marker = _FORGOTTEN_FIELD_MARKER.format(content_hash)
+    out_lines = []
+    scrubbed = 0
+    for line in raw.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            out_lines.append(line)
+            continue
+        if not isinstance(row, dict):
+            out_lines.append(line)
+            continue
+        changed = False
+        for field in ("item_text", "status", "note"):
+            value = row.get(field)
+            if (isinstance(value, str) and value
+                    and normalize.content_key(value) == content_hash):
+                row[field] = (_class_preserving_marker(value, marker)
+                              if field == "status" else marker)
+                changed = True
+        if changed:
+            scrubbed += 1
+            # Same admission seam the append took (#431): the rewrite is
+            # governed for real, not merely correlated — the write-audit
+            # guard can bind the row that lands on disk to this admission,
+            # and any secret shape the row carried pre-#141 is re-scrubbed.
+            row = policy.admit_row(row, redact_fields=("status", "note",
+                                                       "item_text"))
+            out_lines.append(json.dumps(row, ensure_ascii=False))
+        else:
+            out_lines.append(line)
+    if not scrubbed:
+        return 0
+    try:
+        _atomic_write(path, "\n".join(out_lines) + "\n")
+    except OSError:
+        return 0
+    return scrubbed
 
 
 def _tie_rank(evt: dict) -> int:

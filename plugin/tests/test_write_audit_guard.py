@@ -389,6 +389,11 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         run(["resolve", ctx["ids"][_T_KEEP], "--note", "shipped"], 0)
 
     def r_forget():
+        # #599: resolve first so events.jsonl holds the target's text as
+        # `item_text` — the forget below must REWRITE the ledger (the one
+        # ratified rewrite of the append-only file), not just append its
+        # tombstone, so that write is observed and asserted governed.
+        run(["resolve", ctx["ids"][_T_FORGET], "--note", "obsolete"], 0)
         run(["forget", ctx["ids"][_T_FORGET], "--reason", "stale"], 0)
 
     def r_reverify():
@@ -566,6 +571,12 @@ def test_every_command_write_carries_an_admit_frame(
     assert saw("serialize", "guard-serialize.json", "team")  # team dual-write
     assert saw("resolve", "events.jsonl")           # admit_row on the ledger
     assert saw("forget", "events.jsonl")            # tombstone append
+    # #599: the ledger REWRITE (scrub_event_fields) must have run and been
+    # governed — not merely the tombstone append hitting the same file.
+    assert any(cmd == "forget" and rel.name == "events.jsonl" and governed
+               and any(f.endswith("store.scrub_event_fields") for f in frames)
+               for cmd, lbl, rel, governed, frames in write_audit.records), \
+        "forget never exercised (or never governed) the events.jsonl rewrite"
     assert saw("heal", "forget-hits.jsonl")         # capture-time forget drop
     assert saw("anchor", "latest.json")             # --attach rewrite
 

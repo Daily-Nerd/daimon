@@ -481,9 +481,19 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             "SELECT id, text, quote, scene, item_id FROM items"
             " WHERE project_slug IS ?", (bucket.name,)).fetchall()
         for rowid, text, quote, scene, item_id in rows:
+            # #599: the value can also sit in a row's quote/scene column
+            # (indexed verbatim). Whole-row delete is the fail-safe: the
+            # rebuilt row from the scrubbed checkpoint re-inserts the
+            # survivor without the field; a row only reachable here (its
+            # surface was unwritable) over-suppresses rather than serves
+            # forgotten plaintext.
             if item_id not in forgotten_ids and not (
                     forgotten_keys
-                    and normalize.content_key(text or "") in forgotten_keys):
+                    and (normalize.content_key(text or "") in forgotten_keys
+                         or (quote and normalize.content_key(quote)
+                             in forgotten_keys)
+                         or (scene and normalize.content_key(scene)
+                             in forgotten_keys))):
                 continue
             # contentless fts5: deletion is the special 'delete'
             # INSERT and must repeat the original column values
