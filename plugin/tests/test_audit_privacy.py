@@ -381,11 +381,16 @@ def test_exit_code_semantics():
                                      "surface": "checkpoint"}])
     unscan = dict(clean, unscannable=["p"])
     zero = dict(clean, zero_surfaces=True, surfaces_scanned=0)
+    stale_only = dict(clean, informational=[{"path": "p", "item_id": None,
+                                             "content_hash": "h",
+                                             "surface": "stale-index-pending-rebuild"}])
     assert privacy.exit_code([clean]) == 0
     assert privacy.exit_code([residue]) == 1
     assert privacy.exit_code([unscan]) == 3
     assert privacy.exit_code([zero]) == 3
     assert privacy.exit_code([residue, unscan]) == 1   # residue dominates
+    assert privacy.exit_code([]) == 3   # empty set = unaudited = cannot-prove
+    assert privacy.exit_code([stale_only]) == 0   # informational never affects exit code
 
 
 def test_audit_all_uses_per_project_tombstones(tmp_checkpoint_dir):

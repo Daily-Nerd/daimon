@@ -270,6 +270,10 @@ def exit_code(results: list[dict]) -> int:
     """0 proven clean / 1 residue / 3 cannot-prove. 2 belongs to argparse and
     the house hard-error convention. Cannot-prove NEVER folds to clean —
     that is scripted false confidence, the exact thing #583 shipped."""
+    # Empty result set means nothing was audited (no buckets, or checkpoint_dir
+    # inaccessible) — cannot distinguish from "clean", so must report cannot-prove.
+    if not results:
+        return 3
     if any(r["findings"] for r in results):
         return 1
     if any(r["unscannable"] or r["zero_surfaces"] for r in results):

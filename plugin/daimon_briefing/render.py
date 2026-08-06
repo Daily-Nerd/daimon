@@ -1342,10 +1342,14 @@ def render_privacy_audit(results: list[dict]) -> None:
         for p in r["unscannable"]:
             print(f"  UNSCANNABLE {p}")
         cache = r.get("cache") or {}
-        if cache.get("entries"):
+        if cache.get("entries") and cache.get("oldest_days") is not None:
             print(f"  chunk cache: {cache['entries']} entr(y/ies), oldest"
                   f" {cache['oldest_days']:.1f}d — value-level scan impossible"
                   " (substring vs hash); purge is wholesale on forget")
+        elif cache.get("entries"):
+            print(f"  chunk cache: {cache['entries']} entr(y/ies) — age unknown,"
+                  " value-level scan impossible (substring vs hash); purge is"
+                  " wholesale on forget")
         if not (r["findings"] or r["informational"] or r["unscannable"]
                 or r.get("zero_surfaces")):
             print("  clean — no tombstoned value found on any surface")
