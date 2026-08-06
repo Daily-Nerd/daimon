@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, provenance, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -2137,6 +2137,30 @@ def _resolve_audit_source(source, resolver, cache: dict):
     return result
 
 
+def _cmd_audit_privacy(args) -> int:
+    """Read-only tombstone residue audit — proves forget's contract instead
+    of trusting it (#583: a passing test once asserted the residue). Exit 0
+    proven clean / 1 residue / 3 cannot-prove; 3 exists because "could not
+    check" must never look like "all clean"."""
+    if getattr(args, "all_projects", False):
+        results = privacy.audit_all()
+    else:
+        results = [privacy.audit_project(_resolve_project(args.project))]
+    render.render_privacy_audit(results)
+    code = privacy.exit_code(results)
+    # One tag per OUTCOME: "the auditor ran" and "the auditor found residue"
+    # answer different questions, and folding them loses the only number that
+    # says whether the deletion contract holds in the field.
+    _note_usage({1: "audit-privacy:residue",
+                 3: "audit-privacy:unproven"}.get(code, "audit-privacy"))
+    return code
+
+
+def _cmd_audit_quotes_deprecated(args) -> int:
+    print("note: 'daimon audit-quotes' is deprecated — use 'daimon audit quotes'")
+    return _cmd_audit_quotes(args)
+
+
 def _cmd_audit_quotes(args) -> int:
     """Read-only audit (#125): re-check every stored verbatim quote against its
     source transcript with the SAME tier-f matcher serialize uses, and REPORT.
@@ -3313,7 +3337,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd", required=True, metavar="<command>")
     sub.add_parser = functools.partial(sub.add_parser, formatter_class=fmt)
 
     p_ser = sub.add_parser("serialize", help="serialize a transcript file into a checkpoint")
@@ -3586,22 +3610,52 @@ def build_parser() -> argparse.ArgumentParser:
     p_vr.set_defaults(func=_cmd_verify_receipt)
 
     p_audit = sub.add_parser(
-        "audit-quotes",
+        "audit",
+        help="read-only auditors that verify stored guarantees",
+    )
+    audit_sub = p_audit.add_subparsers(dest="audit_cmd", required=True)
+    pa_quotes = audit_sub.add_parser(
+        "quotes",
         help="re-check stored verbatim quotes against their source transcripts "
              "and report mismatches (read-only, never rewrites tags, #125)",
         epilog="Examples:\n"
-               "  daimon audit-quotes\n"
-               "  daimon audit-quotes --all --top 20\n",
+               "  daimon audit quotes\n"
+               "  daimon audit quotes --all --top 20\n",
     )
-    p_audit.add_argument(
+    pa_quotes.add_argument(
         "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
-    p_audit.add_argument(
+    pa_quotes.add_argument(
         "--all", action="store_true",
         help="audit every project's checkpoints, not just the current one")
-    p_audit.add_argument(
+    pa_quotes.add_argument(
         "--top", type=int, default=10,
         help="how many failing quotes to list (default: 10)")
-    p_audit.set_defaults(func=_cmd_audit_quotes)
+    pa_quotes.set_defaults(func=_cmd_audit_quotes)
+    pa_priv = audit_sub.add_parser(
+        "privacy",
+        help="prove no forgotten value's plaintext survives on any surface "
+             "(read-only; exit 0 clean, 1 residue, 3 cannot-prove)",
+        epilog="Examples:\n"
+               "  daimon audit privacy\n"
+               "  daimon audit privacy --all\n",
+    )
+    # Mutually exclusive: --project scopes to ONE bucket and --all audits every
+    # bucket, so together one of them is silently ignored — and the flag that
+    # loses decides which tombstone sets were checked. Fail loud instead.
+    pa_priv_scope = pa_priv.add_mutually_exclusive_group()
+    pa_priv_scope.add_argument(
+        "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_priv_scope.add_argument(
+        "--all", action="store_true", dest="all_projects",
+        help="audit every local project, each against its own tombstone set")
+    pa_priv.set_defaults(func=_cmd_audit_privacy)
+    # Deprecated flat alias (#504-era name). metavar on the top-level
+    # subparsers (set below) keeps it out of the usage brace list.
+    p_audit_old = sub.add_parser("audit-quotes")
+    p_audit_old.add_argument("--project")
+    p_audit_old.add_argument("--all", action="store_true")
+    p_audit_old.add_argument("--top", type=int, default=10)
+    p_audit_old.set_defaults(func=_cmd_audit_quotes_deprecated)
 
     p_heal = sub.add_parser(
         "heal",

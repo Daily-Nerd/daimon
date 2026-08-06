@@ -31,8 +31,21 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | comando | qué hace |
 | --- | --- |
 | `daimon verify-receipt` | Verifica el recibo firmado de procedencia de un checkpoint (chequeo criptográfico completo vía el CLI de vitni). |
-| `daimon audit-quotes` | Re-verifica cada cita verbatim almacenada contra su transcripción de origen y reporta discrepancias. Solo lectura — nunca reescribe etiquetas. |
+| `daimon audit quotes` | Re-verifica cada cita verbatim almacenada contra su transcripción de origen y reporta discrepancias. Solo lectura — nunca reescribe etiquetas. |
+| `daimon audit privacy` | Prueba el contrato de borrado: hashea cada campo con texto plano en cada superficie (checkpoints, punteros rotados, el registro de eventos, el espejo de equipo, el índice de recall y sus snapshots huérfanos) y reporta todo valor olvidado que haya sobrevivido. Solo lectura. |
 | `daimon anchor <archivo> <símbolo>` | Ancla un ítem cognitivo a un símbolo de código; los briefings avisan cuando el código anclado cambió. |
+
+Los auditores comparten un mismo contrato de salida, para que un script pueda
+actuar sobre la respuesta:
+
+| salida | significado |
+| --- | --- |
+| `0` | limpio comprobado — se escaneó cada superficie y no se encontró nada |
+| `1` | hay residuo; el reporte nombra la superficie y el hash (nunca el texto) |
+| `3` | no se puede probar — alguna superficie no se pudo leer, o no había nada en alcance para escanear. Nunca lo trates como limpio |
+
+`--project <dir>` acota a un proyecto, `--all` audita cada proyecto local
+(cada uno contra sus propias lápidas); los dos son mutuamente excluyentes.
 
 ## Setup y operación
 

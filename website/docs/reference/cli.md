@@ -31,8 +31,20 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | command | what it does |
 | --- | --- |
 | `daimon verify-receipt` | Verify a checkpoint's signed provenance receipt (full cryptographic check via the vitni CLI). |
-| `daimon audit-quotes` | Re-check every stored verbatim quote against its source transcript and report mismatches. Read-only — it never rewrites trust tags. |
+| `daimon audit quotes` | Re-check every stored verbatim quote against its source transcript and report mismatches. Read-only — it never rewrites trust tags. |
+| `daimon audit privacy` | Prove the deletion contract: hash every plaintext field on every surface (checkpoints, rotated pointers, the event ledger, the team mirror, the recall index and its orphan snapshots) and report any forgotten value that survived. Read-only. |
 | `daimon anchor <file> <symbol>` | Bind a cognitive item to a code symbol; briefings then warn when the anchored code drifts. |
+
+The auditors share one exit contract, so a script can act on the answer:
+
+| exit | meaning |
+| --- | --- |
+| `0` | proven clean — every surface was scanned and nothing was found |
+| `1` | residue found; the report names the surface and the hash (never the text) |
+| `3` | cannot prove — a surface could not be read, or nothing was in scope to scan. Never treat this as clean |
+
+`--project <dir>` scopes to one project, `--all` audits every local project
+(each against its own tombstones); the two are mutually exclusive.
 
 ## Setup and operations
 
