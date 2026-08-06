@@ -2148,7 +2148,11 @@ def _cmd_audit_privacy(args) -> int:
         results = [privacy.audit_project(_resolve_project(args.project))]
     render.render_privacy_audit(results)
     code = privacy.exit_code(results)
-    _note_usage("audit-privacy" if code != 3 else "audit-privacy:unproven")
+    # One tag per OUTCOME: "the auditor ran" and "the auditor found residue"
+    # answer different questions, and folding them loses the only number that
+    # says whether the deletion contract holds in the field.
+    _note_usage({1: "audit-privacy:residue",
+                 3: "audit-privacy:unproven"}.get(code, "audit-privacy"))
     return code
 
 
@@ -3635,9 +3639,13 @@ def build_parser() -> argparse.ArgumentParser:
                "  daimon audit privacy\n"
                "  daimon audit privacy --all\n",
     )
-    pa_priv.add_argument(
+    # Mutually exclusive: --project scopes to ONE bucket and --all audits every
+    # bucket, so together one of them is silently ignored — and the flag that
+    # loses decides which tombstone sets were checked. Fail loud instead.
+    pa_priv_scope = pa_priv.add_mutually_exclusive_group()
+    pa_priv_scope.add_argument(
         "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
-    pa_priv.add_argument(
+    pa_priv_scope.add_argument(
         "--all", action="store_true", dest="all_projects",
         help="audit every local project, each against its own tombstone set")
     pa_priv.set_defaults(func=_cmd_audit_privacy)
