@@ -380,12 +380,18 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
     admission, the scrub_event_fields precedent. Upstream git history and
     the remote remain out of reach (the registry's `.git/**` known-gap).
 
+    Known blindness, shared with the audit: a pre-stamp-era flat mirror
+    file with no project_slug payload field cannot be attributed and is
+    skipped — privacy._scan_team_dir misses it by the identical rule, so
+    scrub and audit at least agree.
+
     Best-effort per file; returns the paths rewritten."""
     if not content_hash:
         return []
     team = config.team_dir()
     own = project_slug(config.author()) or "unknown"
     slug = project_slug(project_dir)
+    keys = forgotten_content_keys(project_dir) | {content_hash}
     try:
         segs = {tuple(s) for s in teamproject.read_candidates(project_dir)}
     except Exception:
@@ -399,9 +405,16 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
         candidates = list(remote.glob(f"authors/{own}/*.json"))
         candidates += remote.glob(f"projects/**/authors/{own}/*.json")
         for path in sorted(set(candidates)):
+            # nested layout: projects/<seg…>/authors/<own>/<sid>.json —
+            # the logical segments are parts[1:-3] (the same slice the
+            # audit takes; [1:-2] kept the "authors" segment and made this
+            # check unreachable). A copy of the SAME logical project
+            # written from another checkout carries that path's slug, so
+            # the logical-path match is what rescues it.
             parts = path.relative_to(remote).parts
-            nested_ok = (len(parts) > 3 and parts[0] == "projects"
-                         and parts[1:-2] in segs)
+            nested_ok = (len(parts) > 4 and parts[0] == "projects"
+                         and parts[-3] == "authors"
+                         and parts[1:-3] in segs)
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -410,16 +423,23 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
                 continue
             if not nested_ok and payload.get("project_slug") != slug:
                 continue
-            before = json.dumps(payload, sort_keys=True)
-            policy.admit_checkpoint(payload,
-                                    forgotten_content_keys(project_dir)
-                                    | {content_hash})
-            if json.dumps(payload, sort_keys=True) == before:
+            # Probe on a copy first: only files the forget actually changes
+            # are re-admitted and rewritten — admission drift (missing ids,
+            # a new redact pattern) must not masquerade as a scrub, and a
+            # torn payload the probe cannot change is skipped before the
+            # stricter admission can trip on it.
+            probe = json.loads(json.dumps(payload))
+            _, changed = policy.scrub_forgotten_payload(probe, keys)
+            if not changed:
                 continue
             try:
+                policy.admit_checkpoint(payload, keys)
                 _atomic_write(path, json.dumps(payload, indent=2,
                                                ensure_ascii=False) + "\n")
-            except OSError:
+            except Exception:
+                # best-effort per file: one unwritable or half-torn surface
+                # must not abort the rest of the scrub — nor the forget's
+                # remaining steps (event scrub, cache purge) behind it.
                 continue
             rewritten.append(str(path))
     return rewritten

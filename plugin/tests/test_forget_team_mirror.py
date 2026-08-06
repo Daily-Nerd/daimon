@@ -88,8 +88,10 @@ def test_forget_never_touches_a_teammate_copy(tmp_checkpoint_dir, monkeypatch):
     mate_payload = _cp("SX", [CANARY])
     mate_payload["author"] = "Grace"
     mate_payload["project_slug"] = store.project_slug(PROJECT)
-    mate.write_text(json.dumps(mate_payload), encoding="utf-8")
+    mate.write_text(json.dumps(mate_payload, ensure_ascii=False),
+                    encoding="utf-8")
     before = mate.read_text()
+    assert CANARY in before
     _forget()
     assert mate.read_text() == before
 
@@ -104,8 +106,10 @@ def test_forget_team_scrub_is_project_scoped(tmp_checkpoint_dir, monkeypatch):
     other_payload = _cp("SO", [CANARY])
     other_payload["author"] = "Ada"
     other_payload["project_slug"] = store.project_slug("/p/other-project")
-    other.write_text(json.dumps(other_payload), encoding="utf-8")
+    other.write_text(json.dumps(other_payload, ensure_ascii=False),
+                     encoding="utf-8")
     before = other.read_text()
+    assert CANARY in before
     _forget()
     assert other.read_text() == before
 
@@ -117,3 +121,88 @@ def test_audit_is_clean_after_forget_when_only_own_copies_exist(
     result = privacy.audit_project(project_dir=PROJECT)
     hits = [f for f in result["findings"] if f["content_hash"] == KEY]
     assert hits == [], f"audit still finds residue: {hits}"
+
+
+def test_team_scrub_edge_guards(tmp_checkpoint_dir, monkeypatch):
+    """Guard branches: empty key, garbage / non-dict payloads, a half-torn
+    file whose good section scrubs but whose torn sibling section trips the
+    stricter re-admission (skipped, not fatal), and an unreadable team
+    dir."""
+    _seed_mirrored_sessions(monkeypatch)
+    assert store.scrub_team_copies("", project_dir=PROJECT) == []
+    own = store.project_slug("Ada")
+    author_dir = config.team_dir() / "local" / "authors" / own
+    (author_dir / "garbage.json").write_text("not json", encoding="utf-8")
+    (author_dir / "list.json").write_text('["a", "list"]', encoding="utf-8")
+    half = author_dir / "half-torn.json"
+    half.write_text(json.dumps({
+        "session_id": "H", "author": "Ada",
+        "project_slug": store.project_slug(PROJECT),
+        "working_context": {"recent_decisions": [
+            {"text": CANARY, "trust": "inferred"}]},
+        "epistemic_snapshot": "torn",
+    }, ensure_ascii=False), encoding="utf-8")
+    before = half.read_text()
+    _forget()
+    assert half.read_text() == before, \
+        "a file re-admission cannot process is left byte-identical"
+    # a resolver crash degrades to slug-only scoping, never aborts (belt —
+    # read_candidates documents it never raises)
+    from daimon_briefing import teamproject
+    monkeypatch.setattr(teamproject, "read_candidates",
+                        lambda project_dir: (_ for _ in ()).throw(OSError()))
+    assert store.scrub_team_copies("deadbeef", project_dir=PROJECT) == []
+    monkeypatch.setattr(type(config.team_dir()), "iterdir",
+                        lambda self: (_ for _ in ()).throw(OSError()))
+    assert store.scrub_team_copies("deadbeef", project_dir=PROJECT) == []
+
+
+def test_forget_scrubs_nested_copy_written_from_another_checkout(
+        tmp_checkpoint_dir, monkeypatch):
+    """Refuter BLOCKER: the nested-layout logical-path check was dead code
+    (`parts[1:-2]` kept the `authors` segment, so it never matched) — a
+    mirror copy of the SAME logical project written from a different
+    checkout path (worktree, second machine, moved repo) carries that
+    path's project_slug and was silently missed while the audit correctly
+    flagged it forever."""
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/finance")
+    _seed_mirrored_sessions(monkeypatch)
+    own = store.project_slug("Ada")
+    other = (config.team_dir() / "local" / "projects" / "core" / "finance"
+             / "authors" / own / "SA.json")
+    other.parent.mkdir(parents=True, exist_ok=True)
+    payload = _cp("SA", [CANARY])
+    payload["author"] = "Ada"
+    payload["project_slug"] = store.project_slug("/p/another-checkout")
+    # ensure_ascii=False: CANARY carries a non-ASCII char, and the default
+    # \uXXXX escaping made the residue assertion below pass vacuously.
+    other.write_text(json.dumps(payload, ensure_ascii=False),
+                     encoding="utf-8")
+    assert CANARY in other.read_text()
+    _forget()
+    assert CANARY not in other.read_text(), \
+        "same logical project, different checkout — must be scrubbed"
+
+
+def test_one_torn_mirror_file_never_aborts_the_forget(
+        tmp_checkpoint_dir, monkeypatch):
+    """Refuter MAJOR: an unguarded re-admission crashed on a torn payload
+    (working_context as a string trips redact_checkpoint's `or {}`) AFTER
+    the tombstone landed but BEFORE the event scrub and cache purge — and
+    a second forget of the same value refuses ('no item matches'), so the
+    residue was stranded. Best-effort per file must mean it."""
+    _seed_mirrored_sessions(monkeypatch)
+    own = store.project_slug("Ada")
+    torn = config.team_dir() / "local" / "authors" / own / "AA-torn.json"
+    torn.parent.mkdir(parents=True, exist_ok=True)
+    torn.write_text(json.dumps({
+        "session_id": "T", "author": "Ada",
+        "project_slug": store.project_slug(PROJECT),
+        "working_context": "not a dict",
+    }), encoding="utf-8")
+    before = torn.read_text()
+    _forget()          # asserts rc 0 — the torn file must not abort
+    assert torn.read_text() == before
+    residue = [str(p) for p in _mirror_files()
+               if p.name != "AA-torn.json" and CANARY in p.read_text()]
+    assert residue == [], f"files after the torn one unscrubbed: {residue}"
