@@ -315,6 +315,14 @@ def _fingerprint() -> str:
         pass
     try:
         paths.extend(config.team_dir().rglob("*.json"))
+        # #600 slice B: a teammate's tombstone ledger is index CONTENT for
+        # the same reason events.jsonl is — _scan_sources suppresses rows
+        # against it — so it must be fingerprint INPUT too. Without this a
+        # pulled tombstone leaves the fingerprint unchanged, no rebuild
+        # runs, and the index keeps serving the value read_team already
+        # withholds. Naming the file .jsonl to dodge the *.json walks is
+        # exactly what made this easy to miss.
+        paths.extend(config.team_dir().rglob(store._TOMBSTONE_NAME))
     except OSError:
         pass
     entries = []

@@ -44,9 +44,13 @@ def _cp(sid, texts, author=None):
     return payload
 
 
-def _teammate_publishes_a_tombstone(remote="local", author="Grace"):
+def _teammate_publishes_a_tombstone(remote="team-a", author="grace"):
     """Grace's sidecar state as it lands here after a pull: her checkpoint
-    plus the tombstone row her forget published."""
+    plus the tombstone row her forget published.
+
+    A real remote, never `local`: the machine-local mirror holds only this
+    machine's own writes, never syncs, and is deliberately excluded from
+    the foreign set so a solo user cannot poison their own reopen."""
     adir = config.team_dir() / remote / "authors" / author
     adir.mkdir(parents=True, exist_ok=True)
     (adir / "SG.json").write_text(
@@ -122,6 +126,43 @@ def test_no_team_dir_yields_no_foreign_keys(tmp_checkpoint_dir):
     assert store.foreign_forgotten_content_keys() == set()
 
 
+def test_own_rows_are_never_read_back_as_foreign(tmp_checkpoint_dir,
+                                                 monkeypatch):
+    """Adversarial finding (MAJOR): a published row has no retraction, but a
+    local `reopen` lifts the local tombstone — so folding your own rows back
+    in would let a value you deliberately reopened stay suppressed forever,
+    and (with the opt-in on) be re-scrubbed on every sync, because reopen
+    also removes it from the subtrahend."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    adir = config.team_dir() / "team-a" / "authors" / "ada"
+    adir.mkdir(parents=True)
+    (adir / store._TOMBSTONE_NAME).write_text(
+        json.dumps({"ts": "2026-08-02T00:00:00Z", "key": KEY,
+                    "author": "ada"}) + "\n", encoding="utf-8")
+    assert store.foreign_forgotten_content_keys() == set()
+
+
+def test_the_local_mirror_is_never_a_foreign_source(tmp_checkpoint_dir):
+    """A solo user with DAIMON_TEAM=1 publishes into team/local, which no
+    teammate ever sees — it must not read back as someone else's deletion."""
+    _teammate_publishes_a_tombstone(remote="local", author="someone")
+    assert store.foreign_forgotten_content_keys() == set()
+
+
+def test_an_oversized_ledger_is_bounded(tmp_checkpoint_dir, monkeypatch):
+    """One ledger is read on the briefing path, so a teammate publishing a
+    huge file must not make every read pay for it."""
+    monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 200)
+    adir = config.team_dir() / "team-a" / "authors" / "grace"
+    adir.mkdir(parents=True)
+    rows = [json.dumps({"ts": "2026-08-02T00:00:00Z", "key": f"{i:016x}",
+                        "author": "grace"}) for i in range(50)]
+    (adir / store._TOMBSTONE_NAME).write_text("\n".join(rows) + "\n",
+                                              encoding="utf-8")
+    keys = store.foreign_forgotten_content_keys()
+    assert 0 < len(keys) < 50, len(keys)
+
+
 # ---- default A: suppress, never rewrite ----------------------------------
 
 
@@ -193,19 +234,53 @@ def test_opt_in_scrubs_local_copies(tmp_checkpoint_dir, monkeypatch):
     assert texts == [MINE], "only the tombstoned value goes"
 
 
-def test_opt_in_applies_during_a_typed_sync_not_an_unattended_path(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    """`daimon team sync` is typed by a person. heal runs detached from
-    session start on some hosts, and a cross-trust deletion must never
-    arrive unattended."""
+def _seed_for_apply(monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
                            project_dir=PROJECT)
-    _teammate_publishes_a_tombstone()
-    assert cli.main(["heal"]) == 0
+    _teammate_publishes_a_tombstone(remote="team-a", author="grace")
     assert any(THEIRS in p.read_text()
-               for p in store.project_surfaces(PROJECT)), \
-        "heal must not apply a teammate's deletion"
+               for p in store.project_surfaces(PROJECT)), "seed failed"
+
+
+def _local_plaintext_present():
+    return any(THEIRS in p.read_text()
+               for p in store.project_surfaces(PROJECT))
+
+
+def test_a_bare_sync_never_applies_it(tmp_checkpoint_dir, monkeypatch):
+    """THE authority test. `daimon team sync` with no flag is what
+    lib.spawn_team_sync fires DETACHED at SessionStart with stdout to
+    DEVNULL — the same shape as heal. If the setting alone were enough, a
+    teammate's hash would delete local belief state unattended and
+    silently, which is the whole failure this design exists to prevent."""
+    _seed_for_apply(monkeypatch)
+    assert cli.main(["team", "sync"]) == 0
+    assert _local_plaintext_present(), \
+        "a bare (hook-spawned) sync must never apply a teammate's deletion"
+
+
+def test_heal_never_applies_it(tmp_checkpoint_dir, monkeypatch):
+    _seed_for_apply(monkeypatch)
+    assert cli.main(["heal"]) == 0
+    assert _local_plaintext_present()
+
+
+def test_the_typed_flag_applies_it(tmp_checkpoint_dir, monkeypatch, capsys):
+    """The positive half: the flag is the deliberate act, and it reports."""
+    _seed_for_apply(monkeypatch)
+    assert cli.main(["team", "sync", "--apply-forget"]) == 0
+    assert not _local_plaintext_present()
+    assert "applied teammates' forget tombstones" in capsys.readouterr().out
+
+
+def test_the_flag_refuses_without_the_standing_consent(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    _seed_for_apply(monkeypatch)
+    monkeypatch.delenv("DAIMON_TEAM_APPLY_FORGET")
+    assert cli.main(["team", "sync", "--apply-forget"]) == 0
+    assert _local_plaintext_present()
+    assert "DAIMON_TEAM_APPLY_FORGET" in capsys.readouterr().err
 
 
 # ---- the registry knows about the new file -------------------------------

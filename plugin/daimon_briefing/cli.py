@@ -2387,14 +2387,22 @@ def _cmd_team_sync(args) -> int:
         return 0
     reports = teamsync.sync()
     # #600 slice B, opt-in: apply teammates' tombstones to THIS machine's own
-    # checkpoints. Here and nowhere else — sync is typed by a person, while
-    # heal runs detached from session start on some hosts, and a deletion
-    # crossing a trust boundary must never arrive unattended. A no-op unless
-    # DAIMON_TEAM_APPLY_FORGET is on; suppression (always on) is elsewhere.
-    applied = store.apply_foreign_tombstones(project_dir=_resolve_project(None))
-    if applied:
-        print(f"applied teammates' forget tombstones to {len(applied)} local "
-              "surface(s) (DAIMON_TEAM_APPLY_FORGET is on)")
+    # checkpoints. TWO gates, and the flag is the load-bearing one: bare
+    # `daimon team sync` is spawned DETACHED at SessionStart by
+    # lib.spawn_team_sync with stdout to DEVNULL, exactly like heal — so a
+    # setting alone would delete local belief state unattended and silently,
+    # which is the failure this design exists to prevent. The hook never
+    # passes --apply-forget, so only a typed command can reach this.
+    # Machine-wide, matching sync's own project-agnostic contract.
+    if getattr(args, "apply_forget", False):
+        if not config.team_apply_forget():
+            print("daimon team: --apply-forget needs DAIMON_TEAM_APPLY_FORGET=1"
+                  " — a teammate's forget rewriting your own checkpoints is"
+                  " opt-in, and there is no undo", file=sys.stderr)
+        else:
+            applied = store.apply_foreign_tombstones(all_projects=True)
+            print(f"applied teammates' forget tombstones to {len(applied)} "
+                  "local surface(s) across all projects")
     # #246: fetched teammate files are fingerprint input — freshen here (the
     # SessionStart hook spawns sync detached, off the prompt path) so the
     # first recall after a fetch doesn't pay the rebuild. Unconditional on
@@ -3730,6 +3738,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--project",
         help="accepted for CLI symmetry; sync is currently project-agnostic "
              "(all own checkpoints sync regardless of project)",
+    )
+    pt_sync.add_argument(
+        "--apply-forget", action="store_true", dest="apply_forget",
+        help="also rewrite THIS machine's checkpoints under teammates' forget "
+             "tombstones (#600). Requires DAIMON_TEAM_APPLY_FORGET=1; typed "
+             "only — the SessionStart hook spawns a bare sync, so this can "
+             "never delete your belief state unattended",
     )
     pt_sync.set_defaults(func=_cmd_team_sync)
     pt_status = team_sub.add_parser(

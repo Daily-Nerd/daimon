@@ -199,7 +199,12 @@ def team_apply_forget() -> bool:
     primitive over your memory, and the shared branch is append-only, so
     there is no undo; that is a decision to make knowingly, not one to
     inherit from a `git pull`. Same default-closed posture as #279 scope.
-    Applied during a typed `daimon team sync`, never an unattended path."""
+
+    Standing consent only — it is NOT sufficient on its own. The apply also
+    needs `daimon team sync --apply-forget`, because a bare `daimon team
+    sync` is spawned DETACHED at SessionStart (lib.spawn_team_sync, stdout
+    to DEVNULL) exactly like heal: a setting alone would delete local belief
+    state unattended and silently."""
     return _flag("DAIMON_TEAM_APPLY_FORGET")
 
 

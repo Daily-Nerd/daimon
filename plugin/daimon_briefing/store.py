@@ -502,10 +502,23 @@ def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
     return written
 
 
+# One ledger is read on the briefing path, so it cannot be unbounded: a
+# teammate publishing a huge file must not make every read pay for it.
+# ~1 MB is ~12k rows, far past any real forget history.
+_MAX_TOMBSTONE_BYTES = 1_000_000
+
+
 def _tombstone_keys(path) -> set[str]:
     keys: set[str] = set()
     try:
-        raw = path.read_text(encoding="utf-8")
+        if path.stat().st_size > _MAX_TOMBSTONE_BYTES:
+            log.warning("daimon team: %s exceeds %d bytes — reading the "
+                        "first %d only", path.name, _MAX_TOMBSTONE_BYTES,
+                        _MAX_TOMBSTONE_BYTES)
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                raw = f.read(_MAX_TOMBSTONE_BYTES)
+        else:
+            raw = path.read_text(encoding="utf-8")
     except (OSError, ValueError):
         return keys
     for line in raw.splitlines():
@@ -521,23 +534,42 @@ def _tombstone_keys(path) -> set[str]:
 
 
 def foreign_forgotten_content_keys() -> set[str]:
-    """Every tombstone key published by ANY author in the team mirror.
+    """Tombstone keys published by OTHER authors in synced sidecars.
 
-    Includes this author's own rows — harmless, they are already in the
-    local ledger — because filtering by author would make the set depend on
-    identity resolution at read time, and over-inclusion is the fail-safe
-    direction the whole deletion path takes. Never raises."""
+    Own rows are excluded, and that exclusion is load-bearing rather than
+    tidiness: the local ledger is a latest-event-wins fold, so a `reopen`
+    lifts a local tombstone — but a published row has no retraction. Folding
+    your own rows back in would let a key you deliberately reopened suppress
+    the value forever, and (with the opt-in on) re-scrub it on every sync,
+    because reopen removes it from apply_foreign_tombstones' local subtrahend.
+
+    The machine-local mirror is excluded for the same reason: nothing there
+    is another author's, it never syncs, and a solo user with DAIMON_TEAM=1
+    would otherwise poison their own reopen through a dead-end path.
+
+    Bounded on purpose: only `authors/*/` directories inside real sidecars
+    are walked, so a clone's .git object store is never traversed, and each
+    ledger is capped — a teammate cannot make every briefing pay for an
+    unbounded file. Never raises."""
     keys: set[str] = set()
+    own = project_slug(config.author()) or "unknown"
     try:
-        paths = list(config.team_dir().rglob(_TOMBSTONE_NAME))
+        remotes = [d for d in config.team_dir().iterdir()
+                   if d.is_dir() and d.name != _TEAM_LOCAL_REMOTE]
     except OSError:
         return keys
-    for path in paths:
-        keys |= _tombstone_keys(path)
+    for remote in remotes:
+        try:
+            paths = [p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
+                     if p.parent.name != own]
+        except OSError:
+            continue
+        for path in paths:
+            keys |= _tombstone_keys(path)
     return keys
 
 
-def apply_foreign_tombstones(project_dir=None) -> list[str]:
+def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
     """Opt-in (#600 slice B): rewrite THIS machine's own checkpoints under
     a teammate's tombstone.
 
@@ -552,10 +584,22 @@ def apply_foreign_tombstones(project_dir=None) -> list[str]:
     forget would be work without effect."""
     if not config.team_apply_forget():
         return []
-    keys = foreign_forgotten_content_keys() - forgotten_content_keys(project_dir)
+    if all_projects:
+        try:
+            targets = [d.name for d in config.checkpoint_dir().iterdir()
+                       if d.is_dir() and d.name != ".chunk-cache"]
+        except OSError:
+            targets = []
+    else:
+        targets = [project_dir]
+    foreign = foreign_forgotten_content_keys()
     rewritten: list[str] = []
-    for key in sorted(keys):
-        rewritten.extend(scrub_content_key(key, project_dir=project_dir))
+    for target in targets:
+        # Per project, minus what that project already tombstoned locally:
+        # re-applying a local forget is work without effect, and a project
+        # that REOPENED a value must not have it scrubbed by a stale row.
+        for key in sorted(foreign - forgotten_content_keys(target)):
+            rewritten.extend(scrub_content_key(key, project_dir=target))
     return rewritten
 
 

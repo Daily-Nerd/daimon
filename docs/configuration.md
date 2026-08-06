@@ -83,7 +83,7 @@ Opt-in shared-memory mirror. See [docs/team.md](./team.md) for the full workflow
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Root of the shared team-memory mirror. |
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path for this machine's sessions (relative, e.g. `core/api-gateway`). Overrides the sidecar's `daimon-team.toml` mapping and the origin-derived fallback when routing checkpoints under `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Read-time age window: teammates' checkpoints older than this many days are skipped when reading. `0` = keep all. Never physically deletes from the shared append-only branch. |
-| `DAIMON_TEAM_APPLY_FORGET` | off | When truthy, a TEAMMATE's published forget tombstone also rewrites this machine's own checkpoints during a typed `daimon team sync`. Default off: a foreign tombstone always suppresses the value on read and in the index, but deleting local belief state from someone else's hash is a decision to make knowingly — the shared branch is append-only, so there is no undo. |
+| `DAIMON_TEAM_APPLY_FORGET` | off | Standing consent for a TEAMMATE's published forget tombstone to rewrite this machine's own checkpoints. NOT sufficient alone — the apply also requires the typed `daimon team sync --apply-forget`, because a bare `daimon team sync` is spawned detached at SessionStart. Default off: a foreign tombstone always suppresses the value on read and in the index, but deleting local belief state from someone else's hash is a decision to make knowingly — the shared branch is append-only, so there is no undo. |
 
 ## Receipts
 
