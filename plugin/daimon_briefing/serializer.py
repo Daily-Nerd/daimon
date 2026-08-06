@@ -21,7 +21,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from . import config, configure, ledger, llm, redact, schema
+from . import config, configure, ledger, llm, provenance, redact, schema
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -1012,7 +1012,8 @@ def stripped_transcript(messages) -> str:
     return _render_transcript(stripped)
 
 
-def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
+def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
+                  source_ref=None, transcript_hash=None) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
     place (#125). On a hit the item gets `quote_verified: true` AND a
     `last_verified` ISO-8601 UTC stamp (#215: the staleness-budget's freshest
@@ -1068,11 +1069,20 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     # MISS must not execute them for the quote-id's crime.
     signals = signal_message_ids(messages) if messages else set()
     downgraded = echoed = 0
+    digest = provenance.source_digest(transcript_hash, transcript_text)
+
+    def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=()):
+        receipt = provenance.quote_receipt(
+            source_ref, digest, outcome=outcome, checked_at=checked_at,
+            binding_mode=binding_mode, message_ids=message_ids)
+        if receipt is not None:
+            item["quote_provenance"] = receipt
     # The model never gets a vote on the echo verdict (#292 discipline, same
     # as `grounded`/`pinned`): any model-emitted value is dropped before the
     # checker re-derives it.
     for item in iter_items(checkpoint):
         item.pop(ECHO_ONLY_KEY, None)
+        item.pop("quote_provenance", None)
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
             continue
@@ -1081,9 +1091,14 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             continue
         scoped = scoped_haystack(item, texts_by_id, exclude=signals)
         if scoped is not None and quote_matches(quote, scoped):
-            item["quote_verified"] = True
-            item["last_verified"] = datetime.now(timezone.utc).strftime(
+            checked_at = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
+            item["quote_verified"] = True
+            item["last_verified"] = checked_at
+            quote_ids = [i for i in item.get(SOURCE_IDS_KEY) or []
+                         if isinstance(i, str) and i not in signals]
+            stamp_receipt(item, "verified", checked_at, "message-ids",
+                          quote_ids)
         elif quote_matches(quote, haystack):
             if scoped is not None:
                 # Resolved AND mismatched: the quote is real but not in its
@@ -1098,9 +1113,11 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
                 log.warning("quote verification: quote not found in its cited "
                             "message(s) — binding dropped, verified via "
                             "whole-transcript scan (#358)")
-            item["quote_verified"] = True
-            item["last_verified"] = datetime.now(timezone.utc).strftime(
+            checked_at = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
+            item["quote_verified"] = True
+            item["last_verified"] = checked_at
+            stamp_receipt(item, "verified", checked_at, "transcript-scan")
         else:
             # #440: a second pass over the UNSTRIPPED text separates "present
             # only in daimon's own injected output" from "absent entirely".
@@ -1116,6 +1133,10 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             item["quote_verified"] = False
             # A downgraded quote is not evidence; a binding for it is noise.
             item.pop(SOURCE_IDS_KEY, None)
+            checked_at = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+            stamp_receipt(item, "not-verified", checked_at,
+                          "transcript-scan")
             downgraded += 1
             # Log-line-only scrub: item ids are not stamped until store-save,
             # so the text is the only diagnostic handle here. The item itself
@@ -1846,7 +1867,7 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
 # already stomps a model-supplied value the same way.
 _CODE_OWNED_KEYS = (
     "format_version", "created", "author",
-    "transcript_hash", "project_slug", "git_branch", "receipts",
+    "transcript_hash", "source_ref", "project_slug", "git_branch", "receipts",
     # #514: the extractor dates its own run at serialize time; a model never
     # gets to claim one (and the introspection path stays absent = unknown).
     "extraction_version",
@@ -1868,7 +1889,8 @@ _CODE_OWNED_KEYS = (
 # Safe to strip on both paths because carry.merge folds prev items in AFTER
 # serialize_strict returns — a carried item's genuine stamps never pass here.
 _CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
-                         "quote_verified", "last_verified")
+                         "quote_verified", "last_verified",
+                         "quote_provenance")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:
@@ -2017,7 +2039,7 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
 
 
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
-                     escalate=False) -> dict:
+                     escalate=False, source_ref=None, transcript_hash=None) -> dict:
     """Transcript -> validated checkpoint, or a named SerializeError.
 
     `chat` is an injectable callable (messages, **kwargs) -> str; defaults to the
@@ -2255,7 +2277,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # stamp the verdict — the briefing never re-greps. #358: items with a
     # validated binding resolve their id and compare bytes against just that
     # message, whole-transcript scan as fallback.
-    verify_quotes(checkpoint, transcript_text, messages)
+    verify_quotes(checkpoint, transcript_text, messages,
+                  source_ref=source_ref, transcript_hash=transcript_hash)
     # #359: derive the code-owned `grounded` verdict AFTER verification (it
     # must judge the surviving bindings) — outcome claims with a validated
     # signal pointer are marked grounded; unwitnessed verbatim outcome

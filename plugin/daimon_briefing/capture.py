@@ -32,14 +32,14 @@ import logging
 import time
 from pathlib import Path
 
-from . import carry, config, normalize, serializer, store, transcript
+from . import carry, config, normalize, provenance, serializer, store, transcript
 
 log = logging.getLogger(__name__)
 
 
 def run(session_id: str, messages, *, project, chat, deadline,
         transcript_path=None, transcript_sha=None,
-        escalate: bool = False) -> Path | None:
+        escalate: bool = False, capture_host=None) -> Path | None:
     """Serialize `messages` into a checkpoint routed to `project` (used AS-IS;
     None => global pointer only — the caller decides routing, same contract
     as the old cli._run_serialize).
@@ -47,8 +47,13 @@ def run(session_id: str, messages, *, project, chat, deadline,
     Returns store.write_checkpoint's result: the checkpoint path, or None
     when the write boundary refused (kill switch, #421) — each caller renders
     its own skip/success line. Serializer failures propagate."""
+    source_ref = provenance.capture_source_ref(
+        session_id, transcript_path, author=config.author(),
+        host_hint=capture_host or config.capture_host(),
+        claude_projects=config.claude_projects_dir())
     checkpoint = serializer.serialize_strict(
-        session_id, messages, chat=chat, deadline=deadline, escalate=escalate)
+        session_id, messages, chat=chat, deadline=deadline, escalate=escalate,
+        source_ref=source_ref, transcript_hash=transcript_sha)
     # `created` = when the SESSION ended, not when this write happens (#123).
     # Stamped here — not left to store's setdefault-now — so a heal/re-serialize
     # of an old transcript carries its true age and store's pointer guard can
@@ -61,6 +66,8 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # (unreadable file / no file) means no stamp — readers tolerate that.
     if transcript_sha:
         checkpoint["transcript_hash"] = transcript_sha
+    if source_ref is not None:
+        checkpoint["source_ref"] = source_ref
     if config.carry_enabled():
         # Deterministic carry (#33 Phase 2): fold the previous checkpoint's
         # unresolved items in BEFORE the write rotates it away. Clock = this

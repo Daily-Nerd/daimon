@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, ledger, llm, normalize, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, ledger, llm, normalize, provenance, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -2044,24 +2044,6 @@ def _cmd_mcp_serve(args) -> int:
     return mcp_server.serve()
 
 
-def _find_audit_transcript(session_id: str, slug):
-    """Locate a stored checkpoint's source transcript for the #125 audit:
-    <claude_projects>/<slug>/<session_id>.jsonl, with a glob fallback across
-    buckets (a session's project may have moved or forked its bucket). Returns
-    the Path or None when nothing matches."""
-    base = config.claude_projects_dir()
-    if slug:
-        direct = base / slug / f"{session_id}.jsonl"
-        if direct.exists():
-            return direct
-    try:
-        for cand in base.glob(f"*/{session_id}.jsonl"):
-            return cand
-    except OSError:
-        pass
-    return None
-
-
 def _load_audit_transcript(tpath):
     """Parse one transcript file into the (haystack, texts_by_id) pair
     audit-quotes checks quotes against — the one place #503's per-session
@@ -2081,24 +2063,52 @@ def _load_audit_transcript(tpath):
     return haystack, texts_by_id
 
 
-def _resolve_audit_transcript(session_id: str, slug, cache: dict):
-    """Resolve one session's (haystack, texts_by_id) pair and cache it by
-    session id (#503). A corpus scan hits the same session many times — once
-    as a checkpoint's own transcript, and once per carried item in every
-    LATER checkpoint whose origin_session names it — and `--all` walks the
-    whole corpus, so re-parsing per hit would make it quadratic. A miss is
-    cached too (None), so an unresolvable session is not retried on every
-    item that names it."""
-    if session_id in cache:
-        return cache[session_id]
-    tpath = _find_audit_transcript(session_id, slug)
+def _legacy_audit_source(session_id, author=None):
+    """Explicitly inferred pre-#594 Claude candidate, never a bound receipt."""
+    if not provenance.valid_session_id(session_id):
+        return None
+    source = {
+        "version": provenance.SOURCE_REF_VERSION,
+        "host": "claude-code",
+        "session_id": session_id,
+        "locator": "managed",
+    }
+    if isinstance(author, str) and author.strip():
+        source["author"] = author.strip()
+    return source
+
+
+def _audit_item_source(item):
+    """Return (source, receipt) without containing-checkpoint fallback."""
+    receipt = item.get("quote_provenance")
+    if provenance.valid_quote_receipt(receipt):
+        return receipt["source"], receipt
+    origin = item.get("origin_session")
+    if not provenance.valid_session_id(origin):
+        return None, None
+    origin_cp = store.read_checkpoint(origin)
+    if isinstance(origin_cp, dict):
+        source = origin_cp.get("source_ref")
+        if provenance.valid_source_ref(source):
+            return source, None
+    return _legacy_audit_source(origin, item.get("origin_author")), None
+
+
+def _resolve_audit_source(source, resolver, cache: dict):
+    """Resolve and parse one strict source once per complete source identity."""
+    if not provenance.valid_source_ref(source):
+        return None
+    key = json.dumps(source, sort_keys=True, separators=(",", ":"))
+    if key in cache:
+        return cache[key]
     result = None
-    if tpath is not None:
+    resolved = resolver.resolve(source)
+    if resolved.state == "resolved" and resolved.path is not None:
         try:
-            result = _load_audit_transcript(tpath)
+            result = _load_audit_transcript(resolved.path)
         except (OSError, FileNotFoundError):
             result = None
-    cache[session_id] = result
+    cache[key] = result
     return result
 
 
@@ -2106,14 +2116,11 @@ def _cmd_audit_quotes(args) -> int:
     """Read-only audit (#125): re-check every stored verbatim quote against its
     source transcript with the SAME tier-f matcher serialize uses, and REPORT.
 
-    #503: resolved per ITEM, from the item's own `origin_session` stamp, not
-    from the checkpoint that merely contains it — carry.merge copies `quote`
-    and `source_message_ids` forward when an item survives into a later
-    checkpoint, but never the transcript identity they came from, so a carried
-    item checked against its containing checkpoint's transcript is checked
-    against a transcript it was never in. Falls back to the containing
-    checkpoint's own session when the stamp is absent (pre-#268 items) or its
-    transcript cannot be resolved.
+    #594: a valid item receipt is authoritative for source identity and message
+    binding. Legacy origin_session may form an explicitly inferred Claude
+    candidate, but an absent/unresolved source NEVER falls back to the
+    containing checkpoint: exact-text carry proves origin, quote evidence, and
+    containing session can be three different facts.
 
     Never rewrites a trust tag — a blind backfill would flip a large share of
     the historical corpus. Measured (#503): the overwhelming majority of
@@ -2131,6 +2138,9 @@ def _cmd_audit_quotes(args) -> int:
     scanned = paired = unpaired = items = verified = failed = id_resolved = 0
     origin_resolved = 0
     transcripts: dict = {}
+    resolver = provenance.SourceResolver(
+        claude_projects=config.claude_projects_dir(),
+        current_author=config.author())
     failures: list[tuple[str, str]] = []
     for f in sorted(files):
         try:
@@ -2144,7 +2154,10 @@ def _cmd_audit_quotes(args) -> int:
             continue
         scanned += 1
         session_id = str(cp.get("session_id") or f.stem)
-        own = _resolve_audit_transcript(session_id, slug, transcripts)
+        own_source = cp.get("source_ref")
+        if not provenance.valid_source_ref(own_source):
+            own_source = _legacy_audit_source(session_id, cp.get("author"))
+        own = _resolve_audit_source(own_source, resolver, transcripts)
         if own is not None:
             paired += 1
         else:
@@ -2155,38 +2168,27 @@ def _cmd_audit_quotes(args) -> int:
             quote = item.get("quote")
             if not isinstance(quote, str) or not quote.strip():
                 continue
-            # #503: try the item's OWN origin first. origin_session equal to
-            # the containing session (the common native-item case, stamped
-            # onto itself at write) is just `own` again — skip the lookup and
-            # go straight there. A present-but-different stamp that fails to
-            # resolve (GC'd transcript, wrong host layout) falls through to
-            # `own` too, the pre-#503 verdict, byte-identical.
-            resolved, carried = own, False
-            origin = item.get("origin_session")
-            if (isinstance(origin, str) and origin.strip()
-                    and origin != session_id):
-                origin_slug = None
-                if origin not in transcripts:
-                    origin_cp = store.read_checkpoint(origin)
-                    if isinstance(origin_cp, dict):
-                        origin_slug = origin_cp.get("project_slug")
-                from_origin = _resolve_audit_transcript(
-                    origin, origin_slug, transcripts)
-                if from_origin is not None:
-                    resolved, carried = from_origin, True
+            source, receipt = _audit_item_source(item)
+            resolved = _resolve_audit_source(source, resolver, transcripts)
             if resolved is None:
-                continue  # neither the origin nor the containing session's
-                          # transcript resolves -> unverifiable, uncounted,
-                          # same as today's unpaired-checkpoint skip.
+                continue
             haystack, texts_by_id = resolved
             items += 1
-            if carried:
+            if source.get("session_id") != session_id:
                 origin_resolved += 1
             # #358: an item bound to source message id(s) resolves the id and
             # compares bytes against just that message. Missing/invalid ids
             # (old checkpoints, moved/truncated transcripts) fall back to the
             # whole-transcript scan — the pre-#358 verdict, byte-identical.
-            scoped = serializer.scoped_haystack(item, texts_by_id)
+            checked_item = item
+            if receipt is not None:
+                checked_item = dict(item)
+                ids = provenance.binding_message_ids(receipt)
+                if ids:
+                    checked_item[serializer.SOURCE_IDS_KEY] = ids
+                else:
+                    checked_item.pop(serializer.SOURCE_IDS_KEY, None)
+            scoped = serializer.scoped_haystack(checked_item, texts_by_id)
             if scoped is not None and serializer.quote_matches(quote, scoped):
                 verified += 1
                 id_resolved += 1
@@ -2214,7 +2216,7 @@ def _cmd_audit_quotes(args) -> int:
     # no evidence either way about whether anyone reaches for it. The unpaired
     # variant is a distinct event, not a detail of this one: a run that resolved
     # no transcript verified nothing, and it is also how a host whose
-    # transcripts live outside `_find_audit_transcript`'s reach shows up at all.
+    # transcripts live outside the registered resolver's reach shows up at all.
     # #503: keyed on ANY resolved transcript, not on `paired`. Once resolution
     # is per item, a checkpoint whose own transcript is gone still verifies its
     # carried items through origin_session — `paired` counts containing

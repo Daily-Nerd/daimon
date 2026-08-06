@@ -106,7 +106,7 @@ def main() -> int:
         return 0
 
     cwd = str(payload.get("cwd") or "").strip()
-    child_env = lib.project_env(cwd)
+    child_env = lib.project_env(cwd, "codex")
     try:
         lib.spawn_serialize(cli, transcript_path, child_env)
         _mark_spawned(session_id)

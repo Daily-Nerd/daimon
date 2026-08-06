@@ -98,6 +98,8 @@ def test_session_end_script_exists_and_bypasses_the_throttle():
     assert "DAIMON_CODEX_MIN_SERIALIZE_INTERVAL" not in src, (
         "SessionEnd is the real end, not a heartbeat; it must not be throttled")
     assert TAG in src, "log lines must carry the distinct tag"
+    assert 'project_env(cwd, "codex")' in src, (
+        "serialize child must receive the code-owned capture host hint")
     # Fail-open: an advisory hook that raises is surfaced to the user as a hook
     # failure, so the top level has to swallow.
     assert re.search(r"except\s+(BaseException|Exception)", src), (

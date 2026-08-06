@@ -72,6 +72,11 @@ def _post_payload(response="### Planner Response\n\nDone."):
     }
 
 
+def test_serialize_spawns_tag_the_windsurf_capture_host():
+    src = HOOK.read_text(encoding="utf-8")
+    assert 'project_env(cwd, "windsurf")' in src
+
+
 def _fake_cli(tmp_path):
     """A fake `daimon` on PATH that records its argv."""
     fake_bin = tmp_path / "fakebin"
