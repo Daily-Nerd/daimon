@@ -73,6 +73,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 ## Beyond the briefing
 
 - **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled).
+- **`daimon why <item-id>`** — inspect a recalled item's independent capture, provenance, source, byte-integrity, current-support, verifier, lifecycle, and corroboration evidence. Add `--source` for one bounded redacted source window. See the [Trust Inspector guide](docs/trust-inspector.md).
 - **Context switching** — `daimon projects`, `daimon brief --slug <slug>`: read another project's memory deliberately, provenance-labeled — never automatic.
 - **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it, in English or Spanish.
 - **Code anchors** — `daimon anchor <file> <symbol>` pins a belief to a code symbol; drift is flagged in the next briefing. Offline, stdlib `ast`.
@@ -92,7 +93,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 | Surface | State |
 |---------|-------|
 | Claude Code plugin + hooks | live-validated daily |
-| CLI (`brief`, `status`, `recall`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
+| CLI (`brief`, `status`, `recall`, `why`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
 | Windsurf adapter | live-validated |
 | Codex adapter | shipped, awaiting first live run |
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |

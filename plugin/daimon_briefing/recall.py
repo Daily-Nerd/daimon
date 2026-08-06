@@ -702,7 +702,7 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
         " i.session_id, i.created, i.superseded_by, i.invalidated_by,"
-        " i.importance, i.first_seen, i.frontier,"
+        " i.importance, i.first_seen, i.item_id, i.frontier,"
         " bm25(items_fts) AS rank"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "item": {
+    "item_id": "o-abcdef",
+    "kind": "decision",
+    "text": "durable trust decision",
+    "trust": "verbatim",
+    "quote": "durable trust decision",
+    "author": "alice",
+    "project_slug": "-p-A",
+    "session_id": "S-bound",
+    "origin_session": "S-bound",
+    "occurrences": 1
+  },
+  "axes": {
+    "capture": "verified",
+    "provenance": "bound",
+    "locator": "absent-local",
+    "bytes": "unknown",
+    "current_support": "not-checked",
+    "verifier_comparison": "same-version",
+    "lifecycle": "active"
+  },
+  "corroboration": {
+    "count": 0,
+    "references": []
+  },
+  "receipt": {
+    "version": 1,
+    "source": {
+      "version": 1,
+      "host": "claude-code",
+      "session_id": "S-source",
+      "locator": "managed",
+      "author": "alice"
+    },
+    "digest": {
+      "algorithm": "sha256",
+      "scope": "raw-file",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "verifier": {
+      "id": "tier-f",
+      "version": 1
+    },
+    "outcome": "verified",
+    "checked_at": "2026-08-05T10:00:00Z",
+    "binding": {
+      "mode": "message-ids",
+      "message_ids": [
+        "u-1"
+      ]
+    }
+  },
+  "source": {
+    "version": 1,
+    "host": "claude-code",
+    "session_id": "S-source",
+    "locator": "managed",
+    "author": "alice"
+  },
+  "lifecycle_event": null
+}
