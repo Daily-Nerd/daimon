@@ -1055,6 +1055,12 @@ def _cmd_forget(args) -> int:
     # session files hold the same plaintext and were never in the contract
     # (#419: plaintext is what puts a file inside it, not its role).
     store.scrub_content_key(content_hash, project_dir=project)
+    # #600 slice A: the author's own team-mirror copies are plaintext this
+    # machine owns (#419) — scrubbed here; teammates' copies and upstream
+    # git history are the sync protocol's to converge (tombstone
+    # propagation), not a local rewrite's.
+    team_scrubbed = store.scrub_team_copies(content_hash,
+                                            project_dir=project)
     # #599: rows appended BEFORE this forget can carry the value in
     # `item_text`/`status`/`note` — redacted in place, rows never dropped
     # (the one ratified rewrite of the append-only ledger).
@@ -1074,6 +1080,10 @@ def _cmd_forget(args) -> int:
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
+    if team_scrubbed:
+        print(f"scrubbed {len(team_scrubbed)} own team-mirror cop(y/ies) — "
+              "run `daimon team sync` to publish; teammates' copies and "
+              "upstream git history remain until tombstone propagation")
     if events_scrubbed:
         print(f"redacted {events_scrubbed} event-ledger field(s) "
               "carrying the value (rows kept, field replaced)")

@@ -102,8 +102,11 @@ SURFACES: tuple[Surface, ...] = (
     # scanning such files regardless.
     Surface("checkpoints/**/*.tmp", "store._atomic_write",
             True, "wholesale-purge", "reaper"),
-    # -- team mirror: forward plaintext copies, no tombstone propagation
-    #    yet — THE declared gap. --
+    # -- team mirror: forward plaintext copies. #600 slice A: forget now
+    #    rewrites the author's OWN copies (store.scrub_team_copies); the
+    #    remaining gap — teammates' copies and every clone's git history —
+    #    needs tombstone propagation through the sync protocol, so the
+    #    json entry stays a known-gap until that lands. --
     Surface("team/{remote}/README.md", "teamsync.init",
             False, "exempt-no-plaintext", "none"),
     Surface("team/{remote}/daimon-team.toml", "teamsync.init",

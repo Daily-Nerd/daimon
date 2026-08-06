@@ -347,6 +347,104 @@ def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
     return rewritten
 
 
+def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
+    """#600 slice A: scrub the author's OWN team-mirror checkpoint copies.
+
+    The mirror holds full plaintext copies of every mirrored session, and
+    the deletion walk never reached it (team_dir is a SIBLING of the
+    checkpoint store). #419's rule puts it squarely inside the contract:
+    holding plaintext, not its role, is what counts.
+
+    Scope discipline is the whole design:
+    - OWN author dirs only — `authors/<project_slug(config.author())>`,
+      the same identity _dual_write_team writes and teamsync._own_pathspecs
+      commits, so a later `team sync` stages the rewrite as an ordinary
+      own-file modification. The spike verdict forbids mutable POINTERS and
+      cross-author deletes (those race appends); a rewrite inside the
+      disjoint own-author dir is non-racing by the same construction that
+      makes appends safe. Teammates' files are never touched — their
+      copies converge via tombstone propagation (slice B), and the audit
+      keeps reporting them meanwhile.
+    - THIS project only — nested layout segments must be one of
+      teamproject.read_candidates' logical paths, or the payload's own
+      project_slug stamp (written by _dual_write_team) must match. Another
+      project's mirror copy of the same sentence is that project's belief
+      state.
+    - Runs regardless of config.team_enabled(): deletion parallels the
+      kill-switch exemption; a toggle flipped off later must not orphan
+      plaintext the mirror already holds.
+
+    Each rewrite passes through policy.admit_checkpoint — re-admission
+    under the project's forgotten keys (the key that motivated this call
+    included) — so the write-audit guard binds the bytes on disk to a real
+    admission, the scrub_event_fields precedent. Upstream git history and
+    the remote remain out of reach (the registry's `.git/**` known-gap).
+
+    Known blindness, shared with the audit: a pre-stamp-era flat mirror
+    file with no project_slug payload field cannot be attributed and is
+    skipped — privacy._scan_team_dir misses it by the identical rule, so
+    scrub and audit at least agree.
+
+    Best-effort per file; returns the paths rewritten."""
+    if not content_hash:
+        return []
+    team = config.team_dir()
+    own = project_slug(config.author()) or "unknown"
+    slug = project_slug(project_dir)
+    keys = forgotten_content_keys(project_dir) | {content_hash}
+    try:
+        segs = {tuple(s) for s in teamproject.read_candidates(project_dir)}
+    except Exception:
+        segs = set()
+    try:
+        remotes = [d for d in team.iterdir() if d.is_dir()]
+    except OSError:
+        return []
+    rewritten: list[str] = []
+    for remote in remotes:
+        candidates = list(remote.glob(f"authors/{own}/*.json"))
+        candidates += remote.glob(f"projects/**/authors/{own}/*.json")
+        for path in sorted(set(candidates)):
+            # nested layout: projects/<seg…>/authors/<own>/<sid>.json —
+            # the logical segments are parts[1:-3] (the same slice the
+            # audit takes; [1:-2] kept the "authors" segment and made this
+            # check unreachable). A copy of the SAME logical project
+            # written from another checkout carries that path's slug, so
+            # the logical-path match is what rescues it.
+            parts = path.relative_to(remote).parts
+            nested_ok = (len(parts) > 4 and parts[0] == "projects"
+                         and parts[-3] == "authors"
+                         and parts[1:-3] in segs)
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if not nested_ok and payload.get("project_slug") != slug:
+                continue
+            # Probe on a copy first: only files the forget actually changes
+            # are re-admitted and rewritten — admission drift (missing ids,
+            # a new redact pattern) must not masquerade as a scrub, and a
+            # torn payload the probe cannot change is skipped before the
+            # stricter admission can trip on it.
+            probe = json.loads(json.dumps(payload))
+            _, changed = policy.scrub_forgotten_payload(probe, keys)
+            if not changed:
+                continue
+            try:
+                policy.admit_checkpoint(payload, keys)
+                _atomic_write(path, json.dumps(payload, indent=2,
+                                               ensure_ascii=False) + "\n")
+            except Exception:
+                # best-effort per file: one unwritable or half-torn surface
+                # must not abort the rest of the scrub — nor the forget's
+                # remaining steps (event scrub, cache purge) behind it.
+                continue
+            rewritten.append(str(path))
+    return rewritten
+
+
 def checkpoints_written_since(cutoff: float) -> int:
     """How many per-session checkpoints were WRITTEN since `cutoff` (epoch
     seconds), counted by file mtime — the write-side signal for the silent-
