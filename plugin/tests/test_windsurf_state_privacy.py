@@ -92,6 +92,22 @@ def test_hook_and_package_resolve_the_same_state_dir(tmp_path, monkeypatch):
     assert hook.transcript_dir() == override / "transcripts"
 
 
+def test_provenance_resolves_against_the_same_state_dir(tmp_path, monkeypatch):
+    """Third component of the same split: SourceResolver hardcoded the home
+    path too, so with the override set every Windsurf receipt would report
+    absent-local over a transcript that is on disk."""
+    from daimon_briefing import provenance
+    override = tmp_path / "elsewhere"
+    monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(override))
+    tdir = override / "transcripts"
+    tdir.mkdir(parents=True)
+    (tdir / "traj-9.md").write_text("**user**: hi\n", encoding="utf-8")
+    resolver = provenance.SourceResolver()
+    cands = resolver._candidates({"host": "windsurf", "session_id": "traj-9"})
+    assert any(p == tdir / "traj-9.md" for p in cands), cands
+    assert provenance.infer_host(tdir / "traj-9.md")[0] == "windsurf"
+
+
 def test_both_sides_default_under_the_real_daimon_home(tmp_path, monkeypatch):
     """The DEFAULT path is the field path — with the var redirected suite-wide
     by conftest, nothing else asserts it. A typo in either default is
