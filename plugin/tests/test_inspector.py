@@ -113,6 +113,26 @@ def test_item_id_validation_is_bounded_and_exact(value, expected):
     assert inspector.valid_item_id(value) is expected
 
 
+def test_checkpoint_scan_skips_corrupt_and_sessionless_surfaces(
+    tmp_checkpoint_dir, monkeypatch
+):
+    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    corrupt = tmp_checkpoint_dir / "corrupt.json"
+    corrupt.write_text("{not-json", encoding="utf-8")
+    sessionless = tmp_checkpoint_dir / "sessionless.json"
+    sessionless.write_text(json.dumps({"created": _CHECKED_AT}), encoding="utf-8")
+    valid = tmp_checkpoint_dir / "S-valid.json"
+    valid.write_text(
+        json.dumps(_checkpoint("S-valid", [])), encoding="utf-8")
+    monkeypatch.setattr(
+        store, "project_surfaces",
+        lambda _project: [corrupt, sessionless, valid])
+
+    checkpoints = inspector._project_checkpoints(_PROJECT)
+
+    assert [checkpoint["session_id"] for checkpoint in checkpoints] == ["S-valid"]
+
+
 def test_bound_receipt_reports_changed_bytes_and_message_support(
     tmp_checkpoint_dir, tmp_path, monkeypatch
 ):
@@ -186,6 +206,30 @@ def test_rendered_digest_and_older_verifier_are_independent_axes(
     assert result["axes"]["bytes"] == "unchanged"
     assert result["axes"]["current_support"] == "message-id-match"
     assert result["axes"]["verifier_comparison"] == "different-version"
+
+
+def test_unreadable_rendered_source_degrades_to_unknown(
+    tmp_checkpoint_dir, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    projects = tmp_path / ".claude" / "projects"
+    _write_claude(projects, "S-source", [
+        ("user", "durable trust decision", "u-1"),
+    ])
+    receipt = _receipt(
+        _source(), "a" * 64, scope="rendered-transcript")
+    _write_checkpoint("S-containing", [_item(receipt=receipt)])
+
+    def unreadable(_path):
+        raise ValueError("malformed host transcript")
+
+    monkeypatch.setattr(transcript, "from_file", unreadable)
+    result = inspector.inspect_item(
+        _PROJECT, _ITEM_ID, resolver=_resolver(tmp_path, projects))
+
+    assert result["axes"]["locator"] == "resolved"
+    assert result["axes"]["bytes"] == "unknown"
+    assert result["axes"]["current_support"] == "not-checked"
 
 
 def test_legacy_inferred_and_unbound_items_degrade_explicitly(
@@ -455,6 +499,21 @@ def test_source_disclosure_caps_message_count_and_reports_unavailable(
     human = "\n".join(inspector.human_lines(unavailable))
     assert "Source excerpt: (unavailable)" in human
     assert "no bounded source excerpt is available" in human
+
+
+def test_source_helpers_ignore_malformed_messages_and_cap_plain_text():
+    assert inspector._message_by_id([
+        None,
+        {"id": "u-1", "role": "user", "content": "evidence"},
+    ]) == {
+        "u-1": {"id": "u-1", "role": "user", "content": "evidence"},
+    }
+
+    value = "x" * (inspector._SOURCE_CHAR_LIMIT + 20)
+    capped, truncated = inspector._cap_disclosed_source(value)
+
+    assert truncated is True
+    assert capped == "x" * (inspector._SOURCE_CHAR_LIMIT - 1) + "…"
 
 
 def test_why_json_matches_golden_and_command_is_read_only_except_usage(
