@@ -92,6 +92,12 @@ _TOOL_RESULT_MAX_CHARS = 500
 _DAIMON_CMD_RE = re.compile(
     r"(?:^|[|;&(`]|\&\&|\|\|)\s*"
     r"(?:\S+=\S+\s+)*(?:sudo\s+)?"
+    # #585: a shell wrapper puts a QUOTE immediately before the command, and
+    # quotes are deliberately absent from the delimiter class above — adding
+    # them there would match `rg "daimon" cli.py`, which greps ABOUT daimon and
+    # whose output is a genuine witness. Recognise the wrapper explicitly
+    # instead, the same way `uv run` is handled below.
+    r"(?:(?:\S*/)?(?:ba|z|da|k)?sh\s+-[a-z]*c\s+['\"]?)?"
     r"(?:uv\s+run\s+(?:--?[\w-]+(?:[= ]\S+)?\s+)*(?:python\s+-m\s+)?)?"
     r"(?:\S*/)?daimon(?:\s|$)", re.MULTILINE)
 
