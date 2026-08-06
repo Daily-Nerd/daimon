@@ -11,17 +11,31 @@ const HOSTS = ['claude', 'codex', 'gemini', 'windsurf'];
 
 function CopyCmd({cmd, children}: {cmd: string; children: ReactNode}): ReactNode {
   const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(cmd);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = cmd;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — leave button label unchanged */
+    }
+  };
   return (
     <div className="cmdLine">
       <code>{children}</code>
       <button
         type="button"
         className="copyBtn"
-        onClick={() => {
-          navigator.clipboard.writeText(cmd);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}>
+        onClick={copy}>
         {copied
           ? translate({id: 'landing.copy.done', message: 'copied'})
           : translate({id: 'landing.copy', message: 'copy'})}
@@ -47,17 +61,15 @@ function InstallBlock(): ReactNode {
     return () => clearInterval(t);
   }, []);
   return (
-    <pre className="installBlock">
-      <code>
-        <CopyCmd cmd="uv tool install daimon-briefing">{'uv tool install daimon-briefing'}</CopyCmd>
-        <CopyCmd cmd="daimon hooks install claude">
-          {'daimon hooks install '}
-          <span className={fading ? 'hostToken hostFade' : 'hostToken'}>
-            {HOSTS[i]}
-          </span>
-        </CopyCmd>
-      </code>
-    </pre>
+    <div className="installBlock">
+      <CopyCmd cmd="uv tool install daimon-briefing">{'uv tool install daimon-briefing'}</CopyCmd>
+      <CopyCmd cmd="daimon hooks install claude">
+        {'daimon hooks install '}
+        <span className={fading ? 'hostToken hostFade' : 'hostToken'}>
+          {HOSTS[i]}
+        </span>
+      </CopyCmd>
+    </div>
   );
 }
 

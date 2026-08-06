@@ -169,7 +169,8 @@
 .anatomyDim { color: var(--ifm-color-emphasis-600); }
 .anatomyLegend { display: flex; gap: var(--dm-space-6); margin-top: var(--dm-space-4); font-size: 0.875rem; flex-wrap: wrap; }
 .hostRow { color: var(--ifm-color-emphasis-600); font-size: 0.875rem; margin: var(--dm-space-3) 0 0; }
-.cmdLine { display: flex; align-items: center; gap: var(--dm-space-3); justify-content: space-between; }
+.cmdLine { display: flex; align-items: center; gap: var(--dm-space-3); justify-content: space-between; margin-bottom: var(--dm-space-4); }
+.cmdLine:last-child { margin-bottom: 0; }
 .copyBtn {
   min-height: 24px; border: 1px solid var(--ifm-toc-border-color); border-radius: 4px;
   background: none; color: var(--ifm-color-emphasis-600); font-size: 0.875rem;
