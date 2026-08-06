@@ -49,5 +49,8 @@
   },
   "landing.feature.local.body": {
     "message": "Solo stdlib de Python. Tus transcripts nunca salen de tu máquina salvo que configures un remoto de equipo."
+  },
+  "landing.verify.title": {
+    "message": "Mira cómo se verifica un checkpoint"
   }
 }

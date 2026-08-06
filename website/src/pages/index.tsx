@@ -5,6 +5,7 @@ import Layout from '@theme/Layout';
 import {useEffect, useState} from 'react';
 import type {ReactNode} from 'react';
 import HomeReceipt from '@site/src/components/HomeReceipt';
+import VerifyReplay from '@site/src/components/VerifyReplay';
 
 const HOSTS = ['claude', 'codex', 'gemini', 'windsurf'];
 
@@ -134,6 +135,12 @@ export default function Home(): ReactNode {
         </div>
       </header>
       <main>
+        <section className="sectionBand text--center">
+          <h2 className="sectionTitle">
+            {translate({id: 'landing.verify.title', message: 'Watch a checkpoint get verified'})}
+          </h2>
+          <VerifyReplay />
+        </section>
         <p className="quoteRow">
           {translate({
             id: 'landing.quote',
