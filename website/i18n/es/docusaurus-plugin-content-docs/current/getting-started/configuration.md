@@ -90,6 +90,7 @@ para el flujo completo.
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Raíz del mirror de memoria de equipo compartida. |
 | `DAIMON_TEAM_PROJECT` | sin definir | Ruta lógica de proyecto explícita para las sesiones de esta máquina (relativa, p. ej. `core/api-gateway`). Prevalece sobre el mapeo de `daimon-team.toml` del sidecar y sobre el fallback derivado del origin al enrutar checkpoints bajo `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Ventana de edad al leer: los checkpoints de compañeros más viejos que esta cantidad de días se omiten al leer. `0` = conservar todos. Nunca borra físicamente de la rama compartida de solo-anexado. |
+| `DAIMON_TEAM_APPLY_FORGET` | off | Cuando es verdadero, el tombstone de olvido publicado por un COMPAÑERO también reescribe los checkpoints propios de esta máquina durante un `daimon team sync` escrito a mano. Por defecto apagado: un tombstone ajeno siempre suprime el valor al leer y en el índice, pero borrar estado local a partir del hash de otra persona es una decisión que se toma a conciencia — la rama compartida es de solo-anexado, así que no hay vuelta atrás. |
 
 ## Receipts
 

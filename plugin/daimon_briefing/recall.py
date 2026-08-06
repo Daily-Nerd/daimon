@@ -207,7 +207,11 @@ def _scan_sources():
     root = config.team_dir()
     cutoff = store.team_retention_cutoff()
     self_author = store.project_slug(config.author())
-    forgotten = store.all_forgotten_content_keys()
+    # #600 slice B: teammates' published tombstones gate the index too — an
+    # inbound row is suppressed by ANY tombstone this machine can see, local
+    # or foreign (over-suppression is this path's documented posture).
+    forgotten = (store.all_forgotten_content_keys()
+                 | store.foreign_forgotten_content_keys())
     try:
         remotes = list(root.iterdir())
     except OSError:

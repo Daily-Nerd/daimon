@@ -1061,6 +1061,10 @@ def _cmd_forget(args) -> int:
     # propagation), not a local rewrite's.
     team_scrubbed = store.scrub_team_copies(content_hash,
                                             project_dir=project)
+    # #600 slice B: publish the deletion itself (hash only) so teammates can
+    # suppress the value without waiting to pull the scrubbed file — and so
+    # a copy THEY extracted independently can be acted on at all.
+    store.publish_tombstone(content_hash, project_dir=project)
     # #599: rows appended BEFORE this forget can carry the value in
     # `item_text`/`status`/`note` — redacted in place, rows never dropped
     # (the one ratified rewrite of the append-only ledger).
@@ -2382,6 +2386,15 @@ def _cmd_team_sync(args) -> int:
         render.render_team_sync(["daimon team: git not found on PATH — sync skipped"])
         return 0
     reports = teamsync.sync()
+    # #600 slice B, opt-in: apply teammates' tombstones to THIS machine's own
+    # checkpoints. Here and nowhere else — sync is typed by a person, while
+    # heal runs detached from session start on some hosts, and a deletion
+    # crossing a trust boundary must never arrive unattended. A no-op unless
+    # DAIMON_TEAM_APPLY_FORGET is on; suppression (always on) is elsewhere.
+    applied = store.apply_foreign_tombstones(project_dir=_resolve_project(None))
+    if applied:
+        print(f"applied teammates' forget tombstones to {len(applied)} local "
+              "surface(s) (DAIMON_TEAM_APPLY_FORGET is on)")
     # #246: fetched teammate files are fingerprint input — freshen here (the
     # SessionStart hook spawns sync detached, off the prompt path) so the
     # first recall after a fetch doesn't pay the rebuild. Unconditional on
