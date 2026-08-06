@@ -148,3 +148,4 @@
 [data-theme='dark'] .ts { color: #e3b341; }
 .chip { border-radius: 4px; padding: 0 var(--dm-space-2); font-size: 0.875rem; }
 .chipOk { background: rgba(15, 118, 110, 0.12); color: var(--ifm-color-primary); }
+.chipPending { background: var(--ifm-color-emphasis-200); color: var(--ifm-color-emphasis-600); }

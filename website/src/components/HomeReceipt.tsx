@@ -1,6 +1,15 @@
+import {useEffect, useState} from 'react';
 import type {ReactNode} from 'react';
 
 export default function HomeReceipt(): ReactNode {
+  const [checked, setChecked] = useState(true);
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
+    setChecked(false);
+    const t = setTimeout(() => setChecked(true), 900);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
     <div className="receipt" role="img" aria-label="Example daimon briefing with verified, inferred, and stale items">
       <div className="receiptHead">
@@ -10,7 +19,9 @@ export default function HomeReceipt(): ReactNode {
         <span className="tv">✔ verbatim</span> "retry uses exponential backoff, cap 30s"
       </div>
       <div className="receiptSub">
-        └ quote verified · transcript line 214 <span className="chip chipOk">✔ checked</span>
+        └ quote verified · transcript line 214 <span className={checked ? 'chip chipOk' : 'chip chipPending'}>
+          {checked ? '✔ checked' : 'checking…'}
+        </span>
       </div>
       <div className="receiptRow">
         <span className="ti">~ inferred</span> cache layer is the bottleneck
