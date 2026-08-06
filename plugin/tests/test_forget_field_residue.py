@@ -280,6 +280,46 @@ def test_status_scrub_keeps_free_form_resolved_class(tmp_checkpoint_dir):
     assert evt["status"] == MARKER
 
 
+def test_link_list_key_removed_when_its_only_link_is_forgotten(
+        tmp_checkpoint_dir):
+    _write("S1", "2026-08-01T00:00:00Z", [
+        {"text": CANARY, "trust": "inferred"},
+        {"text": KEEPER, "trust": "inferred",
+         "links": [{"type": "supersedes", "target": CANARY}]},
+    ])
+    _forget_canary()
+    kept = _live_decisions()
+    assert [i["text"] for i in kept] == [KEEPER]
+    assert "links" not in kept[0], "an emptied links list must not linger"
+
+
+def test_event_scrub_edge_guards_return_zero(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    # no key, unknown project (no slug), and a project with no ledger yet
+    assert store.scrub_event_fields("", project_dir=PROJECT) == 0
+    assert store.scrub_event_fields("deadbeef", project_dir="") == 0
+    _write("S1", "2026-08-01T00:00:00Z", [{"text": KEEPER, "trust": "inferred"}])
+    assert not store._events_path(PROJECT).exists()  # no ledger yet
+    assert store.scrub_event_fields("deadbeef", project_dir=PROJECT) == 0
+
+
+def test_event_scrub_copies_uninterpretable_lines_verbatim(tmp_checkpoint_dir):
+    _write("S1", "2026-08-01T00:00:00Z", [{"text": CANARY, "trust": "inferred"}])
+    store.append_event("i-y", "resolved", item_text=CANARY,
+                       project_dir=PROJECT)
+    path = store._events_path(PROJECT)
+    with path.open("a", encoding="utf-8") as f:
+        f.write("not json at all\n")
+        f.write('["a", "json", "array", "row"]\n')
+    _forget_canary()
+    lines = path.read_text().splitlines()
+    assert "not json at all" in lines
+    assert '["a", "json", "array", "row"]' in lines
+    scrubbed = [json.loads(ln) for ln in lines
+                if ln.startswith("{") and json.loads(ln).get("item_ref") == "i-y"]
+    assert scrubbed[0]["item_text"] == MARKER
+
+
 def test_event_scrub_routes_rewritten_rows_through_admit_row(
         tmp_checkpoint_dir, monkeypatch):
     """Refuter finding 4: the ledger rewrite must be GOVERNED, not merely
