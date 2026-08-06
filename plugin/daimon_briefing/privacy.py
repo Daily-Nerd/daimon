@@ -228,7 +228,7 @@ def audit_project(project_dir=None) -> dict:
                     if h in keys:
                         result["findings"].append({
                             "path": str(events),
-                            "item_id": evt.get("item"),
+                            "item_id": evt.get("item_ref"),
                             "content_hash": h, "surface": "events-note"})
         except OSError:
             result["unscannable"].append(str(events))

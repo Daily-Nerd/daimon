@@ -343,8 +343,10 @@ def test_verbatim_note_detected(tmp_checkpoint_dir):
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
                        project_dir=PROJECT)
     result = privacy.audit_project(project_dir=PROJECT)
-    assert any(f["surface"] == "events-note" and f["content_hash"] == key
-               for f in result["findings"])
+    found = [f for f in result["findings"]
+             if f["surface"] == "events-note" and f["content_hash"] == key]
+    assert len(found) > 0, "events-note finding not detected"
+    assert found[0]["item_id"] == "i-y", "item_id must match event's item_ref"
 
 
 def test_chunk_cache_reported_at_store_level(tmp_checkpoint_dir):
@@ -355,3 +357,17 @@ def test_chunk_cache_reported_at_store_level(tmp_checkpoint_dir):
     result = privacy.audit_project(project_dir=PROJECT)
     assert result["cache"]["entries"] == 1
     assert result["cache"]["oldest_days"] is not None
+
+
+def test_tombstone_own_note_detected(tmp_checkpoint_dir):
+    """Regression: tombstone's reason field (note) carrying the value must be caught."""
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    # User pasted the value as --reason when forgetting
+    store.append_event("i-x", f"forgotten:{key}", note=CANARY, kind="tombstone",
+                       project_dir=PROJECT)
+    result = privacy.audit_project(project_dir=PROJECT)
+    found = [f for f in result["findings"]
+             if f["surface"] == "events-note" and f["content_hash"] == key]
+    assert len(found) > 0, "tombstone note containing value must be detected"
+    assert found[0]["item_id"] == "i-x", "item_id must match tombstone event's id"
