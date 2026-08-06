@@ -7,7 +7,7 @@ const LINES: ReactNode[] = [
     $ daimon checkpoint · verifying 23 claims…
   </span>,
   <span key="1">
-    "retry cap is 30s" <span aria-hidden="true">→</span> transcript L214{' '}
+    "retry cap is 30s" <span aria-hidden="true">→</span> L214{' '}
     <span className="tv">
       <span aria-hidden="true">✔ </span>verbatim
     </span>
@@ -16,17 +16,19 @@ const LINES: ReactNode[] = [
     "port is 8080" <span aria-hidden="true">→</span> no match{' '}
     <span aria-hidden="true">→</span>{' '}
     <span className="ti">
-      downgraded to <span aria-hidden="true">~ </span>inferred
+      <span aria-hidden="true">~ </span>inferred
     </span>
   </span>,
   <span key="3">
-    "flag renamed in cfg" <span aria-hidden="true">→</span> the code it quoted
-    changed{' '}
+    "flag renamed" <span aria-hidden="true">→</span> code changed{' '}
     <span className="ts">
-      <span aria-hidden="true">⚠ </span>flagged stale
+      <span aria-hidden="true">⚠ </span>stale
     </span>
   </span>,
-  <span key="4">signed 7e4c02d1 · 19 verified, 3 downgraded, 1 flagged</span>,
+  <span key="4" className="replayHead">
+    … 20 more claims
+  </span>,
+  <span key="5">signed ed25519 · sig 7e4c…02d1 · 19 verified, 3 downgraded, 1 flagged</span>,
 ];
 
 export default function VerifyReplay(): ReactNode {
@@ -37,6 +39,12 @@ export default function VerifyReplay(): ReactNode {
 
   const run = useCallback(() => {
     if (timer.current) clearInterval(timer.current);
+    // Reduced motion: jump straight to the finished transcript, no timed reveal.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setShown(LINES.length);
+      setPlayed(true);
+      return;
+    }
     setPlayed(false);
     setShown(0);
     let i = 0;
@@ -73,17 +81,23 @@ export default function VerifyReplay(): ReactNode {
   }, [run]);
 
   return (
-    <div className="replay" ref={ref} data-played={played}>
-      <button
-        type="button"
-        className="replayBtn"
-        aria-label={translate({
-          id: 'landing.replay.aria',
-          message: 'Replay the verification',
-        })}
-        onClick={run}>
-        {translate({id: 'landing.replay.btn', message: 'replay'})}
-      </button>
+    <div className="replay" ref={ref}>
+      <div className="replayBar">
+        <span className="replayBarTitle">
+          {translate({id: 'landing.replay.barTitle', message: 'checkpoint replay'})}
+        </span>
+        <button
+          type="button"
+          className="replayBtn"
+          disabled={!played}
+          aria-label={translate({
+            id: 'landing.replay.aria',
+            message: 'Replay the verification',
+          })}
+          onClick={run}>
+          {translate({id: 'landing.replay.btn', message: 'replay'})}
+        </button>
+      </div>
       <div className="replayLines">
         {LINES.map((l, i) => (
           <div key={i} className={i < shown ? 'replayLine' : 'replayLine replayHidden'}>

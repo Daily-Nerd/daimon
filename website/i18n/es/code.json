@@ -3,13 +3,19 @@
     "message": "CLI de código abierto"
   },
   "landing.hero.title": {
-    "message": "La memoria de tu agente, con receipts que puedes comprobar"
+    "message": "Memoria que tu agente puede demostrar"
   },
   "landing.hero.sub": {
     "message": "Otras herramientas de memoria dejan que el modelo califique su propia tarea. daimon te muestra la línea del transcript, la cita exacta y una firma que puedes verificar offline."
   },
   "landing.install.hosts": {
     "message": "Elige tu host de agente"
+  },
+  "landing.install.step1": {
+    "message": "1 · instala la herramienta"
+  },
+  "landing.install.step2": {
+    "message": "2 · conéctala a {host}"
   },
   "landing.copy": {
     "message": "copiar"
@@ -20,6 +26,12 @@
   "landing.verify.title": {
     "message": "Un checkpoint verificándose a sí mismo"
   },
+  "landing.verify.claim": {
+    "message": "Cada afirmación se vuelve a comprobar contra el transcript antes de llegar a tu agente."
+  },
+  "landing.replay.barTitle": {
+    "message": "repetición del checkpoint"
+  },
   "landing.replay.aria": {
     "message": "Repetir la verificación"
   },
@@ -29,29 +41,35 @@
   "landing.anatomy.title": {
     "message": "Cómo un ítem demuestra lo que dice"
   },
+  "landing.anatomy.claim": {
+    "message": "Un checkpoint es el registro firmado que deja una sesión — cada línea en él se gana su clase."
+  },
   "landing.anatomy.class.term": {
     "message": "clase"
   },
   "landing.anatomy.class": {
-    "message": "— se gana al comprobarla, nunca se auto-declara"
+    "message": "se gana al comprobarla, nunca se auto-declara"
   },
   "landing.anatomy.words.term": {
     "message": "palabras exactas"
   },
   "landing.anatomy.words": {
-    "message": "— citadas del transcript, no parafraseadas"
+    "message": "citadas del transcript, no parafraseadas"
   },
   "landing.anatomy.receipt.term": {
     "message": "receipt"
   },
   "landing.anatomy.receipt": {
-    "message": "— el número de línea y la firma que puedes consultar"
+    "message": "el número de línea y la firma que puedes consultar"
+  },
+  "landing.close.conviction": {
+    "message": "Todo lo de arriba se puede comprobar offline — sin confiar en nosotros, ni en el modelo, ni en esta página."
   },
   "landing.close.deps": {
-    "message": "Solo stdlib de Python — cero dependencias"
+    "message": "Solo stdlib de Python"
   },
   "landing.close.sync": {
-    "message": "Sincronización de equipo por un remoto git normal"
+    "message": "sincronización de equipo por git"
   },
   "landing.close.pypi": {
     "message": "v{version} en PyPI"

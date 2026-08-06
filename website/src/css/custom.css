@@ -17,6 +17,8 @@
   /* light mode: cards must read as raised surfaces, not white-on-white */
   --ifm-background-surface-color: #f6f8fa;
   --dm-card-border: #d0d7de;
+  --dm-terminal-bg: #eceff2;
+  --dm-accent-wash: rgba(15, 118, 110, 0.12);
   --dm-on-accent: #ffffff;
   /* spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 px */
   --dm-space-1: 0.25rem;
@@ -40,25 +42,20 @@
   --ifm-background-color: #0d1117;
   --ifm-background-surface-color: #161b22;
   --dm-card-border: #30363d;
+  --dm-terminal-bg: #0d1117;
+  --dm-accent-wash: rgba(0, 212, 170, 0.12);
   --dm-on-accent: #08211d;
   --docusaurus-highlighted-code-line-bg: rgba(0, 212, 170, 0.08);
 }
 
-/* Reserve the wordmark slot so the navbar never collapses to a zero-width logo. */
-.navbar__logo {
-  min-width: 96px;
-}
-.navbar__logo img {
-  min-height: 24px;
-}
-
-/* Landing type scale — 4 sizes: 36 / 18 / 16 / 14 px. Hero at 2.25× body. */
+/* Landing type scale — 4 sizes: 36 / 18 / 16 / 14 px. Hero at 2.25× body.
+   Radii: 8px for surfaces, buttons and chips; 4px for inline marks. */
 .bandInner {
   margin-left: auto;
   margin-right: auto;
   max-width: 42rem;
 }
-.bandInner--replay { max-width: 46rem; text-align: left; }
+.bandInner--replay { max-width: 34rem; text-align: left; }
 .bandInner--anatomy { max-width: 34rem; text-align: left; }
 .bandInner--close { max-width: 34rem; text-align: center; }
 
@@ -90,7 +87,7 @@
   margin: 0 auto var(--dm-space-8);
 }
 
-/* Install — chips + commands, the page's primary action. */
+/* Install — numbered steps, the page's primary action. */
 .install { margin-bottom: var(--dm-space-8); }
 .hostChips {
   display: flex;
@@ -103,7 +100,7 @@
   min-height: 44px;
   padding: 0 var(--dm-space-4);
   border: 1px solid var(--dm-card-border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--ifm-background-surface-color);
   color: var(--ifm-color-emphasis-800);
   font-size: 0.875rem;
@@ -112,6 +109,7 @@
 .hostChip:hover { border-color: var(--ifm-color-primary); }
 .hostChip:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
 .hostChipOn {
+  background: var(--dm-accent-wash);
   border-color: var(--ifm-color-primary);
   color: var(--ifm-color-primary);
   font-weight: 600;
@@ -135,18 +133,26 @@
   color: var(--ifm-color-emphasis-800);
   font-family: var(--ifm-font-family-monospace);
 }
+.cmdStep + .cmdStep { margin-top: var(--dm-space-3); }
+.cmdLabel {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--ifm-color-emphasis-700);
+}
 .cmdLine {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: var(--dm-space-3);
-  justify-content: space-between;
+  row-gap: var(--dm-space-2);
   min-height: 44px;
 }
 .copyBtn {
   flex: none;
   min-height: 44px;
-  border: none;
-  border-radius: 6px;
+  border: 1px solid var(--ifm-color-primary);
+  border-radius: 8px;
   background: var(--ifm-color-primary);
   color: var(--dm-on-accent);
   font-size: 0.875rem;
@@ -154,12 +160,17 @@
   padding: 0 var(--dm-space-4);
   cursor: pointer;
 }
-.copyBtn:hover { background: var(--ifm-color-primary-dark); }
+.copyBtn:hover { background: var(--ifm-color-primary-dark); border-color: var(--ifm-color-primary-dark); }
 .copyBtn:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
+.copyBtnAlt { background: none; color: var(--ifm-color-primary); }
+.copyBtnAlt:hover { background: var(--dm-accent-wash); border-color: var(--ifm-color-primary); }
 .quietLink {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--dm-space-2);
   font-size: 0.875rem;
-  margin-top: var(--dm-space-3);
+  margin-top: var(--dm-space-2);
 }
 
 /* Receipt — the proof is the most legible text in the card. */
@@ -191,13 +202,6 @@
   padding-top: var(--dm-space-2);
   margin-top: var(--dm-space-2);
 }
-.receiptFoot code {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 100%;
-  color: inherit;
-}
 .receiptSub { color: var(--ifm-color-emphasis-800); padding-left: var(--dm-space-4); }
 .tv { color: var(--ifm-color-primary); }
 .ti { color: #8250df; }
@@ -205,7 +209,7 @@
 [data-theme='dark'] .ti { color: #d2a8ff; }
 [data-theme='dark'] .ts { color: #e3b341; }
 .chip { border-radius: 4px; padding: 0 var(--dm-space-2); font-size: 0.875rem; }
-.chipOk { background: rgba(15, 118, 110, 0.12); color: var(--ifm-color-primary); }
+.chipOk { background: var(--dm-accent-wash); color: var(--ifm-color-primary); }
 .chipPending { background: var(--ifm-color-emphasis-200); color: var(--ifm-color-emphasis-800); }
 
 .sectionBand { border-top: 1px solid var(--dm-card-border); padding: var(--dm-space-12) var(--dm-space-4); }
@@ -215,47 +219,66 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ifm-color-emphasis-700);
+  margin-bottom: var(--dm-space-2);
+}
+.claimLine {
+  font-size: 1.125rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-800);
   margin-bottom: var(--dm-space-6);
 }
 
-/* Replay — left-aligned card filling its band. */
+/* Replay — a terminal, not a third static card. */
 .replay {
-  position: relative;
   display: block;
   box-sizing: border-box;
   max-width: 100%;
   text-align: left;
-  background: var(--ifm-background-surface-color);
+  background: var(--dm-terminal-bg);
   border: 1px solid var(--dm-card-border);
   border-radius: 8px;
-  padding: var(--dm-space-4) var(--dm-space-6);
+  overflow: hidden;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.875rem;
   line-height: 1.7;
+}
+.replayBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dm-space-3);
+  padding: var(--dm-space-2) var(--dm-space-3);
+  background: var(--ifm-background-surface-color);
+  border-bottom: 1px solid var(--dm-card-border);
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.875rem;
+}
+.replayBarTitle { color: var(--ifm-color-emphasis-700); }
+.replayLines {
+  padding: var(--dm-space-4) var(--dm-space-6);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .replayLine { transition: opacity 200ms ease; }
 .replayHidden { opacity: 0; }
 .replayHead { color: var(--ifm-color-emphasis-700); }
 .replayBtn {
-  position: absolute;
-  top: var(--dm-space-2);
-  right: var(--dm-space-2);
+  flex: none;
   min-height: 24px;
   padding: 0 var(--dm-space-2);
   border: 1px solid var(--dm-card-border);
-  border-radius: 4px;
+  border-radius: 8px;
   background: var(--ifm-background-surface-color);
   color: var(--ifm-color-emphasis-800);
   font-family: var(--ifm-font-family-base);
   font-size: 0.875rem;
   cursor: pointer;
 }
-.replayBtn:hover { color: var(--ifm-color-primary); border-color: var(--ifm-color-primary); }
+.replayBtn:hover:enabled { color: var(--ifm-color-primary); border-color: var(--ifm-color-primary); }
 .replayBtn:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
-.replay:not([data-played='true']) .replayBtn { display: none; }
+.replayBtn:disabled { opacity: 0.4; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .replayLine { transition: none; } }
 
-/* Anatomy — one downgrade story, then plain definitions. */
+/* Anatomy — the same claim before and after a downgrade. */
 .anatomyCode {
   box-sizing: border-box;
   max-width: 100%;
@@ -269,30 +292,64 @@
 }
 .anatomySub { color: var(--ifm-color-emphasis-800); padding-left: var(--dm-space-4); }
 .defs { margin: var(--dm-space-6) 0 0; }
-.defRow { display: flex; flex-wrap: wrap; gap: var(--dm-space-2); margin-bottom: var(--dm-space-3); }
+.defRow { display: flex; flex-wrap: wrap; gap: var(--dm-space-3); margin-bottom: var(--dm-space-3); }
 .defRow:last-child { margin-bottom: 0; }
 .defs dt { font-weight: 600; }
 .defs dd { margin: 0; color: var(--ifm-color-emphasis-800); }
 
-/* Close — falsifiable facts, no accent colour, weight carries emphasis. */
-.factList { list-style: none; margin: 0; padding: 0; }
-.factList li { margin-bottom: var(--dm-space-2); }
-.factList li:last-child { margin-bottom: 0; }
+/* Close — conviction, then the command again, then quiet facts. */
+.convictionLine {
+  font-size: 1.125rem;
+  line-height: 1.5;
+  margin-bottom: var(--dm-space-6);
+}
+.closeInstall {
+  text-align: left;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  padding: var(--dm-space-2) var(--dm-space-4);
+  font-size: 0.875rem;
+  margin-bottom: var(--dm-space-6);
+}
+.closeInstall code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 100%;
+  color: var(--ifm-color-emphasis-800);
+  font-family: var(--ifm-font-family-monospace);
+}
+.factRow {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+  margin: 0;
+}
+.factLink {
+  display: inline-block;
+  min-height: 24px;
+  padding: 0 var(--dm-space-1);
+}
 
 @media (max-width: 640px) {
   .hero--daimon { padding: var(--dm-space-12) var(--dm-space-4) var(--dm-space-8); }
-  /* Long artifact lines scroll like a real terminal instead of shredding. */
   .receipt, .replay, .anatomyCode {
     display: block;
     width: 100%;
-    padding: var(--dm-space-3) var(--dm-space-4);
     font-size: 0.75rem;
   }
-  .receipt, .replayLines, .anatomyCode { overflow-x: auto; }
-  .replayLines { padding-top: var(--dm-space-6); }
+  .receipt, .anatomyCode { padding: var(--dm-space-3) var(--dm-space-4); }
+  .replayLines { padding: var(--dm-space-3) var(--dm-space-4); }
+  /* Long artifact lines scroll like a terminal; the right-edge fade says so. */
+  .receipt, .replayLines, .anatomyCode {
+    overflow-x: auto;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  }
   .receipt > div, .replayLine, .anatomyLine { white-space: nowrap; }
   .receiptHead { gap: var(--dm-space-4); }
   /* small tier collapses 14 → 12 so the screen keeps 4 sizes */
-  .heroEyebrow, .sectionTitle, .installBlock, .hostChip, .copyBtn,
-  .quietLink, .chip, .replayBtn { font-size: 0.75rem; }
+  .heroEyebrow, .sectionTitle, .installBlock, .hostChip, .copyBtn, .cmdLabel,
+  .quietLink, .chip, .replayBar, .replayBtn, .closeInstall, .factRow { font-size: 0.75rem; }
 }

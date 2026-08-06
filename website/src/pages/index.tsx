@@ -16,7 +16,15 @@ const HOSTS = [
 
 const PYPI_VERSION = '0.26.0';
 
-function CopyCmd({cmd}: {cmd: string}): ReactNode {
+function CopyCmd({
+  cmd,
+  label,
+  secondary,
+}: {
+  cmd: string;
+  label?: ReactNode;
+  secondary?: boolean;
+}): ReactNode {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -37,17 +45,20 @@ function CopyCmd({cmd}: {cmd: string}): ReactNode {
     }
   };
   return (
-    <div className="cmdLine">
-      <code>{cmd}</code>
-      <button
-        type="button"
-        className="copyBtn"
-        aria-label={'copy: ' + cmd}
-        onClick={copy}>
-        {copied
-          ? translate({id: 'landing.copy.done', message: 'copied'})
-          : translate({id: 'landing.copy', message: 'copy'})}
-      </button>
+    <div className="cmdStep">
+      {label ? <div className="cmdLabel">{label}</div> : null}
+      <div className="cmdLine">
+        <code>{cmd}</code>
+        <button
+          type="button"
+          className={secondary ? 'copyBtn copyBtnAlt' : 'copyBtn'}
+          aria-label={'copy: ' + cmd}
+          onClick={copy}>
+          {copied
+            ? translate({id: 'landing.copy.done', message: 'copied'})
+            : translate({id: 'landing.copy', message: 'copy'})}
+        </button>
+      </div>
     </div>
   );
 }
@@ -75,8 +86,21 @@ function InstallBlock(): ReactNode {
         ))}
       </div>
       <div className="installBlock">
-        <CopyCmd cmd="uv tool install daimon-briefing" />
-        <CopyCmd cmd={`daimon hooks install ${host.id}`} />
+        <CopyCmd
+          cmd="uv tool install daimon-briefing"
+          label={translate({
+            id: 'landing.install.step1',
+            message: '1 · install the tool',
+          })}
+        />
+        <CopyCmd
+          cmd={`daimon hooks install ${host.id}`}
+          secondary
+          label={translate(
+            {id: 'landing.install.step2', message: '2 · connect it to {host}'},
+            {host: host.label},
+          )}
+        />
       </div>
       <Link className="quietLink" to="/docs/">
         {translate({id: 'landing.close.docs', message: 'Read the docs'})}
@@ -101,7 +125,7 @@ export default function Home(): ReactNode {
           <h1>
             {translate({
               id: 'landing.hero.title',
-              message: "Your agent's memory, with receipts you can check",
+              message: 'Memory your agent can prove',
             })}
           </h1>
           <p className="subtitle">
@@ -124,6 +148,13 @@ export default function Home(): ReactNode {
                 message: 'A checkpoint verifying itself',
               })}
             </h2>
+            <p className="claimLine">
+              {translate({
+                id: 'landing.verify.claim',
+                message:
+                  'Every claim is re-checked against the transcript before it reaches your agent.',
+              })}
+            </p>
             <VerifyReplay />
           </div>
         </section>
@@ -135,7 +166,23 @@ export default function Home(): ReactNode {
                 message: 'How an item proves itself',
               })}
             </h2>
+            <p className="claimLine">
+              {translate({
+                id: 'landing.anatomy.claim',
+                message:
+                  'A checkpoint is the signed record a session leaves behind — every line in it earns its class.',
+              })}
+            </p>
             <div className="anatomyCode">
+              <div className="anatomyLine">
+                <span className="tv">
+                  <span aria-hidden="true">✔ </span>verbatim
+                </span>{' '}
+                "port is 8080"
+              </div>
+              <div className="anatomyLine anatomySub">
+                <span aria-hidden="true">└ </span>transcript line 87 · sig 9f3c…a41b
+              </div>
               <div className="anatomyLine">
                 <span className="ti">
                   <span aria-hidden="true">~ </span>inferred
@@ -143,9 +190,8 @@ export default function Home(): ReactNode {
                 "port is 8080"
               </div>
               <div className="anatomyLine anatomySub">
-                <span aria-hidden="true">└ </span>was{' '}
-                <span aria-hidden="true">✔ </span>verbatim · quote no longer
-                matches the transcript · downgraded automatically
+                <span aria-hidden="true">└ </span>quote no longer matches · downgraded
+                automatically
               </div>
             </div>
             <dl className="defs">
@@ -154,7 +200,7 @@ export default function Home(): ReactNode {
                 <dd>
                   {translate({
                     id: 'landing.anatomy.class',
-                    message: '— earned by checking, never self-declared',
+                    message: 'earned by checking, never self-declared',
                   })}
                 </dd>
               </div>
@@ -165,7 +211,7 @@ export default function Home(): ReactNode {
                 <dd>
                   {translate({
                     id: 'landing.anatomy.words',
-                    message: '— quoted from the transcript, not paraphrased',
+                    message: 'quoted from the transcript, not paraphrased',
                   })}
                 </dd>
               </div>
@@ -176,7 +222,7 @@ export default function Home(): ReactNode {
                 <dd>
                   {translate({
                     id: 'landing.anatomy.receipt',
-                    message: '— the line number and signature you can look up',
+                    message: 'the line number and signature you can look up',
                   })}
                 </dd>
               </div>
@@ -185,36 +231,34 @@ export default function Home(): ReactNode {
         </section>
         <section className="sectionBand bandClose">
           <div className="bandInner bandInner--close">
-            <ul className="factList">
-              <li>
-                <a href="https://github.com/Daily-Nerd/daimon/blob/main/LICENSE">
-                  Apache-2.0
-                </a>
-              </li>
-              <li>
-                {translate({
-                  id: 'landing.close.deps',
-                  message: 'Python stdlib only — zero dependencies',
-                })}
-              </li>
-              <li>
-                {translate({
-                  id: 'landing.close.sync',
-                  message: 'Team sync over a plain git remote',
-                })}
-              </li>
-              <li>
-                <a href="https://pypi.org/project/daimon-briefing/">
-                  {translate(
-                    {id: 'landing.close.pypi', message: 'v{version} on PyPI'},
-                    {version: PYPI_VERSION},
-                  )}
-                </a>
-              </li>
-            </ul>
-            <Link className="quietLink" to="/docs/">
-              {translate({id: 'landing.close.docs', message: 'Read the docs'})}
-            </Link>
+            <p className="convictionLine">
+              {translate({
+                id: 'landing.close.conviction',
+                message:
+                  'Every item above is checkable offline — without trusting us, the model, or this page.',
+              })}
+            </p>
+            <div className="closeInstall">
+              <CopyCmd cmd="uv tool install daimon-briefing" />
+            </div>
+            <p className="factRow">
+              <a
+                className="factLink"
+                href="https://github.com/Daily-Nerd/daimon/blob/main/LICENSE">
+                Apache-2.0
+              </a>
+              <span aria-hidden="true"> · </span>
+              {translate({id: 'landing.close.deps', message: 'Python stdlib only'})}
+              <span aria-hidden="true"> · </span>
+              {translate({id: 'landing.close.sync', message: 'team sync over git'})}
+              <span aria-hidden="true"> · </span>
+              <a className="factLink" href="https://pypi.org/project/daimon-briefing/">
+                {translate(
+                  {id: 'landing.close.pypi', message: 'v{version} on PyPI'},
+                  {version: PYPI_VERSION},
+                )}
+              </a>
+            </p>
           </div>
         </section>
       </main>
