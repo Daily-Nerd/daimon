@@ -1,3 +1,4 @@
+import {translate} from '@docusaurus/Translate';
 import {useEffect, useState} from 'react';
 import type {ReactNode} from 'react';
 
@@ -11,7 +12,7 @@ export default function HomeReceipt(): ReactNode {
   }, []);
 
   return (
-    <div className="receipt" role="img" aria-label="Example daimon briefing with verified, inferred, and stale items">
+    <div className="receipt" role="img" aria-label={translate({id: 'landing.receipt.aria', message: 'Example daimon briefing with verified, inferred, and stale items'})}>
       <div className="receiptHead">
         DAIMON BRIEFING <span>written 12m ago</span>
       </div>

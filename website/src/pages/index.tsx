@@ -35,6 +35,7 @@ function CopyCmd({cmd, children}: {cmd: string; children: ReactNode}): ReactNode
       <button
         type="button"
         className="copyBtn"
+        aria-label={'copy: ' + cmd}
         onClick={copy}>
         {copied
           ? translate({id: 'landing.copy.done', message: 'copied'})
@@ -63,7 +64,7 @@ function InstallBlock(): ReactNode {
   return (
     <div className="installBlock">
       <CopyCmd cmd="uv tool install daimon-briefing">{'uv tool install daimon-briefing'}</CopyCmd>
-      <CopyCmd cmd="daimon hooks install claude">
+      <CopyCmd cmd={`daimon hooks install ${HOSTS[i]}`}>
         {'daimon hooks install '}
         <span className={fading ? 'hostToken hostFade' : 'hostToken'}>
           {HOSTS[i]}
@@ -72,7 +73,6 @@ function InstallBlock(): ReactNode {
     </div>
   );
 }
-
 
 export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();

@@ -43,5 +43,8 @@
   },
   "landing.close.docs": {
     "message": "Leer los docs"
+  },
+  "landing.receipt.aria": {
+    "message": "Ejemplo de briefing de daimon con ítems verificados, inferidos y obsoletos"
   }
 }
