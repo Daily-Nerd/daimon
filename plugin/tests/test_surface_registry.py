@@ -60,6 +60,43 @@ def test_the_load_bearing_shapes_are_registered():
         assert surfaces.match(shape) is not None, f"unregistered: {shape}"
 
 
+def test_windsurf_state_is_declared_not_invisible():
+    """Adversarial finding (BLOCKER): the windsurf adapter accumulates FULL
+    RAW TRANSCRIPTS under ~/.daimon/windsurf/transcripts — the largest
+    plaintext store daimon writes, and the registry claimed completeness
+    without it. Declared as the #607 gap; the activity stamps and installed
+    hook copies hold no item text."""
+    t = surfaces.match("windsurf/transcripts/traj-1.md")
+    assert t is not None and t.delete == "known-gap" and t.issue == "#607"
+    u = surfaces.match("windsurf/unparsed-post_cascade_response-123.json")
+    assert u is not None and u.delete == "known-gap" and u.issue == "#607"
+    assert surfaces.match("windsurf/traj-1.last-activity").delete \
+        == "exempt-no-plaintext"
+    assert surfaces.match("windsurf/traj-1.last-serialize").delete \
+        == "exempt-no-plaintext"
+    assert surfaces.match("hooks/daimon-windsurf-hooks.py").delete \
+        == "exempt-no-plaintext"
+
+
+def test_pid_placeholder_matches_digits_only():
+    """{pid} must not degrade to a bare wildcard: recall.db.bak.tmp and
+    recall.db.tmp are a user's own files and must stay UNDECLARED so the
+    registry-derived reaper cannot touch them."""
+    reap = surfaces.match("recall.db.44594.tmp")
+    assert reap is not None and reap.delete == "reap"
+    assert surfaces.match("recall.db.44594.tmp-journal").delete == "reap"
+    assert surfaces.match("recall.db.bak.tmp") is None
+    assert surfaces.match("recall.db.tmp") is None
+    assert surfaces.match("recall.db.tmpfoo") is None
+
+
+def test_recall_db_declares_lazy_rebuild_not_rewrite():
+    """Nothing rewrites recall.db at forget time — rows leave at the next
+    fingerprint-triggered rebuild, and if no recall command ever runs the
+    plaintext persists. The strategy name must say so."""
+    assert surfaces.match("recall.db").delete == "lazy-rebuild"
+
+
 # ---- pattern matching -----------------------------------------------------
 
 
@@ -88,6 +125,34 @@ def test_exempt_suffix_refuses_a_registry_without_one(monkeypatch):
     monkeypatch.setattr(surfaces, "SURFACES", ())
     with pytest.raises(LookupError):
         surfaces.exempt_suffix()
+
+
+def test_exempt_suffix_refuses_two_suffix_exemptions(monkeypatch):
+    """privacy._is_plaintext_free compares against exactly ONE suffix —
+    declaration order silently deciding the winner is the guess the
+    registry exists to forbid."""
+    import pytest
+
+    two = (surfaces.Surface("a/*.receipt", "x", False,
+                            "exempt-no-plaintext", "none", audit_exempt=True),
+           surfaces.Surface("b/*.sidecar", "y", False,
+                            "exempt-no-plaintext", "none", audit_exempt=True))
+    monkeypatch.setattr(surfaces, "SURFACES", two)
+    with pytest.raises(LookupError):
+        surfaces.exempt_suffix()
+
+
+def test_reap_is_registry_derived_not_a_parallel_predicate(
+        tmp_path, monkeypatch):
+    """The reaper's filter IS surfaces.match() — remove the reap declaration
+    and the reaper must delete nothing, proving there is no second
+    hand-written predicate (the parallel-list defect this issue exists to
+    kill, reintroduced in the one path that deletes files)."""
+    dead, journal, _fresh = _plant_orphans()
+    no_reap = tuple(s for s in surfaces.SURFACES if s.delete != "reap")
+    monkeypatch.setattr(surfaces, "SURFACES", no_reap)
+    assert recall.reap_dead_snapshots() == []
+    assert dead.exists() and journal.exists()
 
 
 def test_privacy_exemptions_derive_from_the_registry():

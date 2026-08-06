@@ -40,9 +40,13 @@ from typing import NamedTuple
 # known-gap          — holds plaintext deletion cannot reach TODAY; must cite
 #                      the tracking issue. The registry makes the debt
 #                      visible; it never silences it.
+# lazy-rebuild        — derived cache; forgotten rows leave at the NEXT
+#                       fingerprint-triggered rebuild, not at forget time —
+#                       if no recall command ever runs, plaintext persists
+#                       (the audit's stale-index-pending-rebuild class)
 DELETE_STRATEGIES = frozenset({
     "rewrite", "append-tombstone", "wholesale-purge", "reap",
-    "exempt-no-plaintext", "known-gap",
+    "lazy-rebuild", "exempt-no-plaintext", "known-gap",
 })
 
 
@@ -112,7 +116,7 @@ SURFACES: tuple[Surface, ...] = (
     #    from crashed rebuilds are reaped on sight. --
     Surface("recall.db.{pid}.tmp*", "recall.rebuild",
             True, "reap", "reaper"),
-    Surface("recall.db", "recall.rebuild", True, "rewrite", "recall"),
+    Surface("recall.db", "recall.rebuild", True, "lazy-rebuild", "recall"),
     Surface("recall_seen/*.json", "cli._save_seen",
             False, "exempt-no-plaintext", "none"),
     # -- logs: no item text by construction, except the crash sink, which
@@ -134,15 +138,41 @@ SURFACES: tuple[Surface, ...] = (
     # codex host adapter stop stamps: an epoch float per session.
     Surface("codex/*.last-stop", "_hooks/daimon-codex-*.py",
             False, "exempt-no-plaintext", "none"),
+    # -- windsurf host adapter state: FULL RAW TRANSCRIPTS appended turn by
+    #    turn, plus unparsed event payloads (secret-scrubbed at write, never
+    #    item-text scrubbed). The largest plaintext store daimon writes, and
+    #    nothing in forget or the audit reaches it — THE declared gap after
+    #    the team mirror. provenance.py reads the transcripts as a
+    #    first-class source, so this is load-bearing, not vestigial. --
+    Surface("windsurf/transcripts/*.md", "_hooks/daimon-windsurf-hooks.py",
+            True, "known-gap", "none", issue="#607"),
+    Surface("windsurf/unparsed-*.json", "_hooks/daimon-windsurf-hooks.py",
+            True, "known-gap", "none", issue="#607"),
+    # trajectory activity/serialize stamps: epoch floats, no item text.
+    Surface("windsurf/*.last-activity", "_hooks/daimon-windsurf-hooks.py",
+            False, "exempt-no-plaintext", "none"),
+    Surface("windsurf/*.last-serialize", "_hooks/daimon-windsurf-hooks.py",
+            False, "exempt-no-plaintext", "none"),
+    # installed hook copies under ~/.daimon/hooks — program text, not
+    # belief bytes (cli._hooks_target_dir).
+    Surface("hooks/*", "cli install-hooks", False, "exempt-no-plaintext",
+            "none"),
 )
 
 _PLACEHOLDER_RE = re.compile(r"\{[a-z]+\}")
+
+# {pid} is digits, not a bare wildcard: `recall.db.bak.tmp` beside a
+# DAIMON_RECALL_DB override is a user's own backup and must stay UNDECLARED
+# so the registry-derived reaper cannot touch it.
+_PLACEHOLDER_GLOBS = {"{pid}": "[0-9]*"}
 
 
 def _part_matches(shape_part: str, part: str) -> bool:
     if shape_part == part:
         return True
-    return fnmatch.fnmatchcase(part, _PLACEHOLDER_RE.sub("*", shape_part))
+    pat = _PLACEHOLDER_RE.sub(
+        lambda m: _PLACEHOLDER_GLOBS.get(m.group(0), "*"), shape_part)
+    return fnmatch.fnmatchcase(part, pat)
 
 
 def _parts_match(shape_parts: tuple, parts: tuple) -> bool:
@@ -180,10 +210,19 @@ def exempt_names() -> frozenset:
 
 
 def exempt_suffix() -> str:
-    """The one suffix-shaped audit exemption (receipts sidecars)."""
+    """The one suffix-shaped audit exemption (receipts sidecars).
+
+    Exactly one: privacy._is_plaintext_free compares a single suffix, so a
+    second declaration would have declaration ORDER silently pick the
+    winner — the guess this registry exists to forbid. Fail loudly both
+    ways."""
+    found = []
     for s in SURFACES:
         if s.audit_exempt:
             name = s.shape.rsplit("/", 1)[-1]
             if name.startswith("*."):
-                return name[1:]
-    raise LookupError("no suffix-shaped exemption declared")
+                found.append(name[1:])
+    if len(found) != 1:
+        raise LookupError(
+            f"expected exactly one suffix-shaped exemption, got {found}")
+    return found[0]

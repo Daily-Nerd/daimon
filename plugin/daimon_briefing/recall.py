@@ -520,27 +520,32 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     fail. The strands are full plaintext copies, and the unopenable sidecars
     pinned real installs at `daimon audit privacy` exit 3 (cannot-prove).
 
-    Registry contract (surfaces.py): shape `recall.db.{pid}.tmp*`, strategy
-    `reap`. The filter is EXACTLY that shape — `<db>.<digits>.tmp` plus a
-    dash-sidecar tail — never a substring test: `recall.db.tmp`,
+    The filter IS the registry declaration (surfaces.match → the entry
+    whose strategy is `reap`, shape `recall.db.{pid}.tmp*` with {pid}
+    digit-anchored) — never a second hand-written predicate, which would
+    reintroduce the parallel-list defect in the one path that DELETES
+    files (adversarial-review finding). `recall.db.tmp`,
     `recall.db.bak.tmp`, `recall.db.tmp.gz` beside a DAIMON_RECALL_DB
-    override are a user's own files (adversarial-review finding), and the
-    live db's sqlite sidecars are dash-named (`recall.db-journal`) so they
-    cannot match either. Age-gated like the checkpoint reaper — anything
-    older than an hour is dead by construction. `apply=False` only lists
-    (heal --dry-run). Best-effort per file; returns the paths reaped (or
+    override are a user's own files and stay undeclared; the live db's
+    sqlite sidecars are dash-named (`recall.db-journal`) so they cannot
+    match the dotted glob at all. Age-gated like the checkpoint reaper —
+    anything older than an hour is dead by construction (this runs
+    unattended from heal at session start on some hosts, so containment
+    is the load-bearing property). `apply=False` only lists (heal
+    --dry-run). Best-effort per file; returns the paths reaped (or
     would-reap)."""
+    from . import surfaces
     db = config.recall_db()
     if now is None:
         now = time.time()
     reaped: list = []
-    strand = re.compile(re.escape(db.name) + r"\.\d+\.tmp(-[a-z]+)?$")
     try:
         candidates = sorted(db.parent.glob(db.name + ".*"))
     except OSError:
         return reaped
     for p in candidates:
-        if not strand.fullmatch(p.name):
+        entry = surfaces.match(p.name)
+        if entry is None or entry.delete != "reap":
             continue
         try:
             if not p.is_file():

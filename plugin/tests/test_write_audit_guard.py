@@ -601,9 +601,20 @@ def test_every_observed_write_shape_is_declared(
     proj = _setup_env(tmp_path, monkeypatch)
     write_audit.placeholders[store.project_slug(str(proj))] = "{slug}"
     _drive_all(write_audit, tmp_path, monkeypatch, proj)
-    undeclared = _undeclared(_observed_shapes(write_audit))
+    shapes = _observed_shapes(write_audit)
+    # Anti-vacuity (adversarial finding): an empty observation set passes
+    # the undeclared check trivially — a broken driver or root registration
+    # must fail here, not go green.
+    assert len(shapes) >= 5, f"drive observed almost nothing: {shapes}"
+    undeclared = _undeclared(shapes)
     assert undeclared == [], \
         f"writes to shapes never declared in surfaces.py: {undeclared}"
+    # Known limitation, stated where it bites: the audited roots are the
+    # checkpoint store and the team mirror. logs/, recall_seen/, keys/,
+    # codex/, windsurf/ writes are not observed here (log appends are
+    # ungoverned by design, sqlite writes happen below Python I/O, host
+    # hooks run out of process) — their shapes are pinned statically by
+    # test_surface_registry.py instead.
 
 
 def test_registry_ratchet_trips_on_an_undeclared_shape():
