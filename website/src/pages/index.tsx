@@ -2,14 +2,21 @@ import Link from '@docusaurus/Link';
 import {translate} from '@docusaurus/Translate';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
-import {useEffect, useState} from 'react';
+import {useState} from 'react';
 import type {ReactNode} from 'react';
 import HomeReceipt from '@site/src/components/HomeReceipt';
 import VerifyReplay from '@site/src/components/VerifyReplay';
 
-const HOSTS = ['claude', 'codex', 'gemini', 'windsurf'];
+const HOSTS = [
+  {id: 'claude', label: 'Claude Code'},
+  {id: 'codex', label: 'Codex'},
+  {id: 'gemini', label: 'Gemini CLI'},
+  {id: 'windsurf', label: 'Windsurf'},
+];
 
-function CopyCmd({cmd, children}: {cmd: string; children: ReactNode}): ReactNode {
+const PYPI_VERSION = '0.26.0';
+
+function CopyCmd({cmd}: {cmd: string}): ReactNode {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -31,7 +38,7 @@ function CopyCmd({cmd, children}: {cmd: string; children: ReactNode}): ReactNode
   };
   return (
     <div className="cmdLine">
-      <code>{children}</code>
+      <code>{cmd}</code>
       <button
         type="button"
         className="copyBtn"
@@ -46,30 +53,34 @@ function CopyCmd({cmd, children}: {cmd: string; children: ReactNode}): ReactNode
 }
 
 function InstallBlock(): ReactNode {
-  const [i, setI] = useState(0);
-  const [fading, setFading] = useState(false);
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      return undefined;
-    }
-    const t = setInterval(() => {
-      setFading(true);
-      setTimeout(() => {
-        setI((n) => (n + 1) % HOSTS.length);
-        setFading(false);
-      }, 180);
-    }, 2200);
-    return () => clearInterval(t);
-  }, []);
+  const [host, setHost] = useState(HOSTS[0]);
   return (
-    <div className="installBlock">
-      <CopyCmd cmd="uv tool install daimon-briefing">{'uv tool install daimon-briefing'}</CopyCmd>
-      <CopyCmd cmd={`daimon hooks install ${HOSTS[i]}`}>
-        {'daimon hooks install '}
-        <span className={fading ? 'hostToken hostFade' : 'hostToken'}>
-          {HOSTS[i]}
-        </span>
-      </CopyCmd>
+    <div className="install">
+      <div
+        className="hostChips"
+        role="group"
+        aria-label={translate({
+          id: 'landing.install.hosts',
+          message: 'Choose your agent host',
+        })}>
+        {HOSTS.map((h) => (
+          <button
+            key={h.id}
+            type="button"
+            className={h.id === host.id ? 'hostChip hostChipOn' : 'hostChip'}
+            aria-pressed={h.id === host.id}
+            onClick={() => setHost(h)}>
+            {h.label}
+          </button>
+        ))}
+      </div>
+      <div className="installBlock">
+        <CopyCmd cmd="uv tool install daimon-briefing" />
+        <CopyCmd cmd={`daimon hooks install ${host.id}`} />
+      </div>
+      <Link className="quietLink" to="/docs/">
+        {translate({id: 'landing.close.docs', message: 'Read the docs'})}
+      </Link>
     </div>
   );
 }
@@ -79,69 +90,132 @@ export default function Home(): ReactNode {
   return (
     <Layout description={siteConfig.tagline}>
       <header className="hero--daimon text--center">
-        <h1>
-          {translate({id: 'landing.hero.title', message: 'Memory your agents can prove'})}
-        </h1>
-        <p className="subtitle">
-          {translate({
-            id: 'landing.hero.sub',
-            message: 'Every briefing item carries its trust class, its quote, and a signature you can check offline.',
-          })}
-        </p>
-        <HomeReceipt />
-        <div className="ctaRow">
-          <Link className="button button--primary" to="/docs/">
-            {translate({id: 'landing.cta.start', message: 'Get started'})}
-          </Link>
-          <Link className="button button--secondary" href="https://github.com/Daily-Nerd/daimon">
-            GitHub
-          </Link>
+        <div className="bandInner bandInner--hero">
+          <p className="heroEyebrow">
+            <span className="heroMark">daimon</span>
+            <span aria-hidden="true"> · </span>
+            <span>
+              {translate({id: 'landing.hero.eyebrow', message: 'open-source CLI'})}
+            </span>
+          </p>
+          <h1>
+            {translate({
+              id: 'landing.hero.title',
+              message: "Your agent's memory, with receipts you can check",
+            })}
+          </h1>
+          <p className="subtitle">
+            {translate({
+              id: 'landing.hero.sub',
+              message:
+                'Other memory tools let the model grade its own homework. daimon shows you the transcript line, the exact quote, and a signature you can check offline.',
+            })}
+          </p>
+          <InstallBlock />
+          <HomeReceipt />
         </div>
       </header>
       <main>
-        <section className="sectionBand text--center">
-          <h2 className="sectionTitle">
-            {translate({id: 'landing.verify.title', message: 'Watch a checkpoint get verified'})}
-          </h2>
-          <VerifyReplay />
-        </section>
-        <section className="sectionBand text--center">
-          <h2 className="sectionTitle">
-            {translate({id: 'landing.anatomy.title', message: 'Every item earns its class'})}
-          </h2>
-          <div className="anatomy">
-            <div className="anatomyItem">
-              <span className="tv">✔ verbatim</span> "retry uses exponential backoff, cap 30s"<br />
-              <span className="anatomyDim">└ transcript line 214 · checked at write time</span>
-            </div>
-            <div className="anatomyLegend">
-              <div><span className="tv">↑</span> {translate({id: 'landing.anatomy.class', message: 'the class — earned, not self-declared'})}</div>
-              <div><span className="tv">↑</span> {translate({id: 'landing.anatomy.words', message: 'the exact words — quoted, not paraphrased'})}</div>
-              <div><span className="tv">↑</span> {translate({id: 'landing.anatomy.receipt', message: 'the receipt — where to look it up'})}</div>
-            </div>
+        <section className="sectionBand bandReplay">
+          <div className="bandInner bandInner--replay">
+            <h2 className="sectionTitle">
+              {translate({
+                id: 'landing.verify.title',
+                message: 'A checkpoint verifying itself',
+              })}
+            </h2>
+            <VerifyReplay />
           </div>
         </section>
-        <section className="sectionBand text--center">
-          <h2 className="sectionTitle">
-            {translate({id: 'landing.quickstart.title', message: 'Two commands'})}
-          </h2>
-          <InstallBlock />
-          <p className="hostRow">Claude Code · Codex · Gemini CLI · Windsurf</p>
+        <section className="sectionBand bandAnatomy">
+          <div className="bandInner bandInner--anatomy">
+            <h2 className="sectionTitle">
+              {translate({
+                id: 'landing.anatomy.title',
+                message: 'How an item proves itself',
+              })}
+            </h2>
+            <div className="anatomyCode">
+              <div className="anatomyLine">
+                <span className="ti">
+                  <span aria-hidden="true">~ </span>inferred
+                </span>{' '}
+                "port is 8080"
+              </div>
+              <div className="anatomyLine anatomySub">
+                <span aria-hidden="true">└ </span>was{' '}
+                <span aria-hidden="true">✔ </span>verbatim · quote no longer
+                matches the transcript · downgraded automatically
+              </div>
+            </div>
+            <dl className="defs">
+              <div className="defRow">
+                <dt>{translate({id: 'landing.anatomy.class.term', message: 'class'})}</dt>
+                <dd>
+                  {translate({
+                    id: 'landing.anatomy.class',
+                    message: '— earned by checking, never self-declared',
+                  })}
+                </dd>
+              </div>
+              <div className="defRow">
+                <dt>
+                  {translate({id: 'landing.anatomy.words.term', message: 'exact words'})}
+                </dt>
+                <dd>
+                  {translate({
+                    id: 'landing.anatomy.words',
+                    message: '— quoted from the transcript, not paraphrased',
+                  })}
+                </dd>
+              </div>
+              <div className="defRow">
+                <dt>
+                  {translate({id: 'landing.anatomy.receipt.term', message: 'receipt'})}
+                </dt>
+                <dd>
+                  {translate({
+                    id: 'landing.anatomy.receipt',
+                    message: '— the line number and signature you can look up',
+                  })}
+                </dd>
+              </div>
+            </dl>
+          </div>
         </section>
-        <section className="sectionBand text--center">
-          <p className="closeLine">
-            {translate({id: 'landing.close.line1', message: 'Other memory tools let the model grade its own homework.'})}
-            <br />
-            <strong className="tv">
-              {translate({id: 'landing.close.line2', message: 'daimon derives trust from evidence it can show you.'})}
-            </strong>
-          </p>
-          <p className="closeMeta">
-            {translate({id: 'landing.close.meta', message: 'Team sync over a plain git remote · Python stdlib only · Apache-2.0'})}
-          </p>
-          <Link className="button button--secondary" to="/docs/">
-            {translate({id: 'landing.close.docs', message: 'Read the docs'})}
-          </Link>
+        <section className="sectionBand bandClose">
+          <div className="bandInner bandInner--close">
+            <ul className="factList">
+              <li>
+                <a href="https://github.com/Daily-Nerd/daimon/blob/main/LICENSE">
+                  Apache-2.0
+                </a>
+              </li>
+              <li>
+                {translate({
+                  id: 'landing.close.deps',
+                  message: 'Python stdlib only — zero dependencies',
+                })}
+              </li>
+              <li>
+                {translate({
+                  id: 'landing.close.sync',
+                  message: 'Team sync over a plain git remote',
+                })}
+              </li>
+              <li>
+                <a href="https://pypi.org/project/daimon-briefing/">
+                  {translate(
+                    {id: 'landing.close.pypi', message: 'v{version} on PyPI'},
+                    {version: PYPI_VERSION},
+                  )}
+                </a>
+              </li>
+            </ul>
+            <Link className="quietLink" to="/docs/">
+              {translate({id: 'landing.close.docs', message: 'Read the docs'})}
+            </Link>
+          </div>
         </section>
       </main>
     </Layout>

@@ -1,30 +1,15 @@
 {
-  "landing.cta.start": {
-    "message": "Empezar"
+  "landing.hero.eyebrow": {
+    "message": "CLI de código abierto"
   },
   "landing.hero.title": {
-    "message": "Memoria que tus agentes pueden demostrar"
+    "message": "La memoria de tu agente, con receipts que puedes comprobar"
   },
   "landing.hero.sub": {
-    "message": "Cada ítem del briefing lleva su clase de confianza, su cita y una firma que puedes verificar offline."
+    "message": "Otras herramientas de memoria dejan que el modelo califique su propia tarea. daimon te muestra la línea del transcript, la cita exacta y una firma que puedes verificar offline."
   },
-  "landing.verify.title": {
-    "message": "Mira cómo se verifica un checkpoint"
-  },
-  "landing.anatomy.title": {
-    "message": "Cada ítem se gana su clase"
-  },
-  "landing.anatomy.class": {
-    "message": "la clase — ganada, no auto-declarada"
-  },
-  "landing.anatomy.words": {
-    "message": "las palabras exactas — citadas, no parafraseadas"
-  },
-  "landing.anatomy.receipt": {
-    "message": "el receipt — dónde comprobarlo"
-  },
-  "landing.quickstart.title": {
-    "message": "Dos comandos"
+  "landing.install.hosts": {
+    "message": "Elige tu host de agente"
   },
   "landing.copy": {
     "message": "copiar"
@@ -32,19 +17,46 @@
   "landing.copy.done": {
     "message": "copiado"
   },
-  "landing.close.line1": {
-    "message": "Otras herramientas de memoria dejan que el modelo califique su propia tarea."
+  "landing.verify.title": {
+    "message": "Un checkpoint verificándose a sí mismo"
   },
-  "landing.close.line2": {
-    "message": "daimon deriva la confianza de evidencia que te puede mostrar."
+  "landing.replay.aria": {
+    "message": "Repetir la verificación"
   },
-  "landing.close.meta": {
-    "message": "Sincronización de equipo por un remoto git normal · Solo stdlib de Python · Apache-2.0"
+  "landing.replay.btn": {
+    "message": "repetir"
+  },
+  "landing.anatomy.title": {
+    "message": "Cómo un ítem demuestra lo que dice"
+  },
+  "landing.anatomy.class.term": {
+    "message": "clase"
+  },
+  "landing.anatomy.class": {
+    "message": "— se gana al comprobarla, nunca se auto-declara"
+  },
+  "landing.anatomy.words.term": {
+    "message": "palabras exactas"
+  },
+  "landing.anatomy.words": {
+    "message": "— citadas del transcript, no parafraseadas"
+  },
+  "landing.anatomy.receipt.term": {
+    "message": "receipt"
+  },
+  "landing.anatomy.receipt": {
+    "message": "— el número de línea y la firma que puedes consultar"
+  },
+  "landing.close.deps": {
+    "message": "Solo stdlib de Python — cero dependencias"
+  },
+  "landing.close.sync": {
+    "message": "Sincronización de equipo por un remoto git normal"
+  },
+  "landing.close.pypi": {
+    "message": "v{version} en PyPI"
   },
   "landing.close.docs": {
     "message": "Leer los docs"
-  },
-  "landing.receipt.aria": {
-    "message": "Ejemplo de briefing de daimon con ítems verificados, inferidos y obsoletos"
   }
 }

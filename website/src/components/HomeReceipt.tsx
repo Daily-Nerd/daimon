@@ -1,4 +1,3 @@
-import {translate} from '@docusaurus/Translate';
 import {useEffect, useState} from 'react';
 import type {ReactNode} from 'react';
 
@@ -12,26 +11,43 @@ export default function HomeReceipt(): ReactNode {
   }, []);
 
   return (
-    <div className="receipt" role="img" aria-label={translate({id: 'landing.receipt.aria', message: 'Example daimon briefing with verified, inferred, and stale items'})}>
+    <div className="receipt">
       <div className="receiptHead">
-        DAIMON BRIEFING <span>written 12m ago</span>
+        <span>DAIMON BRIEFING</span> <span>session end · 21:14 UTC</span>
       </div>
       <div className="receiptRow">
-        <span className="tv">✔ verbatim</span> "retry uses exponential backoff, cap 30s"
+        <span className="tv">
+          <span aria-hidden="true">✔ </span>verbatim
+        </span>{' '}
+        "retry uses exponential backoff, cap 30s"
       </div>
       <div className="receiptSub">
-        └ quote verified · transcript line 214 <span className={checked ? 'chip chipOk' : 'chip chipPending'}>
-          {checked ? '✔ checked' : 'checking…'}
+        <span aria-hidden="true">└ </span>transcript line 214{' '}
+        <span className={checked ? 'chip chipOk' : 'chip chipPending'}>
+          {checked ? (
+            <>
+              <span aria-hidden="true">✔ </span>checked
+            </>
+          ) : (
+            'checking…'
+          )}
         </span>
       </div>
       <div className="receiptRow">
-        <span className="ti">~ inferred</span> cache layer is the bottleneck
+        <span className="ti">
+          <span aria-hidden="true">~ </span>inferred
+        </span>{' '}
+        cache layer is the bottleneck
       </div>
       <div className="receiptRow">
-        <span className="ts">⚠ stale</span> config flag renamed — re-verify before use
+        <span className="ts">
+          <span aria-hidden="true">⚠ </span>stale
+        </span>{' '}
+        config flag renamed — re-verify before use
       </div>
       <div className="receiptFoot">
-        signed · checkpoint <span className="tv">a1b9f3c2</span> · verify offline: <code>daimon verify</code>
+        signed ed25519 · sig 9f3c…a41b · key daimon-team · verify:{' '}
+        <code>daimon verify</code>
       </div>
     </div>
   );
