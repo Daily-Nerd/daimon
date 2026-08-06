@@ -378,6 +378,10 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_recall():
         run(["recall", "gateway"], 0)
 
+    def r_why():
+        # #502: trust inspection is read-only apart from usage telemetry.
+        run(["why", ctx["ids"][_T_GATEWAY]], 0)
+
     def r_projects():
         run(["projects"], 0)
 
@@ -483,6 +487,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("brief",): r_brief,
         ("anchor",): r_anchor,
         ("recall",): r_recall,
+        ("why",): r_why,
         ("projects",): r_projects,
         ("resolve",): r_resolve,
         ("reverify",): r_reverify,

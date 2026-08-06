@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, ledger, llm, normalize, provenance, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, provenance, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -750,9 +750,34 @@ def _cmd_recall(args) -> int:
                       else " [resolved]" if sup == "resolved"
                       else f" [superseded by {sup}]")
         trust = r.get("trust") or "untagged"
-        lines.append(f"[{r['author']}] [{trust}] [{r['kind']}] {r['text']} "
+        item_id = f" [{r['item_id']}]" if r.get("item_id") else ""
+        lines.append(f"[{r['author']}] [{trust}] [{r['kind']}]{item_id} {r['text']} "
                      f"({r['session_id']}, {age} ago){superseded}")
     render.render_recall_lines(lines)
+    return 0
+
+
+def _cmd_why(args) -> int:
+    """Render one project-scoped, read-side trust receipt (#502)."""
+    _note_usage("why")
+    if args.slug and args.project:
+        print("error: --slug and --project are two answers to \"which bucket\" "
+              "— pass one", file=sys.stderr)
+        return 2
+    if not inspector.valid_item_id(args.item_id):
+        print("error: invalid item id — expected "
+              "[a-z]-[0-9a-f]{6,40}(-N)?", file=sys.stderr)
+        return 2
+    project = args.slug or _resolve_project(args.project)
+    result = inspector.inspect_item(
+        project, args.item_id, include_source=args.source)
+    if result is None:
+        print(f"no item {args.item_id!r} in this project", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        render.render_recall_lines(inspector.human_lines(result))
     return 0
 
 
@@ -3395,6 +3420,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=20, help="max results (default: 20)"
     )
     p_recall.set_defaults(func=_cmd_recall)
+
+    p_why = sub.add_parser(
+        "why", help="inspect the evidence and lifecycle receipt for one item",
+        epilog="Examples:\n"
+               "  daimon recall retry policy\n"
+               "  daimon why o-3f8a2c\n"
+               "  daimon why o-3f8a2c --source --json\n",
+    )
+    p_why.add_argument(
+        "item_id", help="exact item id shown by `daimon recall` or `daimon loops`")
+    p_why.add_argument(
+        "--source", action="store_true",
+        help="show one bounded, redacted message-level source window")
+    p_why.add_argument(
+        "--json", action="store_true", help="machine-readable evidence axes")
+    p_why.add_argument(
+        "--project",
+        help="project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_why.add_argument(
+        "--slug", metavar="SLUG",
+        help="scope to a project bucket by its slug (see `daimon projects`)")
+    p_why.set_defaults(func=_cmd_why)
 
     p_projects = sub.add_parser(
         "projects", help="list every project daimon has a checkpoint for",
