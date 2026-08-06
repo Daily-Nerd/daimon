@@ -13,6 +13,7 @@ re-capture the thing the user deleted.
 """
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 from . import config, normalize, store
@@ -169,9 +170,10 @@ def audit_project(project_dir=None) -> dict:
     keys = store.forgotten_content_keys(project_dir=project_dir)
     result = {"slug": slug, "findings": [], "informational": [],
               "unscannable": [], "surfaces_scanned": 0,
-              "zero_surfaces": False, "cache": {}}
+              "zero_surfaces": False}
     if not slug:
         result["zero_surfaces"] = True
+        result["cache"] = {"entries": 0, "oldest_days": None}
         return result
     known, unknown = _checkpoint_candidates()
     result["unscannable"].extend(str(p) for p in unknown)
@@ -210,4 +212,38 @@ def audit_project(project_dir=None) -> dict:
         for f in res + info:
             f["surface"] = "orphan-tmp"
             result["findings"].append(f)
+    # Notes: hashed WHOLE — catches a note that IS the value verbatim; a note
+    # merely containing it is undetectable by hash (stated report limitation).
+    events = config.checkpoint_dir() / slug / "events.jsonl"
+    if events.exists():
+        try:
+            for line in events.read_text(encoding="utf-8").splitlines():
+                try:
+                    evt = json.loads(line)
+                except ValueError:
+                    continue
+                note = evt.get("note") if isinstance(evt, dict) else None
+                if isinstance(note, str) and note.strip():
+                    h = normalize.content_key(note)
+                    if h in keys:
+                        result["findings"].append({
+                            "path": str(events),
+                            "item_id": evt.get("item"),
+                            "content_hash": h, "surface": "events-note"})
+        except OSError:
+            result["unscannable"].append(str(events))
+    # Chunk cache: value-level detection impossible (cache keyed by chunk
+    # text, values are substrings). Store-level honesty: entry count + real
+    # oldest age — the reaper runs only on WRITES, so never assert bounded.
+    cache_dir = config.checkpoint_dir() / ".chunk-cache"
+    entries, oldest = 0, None
+    try:
+        for p in cache_dir.iterdir():
+            if p.is_file():
+                entries += 1
+                age = (time.time() - p.stat().st_mtime) / 86400
+                oldest = age if oldest is None else max(oldest, age)
+    except OSError:
+        pass
+    result["cache"] = {"entries": entries, "oldest_days": oldest}
     return result

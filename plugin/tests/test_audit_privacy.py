@@ -334,3 +334,24 @@ def test_team_findings_dont_count_toward_surfaces_scanned(tmp_checkpoint_dir):
     # But team finding should still be present
     assert any(f["surface"] == "team-copy" and f["content_hash"] == key
                for f in result["findings"])
+
+
+def test_verbatim_note_detected(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-y", "resolved", note=CANARY, project_dir=PROJECT)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["surface"] == "events-note" and f["content_hash"] == key
+               for f in result["findings"])
+
+
+def test_chunk_cache_reported_at_store_level(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    cache = tmp_checkpoint_dir / ".chunk-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "abc123.json").write_text("{}", encoding="utf-8")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert result["cache"]["entries"] == 1
+    assert result["cache"]["oldest_days"] is not None
