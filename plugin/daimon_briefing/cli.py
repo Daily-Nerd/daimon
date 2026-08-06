@@ -2308,6 +2308,12 @@ def _cmd_heal(args) -> int:
     wrapped directly; no restructuring of `_run_serialize` needed."""
     dry_run = getattr(args, "dry_run", False)
     force = getattr(args, "force", False)
+    # #601: heal owns repair, so the dead-index-snapshot reap lives here (the
+    # audit group is read-only by charter). Runs even when nothing is
+    # healable — the strands are what pin `audit privacy` at cannot-prove.
+    for p in recall.reap_dead_snapshots(apply=not dry_run):
+        print(f"{'would reap' if dry_run else 'reaped'} "
+              f"dead index snapshot: {p.name}")
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:

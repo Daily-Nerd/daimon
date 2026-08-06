@@ -581,6 +581,53 @@ def test_every_command_write_carries_an_admit_frame(
     assert saw("anchor", "latest.json")             # --attach rewrite
 
 
+def _observed_shapes(audit):
+    return {audit.pattern(label, rel)
+            for _cmd, label, rel, _governed, _frames in audit.records}
+
+
+def _undeclared(shapes):
+    from daimon_briefing import surfaces
+    return sorted(s for s in shapes if surfaces.match(s) is None)
+
+
+def test_every_observed_write_shape_is_declared(
+        write_audit, tmp_path, monkeypatch, capsys):
+    """#601: the surface registry ratchet. Every file shape a command writes
+    under the audited roots must be DECLARED in surfaces.SURFACES with a
+    delete strategy — a new store cannot ship without stating how deletion
+    reaches it. (The registry's own hygiene tests live in
+    test_surface_registry.py; this is the enforcement side.)"""
+    proj = _setup_env(tmp_path, monkeypatch)
+    write_audit.placeholders[store.project_slug(str(proj))] = "{slug}"
+    _drive_all(write_audit, tmp_path, monkeypatch, proj)
+    shapes = _observed_shapes(write_audit)
+    # Anti-vacuity (adversarial finding): an empty observation set passes
+    # the undeclared check trivially — a broken driver or root registration
+    # must fail here, not go green.
+    assert len(shapes) >= 5, f"drive observed almost nothing: {shapes}"
+    undeclared = _undeclared(shapes)
+    assert undeclared == [], \
+        f"writes to shapes never declared in surfaces.py: {undeclared}"
+    # Known limitation, stated where it bites: the audited roots are the
+    # checkpoint store and the team mirror. logs/, recall_seen/, keys/,
+    # codex/, windsurf/ writes are not observed here (log appends are
+    # ungoverned by design, sqlite writes happen below Python I/O, host
+    # hooks run out of process) — their shapes are pinned statically by
+    # test_surface_registry.py instead.
+
+
+def test_registry_ratchet_trips_on_an_undeclared_shape():
+    """Sensitivity twin: prove the alarm rings — an empty registry must
+    classify every observed shape as undeclared."""
+    from unittest import mock
+
+    from daimon_briefing import surfaces
+    with mock.patch.object(surfaces, "SURFACES", ()):
+        assert _undeclared({"checkpoints/{slug}/events.jsonl"}) \
+            == ["checkpoints/{slug}/events.jsonl"]
+
+
 # ---------------------------------------------------------------------------
 # SENSITIVITY — the guard must FAIL when the seam is removed (the #420/#426
 # mutation-check precedent: prove the alarm rings, don't assume it).

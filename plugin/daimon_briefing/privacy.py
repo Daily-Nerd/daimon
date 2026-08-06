@@ -18,7 +18,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import config, normalize, store, teamproject
+from . import config, normalize, store, surfaces, teamproject
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -37,26 +37,14 @@ _EVENT_FIELDS = ("note", "item_text", "status")
 _EVENTS_NAME = "events.jsonl"
 
 # Files that live in the checkpoint store and hold NO item plaintext BY
-# CONSTRUCTION. Every exemption is checked against its owning module, because
-# an exemption granted on a hunch is exactly how a plaintext surface goes
-# unreported. Reporting these made exit 0 unreachable on a real install (74
-# `.receipt` sidecars in the flat dir of the machine this was specced on).
-_EXEMPT_NAMES = frozenset({
-    # store._pointer_lock: an empty flock sidecar, opened "a+" and never written.
-    store._LOCK_NAME,
-    # store.append_verification: item_ref + a reason CODE, "never the rejected
-    # text" — quote verification runs pre-redaction, so it must not log text.
-    "verification.jsonl",
-    # store.record_forget_hits: {ts, key} — the canonical hash only, "NEVER the
-    # text or any prefix of it".
-    "forget-hits.jsonl",
-    # macOS Finder metadata: directory listing/positions, never file contents.
-    ".DS_Store",
-})
-# receipts._sidecar_path. The blob is {jws, receipt, kid, performer_id} where
-# the receipt carries inputs/outputs HASHES, method and nonce — it binds to a
-# checkpoint's bytes, it never copies them.
-_EXEMPT_SUFFIX = ".receipt"
+# CONSTRUCTION. Since #601 both sets are VIEWS of the declared surface
+# registry (surfaces.py) — the per-entry justifications live there, next to
+# each shape's owner and delete strategy, so the auditor cannot drift from
+# the declaration. An exemption granted on a hunch is exactly how a
+# plaintext surface goes unreported; the registry's audit_exempt flag is
+# the single place such a claim is made and reviewed.
+_EXEMPT_NAMES = surfaces.exempt_names()
+_EXEMPT_SUFFIX = surfaces.exempt_suffix()
 
 
 def _is_plaintext_free(path: Path) -> bool:

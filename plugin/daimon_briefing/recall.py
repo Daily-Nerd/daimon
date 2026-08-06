@@ -504,6 +504,62 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
 
 
+# A dead snapshot is unambiguous after this long: a live rebuild holds its
+# tmp for seconds, and store._TMP_REAP_SECONDS set the same one-hour
+# precedent for checkpoint staging twins.
+_SNAPSHOT_REAP_SECONDS = 3600
+
+
+def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
+    """Delete index snapshots left by crashed rebuilds (#601).
+
+    rebuild() stages into `recall.db.<pid>.tmp` and only unlinks ITS OWN
+    pid's leftover — a crash under any other pid strands the snapshot (plus
+    sqlite's `-journal` sidecar) forever: store._reap_stale_tmps never visits
+    this directory and its filter is `.endswith(".tmp")`, which the sidecars
+    fail. The strands are full plaintext copies, and the unopenable sidecars
+    pinned real installs at `daimon audit privacy` exit 3 (cannot-prove).
+
+    The filter IS the registry declaration (surfaces.match → the entry
+    whose strategy is `reap`, shape `recall.db.{pid}.tmp*` with {pid}
+    digit-anchored) — never a second hand-written predicate, which would
+    reintroduce the parallel-list defect in the one path that DELETES
+    files (adversarial-review finding). `recall.db.tmp`,
+    `recall.db.bak.tmp`, `recall.db.tmp.gz` beside a DAIMON_RECALL_DB
+    override are a user's own files and stay undeclared; the live db's
+    sqlite sidecars are dash-named (`recall.db-journal`) so they cannot
+    match the dotted glob at all. Age-gated like the checkpoint reaper —
+    anything older than an hour is dead by construction (this runs
+    unattended from heal at session start on some hosts, so containment
+    is the load-bearing property). `apply=False` only lists (heal
+    --dry-run). Best-effort per file; returns the paths reaped (or
+    would-reap)."""
+    from . import surfaces
+    db = config.recall_db()
+    if now is None:
+        now = time.time()
+    reaped: list = []
+    try:
+        candidates = sorted(db.parent.glob(db.name + ".*"))
+    except OSError:
+        return reaped
+    for p in candidates:
+        entry = surfaces.match(p.name)
+        if entry is None or entry.delete != "reap":
+            continue
+        try:
+            if not p.is_file():
+                continue
+            if now - p.stat().st_mtime < _SNAPSHOT_REAP_SECONDS:
+                continue
+            if apply:
+                p.unlink()
+        except OSError:
+            continue
+        reaped.append(p)
+    return reaped
+
+
 def rebuild() -> int:
     """Drop + rebuild the whole index by scanning local + team checkpoints.
     Atomic: builds into a sibling temp file, then os.replace — a concurrent
