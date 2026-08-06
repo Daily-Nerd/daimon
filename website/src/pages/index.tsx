@@ -124,10 +124,10 @@ export default function Home(): ReactNode {
         <div className="install">
           <InstallBlock />
         </div>
-        <div>
+        <div className="ctaRow">
           <Link className="button button--primary" to="/docs/">
             {translate({id: 'landing.cta.start', message: 'Get started'})}
-          </Link>{' '}
+          </Link>
           <Link
             className="button button--secondary"
             href="https://github.com/Daily-Nerd/daimon">

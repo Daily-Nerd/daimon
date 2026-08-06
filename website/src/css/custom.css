@@ -14,6 +14,15 @@
   --ifm-heading-font-weight: 600;
   --ifm-global-radius: 8px;
   --docusaurus-highlighted-code-line-bg: rgba(15, 118, 110, 0.08);
+  /* spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 px */
+  --dm-space-1: 0.25rem;
+  --dm-space-2: 0.5rem;
+  --dm-space-3: 0.75rem;
+  --dm-space-4: 1rem;
+  --dm-space-6: 1.5rem;
+  --dm-space-8: 2rem;
+  --dm-space-12: 3rem;
+  --dm-space-16: 4rem;
 }
 
 [data-theme='dark'] {
@@ -29,53 +38,76 @@
   --docusaurus-highlighted-code-line-bg: rgba(0, 212, 170, 0.08);
 }
 
+/* Landing type scale: 36 / 18 / 16 / 14 px — hero at 2.25× body. */
 .hero--daimon {
-  padding: 4.5rem 1rem 3.5rem;
+  padding: var(--dm-space-16) var(--dm-space-4) var(--dm-space-12);
   border-bottom: 1px solid var(--ifm-toc-border-color);
 }
 .hero--daimon h1 {
-  font-size: 2.4rem;
+  font-size: 2.25rem;
+  line-height: 1.1;
   letter-spacing: -0.02em;
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--dm-space-3);
 }
 .hero--daimon .subtitle {
-  font-size: 1.15rem;
+  font-size: 1.125rem;
+  line-height: 1.5;
   color: var(--ifm-color-emphasis-700);
   max-width: 42rem;
-  margin: 0 auto 1.5rem;
+  margin: 0 auto var(--dm-space-6);
 }
 .hero--daimon .install {
   display: inline-block;
   text-align: left;
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--dm-space-6);
+}
+.ctaRow {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--dm-space-3);
+}
+.ctaRow .button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
 }
 .quoteRow {
   border-left: 3px solid var(--ifm-color-primary);
-  padding: 0.25rem 0 0.25rem 1rem;
+  padding: var(--dm-space-1) 0 var(--dm-space-1) var(--dm-space-4);
   max-width: 38rem;
-  margin: 2.5rem auto;
-  font-size: 1.05rem;
+  margin: var(--dm-space-12) auto;
+  font-size: 1.125rem;
+  line-height: 1.5;
   color: var(--ifm-color-emphasis-800);
 }
-.quoteRow footer { font-size: 0.85rem; color: var(--ifm-color-emphasis-600); margin-top: 0.4rem; }
-.featureGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; padding: 1rem; max-width: 1100px; margin: 0 auto 2rem; }
+.quoteRow footer { font-size: 0.875rem; color: var(--ifm-color-emphasis-600); margin-top: var(--dm-space-2); }
+.featureGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--dm-space-4);
+  padding: 0 var(--dm-space-4);
+  max-width: 1100px;
+  margin: 0 auto var(--dm-space-12);
+}
 .featureCard {
   border: 1px solid var(--ifm-toc-border-color);
   border-radius: 8px;
-  padding: 1.25rem;
+  padding: var(--dm-space-6);
   background: var(--ifm-background-surface-color);
 }
-.featureCard h3 { font-size: 1rem; margin-bottom: 0.5rem; }
-.featureCard p { font-size: 0.9rem; color: var(--ifm-color-emphasis-700); margin: 0; }
+.featureCard h3 { font-size: 1rem; margin-bottom: var(--dm-space-2); }
+.featureCard p { font-size: 0.875rem; line-height: 1.5; color: var(--ifm-color-emphasis-700); margin: 0; }
 
 .installBlock {
   text-align: left;
   background: var(--ifm-background-surface-color);
   border: 1px solid var(--ifm-toc-border-color);
   border-radius: 8px;
-  padding: 1rem 1.25rem;
-  font-size: 0.9rem;
+  padding: var(--dm-space-4) var(--dm-space-6);
+  font-size: 0.875rem;
   line-height: 1.7;
+  margin: 0;
 }
 .hostToken {
   display: inline-block;
@@ -86,3 +118,10 @@
   transition: opacity 180ms ease;
 }
 .hostFade { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .hostToken { transition: none; }
+}
+@media (max-width: 640px) {
+  .hero--daimon { padding: var(--dm-space-12) var(--dm-space-4) var(--dm-space-8); }
+  .hero--daimon h1 { font-size: 1.875rem; }
+}
