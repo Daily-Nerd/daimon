@@ -4,6 +4,7 @@ import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import {useEffect, useState} from 'react';
 import type {ReactNode} from 'react';
+import HomeReceipt from '@site/src/components/HomeReceipt';
 
 const HOSTS = ['claude', 'codex', 'gemini', 'windsurf'];
 
@@ -113,24 +114,21 @@ export default function Home(): ReactNode {
   return (
     <Layout description={siteConfig.tagline}>
       <header className="hero--daimon text--center">
-        <h1>{siteConfig.title}</h1>
+        <h1>
+          {translate({id: 'landing.hero.title', message: 'Memory your agents can prove'})}
+        </h1>
         <p className="subtitle">
           {translate({
-            id: 'landing.subtitle',
-            message:
-              'Session memory your coding agents can prove. Briefings with trust classes, quotes verified against the transcript, and signed receipts.',
+            id: 'landing.hero.sub',
+            message: 'Every briefing item carries its trust class, its quote, and a signature you can check offline.',
           })}
         </p>
-        <div className="install">
-          <InstallBlock />
-        </div>
+        <HomeReceipt />
         <div className="ctaRow">
           <Link className="button button--primary" to="/docs/">
             {translate({id: 'landing.cta.start', message: 'Get started'})}
           </Link>
-          <Link
-            className="button button--secondary"
-            href="https://github.com/Daily-Nerd/daimon">
+          <Link className="button button--secondary" href="https://github.com/Daily-Nerd/daimon">
             GitHub
           </Link>
         </div>

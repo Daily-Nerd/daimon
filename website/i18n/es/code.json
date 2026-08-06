@@ -8,6 +8,12 @@
   "landing.quote": {
     "message": "Deja de re-explicarte en cada sesión. La siguiente sesión abre sabiendo ya en qué estabas, qué decidiste y qué sigue abierto — con la evidencia para comprobarlo."
   },
+  "landing.hero.title": {
+    "message": "Memoria que tus agentes pueden demostrar"
+  },
+  "landing.hero.sub": {
+    "message": "Cada ítem del briefing lleva su clase de confianza, su cita y una firma que puedes verificar offline."
+  },
   "landing.feature.briefings.title": {
     "message": "Briefings, no arranques en frío"
   },
