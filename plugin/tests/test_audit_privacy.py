@@ -71,6 +71,44 @@ def test_residue_in_quote_field_detected(tmp_checkpoint_dir):
     assert any(f["content_hash"] == key for f in result["findings"])
 
 
+def test_residue_in_active_topic_detected(tmp_checkpoint_dir):
+    """#599 class finding: active_topic is a singleton outside _ITEM_LISTS —
+    indexed for retrieval (schema.KIND_SOURCES) but invisible to an auditor
+    iterating the list sections only. An audit blind to it certifies exit 0
+    over live plaintext."""
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-08-01T00:00:00Z",
+        "working_context": {
+            "active_topic": {"text": KEEPER, "quote": CANARY,
+                             "trust": "verbatim"},
+            "recent_decisions": [{"text": KEEPER, "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["content_hash"] == key for f in result["findings"]), \
+        "active_topic residue must be detected"
+
+
+def test_residue_in_link_target_detected(tmp_checkpoint_dir):
+    """#599 class finding: links[].target copies another item's whole text
+    (the serializer's supersedes contract) and redact_checkpoint scrubs it —
+    so it is a plaintext carrier the audit must hash too."""
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-08-01T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": KEEPER, "trust": "inferred",
+             "links": [{"type": "supersedes", "target": CANARY}]}]},
+    }, project_dir=PROJECT)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["content_hash"] == key for f in result["findings"]), \
+        "links[].target residue must be detected"
+
+
 def test_clean_tree_reports_nothing(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     result = privacy.audit_project(project_dir=PROJECT)

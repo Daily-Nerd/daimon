@@ -104,9 +104,22 @@ def drop_forgotten(checkpoint: dict, forgotten_keys: set) -> list:
     over-suppresses on a hash collision (via the bounded content key) — a
     forgotten value re-appearing is the worse failure. A no-op with zero cost
     when nothing was ever forgotten here."""
+    return scrub_forgotten_payload(checkpoint, forgotten_keys)[0]
+
+
+def scrub_forgotten_payload(checkpoint: dict,
+                            forgotten_keys: set) -> tuple[list, bool]:
+    """drop_forgotten's full-enumeration body (#599): covers the same
+    plaintext-bearing CLASS redact_checkpoint enumerates — every list item's
+    text/quote/scene and links[].target, plus the active_topic singleton
+    (outside _ITEM_LISTS, so a list-only walk indexes it for retrieval while
+    leaving it unreachable by deletion). Returns (dropped_items, changed) —
+    `changed` also covers field-level scrubs that drop nothing, so a caller
+    rewriting files knows whether bytes moved."""
     if not forgotten_keys:
-        return []
+        return [], False
     dropped: list = []
+    changed = False
     for section, key in _ITEM_LISTS:
         block = checkpoint.get(section)
         if not isinstance(block, dict):
@@ -120,10 +133,73 @@ def drop_forgotten(checkpoint: dict, forgotten_keys: set) -> list:
                     and normalize.content_key(item.get("text") or "") in forgotten_keys):
                 dropped.append(item)
             else:
+                if (isinstance(item, dict)
+                        and scrub_forgotten_fields(item, forgotten_keys)):
+                    changed = True
                 kept.append(item)
         if len(kept) != len(lst):
             block[key] = kept
-    return dropped
+            changed = True
+    wc = checkpoint.get("working_context")
+    topic = wc.get("active_topic") if isinstance(wc, dict) else None
+    if isinstance(topic, dict):
+        if normalize.content_key(topic.get("text") or "") in forgotten_keys:
+            del wc["active_topic"]
+            dropped.append(topic)
+            changed = True
+        elif scrub_forgotten_fields(topic, forgotten_keys):
+            changed = True
+    return dropped, changed
+
+
+# A quote that leaves an item takes its verification claim with it: a stale
+# receipt would keep carry._capture_verified answering True (corroboration G3
+# trusts the receipt over the flat flag), and `trust=verbatim` with no quote
+# fails serializer revalidation ("trust=verbatim item has no quote").
+_QUOTE_CLAIM_KEYS = ("quote_provenance", "quote_verified", "last_verified",
+                     "source_message_ids")
+
+
+def scrub_forgotten_fields(item: dict, forgotten_keys: set) -> bool:
+    """Field-level twin of drop_forgotten (#599): an item whose TEXT folds
+    into the forgotten set is dropped whole, but an item that merely carries
+    the value in `quote` or `scene` loses that FIELD, not its own text.
+    Whole-field equality under the same canonical key the tombstone uses —
+    the same granularity `daimon audit privacy` detects at. A scrubbed quote
+    downgrades trust to "inferred" (the verify_quotes miss posture); a
+    scrubbed scene touches nothing else. Returns whether the item changed."""
+    changed = False
+    for field in ("quote", "scene"):
+        value = item.get(field)
+        if (isinstance(value, str) and value
+                and normalize.content_key(value) in forgotten_keys):
+            del item[field]
+            changed = True
+            if field == "quote":
+                for stale in _QUOTE_CLAIM_KEYS:
+                    item.pop(stale, None)
+                if item.get("trust") == "verbatim":
+                    item["trust"] = "inferred"
+    # links[].target copies another item's WHOLE text (the serializer's
+    # supersedes contract) until bind_links resolves it to an id — a link
+    # whose target folds to a forgotten key points at removed content, so
+    # the element goes (never a marker: a marker target would fuzzy-bind
+    # to nothing and read as a live supersession claim).
+    links = item.get("links")
+    if isinstance(links, list):
+        kept_links = [
+            link for link in links
+            if not (isinstance(link, dict)
+                    and isinstance(link.get("target"), str)
+                    and link["target"]
+                    and normalize.content_key(link["target"]) in forgotten_keys)]
+        if len(kept_links) != len(links):
+            changed = True
+            if kept_links:
+                item["links"] = kept_links
+            else:
+                del item["links"]
+    return changed
 
 
 def stamp_item_ids(checkpoint: dict) -> None:

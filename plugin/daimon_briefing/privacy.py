@@ -20,10 +20,11 @@ from pathlib import Path
 
 from . import config, normalize, store, teamproject
 
-# Plaintext-bearing item fields. forget currently hashes only `text`
-# (cli._cmd_forget, store.scrub_content_key, recall rebuild) — auditing
-# quote/scene as well is deliberate: it detects the residue forget cannot
-# yet reach, which is this tool's reason to exist.
+# Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
+# enumerates (its links[].target and active_topic coverage lives in _hashes
+# and _payload_findings below). #599 taught forget to reach all of them; the
+# audit keeps hashing them independently so a future field addition that
+# misses one side surfaces as a finding, not silence.
 _FIELDS = ("text", "quote", "scene")
 
 # Free-text fields store.append_event writes to events.jsonl. `note` alone was
@@ -68,6 +69,15 @@ def _hashes(item: dict) -> set[str]:
         value = item.get(field)
         if isinstance(value, str) and value.strip():
             out.add(normalize.content_key(value))
+    # links[].target copies another item's whole text until bind_links
+    # resolves it to an id (#599 class finding) — a plaintext carrier.
+    links = item.get("links")
+    if isinstance(links, list):
+        for link in links:
+            if isinstance(link, dict):
+                target = link.get("target")
+                if isinstance(target, str) and target.strip():
+                    out.add(normalize.content_key(target))
     return out
 
 
@@ -139,6 +149,16 @@ def _payload_findings(payload: dict, path: Path, keys: set[str],
                                  "item_id": item.get("id"),
                                  "content_hash": h,
                                  "surface": surface})
+    # The active_topic singleton sits outside _ITEM_LISTS (#599 class
+    # finding): indexed for retrieval by schema.KIND_SOURCES, so an audit
+    # walking only the list sections certifies exit 0 over live plaintext.
+    topic = (payload.get("working_context") or {}).get("active_topic")
+    if isinstance(topic, dict):
+        for h in _hashes(topic) & keys:
+            findings.append({"path": str(path),
+                             "item_id": topic.get("id"),
+                             "content_hash": h,
+                             "surface": surface})
     return findings
 
 
