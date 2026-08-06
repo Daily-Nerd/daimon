@@ -110,7 +110,7 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
             out = capture.run(
                 session_id, messages, project=root, chat=_chat,
                 deadline=deadline, transcript_path=transcript_path,
-                transcript_sha=transcript_sha,
+                transcript_sha=transcript_sha, capture_host=platform,
             )
         except serializer.TooShortError:
             log.info("daimon: no checkpoint produced for session %s (skip)", session_id)

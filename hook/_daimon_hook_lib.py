@@ -156,10 +156,16 @@ def age_line(latest: Path) -> str:
     return f"(checkpoint: {session_id}, written {age} ago)"
 
 
-def project_env(cwd):
-    """Child env with DAIMON_PROJECT_DIR set to `cwd`, or None to inherit the
-    parent env unchanged (pre-routing behavior when no cwd is known)."""
-    return {**os.environ, "DAIMON_PROJECT_DIR": cwd} if cwd else None
+def project_env(cwd, host=None):
+    """Child env with code-owned project/host capture hints when known."""
+    if not cwd and not host:
+        return None
+    env = dict(os.environ)
+    if cwd:
+        env["DAIMON_PROJECT_DIR"] = cwd
+    if host:
+        env["DAIMON_CAPTURE_HOST"] = host
+    return env
 
 
 def log(line: str) -> None:

@@ -346,7 +346,8 @@ def _fake_cli(tmp_path) -> tuple[Path, Path]:
     script = fake_bin / "daimon"
     script.write_text(
         "#!/bin/sh\n"
-        f'printf "DAIMON_PROJECT_DIR=%s\\nargs=%s\\n" "$DAIMON_PROJECT_DIR" "$*" > "{capture}"\n'
+        f'printf "DAIMON_PROJECT_DIR=%s\\nDAIMON_CAPTURE_HOST=%s\\nargs=%s\\n" '
+        f'"$DAIMON_PROJECT_DIR" "$DAIMON_CAPTURE_HOST" "$*" > "{capture}"\n'
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return fake_bin, capture
@@ -375,6 +376,7 @@ def test_session_end_passes_project_dir_to_child(tmp_path, tmp_checkpoint_dir):
     assert proc.returncode == 0
     captured = _wait_for(capture)
     assert "DAIMON_PROJECT_DIR=/Users/x/projA" in captured
+    assert "DAIMON_CAPTURE_HOST=claude-code" in captured
     assert str(transcript) in captured
 
 
@@ -423,7 +425,9 @@ def test_session_end_does_not_route_child_stdout_into_log(tmp_path, tmp_checkpoi
     assert sentinel not in content
 
 
-def test_session_end_no_cwd_no_project_env(tmp_path, tmp_checkpoint_dir):
+def test_session_end_no_cwd_keeps_project_unset_but_passes_host(
+    tmp_path, tmp_checkpoint_dir
+):
     fake_bin, capture = _fake_cli(tmp_path)
     transcript = tmp_path / "t.jsonl"
     transcript.write_text("{}\n")
@@ -431,7 +435,8 @@ def test_session_end_no_cwd_no_project_env(tmp_path, tmp_checkpoint_dir):
     proc = _run(END_HOOK, payload, tmp_path, extra_env={"PATH": str(fake_bin)})
     assert proc.returncode == 0
     captured = _wait_for(capture)
-    assert "DAIMON_PROJECT_DIR=\n" in captured  # unset for the child, exactly as today
+    assert "DAIMON_PROJECT_DIR=\n" in captured
+    assert "DAIMON_CAPTURE_HOST=claude-code" in captured
 
 
 # ---- sweep_orphans (#185): session-start catch-up sweep, unit-level ----

@@ -21,7 +21,7 @@ import copy
 import json
 import os
 
-from daimon_briefing import cli, hooks, store, transcript
+from daimon_briefing import cli, hooks, provenance, store, transcript
 
 PROJECT = "/p/parity"
 SESSION = "S-parity"
@@ -150,6 +150,12 @@ def test_hook_and_cli_capture_produce_identical_checkpoints(
     assert carried and carried[0]["carried_from"] == "S-prev"
     assert cli_cp["transcript_hash"] == transcript.file_sha256(tpath)
     assert cli_cp["created"] == _STAMPS[-1]
+    assert provenance.valid_source_ref(cli_cp["source_ref"])
+    rejected = next(
+        q for q in cli_cp["working_context"]["open_questions"]
+        if q.get("text") == "PR #6 state")
+    assert provenance.valid_quote_receipt(rejected["quote_provenance"])
+    assert rejected["quote_provenance"]["outcome"] == "not-verified"
 
     # Same events emitted through both doors (supersede-candidate emission),
     # minus the append-time `ts` wall stamp.

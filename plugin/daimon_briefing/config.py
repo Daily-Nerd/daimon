@@ -342,6 +342,11 @@ def project_dir() -> str | None:
     return _get("DAIMON_PROJECT_DIR") or None
 
 
+def capture_host() -> str | None:
+    """Trusted host hint forwarded by installed capture hooks (#594)."""
+    return _get("DAIMON_CAPTURE_HOST") or None
+
+
 def claude_projects_dir() -> Path:
     """Where host transcripts live: ~/.claude/projects/<slug>/<session>.jsonl.
     The #125 audit reads (never writes) these to re-check stored quotes against
