@@ -106,7 +106,9 @@ def test_zero_surfaces_is_not_clean(tmp_checkpoint_dir):
 
 
 def _make_recall_db(tmp_path, rows, fingerprint):
-    """Build a minimal real recall.db shape at the isolated test location."""
+    """Build a minimal real recall.db shape at the isolated test location.
+
+    Rows can be 2-tuple (text, slug) or 3-tuple (text, slug, author)."""
     db = config.recall_db()
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db)
@@ -120,10 +122,15 @@ def _make_recall_db(tmp_path, rows, fingerprint):
         " pinned INTEGER NOT NULL DEFAULT 0,"
         " frontier INTEGER NOT NULL DEFAULT 0);")
     conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
-    for text, slug in rows:
+    for row in rows:
+        if len(row) == 2:
+            text, slug = row
+            author = None
+        else:
+            text, slug, author = row
         conn.execute(
-            "INSERT INTO items(text, project_slug, item_id) VALUES (?, ?, 'i-r')",
-            (text, slug))
+            "INSERT INTO items(text, project_slug, item_id, author) VALUES (?, ?, 'i-r', ?)",
+            (text, slug, author))
     conn.commit()
     conn.close()
     return db
@@ -174,3 +181,53 @@ def test_missing_recall_db_is_not_created_by_audit(tmp_checkpoint_dir):
     assert not db.exists()
     privacy.audit_project(project_dir=PROJECT)
     assert not db.exists(), "audit must never create the recall db"
+
+
+def test_foreign_author_row_with_matching_tombstone_is_residue(tmp_checkpoint_dir):
+    from daimon_briefing import recall
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    # Foreign author (different from self_author project slug)
+    _make_recall_db(tmp_checkpoint_dir, [(CANARY, "other-slug", "foreign@example.com")],
+                    recall._fingerprint())
+    result = privacy.audit_project(project_dir=PROJECT)
+    # Foreign author rows answer to machine-global union, so a global tombstone
+    # creates a finding
+    assert any(f["surface"] == "recall-index-residue"
+               and f["content_hash"] == key for f in result["findings"])
+
+
+def test_different_local_project_row_not_flagged(tmp_checkpoint_dir):
+    from daimon_briefing import recall
+    other = "/p/other-project"
+    _write("S1", KEEPER)
+    _write("S2", KEEPER, project_dir=other)
+    key = normalize.content_key(CANARY)
+    # Tombstone in THIS project
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    # But the row belongs to the OTHER local project with a local author
+    other_slug = store.project_slug(other)
+    local_author = config.author()  # local author
+    _make_recall_db(tmp_checkpoint_dir, [(CANARY, other_slug, local_author)],
+                    recall._fingerprint())
+    result = privacy.audit_project(project_dir=PROJECT)
+    # Other local project's row should not be flagged by this project's audit
+    assert not any(f["content_hash"] == key for f in result["findings"])
+
+
+def test_null_slug_row_with_stale_fingerprint_is_informational(tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    # NULL slug row with stale fingerprint
+    _make_recall_db(tmp_checkpoint_dir, [(CANARY, None)], "stale-fp")
+    result = privacy.audit_project(project_dir=PROJECT)
+    # Should appear in informational, not findings
+    assert not any(f["surface"] == "unattributed" and f["content_hash"] == key
+                   for f in result["findings"])
+    assert any(f["surface"] == "stale-index-pending-rebuild"
+               and f["content_hash"] == key for f in result["informational"])
