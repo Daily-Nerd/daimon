@@ -391,6 +391,25 @@ def audit_project(project_dir=None) -> dict:
     except OSError:
         pass
     result["cache"] = {"entries": entries, "oldest_days": oldest}
+    # Windsurf adapter state (#607): daimon-authored conversation text. Same
+    # honesty as the chunk cache and for the same reason — the value lives
+    # as a SUBSTRING of prose and the tombstone is a hash, so neither a
+    # finding nor an `unscannable` entry would be true. Reporting the store
+    # exists (with its real oldest age) is what the auditor can prove; the
+    # exit code stays untouched, and forget purges it wholesale.
+    ws_entries, ws_oldest = 0, None
+    try:
+        ws_files = store._windsurf_text_files()
+    except OSError:
+        ws_files = []          # a walk that raises degrades, never aborts
+    for path in ws_files:
+        try:
+            age = (time.time() - path.stat().st_mtime) / 86400
+        except OSError:
+            continue
+        ws_entries += 1
+        ws_oldest = age if ws_oldest is None else max(ws_oldest, age)
+    result["windsurf"] = {"entries": ws_entries, "oldest_days": ws_oldest}
     return result
 
 

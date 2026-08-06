@@ -26,6 +26,10 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_RECALL_DB", str(home / "recall.db"))
     # And the #125 per-session suggestion-cooldown state, same reasoning.
     monkeypatch.setenv("DAIMON_RECALL_SEEN_DIR", str(home / "recall_seen"))
+    # #607: the Windsurf adapter's own transcript store — no test may read or
+    # write the developer's real ~/.daimon/windsurf, and the purge/reap paths
+    # DELETE, so an unredirected default would destroy real host state.
+    monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(home / "windsurf"))
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
     monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
     # #200: a host DAIMON_TEAM_PROJECT would nest every team write; and the

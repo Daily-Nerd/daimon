@@ -1077,6 +1077,14 @@ def _cmd_forget(args) -> int:
         purged, purge_err = serializer.purge_chunk_cache()
     except Exception as e:  # belt: purge_chunk_cache itself never raises
         purged, purge_err = 0, str(e)
+    # #607: the Windsurf adapter writes its own transcripts when Cascade
+    # gives it none — daimon-authored plaintext, so inside the contract.
+    # Wholesale for the same reason as the chunk cache: the tombstone is a
+    # hash, so a value inside prose cannot be located to remove selectively.
+    try:
+        ws_purged, ws_err = store.purge_windsurf_state()
+    except Exception as e:  # belt: purge_windsurf_state never raises
+        ws_purged, ws_err = 0, str(e)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
@@ -1094,6 +1102,13 @@ def _cmd_forget(args) -> int:
     else:
         print(f"purged {purged} cached chunk extraction(s) "
               "(pre-redaction serializer cache)")
+    if ws_err is not None:
+        print(f"warning: windsurf transcript purge failed: {ws_err} — "
+              "daimon-authored conversation text may persist up to "
+              f"{config.windsurf_state_days()} day(s) (age reaper)")
+    elif ws_purged:
+        print(f"purged {ws_purged} daimon-authored windsurf transcript "
+              "file(s); host-authored transcripts are untouched")
     return 0
 
 
@@ -2324,6 +2339,11 @@ def _cmd_heal(args) -> int:
     for p in recall.reap_dead_snapshots(apply=not dry_run):
         print(f"{'would reap' if dry_run else 'reaped'} "
               f"dead index snapshot: {p.name}")
+    # #607: same repair charter — bound how long daimon-authored Windsurf
+    # conversation text lingers between forgets.
+    for p in store.reap_windsurf_state(apply=not dry_run):
+        print(f"{'would reap' if dry_run else 'reaped'} "
+              f"aged windsurf transcript: {p.name}")
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
