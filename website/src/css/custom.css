@@ -19,6 +19,8 @@
   --dm-card-border: #d0d7de;
   --dm-terminal-bg: #eceff2;
   --dm-accent-wash: rgba(15, 118, 110, 0.12);
+  /* full-width band tint — teal-tinted to match the accent's temperature */
+  --dm-band-tint: #f2f6f5;
   /* spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 px */
   --dm-space-1: 0.25rem;
   --dm-space-2: 0.5rem;
@@ -43,6 +45,7 @@
   --dm-card-border: #30363d;
   --dm-terminal-bg: #0d1117;
   --dm-accent-wash: rgba(0, 212, 170, 0.12);
+  --dm-band-tint: #10161d;
   --docusaurus-highlighted-code-line-bg: rgba(0, 212, 170, 0.08);
 }
 
@@ -53,8 +56,16 @@
   margin-right: auto;
   max-width: 42rem;
 }
-.bandInner--replay { max-width: 34rem; text-align: left; }
-.bandInner--anatomy { max-width: 34rem; text-align: left; }
+/* Replay band — tinted, two columns: the argument on the left, the artifact on the right. */
+.bandInner--replay {
+  max-width: 60rem;
+  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--dm-space-12);
+  align-items: center;
+}
+.bandInner--anatomy { max-width: 60rem; text-align: left; }
 .bandInner--close { max-width: 34rem; text-align: center; }
 
 .hero--daimon {
@@ -217,6 +228,7 @@
 .chipPending { background: var(--ifm-color-emphasis-200); color: var(--ifm-color-emphasis-800); }
 
 .sectionBand { border-top: 1px solid var(--dm-card-border); padding: var(--dm-space-12) var(--dm-space-4); }
+.bandReplay { background: var(--dm-band-tint); padding-top: var(--dm-space-16); padding-bottom: var(--dm-space-16); }
 .sectionTitle {
   font-size: 0.875rem;
   font-weight: 600;
@@ -231,6 +243,14 @@
   color: var(--ifm-color-emphasis-800);
   margin-bottom: var(--dm-space-6);
 }
+/* secondary claim — body size, de-emphasized by color, not weight */
+.claimSub {
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+  margin-bottom: 0;
+}
+.replayIntro .claimLine { margin-bottom: var(--dm-space-3); }
 
 /* Replay — a terminal, not a third static card. */
 .replay {
@@ -282,8 +302,14 @@
 .replayBtn:disabled { opacity: 0.4; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .replayLine { transition: none; } }
 
-/* Anatomy — the same claim before and after a downgrade. */
-.anatomyCode {
+/* Anatomy — the same claim before and after a downgrade, side by side. */
+.anatomyPair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: var(--dm-space-6);
+  align-items: stretch;
+}
+.anatomyCard {
   box-sizing: border-box;
   max-width: 100%;
   background: var(--ifm-background-surface-color);
@@ -294,16 +320,24 @@
   font-size: 0.875rem;
   line-height: 1.7;
 }
+.anatomyArrow {
+  align-self: center;
+  font-size: 1.125rem;
+  color: var(--ifm-color-emphasis-700);
+}
 .anatomySub { color: var(--ifm-color-emphasis-800); padding-left: var(--dm-space-4); }
 /* temporal cue — without it the before/after pair reads as a contradiction */
 .anatomyWhen { color: var(--ifm-color-emphasis-700); }
 .anatomyWhen + .anatomyLine { margin-bottom: var(--dm-space-1); }
-.anatomySub + .anatomyWhen { margin-top: var(--dm-space-3); }
-/* Definitions live inside the card, separated by the same 1px rule the receipt uses. */
+/* Definitions — one quiet row under the pair. */
 .anatomyDefs {
-  margin: var(--dm-space-2) 0 0;
-  padding-top: var(--dm-space-2);
+  margin: var(--dm-space-6) 0 0;
+  padding-top: var(--dm-space-4);
   border-top: 1px solid var(--dm-card-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dm-space-2) var(--dm-space-8);
+  font-size: 0.875rem;
 }
 .anatomyDefRow { display: flex; gap: var(--dm-space-1); }
 .anatomyDefs dt { color: var(--ifm-color-emphasis-800); font-weight: 600; }
@@ -344,22 +378,31 @@
   padding: 0 var(--dm-space-1);
 }
 
+/* The two-column band and the card pair collapse before they can crowd. */
+@media (max-width: 996px) {
+  .bandInner--replay { grid-template-columns: minmax(0, 1fr); gap: var(--dm-space-6); }
+  .anatomyPair { grid-template-columns: minmax(0, 1fr); }
+  .anatomyArrow { transform: rotate(90deg); justify-self: center; }
+}
+
 @media (max-width: 640px) {
   .hero--daimon { padding: var(--dm-space-12) var(--dm-space-4) var(--dm-space-8); }
-  .receipt, .replay, .anatomyCode {
+  .receipt, .replay, .anatomyCard {
     display: block;
     width: 100%;
     font-size: 0.75rem;
   }
-  .receipt, .anatomyCode { padding: var(--dm-space-3) var(--dm-space-4); }
+  .receipt, .anatomyCard { padding: var(--dm-space-3) var(--dm-space-4); }
   .replayLines { padding: var(--dm-space-3) var(--dm-space-4); }
   /* Long artifact lines scroll like a terminal; the right-edge fade says so. */
-  .receipt, .replayLines, .anatomyCode {
+  .receipt, .replayLines, .anatomyCard {
     overflow-x: auto;
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
-  .receipt > div, .replayLine, .anatomyLine, .anatomyDefRow { white-space: nowrap; }
+  .receipt > div, .replayLine, .anatomyLine { white-space: nowrap; }
+  /* defs sit outside any scroll container now — they must wrap, not clip */
+  .anatomyDefRow { flex-wrap: wrap; }
   /* the signature must never depend on a horizontal scroll.
      Needs to outrank `.receipt > div` above, hence the two-class selector. */
   .receipt > .receiptFoot { white-space: normal; }

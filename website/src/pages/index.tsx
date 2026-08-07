@@ -157,19 +157,28 @@ export default function Home(): ReactNode {
       <main>
         <section className="sectionBand bandReplay">
           <div className="bandInner bandInner--replay">
-            <h2 className="sectionTitle">
-              {translate({
-                id: 'landing.verify.title',
-                message: 'A checkpoint verifying itself',
-              })}
-            </h2>
-            <p className="claimLine">
-              {translate({
-                id: 'landing.verify.claim',
-                message:
-                  'Every claim is re-checked against the transcript before it reaches your agent.',
-              })}
-            </p>
+            <div className="replayIntro">
+              <h2 className="sectionTitle">
+                {translate({
+                  id: 'landing.verify.title',
+                  message: 'A checkpoint verifying itself',
+                })}
+              </h2>
+              <p className="claimLine">
+                {translate({
+                  id: 'landing.anatomy.claim',
+                  message:
+                    'A checkpoint is the signed record a session leaves behind — every line in it earns its class.',
+                })}
+              </p>
+              <p className="claimSub">
+                {translate({
+                  id: 'landing.verify.claim',
+                  message:
+                    'Every claim is re-checked against the transcript before it reaches your agent.',
+                })}
+              </p>
+            </div>
             <VerifyReplay />
           </div>
         </section>
@@ -181,36 +190,37 @@ export default function Home(): ReactNode {
                 message: 'How an item proves itself',
               })}
             </h2>
-            <p className="claimLine">
-              {translate({
-                id: 'landing.anatomy.claim',
-                message:
-                  'A checkpoint is the signed record a session leaves behind — every line in it earns its class.',
-              })}
-            </p>
-            <div className="anatomyCode">
-              <div className="anatomyLine anatomyWhen">at write time</div>
-              <div className="anatomyLine">
-                <span className="tv">
-                  <span aria-hidden="true">✔ </span>verbatim
-                </span>{' '}
-                "port is 8080"
+            <div className="anatomyPair">
+              <div className="anatomyCard">
+                <div className="anatomyLine anatomyWhen">at write time</div>
+                <div className="anatomyLine">
+                  <span className="tv">
+                    <span aria-hidden="true">✔ </span>verbatim
+                  </span>{' '}
+                  "port is 8080"
+                </div>
+                <div className="anatomyLine anatomySub">
+                  <span aria-hidden="true">└ </span>transcript line 87 · sig 9f3c…a41b
+                </div>
               </div>
-              <div className="anatomyLine anatomySub">
-                <span aria-hidden="true">└ </span>transcript line 87 · sig 9f3c…a41b
+              <div className="anatomyArrow" aria-hidden="true">
+                →
               </div>
-              <div className="anatomyLine anatomyWhen">21 days later</div>
-              <div className="anatomyLine">
-                <span className="ti">
-                  <span aria-hidden="true">~ </span>inferred
-                </span>{' '}
-                "port is 8080"
+              <div className="anatomyCard">
+                <div className="anatomyLine anatomyWhen">21 days later</div>
+                <div className="anatomyLine">
+                  <span className="ti">
+                    <span aria-hidden="true">~ </span>inferred
+                  </span>{' '}
+                  "port is 8080"
+                </div>
+                <div className="anatomyLine anatomySub">
+                  <span aria-hidden="true">└ </span>quote no longer matches · downgraded
+                  automatically
+                </div>
               </div>
-              <div className="anatomyLine anatomySub">
-                <span aria-hidden="true">└ </span>quote no longer matches · downgraded
-                automatically
-              </div>
-              <dl className="anatomyDefs">
+            </div>
+            <dl className="anatomyDefs">
                 <div className="anatomyDefRow">
                   <dt>
                     {translate({id: 'landing.anatomy.class.term', message: 'class'})}
@@ -248,7 +258,6 @@ export default function Home(): ReactNode {
                   </dd>
                 </div>
               </dl>
-            </div>
           </div>
         </section>
         <section className="sectionBand bandClose">
