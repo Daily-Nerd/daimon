@@ -192,8 +192,21 @@ def test_from_file_parses_codex_0147_item_completed_stream(tmp_path):
         {"type": "event_msg", "ordinal": 6, "payload": {
             "type": "item_completed", "item": {
                 "type": "AgentMessage", "id": "a2", "content": [
+                    "stray-string-block",
+                    {"type": "image", "url": "x"},
                     {"type": "Text", "text": "Branch is clean."},
                 ], "phase": "final_answer",
+            },
+        }},
+        {"type": "event_msg", "ordinal": 7, "payload": {
+            "type": "token_count", "info": {"total_tokens": 4212},
+        }},
+        {"type": "event_msg", "ordinal": 8, "payload": {
+            "type": "item_completed", "item": "not-a-dict",
+        }},
+        {"type": "event_msg", "ordinal": 9, "payload": {
+            "type": "item_completed", "item": {
+                "type": "UserMessage", "id": "u2", "content": None,
             },
         }},
     ])
