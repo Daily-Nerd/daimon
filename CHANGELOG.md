@@ -5,6 +5,40 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0](https://github.com/Daily-Nerd/daimon/compare/v0.26.0...v0.27.0) (2026-08-07)
+
+
+### Features
+
+* **audit:** read-only tombstone residue audit — daimon audit privacy ([#602](https://github.com/Daily-Nerd/daimon/issues/602)) ([cb96945](https://github.com/Daily-Nerd/daimon/commit/cb96945e5d2888fc32004a038afda31e47f1f711))
+* **cli:** add trust inspector ([#597](https://github.com/Daily-Nerd/daimon/issues/597)) ([7624c3f](https://github.com/Daily-Nerd/daimon/commit/7624c3fc688514fad67873664bb4e89d7531e447)), closes [#502](https://github.com/Daily-Nerd/daimon/issues/502)
+* **cli:** warn when handoff supersedes an unconsumed baton ([#572](https://github.com/Daily-Nerd/daimon/issues/572)) ([417d13d](https://github.com/Daily-Nerd/daimon/commit/417d13d8035bf2281b906896ac5f7f4376c9e640))
+* **hooks:** make Codex SessionEnd the primary capture event ([#589](https://github.com/Daily-Nerd/daimon/issues/589)) ([742f587](https://github.com/Daily-Nerd/daimon/commit/742f587b97b1bd40a968c5b7292551edd3757b15))
+* **research:** run-attributed merge-fidelity instrument ([#569](https://github.com/Daily-Nerd/daimon/issues/569)) ([284c208](https://github.com/Daily-Nerd/daimon/commit/284c2088829573069d375b33a7b41889eb14e845))
+* **store:** surface registry — new stores must declare a delete strategy ([#606](https://github.com/Daily-Nerd/daimon/issues/606)) ([a9069b0](https://github.com/Daily-Nerd/daimon/commit/a9069b06e4fd1442b8425a8ece45f0a70b3036c8))
+* **team:** propagate forget tombstones, suppressing by default ([#611](https://github.com/Daily-Nerd/daimon/issues/611)) ([fd14885](https://github.com/Daily-Nerd/daimon/commit/fd148858d392f7c9170fb4502fd24f8a8f97fa11))
+* **trust:** add durable quote provenance ([#595](https://github.com/Daily-Nerd/daimon/issues/595)) ([1bbd4db](https://github.com/Daily-Nerd/daimon/commit/1bbd4db3382faaa1faa446eaa5fbc844c7d8a814)), closes [#594](https://github.com/Daily-Nerd/daimon/issues/594)
+* **website:** landing page polish — 4-size type scale, spacing grid, CTA targets ([#615](https://github.com/Daily-Nerd/daimon/issues/615)) ([abbfe08](https://github.com/Daily-Nerd/daimon/commit/abbfe080ee993a8300f75390b89a00c10d837c9b))
+
+
+### Bug Fixes
+
+* **forget:** reach every plaintext surface the project owns ([#584](https://github.com/Daily-Nerd/daimon/issues/584)) ([5ecc9b7](https://github.com/Daily-Nerd/daimon/commit/5ecc9b75eccec64b6e56b9a4ed059f28b286e1bf))
+* **forget:** reach quote/scene/links/topic fields and redact the event ledger ([#603](https://github.com/Daily-Nerd/daimon/issues/603)) ([739a366](https://github.com/Daily-Nerd/daimon/commit/739a366fa15775081ac0574fe110d9148b2c20c8))
+* **serializer:** stop feeding daimon's own output to the extractor ([#582](https://github.com/Daily-Nerd/daimon/issues/582)) ([25a8139](https://github.com/Daily-Nerd/daimon/commit/25a8139c71a16db1351cad4ded412841fa356524))
+* **serializer:** thread the capture clock into quote verification stamps ([#610](https://github.com/Daily-Nerd/daimon/issues/610)) ([e9fdf41](https://github.com/Daily-Nerd/daimon/commit/e9fdf41556412c885f9c2b593b779ac569f81b80))
+* **store:** bring the serializer crash log inside the deletion contract ([#605](https://github.com/Daily-Nerd/daimon/issues/605)) ([#617](https://github.com/Daily-Nerd/daimon/issues/617)) ([c7e95d0](https://github.com/Daily-Nerd/daimon/commit/c7e95d0ee2d2e6c91ddd8d5f8f40bf9da547b365))
+* **team:** forget scrubs the author's own team-mirror copies ([#608](https://github.com/Daily-Nerd/daimon/issues/608)) ([ecb7bb1](https://github.com/Daily-Nerd/daimon/commit/ecb7bb104d7dbdbfc4f676e39d3ca9672982542f))
+* **transcript:** parse Codex 0.147.0 item_completed rollout events ([#623](https://github.com/Daily-Nerd/daimon/issues/623)) ([4222243](https://github.com/Daily-Nerd/daimon/commit/4222243e40352691b957d6e3242b5aed25e8c851))
+* **transcript:** recognise daimon invoked through a shell wrapper ([#590](https://github.com/Daily-Nerd/daimon/issues/590)) ([8ddbda2](https://github.com/Daily-Nerd/daimon/commit/8ddbda2bd4e7f4e1bdf59eaed90dd29d7e0f1808))
+* **windsurf:** bring the adapter's own transcript store inside the deletion contract ([#609](https://github.com/Daily-Nerd/daimon/issues/609)) ([1bcf685](https://github.com/Daily-Nerd/daimon/commit/1bcf68540b2682daad0dc0851570147922703a1c))
+
+
+### Documentation
+
+* **research:** correct the linearity reading and the subject-rail zero ([#588](https://github.com/Daily-Nerd/daimon/issues/588)) ([a721460](https://github.com/Daily-Nerd/daimon/commit/a72146051b7c296b21cc3b9c6f3cf15dbff3e36b))
+* **scars:** candidate — residue tests must not enumerate via the scrubber's own walk ([#621](https://github.com/Daily-Nerd/daimon/issues/621)) ([ecf1995](https://github.com/Daily-Nerd/daimon/commit/ecf19950fc646e144e1a5d6bab939ad63bd4ba83))
+
 ## [0.26.0](https://github.com/Daily-Nerd/daimon/compare/v0.25.0...v0.26.0) (2026-08-04)
 
 
