@@ -283,6 +283,92 @@ def test_the_flag_refuses_without_the_standing_consent(
     assert "DAIMON_TEAM_APPLY_FORGET" in capsys.readouterr().err
 
 
+# ---- a broken sidecar degrades, it never aborts ---------------------------
+#
+# Every path here runs on the briefing/forget hot path against files another
+# machine wrote and git delivered. None of them may raise, and none may cost
+# more than the broken thing itself.
+
+
+def test_a_failed_publish_never_costs_the_local_deletion(
+        tmp_checkpoint_dir, tmp_path, monkeypatch):
+    """Publishing runs AFTER the local forget and is best-effort. If the
+    sidecar cannot be written at all — a read-only mount, or a stale file
+    sitting where the tree belongs — the teammate simply does not learn.
+    The deletion this machine was actually asked for still happened."""
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    blocked = tmp_path / "team-is-a-file"
+    blocked.write_text("a file where the mirror root should be",
+                       encoding="utf-8")
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(blocked))
+    store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
+                           project_dir=PROJECT)
+    assert _local_plaintext_present(), \
+        "seed failed — the canary must be on disk BEFORE we assert it is gone"
+    assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 0
+    assert store.publish_tombstone(KEY, project_dir=PROJECT) == [], \
+        "an unwritable sidecar must report nothing published, not raise"
+    assert not _local_plaintext_present(), \
+        "the local forget must not be undone by a failed publish"
+
+
+def test_an_unreadable_ledger_never_hides_the_other_authors(
+        tmp_checkpoint_dir):
+    """A ledger that cannot be READ — here a directory left where the file
+    belongs, the shape a half-applied pull leaves behind — is skipped, not
+    fatal. One broken author's dir must not blind this machine to every
+    other teammate's deletion."""
+    _teammate_publishes_a_tombstone(remote="team-a", author="grace")
+    broken = (config.team_dir() / "team-a" / "authors" / "kay"
+              / store._TOMBSTONE_NAME)
+    broken.mkdir(parents=True)
+    assert store.foreign_forgotten_content_keys() == {KEY}
+
+
+def test_a_remote_whose_walk_explodes_costs_only_its_own_keys(
+        tmp_checkpoint_dir, monkeypatch):
+    """`foreign_forgotten_content_keys` documents that it never raises, and
+    it is called on the read path, so a sidecar that cannot be walked at all
+    must cost only ITS keys — the briefing still suppresses everything the
+    reachable remotes published. Injected rather than staged on disk:
+    pathlib swallows scandir errors during a walk, so no filesystem state
+    reaches this branch."""
+    _teammate_publishes_a_tombstone(remote="team-a", author="grace")
+    other = normalize.content_key("zqxothercanary9182 staging db password")
+    hopper = config.team_dir() / "team-b" / "authors" / "hopper"
+    hopper.mkdir(parents=True)
+    (hopper / store._TOMBSTONE_NAME).write_text(
+        json.dumps({"ts": "2026-08-02T00:00:00Z", "key": other,
+                    "author": "hopper"}) + "\n", encoding="utf-8")
+    assert store.foreign_forgotten_content_keys() == {KEY, other}, \
+        "seed failed — both remotes must be readable before one is broken"
+
+    real_rglob = type(config.team_dir()).rglob
+
+    def explode_on_team_a(self, pattern):
+        if self.name == "team-a":
+            raise OSError("EIO reading the sidecar")
+        return real_rglob(self, pattern)
+
+    monkeypatch.setattr(type(config.team_dir()), "rglob", explode_on_team_a)
+    assert store.foreign_forgotten_content_keys() == {other}
+
+
+def test_apply_across_all_projects_survives_a_missing_checkpoint_dir(
+        tmp_checkpoint_dir, monkeypatch):
+    """`--apply-forget` is machine-wide, and a machine can have pulled the
+    sidecar before it ever wrote a checkpoint of its own. Nothing to rewrite
+    is not an error."""
+    monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
+    _teammate_publishes_a_tombstone()
+    assert store.foreign_forgotten_content_keys() == {KEY}, \
+        "seed failed — an empty foreign set would make the result vacuous"
+    assert not tmp_checkpoint_dir.exists(), \
+        "nothing has been written here, so there is no store to walk"
+    assert store.apply_foreign_tombstones(all_projects=True) == []
+
+
 # ---- the registry knows about the new file -------------------------------
 
 
