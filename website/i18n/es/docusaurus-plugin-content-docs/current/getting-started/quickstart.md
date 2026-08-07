@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Inicio rápido
 
-De la instalación a tu primer briefing. Cuatro pasos, uno opcional.
+De la instalación a tu primer briefing. Cinco pasos, uno opcional.
 
 ## 1. Instala el CLI
 
@@ -102,7 +102,7 @@ Active topic: Migrating the scheduler off cron to the new worker pool
 También puedes leerlo en una terminal en cualquier momento con
 `daimon brief`.
 
-:::note Las sesiones cortas se omiten a propósito
+:::note[Las sesiones cortas se omiten a propósito]
 Una sesión con menos mensajes que `DAIMON_MIN_MESSAGES` (por defecto: 10) no
 se serializa — no hay nada que valga la pena recordar en un intercambio de
 dos mensajes. Si estás evaluando daimon y quieres capturar tus sesiones

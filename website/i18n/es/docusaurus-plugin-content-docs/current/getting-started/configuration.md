@@ -165,7 +165,7 @@ uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida.
 | `DAIMON_LLM_BRIEFING` | off | Cuando es verdadero, renderiza el briefing vía LLM en lugar de la plantilla determinista. |
 | `DAIMON_LLM_COMMAND` | sin definir | Invocación completa del CLI para el backend `command` (binario + modelo + flags). Obligatoria para `command`, y obligatoria para que un `claude` en el PATH sea usado por cualquier backend que no sea `claude-cli`. |
 
-:::note Qué proceso recibe tu transcripción
+:::note[Qué proceso recibe tu transcripción]
 
 Un binario `claude` que simplemente esté en el PATH **no** se adopta automáticamente. Serializar envía la transcripción completa de la sesión al CLI configurado, así que ese CLI debe nombrarse: o `DAIMON_LLM_COMMAND`, o `DAIMON_LLM_BACKEND=claude-cli` para optar por el preset incorporado.
 

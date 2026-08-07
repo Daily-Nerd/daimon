@@ -158,7 +158,7 @@ the `DAIMON_*` form is unset.
 | `DAIMON_LLM_BRIEFING` | off | When truthy, render the briefing via the LLM instead of the deterministic template. |
 | `DAIMON_LLM_COMMAND` | unset | Full CLI invocation for the `command` backend (binary + model + flags). Required for `command`, and required for a `claude` on PATH to be used by any backend other than `claude-cli`. |
 
-:::note Which process receives your transcript
+:::note[Which process receives your transcript]
 
 A `claude` binary merely present on PATH is **not** adopted automatically. Serializing sends the full session transcript to whichever CLI is configured, so that CLI has to be named: either `DAIMON_LLM_COMMAND`, or `DAIMON_LLM_BACKEND=claude-cli` to opt into the built-in preset.
 
