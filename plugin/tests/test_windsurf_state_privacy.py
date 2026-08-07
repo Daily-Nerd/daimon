@@ -65,6 +65,14 @@ def _seed_state(turns=("user", "assistant"), age_days=0.0):
     return path, dump, stamp
 
 
+def _holding(root, needle):
+    """Byte scan of the whole store — the pointer-history idiom (#603). A
+    seeded canary is asserted PRESENT through this before anything asserts
+    it is gone, so a fixture that never wrote it cannot pass as a scrub."""
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*")
+                  if p.is_file() and needle.encode() in p.read_bytes())
+
+
 def _write_checkpoint():
     store.write_checkpoint("S1", {
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
@@ -120,6 +128,25 @@ def test_both_sides_default_under_the_real_daimon_home(tmp_path, monkeypatch):
     expected = tmp_path / ".daimon" / "windsurf"
     assert config.windsurf_state_dir() == expected
     assert hook.state_dir() == expected
+
+
+def test_provenance_default_matches_the_writer_default(tmp_path, monkeypatch):
+    """The override path is pinned above; the DEFAULT is the one that ships.
+    provenance is the third component that has to agree, and with the var
+    unset it falls back to its own literal — a typo in that literal sends
+    every Windsurf receipt on a stock install to absent-local while the
+    transcript sits on disk, which is the exact split this slice closed."""
+    from daimon_briefing import provenance
+    hook = _hook_module()
+    monkeypatch.delenv("DAIMON_WINDSURF_DIR", raising=False)
+    monkeypatch.setattr(hook.Path, "home", lambda: tmp_path)
+    expected = tmp_path / ".daimon" / "windsurf" / "transcripts"
+    assert provenance._daimon_windsurf_transcripts(tmp_path) == expected
+    assert hook.transcript_dir() == expected, "reader and writer disagree"
+    expected.mkdir(parents=True)
+    (expected / "traj-7.md").write_text("**user**: hi\n", encoding="utf-8")
+    assert provenance.infer_host(expected / "traj-7.md",
+                                 home=tmp_path)[0] == "windsurf"
 
 
 def test_state_window_defaults_to_seven_days_and_never_goes_below_one(
@@ -221,6 +248,100 @@ def test_forget_survives_a_failed_purge(tmp_checkpoint_dir, monkeypatch):
     assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
 
 
+def test_forget_survives_a_purge_that_raises(tmp_checkpoint_dir, monkeypatch,
+                                             capsys):
+    """purge_windsurf_state promises a tuple and never an exception, so the
+    belt around the call site reads as dead code — it is not. It is what
+    keeps a future bug in the purge from taking the SCRUB down with it,
+    and the scrub is the contract the user actually invoked. Losing the
+    checkpoint rewrite to a transcript-store bug would be the deletion
+    failing while the command reported a crash instead of a leak."""
+    _seed_state()
+    _write_checkpoint()
+    assert _holding(tmp_checkpoint_dir, CANARY), "fixture wrote no canary"
+
+    def boom():
+        raise RuntimeError("purge exploded")
+
+    monkeypatch.setattr(store, "purge_windsurf_state", boom)
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert _holding(tmp_checkpoint_dir, CANARY) == [], \
+        "the checkpoint scrub must survive a purge that blew up"
+    out = capsys.readouterr().out
+    assert "purge exploded" in out, "a swallowed failure is an invisible leak"
+
+
+# ---- what the store must NOT delete, and what it must not claim ----------
+
+
+def test_a_directory_matching_the_glob_is_never_unlinked(tmp_checkpoint_dir):
+    """`transcripts/*.md` is a NAME pattern, not a type check. A directory
+    that happens to match must be filtered out before unlink() sees it —
+    otherwise the purge raises EISDIR partway through and abandons every
+    file ordered after it, silently, since the count is all anyone sees."""
+    path, dump, _stamp = _seed_state()
+    decoy = _state_dir() / "transcripts" / "archive.md"
+    decoy.mkdir()
+    (decoy / "inside.txt").write_text("not daimon's to delete",
+                                      encoding="utf-8")
+    purged, err = store.purge_windsurf_state()
+    assert (purged, err) == (2, None), "the real transcript store still goes"
+    assert not path.exists() and not dump.exists()
+    assert (decoy / "inside.txt").exists(), "a directory is not a transcript"
+
+
+def test_state_it_cannot_classify_is_skipped_and_the_rest_still_purges(
+        tmp_checkpoint_dir):
+    """A transcripts/ the process can list but not stat (no +x) makes
+    is_file() RAISE rather than answer. Skip that entry and keep going: a
+    store that is partly unreachable is no reason to leave the reachable
+    half of the plaintext sitting on disk."""
+    path, dump, _stamp = _seed_state()
+    assert CANARY in path.read_text(encoding="utf-8")
+    tdir = _state_dir() / "transcripts"
+    tdir.chmod(0o600)          # listable, not stat-able
+    try:
+        purged, err = store.purge_windsurf_state()
+    finally:
+        tdir.chmod(0o700)
+    assert (purged, err) == (1, None)
+    assert not dump.exists(), "the reachable half must still be purged"
+    assert path.exists(), "unlink is never attempted on an unclassified path"
+
+
+def test_a_state_root_that_cannot_be_resolved_deletes_nothing(
+        tmp_checkpoint_dir, monkeypatch):
+    """Containment is the whole reason this purge is safe to point at a
+    directory, so an unresolvable root is fail-CLOSED: it yields no
+    targets at all rather than falling back to the unresolved path and
+    unlinking through whatever that turns out to be."""
+    path, dump, _stamp = _seed_state()
+    monkeypatch.setattr(
+        type(_state_dir()), "resolve",
+        lambda self, **kw: (_ for _ in ()).throw(OSError("nope")))
+    assert store._windsurf_text_files() == []
+    assert store.purge_windsurf_state()[0] == 0
+    assert path.exists() and dump.exists()
+
+
+def test_purge_reports_a_file_it_could_not_remove(tmp_checkpoint_dir):
+    """The count is a privacy CLAIM — "this many plaintext files are gone" —
+    so a file that survived a read-only store must not be inside it, and
+    the error must surface for the forget warning to carry."""
+    path, dump, _stamp = _seed_state()
+    assert CANARY in path.read_text(encoding="utf-8")
+    tdir = _state_dir() / "transcripts"
+    tdir.chmod(0o500)          # readable and stat-able, not writable
+    try:
+        purged, err = store.purge_windsurf_state()
+    finally:
+        tdir.chmod(0o700)
+    assert purged == 1, "only a file that actually went may be counted"
+    assert err is not None, "a silent partial purge reads as a clean one"
+    assert not dump.exists()
+    assert CANARY in path.read_text(encoding="utf-8")
+
+
 # ---- age reaper -----------------------------------------------------------
 
 
@@ -250,6 +371,36 @@ def test_heal_reaps_windsurf_state_and_dry_run_only_lists(
     assert not path.exists()
 
 
+def test_reap_never_reports_a_file_it_could_not_remove(tmp_checkpoint_dir):
+    """`heal` prints "reaped <name>" straight out of this list, so every name
+    in it is a claim that the plaintext is gone. A file the reaper could
+    not unlink has to be ABSENT from the list — announcing it would tell a
+    user their conversation was deleted while it is still on disk."""
+    path, dump, _stamp = _seed_state(age_days=30)
+    assert CANARY in path.read_text(encoding="utf-8")
+    tdir = _state_dir() / "transcripts"
+    tdir.chmod(0o500)
+    try:
+        reaped = store.reap_windsurf_state()
+    finally:
+        tdir.chmod(0o700)
+    assert [p.name for p in reaped] == [dump.name]
+    assert not dump.exists(), "the writable half is still reaped"
+    assert CANARY in path.read_text(encoding="utf-8")
+
+
+def test_reap_survives_an_unreadable_state_dir(tmp_checkpoint_dir,
+                                               monkeypatch):
+    """Same posture as the purge, different call site: heal is a repair pass
+    over many surfaces, so a state dir that raises mid-walk costs this one
+    reaper and never the rest of the run."""
+    path, _dump, _stamp = _seed_state(age_days=30)
+    monkeypatch.setattr(type(_state_dir()), "glob",
+                        lambda self, pat: (_ for _ in ()).throw(OSError("nope")))
+    assert store.reap_windsurf_state() == []
+    assert path.exists(), "a walk that failed must not be read as reaped"
+
+
 def test_window_is_configurable(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_WINDSURF_STATE_DAYS", "1")
     assert config.windsurf_state_days() == 1
@@ -277,6 +428,26 @@ def test_audit_reports_windsurf_state_informationally(tmp_checkpoint_dir):
     assert privacy.exit_code([result]) == 0
     assert not any(f["surface"].startswith("windsurf")
                    for f in result["findings"])
+
+
+def test_audit_skips_state_that_vanished_mid_walk(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    """The reaper and the auditor run against the same store with no lock
+    between them, so a file can be listed and then gone before its stat.
+    It must drop out of the count — an entry the auditor never measured is
+    not evidence of a file, and the audit of every OTHER surface must not
+    die over it."""
+    _seed_state()
+    _write_checkpoint()
+    real = store._windsurf_text_files()
+    assert real, "fixture seeded no windsurf state"
+    ghost = _state_dir() / "transcripts" / "already-reaped.md"
+    monkeypatch.setattr(store, "_windsurf_text_files", lambda: [ghost] + real)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert result["windsurf"]["entries"] == len(real), \
+        "a file that was never stat-able cannot be counted"
+    assert result["windsurf"]["oldest_days"] is not None
+    assert privacy.exit_code([result]) == 0
 
 
 def test_audit_render_names_the_purge_contract(tmp_checkpoint_dir, capsys):
