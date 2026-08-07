@@ -111,6 +111,12 @@ SURFACES: tuple[Surface, ...] = (
             False, "exempt-no-plaintext", "none"),
     Surface("team/{remote}/daimon-team.toml", "teamsync.init",
             False, "exempt-no-plaintext", "none"),
+    # #600 slice B: the published tombstone ledger — {ts, key, author}, the
+    # canonical hash and never the text (#321), the same posture
+    # forget-hits.jsonl takes locally. Deliberately BEFORE the json entry
+    # and named `.jsonl` so no `*.json` walk claims it.
+    Surface("team/{remote}/**/tombstones.jsonl", "store.publish_tombstone",
+            False, "exempt-no-plaintext", "none"),
     Surface("team/{remote}/**/*.json", "store._dual_write_team",
             True, "known-gap", "audit", issue="#600"),
     Surface("team/{remote}/.git/**", "git (teamsync subprocess)",
@@ -142,15 +148,17 @@ SURFACES: tuple[Surface, ...] = (
     Surface("codex/*.last-stop", "_hooks/daimon-codex-*.py",
             False, "exempt-no-plaintext", "none"),
     # -- windsurf host adapter state: FULL RAW TRANSCRIPTS appended turn by
-    #    turn, plus unparsed event payloads (secret-scrubbed at write, never
-    #    item-text scrubbed). The largest plaintext store daimon writes, and
-    #    nothing in forget or the audit reaches it — THE declared gap after
-    #    the team mirror. provenance.py reads the transcripts as a
-    #    first-class source, so this is load-bearing, not vestigial. --
+    #    turn, plus unparsed event payloads. daimon-authored, so inside the
+    #    deletion contract (#419) — unlike Codex rollouts or Claude Code
+    #    JSONL, which daimon reads by path and never copies. #607: forget
+    #    purges wholesale (a value inside prose cannot be located when the
+    #    tombstone is a hash, the chunk-cache situation), heal reaps by age
+    #    (config.windsurf_state_days), and the audit reports the store
+    #    without claiming a verdict it cannot reach. --
     Surface("windsurf/transcripts/*.md", "_hooks/daimon-windsurf-hooks.py",
-            True, "known-gap", "none", issue="#607"),
+            True, "wholesale-purge", "forget"),
     Surface("windsurf/unparsed-*.json", "_hooks/daimon-windsurf-hooks.py",
-            True, "known-gap", "none", issue="#607"),
+            True, "wholesale-purge", "forget"),
     # trajectory activity/serialize stamps: epoch floats, no item text.
     Surface("windsurf/*.last-activity", "_hooks/daimon-windsurf-hooks.py",
             False, "exempt-no-plaintext", "none"),

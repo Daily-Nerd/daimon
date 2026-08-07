@@ -87,6 +87,7 @@ Opt-in shared-memory mirror. See [docs/team.md](../team/team.md) for the full wo
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Root of the shared team-memory mirror. |
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path for this machine's sessions (relative, e.g. `core/api-gateway`). Overrides the sidecar's `daimon-team.toml` mapping and the origin-derived fallback when routing checkpoints under `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Read-time age window: teammates' checkpoints older than this many days are skipped when reading. `0` = keep all. Never physically deletes from the shared append-only branch. |
+| `DAIMON_TEAM_APPLY_FORGET` | off | Standing consent for a TEAMMATE's published forget tombstone to rewrite this machine's own checkpoints. NOT sufficient alone — the apply also requires the typed `daimon team sync --apply-forget`, because a bare `daimon team sync` is spawned detached at SessionStart. Default off: a foreign tombstone always suppresses the value on read and in the index, but deleting local belief state from someone else's hash is a decision to make knowingly — the shared branch is append-only, so there is no undo. |
 
 ## Receipts
 
@@ -126,6 +127,8 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Codex serialize spawns. `0` serializes on every `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Windsurf serialize spawns (Windsurf has no session-end event, so capture runs on this throttle). `0` serializes every turn. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
+| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Where the Windsurf adapter keeps the transcripts it accumulates. Read by both the hook that writes them and the `forget`/`heal` paths that delete them — change it in one place only, or the writer and the deleter stop agreeing. |
+| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Age window for daimon-authored Windsurf transcripts and unparsed payload dumps, reaped by `daimon heal`. A privacy bound: a forgotten value cannot be located inside prose, so this limits how long the source conversation lingers between `forget` runs. Clamped to at least 1 — unlike the other Windsurf knobs, `0` does not disable it. |
 
 ## Ops & diagnostics
 

@@ -80,8 +80,21 @@ try:
 except Exception:  # noqa: BLE001 — missing/corrupt lib must never crash the hook
     lib = None
 
-STATE_DIR = Path.home() / ".daimon" / "windsurf"
-TRANSCRIPT_DIR = STATE_DIR / "transcripts"
+def state_dir() -> Path:
+    """Where this adapter keeps its own state. DAIMON_WINDSURF_DIR overrides
+    the default, and reading it here is load-bearing: `daimon forget` purges
+    this store and `daimon heal` reaps it by age (#607), both resolving the
+    same var through config.windsurf_state_dir(). A hardcoded home here
+    would have the writer filling one directory while the deleter reported
+    cleanly on another — silently, since a zero-file purge says nothing."""
+    raw = os.environ.get("DAIMON_WINDSURF_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".daimon" / "windsurf"
+
+
+def transcript_dir() -> Path:
+    return state_dir() / "transcripts"
 
 # Keys tried, in order, for the user-prompt text — the pre_user_prompt payload
 # shape is not yet field-confirmed (post_cascade_response is), so the
@@ -124,7 +137,7 @@ def _safe_name(trajectory_id: str) -> str:
 
 
 def _activity_stamp(trajectory_id: str) -> Path:
-    return STATE_DIR / f"{_safe_name(trajectory_id)}.last-activity"
+    return state_dir() / f"{_safe_name(trajectory_id)}.last-activity"
 
 
 def _touch_activity(trajectory_id: str) -> None:
@@ -138,7 +151,7 @@ def _touch_activity(trajectory_id: str) -> None:
     if _finalizer_quiet_seconds() <= 0:
         return
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        state_dir().mkdir(parents=True, exist_ok=True)
         _activity_stamp(trajectory_id).write_text(
             str(int(time.time())), encoding="utf-8")
     except OSError:
@@ -150,8 +163,8 @@ def _should_spawn(trajectory_id: str) -> bool:
     if interval <= 0:
         return True
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        marker = STATE_DIR / f"{_safe_name(trajectory_id)}.last-serialize"
+        state_dir().mkdir(parents=True, exist_ok=True)
+        marker = state_dir() / f"{_safe_name(trajectory_id)}.last-serialize"
         if marker.exists() and time.time() - marker.stat().st_mtime < interval:
             return False
         return True
@@ -163,8 +176,8 @@ def _mark_spawned(trajectory_id: str) -> None:
     if _interval_seconds() <= 0:
         return
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        (STATE_DIR / f"{_safe_name(trajectory_id)}.last-serialize").write_text(
+        state_dir().mkdir(parents=True, exist_ok=True)
+        (state_dir() / f"{_safe_name(trajectory_id)}.last-serialize").write_text(
             str(int(time.time())), encoding="utf-8")
     except OSError:
         pass
@@ -177,8 +190,8 @@ def _append_turn(trajectory_id: str, role: str, text: str) -> Path:
     site (#109): the accumulation file is a disk artifact `daimon serialize`
     reads later, so a quoted secret must not land here raw. main() has already
     gated on lib.redaction_available(), so the scrub is guaranteed real."""
-    TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-    path = TRANSCRIPT_DIR / f"{_safe_name(trajectory_id)}.md"
+    transcript_dir().mkdir(parents=True, exist_ok=True)
+    path = transcript_dir() / f"{_safe_name(trajectory_id)}.md"
     with path.open("a", encoding="utf-8") as f:
         f.write(f"**{role}**: {lib.redact_text(text).strip()}\n\n")
     return path
@@ -229,12 +242,12 @@ def _dump_probe(event: str, payload: dict) -> bool:
     Payload string leaves are secret-scrubbed at this write site (#109) so no
     quoted secret reaches unparsed-*.json, while structure stays usable."""
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        state_dir().mkdir(parents=True, exist_ok=True)
         tag = _safe_name(event or "unknown")
-        if any(STATE_DIR.glob(f"unparsed-{tag}-*.json")):
+        if any(state_dir().glob(f"unparsed-{tag}-*.json")):
             return False
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        (STATE_DIR / f"unparsed-{tag}-{stamp}.json").write_text(
+        (state_dir() / f"unparsed-{tag}-{stamp}.json").write_text(
             json.dumps(_redact_payload(payload), indent=2, ensure_ascii=False),
             encoding="utf-8")
         return True

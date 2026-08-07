@@ -191,6 +191,23 @@ def team_enabled() -> bool:
     return _flag("DAIMON_TEAM")
 
 
+def team_apply_forget() -> bool:
+    """#600 slice B: may a TEAMMATE's forget rewrite this machine's own
+    checkpoints? Default NO — a foreign tombstone suppresses on read and in
+    the index (the admit_foreign posture), but never deletes local belief
+    state. Turning this on hands every member of the sidecar a delete
+    primitive over your memory, and the shared branch is append-only, so
+    there is no undo; that is a decision to make knowingly, not one to
+    inherit from a `git pull`. Same default-closed posture as #279 scope.
+
+    Standing consent only — it is NOT sufficient on its own. The apply also
+    needs `daimon team sync --apply-forget`, because a bare `daimon team
+    sync` is spawned DETACHED at SessionStart (lib.spawn_team_sync, stdout
+    to DEVNULL) exactly like heal: a setting alone would delete local belief
+    state unattended and silently."""
+    return _flag("DAIMON_TEAM_APPLY_FORGET")
+
+
 def team_dir() -> Path:
     """Root of the shared team-memory mirror. Sibling of the checkpoint dir under
     ~/.daimon by default; DAIMON_TEAM_DIR overrides (tests point it under tmp so no
@@ -199,6 +216,41 @@ def team_dir() -> Path:
     if raw:
         return Path(raw).expanduser()
     return Path.home() / ".daimon" / "team"
+
+
+def windsurf_state_dir() -> Path:
+    """Root of the Windsurf adapter's own state (#607). The adapter writes
+    FULL RAW TRANSCRIPTS here when Cascade gives it no native transcript, so
+    this is daimon-authored plaintext and inside the deletion contract —
+    unlike Codex rollouts or Claude Code JSONL, which daimon reads by path
+    and never copies. DAIMON_WINDSURF_DIR overrides (tests point it under
+    tmp; the hook hardcodes ~/.daimon/windsurf because it must run with no
+    package import at all)."""
+    raw = _get("DAIMON_WINDSURF_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".daimon" / "windsurf"
+
+
+def windsurf_state_days() -> int:
+    """#607: age window for daimon-authored Windsurf transcripts and unparsed
+    payload dumps. A privacy bound, not a disk bound: a forgotten value
+    cannot be located inside prose (the tombstone is a hash, never the
+    text), so between forgets this window is what limits how long the
+    source conversation lingers. 7 days rather than the chunk cache's 3 —
+    the transcript is what quote provenance resolves against, and
+    provenance already degrades to `absent-local` rather than failing when
+    it is gone. Override with DAIMON_WINDSURF_STATE_DAYS.
+
+    Clamped at 1 (the checkpoint_history / carry_max posture). Every other
+    DAIMON_WINDSURF_* knob reads 0 as "disable", so an unclamped 0 here
+    would make the cutoff `now` and delete the LIVE capture buffer at the
+    next heal — reading an ambiguous 0 as "delete everything" is the wrong
+    direction for a knob a user reaches for to turn something off."""
+    try:
+        return max(1, int(_get("DAIMON_WINDSURF_STATE_DAYS") or "7"))
+    except ValueError:
+        return 7
 
 
 def recall_db() -> Path:
