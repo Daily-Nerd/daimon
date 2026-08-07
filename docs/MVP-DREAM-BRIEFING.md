@@ -48,7 +48,7 @@ The hook scripts are standalone and **stdlib-only**: they run inside whatever in
 **Live-validation status per host (honest ladder — trust class applies to hosts too):**
 
 - **Claude Code — LIVE.** The only field-tested host: daily dogfood, full loop (serialize → carry → brief → recall), field incidents recorded in `research/LOGBOOK.md`.
-- **Codex — code-verified + unit-tested (`test_codex_hooks.py`), zero recorded live sessions.** The adapter and installer ship, but no LOGBOOK entry documents a real Codex session completing the capture → inject loop. Treat "runs on Codex" as INFERRED until one is on record.
+- **Codex — code-verified + unit-tested (`test_codex_hooks.py`), live-validated capture since 2026-08-06.** Real Codex sessions serialize into checkpoints (`codex-session-end` and throttled `codex-stop` entries in the maintainer serialize log; checkpoints keyed by rollout session id on record). One maintainer machine deep — not a fleet.
 - **Gemini — briefing hook shipped; serialize CANNOT run end-to-end today.** Capture is staged behind upstream `gemini-cli#14715` (`transcript_path` stub). Half a loop, by upstream constraint.
 - **Windsurf — adapter shipped and code-verified (native-transcript serialize, 0.8.0 #71; probe-hardened, 0.7.0 #63), live validation in progress.** No LOGBOOK entry yet documents a complete dogfooded loop the way Claude Code's does — treat end-to-end "runs on Windsurf" as INFERRED from code + unit tests until one is on record.
 - **hermes — secondary path (Appendix A), unit-tested against a fake host context only.** Never run under a real hermes-agent.

@@ -8,7 +8,7 @@ profundidad del soporte varía según los eventos de hook que cada host expone.
 | Host | Instalación | Captura | Inyección del briefing | Estado |
 |---|---|---|---|---|
 | [Claude Code](./claude-code.md) | Plugin (`/plugin install daimon@daimon`) o manual `hook/daimon-hooks.py install` | El hook `SessionEnd` lanza `daimon serialize` en segundo plano | El hook `SessionStart` inyecta el briefing; el hook `UserPromptSubmit` agrega recall proactivo | validado en uso real a diario |
-| [Codex](./codex.md) | Manual `hook/codex-hooks.py install` (desde un clon) | Hook `Stop` con throttle (Codex no tiene evento de fin de sesión) | El hook `SessionStart` inyecta vía `additionalContext` | publicado, a la espera de su primera ejecución real |
+| [Codex](./codex.md) | `daimon hooks install codex` | El hook `SessionEnd` serializa al cierre ordenado; el hook `Stop` con throttle cubre el resto | El hook `SessionStart` inyecta vía `additionalContext` | captura validada en uso real (desde 2026-08-06) |
 | [Gemini CLI](./gemini.md) | Manual `hook/gemini-hooks.py install` (desde un clon) | Bloqueado upstream (`gemini-cli#14715` — `transcript_path` es un stub vacío) | El hook `SessionStart` inyecta vía `additionalContext` | bloqueado upstream (`gemini-cli#14715`) |
 | [Windsurf (Cascade)](./windsurf.md) | `daimon hooks install windsurf` | Serialización con throttle en `pre_user_prompt` / `post_cascade_response(_with_transcript)` | Ninguna — Cascade no tiene evento equivalente a inicio de sesión; la skill instruye al agente a ejecutar `daimon brief --team` en la terminal al empezar | validado en uso real |
 

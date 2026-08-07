@@ -1,11 +1,15 @@
 # Codex
 
-Codex está verificado a nivel de código y con tests unitarios
-(`test_codex_hooks.py`), pero tiene cero sesiones reales registradas — el
-adaptador y el instalador están publicados, pero ninguna entrada del logbook
-documenta todavía una sesión real de Codex completando el ciclo de captura ->
-inyección. Trata "corre en Codex" como inferido hasta que haya una en
-registro.
+Codex está verificado a nivel de código, con tests unitarios
+(`test_codex_hooks.py`), y validado en vivo del lado de captura: sesiones
+reales de Codex se serializan a checkpoints desde el 2026-08-06 — el log de
+serialización del maintainer registra capturas tanto de `codex-session-end`
+como de `codex-stop` con throttling desde transcripts de rollout, y hay
+checkpoints en registro cuyo id de sesión es el archivo de rollout. El parser
+de transcripts sigue el formato de rollout de Codex a medida que deriva (los
+eventos `item_completed` de 0.147.0 se manejan desde daimon 0.27.0). Alcance
+declarado con honestidad: la validación tiene la profundidad de una sola
+máquina del maintainer, no de una flota.
 
 ## Instalación
 
@@ -16,8 +20,8 @@ publicado (sin necesidad de clonar el repo):
 daimon hooks install codex
 ```
 
-Esto copia ambos scripts de hook y su helper compartido a `~/.codex/hooks/` y
-registra `SessionStart` y `Stop` en `~/.codex/hooks.json`, preservando
+Esto copia los tres scripts de hook y su helper compartido a `~/.codex/hooks/` y
+registra `SessionStart`, `SessionEnd` y `Stop` en `~/.codex/hooks.json`, preservando
 cualquier entrada no relacionada que ya exista. Es idempotente — re-ejecútalo
 después de cada `uv tool upgrade daimon-briefing` para refrescar los scripts
 y que coincidan con el CLI instalado. Tras instalar, abre `/hooks` en Codex
@@ -51,6 +55,8 @@ python3 hook/codex-hooks.py status
 
 ## Qué hace cada script
 
+- **`daimon-codex-session-end.py`** — hook `SessionEnd`. Serializa la sesión
+  terminada en segundo plano cuando Codex la cierra de forma ordenada.
 - **`daimon-codex-session-start.py`** — hook `SessionStart`. Lee el último
   checkpoint del proyecto y devuelve JSON `additionalContext` de Codex, así
   el briefing se inyecta como contexto de desarrollo.
