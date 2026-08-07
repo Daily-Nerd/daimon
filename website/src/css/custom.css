@@ -175,10 +175,13 @@
 
 /* Receipt — the proof is the most legible text in the card. */
 .receipt {
-  display: inline-block;
+  display: block;
+  width: 100%;
   text-align: left;
   box-sizing: border-box;
-  max-width: 100%;
+  /* same 34rem column the install block sits on */
+  max-width: 34rem;
+  margin: 0 auto;
   background: var(--ifm-background-surface-color);
   border: 1px solid var(--dm-card-border);
   border-radius: 8px;
@@ -291,6 +294,10 @@
   line-height: 1.7;
 }
 .anatomySub { color: var(--ifm-color-emphasis-800); padding-left: var(--dm-space-4); }
+/* temporal cue — without it the before/after pair reads as a contradiction */
+.anatomyWhen { color: var(--ifm-color-emphasis-700); }
+.anatomyWhen + .anatomyLine { margin-bottom: var(--dm-space-1); }
+.anatomySub + .anatomyWhen { margin-top: var(--dm-space-3); }
 .defs { margin: var(--dm-space-6) 0 0; }
 .defRow { display: flex; flex-wrap: wrap; gap: var(--dm-space-3); margin-bottom: var(--dm-space-3); }
 .defRow:last-child { margin-bottom: 0; }
@@ -348,6 +355,9 @@
     mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
   .receipt > div, .replayLine, .anatomyLine { white-space: nowrap; }
+  /* the signature must never depend on a horizontal scroll.
+     Needs to outrank `.receipt > div` above, hence the two-class selector. */
+  .receipt > .receiptFoot { white-space: normal; }
   .receiptHead { gap: var(--dm-space-4); }
   /* small tier collapses 14 → 12 so the screen keeps 4 sizes */
   .heroEyebrow, .sectionTitle, .installBlock, .hostChip, .copyBtn, .cmdLabel,

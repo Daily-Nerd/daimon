@@ -3,7 +3,7 @@
     "message": "CLI de código abierto"
   },
   "landing.hero.title": {
-    "message": "Memoria que tu agente puede demostrar"
+    "message": "Memoria que cualquiera puede verificar"
   },
   "landing.hero.sub": {
     "message": "Otras herramientas de memoria dejan que el modelo califique su propia tarea. daimon te muestra la línea del transcript, la cita exacta y una firma que puedes verificar offline."

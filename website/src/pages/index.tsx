@@ -125,7 +125,7 @@ export default function Home(): ReactNode {
           <h1>
             {translate({
               id: 'landing.hero.title',
-              message: 'Memory your agent can prove',
+              message: 'Memory anyone can verify',
             })}
           </h1>
           <p className="subtitle">
@@ -174,6 +174,7 @@ export default function Home(): ReactNode {
               })}
             </p>
             <div className="anatomyCode">
+              <div className="anatomyLine anatomyWhen">at write time</div>
               <div className="anatomyLine">
                 <span className="tv">
                   <span aria-hidden="true">✔ </span>verbatim
@@ -183,6 +184,7 @@ export default function Home(): ReactNode {
               <div className="anatomyLine anatomySub">
                 <span aria-hidden="true">└ </span>transcript line 87 · sig 9f3c…a41b
               </div>
+              <div className="anatomyLine anatomyWhen">21 days later</div>
               <div className="anatomyLine">
                 <span className="ti">
                   <span aria-hidden="true">~ </span>inferred

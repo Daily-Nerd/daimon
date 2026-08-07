@@ -28,7 +28,8 @@ const LINES: ReactNode[] = [
   <span key="4" className="replayHead">
     … 20 more claims
   </span>,
-  <span key="5">signed ed25519 · sig 7e4c…02d1 · 19 verified, 3 downgraded, 1 flagged</span>,
+  <span key="5">signed ed25519 · sig 7e4c…02d1</span>,
+  <span key="6">19 verified, 3 downgraded, 1 flagged</span>,
 ];
 
 export default function VerifyReplay(): ReactNode {
