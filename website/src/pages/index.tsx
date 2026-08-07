@@ -16,15 +16,20 @@ const HOSTS = [
 
 const PYPI_VERSION = '0.26.0';
 
-function CopyCmd({
-  cmd,
-  label,
-  secondary,
-}: {
-  cmd: string;
-  label?: ReactNode;
-  secondary?: boolean;
-}): ReactNode {
+const ICON = {
+  viewBox: '0 0 24 24',
+  width: 18,
+  height: 18,
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.75,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+  'aria-hidden': true,
+  focusable: false,
+};
+
+function CopyCmd({cmd, label}: {cmd: string; label?: ReactNode}): ReactNode {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -41,7 +46,7 @@ function CopyCmd({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* clipboard unavailable — leave button label unchanged */
+      /* clipboard unavailable — leave the glyph unchanged */
     }
   };
   return (
@@ -51,12 +56,23 @@ function CopyCmd({
         <code>{cmd}</code>
         <button
           type="button"
-          className={secondary ? 'copyBtn copyBtnAlt' : 'copyBtn'}
-          aria-label={'copy: ' + cmd}
+          className={copied ? 'copyBtn copyBtnDone' : 'copyBtn'}
+          aria-label={
+            copied
+              ? translate({id: 'landing.copy.done', message: 'copied'})
+              : translate({id: 'landing.copy', message: 'copy'}) + ': ' + cmd
+          }
           onClick={copy}>
-          {copied
-            ? translate({id: 'landing.copy.done', message: 'copied'})
-            : translate({id: 'landing.copy', message: 'copy'})}
+          {copied ? (
+            <svg {...ICON}>
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          ) : (
+            <svg {...ICON}>
+              <rect x="9" y="9" width="11" height="11" rx="2.5" />
+              <path d="M5 15V5.5A2.5 2.5 0 0 1 7.5 3H15" />
+            </svg>
+          )}
         </button>
       </div>
     </div>
@@ -95,7 +111,6 @@ function InstallBlock(): ReactNode {
         />
         <CopyCmd
           cmd={`daimon hooks install ${host.id}`}
-          secondary
           label={translate(
             {id: 'landing.install.step2', message: '2 · connect it to {host}'},
             {host: host.label},
@@ -195,40 +210,45 @@ export default function Home(): ReactNode {
                 <span aria-hidden="true">└ </span>quote no longer matches · downgraded
                 automatically
               </div>
+              <dl className="anatomyDefs">
+                <div className="anatomyDefRow">
+                  <dt>
+                    {translate({id: 'landing.anatomy.class.term', message: 'class'})}
+                  </dt>
+                  <dd>
+                    <span aria-hidden="true">— </span>
+                    {translate({
+                      id: 'landing.anatomy.class',
+                      message: 'earned by checking, never self-declared',
+                    })}
+                  </dd>
+                </div>
+                <div className="anatomyDefRow">
+                  <dt>
+                    {translate({id: 'landing.anatomy.words.term', message: 'exact words'})}
+                  </dt>
+                  <dd>
+                    <span aria-hidden="true">— </span>
+                    {translate({
+                      id: 'landing.anatomy.words',
+                      message: 'quoted from the transcript, not paraphrased',
+                    })}
+                  </dd>
+                </div>
+                <div className="anatomyDefRow">
+                  <dt>
+                    {translate({id: 'landing.anatomy.receipt.term', message: 'receipt'})}
+                  </dt>
+                  <dd>
+                    <span aria-hidden="true">— </span>
+                    {translate({
+                      id: 'landing.anatomy.receipt',
+                      message: 'the line number and signature you can look up',
+                    })}
+                  </dd>
+                </div>
+              </dl>
             </div>
-            <dl className="defs">
-              <div className="defRow">
-                <dt>{translate({id: 'landing.anatomy.class.term', message: 'class'})}</dt>
-                <dd>
-                  {translate({
-                    id: 'landing.anatomy.class',
-                    message: 'earned by checking, never self-declared',
-                  })}
-                </dd>
-              </div>
-              <div className="defRow">
-                <dt>
-                  {translate({id: 'landing.anatomy.words.term', message: 'exact words'})}
-                </dt>
-                <dd>
-                  {translate({
-                    id: 'landing.anatomy.words',
-                    message: 'quoted from the transcript, not paraphrased',
-                  })}
-                </dd>
-              </div>
-              <div className="defRow">
-                <dt>
-                  {translate({id: 'landing.anatomy.receipt.term', message: 'receipt'})}
-                </dt>
-                <dd>
-                  {translate({
-                    id: 'landing.anatomy.receipt',
-                    message: 'the line number and signature you can look up',
-                  })}
-                </dd>
-              </div>
-            </dl>
           </div>
         </section>
         <section className="sectionBand bandClose">

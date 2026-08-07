@@ -19,7 +19,6 @@
   --dm-card-border: #d0d7de;
   --dm-terminal-bg: #eceff2;
   --dm-accent-wash: rgba(15, 118, 110, 0.12);
-  --dm-on-accent: #ffffff;
   /* spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 px */
   --dm-space-1: 0.25rem;
   --dm-space-2: 0.5rem;
@@ -44,7 +43,6 @@
   --dm-card-border: #30363d;
   --dm-terminal-bg: #0d1117;
   --dm-accent-wash: rgba(0, 212, 170, 0.12);
-  --dm-on-accent: #08211d;
   --docusaurus-highlighted-code-line-bg: rgba(0, 212, 170, 0.08);
 }
 
@@ -150,20 +148,23 @@
 }
 .copyBtn {
   flex: none;
-  min-height: 44px;
-  border: 1px solid var(--ifm-color-primary);
+  /* pinned to the right edge of the command row */
+  margin-left: auto;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--dm-card-border);
   border-radius: 8px;
-  background: var(--ifm-color-primary);
-  color: var(--dm-on-accent);
-  font-size: 0.875rem;
-  font-weight: 600;
-  padding: 0 var(--dm-space-4);
+  background: none;
+  color: var(--ifm-color-emphasis-800);
   cursor: pointer;
 }
-.copyBtn:hover { background: var(--ifm-color-primary-dark); border-color: var(--ifm-color-primary-dark); }
+.copyBtn:hover { background: var(--dm-accent-wash); border-color: var(--ifm-color-primary); color: var(--ifm-color-primary); }
 .copyBtn:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
-.copyBtnAlt { background: none; color: var(--ifm-color-primary); }
-.copyBtnAlt:hover { background: var(--dm-accent-wash); border-color: var(--ifm-color-primary); }
+.copyBtnDone { border-color: var(--ifm-color-primary); color: var(--ifm-color-primary); }
 .quietLink {
   display: inline-flex;
   align-items: center;
@@ -298,11 +299,15 @@
 .anatomyWhen { color: var(--ifm-color-emphasis-700); }
 .anatomyWhen + .anatomyLine { margin-bottom: var(--dm-space-1); }
 .anatomySub + .anatomyWhen { margin-top: var(--dm-space-3); }
-.defs { margin: var(--dm-space-6) 0 0; }
-.defRow { display: flex; flex-wrap: wrap; gap: var(--dm-space-3); margin-bottom: var(--dm-space-3); }
-.defRow:last-child { margin-bottom: 0; }
-.defs dt { font-weight: 600; }
-.defs dd { margin: 0; color: var(--ifm-color-emphasis-800); }
+/* Definitions live inside the card, separated by the same 1px rule the receipt uses. */
+.anatomyDefs {
+  margin: var(--dm-space-2) 0 0;
+  padding-top: var(--dm-space-2);
+  border-top: 1px solid var(--dm-card-border);
+}
+.anatomyDefRow { display: flex; gap: var(--dm-space-1); }
+.anatomyDefs dt { color: var(--ifm-color-emphasis-800); font-weight: 600; }
+.anatomyDefs dd { margin: 0; color: var(--ifm-color-emphasis-700); }
 
 /* Close — conviction, then the command again, then quiet facts. */
 .convictionLine {
@@ -354,12 +359,12 @@
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
-  .receipt > div, .replayLine, .anatomyLine { white-space: nowrap; }
+  .receipt > div, .replayLine, .anatomyLine, .anatomyDefRow { white-space: nowrap; }
   /* the signature must never depend on a horizontal scroll.
      Needs to outrank `.receipt > div` above, hence the two-class selector. */
   .receipt > .receiptFoot { white-space: normal; }
   .receiptHead { gap: var(--dm-space-4); }
   /* small tier collapses 14 → 12 so the screen keeps 4 sizes */
-  .heroEyebrow, .sectionTitle, .installBlock, .hostChip, .copyBtn, .cmdLabel,
+  .heroEyebrow, .sectionTitle, .installBlock, .hostChip, .cmdLabel,
   .quietLink, .chip, .replayBar, .replayBtn, .closeInstall, .factRow { font-size: 0.75rem; }
 }
