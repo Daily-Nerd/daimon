@@ -64,12 +64,13 @@ def test_windsurf_state_is_declared_not_invisible():
     """Adversarial finding (BLOCKER): the windsurf adapter accumulates FULL
     RAW TRANSCRIPTS under ~/.daimon/windsurf/transcripts — the largest
     plaintext store daimon writes, and the registry claimed completeness
-    without it. Declared as the #607 gap; the activity stamps and installed
-    hook copies hold no item text."""
+    without it. #607 brought it inside the contract (wholesale purge on
+    forget, age reaper on heal); the activity stamps and installed hook
+    copies hold no item text."""
     t = surfaces.match("windsurf/transcripts/traj-1.md")
-    assert t is not None and t.delete == "known-gap" and t.issue == "#607"
+    assert t is not None and t.delete == "wholesale-purge"
     u = surfaces.match("windsurf/unparsed-post_cascade_response-123.json")
-    assert u is not None and u.delete == "known-gap" and u.issue == "#607"
+    assert u is not None and u.delete == "wholesale-purge"
     assert surfaces.match("windsurf/traj-1.last-activity").delete \
         == "exempt-no-plaintext"
     assert surfaces.match("windsurf/traj-1.last-serialize").delete \

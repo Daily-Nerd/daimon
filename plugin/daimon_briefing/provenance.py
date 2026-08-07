@@ -47,6 +47,20 @@ def valid_session_id(value) -> bool:
     return isinstance(value, str) and _SESSION_RE.fullmatch(value) is not None
 
 
+def _daimon_windsurf_transcripts(home: Path) -> Path:
+    """The daimon-authored Windsurf transcript root, resolved the same way
+    the hook that writes it and the purge that deletes it resolve it (#607).
+    Hardcoding home here would put a THIRD component out of step with the
+    other two: with DAIMON_WINDSURF_DIR set, every Windsurf receipt would
+    report absent-local over a transcript sitting on disk. `home` stays a
+    parameter so the injected-home tests keep working when the var is
+    unset."""
+    raw = (os.environ.get("DAIMON_WINDSURF_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser() / "transcripts"
+    return home / ".daimon" / "windsurf" / "transcripts"
+
+
 def _under(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.expanduser().resolve())
@@ -78,7 +92,7 @@ def infer_host(transcript_path, *, home=None, codex_home=None,
             or _under(path, codex_home / "archived_sessions")):
         return "codex", "managed"
     if (_under(path, home / ".windsurf" / "transcripts")
-            or _under(path, home / ".daimon" / "windsurf" / "transcripts")):
+            or _under(path, _daimon_windsurf_transcripts(home))):
         return "windsurf", "managed"
     return "manual", "unsupported"
 
@@ -254,7 +268,7 @@ class SourceResolver:
                     self.codex_home / "archived_sessions")
         if host == "windsurf":
             return (self.home / ".windsurf" / "transcripts",
-                    self.home / ".daimon" / "windsurf" / "transcripts")
+                    _daimon_windsurf_transcripts(self.home))
         return None
 
     def _candidates(self, source: dict) -> list[Path] | None:
@@ -277,7 +291,7 @@ class SourceResolver:
             if host == "windsurf":
                 return [
                     self.home / ".windsurf" / "transcripts" / f"{sid}.jsonl",
-                    self.home / ".daimon" / "windsurf" / "transcripts" / f"{sid}.md",
+                    _daimon_windsurf_transcripts(self.home) / f"{sid}.md",
                 ]
         except OSError:
             return []

@@ -127,6 +127,8 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Codex serialize spawns. `0` serializes on every `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Windsurf serialize spawns (Windsurf has no session-end event, so capture runs on this throttle). `0` serializes every turn. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
+| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Where the Windsurf adapter keeps the transcripts it accumulates. Read by both the hook that writes them and the `forget`/`heal` paths that delete them — change it in one place only, or the writer and the deleter stop agreeing. |
+| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Age window for daimon-authored Windsurf transcripts and unparsed payload dumps, reaped by `daimon heal`. A privacy bound: a forgotten value cannot be located inside prose, so this limits how long the source conversation lingers between `forget` runs. Clamped to at least 1 — unlike the other Windsurf knobs, `0` does not disable it. |
 
 ## Ops & diagnostics
 

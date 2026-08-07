@@ -445,6 +445,99 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
     return rewritten
 
 
+# Daimon-authored Windsurf state that holds conversation text (#607). The
+# activity/serialize stamps beside it are epoch integers and stay.
+_WINDSURF_TEXT_GLOBS = ("transcripts/*.md", "unparsed-*.json")
+
+
+def _windsurf_text_files() -> list:
+    """Containment before deletion: a symlinked `transcripts` directory
+    would otherwise have the purge unlink files outside the state root
+    entirely. provenance.SourceResolver already resolves-and-contains
+    before merely READING this directory; the deleting path must not be
+    laxer than the reading one."""
+    root = config.windsurf_state_dir()
+    try:
+        real_root = root.resolve()
+    except OSError:
+        return []
+    out: list = []
+    for pattern in _WINDSURF_TEXT_GLOBS:
+        for path in root.glob(pattern):
+            try:
+                if not path.is_file():
+                    continue
+                if real_root not in path.resolve().parents:
+                    continue
+            except OSError:
+                continue
+            out.append(path)
+    return sorted(set(out))
+
+
+def purge_windsurf_state() -> tuple:
+    """#607: wholesale removal of the transcripts the Windsurf adapter wrote.
+
+    `daimon forget` calls this after the tombstone+rewrite, for the same
+    reason it purges the chunk cache (#422): the value cannot be located
+    selectively. A transcript is prose, the forgotten sentence is a
+    substring of a line, and the tombstone is a canonical HASH — forget
+    stores the key and never the text (#321), so no component downstream
+    holds the plaintext a substring search would need. Detection is
+    impossible by construction, so the whole store goes.
+
+    Accepted cost: quote provenance resolving against these files reports
+    `absent-local` afterward — a state provenance.SourceResolver already
+    models, so a purged transcript degrades a receipt rather than breaking
+    it. Host-authored transcripts (Codex rollouts, Claude Code JSONL) are
+    untouched: daimon reads those by path and never copies them, so they
+    are not daimon's to delete — and `forget` has never removed them.
+
+    Returns (purged_count, error_or_None) and NEVER raises: deleting belief
+    state is the primary contract; a failed purge is reported, not fatal."""
+    try:
+        targets = _windsurf_text_files()
+    except OSError as e:
+        return 0, str(e)
+    purged, error = 0, None
+    for path in targets:
+        try:
+            path.unlink()
+            purged += 1
+        except OSError as e:
+            error = error or str(e)
+    return purged, error
+
+
+def reap_windsurf_state(now: float | None = None, apply: bool = True) -> list:
+    """#607: age-bound what accumulates between forgets.
+
+    The purge above only fires when someone runs `forget`; without a window
+    the adapter's transcript store grows without limit, and every turn of
+    every conversation stays on disk forever. config.windsurf_state_days()
+    (default 7) is that bound — a privacy window, not a disk one. Wired
+    into `daimon heal` beside the index-snapshot reap; `apply=False` lists
+    only (heal --dry-run). Best-effort per file."""
+    if now is None:
+        now = time.time()
+    cutoff = now - config.windsurf_state_days() * 86400
+    reaped: list = []
+    try:
+        targets = _windsurf_text_files()
+    except OSError:
+        return reaped
+    for path in targets:
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+            if apply:
+                path.unlink()
+        except OSError:
+            continue
+        reaped.append(path)
+    return reaped
+
+
 # #600 slice B: the per-author tombstone ledger published into the team
 # mirror. `.jsonl`, so every `*.json` walk in the codebase (read_team,
 # privacy's team scan, recall's fingerprint) steps over it by construction,

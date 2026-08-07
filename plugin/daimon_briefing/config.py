@@ -218,6 +218,41 @@ def team_dir() -> Path:
     return Path.home() / ".daimon" / "team"
 
 
+def windsurf_state_dir() -> Path:
+    """Root of the Windsurf adapter's own state (#607). The adapter writes
+    FULL RAW TRANSCRIPTS here when Cascade gives it no native transcript, so
+    this is daimon-authored plaintext and inside the deletion contract —
+    unlike Codex rollouts or Claude Code JSONL, which daimon reads by path
+    and never copies. DAIMON_WINDSURF_DIR overrides (tests point it under
+    tmp; the hook hardcodes ~/.daimon/windsurf because it must run with no
+    package import at all)."""
+    raw = _get("DAIMON_WINDSURF_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".daimon" / "windsurf"
+
+
+def windsurf_state_days() -> int:
+    """#607: age window for daimon-authored Windsurf transcripts and unparsed
+    payload dumps. A privacy bound, not a disk bound: a forgotten value
+    cannot be located inside prose (the tombstone is a hash, never the
+    text), so between forgets this window is what limits how long the
+    source conversation lingers. 7 days rather than the chunk cache's 3 —
+    the transcript is what quote provenance resolves against, and
+    provenance already degrades to `absent-local` rather than failing when
+    it is gone. Override with DAIMON_WINDSURF_STATE_DAYS.
+
+    Clamped at 1 (the checkpoint_history / carry_max posture). Every other
+    DAIMON_WINDSURF_* knob reads 0 as "disable", so an unclamped 0 here
+    would make the cutoff `now` and delete the LIVE capture buffer at the
+    next heal — reading an ambiguous 0 as "delete everything" is the wrong
+    direction for a knob a user reaches for to turn something off."""
+    try:
+        return max(1, int(_get("DAIMON_WINDSURF_STATE_DAYS") or "7"))
+    except ValueError:
+        return 7
+
+
 def recall_db() -> Path:
     """Location of the derived recall index (#112). NEVER source of truth —
     safe to delete at any time; recall rebuilds it by scanning the local flat
