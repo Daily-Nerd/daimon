@@ -191,6 +191,23 @@ def team_enabled() -> bool:
     return _flag("DAIMON_TEAM")
 
 
+def team_apply_forget() -> bool:
+    """#600 slice B: may a TEAMMATE's forget rewrite this machine's own
+    checkpoints? Default NO — a foreign tombstone suppresses on read and in
+    the index (the admit_foreign posture), but never deletes local belief
+    state. Turning this on hands every member of the sidecar a delete
+    primitive over your memory, and the shared branch is append-only, so
+    there is no undo; that is a decision to make knowingly, not one to
+    inherit from a `git pull`. Same default-closed posture as #279 scope.
+
+    Standing consent only — it is NOT sufficient on its own. The apply also
+    needs `daimon team sync --apply-forget`, because a bare `daimon team
+    sync` is spawned DETACHED at SessionStart (lib.spawn_team_sync, stdout
+    to DEVNULL) exactly like heal: a setting alone would delete local belief
+    state unattended and silently."""
+    return _flag("DAIMON_TEAM_APPLY_FORGET")
+
+
 def team_dir() -> Path:
     """Root of the shared team-memory mirror. Sibling of the checkpoint dir under
     ~/.daimon by default; DAIMON_TEAM_DIR overrides (tests point it under tmp so no

@@ -445,6 +445,164 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
     return rewritten
 
 
+# #600 slice B: the per-author tombstone ledger published into the team
+# mirror. `.jsonl`, so every `*.json` walk in the codebase (read_team,
+# privacy's team scan, recall's fingerprint) steps over it by construction,
+# and it sits INSIDE the own-author dir so teamsync._commit_own carries it
+# with no protocol change.
+_TOMBSTONE_NAME = "tombstones.jsonl"
+
+
+def _own_team_dirs(project_dir=None) -> list:
+    """This author's directories in every sidecar the project routes to —
+    the same identity and routing _dual_write_team writes checkpoints with,
+    so a published tombstone lands where the sync already looks."""
+    own = project_slug(config.author()) or "unknown"
+    segs = teamproject.resolve(project_dir)
+    out = []
+    for slug in _team_write_slugs(project_dir):
+        base = config.team_dir() / slug
+        if segs:
+            base = base.joinpath("projects", *segs)
+        out.append(base / "authors" / own)
+    return out
+
+
+def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
+    """Publish a forget so teammates can act on it (#600 slice B).
+
+    A hash-only row — {ts, key, author}, never the text (#321) — appended
+    to the author's own tombstone ledger in each sidecar this project
+    routes to. Append-only and idempotent: a key already present is not
+    re-appended, so repeated forgets of the same value do not grow the
+    file, and re-publishing after a pull is a no-op.
+
+    Gated on config.team_enabled(): nothing is published into a team the
+    user has not opted into. Best-effort — a failed publish never costs the
+    local deletion, which already happened by the time this runs."""
+    if not content_hash or not config.team_enabled():
+        return []
+    written: list[str] = []
+    row = json.dumps({
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "key": content_hash,
+        "author": config.author(),
+    }, ensure_ascii=False)
+    for adir in _own_team_dirs(project_dir):
+        path = adir / _TOMBSTONE_NAME
+        try:
+            if path.exists() and content_hash in _tombstone_keys(path):
+                continue
+            adir.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(row + "\n")
+        except OSError:
+            continue
+        written.append(str(path))
+    return written
+
+
+# One ledger is read on the briefing path, so it cannot be unbounded: a
+# teammate publishing a huge file must not make every read pay for it.
+# ~1 MB is ~12k rows, far past any real forget history.
+_MAX_TOMBSTONE_BYTES = 1_000_000
+
+
+def _tombstone_keys(path) -> set[str]:
+    keys: set[str] = set()
+    try:
+        if path.stat().st_size > _MAX_TOMBSTONE_BYTES:
+            log.warning("daimon team: %s exceeds %d bytes — reading the "
+                        "first %d only", path.name, _MAX_TOMBSTONE_BYTES,
+                        _MAX_TOMBSTONE_BYTES)
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                raw = f.read(_MAX_TOMBSTONE_BYTES)
+        else:
+            raw = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return keys
+    for line in raw.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue          # a corrupt row must not hide the rest
+        if isinstance(row, dict):
+            key = row.get("key")
+            if isinstance(key, str) and key.strip():
+                keys.add(key.strip())
+    return keys
+
+
+def foreign_forgotten_content_keys() -> set[str]:
+    """Tombstone keys published by OTHER authors in synced sidecars.
+
+    Own rows are excluded, and that exclusion is load-bearing rather than
+    tidiness: the local ledger is a latest-event-wins fold, so a `reopen`
+    lifts a local tombstone — but a published row has no retraction. Folding
+    your own rows back in would let a key you deliberately reopened suppress
+    the value forever, and (with the opt-in on) re-scrub it on every sync,
+    because reopen removes it from apply_foreign_tombstones' local subtrahend.
+
+    The machine-local mirror is excluded for the same reason: nothing there
+    is another author's, it never syncs, and a solo user with DAIMON_TEAM=1
+    would otherwise poison their own reopen through a dead-end path.
+
+    Bounded on purpose: only `authors/*/` directories inside real sidecars
+    are walked, so a clone's .git object store is never traversed, and each
+    ledger is capped — a teammate cannot make every briefing pay for an
+    unbounded file. Never raises."""
+    keys: set[str] = set()
+    own = project_slug(config.author()) or "unknown"
+    try:
+        remotes = [d for d in config.team_dir().iterdir()
+                   if d.is_dir() and d.name != _TEAM_LOCAL_REMOTE]
+    except OSError:
+        return keys
+    for remote in remotes:
+        try:
+            paths = [p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
+                     if p.parent.name != own]
+        except OSError:
+            continue
+        for path in paths:
+            keys |= _tombstone_keys(path)
+    return keys
+
+
+def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
+    """Opt-in (#600 slice B): rewrite THIS machine's own checkpoints under
+    a teammate's tombstone.
+
+    Off by default and deliberately so — see config.team_apply_forget. When
+    off this is a pure no-op that returns [], which is the whole authority
+    guarantee: a teammate writing a hash cannot delete local belief state,
+    it can only stop that value being read (the suppression path, which is
+    always on).
+
+    Returns the surfaces rewritten. The keys are the foreign ledger minus
+    what this project already tombstoned locally — re-applying a local
+    forget would be work without effect."""
+    if not config.team_apply_forget():
+        return []
+    if all_projects:
+        try:
+            targets = [d.name for d in config.checkpoint_dir().iterdir()
+                       if d.is_dir() and d.name != ".chunk-cache"]
+        except OSError:
+            targets = []
+    else:
+        targets = [project_dir]
+    foreign = foreign_forgotten_content_keys()
+    rewritten: list[str] = []
+    for target in targets:
+        # Per project, minus what that project already tombstoned locally:
+        # re-applying a local forget is work without effect, and a project
+        # that REOPENED a value must not have it scrubbed by a stale row.
+        for key in sorted(foreign - forgotten_content_keys(target)):
+            rewritten.extend(scrub_content_key(key, project_dir=target))
+    return rewritten
+
+
 def checkpoints_written_since(cutoff: float) -> int:
     """How many per-session checkpoints were WRITTEN since `cutoff` (epoch
     seconds), counted by file mtime — the write-side signal for the silent-
@@ -1057,7 +1215,11 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
     candidates = teamproject.read_candidates(project_dir)
-    forgotten = forgotten_content_keys(project_dir)
+    # #600 slice B: a teammate's published tombstone suppresses their value
+    # here too. Always on — suppression is not deletion, it costs a teammate
+    # nothing but the sight of a value they asked to be forgotten, and their
+    # own scrubbed file may not have reached this clone yet.
+    forgotten = forgotten_content_keys(project_dir) | foreign_forgotten_content_keys()
     self_author = project_slug(config.author())
     # author-slug (dir identity, one per author) -> (recency, author, checkpoint)
     best: dict[str, tuple[float, str, dict]] = {}

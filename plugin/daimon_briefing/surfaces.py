@@ -111,6 +111,12 @@ SURFACES: tuple[Surface, ...] = (
             False, "exempt-no-plaintext", "none"),
     Surface("team/{remote}/daimon-team.toml", "teamsync.init",
             False, "exempt-no-plaintext", "none"),
+    # #600 slice B: the published tombstone ledger — {ts, key, author}, the
+    # canonical hash and never the text (#321), the same posture
+    # forget-hits.jsonl takes locally. Deliberately BEFORE the json entry
+    # and named `.jsonl` so no `*.json` walk claims it.
+    Surface("team/{remote}/**/tombstones.jsonl", "store.publish_tombstone",
+            False, "exempt-no-plaintext", "none"),
     Surface("team/{remote}/**/*.json", "store._dual_write_team",
             True, "known-gap", "audit", issue="#600"),
     Surface("team/{remote}/.git/**", "git (teamsync subprocess)",
