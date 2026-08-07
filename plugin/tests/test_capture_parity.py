@@ -49,9 +49,13 @@ _PREV = {
 # - a supersedes link with a free-text target that uniquely matches the prev
 #   decision -> bind_links pair -> supersede-candidate event in events.jsonl;
 # - a verbatim item whose quote is NOT in the transcript -> quote_verified
-#   False -> a #376 rejection row in verification.jsonl. (Deliberately no
-#   verbatim item whose quote WOULD verify: a hit stamps wall-clock
-#   `last_verified`, which would be flaky noise here, not signal.)
+#   False -> a #376 rejection row in verification.jsonl;
+# - a verbatim item whose quote DOES verify. This one was deliberately
+#   absent until #604 because a hit stamped wall-clock `last_verified`.
+#   That workaround never covered the whole hazard — #595 put a wall-clock
+#   receipt on the MISS path too, which is how this guard started failing
+#   1-3 runs in 40 on the case it thought was safe. Verification stamps are
+#   threaded from the transcript clock now, so the hit belongs here.
 _NEW_CP = json.dumps({
     "session_id": SESSION,
     "working_context": {
@@ -59,6 +63,8 @@ _NEW_CP = json.dumps({
         "open_questions": [
             {"text": "PR #6 state", "trust": "verbatim",
              "quote": "this quote appears nowhere in the transcript"},
+            {"text": "what turn 0 said", "trust": "verbatim",
+             "quote": "turn 0"},
         ],
         "recent_decisions": [
             {"text": "postgres replaces the old lookup store",
