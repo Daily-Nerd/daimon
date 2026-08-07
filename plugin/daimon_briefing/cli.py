@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1061,6 +1062,10 @@ def _cmd_forget(args) -> int:
     # propagation), not a local rewrite's.
     team_scrubbed = store.scrub_team_copies(content_hash,
                                             project_dir=project)
+    # #600 slice B: publish the deletion itself (hash only) so teammates can
+    # suppress the value without waiting to pull the scrubbed file — and so
+    # a copy THEY extracted independently can be acted on at all.
+    store.publish_tombstone(content_hash, project_dir=project)
     # #599: rows appended BEFORE this forget can carry the value in
     # `item_text`/`status`/`note` — redacted in place, rows never dropped
     # (the one ratified rewrite of the append-only ledger).
@@ -1077,6 +1082,23 @@ def _cmd_forget(args) -> int:
         purged, purge_err = serializer.purge_chunk_cache()
     except Exception as e:  # belt: purge_chunk_cache itself never raises
         purged, purge_err = 0, str(e)
+    # #607: the Windsurf adapter writes its own transcripts when Cascade
+    # gives it none — daimon-authored plaintext, so inside the contract.
+    # Wholesale for the same reason as the chunk cache: the tombstone is a
+    # hash, so a value inside prose cannot be located to remove selectively.
+    try:
+        ws_purged, ws_err = store.purge_windsurf_state()
+    except Exception as e:  # belt: purge_windsurf_state never raises
+        ws_purged, ws_err = 0, str(e)
+    # #605: serialize-crash.log is the detached child's RAW stderr — an
+    # uncaught traceback carries whatever the crashing frame held, and the
+    # bytes were never scrubbed (status redacted its tail on READ, #513, over
+    # a file nothing deleted). Wholesale like the two purges above: the
+    # tombstone is a hash, so a value inside a traceback cannot be located.
+    try:
+        crash_purged, crash_err = store.purge_crash_log()
+    except Exception as e:  # belt: purge_crash_log never raises
+        crash_purged, crash_err = 0, str(e)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
@@ -1094,6 +1116,32 @@ def _cmd_forget(args) -> int:
     else:
         print(f"purged {purged} cached chunk extraction(s) "
               "(pre-redaction serializer cache)")
+    if ws_err is not None:
+        print(f"warning: windsurf transcript purge failed: {ws_err} — "
+              "daimon-authored conversation text may persist up to "
+              f"{config.windsurf_state_days()} day(s) (age reaper)")
+    else:
+        # Always printed, like the chunk-cache line: a silent zero is how a
+        # misconfigured store (writer and deleter disagreeing about the
+        # directory) stays invisible. The scope note is not decoration —
+        # the store is keyed by trajectory and carries no project
+        # attribution, so this purge is machine-wide by construction.
+        print(f"purged {ws_purged} daimon-authored windsurf transcript "
+              "file(s) across all projects (machine-wide: the store is keyed "
+              "by trajectory, not project); host-authored transcripts are "
+              "untouched")
+    if crash_err is not None:
+        print(f"warning: crash log purge failed: {crash_err} — serializer "
+              "tracebacks may persist (bounded to a trimmed tail at the next "
+              "spawn, never removed)")
+    else:
+        # Printed even at zero, like the two lines above: a silent zero is
+        # how a writer and a deleter disagreeing about DAIMON_LOG_DIR stays
+        # invisible. One crash log per machine, so the scope note is the
+        # same honesty the windsurf line owes.
+        print(f"purged {crash_purged} serializer crash log(s) across all "
+              "projects (machine-wide: the log is raw child stderr, not "
+              "keyed by project)")
     return 0
 
 
@@ -2324,6 +2372,11 @@ def _cmd_heal(args) -> int:
     for p in recall.reap_dead_snapshots(apply=not dry_run):
         print(f"{'would reap' if dry_run else 'reaped'} "
               f"dead index snapshot: {p.name}")
+    # #607: same repair charter — bound how long daimon-authored Windsurf
+    # conversation text lingers between forgets.
+    for p in store.reap_windsurf_state(apply=not dry_run):
+        print(f"{'would reap' if dry_run else 'reaped'} "
+              f"aged windsurf transcript: {p.name}")
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
@@ -2382,6 +2435,23 @@ def _cmd_team_sync(args) -> int:
         render.render_team_sync(["daimon team: git not found on PATH — sync skipped"])
         return 0
     reports = teamsync.sync()
+    # #600 slice B, opt-in: apply teammates' tombstones to THIS machine's own
+    # checkpoints. TWO gates, and the flag is the load-bearing one: bare
+    # `daimon team sync` is spawned DETACHED at SessionStart by
+    # lib.spawn_team_sync with stdout to DEVNULL, exactly like heal — so a
+    # setting alone would delete local belief state unattended and silently,
+    # which is the failure this design exists to prevent. The hook never
+    # passes --apply-forget, so only a typed command can reach this.
+    # Machine-wide, matching sync's own project-agnostic contract.
+    if getattr(args, "apply_forget", False):
+        if not config.team_apply_forget():
+            print("daimon team: --apply-forget needs DAIMON_TEAM_APPLY_FORGET=1"
+                  " — a teammate's forget rewriting your own checkpoints is"
+                  " opt-in, and there is no undo", file=sys.stderr)
+        else:
+            applied = store.apply_foreign_tombstones(all_projects=True)
+            print(f"applied teammates' forget tombstones to {len(applied)} "
+                  "local surface(s) across all projects")
     # #246: fetched teammate files are fingerprint input — freshen here (the
     # SessionStart hook spawns sync detached, off the prompt path) so the
     # first recall after a fetch doesn't pay the rebuild. Unconditional on
@@ -3329,13 +3399,30 @@ def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
     """Uncaught-crash header (#92): serialize-crash.log is the detached
     child's RAW stderr fd — no logger sits in the write path, so the only
     process that can timestamp a crash is the crashing one. One ISO-stamped
-    line, then the stock traceback. Covers uncaught Python exceptions (the
-    dominant case); interpreter-level deaths still write nothing."""
+    line, then the traceback. Covers uncaught Python exceptions (the
+    dominant case); interpreter-level deaths still write nothing.
+
+    #605: the traceback is formatted HERE rather than handed to
+    sys.__excepthook__, so it can pass through redact_text on the way out.
+    The crashing process is the only one that can scrub these bytes — for
+    the same reason it is the only one that can stamp them — and #513
+    redacted the tail on READ over a file nothing deleted. Item text still
+    survives (redaction catches secrets, not beliefs), which is why the
+    purge above it is wholesale.
+
+    Fail-open, redact.py's own posture: anything that goes wrong formatting
+    or redacting falls back to the stock hook, because a swallowed traceback
+    is a crash nobody can diagnose."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cmd = next((a for a in sys.argv[1:] if not a.startswith("-")), "?")
     print(f"--- crash {stamp} pid={os.getpid()} cmd={cmd} ---",
           file=sys.stderr, flush=True)
-    sys.__excepthook__(exc_type, exc, tb)
+    try:
+        formatted = "".join(traceback.format_exception(exc_type, exc, tb))
+        redacted, _ = redact.redact_text(formatted)
+        print(redacted, end="", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001 — see fail-open above
+        sys.__excepthook__(exc_type, exc, tb)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3717,6 +3804,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--project",
         help="accepted for CLI symmetry; sync is currently project-agnostic "
              "(all own checkpoints sync regardless of project)",
+    )
+    pt_sync.add_argument(
+        "--apply-forget", action="store_true", dest="apply_forget",
+        help="also rewrite THIS machine's checkpoints under teammates' forget "
+             "tombstones (#600). Requires DAIMON_TEAM_APPLY_FORGET=1; typed "
+             "only — the SessionStart hook spawns a bare sync, so this can "
+             "never delete your belief state unattended",
     )
     pt_sync.set_defaults(func=_cmd_team_sync)
     pt_status = team_sub.add_parser(

@@ -90,6 +90,7 @@ para el flujo completo.
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Raíz del mirror de memoria de equipo compartida. |
 | `DAIMON_TEAM_PROJECT` | sin definir | Ruta lógica de proyecto explícita para las sesiones de esta máquina (relativa, p. ej. `core/api-gateway`). Prevalece sobre el mapeo de `daimon-team.toml` del sidecar y sobre el fallback derivado del origin al enrutar checkpoints bajo `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Ventana de edad al leer: los checkpoints de compañeros más viejos que esta cantidad de días se omiten al leer. `0` = conservar todos. Nunca borra físicamente de la rama compartida de solo-anexado. |
+| `DAIMON_TEAM_APPLY_FORGET` | off | Consentimiento permanente para que el tombstone de olvido publicado por un COMPAÑERO reescriba los checkpoints propios de esta máquina. NO alcanza por sí solo — el borrado además exige el `daimon team sync --apply-forget` escrito a mano, porque un `daimon team sync` pelado se lanza en segundo plano al iniciar la sesión. Por defecto apagado: un tombstone ajeno siempre suprime el valor al leer y en el índice, pero borrar estado local a partir del hash de otra persona es una decisión que se toma a conciencia — la rama compartida es de solo-anexado, así que no hay vuelta atrás. |
 
 ## Receipts
 
@@ -133,12 +134,14 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Codex. `0` serializa en cada `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Windsurf (Windsurf no tiene evento de fin de sesión, así que la captura corre con este throttle). `0` serializa cada turno. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Periodo de silencio tras la última actividad de Windsurf antes de que un finalizador con debounce serialice el estado final del transcript de la trayectoria — cubre sesiones cuyos últimos turnos caen dentro de la ventana del throttle. Acepta valores fraccionarios; `0` desactiva el finalizador. |
+| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Dónde guarda el adaptador de Windsurf los transcripts que acumula. Lo leen tanto el hook que los escribe como las rutas de `forget`/`heal` que los borran — cámbialo en un solo sitio, o el que escribe y el que borra dejan de coincidir. |
+| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Ventana de antigüedad para los transcripts de Windsurf que escribe daimon y los volcados `unparsed`, recogidos por `daimon heal`. Es un límite de privacidad: un valor olvidado no puede localizarse dentro de la prosa, así que esto acota cuánto tiempo permanece la conversación de origen entre ejecuciones de `forget`. Con mínimo 1 — a diferencia de los otros ajustes de Windsurf, `0` no lo desactiva. |
 
 ## Operación y diagnóstico
 
 | Variable | Default | Qué hace |
 |---|---|---|
-| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Dónde escribe `serialize.log` el hook de fin de sesión. El hook en sí tiene `~/.daimon/logs` fijo; este override existe para que el CLI (y los tests) puedan apuntar `status` a otra parte. |
+| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Directorio de logs. `serialize-crash.log` respeta esta variable de los dos lados: los hooks que lanzan el proceso hijo de serialize la leen (del entorno y de este archivo) igual que el CLI, porque `daimon forget` borra ese archivo y quien escribe y quien borra tienen que coincidir en dónde está. `serialize.log` es la excepción: los hooks lo siguen escribiendo en `~/.daimon/logs` siempre, y este override solo cambia dónde lo busca el CLI (y los tests). |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Dónde viven los transcripts del host (`<slug>/<session>.jsonl`). Solo-lectura — la auditoría de re-verificación de citas los lee para re-revisar citas almacenadas contra su fuente. |
 | `DAIMON_SCAR_HARVEST` | off | Cuando es verdadero, borra candidatos de scar (conocimiento negativo) desde el transcript al fin de sesión. |
 

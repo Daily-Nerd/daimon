@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import re
+import stat
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -442,6 +443,317 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
                 # remaining steps (event scrub, cache purge) behind it.
                 continue
             rewritten.append(str(path))
+    return rewritten
+
+
+# Daimon-authored Windsurf state that holds conversation text (#607). The
+# activity/serialize stamps beside it are epoch integers and stay.
+_WINDSURF_TEXT_GLOBS = ("transcripts/*.md", "unparsed-*.json")
+
+
+def _windsurf_text_files() -> list:
+    """Containment before deletion: a symlinked `transcripts` directory
+    would otherwise have the purge unlink files outside the state root
+    entirely. provenance.SourceResolver already resolves-and-contains
+    before merely READING this directory; the deleting path must not be
+    laxer than the reading one."""
+    root = config.windsurf_state_dir()
+    try:
+        real_root = root.resolve()
+    except OSError:
+        return []
+    out: list = []
+    for pattern in _WINDSURF_TEXT_GLOBS:
+        for path in root.glob(pattern):
+            try:
+                if not path.is_file():
+                    continue
+                if real_root not in path.resolve().parents:
+                    continue
+            except OSError:
+                continue
+            out.append(path)
+    return sorted(set(out))
+
+
+def purge_windsurf_state() -> tuple:
+    """#607: wholesale removal of the transcripts the Windsurf adapter wrote.
+
+    `daimon forget` calls this after the tombstone+rewrite, for the same
+    reason it purges the chunk cache (#422): the value cannot be located
+    selectively. A transcript is prose, the forgotten sentence is a
+    substring of a line, and the tombstone is a canonical HASH — forget
+    stores the key and never the text (#321), so no component downstream
+    holds the plaintext a substring search would need. Detection is
+    impossible by construction, so the whole store goes.
+
+    Accepted cost: quote provenance resolving against these files reports
+    `absent-local` afterward — a state provenance.SourceResolver already
+    models, so a purged transcript degrades a receipt rather than breaking
+    it. Host-authored transcripts (Codex rollouts, Claude Code JSONL) are
+    untouched: daimon reads those by path and never copies them, so they
+    are not daimon's to delete — and `forget` has never removed them.
+
+    Returns (purged_count, error_or_None) and NEVER raises: deleting belief
+    state is the primary contract; a failed purge is reported, not fatal."""
+    try:
+        targets = _windsurf_text_files()
+    except OSError as e:
+        return 0, str(e)
+    purged, error = 0, None
+    for path in targets:
+        try:
+            path.unlink()
+            purged += 1
+        except OSError as e:
+            error = error or str(e)
+    return purged, error
+
+
+def reap_windsurf_state(now: float | None = None, apply: bool = True) -> list:
+    """#607: age-bound what accumulates between forgets.
+
+    The purge above only fires when someone runs `forget`; without a window
+    the adapter's transcript store grows without limit, and every turn of
+    every conversation stays on disk forever. config.windsurf_state_days()
+    (default 7) is that bound — a privacy window, not a disk one. Wired
+    into `daimon heal` beside the index-snapshot reap; `apply=False` lists
+    only (heal --dry-run). Best-effort per file."""
+    if now is None:
+        now = time.time()
+    cutoff = now - config.windsurf_state_days() * 86400
+    reaped: list = []
+    try:
+        targets = _windsurf_text_files()
+    except OSError:
+        return reaped
+    for path in targets:
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+            if apply:
+                path.unlink()
+        except OSError:
+            continue
+        reaped.append(path)
+    return reaped
+
+
+def purge_crash_log() -> tuple:
+    """#605: the serializer child's RAW stderr sink, inside the contract.
+
+    `logs/serialize-crash.log` is the fd spawn_serialize hands a detached
+    child (and the Windsurf finalizer its sleeper), so an uncaught traceback
+    lands there verbatim — exception message, repr'd arguments, whatever the
+    crashing frame was holding. `status` redacted that tail on READ (#513)
+    while the bytes underneath stayed; nothing ever removed them.
+
+    Wholesale for the same reason as the chunk cache (#422) and the Windsurf
+    transcript store (#607): forget keeps the canonical HASH and never the
+    text (#321), so no component downstream holds the plaintext a substring
+    search of a traceback would need. Detection is impossible by
+    construction, so the whole file goes — and unlike those two stores there
+    is no age reaper behind it, because the write seam trims the file to a
+    bounded tail instead (_daimon_hook_lib.trim_crash_log).
+
+    Accepted cost: `daimon status` reports no last-crash line until the next
+    one happens. That is the same trade `forget` already makes against quote
+    provenance — a receipt degrades, a diagnostic goes quiet, and neither
+    outranks removing plaintext the user asked to be gone.
+
+    Returns (purged_count, error_or_None) and NEVER raises: deleting belief
+    state is the primary contract; a failed purge is reported, not fatal."""
+    try:
+        path = config.log_dir() / "serialize-crash.log"
+    except Exception as e:  # noqa: BLE001 — e.g. UnicodeDecodeError from a
+        # corrupt ~/.daimon/env: a ValueError, so the OSError net below never
+        # sees it. The writer resolves through the same accessors and raises
+        # identically, so nothing was written where this purge cannot look.
+        return 0, str(e)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return 0, None                 # never crashed, or already purged
+    except OSError as e:
+        # A log dir this process cannot see is not a clean purge. The count
+        # is a privacy CLAIM — "the tracebacks are gone" — and a silent zero
+        # over an unreadable directory is that claim made without evidence.
+        return 0, str(e)
+    # lstat rather than is_file(): those follow the link and answer False for
+    # every failure alike. daimon creates this file itself with open("a"), so
+    # a symlink or a directory standing in its place is not a shape daimon
+    # wrote. This is _windsurf_text_files' containment rule (#607) narrowed
+    # to a FIXED filename, where a resolve()-parents check would be strictly
+    # weaker: a link pointing back inside the log dir passes containment,
+    # yet unlink() removes only the link and leaves the plaintext behind a
+    # count that says it went.
+    if stat.S_ISLNK(st.st_mode):
+        return 0, (f"{path} is a symlink — refusing to unlink through a file "
+                   "daimon did not create")
+    if not stat.S_ISREG(st.st_mode):
+        return 0, f"{path} is not a regular file — refusing to unlink it"
+    try:
+        os.unlink(path)
+    except OSError as e:
+        return 0, str(e)
+    return 1, None
+
+
+# #600 slice B: the per-author tombstone ledger published into the team
+# mirror. `.jsonl`, so every `*.json` walk in the codebase (read_team,
+# privacy's team scan, recall's fingerprint) steps over it by construction,
+# and it sits INSIDE the own-author dir so teamsync._commit_own carries it
+# with no protocol change.
+_TOMBSTONE_NAME = "tombstones.jsonl"
+
+
+def _own_team_dirs(project_dir=None) -> list:
+    """This author's directories in every sidecar the project routes to —
+    the same identity and routing _dual_write_team writes checkpoints with,
+    so a published tombstone lands where the sync already looks."""
+    own = project_slug(config.author()) or "unknown"
+    segs = teamproject.resolve(project_dir)
+    out = []
+    for slug in _team_write_slugs(project_dir):
+        base = config.team_dir() / slug
+        if segs:
+            base = base.joinpath("projects", *segs)
+        out.append(base / "authors" / own)
+    return out
+
+
+def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
+    """Publish a forget so teammates can act on it (#600 slice B).
+
+    A hash-only row — {ts, key, author}, never the text (#321) — appended
+    to the author's own tombstone ledger in each sidecar this project
+    routes to. Append-only and idempotent: a key already present is not
+    re-appended, so repeated forgets of the same value do not grow the
+    file, and re-publishing after a pull is a no-op.
+
+    Gated on config.team_enabled(): nothing is published into a team the
+    user has not opted into. Best-effort — a failed publish never costs the
+    local deletion, which already happened by the time this runs."""
+    if not content_hash or not config.team_enabled():
+        return []
+    written: list[str] = []
+    row = json.dumps({
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "key": content_hash,
+        "author": config.author(),
+    }, ensure_ascii=False)
+    for adir in _own_team_dirs(project_dir):
+        path = adir / _TOMBSTONE_NAME
+        try:
+            if path.exists() and content_hash in _tombstone_keys(path):
+                continue
+            adir.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(row + "\n")
+        except OSError:
+            continue
+        written.append(str(path))
+    return written
+
+
+# One ledger is read on the briefing path, so it cannot be unbounded: a
+# teammate publishing a huge file must not make every read pay for it.
+# ~1 MB is ~12k rows, far past any real forget history.
+_MAX_TOMBSTONE_BYTES = 1_000_000
+
+
+def _tombstone_keys(path) -> set[str]:
+    keys: set[str] = set()
+    try:
+        if path.stat().st_size > _MAX_TOMBSTONE_BYTES:
+            log.warning("daimon team: %s exceeds %d bytes — reading the "
+                        "first %d only", path.name, _MAX_TOMBSTONE_BYTES,
+                        _MAX_TOMBSTONE_BYTES)
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                raw = f.read(_MAX_TOMBSTONE_BYTES)
+        else:
+            raw = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return keys
+    for line in raw.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue          # a corrupt row must not hide the rest
+        if isinstance(row, dict):
+            key = row.get("key")
+            if isinstance(key, str) and key.strip():
+                keys.add(key.strip())
+    return keys
+
+
+def foreign_forgotten_content_keys() -> set[str]:
+    """Tombstone keys published by OTHER authors in synced sidecars.
+
+    Own rows are excluded, and that exclusion is load-bearing rather than
+    tidiness: the local ledger is a latest-event-wins fold, so a `reopen`
+    lifts a local tombstone — but a published row has no retraction. Folding
+    your own rows back in would let a key you deliberately reopened suppress
+    the value forever, and (with the opt-in on) re-scrub it on every sync,
+    because reopen removes it from apply_foreign_tombstones' local subtrahend.
+
+    The machine-local mirror is excluded for the same reason: nothing there
+    is another author's, it never syncs, and a solo user with DAIMON_TEAM=1
+    would otherwise poison their own reopen through a dead-end path.
+
+    Bounded on purpose: only `authors/*/` directories inside real sidecars
+    are walked, so a clone's .git object store is never traversed, and each
+    ledger is capped — a teammate cannot make every briefing pay for an
+    unbounded file. Never raises."""
+    keys: set[str] = set()
+    own = project_slug(config.author()) or "unknown"
+    try:
+        remotes = [d for d in config.team_dir().iterdir()
+                   if d.is_dir() and d.name != _TEAM_LOCAL_REMOTE]
+    except OSError:
+        return keys
+    for remote in remotes:
+        try:
+            paths = [p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
+                     if p.parent.name != own]
+        except OSError:
+            continue
+        for path in paths:
+            keys |= _tombstone_keys(path)
+    return keys
+
+
+def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
+    """Opt-in (#600 slice B): rewrite THIS machine's own checkpoints under
+    a teammate's tombstone.
+
+    Off by default and deliberately so — see config.team_apply_forget. When
+    off this is a pure no-op that returns [], which is the whole authority
+    guarantee: a teammate writing a hash cannot delete local belief state,
+    it can only stop that value being read (the suppression path, which is
+    always on).
+
+    Returns the surfaces rewritten. The keys are the foreign ledger minus
+    what this project already tombstoned locally — re-applying a local
+    forget would be work without effect."""
+    if not config.team_apply_forget():
+        return []
+    if all_projects:
+        try:
+            targets = [d.name for d in config.checkpoint_dir().iterdir()
+                       if d.is_dir() and d.name != ".chunk-cache"]
+        except OSError:
+            targets = []
+    else:
+        targets = [project_dir]
+    foreign = foreign_forgotten_content_keys()
+    rewritten: list[str] = []
+    for target in targets:
+        # Per project, minus what that project already tombstoned locally:
+        # re-applying a local forget is work without effect, and a project
+        # that REOPENED a value must not have it scrubbed by a stale row.
+        for key in sorted(foreign - forgotten_content_keys(target)):
+            rewritten.extend(scrub_content_key(key, project_dir=target))
     return rewritten
 
 
@@ -1057,7 +1369,11 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
     candidates = teamproject.read_candidates(project_dir)
-    forgotten = forgotten_content_keys(project_dir)
+    # #600 slice B: a teammate's published tombstone suppresses their value
+    # here too. Always on — suppression is not deletion, it costs a teammate
+    # nothing but the sight of a value they asked to be forgotten, and their
+    # own scrubbed file may not have reached this clone yet.
+    forgotten = forgotten_content_keys(project_dir) | foreign_forgotten_content_keys()
     self_author = project_slug(config.author())
     # author-slug (dir identity, one per author) -> (recency, author, checkpoint)
     best: dict[str, tuple[float, str, dict]] = {}

@@ -1350,6 +1350,14 @@ def render_privacy_audit(results: list[dict]) -> None:
             print(f"  chunk cache: {cache['entries']} entr(y/ies) — age unknown,"
                   " value-level scan impossible (substring vs hash); purge is"
                   " wholesale on forget")
+        ws = r.get("windsurf") or {}
+        if ws.get("entries"):
+            age = (f", oldest {ws['oldest_days']:.1f}d"
+                   if ws.get("oldest_days") is not None else ", age unknown")
+            print(f"  windsurf transcripts: {ws['entries']} file(s){age} —"
+                  " daimon-authored conversation text; value-level scan"
+                  " impossible (substring vs hash); purge is wholesale on"
+                  " forget")
         if not (r["findings"] or r["informational"] or r["unscannable"]
                 or r.get("zero_surfaces")):
             print("  clean — no tombstoned value found on any surface")
