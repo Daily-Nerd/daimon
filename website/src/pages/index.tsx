@@ -226,7 +226,6 @@ export default function Home(): ReactNode {
                     {translate({id: 'landing.anatomy.class.term', message: 'class'})}
                   </dt>
                   <dd>
-                    <span aria-hidden="true">— </span>
                     {translate({
                       id: 'landing.anatomy.class',
                       message: 'earned by checking, never self-declared',
@@ -238,7 +237,6 @@ export default function Home(): ReactNode {
                     {translate({id: 'landing.anatomy.words.term', message: 'exact words'})}
                   </dt>
                   <dd>
-                    <span aria-hidden="true">— </span>
                     {translate({
                       id: 'landing.anatomy.words',
                       message: 'quoted from the transcript, not paraphrased',
@@ -250,7 +248,6 @@ export default function Home(): ReactNode {
                     {translate({id: 'landing.anatomy.receipt.term', message: 'receipt'})}
                   </dt>
                   <dd>
-                    <span aria-hidden="true">— </span>
                     {translate({
                       id: 'landing.anatomy.receipt',
                       message: 'the line number and signature you can look up',

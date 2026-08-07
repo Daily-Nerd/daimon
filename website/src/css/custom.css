@@ -329,19 +329,24 @@
 /* temporal cue — without it the before/after pair reads as a contradiction */
 .anatomyWhen { color: var(--ifm-color-emphasis-700); }
 .anatomyWhen + .anatomyLine { margin-bottom: var(--dm-space-1); }
-/* Definitions — one quiet row under the pair. */
+/* Definitions — three aligned columns under the pair, terms in the cards' mono voice. */
 .anatomyDefs {
   margin: var(--dm-space-6) 0 0;
   padding-top: var(--dm-space-4);
   border-top: 1px solid var(--dm-card-border);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--dm-space-2) var(--dm-space-8);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--dm-space-6);
   font-size: 0.875rem;
 }
-.anatomyDefRow { display: flex; gap: var(--dm-space-1); }
-.anatomyDefs dt { color: var(--ifm-color-emphasis-800); font-weight: 600; }
-.anatomyDefs dd { margin: 0; color: var(--ifm-color-emphasis-700); }
+.anatomyDefRow { display: block; }
+.anatomyDefs dt {
+  color: var(--ifm-color-emphasis-800);
+  font-weight: 600;
+  font-family: var(--ifm-font-family-monospace);
+  margin-bottom: var(--dm-space-1);
+}
+.anatomyDefs dd { margin: 0; color: var(--ifm-color-emphasis-700); line-height: 1.5; }
 
 /* Close — conviction, then the command again, then quiet facts. */
 .convictionLine {
@@ -401,8 +406,8 @@
     mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
   .receipt > div, .replayLine, .anatomyLine { white-space: nowrap; }
-  /* defs sit outside any scroll container now — they must wrap, not clip */
-  .anatomyDefRow { flex-wrap: wrap; }
+  /* defs sit outside any scroll container — single column, wrapping text */
+  .anatomyDefs { grid-template-columns: minmax(0, 1fr); gap: var(--dm-space-3); }
   /* the signature must never depend on a horizontal scroll.
      Needs to outrank `.receipt > div` above, hence the two-class selector. */
   .receipt > .receiptFoot { white-space: normal; }
