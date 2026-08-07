@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1089,6 +1090,15 @@ def _cmd_forget(args) -> int:
         ws_purged, ws_err = store.purge_windsurf_state()
     except Exception as e:  # belt: purge_windsurf_state never raises
         ws_purged, ws_err = 0, str(e)
+    # #605: serialize-crash.log is the detached child's RAW stderr — an
+    # uncaught traceback carries whatever the crashing frame held, and the
+    # bytes were never scrubbed (status redacted its tail on READ, #513, over
+    # a file nothing deleted). Wholesale like the two purges above: the
+    # tombstone is a hash, so a value inside a traceback cannot be located.
+    try:
+        crash_purged, crash_err = store.purge_crash_log()
+    except Exception as e:  # belt: purge_crash_log never raises
+        crash_purged, crash_err = 0, str(e)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
@@ -1120,6 +1130,18 @@ def _cmd_forget(args) -> int:
               "file(s) across all projects (machine-wide: the store is keyed "
               "by trajectory, not project); host-authored transcripts are "
               "untouched")
+    if crash_err is not None:
+        print(f"warning: crash log purge failed: {crash_err} — serializer "
+              "tracebacks may persist (bounded to a trimmed tail at the next "
+              "spawn, never removed)")
+    else:
+        # Printed even at zero, like the two lines above: a silent zero is
+        # how a writer and a deleter disagreeing about DAIMON_LOG_DIR stays
+        # invisible. One crash log per machine, so the scope note is the
+        # same honesty the windsurf line owes.
+        print(f"purged {crash_purged} serializer crash log(s) across all "
+              "projects (machine-wide: the log is raw child stderr, not "
+              "keyed by project)")
     return 0
 
 
@@ -3377,13 +3399,30 @@ def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
     """Uncaught-crash header (#92): serialize-crash.log is the detached
     child's RAW stderr fd — no logger sits in the write path, so the only
     process that can timestamp a crash is the crashing one. One ISO-stamped
-    line, then the stock traceback. Covers uncaught Python exceptions (the
-    dominant case); interpreter-level deaths still write nothing."""
+    line, then the traceback. Covers uncaught Python exceptions (the
+    dominant case); interpreter-level deaths still write nothing.
+
+    #605: the traceback is formatted HERE rather than handed to
+    sys.__excepthook__, so it can pass through redact_text on the way out.
+    The crashing process is the only one that can scrub these bytes — for
+    the same reason it is the only one that can stamp them — and #513
+    redacted the tail on READ over a file nothing deleted. Item text still
+    survives (redaction catches secrets, not beliefs), which is why the
+    purge above it is wholesale.
+
+    Fail-open, redact.py's own posture: anything that goes wrong formatting
+    or redacting falls back to the stock hook, because a swallowed traceback
+    is a crash nobody can diagnose."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cmd = next((a for a in sys.argv[1:] if not a.startswith("-")), "?")
     print(f"--- crash {stamp} pid={os.getpid()} cmd={cmd} ---",
           file=sys.stderr, flush=True)
-    sys.__excepthook__(exc_type, exc, tb)
+    try:
+        formatted = "".join(traceback.format_exception(exc_type, exc, tb))
+        redacted, _ = redact.redact_text(formatted)
+        print(redacted, end="", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001 — see fail-open above
+        sys.__excepthook__(exc_type, exc, tb)
 
 
 def build_parser() -> argparse.ArgumentParser:

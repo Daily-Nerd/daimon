@@ -128,13 +128,32 @@ SURFACES: tuple[Surface, ...] = (
     Surface("recall.db", "recall.rebuild", True, "lazy-rebuild", "recall"),
     Surface("recall_seen/*.json", "cli._save_seen",
             False, "exempt-no-plaintext", "none"),
-    # -- logs: no item text by construction, except the crash sink, which
-    #    captures raw serializer-child stderr — tracebacks can embed item
-    #    text and nothing deletes it. Declared debt. --
+    # -- the crash sink: RAW child stderr, so its contents are whatever the
+    #    serialize child wrote to fd 2. An uncaught traceback, yes — but also
+    #    logging.lastResort output from any logger OUTSIDE the
+    #    `daimon_briefing` hierarchy the #194 handler attaches to
+    #    (`daimon.recall` and `daimon.briefing` are not under it). Any of it
+    #    can carry item text.
+    #    The WHOLESALE PURGE at forget and the write-seam trim are therefore
+    #    the whole contract (#605): a value inside a traceback cannot be
+    #    located when the tombstone is a hash — the chunk-cache situation —
+    #    and the trim bounds what accumulates between forgets without a
+    #    second reaper. The #92 excepthook redacts secrets on the way out,
+    #    but it sees ONLY uncaught top-level exceptions in the child: a
+    #    narrowing of what lands here, never a claim about the file, and
+    #    nothing in this entry rests on it. --
     Surface("logs/serialize-crash.log", "cli serialize child stderr",
-            True, "known-gap", "none", issue="#605"),
+            True, "wholesale-purge", "forget"),
     Surface("logs/heartbeats/*", "ledger.touch_heartbeat",
             False, "exempt-no-plaintext", "none"),
+    # The two entries above and below keep the declarations they shipped
+    # with. Deliberately NOT restated here: the old blanket "logs hold no
+    # item text by construction". serializer's quote-verification downgrade
+    # logs the item's own text (secret-redacted, not item-redacted) and the
+    # CLI routes that line into serialize.log, so the claim is false as
+    # written — #616 tracks re-declaring this entry (backend-stderr.log has
+    # the same problem). #605 changed the sink above it and left this one
+    # alone rather than quietly widening its own scope.
     Surface("logs/*.log", "ledger / cli._note_usage / recall._note_error",
             False, "exempt-no-plaintext", "none"),
     # -- key material and env: secrets, never item plaintext. --

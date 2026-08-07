@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import re
+import stat
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -536,6 +537,66 @@ def reap_windsurf_state(now: float | None = None, apply: bool = True) -> list:
             continue
         reaped.append(path)
     return reaped
+
+
+def purge_crash_log() -> tuple:
+    """#605: the serializer child's RAW stderr sink, inside the contract.
+
+    `logs/serialize-crash.log` is the fd spawn_serialize hands a detached
+    child (and the Windsurf finalizer its sleeper), so an uncaught traceback
+    lands there verbatim — exception message, repr'd arguments, whatever the
+    crashing frame was holding. `status` redacted that tail on READ (#513)
+    while the bytes underneath stayed; nothing ever removed them.
+
+    Wholesale for the same reason as the chunk cache (#422) and the Windsurf
+    transcript store (#607): forget keeps the canonical HASH and never the
+    text (#321), so no component downstream holds the plaintext a substring
+    search of a traceback would need. Detection is impossible by
+    construction, so the whole file goes — and unlike those two stores there
+    is no age reaper behind it, because the write seam trims the file to a
+    bounded tail instead (_daimon_hook_lib.trim_crash_log).
+
+    Accepted cost: `daimon status` reports no last-crash line until the next
+    one happens. That is the same trade `forget` already makes against quote
+    provenance — a receipt degrades, a diagnostic goes quiet, and neither
+    outranks removing plaintext the user asked to be gone.
+
+    Returns (purged_count, error_or_None) and NEVER raises: deleting belief
+    state is the primary contract; a failed purge is reported, not fatal."""
+    try:
+        path = config.log_dir() / "serialize-crash.log"
+    except Exception as e:  # noqa: BLE001 — e.g. UnicodeDecodeError from a
+        # corrupt ~/.daimon/env: a ValueError, so the OSError net below never
+        # sees it. The writer resolves through the same accessors and raises
+        # identically, so nothing was written where this purge cannot look.
+        return 0, str(e)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return 0, None                 # never crashed, or already purged
+    except OSError as e:
+        # A log dir this process cannot see is not a clean purge. The count
+        # is a privacy CLAIM — "the tracebacks are gone" — and a silent zero
+        # over an unreadable directory is that claim made without evidence.
+        return 0, str(e)
+    # lstat rather than is_file(): those follow the link and answer False for
+    # every failure alike. daimon creates this file itself with open("a"), so
+    # a symlink or a directory standing in its place is not a shape daimon
+    # wrote. This is _windsurf_text_files' containment rule (#607) narrowed
+    # to a FIXED filename, where a resolve()-parents check would be strictly
+    # weaker: a link pointing back inside the log dir passes containment,
+    # yet unlink() removes only the link and leaves the plaintext behind a
+    # count that says it went.
+    if stat.S_ISLNK(st.st_mode):
+        return 0, (f"{path} is a symlink — refusing to unlink through a file "
+                   "daimon did not create")
+    if not stat.S_ISREG(st.st_mode):
+        return 0, f"{path} is not a regular file — refusing to unlink it"
+    try:
+        os.unlink(path)
+    except OSError as e:
+        return 0, str(e)
+    return 1, None
 
 
 # #600 slice B: the per-author tombstone ledger published into the team
