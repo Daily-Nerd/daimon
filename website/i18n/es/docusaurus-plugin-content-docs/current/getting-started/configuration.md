@@ -141,7 +141,7 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 
 | Variable | Default | Qué hace |
 |---|---|---|
-| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Dónde escribe `serialize.log` el hook de fin de sesión. El hook en sí tiene `~/.daimon/logs` fijo; este override existe para que el CLI (y los tests) puedan apuntar `status` a otra parte. |
+| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Directorio de logs. `serialize-crash.log` respeta esta variable de los dos lados: los hooks que lanzan el proceso hijo de serialize la leen (del entorno y de este archivo) igual que el CLI, porque `daimon forget` borra ese archivo y quien escribe y quien borra tienen que coincidir en dónde está. `serialize.log` es la excepción: los hooks lo siguen escribiendo en `~/.daimon/logs` siempre, y este override solo cambia dónde lo busca el CLI (y los tests). |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Dónde viven los transcripts del host (`<slug>/<session>.jsonl`). Solo-lectura — la auditoría de re-verificación de citas los lee para re-revisar citas almacenadas contra su fuente. |
 | `DAIMON_SCAR_HARVEST` | off | Cuando es verdadero, borra candidatos de scar (conocimiento negativo) desde el transcript al fin de sesión. |
 

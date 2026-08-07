@@ -386,10 +386,15 @@ def _arm_finalizer(trajectory_id: str, transcript_path) -> None:
     # Same detached shape as lib.spawn_serialize: stderr to the crash log so
     # an uncaught sleeper traceback is preserved without polluting
     # serialize.log; start_new_session so it survives the exiting hook.
+    # Through lib.crash_log_path(), not a home literal: this file is the crash
+    # sink's SECOND writer, and #605 put the sink inside the deletion
+    # contract, so it has to land where `daimon forget` purges (state_dir()
+    # above carries the same reasoning for the transcript store).
     try:
-        log_dir = Path.home() / ".daimon" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with (log_dir / "serialize-crash.log").open("a", encoding="utf-8") as crashf:
+        crash = lib.crash_log_path()
+        crash.parent.mkdir(parents=True, exist_ok=True)
+        lib.trim_crash_log(crash)
+        with crash.open("a", encoding="utf-8") as crashf:
             subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--finalize",
                  trajectory_id, str(transcript_path), str(armed_mtime_ns)],
