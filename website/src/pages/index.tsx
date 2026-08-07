@@ -14,7 +14,7 @@ const HOSTS = [
   {id: 'windsurf', label: 'Windsurf'},
 ];
 
-const PYPI_VERSION = '0.26.0';
+const PYPI_VERSION = '0.27.0';
 
 const ICON = {
   viewBox: '0 0 24 24',
