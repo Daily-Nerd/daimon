@@ -99,6 +99,11 @@ Decisions made:
 Active topic: Migrating the scheduler off cron to the new worker pool
 ```
 
+`[✓ verbatim]` significa que esa cita fue verificada carácter por carácter
+contra la transcripción de la sesión; `[~ inferred]` marca las conclusiones
+propias del modelo. El sistema de etiquetas es el punto del producto — mira
+[Clases de confianza](../concepts/trust-classes.md).
+
 También puedes leerlo en una terminal en cualquier momento con
 `daimon brief`.
 

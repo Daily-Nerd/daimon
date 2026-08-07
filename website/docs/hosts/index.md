@@ -18,8 +18,8 @@ Every host setup combines up to three pieces, installed independently:
 
 - **Hooks** capture your sessions and (where the host supports it) inject the
   briefing as context. Claude Code gets a packaged plugin; other hosts install
-  standalone hook scripts via `daimon hooks install <host>` (currently
-  Windsurf) or the manual lifecycle scripts under `hook/` (Codex, Gemini, and
+  standalone hook scripts via `daimon hooks install <host>` (Windsurf,
+  Codex) or the manual lifecycle scripts under `hook/` (Gemini, and
   Claude Code without the plugin).
 - **The skill** (`daimon skill install <host>`) teaches the agent on the other
   side of the hook how to use what the hooks capture — read the briefing at

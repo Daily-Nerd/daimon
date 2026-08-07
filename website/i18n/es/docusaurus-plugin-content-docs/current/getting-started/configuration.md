@@ -164,19 +164,19 @@ uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida.
 | `DAIMON_LLM_NO_CACHE` | off | Cuando es verdadero, evita el cache de respuestas del gateway por request — necesario cuando una respuesta mala cacheada fija una falla o cuando las corridas deben ser estadísticamente independientes. |
 | `DAIMON_LLM_BRIEFING` | off | Cuando es verdadero, renderiza el briefing vía LLM en lugar de la plantilla determinista. |
 | `DAIMON_LLM_COMMAND` | sin definir | Invocación completa del CLI para el backend `command` (binario + modelo + flags). Obligatoria para `command`, y obligatoria para que un `claude` en el PATH sea usado por cualquier backend que no sea `claude-cli`. |
-
-:::note[Qué proceso recibe tu transcripción]
-
-Un binario `claude` que simplemente esté en el PATH **no** se adopta automáticamente. Serializar envía la transcripción completa de la sesión al CLI configurado, así que ese CLI debe nombrarse: o `DAIMON_LLM_COMMAND`, o `DAIMON_LLM_BACKEND=claude-cli` para optar por el preset incorporado.
-
-Antes bastaba con dejar `DAIMON_LLM_COMMAND` sin definir y tener un `claude` en cualquier parte del PATH, tanto para instalaciones en `auto` como para la ruta de rescate de litellm. Si dependías de eso, definí una de las dos variables de arriba. `daimon configure` y `daimon doctor` nombran el binario resuelto y su ruta para que puedas ver exactamente cuál está en uso.
-
-:::
 | `DAIMON_LLM_COMMAND_OUTPUT` | sin definir | Cómo extraer el texto del asistente del stdout del comando: `text` (stdout crudo) o `json:<key>` (parsear JSON, leer `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | Cómo llega el prompt al backend de comando: `stdin` (por tubería), `arg` (anexado como último elemento de argv) o `file:<flag>` (escrito a un archivo temporal, luego se anexa `<flag> <path>`). Un valor no reconocido registra una advertencia y cae a `stdin`. |
 | `DAIMON_LLM_COMMAND_FALLBACK` | sin definir | El único CLI de rescate, usado cuando el backend primario falla. Sirve tanto para un primario litellm como para uno `command`, que antes no tenía ninguna dirección de rescate. Un solo fallback, nunca una cadena: si el primario y este fallan, la causa casi siempre es del entorno, y un tercer CLI gasta presupuesto para llegar al mismo error mientras hace que la instalación parezca más protegida de lo que está. Si no se define, un primario litellm sigue cayendo a `DAIMON_LLM_COMMAND` como antes. |
 | `DAIMON_LLM_COMMAND_FALLBACK_OUTPUT` | sin definir | Especificación de salida del CLI de rescate, misma gramática que `DAIMON_LLM_COMMAND_OUTPUT`. Se lleva por separado porque el rescate es otro binario. |
 | `DAIMON_LLM_COMMAND_FALLBACK_INPUT` | `stdin` | Especificación de entrada del CLI de rescate, misma gramática que `DAIMON_LLM_COMMAND_INPUT`. |
+
+:::note[Qué proceso recibe tu transcripción]
+
+Un binario `claude` que simplemente esté en el PATH **no** se adopta automáticamente. Serializar envía la transcripción completa de la sesión al CLI configurado, así que ese CLI debe nombrarse: o `DAIMON_LLM_COMMAND`, o `DAIMON_LLM_BACKEND=claude-cli` para optar por el preset incorporado.
+
+Antes bastaba con dejar `DAIMON_LLM_COMMAND` sin definir y tener un `claude` en cualquier parte del PATH, tanto para instalaciones en `auto` como para la ruta de rescate de litellm. Si dependías de eso, definí una de las dos variables de arriba. `daimon configure` nombra el binario resuelto y su ruta para que puedas ver exactamente cuál está en uso.
+
+:::
 
 ## Chunking del serializador
 

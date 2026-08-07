@@ -20,8 +20,8 @@ independiente:
 - **Los hooks** capturan tus sesiones y (donde el host lo permite) inyectan el
   briefing como contexto. Claude Code tiene un plugin empaquetado; los demás
   hosts instalan scripts de hook independientes vía
-  `daimon hooks install <host>` (actualmente Windsurf) o los scripts manuales
-  de ciclo de vida bajo `hook/` (Codex, Gemini, y Claude Code sin el plugin).
+  `daimon hooks install <host>` (Windsurf, Codex) o los scripts manuales
+  de ciclo de vida bajo `hook/` (Gemini, y Claude Code sin el plugin).
 - **La skill** (`daimon skill install <host>`) le enseña al agente del otro
   lado del hook cómo usar lo que los hooks capturan — leer el briefing al
   inicio de sesión (obteniéndolo con `daimon brief --team` cuando el host no
