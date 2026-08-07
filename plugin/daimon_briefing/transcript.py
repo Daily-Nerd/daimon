@@ -210,6 +210,38 @@ def _from_jsonl(text: str) -> list[dict]:
         content = payload.get("message")
         if role and isinstance(content, str) and content.strip():
             codex_messages.append({"role": role, "content": content.strip()})
+            continue
+        # Codex CLI 0.147.0 (#622) dropped user_message/agent_message events:
+        # visible turns now arrive as item_completed with a PascalCase
+        # item.type and text as a content-block list. Block-type case differs
+        # by role in the field (UserMessage blocks say "text", AgentMessage
+        # blocks say "Text") — match it case-insensitively. AgentMessage
+        # phases (commentary, final_answer) are both assistant content.
+        if payload_type != "item_completed":
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            continue
+        role = {"UserMessage": "user", "AgentMessage": "assistant"}.get(
+            item.get("type")
+        )
+        if role is None:
+            continue
+        blocks = item.get("content")
+        if not isinstance(blocks, list):
+            continue
+        parts = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("type") or "").lower() != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        joined = "\n".join(parts)
+        if joined:
+            codex_messages.append({"role": role, "content": joined})
     if codex_messages:
         return codex_messages
 
