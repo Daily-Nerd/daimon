@@ -96,6 +96,15 @@
   vertical-align: -4px;
   margin-right: var(--dm-space-2);
 }
+/* The reader's pain, stated before the first proof claim — leads the hero
+   so the h1's promise lands on a named problem, not on cold proof. */
+.heroPain {
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 38rem;
+  margin: 0 auto var(--dm-space-3);
+}
 .hero--daimon h1 {
   font-size: 2.25rem;
   line-height: 1.1;
@@ -263,6 +272,14 @@
   line-height: 1.5;
   color: var(--ifm-color-emphasis-700);
   margin-bottom: 0;
+}
+/* Honest bound on "verified" — rides with the claim it scopes. */
+.scopeLine {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 44rem;
+  margin: var(--dm-space-3) 0 0;
 }
 .replayIntro .claimLine { margin-bottom: var(--dm-space-3); }
 

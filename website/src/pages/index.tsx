@@ -15,7 +15,7 @@ const HOSTS = [
   {id: 'windsurf', label: 'Windsurf'},
 ];
 
-const PYPI_VERSION = '0.27.0';
+const PYPI_VERSION = '0.28.0';
 
 const ICON = {
   viewBox: '0 0 24 24',
@@ -145,6 +145,13 @@ export default function Home(): ReactNode {
               {translate({id: 'landing.hero.eyebrow', message: 'open-source CLI'})}
             </span>
           </p>
+          <p className="heroPain">
+            {translate({
+              id: 'landing.hero.pain',
+              message:
+                'Your agent forgets every session — then asserts what it half-remembers.',
+            })}
+          </p>
           <h1>
             {translate({
               id: 'landing.hero.title',
@@ -184,6 +191,13 @@ export default function Home(): ReactNode {
                   id: 'landing.verify.claim',
                   message:
                     'Every claim is re-checked against the transcript before it reaches your agent.',
+                })}
+              </p>
+              <p className="scopeLine">
+                {translate({
+                  id: 'landing.verify.scope',
+                  message:
+                    'Verified means daimon found this exact quote in your transcript — matched after folding case, whitespace, and formatting, with elided spans allowed. It is a mechanical check, not a truth claim.',
                 })}
               </p>
             </div>
