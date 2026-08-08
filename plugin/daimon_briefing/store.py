@@ -563,8 +563,36 @@ def purge_crash_log() -> tuple:
 
     Returns (purged_count, error_or_None) and NEVER raises: deleting belief
     state is the primary contract; a failed purge is reported, not fatal."""
+    return _purge_fixed_log("serialize-crash.log")
+
+
+def purge_backend_stderr_log() -> tuple:
+    """#616: the CLI-backend diagnostics sink, inside the contract.
+
+    `logs/backend-stderr.log` holds backend stderr AND stdout — and CLI
+    backends can echo prompt fragments (transcript text) into either stream
+    (#141, llm._log_backend_stderr's own concession). The write seam
+    secret-redacts and byte-bounds the file, but item text is not a secret
+    shape, so a forgotten value echoed by a backend survived on disk while
+    the registry called the file plaintext-free.
+
+    Wholesale for the crash sink's reason (#605): the tombstone is a
+    canonical HASH (#321), so a value inside prose diagnostics cannot be
+    located to remove selectively. Accepted cost mirrors #605's: the next
+    backend failure has no history behind it — a diagnostic goes quiet,
+    and that never outranks removing plaintext the user asked to be gone.
+
+    Returns (purged_count, error_or_None) and NEVER raises: deleting belief
+    state is the primary contract; a failed purge is reported, not fatal."""
+    return _purge_fixed_log("backend-stderr.log")
+
+
+def _purge_fixed_log(name: str) -> tuple:
+    """Unlink ONE daimon-authored file under the log dir, defensively.
+
+    Shared by the fixed-name log purges above; returns (purged, err)."""
     try:
-        path = config.log_dir() / "serialize-crash.log"
+        path = config.log_dir() / name
     except Exception as e:  # noqa: BLE001 — e.g. UnicodeDecodeError from a
         # corrupt ~/.daimon/env: a ValueError, so the OSError net below never
         # sees it. The writer resolves through the same accessors and raises
@@ -573,10 +601,10 @@ def purge_crash_log() -> tuple:
     try:
         st = os.lstat(path)
     except FileNotFoundError:
-        return 0, None                 # never crashed, or already purged
+        return 0, None                 # never written, or already purged
     except OSError as e:
         # A log dir this process cannot see is not a clean purge. The count
-        # is a privacy CLAIM — "the tracebacks are gone" — and a silent zero
+        # is a privacy CLAIM — "the bytes are gone" — and a silent zero
         # over an unreadable directory is that claim made without evidence.
         return 0, str(e)
     # lstat rather than is_file(): those follow the link and answer False for
@@ -597,6 +625,98 @@ def purge_crash_log() -> tuple:
     except OSError as e:
         return 0, str(e)
     return 1, None
+
+
+# #616: the two line shapes pre-fix serializers wrote into serialize.log with
+# the item's OWN text as payload. Anchored on the logging router's record
+# prefix (`<iso> WARNING daimon_briefing.serializer: `, cli's
+# _attach_serialize_log_handler) so a ledger result line — raw, untimestamped
+# — can never match. Current writers log `(content hash <key>)` with no `: `
+# payload separator after these heads, so clean lines never match either.
+_LEGACY_DOWNGRADE_RE = re.compile(
+    r"^(?P<head>\S+ WARNING \S+: "
+    r"(?:quote verification: downgraded verbatim->inferred"
+    r"(?: \(echo-only: quote appears only in daimon's own injected output\))?"
+    r"|outcome grounding: unwitnessed outcome claim downgraded "
+    r"verbatim->inferred \(no signal cited\)): ).*$")
+
+_LOG_STAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T")
+
+_SCRUB_MARKER = "[payload scrubbed #616]"
+
+
+def scrub_serialize_log() -> tuple:
+    """#616: redact LEGACY downgrade payloads out of serialize.log in place.
+
+    Pre-fix, the quote-verification and outcome-grounding downgrade lines
+    logged the item's own text (secret-redacted, never item-redacted) and
+    the CLI routed them here. Current writers log a content hash instead,
+    but the old payloads persist on disk in every existing install.
+
+    NOT a wholesale purge, deliberately: serialize.log is also the ledger
+    `status` parses for capture stats (_SPAWN_RE / _RESULT_*_RE), and
+    destroying the measurement record on every forget trades one contract
+    for another. The legacy payloads sit behind two exactly-known line
+    shapes, so the scrub is SHAPE-targeted — value-blind, like every purge
+    on this path (the tombstone is a hash; the value cannot be located).
+
+    A matched line keeps its head and gets its payload replaced; the lines
+    AFTER it are dropped until the next router-timestamped line, because a
+    multi-line item text logs as untimestamped continuation lines. That can
+    in principle eat a raw ledger line that directly follows a multi-line
+    payload — accepted: over-scrubbing costs one stat row, under-scrubbing
+    persists a line of text the user asked to be gone, and content_key
+    already picks the same fail-safe direction (over-blocking).
+
+    Rewrite is atomic (temp + os.replace) and refuses symlinks/non-regular
+    files for _purge_fixed_log's reason. Returns (scrubbed_line_count,
+    error_or_None) and NEVER raises."""
+    try:
+        path = config.log_dir() / "serialize.log"
+    except Exception as e:  # noqa: BLE001 — same corrupt-env net as above
+        return 0, str(e)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return 0, None                 # never serialized here — nothing to scrub
+    except OSError as e:
+        return 0, str(e)
+    if stat.S_ISLNK(st.st_mode):
+        return 0, (f"{path} is a symlink — refusing to rewrite through a "
+                   "file daimon did not create")
+    if not stat.S_ISREG(st.st_mode):
+        return 0, f"{path} is not a regular file — refusing to rewrite it"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (OSError, ValueError) as e:
+        return 0, str(e)
+    out: list = []
+    scrubbed = 0
+    dropping = False
+    for line in lines:
+        if dropping and not _LOG_STAMP_RE.match(line):
+            continue                   # continuation of a scrubbed payload
+        dropping = False
+        m = _LEGACY_DOWNGRADE_RE.match(line.rstrip("\n"))
+        if m:
+            out.append(m.group("head") + _SCRUB_MARKER + "\n")
+            scrubbed += 1
+            dropping = True
+            continue
+        out.append(line)
+    if not scrubbed:
+        return 0, None
+    tmp = path.with_name(path.name + ".scrub.tmp")
+    try:
+        tmp.write_text("".join(out), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return 0, str(e)
+    return scrubbed, None
 
 
 # #600 slice B: the per-author tombstone ledger published into the team

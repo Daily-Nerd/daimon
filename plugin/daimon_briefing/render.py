@@ -1358,6 +1358,13 @@ def render_privacy_audit(results: list[dict]) -> None:
                   " daimon-authored conversation text; value-level scan"
                   " impossible (substring vs hash); purge is wholesale on"
                   " forget")
+        bl = r.get("backend_log") or {}
+        if bl.get("present"):
+            age = (f", last write {bl['age_days']:.1f}d ago"
+                   if bl.get("age_days") is not None else ", age unknown")
+            print(f"  backend stderr log: present{age} — backend echo can"
+                  " carry transcript text (#616); value-level scan impossible"
+                  " (substring vs hash); purge is wholesale on forget")
         if not (r["findings"] or r["informational"] or r["unscannable"]
                 or r.get("zero_surfaces")):
             print("  clean — no tombstoned value found on any surface")

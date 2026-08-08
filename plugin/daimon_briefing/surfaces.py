@@ -146,14 +146,22 @@ SURFACES: tuple[Surface, ...] = (
             True, "wholesale-purge", "forget"),
     Surface("logs/heartbeats/*", "ledger.touch_heartbeat",
             False, "exempt-no-plaintext", "none"),
-    # The two entries above and below keep the declarations they shipped
-    # with. Deliberately NOT restated here: the old blanket "logs hold no
-    # item text by construction". serializer's quote-verification downgrade
-    # logs the item's own text (secret-redacted, not item-redacted) and the
-    # CLI routes that line into serialize.log, so the claim is false as
-    # written — #616 tracks re-declaring this entry (backend-stderr.log has
-    # the same problem). #605 changed the sink above it and left this one
-    # alone rather than quietly widening its own scope.
+    # -- backend diagnostics: stderr AND stdout of the LLM CLI child, which
+    #    can echo prompt fragments — transcript text (#141). Secret-redacted
+    #    and byte-bounded at the write seam (llm._log_backend_stderr), but
+    #    item text is not a secret shape, so the honest declaration is the
+    #    crash sink's (#616, same class #605 closed): plaintext, purged
+    #    wholesale at forget — a value inside prose diagnostics cannot be
+    #    located when the tombstone is a hash. BEFORE the *.log glob so the
+    #    specific contract wins. --
+    Surface("logs/backend-stderr.log", "llm._log_backend_stderr",
+            True, "wholesale-purge", "forget"),
+    # #616 restored the glob's claim instead of widening it: serializer's
+    # downgrade lines — the one writer that put item text under this shape —
+    # now log a content hash (normalize.content_key, the same key a forget
+    # would tombstone), and forget scrubs the LEGACY payloads by line shape
+    # (store.scrub_serialize_log) rather than purging serialize.log
+    # wholesale, because that file is also the ledger `status` parses.
     Surface("logs/*.log", "ledger / cli._note_usage / recall._note_error",
             False, "exempt-no-plaintext", "none"),
     # -- key material and env: secrets, never item plaintext. --

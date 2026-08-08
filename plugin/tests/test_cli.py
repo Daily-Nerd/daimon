@@ -4966,17 +4966,19 @@ def _detach_serialize_log_handler():
 def test_serialize_routes_downgrade_warning_to_serialize_log(
         tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, capsys,
         monkeypatch, _detach_serialize_log_handler):
-    # A quote-verification downgrade must land in serialize.log UNTRUNCATED
-    # (no %.80s cap — this line is the only surviving record of the item text).
-    tail_marker = ("the item text runs well past eighty characters so the old "
-                   "prefix cap would have cut it long before END-OF-ITEM")
-    assert len(tail_marker) > 80
+    # A quote-verification downgrade must land in serialize.log as a CONTENT
+    # HASH, never the item text (#616 — supersedes #194's untruncated
+    # payload: logs/*.log is declared exempt-no-plaintext, and the writers
+    # carry that claim). The hash is content_key of the text, so "which item
+    # downgraded" stays answerable against the stored item.
+    item_text = ("the item text runs well past eighty characters so the old "
+                 "prefix cap would have cut it long before END-OF-ITEM")
     payload = json.dumps({
         "session_id": "sample_transcript",
         "working_context": {
             "active_topic": {"text": "t", "trust": "inferred"},
             "open_questions": [
-                {"text": tail_marker, "trust": "verbatim",
+                {"text": item_text, "trust": "verbatim",
                  "quote": "THIS QUOTE APPEARS NOWHERE IN THE TRANSCRIPT"}
             ],
             "recent_decisions": [],
@@ -4989,7 +4991,9 @@ def test_serialize_routes_downgrade_warning_to_serialize_log(
     assert rc == 0
     log = (tmp_log_dir / "serialize.log").read_text()
     assert "downgraded verbatim->inferred" in log
-    assert "END-OF-ITEM" in log  # full text survived, cap dropped
+    assert "END-OF-ITEM" not in log  # item text never reaches the log (#616)
+    from daimon_briefing import normalize
+    assert normalize.content_key(item_text) in log
 
 
 def test_attach_serialize_log_handler_is_idempotent(
