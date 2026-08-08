@@ -12,7 +12,7 @@ which parts of it are quotes and which parts are guesses.
 
 ### `[✓ verbatim]`
 
-An exact quote from a past session's transcript, pinned character-for-character.
+An exact quote from a past session's transcript, pinned at capture.
 Verbatim items are never reworded — not by carry-over between sessions, not by
 rendering, not by budget truncation. When a briefing shows
 
@@ -67,6 +67,15 @@ by a deterministic verifier — pure string operations, no LLM, on the principle
 that *the checker must be dumber than the thing it checks*. A quote that
 verifies gets stamped; a quote that doesn't is **downgraded to `~ inferred`**
 on the spot, so a hallucinated "quote" can never wear the verbatim badge.
+
+What the check actually guarantees, precisely: the quote is **found in the
+transcript after both sides are folded the same way** — case, whitespace runs,
+markdown emphasis and list markers, and curly-quote/dash glyph variants are
+normalized; a quote elided with `…` is split into fragments that must appear
+in order, with very short fragments dropped as too generic to pin. It is a
+mechanical presence check, not a byte-for-byte guarantee and not a truth
+claim about the world. Byte-immutability applies to *storage*: once pinned,
+the stored quote is never reworded by carry, rendering, or truncation.
 
 The guarantee extends past write time: with [receipts](./receipts.md) enabled,
 the checkpoint's exact bytes are signed when written — so if a checkpoint file

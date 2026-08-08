@@ -63,7 +63,7 @@ session read that line, believed the memory layer was healthy, and built on a
 foundation that was not there.
 
 Every step of that is faithful. The model did say it. The transcript records it
-exactly. The quote verifier matched it character for character and stamped it
+exactly. The quote verifier found it in the transcript and stamped it
 `✓ verbatim`, correctly. The trust class did its job and the memory was still
 false, because the thing being certified was that the sentence was *said*, not
 that the event *happened*.
