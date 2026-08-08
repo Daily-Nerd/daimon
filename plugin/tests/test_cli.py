@@ -2117,6 +2117,68 @@ def test_session_ledger_computes_spawn_age():
     assert led["A"]["result_kind"] is None
 
 
+# ---- #634: Codex rollout stem vs bare session id ----
+
+# Codex hooks spawn-log the BARE session id, but the serialize result lines
+# carry the rollout stem (`rollout-<stamp>-<id>`) because that is what the
+# checkpoint file and the host transcript are named. Folding them under
+# different keys makes every successful Codex capture also emit a phantom
+# "spawned, no result" failure.
+_CODEX_SID = "019fdf6a-8019-7dd0-b57f-bd20b7ac47e8"
+_CODEX_STEM = f"rollout-2026-08-07T21-28-46-{_CODEX_SID}"
+
+
+def test_session_ledger_pairs_codex_rollout_success_with_bare_spawn():
+    text = "\n".join([
+        f"2026-08-08T04:48:19Z codex-session-end: spawned serialize for {_CODEX_SID} "
+        "(reason: exit, project: /p/A)",
+        f"wrote checkpoint: /c/{_CODEX_STEM}.json (took 143s)",
+    ])
+    led = cli._session_ledger(text, now=0.0)
+    assert list(led) == [_CODEX_SID]
+    assert led[_CODEX_SID]["spawned"] is True
+    assert led[_CODEX_SID]["result_kind"] == "success"
+
+
+def test_session_ledger_pairs_codex_rollout_error_with_bare_spawn():
+    text = "\n".join([
+        f"2026-08-08T04:48:19Z codex-session-end: spawned serialize for {_CODEX_SID} "
+        "(reason: exit, project: /p/A)",
+        f"error: boom (transcript: /t/{_CODEX_STEM}.jsonl) after 3s",
+    ])
+    led = cli._session_ledger(text, now=0.0)
+    assert list(led) == [_CODEX_SID]
+    assert led[_CODEX_SID]["spawned"] is True
+    assert led[_CODEX_SID]["result_kind"] == "error"
+    assert led[_CODEX_SID]["transcript"] == f"/t/{_CODEX_STEM}.jsonl"
+
+
+def test_session_ledger_keeps_non_rollout_stems_verbatim():
+    # A Claude checkpoint stem IS the session id — normalisation must not
+    # touch it, and a rollout-shaped name without a valid stamp is not a
+    # Codex rollout either.
+    text = "\n".join([
+        "wrote checkpoint: /c/A.json (took 5s)",
+        "wrote checkpoint: /c/rollout-not-a-stamp-B.json (took 5s)",
+    ])
+    led = cli._session_ledger(text, now=0.0)
+    assert set(led) == {"A", "rollout-not-a-stamp-B"}
+
+
+def test_compute_outstanding_sees_codex_checkpoint_under_rollout_name(
+    tmp_checkpoint_dir, sample_checkpoint
+):
+    # The result line has aged out of the 200-line window, so only the probe
+    # can clear the spawn. The checkpoint on disk is named by rollout stem.
+    from daimon_briefing import store
+
+    store.write_checkpoint(_CODEX_STEM, sample_checkpoint)
+    log = (f"2026-08-08T04:48:19Z codex-session-end: spawned serialize for "
+           f"{_CODEX_SID} (reason: exit, project: /p/A)")
+    now = datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+    assert cli._compute_outstanding(log, now) == []
+
+
 # ---- _outstanding_failures: classify lost sessions per checkpoint store ----
 
 
