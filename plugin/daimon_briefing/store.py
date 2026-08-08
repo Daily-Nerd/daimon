@@ -699,6 +699,9 @@ def scrub_serialize_log() -> tuple:
         dropping = False
         m = _LEGACY_DOWNGRADE_RE.match(line.rstrip("\n"))
         if m:
+            if line.rstrip("\n") == m.group("head") + _SCRUB_MARKER:
+                out.append(line)       # already scrubbed — a marker is a
+                continue               # payload shape too; do not re-count
             out.append(m.group("head") + _SCRUB_MARKER + "\n")
             scrubbed += 1
             dropping = True

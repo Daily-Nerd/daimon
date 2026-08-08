@@ -163,6 +163,21 @@ def test_forget_survives_a_failed_backend_purge(tmp_checkpoint_dir,
     assert "disk on fire" in capsys.readouterr().out
 
 
+def test_forget_survives_a_backend_purge_that_raises(tmp_checkpoint_dir,
+                                                     monkeypatch, capsys):
+    # The belt around the call site: a future bug in the purge must not take
+    # the scrub down with it (the crash-sink posture).
+    _seed_backend_log()
+    _write_checkpoint()
+
+    def boom():
+        raise RuntimeError("backend purge exploded")
+
+    monkeypatch.setattr(store, "purge_backend_stderr_log", boom)
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert "backend purge exploded" in capsys.readouterr().out
+
+
 # ---- serialize.log: legacy downgrade payloads scrubbed at forget ----------
 
 
@@ -229,8 +244,9 @@ def test_scrub_is_idempotent(tmp_checkpoint_dir):
     path = _seed_serialize_log()
     assert store.scrub_serialize_log()[1] is None
     first = path.read_text(encoding="utf-8")
-    scrubbed, err = store.scrub_serialize_log()
-    assert err is None
+    # A marker line is itself a payload shape — the second pass must neither
+    # re-count it nor rewrite the file.
+    assert store.scrub_serialize_log() == (0, None)
     assert path.read_text(encoding="utf-8") == first
 
 
@@ -263,6 +279,78 @@ def test_forget_survives_a_failed_scrub(tmp_checkpoint_dir, monkeypatch,
     assert "scrub exploded" in capsys.readouterr().out
 
 
+def test_forget_survives_a_scrub_that_raises(tmp_checkpoint_dir, monkeypatch,
+                                             capsys):
+    _seed_serialize_log()
+    _write_checkpoint()
+
+    def boom():
+        raise RuntimeError("scrub blew up")
+
+    monkeypatch.setattr(store, "scrub_serialize_log", boom)
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert "scrub blew up" in capsys.readouterr().out
+
+
+def test_scrub_a_corrupt_env_file_fails_closed(monkeypatch, tmp_path):
+    # Same net as the purge: a non-UTF-8 env file raises ValueError out of
+    # config.log_dir(), past the OSError handlers — (0, err), no exception.
+    monkeypatch.delenv("DAIMON_LOG_DIR", raising=False)
+    env_file = tmp_path / "env"
+    env_file.write_bytes(b"DAIMON_LOG_DIR=\xff\xfe broken\n")
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    scrubbed, err = store.scrub_serialize_log()
+    assert scrubbed == 0
+    assert err is not None
+
+
+def test_scrub_a_log_dir_it_cannot_see_is_never_reported_clean(
+        tmp_checkpoint_dir):
+    path = _seed_serialize_log()
+    path.parent.chmod(0o000)
+    try:
+        scrubbed, err = store.scrub_serialize_log()
+    finally:
+        path.parent.chmod(0o700)
+    assert scrubbed == 0
+    assert err is not None, "a blind scrub must not read as a clean one"
+    assert CANARY in path.read_text(encoding="utf-8")
+
+
+def test_scrub_refuses_a_directory_named_like_the_log(tmp_checkpoint_dir):
+    decoy = _serialize_log_path()
+    decoy.mkdir(parents=True)
+    (decoy / "inside.txt").write_text("not daimon's to rewrite",
+                                      encoding="utf-8")
+    scrubbed, err = store.scrub_serialize_log()
+    assert scrubbed == 0 and err is not None
+    assert (decoy / "inside.txt").exists()
+
+
+def test_scrub_reports_a_log_it_cannot_decode(tmp_checkpoint_dir):
+    # A non-UTF-8 log is cannot-check, not clean and not a traceback.
+    path = _serialize_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe not text\n")
+    scrubbed, err = store.scrub_serialize_log()
+    assert scrubbed == 0
+    assert err is not None
+
+
+def test_scrub_reports_a_rewrite_it_could_not_complete(tmp_checkpoint_dir):
+    # Readable file, unwritable dir: the temp-file write fails and the error
+    # must surface for the forget warning to carry; the original survives.
+    path = _seed_serialize_log()
+    path.parent.chmod(0o500)
+    try:
+        scrubbed, err = store.scrub_serialize_log()
+    finally:
+        path.parent.chmod(0o700)
+    assert scrubbed == 0
+    assert err is not None
+    assert CANARY in path.read_text(encoding="utf-8")
+
+
 # ---- the audit reports what it can prove ----------------------------------
 
 
@@ -278,3 +366,16 @@ def test_audit_reports_backend_log_absent(tmp_checkpoint_dir):
     _write_checkpoint()
     result = privacy.audit_project(project_dir=PROJECT)
     assert result["backend_log"]["present"] is False
+
+
+def test_render_shows_the_backend_log_line(capsys):
+    from daimon_briefing import render
+    render.render_privacy_audit([{
+        "slug": "-p-616-logs", "surfaces_scanned": 1, "zero_surfaces": False,
+        "findings": [], "informational": [], "unscannable": [],
+        "cache": {}, "windsurf": {},
+        "backend_log": {"present": True, "age_days": 0.5},
+    }])
+    out = capsys.readouterr().out
+    assert "backend stderr log: present" in out
+    assert "wholesale on forget" in out
