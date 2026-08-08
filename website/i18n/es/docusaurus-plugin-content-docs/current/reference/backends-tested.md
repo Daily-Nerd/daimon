@@ -25,7 +25,7 @@ receta de abajo.
 | Modelo | Ruta de backend | daimon | Tasa de degradación (muestra) | Fecha | Notas |
 |-------|--------------|--------|-------------------------|------|-------|
 | MIXED — claude-haiku-4-5 (litellm proxy) + sesiones claude-cli, atribución por sesión perdida | ver notas | 0.13.0 | 29% de 51 afirmaciones verbatim frescas, 3 sesiones — rango por sesión 6%–77% | 2026-07-10 | máquina de desarrollo del maintainer. El backend cambió entre estas sesiones y los checkpoints no registran cuál serializó cada una, así que esta fila NO PUEDE separarse — se conserva como ejemplo práctico de por qué las muestras sin atribución son casi inútiles y de por qué el serializador necesita un sello de backend/modelo. Reemplázala con filas atribuidas ahora que el sellado existe. |
-| MIXED — agregado de por vida del maintainer, backends variados a lo largo de cinco meses (mayormente claude-cli) | ver notas | 0.13.0–0.27.0 | 12.2% de 3703 afirmaciones verbatim frescas, 160 sesiones | 2026-08-07 | máquina de desarrollo del maintainer, dogfooding de este repo. No es un par (modelo, backend) — se publica como línea base de por vida, atribuida por mes y por formato de checkpoint: 2026-07 13.7% (n=2217) → 2026-08 9.8% (n=1476); por formato D-012 21.2%, D-013 16.5%, D-014 10.1%, D-016 16.1%, D-017 9.9%, D-018 10.6% (n=1274). Deduplicado por id de sesión — mira la nota del agregado abajo. |
+| MIXED — agregado de por vida del maintainer, backends variados a lo largo de dos meses (mayormente claude-cli) | ver notas | 0.13.0–0.27.0 | 12.2% de 3703 afirmaciones verbatim frescas, 160 sesiones | 2026-08-07 | máquina de desarrollo del maintainer, dogfooding de este repo. No es un par (modelo, backend) — se publica como línea base de por vida, atribuida por mes y por formato de checkpoint: 2026-07 13.7% (n=2217) → 2026-08 9.8% (n=1476); por formato D-012 21.2%, D-013 16.5%, D-014 10.1%, D-016 16.1%, D-017 9.9%, D-018 10.6% (n=1274). Deduplicado por id de sesión — mira la nota del agregado abajo. |
 | _tu modelo_ | _anthropic / openai-compatible / claude-cli / command_ | | | | |
 
 **Regla de atribución (aprendida llenando la primera fila):** una fila solo
@@ -56,7 +56,7 @@ una sola máquina del maintainer — contadas con los mismos sellos
   vez. Acá la tasa resultó idéntica antes y después de deduplicar, pero eso es
   suerte, no una propiedad — deduplica igual.
 - **Es una línea base, no un benchmark.** Una sola máquina, un solo proyecto
-  (daimon desarrollándose a sí mismo), backends mezclados a lo largo de cinco
+  (daimon desarrollándose a sí mismo), backends mezclados a lo largo de dos
   meses de versiones. La señal portable es la tendencia, no el nivel: las
   tasas por formato caen del 21.2% de D-012 a aproximadamente 10% en
   D-017/D-018 a medida que la verificación del lado del serializador se

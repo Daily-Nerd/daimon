@@ -5,7 +5,7 @@ sidebar_position: 4
 # Afirmaciones, con método para re-ejecutarlas
 
 Cada número que daimon publica sobre sí mismo viene con el método para
-reproducirlo. Los números de abajo describen **nuestro propio store** — cinco
+reproducirlo. Los números de abajo describen **nuestro propio store** — dos
 meses de dogfooding en una sola máquina. Correr los mismos comandos en tu
 instalación mide **tu** store; ese es el punto. Una afirmación que no podés
 re-ejecutar es un testimonio, y esta página no lleva testimonios.

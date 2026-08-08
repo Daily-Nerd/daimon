@@ -5,7 +5,7 @@ sidebar_position: 4
 # Claims, with re-run methods
 
 Every number daimon publishes about itself ships with the method to reproduce
-it. The numbers below describe **our own store** — five months of dogfooding on
+it. The numbers below describe **our own store** — two months of dogfooding on
 one machine. Running the same commands on your install measures **your** store;
 that is the point. A claim you cannot re-run is a testimonial, and this page
 does not carry testimonials.
