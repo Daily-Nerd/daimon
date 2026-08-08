@@ -67,7 +67,7 @@ siguiente leyó esa línea, creyó que la capa de memoria estaba sana y construy
 sobre unos cimientos que no existían.
 
 Cada paso es fiel. El modelo lo dijo. El transcript lo registra exacto. El
-verificador de citas lo hizo coincidir carácter por carácter y lo selló como
+verificador de citas lo encontró en el transcript y lo selló como
 `✓ verbatim`, correctamente. La clase de confianza hizo su trabajo y la memoria
 igual era falsa, porque lo que se estaba certificando era que la frase *se
 dijo*, no que el evento *pasó*.

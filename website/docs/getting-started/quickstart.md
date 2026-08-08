@@ -95,8 +95,8 @@ Decisions made:
 Active topic: Migrating the scheduler off cron to the new worker pool
 ```
 
-`[✓ verbatim]` means that quote was checked character-for-character against the
-session transcript; `[~ inferred]` marks the model's own conclusions. The full
+`[✓ verbatim]` means a deterministic checker found that quote in the session
+transcript; `[~ inferred]` marks the model's own conclusions. The full
 tag system is the point of the product — see [Trust classes](../concepts/trust-classes.md).
 
 You can also read it in a terminal anytime with `daimon brief`.

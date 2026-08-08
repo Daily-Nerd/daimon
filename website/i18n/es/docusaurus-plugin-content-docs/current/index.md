@@ -37,8 +37,9 @@ deja al terminar. Un **briefing** es la versión legible de un vistazo del
 La mayoría de las herramientas de memoria guardan lo que un modelo *escribió
 sobre* lo que pasó — y cuando ese texto está mal, nada te avisa. daimon marca
 cada línea con cómo llegó a existir: las líneas `[✓ verbatim]` son citas
-exactas verificadas carácter por carácter contra la transcripción de la sesión
-por un verificador determinista (operaciones de strings puras, sin LLM); las
+exactas que un verificador determinista encontró en la transcripción de la
+sesión (operaciones de strings puras, sin LLM — case, espacios y formato
+plegados, con tramos elididos permitidos); las
 líneas `[~ inferred]` son conclusiones propias del modelo, honestas sobre ser
 derivaciones. Una "cita" que falla la verificación se degrada a inferida en el
 acto, así que una cita alucinada nunca puede llevar la insignia verbatim. Con

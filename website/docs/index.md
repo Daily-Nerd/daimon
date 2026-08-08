@@ -36,10 +36,10 @@ checkpoint, injected when the next session starts.
 
 Most memory tools store what a model *wrote about* what happened — and when
 that text is wrong, nothing tells you. daimon marks every line with how it
-came to exist: `[✓ verbatim]` lines are exact quotes checked
-character-for-character against the session transcript by a deterministic
-verifier (pure string operations, no LLM); `[~ inferred]` lines are the
-model's own conclusions, honest about being derivations. A "quote" that fails
+came to exist: `[✓ verbatim]` lines are exact quotes a deterministic verifier
+found in the session transcript (pure string operations, no LLM — case,
+whitespace, and formatting folded, elided spans allowed); `[~ inferred]` lines
+are the model's own conclusions, honest about being derivations. A "quote" that fails
 the check is demoted to inferred on the spot, so a hallucinated quote can
 never wear the verbatim badge. With [receipts](concepts/receipts.md) enabled,
 the checkpoint's exact bytes are signed — everything above is checkable

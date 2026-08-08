@@ -12,8 +12,8 @@ que te dice qué partes son citas y qué partes son conjeturas.
 
 ### `[✓ verbatim]`
 
-Una cita exacta del transcript de una sesión pasada, fijada
-carácter por carácter. Los ítems verbatim nunca se reformulan — ni al
+Una cita exacta del transcript de una sesión pasada, fijada al
+capturarse. Los ítems verbatim nunca se reformulan — ni al
 arrastrarse entre sesiones, ni al renderizarse, ni al truncarse por
 presupuesto. Cuando un briefing muestra
 
@@ -72,6 +72,17 @@ sin LLM, bajo el principio de que *el verificador debe ser más tonto que lo
 que verifica*. Una cita que verifica queda sellada; una que no, se **degrada
 a `~ inferred`** en el acto — una "cita" alucinada nunca puede llevar la
 insignia verbatim.
+
+Lo que el chequeo garantiza, con precisión: la cita se **encuentra en el
+transcript después de plegar ambos lados de la misma manera** — se normalizan
+mayúsculas, corridas de espacios, énfasis y marcadores de lista de markdown, y
+variantes de comillas curvas y guiones; una cita elidida con `…` se parte en
+fragmentos que deben aparecer en orden, y los fragmentos muy cortos se
+descartan por demasiado genéricos para fijar. Es un chequeo mecánico de
+presencia, no una garantía byte por byte ni una afirmación de verdad sobre el
+mundo. La inmutabilidad byte a byte aplica al *almacenamiento*: una vez
+fijada, la cita guardada nunca se reformula por arrastre, renderizado ni
+truncamiento.
 
 La garantía se extiende más allá del momento de escritura: con
 [receipts](./receipts.md) habilitados, los bytes exactos del checkpoint se
