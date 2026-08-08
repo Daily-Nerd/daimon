@@ -101,7 +101,7 @@
 .heroPain {
   font-size: 1rem;
   line-height: 1.5;
-  color: var(--ifm-color-emphasis-800);
+  color: var(--ifm-color-emphasis-700);
   max-width: 38rem;
   margin: 0 auto var(--dm-space-3);
 }

@@ -149,7 +149,7 @@ export default function Home(): ReactNode {
             {translate({
               id: 'landing.hero.pain',
               message:
-                'Your agent forgets everything between sessions — and asserts what it half-remembers with full confidence.',
+                'Your agent forgets every session — then asserts what it half-remembers.',
             })}
           </p>
           <h1>
