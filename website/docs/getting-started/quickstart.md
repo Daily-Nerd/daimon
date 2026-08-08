@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Quickstart
 
-From install to your first briefing. Four steps, one optional.
+From install to your first briefing. Five steps, one optional.
 
 ## 1. Install the CLI
 
@@ -95,9 +95,13 @@ Decisions made:
 Active topic: Migrating the scheduler off cron to the new worker pool
 ```
 
+`[✓ verbatim]` means that quote was checked character-for-character against the
+session transcript; `[~ inferred]` marks the model's own conclusions. The full
+tag system is the point of the product — see [Trust classes](../concepts/trust-classes.md).
+
 You can also read it in a terminal anytime with `daimon brief`.
 
-:::note Short sessions are skipped by design
+:::note[Short sessions are skipped by design]
 A session shorter than `DAIMON_MIN_MESSAGES` (default: 10 messages) is not
 serialized — there is nothing worth remembering in a two-message exchange.
 If you are evaluating daimon and want your short test sessions captured,

@@ -30,6 +30,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 
 | comando | qué hace |
 | --- | --- |
+| `daimon why <item-id>` | El inspector de confianza: muestra cada eje de evidencia detrás de un ítem — captura independiente, procedencia, fuente, integridad de bytes, soporte actual, veredicto del verificador, ciclo de vida, corroboración. `--source` agrega una ventana de fuente acotada y redactada; `--json` para máquinas. Los ids de ítem salen de `daimon recall` o `daimon loops`. |
 | `daimon verify-receipt` | Verifica el recibo firmado de procedencia de un checkpoint (chequeo criptográfico completo vía el CLI de vitni). |
 | `daimon audit quotes` | Re-verifica cada cita verbatim almacenada contra su transcripción de origen y reporta discrepancias. Solo lectura — nunca reescribe etiquetas. |
 | `daimon audit privacy` | Prueba el contrato de borrado: hashea cada campo con texto plano en cada superficie (checkpoints, punteros rotados, el registro de eventos, el espejo de equipo, el índice de recall y sus snapshots huérfanos) y reporta todo valor olvidado que haya sobrevivido. Solo lectura. |
