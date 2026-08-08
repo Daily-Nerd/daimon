@@ -5,6 +5,24 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0](https://github.com/Daily-Nerd/daimon/compare/v0.27.0...v0.28.0) (2026-08-08)
+
+
+### Features
+
+* **website:** show-the-receipts landing rework ([#627](https://github.com/Daily-Nerd/daimon/issues/627)) ([2c35964](https://github.com/Daily-Nerd/daimon/commit/2c359644d435765fad06b227f114113a0277a2f5))
+
+
+### Bug Fixes
+
+* **surfaces:** stop persisting item text under logs/*.log ([#632](https://github.com/Daily-Nerd/daimon/issues/632)) ([1fe3674](https://github.com/Daily-Nerd/daimon/commit/1fe3674b1174bd00bf6489c5f71562e223f04171))
+
+
+### Documentation
+
+* publish downgrade-rate baseline, fix stale Codex/Windsurf status, docs accuracy wave ([#625](https://github.com/Daily-Nerd/daimon/issues/625)) ([0b92140](https://github.com/Daily-Nerd/daimon/commit/0b921406348fd38f64ef2a65a5d8df42fd4bc579))
+* state the quote check's real matching contract ([#630](https://github.com/Daily-Nerd/daimon/issues/630)) ([d73cadd](https://github.com/Daily-Nerd/daimon/commit/d73caddd0af7323fabfb1a15a6f58c138d5064d1))
+
 ## [0.27.0](https://github.com/Daily-Nerd/daimon/compare/v0.26.0...v0.27.0) (2026-08-07)
 
 
