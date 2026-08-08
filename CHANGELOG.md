@@ -5,6 +5,26 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0](https://github.com/Daily-Nerd/daimon/compare/v0.28.0...v0.29.0) (2026-08-08)
+
+
+### Features
+
+* **refutations:** add evidence-cited negative knowledge ledger ([#575](https://github.com/Daily-Nerd/daimon/issues/575)) ([9fc303e](https://github.com/Daily-Nerd/daimon/commit/9fc303e87b53d9ac71f1b4891f298f86126349eb)), closes [#573](https://github.com/Daily-Nerd/daimon/issues/573) [#576](https://github.com/Daily-Nerd/daimon/issues/576) [#578](https://github.com/Daily-Nerd/daimon/issues/578) [#579](https://github.com/Daily-Nerd/daimon/issues/579) [#645](https://github.com/Daily-Nerd/daimon/issues/645) [#646](https://github.com/Daily-Nerd/daimon/issues/646) [#647](https://github.com/Daily-Nerd/daimon/issues/647)
+
+
+### Bug Fixes
+
+* **ledger:** resolve Codex rollout stems to the spawned session id ([#642](https://github.com/Daily-Nerd/daimon/issues/642)) ([053e20b](https://github.com/Daily-Nerd/daimon/commit/053e20b9db9ed03c10fe09323594d686f1a6ed98))
+* **skill:** move the plugin skills where hosts look, and teach daimon why ([#649](https://github.com/Daily-Nerd/daimon/issues/649)) ([c151741](https://github.com/Daily-Nerd/daimon/commit/c151741e19e35d03c3952d36944199c67154dbf6))
+
+
+### Documentation
+
+* **reference:** add a claims page with re-run methods ([#641](https://github.com/Daily-Nerd/daimon/issues/641)) ([b8945cb](https://github.com/Daily-Nerd/daimon/commit/b8945cb2f085b1f6b0df2079df4ce7fadc8a5ab1))
+* regroup the CLI reference by user intent and drop adjudication wording ([#638](https://github.com/Daily-Nerd/daimon/issues/638)) ([e27dec9](https://github.com/Daily-Nerd/daimon/commit/e27dec935037a4632e5551e7c9f22994e0ba0061))
+* **website:** name the reader's problem before the first proof claim ([#636](https://github.com/Daily-Nerd/daimon/issues/636)) ([3d5cacf](https://github.com/Daily-Nerd/daimon/commit/3d5cacf3819dced64d022ee729d8881a8a0f9c76))
+
 ## [0.28.0](https://github.com/Daily-Nerd/daimon/compare/v0.27.0...v0.28.0) (2026-08-08)
 
 
