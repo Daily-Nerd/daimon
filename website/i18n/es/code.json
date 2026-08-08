@@ -2,6 +2,9 @@
   "landing.hero.eyebrow": {
     "message": "CLI de código abierto"
   },
+  "landing.hero.pain": {
+    "message": "Tu agente olvida todo entre sesiones — y afirma lo que recuerda a medias con total confianza."
+  },
   "landing.hero.title": {
     "message": "Memoria que cualquiera puede verificar"
   },
@@ -28,6 +31,9 @@
   },
   "landing.verify.claim": {
     "message": "Cada afirmación se vuelve a comprobar contra el transcript antes de llegar a tu agente."
+  },
+  "landing.verify.scope": {
+    "message": "Verificado significa que daimon encontró esta cita exacta en tu transcript — comparada tras normalizar mayúsculas, espacios y formato, con tramos elididos permitidos. Es una comprobación mecánica, no una afirmación de verdad."
   },
   "landing.replay.barTitle": {
     "message": "repetición del checkpoint"
