@@ -128,6 +128,27 @@ def test_every_plaintext_ledger_field_is_scanned_not_only_the_subject(
     assert privacy.audit_project(project_dir=PROJECT)["findings"] == []
 
 
+def test_torn_and_non_dict_ledger_lines_are_skipped_not_fatal(
+        tmp_checkpoint_dir):
+    """The ledger is append-only and can be torn mid-write, and a future
+    daimon may write a row shape this version does not model. Neither may
+    sink a read-only auditor — and neither may hide the residue sitting in
+    the rows around them."""
+    _checkpoint()
+    _refute(subject=CANARY)
+    key = _tombstone(CANARY)
+    with _ledger_path().open("a", encoding="utf-8") as handle:
+        handle.write('{"event": "asserted", "subject": "torn\n')   # torn
+        handle.write('"a bare string, not a row"\n')               # non-dict
+        handle.write('[1, 2, 3]\n')                                # non-dict
+
+    result = privacy.audit_project(project_dir=PROJECT)
+
+    assert result["unscannable"] == [], "junk lines are skipped, not cannot-prove"
+    assert [f for f in result["findings"] if f["content_hash"] == key], \
+        "junk lines swallowed the residue in the rows around them"
+
+
 def test_an_unreadable_ledger_is_cannot_prove_never_clean(
         tmp_checkpoint_dir):
     _checkpoint()

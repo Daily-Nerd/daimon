@@ -411,6 +411,34 @@ def test_a_revision_cannot_take_over_another_records_identity(
     assert refutations.get(first, project_dir=PROJECT) is not None
 
 
+def test_a_record_too_damaged_to_name_an_identity_claims_none():
+    """`_identity_id` runs over folded rows the reader was tolerant about, so
+    it meets records with a missing or blank subject. Such a record must claim
+    NO identity — returning a hash of "" would make every damaged record
+    collide with every other one and refuse honest assertions."""
+    assert refutations._identity_id({"subject": "", "scope": "storage"}) == ""
+    assert refutations._identity_id({"scope": "storage"}) == ""
+    assert refutations._identity_id({}) == ""
+    assert refutations._identity_id(
+        {"subject": "a real subject", "scope": "storage"}) \
+        == refutations.make_id("a real subject", "storage")
+
+
+def test_an_unstattable_ledger_is_not_reported_as_torn(
+        tmp_checkpoint_dir, monkeypatch):
+    """`_is_torn` decides whether to prefix a newline before appending. It
+    cannot answer over a file it cannot stat, and guessing True there would
+    inject a blank line into a healthy ledger on every append."""
+    _assert()
+    path = refutations._path(PROJECT)
+
+    def boom(*args, **kwargs):
+        raise OSError("no stat for you")
+
+    monkeypatch.setattr(Path, "stat", boom)
+    assert refutations._is_torn(path) is False
+
+
 def test_a_revision_that_keeps_its_own_identity_is_still_allowed(
         tmp_checkpoint_dir):
     """Anti-overreach: a record always collides with ITSELF under any

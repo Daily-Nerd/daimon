@@ -13,6 +13,7 @@ holds plaintext by design, which puts it in the checkpoint's category: tombstone
 first (#418 ordering), then rewrite the store without the value.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -336,6 +337,69 @@ def test_forget_content_key_is_a_noop_when_nothing_matches(
 def test_forget_content_key_tolerates_a_missing_ledger(tmp_checkpoint_dir):
     assert refutations.forget_content_key(
         normalize.content_key("anything"), project_dir=PROJECT) == []
+
+
+def test_rewrite_bails_when_the_ledger_cannot_be_read(
+        tmp_checkpoint_dir, monkeypatch):
+    # `doomed` is computed from `events()` but the rewrite re-reads the RAW
+    # bytes, so the two reads can disagree — a ledger that turns unreadable
+    # between them must cost nothing rather than truncate the file to the rows
+    # this version happened to parse.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _refute()
+    path = refutations._path(PROJECT)
+    rows = refutations.events(project_dir=PROJECT)
+    unreadable = b"\xff\xfe not utf-8 at all"
+    path.write_bytes(unreadable)
+    monkeypatch.setattr(refutations, "events", lambda **kwargs: rows)
+
+    assert refutations.forget_content_key(
+        normalize.content_key(SUBJECT), project_dir=PROJECT) == []
+    assert path.read_bytes() == unreadable
+
+
+def test_rewrite_drops_blank_and_unparseable_lines_and_keeps_the_rest(
+        tmp_checkpoint_dir, monkeypatch):
+    # A torn append leaves bytes no read path can see. `_is_torn` establishes
+    # such a row is expendable, so the rewrite drops it rather than preserving
+    # forgotten bytes for no reachable benefit — but a KEEPER row on the same
+    # pass must survive byte-identical.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    doomed = _refute()
+    keeper = _refute(subject="sharding the audit table by tenant",
+                     scope="storage")
+    path = refutations._path(PROJECT)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")                        # blank
+        handle.write("{not json at all\n")        # unparseable
+
+    assert refutations.forget_content_key(
+        normalize.content_key(SUBJECT), project_dir=PROJECT) == [doomed]
+
+    text = path.read_text(encoding="utf-8")
+    assert "{not json at all" not in text
+    assert "\n\n" not in text
+    assert refutations.get(keeper, project_dir=PROJECT) is not None
+
+
+def test_a_failed_rewrite_reports_nothing_even_when_the_tmp_survives(
+        tmp_checkpoint_dir, monkeypatch):
+    # Atomic or nothing, with no second failure mode: if the staged replacement
+    # cannot be swapped in AND cannot be cleaned up, the answer is still "no id
+    # removed" rather than a traceback out of a deletion command.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _refute()
+    before = _ledger_text()
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(refutations.os, "replace", boom)
+    monkeypatch.setattr(Path, "unlink", boom)
+
+    assert refutations.forget_content_key(
+        normalize.content_key(SUBJECT), project_dir=PROJECT) == []
+    assert _ledger_text() == before
 
 
 @pytest.mark.parametrize("target", [SUBJECT, "r-000000000000"])
