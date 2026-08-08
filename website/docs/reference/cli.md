@@ -30,6 +30,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 
 | command | what it does |
 | --- | --- |
+| `daimon why <item-id>` | The trust inspector: show every evidence axis behind one item — independent capture, provenance, source, byte-integrity, current support, verifier verdict, lifecycle, corroboration. `--source` adds one bounded, redacted source window; `--json` for machines. Item ids come from `daimon recall` or `daimon loops`. |
 | `daimon verify-receipt` | Verify a checkpoint's signed provenance receipt (full cryptographic check via the vitni CLI). |
 | `daimon audit quotes` | Re-check every stored verbatim quote against its source transcript and report mismatches. Read-only — it never rewrites trust tags. |
 | `daimon audit privacy` | Prove the deletion contract: hash every plaintext field on every surface (checkpoints, rotated pointers, the event ledger, the team mirror, the recall index and its orphan snapshots) and report any forgotten value that survived. Read-only. |

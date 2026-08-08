@@ -1,9 +1,13 @@
 # Codex
 
-Codex is code-verified and unit-tested (`test_codex_hooks.py`), but has zero
-recorded live sessions — the adapter and installer ship, but no logbook entry
-documents a real Codex session completing the capture -> inject loop yet.
-Treat "runs on Codex" as inferred until one is on record.
+Codex is code-verified, unit-tested (`test_codex_hooks.py`), and live-validated
+on the capture side: real Codex sessions have been serialized into checkpoints
+since 2026-08-06 — the maintainer's serialize log records both `codex-session-end`
+and throttled `codex-stop` captures from rollout transcripts, and checkpoints
+whose session id is the rollout file are on record. The transcript parser tracks
+Codex's rollout format as it drifts (0.147.0's `item_completed` events are
+handled since daimon 0.27.0). Scope honestly stated: validation is one
+maintainer machine deep, not a fleet.
 
 ## Install
 
@@ -14,8 +18,8 @@ clone needed):
 daimon hooks install codex
 ```
 
-This copies both hook scripts and their shared helper to `~/.codex/hooks/` and
-registers `SessionStart` and `Stop` in `~/.codex/hooks.json`, preserving any
+This copies the three hook scripts and their shared helper to `~/.codex/hooks/`
+and registers `SessionStart`, `SessionEnd`, and `Stop` in `~/.codex/hooks.json`, preserving any
 unrelated entries already there. It is idempotent — re-run it after every
 `uv tool upgrade daimon-briefing` to refresh the scripts to match the installed
 CLI. After installing, open `/hooks` in Codex to review and trust the hook
@@ -50,6 +54,8 @@ python3 hook/codex-hooks.py status
 - **`daimon-codex-session-start.py`** — `SessionStart` hook. Reads the latest
   project checkpoint and returns Codex `additionalContext` JSON, so the
   briefing is injected as developer context.
+- **`daimon-codex-session-end.py`** — `SessionEnd` hook. Serializes the
+  finished session in the background when Codex ends it gracefully.
 - **`daimon-codex-stop.py`** — `Stop` hook. Codex exposes `Stop` at turn
   scope. `SessionEnd` covers the graceful end of a session, so this hook serializes
   opportunistically and is throttled by `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL`
