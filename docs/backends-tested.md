@@ -21,7 +21,7 @@ collected automatically. Add your combination with the recipe below.
 | Model | Backend path | daimon | Downgrade rate (sample) | Date | Notes |
 |-------|--------------|--------|-------------------------|------|-------|
 | MIXED — claude-haiku-4-5 (litellm proxy) + claude-cli sessions, per-session attribution lost | see notes | 0.13.0 | 29% of 51 fresh verbatim claims, 3 sessions — per-session range 6%–77% | 2026-07-10 | maintainer dev box. The backend changed between these sessions and checkpoints don't record which one serialized them, so this row CANNOT be split — kept as a worked example of why unattributed samples are near-useless and why the serializer needs a backend/model stamp. Replace with attributed rows once stamping ships. |
-| MIXED — maintainer lifetime aggregate, backends varied over five months (mostly claude-cli) | see notes | 0.13.0–0.27.0 | 12.2% of 3703 fresh verbatim claims, 160 sessions | 2026-08-07 | maintainer dev box, dogfooding this repo. Not one (model, backend) pair — published as the lifetime baseline, attributed by month and checkpoint format instead: 2026-07 13.7% (n=2217) → 2026-08 9.8% (n=1476); by format D-012 21.2%, D-013 16.5%, D-014 10.1%, D-016 16.1%, D-017 9.9%, D-018 10.6% (n=1274). Deduplicated by session id — see the aggregate note below. |
+| MIXED — maintainer lifetime aggregate, backends varied over two months (mostly claude-cli) | see notes | 0.13.0–0.27.0 | 12.2% of 3703 fresh verbatim claims, 160 sessions | 2026-08-07 | maintainer dev box, dogfooding this repo. Not one (model, backend) pair — published as the lifetime baseline, attributed by month and checkpoint format instead: 2026-07 13.7% (n=2217) → 2026-08 9.8% (n=1476); by format D-012 21.2%, D-013 16.5%, D-014 10.1%, D-016 16.1%, D-017 9.9%, D-018 10.6% (n=1274). Deduplicated by session id — see the aggregate note below. |
 | _your model_ | _anthropic / openai-compatible / claude-cli / command_ | | | | |
 
 **Attribution rule (learned filling the first row):** a row is only valid if every
@@ -49,7 +49,7 @@ keep it honest:
   the rate happened to be identical before and after dedup, but that is luck,
   not a property — dedup anyway.
 - **It is a baseline, not a benchmark.** Single machine, a single project
-  (daimon developing itself), mixed backends across five months of versions.
+  (daimon developing itself), mixed backends across two months of versions.
   The portable signal is the trend, not the level: per-format rates fall from
   D-012's 21.2% to roughly 10% on D-017/D-018 as serializer-side verification
   hardened.
