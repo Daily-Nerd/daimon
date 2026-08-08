@@ -5,7 +5,9 @@ Windsurf's 6,000-char global-rules file with the user's own rules — the
 2,000-char cap is a hard product constraint, not a style preference.
 """
 
-from daimon_briefing import skill_content
+import re
+
+from daimon_briefing import cli, skill_content
 
 
 def test_compact_fits_budget():
@@ -346,3 +348,63 @@ def test_the_trust_verbs_reach_the_symptom_table():
     section = full.split("## When memory looks wrong")[1].split("\n## ")[0]
     for verb in ("daimon why", "daimon audit", "daimon verify-receipt"):
         assert verb in section, f"{verb} has no symptom that reaches it"
+
+
+def _top_level_commands():
+    parser = cli.build_parser()
+    for action in parser._actions:
+        if getattr(action, "choices", None) and hasattr(action.choices, "items"):
+            return set(action.choices)
+    raise AssertionError("no subparsers found on the top-level parser")
+
+
+def _taught(full, name):
+    """Is `name` taught as a COMMAND, not merely as a word?
+
+    Substring matching is wrong in both directions here: `anchor` appears only
+    as `--anchor`, a flag of `refute guard`; `serialize` appears inside the
+    word "serialized". Both would read as covered while the agent learns
+    nothing about the command."""
+    return re.search(rf"`daimon {re.escape(name)}\b", full) is not None
+
+
+def test_every_shipped_command_is_taught_or_declared_not_agent_facing():
+    """#650. `daimon why` shipped in 0.28.0 and reached no skill for a whole
+    release while its human documentation was complete. Nothing failed, because
+    nothing was asking.
+
+    This partitions the command surface: a subcommand is either taught in the
+    installed skill or named in `_NOT_AGENT_FACING` with a reason. A new
+    command that is in neither fails here, and the fix is one line in whichever
+    set is correct — the point is that the decision gets made, not that it goes
+    a particular way.
+
+    Governs `skill_content.render_full()`, the body `daimon skill install`
+    writes. The plugin-discovered `skills/*/SKILL.md` is a SEPARATE surface
+    with its own shape (prose overview, not a command reference), and #643
+    showed the two can fail independently: the CLI-installed skill was healthy
+    on the maintainer's machine for five releases while every plugin install
+    shipped no discoverable skill at all."""
+    full = skill_content.render_full()
+    commands = _top_level_commands()
+    declared = set(skill_content.NOT_AGENT_FACING)
+
+    unknown = declared - commands
+    assert not unknown, (
+        f"NOT_AGENT_FACING names commands that do not exist: {sorted(unknown)}")
+
+    untaught = {c for c in commands if not _taught(full, c)}
+    unclassified = sorted(untaught - declared)
+    assert not unclassified, (
+        "these commands reach no skill and are not declared "
+        f"not-agent-facing: {unclassified}. Teach them in _FULL_BODY, or add "
+        "them to skill_content.NOT_AGENT_FACING with the reason.")
+
+    contradicted = sorted(declared - untaught)
+    assert not contradicted, (
+        f"declared not-agent-facing but taught anyway: {contradicted}")
+
+
+def test_every_not_agent_facing_entry_gives_a_reason():
+    for name, reason in skill_content.NOT_AGENT_FACING.items():
+        assert reason and reason.strip(), f"{name}: no reason recorded"
