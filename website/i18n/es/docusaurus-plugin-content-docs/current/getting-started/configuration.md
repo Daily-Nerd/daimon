@@ -90,6 +90,7 @@ para el flujo completo.
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Raíz del mirror de memoria de equipo compartida. |
 | `DAIMON_TEAM_PROJECT` | sin definir | Ruta lógica de proyecto explícita para las sesiones de esta máquina (relativa, p. ej. `core/api-gateway`). Prevalece sobre el mapeo de `daimon-team.toml` del sidecar y sobre el fallback derivado del origin al enrutar checkpoints bajo `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Ventana de edad al leer: los checkpoints de compañeros más viejos que esta cantidad de días se omiten al leer. `0` = conservar todos. Nunca borra físicamente de la rama compartida de solo-anexado. |
+| `DAIMON_TEAM_APPLY_FORGET` | off | Consentimiento permanente para que el tombstone de olvido publicado por un COMPAÑERO reescriba los checkpoints propios de esta máquina. NO alcanza por sí solo — el borrado además exige el `daimon team sync --apply-forget` escrito a mano, porque un `daimon team sync` pelado se lanza en segundo plano al iniciar la sesión. Por defecto apagado: un tombstone ajeno siempre suprime el valor al leer y en el índice, pero borrar estado local a partir del hash de otra persona es una decisión que se toma a conciencia — la rama compartida es de solo-anexado, así que no hay vuelta atrás. |
 
 ## Receipts
 
@@ -133,12 +134,14 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Codex. `0` serializa en cada `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Windsurf (Windsurf no tiene evento de fin de sesión, así que la captura corre con este throttle). `0` serializa cada turno. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Periodo de silencio tras la última actividad de Windsurf antes de que un finalizador con debounce serialice el estado final del transcript de la trayectoria — cubre sesiones cuyos últimos turnos caen dentro de la ventana del throttle. Acepta valores fraccionarios; `0` desactiva el finalizador. |
+| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Dónde guarda el adaptador de Windsurf los transcripts que acumula. Lo leen tanto el hook que los escribe como las rutas de `forget`/`heal` que los borran — cámbialo en un solo sitio, o el que escribe y el que borra dejan de coincidir. |
+| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Ventana de antigüedad para los transcripts de Windsurf que escribe daimon y los volcados `unparsed`, recogidos por `daimon heal`. Es un límite de privacidad: un valor olvidado no puede localizarse dentro de la prosa, así que esto acota cuánto tiempo permanece la conversación de origen entre ejecuciones de `forget`. Con mínimo 1 — a diferencia de los otros ajustes de Windsurf, `0` no lo desactiva. |
 
 ## Operación y diagnóstico
 
 | Variable | Default | Qué hace |
 |---|---|---|
-| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Dónde escribe `serialize.log` el hook de fin de sesión. El hook en sí tiene `~/.daimon/logs` fijo; este override existe para que el CLI (y los tests) puedan apuntar `status` a otra parte. |
+| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Directorio de logs. `serialize-crash.log` respeta esta variable de los dos lados: los hooks que lanzan el proceso hijo de serialize la leen (del entorno y de este archivo) igual que el CLI, porque `daimon forget` borra ese archivo y quien escribe y quien borra tienen que coincidir en dónde está. `serialize.log` es la excepción: los hooks lo siguen escribiendo en `~/.daimon/logs` siempre, y este override solo cambia dónde lo busca el CLI (y los tests). |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Dónde viven los transcripts del host (`<slug>/<session>.jsonl`). Solo-lectura — la auditoría de re-verificación de citas los lee para re-revisar citas almacenadas contra su fuente. |
 | `DAIMON_SCAR_HARVEST` | off | Cuando es verdadero, borra candidatos de scar (conocimiento negativo) desde el transcript al fin de sesión. |
 
@@ -161,19 +164,19 @@ uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida.
 | `DAIMON_LLM_NO_CACHE` | off | Cuando es verdadero, evita el cache de respuestas del gateway por request — necesario cuando una respuesta mala cacheada fija una falla o cuando las corridas deben ser estadísticamente independientes. |
 | `DAIMON_LLM_BRIEFING` | off | Cuando es verdadero, renderiza el briefing vía LLM en lugar de la plantilla determinista. |
 | `DAIMON_LLM_COMMAND` | sin definir | Invocación completa del CLI para el backend `command` (binario + modelo + flags). Obligatoria para `command`, y obligatoria para que un `claude` en el PATH sea usado por cualquier backend que no sea `claude-cli`. |
-
-:::note Qué proceso recibe tu transcripción
-
-Un binario `claude` que simplemente esté en el PATH **no** se adopta automáticamente. Serializar envía la transcripción completa de la sesión al CLI configurado, así que ese CLI debe nombrarse: o `DAIMON_LLM_COMMAND`, o `DAIMON_LLM_BACKEND=claude-cli` para optar por el preset incorporado.
-
-Antes bastaba con dejar `DAIMON_LLM_COMMAND` sin definir y tener un `claude` en cualquier parte del PATH, tanto para instalaciones en `auto` como para la ruta de rescate de litellm. Si dependías de eso, definí una de las dos variables de arriba. `daimon configure` y `daimon doctor` nombran el binario resuelto y su ruta para que puedas ver exactamente cuál está en uso.
-
-:::
 | `DAIMON_LLM_COMMAND_OUTPUT` | sin definir | Cómo extraer el texto del asistente del stdout del comando: `text` (stdout crudo) o `json:<key>` (parsear JSON, leer `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | Cómo llega el prompt al backend de comando: `stdin` (por tubería), `arg` (anexado como último elemento de argv) o `file:<flag>` (escrito a un archivo temporal, luego se anexa `<flag> <path>`). Un valor no reconocido registra una advertencia y cae a `stdin`. |
 | `DAIMON_LLM_COMMAND_FALLBACK` | sin definir | El único CLI de rescate, usado cuando el backend primario falla. Sirve tanto para un primario litellm como para uno `command`, que antes no tenía ninguna dirección de rescate. Un solo fallback, nunca una cadena: si el primario y este fallan, la causa casi siempre es del entorno, y un tercer CLI gasta presupuesto para llegar al mismo error mientras hace que la instalación parezca más protegida de lo que está. Si no se define, un primario litellm sigue cayendo a `DAIMON_LLM_COMMAND` como antes. |
 | `DAIMON_LLM_COMMAND_FALLBACK_OUTPUT` | sin definir | Especificación de salida del CLI de rescate, misma gramática que `DAIMON_LLM_COMMAND_OUTPUT`. Se lleva por separado porque el rescate es otro binario. |
 | `DAIMON_LLM_COMMAND_FALLBACK_INPUT` | `stdin` | Especificación de entrada del CLI de rescate, misma gramática que `DAIMON_LLM_COMMAND_INPUT`. |
+
+:::note[Qué proceso recibe tu transcripción]
+
+Un binario `claude` que simplemente esté en el PATH **no** se adopta automáticamente. Serializar envía la transcripción completa de la sesión al CLI configurado, así que ese CLI debe nombrarse: o `DAIMON_LLM_COMMAND`, o `DAIMON_LLM_BACKEND=claude-cli` para optar por el preset incorporado.
+
+Antes bastaba con dejar `DAIMON_LLM_COMMAND` sin definir y tener un `claude` en cualquier parte del PATH, tanto para instalaciones en `auto` como para la ruta de rescate de litellm. Si dependías de eso, definí una de las dos variables de arriba. `daimon configure` nombra el binario resuelto y su ruta para que puedas ver exactamente cuál está en uso.
+
+:::
 
 ## Chunking del serializador
 

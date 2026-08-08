@@ -14,6 +14,22 @@
   --ifm-heading-font-weight: 600;
   --ifm-global-radius: 8px;
   --docusaurus-highlighted-code-line-bg: rgba(15, 118, 110, 0.08);
+  /* light mode: cards must read as raised surfaces, not white-on-white */
+  --ifm-background-surface-color: #f6f8fa;
+  --dm-card-border: #d0d7de;
+  --dm-terminal-bg: #eceff2;
+  --dm-accent-wash: rgba(15, 118, 110, 0.12);
+  /* full-width band tint — teal-tinted to match the accent's temperature */
+  --dm-band-tint: #f2f6f5;
+  /* spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 px */
+  --dm-space-1: 0.25rem;
+  --dm-space-2: 0.5rem;
+  --dm-space-3: 0.75rem;
+  --dm-space-4: 1rem;
+  --dm-space-6: 1.5rem;
+  --dm-space-8: 2rem;
+  --dm-space-12: 3rem;
+  --dm-space-16: 4rem;
 }
 
 [data-theme='dark'] {
@@ -26,63 +42,408 @@
   --ifm-color-primary-lightest: #2affd3;
   --ifm-background-color: #0d1117;
   --ifm-background-surface-color: #161b22;
+  --dm-card-border: #30363d;
+  --dm-terminal-bg: #0d1117;
+  --dm-accent-wash: rgba(0, 212, 170, 0.12);
+  --dm-band-tint: #10161d;
   --docusaurus-highlighted-code-line-bg: rgba(0, 212, 170, 0.08);
 }
 
+/* Landing type scale — 4 sizes: 36 / 18 / 16 / 14 px. Hero at 2.25× body.
+   Radii: 8px for surfaces, buttons and chips; 4px for inline marks. */
+.bandInner {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 42rem;
+}
+/* Replay band — tinted, two columns: the argument on the left, the artifact on the right. */
+.bandInner--replay {
+  max-width: 60rem;
+  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--dm-space-12);
+  align-items: center;
+}
+.bandInner--anatomy { max-width: 60rem; text-align: left; }
+.bandInner--close { max-width: 34rem; text-align: center; }
+
 .hero--daimon {
-  padding: 4.5rem 1rem 3.5rem;
-  border-bottom: 1px solid var(--ifm-toc-border-color);
+  padding: var(--dm-space-16) var(--dm-space-4) var(--dm-space-12);
+  border-bottom: 1px solid var(--dm-card-border);
+  /* one background moment: a faint accent glow that dies before the install card,
+     so the artifact zone below stays clinical */
+  background: radial-gradient(
+    56rem 20rem at 50% -6rem,
+    var(--dm-accent-wash),
+    transparent 70%
+  );
+}
+.heroEyebrow {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--ifm-color-emphasis-700);
+  margin-bottom: var(--dm-space-3);
+}
+.heroMark {
+  font-weight: 600;
+  color: var(--ifm-font-color-base);
+}
+.heroEmblem {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  vertical-align: -4px;
+  margin-right: var(--dm-space-2);
+}
+/* The reader's pain, stated before the first proof claim — leads the hero
+   so the h1's promise lands on a named problem, not on cold proof. */
+.heroPain {
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 38rem;
+  margin: 0 auto var(--dm-space-3);
 }
 .hero--daimon h1 {
-  font-size: 2.4rem;
+  font-size: 2.25rem;
+  line-height: 1.1;
   letter-spacing: -0.02em;
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--dm-space-3);
 }
 .hero--daimon .subtitle {
-  font-size: 1.15rem;
-  color: var(--ifm-color-emphasis-700);
-  max-width: 42rem;
-  margin: 0 auto 1.5rem;
-}
-.hero--daimon .install {
-  display: inline-block;
-  text-align: left;
-  margin-bottom: 1.5rem;
-}
-.quoteRow {
-  border-left: 3px solid var(--ifm-color-primary);
-  padding: 0.25rem 0 0.25rem 1rem;
-  max-width: 38rem;
-  margin: 2.5rem auto;
-  font-size: 1.05rem;
+  font-size: 1.125rem;
+  line-height: 1.5;
   color: var(--ifm-color-emphasis-800);
+  max-width: 42rem;
+  margin: 0 auto var(--dm-space-8);
 }
-.quoteRow footer { font-size: 0.85rem; color: var(--ifm-color-emphasis-600); margin-top: 0.4rem; }
-.featureGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; padding: 1rem; max-width: 1100px; margin: 0 auto 2rem; }
-.featureCard {
-  border: 1px solid var(--ifm-toc-border-color);
-  border-radius: 8px;
-  padding: 1.25rem;
-  background: var(--ifm-background-surface-color);
-}
-.featureCard h3 { font-size: 1rem; margin-bottom: 0.5rem; }
-.featureCard p { font-size: 0.9rem; color: var(--ifm-color-emphasis-700); margin: 0; }
 
+/* Install — numbered steps, the page's primary action. */
+.install { margin-bottom: var(--dm-space-8); }
+.hostChips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--dm-space-2);
+  margin-bottom: var(--dm-space-3);
+}
+.hostChip {
+  min-height: 44px;
+  padding: 0 var(--dm-space-4);
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-color-emphasis-800);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.hostChip:hover { border-color: var(--ifm-color-primary); }
+.hostChip:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
+.hostChipOn {
+  background: var(--dm-accent-wash);
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
 .installBlock {
   text-align: left;
   background: var(--ifm-background-surface-color);
-  border: 1px solid var(--ifm-toc-border-color);
+  border: 1px solid var(--dm-card-border);
   border-radius: 8px;
-  padding: 1rem 1.25rem;
-  font-size: 0.9rem;
+  padding: var(--dm-space-3) var(--dm-space-4);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  max-width: 34rem;
+  margin: 0 auto;
+}
+.installBlock code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 100%;
+  color: var(--ifm-color-emphasis-800);
+  font-family: var(--ifm-font-family-monospace);
+}
+.cmdStep + .cmdStep { margin-top: var(--dm-space-3); }
+.cmdLabel {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--ifm-color-emphasis-700);
+}
+.cmdLine {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: var(--dm-space-3);
+  row-gap: var(--dm-space-2);
+  min-height: 44px;
+}
+.copyBtn {
+  flex: none;
+  /* pinned to the right edge of the command row */
+  margin-left: auto;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  background: none;
+  color: var(--ifm-color-emphasis-800);
+  cursor: pointer;
+}
+.copyBtn:hover { background: var(--dm-accent-wash); border-color: var(--ifm-color-primary); color: var(--ifm-color-primary); }
+.copyBtn:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
+.copyBtnDone { border-color: var(--ifm-color-primary); color: var(--ifm-color-primary); }
+.quietLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--dm-space-2);
+  font-size: 0.875rem;
+  margin-top: var(--dm-space-2);
+}
+
+/* Receipt — the proof is the most legible text in the card. */
+.receipt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  box-sizing: border-box;
+  /* same 34rem column the install block sits on */
+  max-width: 34rem;
+  margin: 0 auto;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  padding: var(--dm-space-4) var(--dm-space-6);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.875rem;
   line-height: 1.7;
 }
-.hostToken {
-  display: inline-block;
-  min-width: 8ch;
-  text-align: left;
-  color: var(--ifm-color-primary);
-  opacity: 1;
-  transition: opacity 180ms ease;
+.receiptHead {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--dm-space-6);
+  color: var(--ifm-color-emphasis-700);
+  border-bottom: 1px solid var(--dm-card-border);
+  padding-bottom: var(--dm-space-2);
+  margin-bottom: var(--dm-space-2);
 }
-.hostFade { opacity: 0; }
+.receiptFoot {
+  color: var(--ifm-color-emphasis-800);
+  border-top: 1px solid var(--dm-card-border);
+  padding-top: var(--dm-space-2);
+  margin-top: var(--dm-space-2);
+}
+.receiptSub { color: var(--ifm-color-emphasis-800); padding-left: var(--dm-space-4); }
+.tv { color: var(--ifm-color-primary); }
+.ti { color: #8250df; }
+.ts { color: #9a6700; }
+[data-theme='dark'] .ti { color: #d2a8ff; }
+[data-theme='dark'] .ts { color: #e3b341; }
+.chip { border-radius: 4px; padding: 0 var(--dm-space-2); font-size: 0.875rem; }
+.chipOk { background: var(--dm-accent-wash); color: var(--ifm-color-primary); }
+.chipPending { background: var(--ifm-color-emphasis-200); color: var(--ifm-color-emphasis-800); }
+
+.sectionBand { border-top: 1px solid var(--dm-card-border); padding: var(--dm-space-12) var(--dm-space-4); }
+.bandReplay { background: var(--dm-band-tint); padding-top: var(--dm-space-16); padding-bottom: var(--dm-space-16); }
+.sectionTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-700);
+  margin-bottom: var(--dm-space-2);
+}
+.claimLine {
+  font-size: 1.125rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-800);
+  margin-bottom: var(--dm-space-6);
+}
+/* secondary claim — body size, de-emphasized by color, not weight */
+.claimSub {
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+  margin-bottom: 0;
+}
+/* Honest bound on "verified" — rides with the claim it scopes. */
+.scopeLine {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 44rem;
+  margin: var(--dm-space-3) 0 0;
+}
+.replayIntro .claimLine { margin-bottom: var(--dm-space-3); }
+
+/* Replay — a terminal, not a third static card. */
+.replay {
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  text-align: left;
+  background: var(--dm-terminal-bg);
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+.replayBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dm-space-3);
+  padding: var(--dm-space-2) var(--dm-space-3);
+  background: var(--ifm-background-surface-color);
+  border-bottom: 1px solid var(--dm-card-border);
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.875rem;
+}
+.replayBarTitle { color: var(--ifm-color-emphasis-700); }
+.replayLines {
+  padding: var(--dm-space-4) var(--dm-space-6);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.replayLine { transition: opacity 200ms ease; }
+.replayHidden { opacity: 0; }
+.replayHead { color: var(--ifm-color-emphasis-700); }
+.replayBtn {
+  flex: none;
+  min-height: 24px;
+  padding: 0 var(--dm-space-2);
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-color-emphasis-800);
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.replayBtn:hover:enabled { color: var(--ifm-color-primary); border-color: var(--ifm-color-primary); }
+.replayBtn:focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 2px; }
+.replayBtn:disabled { opacity: 0.4; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .replayLine { transition: none; } }
+
+/* Anatomy — the same claim before and after a downgrade, side by side. */
+.anatomyPair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: var(--dm-space-6);
+  align-items: stretch;
+}
+.anatomyCard {
+  box-sizing: border-box;
+  max-width: 100%;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  padding: var(--dm-space-4) var(--dm-space-6);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+.anatomyArrow {
+  align-self: center;
+  font-size: 1.125rem;
+  color: var(--ifm-color-emphasis-700);
+}
+.anatomySub { color: var(--ifm-color-emphasis-800); padding-left: var(--dm-space-4); }
+/* temporal cue — without it the before/after pair reads as a contradiction */
+.anatomyWhen { color: var(--ifm-color-emphasis-700); }
+.anatomyWhen + .anatomyLine { margin-bottom: var(--dm-space-1); }
+/* Definitions — three aligned columns under the pair, terms in the cards' mono voice. */
+.anatomyDefs {
+  margin: var(--dm-space-6) 0 0;
+  padding-top: var(--dm-space-4);
+  border-top: 1px solid var(--dm-card-border);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--dm-space-6);
+  font-size: 0.875rem;
+}
+.anatomyDefRow { display: block; }
+.anatomyDefs dt {
+  color: var(--ifm-color-emphasis-800);
+  font-weight: 600;
+  font-family: var(--ifm-font-family-monospace);
+  margin-bottom: var(--dm-space-1);
+}
+.anatomyDefs dd { margin: 0; color: var(--ifm-color-emphasis-700); line-height: 1.5; }
+
+/* Close — conviction, then the command again, then quiet facts. */
+.convictionLine {
+  font-size: 1.125rem;
+  line-height: 1.5;
+  margin-bottom: var(--dm-space-6);
+}
+.closeInstall {
+  text-align: left;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--dm-card-border);
+  border-radius: 8px;
+  padding: var(--dm-space-2) var(--dm-space-4);
+  font-size: 0.875rem;
+  margin-bottom: var(--dm-space-6);
+}
+.closeInstall code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 100%;
+  color: var(--ifm-color-emphasis-800);
+  font-family: var(--ifm-font-family-monospace);
+}
+.factRow {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+  margin: 0;
+}
+.factLink {
+  display: inline-block;
+  min-height: 24px;
+  padding: 0 var(--dm-space-1);
+}
+
+/* The two-column band and the card pair collapse before they can crowd. */
+@media (max-width: 996px) {
+  .bandInner--replay { grid-template-columns: minmax(0, 1fr); gap: var(--dm-space-6); }
+  .anatomyPair { grid-template-columns: minmax(0, 1fr); }
+  .anatomyArrow { transform: rotate(90deg); justify-self: center; }
+}
+
+@media (max-width: 640px) {
+  .hero--daimon { padding: var(--dm-space-12) var(--dm-space-4) var(--dm-space-8); }
+  .receipt, .replay, .anatomyCard {
+    display: block;
+    width: 100%;
+    font-size: 0.75rem;
+  }
+  .receipt, .anatomyCard { padding: var(--dm-space-3) var(--dm-space-4); }
+  .replayLines { padding: var(--dm-space-3) var(--dm-space-4); }
+  /* Long artifact lines scroll like a terminal; the right-edge fade says so. */
+  .receipt, .replayLines, .anatomyCard {
+    overflow-x: auto;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  }
+  .receipt > div, .replayLine, .anatomyLine { white-space: nowrap; }
+  /* defs sit outside any scroll container — single column, wrapping text */
+  .anatomyDefs { grid-template-columns: minmax(0, 1fr); gap: var(--dm-space-3); }
+  /* the signature must never depend on a horizontal scroll.
+     Needs to outrank `.receipt > div` above, hence the two-class selector. */
+  .receipt > .receiptFoot { white-space: normal; }
+  .receiptHead { gap: var(--dm-space-4); }
+  /* small tier collapses 14 → 12 so the screen keeps 4 sizes */
+  .heroEyebrow, .sectionTitle, .installBlock, .hostChip, .cmdLabel,
+  .quietLink, .chip, .replayBar, .replayBtn, .closeInstall, .factRow { font-size: 0.75rem; }
+}

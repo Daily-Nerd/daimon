@@ -138,6 +138,32 @@ def test_sync_commits_and_pushes_own_new_files(bare_remote, monkeypatch):
     assert subject == "sync: Ada 1 checkpoint(s)"
 
 
+def test_sync_publishes_a_forget_rewrite_of_an_own_file(
+        bare_remote, monkeypatch):
+    """#600 slice A: store.scrub_team_copies rewrites own mirror files in
+    place; the NEXT sync must publish that modification like any own-file
+    change (`git add` on the own-author pathspec stages modifications, not
+    only additions). Pin it so a future 'new files only' optimization
+    cannot silently strand scrubbed state locally."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json",
+                     {"session_id": "S1", "author": "Ada",
+                      "secret": "the payroll token"})
+    assert teamsync.sync_remote(sidecar)["pushed"] is True
+    # forget-time rewrite of the same file (scrub in place, no delete)
+    path = sidecar / "authors" / "Ada" / "S1.json"
+    path.write_text(json.dumps({"session_id": "S1", "author": "Ada",
+                                "secret": "[gone]"}), encoding="utf-8")
+    r = teamsync.sync_remote(sidecar)
+    assert r["committed"] == 1 and r["pushed"] is True
+    blob = subprocess.run(
+        ["git", "-C", str(bare_remote), "show", "HEAD:authors/Ada/S1.json"],
+        capture_output=True, text=True, timeout=30).stdout
+    assert "payroll token" not in blob
+    assert "[gone]" in blob
+
+
 def test_sync_never_touches_other_authors_paths(bare_remote, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     sidecar = teamsync.init(str(bare_remote))

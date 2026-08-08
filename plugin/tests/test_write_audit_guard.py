@@ -388,6 +388,10 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_recall():
         run(["recall", "gateway"], 0)
 
+    def r_why():
+        # #502: trust inspection is read-only apart from usage telemetry.
+        run(["why", ctx["ids"][_T_GATEWAY]], 0)
+
     def r_projects():
         run(["projects"], 0)
 
@@ -436,6 +440,11 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         run(["resolve", ctx["ids"][_T_KEEP], "--note", "shipped"], 0)
 
     def r_forget():
+        # #599: resolve first so events.jsonl holds the target's text as
+        # `item_text` — the forget below must REWRITE the ledger (the one
+        # ratified rewrite of the append-only file), not just append its
+        # tombstone, so that write is observed and asserted governed.
+        run(["resolve", ctx["ids"][_T_FORGET], "--note", "obsolete"], 0)
         run(["forget", ctx["ids"][_T_FORGET], "--reason", "stale"], 0)
 
     def r_reverify():
@@ -469,6 +478,15 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
 
     def r_audit_quotes():
         run(["audit-quotes"], 0)
+
+    def r_audit_quotes_grouped():
+        # #598: same command, moved under the `audit` group.
+        run(["audit", "quotes"], 0)
+
+    def r_audit_privacy():
+        # #598: read-only tombstone residue audit. r_forget already scrubbed
+        # one item for real by this point in the drive.
+        run(["audit", "privacy"], 0)
 
     def r_heal():
         # Seed a FAILED session with the ledger's own documented line shapes
@@ -534,6 +552,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("brief",): r_brief,
         ("anchor",): r_anchor,
         ("recall",): r_recall,
+        ("why",): r_why,
         ("projects",): r_projects,
         ("refute", "add"): r_refute_add,
         ("refute", "ratify"): r_refute_ratify,
@@ -553,6 +572,8 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("status",): r_status,
         ("verify-receipt",): r_verify_receipt,
         ("audit-quotes",): r_audit_quotes,
+        ("audit", "quotes"): r_audit_quotes_grouped,
+        ("audit", "privacy"): r_audit_privacy,
         ("heal",): r_heal,
         ("team", "sync"): r_team_sync,
         ("team", "status"): r_team_status,
@@ -610,8 +631,61 @@ def test_every_command_write_carries_an_admit_frame(
     assert saw("resolve", "events.jsonl")           # admit_row on the ledger
     assert saw("forget", "events.jsonl")            # tombstone append
     assert saw("refute add", "refutations.jsonl")  # negative ledger append
+    # #599: the ledger REWRITE (scrub_event_fields) must have run and been
+    # governed — not merely the tombstone append hitting the same file.
+    assert any(cmd == "forget" and rel.name == "events.jsonl" and governed
+               and any(f.endswith("store.scrub_event_fields") for f in frames)
+               for cmd, lbl, rel, governed, frames in write_audit.records), \
+        "forget never exercised (or never governed) the events.jsonl rewrite"
     assert saw("heal", "forget-hits.jsonl")         # capture-time forget drop
     assert saw("anchor", "latest.json")             # --attach rewrite
+
+
+def _observed_shapes(audit):
+    return {audit.pattern(label, rel)
+            for _cmd, label, rel, _governed, _frames in audit.records}
+
+
+def _undeclared(shapes):
+    from daimon_briefing import surfaces
+    return sorted(s for s in shapes if surfaces.match(s) is None)
+
+
+def test_every_observed_write_shape_is_declared(
+        write_audit, tmp_path, monkeypatch, capsys):
+    """#601: the surface registry ratchet. Every file shape a command writes
+    under the audited roots must be DECLARED in surfaces.SURFACES with a
+    delete strategy — a new store cannot ship without stating how deletion
+    reaches it. (The registry's own hygiene tests live in
+    test_surface_registry.py; this is the enforcement side.)"""
+    proj = _setup_env(tmp_path, monkeypatch)
+    write_audit.placeholders[store.project_slug(str(proj))] = "{slug}"
+    _drive_all(write_audit, tmp_path, monkeypatch, proj)
+    shapes = _observed_shapes(write_audit)
+    # Anti-vacuity (adversarial finding): an empty observation set passes
+    # the undeclared check trivially — a broken driver or root registration
+    # must fail here, not go green.
+    assert len(shapes) >= 5, f"drive observed almost nothing: {shapes}"
+    undeclared = _undeclared(shapes)
+    assert undeclared == [], \
+        f"writes to shapes never declared in surfaces.py: {undeclared}"
+    # Known limitation, stated where it bites: the audited roots are the
+    # checkpoint store and the team mirror. logs/, recall_seen/, keys/,
+    # codex/, windsurf/ writes are not observed here (log appends are
+    # ungoverned by design, sqlite writes happen below Python I/O, host
+    # hooks run out of process) — their shapes are pinned statically by
+    # test_surface_registry.py instead.
+
+
+def test_registry_ratchet_trips_on_an_undeclared_shape():
+    """Sensitivity twin: prove the alarm rings — an empty registry must
+    classify every observed shape as undeclared."""
+    from unittest import mock
+
+    from daimon_briefing import surfaces
+    with mock.patch.object(surfaces, "SURFACES", ()):
+        assert _undeclared({"checkpoints/{slug}/events.jsonl"}) \
+            == ["checkpoints/{slug}/events.jsonl"]
 
 
 # ---------------------------------------------------------------------------

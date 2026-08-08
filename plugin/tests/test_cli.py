@@ -2117,6 +2117,68 @@ def test_session_ledger_computes_spawn_age():
     assert led["A"]["result_kind"] is None
 
 
+# ---- #634: Codex rollout stem vs bare session id ----
+
+# Codex hooks spawn-log the BARE session id, but the serialize result lines
+# carry the rollout stem (`rollout-<stamp>-<id>`) because that is what the
+# checkpoint file and the host transcript are named. Folding them under
+# different keys makes every successful Codex capture also emit a phantom
+# "spawned, no result" failure.
+_CODEX_SID = "019fdf6a-8019-7dd0-b57f-bd20b7ac47e8"
+_CODEX_STEM = f"rollout-2026-08-07T21-28-46-{_CODEX_SID}"
+
+
+def test_session_ledger_pairs_codex_rollout_success_with_bare_spawn():
+    text = "\n".join([
+        f"2026-08-08T04:48:19Z codex-session-end: spawned serialize for {_CODEX_SID} "
+        "(reason: exit, project: /p/A)",
+        f"wrote checkpoint: /c/{_CODEX_STEM}.json (took 143s)",
+    ])
+    led = cli._session_ledger(text, now=0.0)
+    assert list(led) == [_CODEX_SID]
+    assert led[_CODEX_SID]["spawned"] is True
+    assert led[_CODEX_SID]["result_kind"] == "success"
+
+
+def test_session_ledger_pairs_codex_rollout_error_with_bare_spawn():
+    text = "\n".join([
+        f"2026-08-08T04:48:19Z codex-session-end: spawned serialize for {_CODEX_SID} "
+        "(reason: exit, project: /p/A)",
+        f"error: boom (transcript: /t/{_CODEX_STEM}.jsonl) after 3s",
+    ])
+    led = cli._session_ledger(text, now=0.0)
+    assert list(led) == [_CODEX_SID]
+    assert led[_CODEX_SID]["spawned"] is True
+    assert led[_CODEX_SID]["result_kind"] == "error"
+    assert led[_CODEX_SID]["transcript"] == f"/t/{_CODEX_STEM}.jsonl"
+
+
+def test_session_ledger_keeps_non_rollout_stems_verbatim():
+    # A Claude checkpoint stem IS the session id — normalisation must not
+    # touch it, and a rollout-shaped name without a valid stamp is not a
+    # Codex rollout either.
+    text = "\n".join([
+        "wrote checkpoint: /c/A.json (took 5s)",
+        "wrote checkpoint: /c/rollout-not-a-stamp-B.json (took 5s)",
+    ])
+    led = cli._session_ledger(text, now=0.0)
+    assert set(led) == {"A", "rollout-not-a-stamp-B"}
+
+
+def test_compute_outstanding_sees_codex_checkpoint_under_rollout_name(
+    tmp_checkpoint_dir, sample_checkpoint
+):
+    # The result line has aged out of the 200-line window, so only the probe
+    # can clear the spawn. The checkpoint on disk is named by rollout stem.
+    from daimon_briefing import store
+
+    store.write_checkpoint(_CODEX_STEM, sample_checkpoint)
+    log = (f"2026-08-08T04:48:19Z codex-session-end: spawned serialize for "
+           f"{_CODEX_SID} (reason: exit, project: /p/A)")
+    now = datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+    assert cli._compute_outstanding(log, now) == []
+
+
 # ---- _outstanding_failures: classify lost sessions per checkpoint store ----
 
 
@@ -4966,17 +5028,19 @@ def _detach_serialize_log_handler():
 def test_serialize_routes_downgrade_warning_to_serialize_log(
         tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, capsys,
         monkeypatch, _detach_serialize_log_handler):
-    # A quote-verification downgrade must land in serialize.log UNTRUNCATED
-    # (no %.80s cap — this line is the only surviving record of the item text).
-    tail_marker = ("the item text runs well past eighty characters so the old "
-                   "prefix cap would have cut it long before END-OF-ITEM")
-    assert len(tail_marker) > 80
+    # A quote-verification downgrade must land in serialize.log as a CONTENT
+    # HASH, never the item text (#616 — supersedes #194's untruncated
+    # payload: logs/*.log is declared exempt-no-plaintext, and the writers
+    # carry that claim). The hash is content_key of the text, so "which item
+    # downgraded" stays answerable against the stored item.
+    item_text = ("the item text runs well past eighty characters so the old "
+                 "prefix cap would have cut it long before END-OF-ITEM")
     payload = json.dumps({
         "session_id": "sample_transcript",
         "working_context": {
             "active_topic": {"text": "t", "trust": "inferred"},
             "open_questions": [
-                {"text": tail_marker, "trust": "verbatim",
+                {"text": item_text, "trust": "verbatim",
                  "quote": "THIS QUOTE APPEARS NOWHERE IN THE TRANSCRIPT"}
             ],
             "recent_decisions": [],
@@ -4989,7 +5053,9 @@ def test_serialize_routes_downgrade_warning_to_serialize_log(
     assert rc == 0
     log = (tmp_log_dir / "serialize.log").read_text()
     assert "downgraded verbatim->inferred" in log
-    assert "END-OF-ITEM" in log  # full text survived, cap dropped
+    assert "END-OF-ITEM" not in log  # item text never reaches the log (#616)
+    from daimon_briefing import normalize
+    assert normalize.content_key(item_text) in log
 
 
 def test_attach_serialize_log_handler_is_idempotent(
@@ -5375,6 +5441,22 @@ def test_status_payload_matches_status_json_output(
         "(reason: exit, project: /p/A)",
         "wrote checkpoint: /tmp/ck/S-prev.json (took 7s)",
     ])
+    # #631: the assertion is about the ASSEMBLER, not the wall clock — but
+    # each call fetches its own `now`, so a second boundary between the two
+    # builds skewed every age/freshness field by one and flaked CI. Freeze
+    # both clock sources for the comparison; ticking is exercised on purpose
+    # in the repro that filed the issue, not here.
+    frozen = time.time()
+    monkeypatch.setattr(time, "time", lambda: frozen)
+    frozen_dt = datetime.now(timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen_dt.astimezone(tz) if tz else \
+                frozen_dt.replace(tzinfo=None)
+
+    monkeypatch.setattr(cli, "datetime", _FrozenDatetime)
     rc = cli.main(["status", "--json"])
     data = json.loads(capsys.readouterr().out)
     payload, prc = cli.status_payload(None)

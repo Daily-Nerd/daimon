@@ -74,7 +74,7 @@ def main() -> int:
     # the serializer writes this project's latest pointer (plus the global one).
     # No cwd in the payload -> child env untouched -> pre-routing behavior.
     cwd = str(payload.get("cwd") or "").strip()
-    child_env = lib.project_env(cwd)
+    child_env = lib.project_env(cwd, "claude-code")
     try:
         lib.spawn_serialize(cli, transcript_path, child_env)
         # Trailing (transcript: ...) group (#28): if the child crashes before

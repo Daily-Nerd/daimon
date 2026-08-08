@@ -20,10 +20,6 @@ case-insensitively where noted). A handful use different conventions — kill
 switches that are on unless set to `0`, or presence-based flags — and those are
 called out in the "What it does" column.
 
-Internal serialization-tuning knobs (chunking thresholds, overlap, concurrency,
-merge-group size) are intentionally not documented here — they are load-bearing
-defaults calibrated against measured behavior, not user-facing configuration.
-
 ## Core
 
 | Variable | Default | What it does |
@@ -83,6 +79,7 @@ Opt-in shared-memory mirror. See [docs/team.md](./team.md) for the full workflow
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Root of the shared team-memory mirror. |
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path for this machine's sessions (relative, e.g. `core/api-gateway`). Overrides the sidecar's `daimon-team.toml` mapping and the origin-derived fallback when routing checkpoints under `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Read-time age window: teammates' checkpoints older than this many days are skipped when reading. `0` = keep all. Never physically deletes from the shared append-only branch. |
+| `DAIMON_TEAM_APPLY_FORGET` | off | Standing consent for a TEAMMATE's published forget tombstone to rewrite this machine's own checkpoints. NOT sufficient alone — the apply also requires the typed `daimon team sync --apply-forget`, because a bare `daimon team sync` is spawned detached at SessionStart. Default off: a foreign tombstone always suppresses the value on read and in the index, but deleting local belief state from someone else's hash is a decision to make knowingly — the shared branch is append-only, so there is no undo. |
 
 ## Receipts
 
@@ -122,6 +119,8 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Codex serialize spawns. `0` serializes on every `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Windsurf serialize spawns (Windsurf has no session-end event, so capture runs on this throttle). `0` serializes every turn. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
+| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Where the Windsurf adapter keeps the transcripts it accumulates. Read by both the hook that writes them and the `forget`/`heal` paths that delete them — change it in one place only, or the writer and the deleter stop agreeing. |
+| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Age window for daimon-authored Windsurf transcripts and unparsed payload dumps, reaped by `daimon heal`. A privacy bound: a forgotten value cannot be located inside prose, so this limits how long the source conversation lingers between `forget` runs. Clamped to at least 1 — unlike the other Windsurf knobs, `0` does not disable it. |
 
 ## Scar harvest
 
@@ -155,7 +154,7 @@ checkpoints, so candidate files are committable.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Where the session-end hook writes `serialize.log`. The hook itself hardcodes `~/.daimon/logs`; this override exists so the CLI (and tests) can point `status` elsewhere. |
+| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Log directory. `serialize-crash.log` honors this on both sides — the hooks that spawn the serialize child read it (process env and this file) exactly as the CLI does, because `daimon forget` deletes that file and writer and deleter must agree on where it is. `serialize.log` is the exception: the hooks still write it to `~/.daimon/logs` unconditionally, and this override only moves where the CLI (and tests) look for it. |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where host transcripts live (`<slug>/<session>.jsonl`). Read-only — the quote-reverification audit reads them to re-check stored quotes against their source. |
 
 ## LLM backend
@@ -182,19 +181,19 @@ The URL, key, and model each fall back to a `LITELLM_*` variable if the
 | `DAIMON_LLM_NO_CACHE` | off | When truthy, bypass gateway response caching per request — needed when a cached bad response pins a failure or runs must be statistically independent. |
 | `DAIMON_LLM_BRIEFING` | off | When truthy, render the briefing via the LLM instead of the deterministic template. |
 | `DAIMON_LLM_COMMAND` | unset | Full CLI invocation for the `command` backend (binary + model + flags). Required for `command`, and required for a `claude` on PATH to be used by any backend other than `claude-cli`. |
-
-:::note Which process receives your transcript
-
-A `claude` binary merely present on PATH is **not** adopted automatically. Serializing sends the full session transcript to whichever CLI is configured, so that CLI has to be named: either `DAIMON_LLM_COMMAND`, or `DAIMON_LLM_BACKEND=claude-cli` to opt into the built-in preset.
-
-Previously an unset `DAIMON_LLM_COMMAND` plus a `claude` anywhere on PATH was enough for `auto` installs and for the litellm rescue path. If you relied on that, set one of the two variables above. `daimon configure` and `daimon doctor` name the resolved binary and its path so you can see exactly which one is in use.
-
-:::
 | `DAIMON_LLM_COMMAND_OUTPUT` | unset | How to extract assistant text from the command's stdout: `text` (raw stdout) or `json:<key>` (parse JSON, read `<key>`). |
 | `DAIMON_LLM_COMMAND_INPUT` | `stdin` | How the prompt reaches the command backend: `stdin` (piped), `arg` (appended as the final argv element), or `file:<flag>` (written to a tempfile, then `<flag> <path>` appended). An unrecognized value logs a warning and falls back to `stdin`. |
 | `DAIMON_LLM_COMMAND_FALLBACK` | unset | The one rescue CLI, used when the primary backend fails. Works for both a litellm primary and a `command` primary, which previously had no rescue direction at all. One fallback, never a chain: if the primary and this both fail the cause is almost always environmental, and a third CLI spends budget reaching the same error while making the install look better protected than it is. When unset, a litellm primary still falls back to `DAIMON_LLM_COMMAND` as before. |
 | `DAIMON_LLM_COMMAND_FALLBACK_OUTPUT` | unset | Output spec for the rescue CLI, same grammar as `DAIMON_LLM_COMMAND_OUTPUT`. Carried separately because the rescue is a different binary. |
 | `DAIMON_LLM_COMMAND_FALLBACK_INPUT` | `stdin` | Input spec for the rescue CLI, same grammar as `DAIMON_LLM_COMMAND_INPUT`. |
+
+:::note[Which process receives your transcript]
+
+A `claude` binary merely present on PATH is **not** adopted automatically. Serializing sends the full session transcript to whichever CLI is configured, so that CLI has to be named: either `DAIMON_LLM_COMMAND`, or `DAIMON_LLM_BACKEND=claude-cli` to opt into the built-in preset.
+
+Previously an unset `DAIMON_LLM_COMMAND` plus a `claude` anywhere on PATH was enough for `auto` installs and for the litellm rescue path. If you relied on that, set one of the two variables above. `daimon configure` names the resolved binary and its path so you can see exactly which one is in use.
+
+:::
 
 ## Serializer chunking
 

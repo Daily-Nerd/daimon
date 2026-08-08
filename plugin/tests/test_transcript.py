@@ -146,6 +146,80 @@ def test_from_file_parses_current_codex_event_stream_without_duplicates(tmp_path
     ]
 
 
+def test_from_file_parses_codex_0147_item_completed_stream(tmp_path):
+    # Field-confirmed (#622): Codex CLI 0.147.0 stopped emitting
+    # user_message/agent_message events. Visible turns now arrive as
+    # event_msg/item_completed with a PascalCase item.type, text as a
+    # content-block list, and inconsistent block-type case between roles
+    # (UserMessage blocks say "text", AgentMessage blocks say "Text").
+    # AgentMessage carries a phase: commentary (mid-turn narration) and
+    # final_answer are both assistant content. response_item rows still
+    # duplicate each turn — the event stream stays the single source.
+    p = _write_jsonl(tmp_path / "codex.jsonl", [
+        {"type": "session_meta", "payload": {"cli_version": "0.147.0"}},
+        {"type": "event_msg", "ordinal": 1, "payload": {
+            "type": "item_completed", "item": {
+                "type": "UserMessage", "id": "u1", "content": [
+                    {"type": "text", "text": "Where did we leave off?",
+                     "text_elements": []},
+                ],
+            },
+        }},
+        {"type": "event_msg", "ordinal": 2, "payload": {
+            "type": "item_completed", "item": {
+                "type": "Reasoning", "id": "r1",
+                "summary_text": [], "raw_content": [],
+            },
+        }},
+        {"type": "event_msg", "ordinal": 3, "payload": {
+            "type": "item_completed", "item": {
+                "type": "AgentMessage", "id": "a1", "content": [
+                    {"type": "Text", "text": "Let me verify the repo."},
+                ], "phase": "commentary",
+            },
+        }},
+        {"type": "event_msg", "ordinal": 4, "payload": {
+            "type": "item_completed", "item": {
+                "type": "CommandExecution", "id": "e1",
+                "command": ["/bin/zsh", "-lc", "git status"],
+            },
+        }},
+        {"type": "response_item", "ordinal": 5, "payload": {
+            "type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": "Let me verify the repo."},
+            ],
+        }},
+        {"type": "event_msg", "ordinal": 6, "payload": {
+            "type": "item_completed", "item": {
+                "type": "AgentMessage", "id": "a2", "content": [
+                    "stray-string-block",
+                    {"type": "image", "url": "x"},
+                    {"type": "Text", "text": "Branch is clean."},
+                ], "phase": "final_answer",
+            },
+        }},
+        {"type": "event_msg", "ordinal": 7, "payload": {
+            "type": "token_count", "info": {"total_tokens": 4212},
+        }},
+        {"type": "event_msg", "ordinal": 8, "payload": {
+            "type": "item_completed", "item": "not-a-dict",
+        }},
+        {"type": "event_msg", "ordinal": 9, "payload": {
+            "type": "item_completed", "item": {
+                "type": "UserMessage", "id": "u2", "content": None,
+            },
+        }},
+    ])
+
+    msgs = transcript.from_file(p)
+
+    assert msgs == [
+        {"role": "user", "content": "Where did we leave off?"},
+        {"role": "assistant", "content": "Let me verify the repo."},
+        {"role": "assistant", "content": "Branch is clean."},
+    ]
+
+
 def test_from_file_windsurf_cascade_jsonl_parses_user_and_assistant(tmp_path):
     # Field-confirmed (#70): native Cascade transcript rows are exactly
     # {type, status, <payload-key>}. canceled is dropped, error is kept

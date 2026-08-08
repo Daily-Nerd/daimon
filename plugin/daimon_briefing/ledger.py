@@ -69,7 +69,8 @@ def _append_retry_log(session_id: str, prior: str) -> None:
 # host and the verb are alternations. A new host adapter MUST add its prefix
 # here or its serializes are invisible to status/hung detection/heal.
 _SPAWN_RE = re.compile(
-    r"^(\S+) (?:gemini-session-end|session-end|codex-stop|windsurf-cascade|"
+    r"^(\S+) (?:gemini-session-end|codex-session-end|session-end|codex-stop|"
+    r"windsurf-cascade|"
     r"windsurf-finalizer|session-start): "
     r"(?:spawned|retry) serialize for (\S+)"
 )
@@ -149,6 +150,40 @@ _LEDGER_PROJECT_RE = re.compile(r"project: (.*?)\)")
 # match keeps it disjoint from _HEAL_TRANSCRIPT_RE (error lines, `after Ns`).
 _LEDGER_SPAWN_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)\s*$")
 
+# #634: Codex names BOTH its rollout transcript and the checkpoint written from
+# it `rollout-<stamp>-<session-id>`, while its hooks spawn-log the BARE session
+# id. Attributing a result by file stem therefore never meets its spawn, so
+# every successful Codex capture also left a phantom "spawned, no result"
+# failure in status. The stamp shape is matched exactly because both halves
+# contain dashes — a looser split would be ambiguous. Non-Codex stems (a Claude
+# checkpoint stem IS the session id) must pass through untouched.
+_ROLLOUT_STEM_RE = re.compile(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$")
+
+
+def _session_key(stem: str) -> str:
+    """Checkpoint/transcript file stem -> the session id its spawn line carries.
+    Identity for every host except Codex (#634)."""
+    m = _ROLLOUT_STEM_RE.match(stem)
+    return m.group(1) if m else stem
+
+
+def _has_checkpoint(sid: str) -> bool:
+    """Did this session's serialize land a checkpoint? A direct read covers
+    every host whose checkpoint is named by session id; the scan covers Codex,
+    whose file is on disk under the rollout name the bare id cannot address
+    (#634). The glob pattern is a literal — `sid` never reaches it — so no
+    session id can inject shell-style metacharacters into the match.
+
+    The scan needs no OSError guard, unlike this module's other filesystem
+    readers: `Path.glob` swallows a missing directory, a path that is a file
+    rather than a directory, and a permission-denied directory, returning an
+    empty iterator for all three (verified on 3.10 and 3.13, the versions CI
+    runs). A `try/except OSError` here would be unreachable."""
+    if store.read_checkpoint(sid) is not None:
+        return True
+    return any(_session_key(p.stem) == sid
+               for p in config.checkpoint_dir().glob("rollout-*.json"))
+
 
 def _session_ledger(text: str, now: float) -> dict:
     """Fold serialize.log into per-session terminal state. Unlike
@@ -189,7 +224,7 @@ def _session_ledger(text: str, now: float) -> dict:
             continue
         m = _LEDGER_OK_RE.match(line)
         if m:
-            e = _entry(Path(m.group(1)).stem)
+            e = _entry(_session_key(Path(m.group(1)).stem))
             e["result_kind"] = "success"
             e["result_line"] = line
             e["transcript"] = None
@@ -204,7 +239,7 @@ def _session_ledger(text: str, now: float) -> dict:
             tm = _HEAL_TRANSCRIPT_RE.search(line)
             if not tm:
                 continue  # pre-flight error, no session to attribute
-            e = _entry(Path(tm.group(1)).stem)
+            e = _entry(_session_key(Path(tm.group(1)).stem))
             e["result_kind"] = "error"
             e["result_line"] = line
             e["transcript"] = tm.group(1)
@@ -279,7 +314,7 @@ def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
     classification."""
     return _outstanding_failures(
         _session_ledger(text, now), now,
-        lambda sid: store.read_checkpoint(sid) is not None,
+        _has_checkpoint,
         config.hung_after_seconds(),
         lambda p: bool(p) and Path(p).exists(),
         force=force,
@@ -440,7 +475,8 @@ def serialize_in_flight(project_slug: str, now: float | None = None) -> bool:
 # Host prefix on a spawn line, for per-host capture counts. Deliberately the
 # same alternation as _SPAWN_RE (a new host adapter updates both).
 _STATS_HOST_RE = re.compile(
-    r"^\S+ (gemini-session-end|session-end|codex-stop|windsurf-cascade|"
+    r"^\S+ (gemini-session-end|codex-session-end|session-end|codex-stop|"
+    r"windsurf-cascade|"
     r"windsurf-finalizer): "
     r"spawned serialize for "
 )

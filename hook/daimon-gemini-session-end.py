@@ -84,7 +84,7 @@ def main() -> int:
     # Per-project routing: hand the session's working directory to the child so
     # the serializer writes this project's latest pointer (plus the global one).
     cwd = str(payload.get("cwd") or "").strip()
-    child_env = lib.project_env(cwd)
+    child_env = lib.project_env(cwd, "gemini")
     try:
         lib.spawn_serialize(cli, transcript_path, child_env)
         lib.log(

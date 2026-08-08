@@ -21,7 +21,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from . import config, configure, ledger, llm, redact, schema
+from . import (config, configure, ledger, llm, normalize, provenance, schema)
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -951,6 +951,42 @@ def daimon_output_ids(messages) -> set:
             and (mid := _message_id(m)) is not None}
 
 
+def extraction_messages(messages):
+    """Messages as the EXTRACTOR should see them: daimon's own tool output
+    blanked (#577).
+
+    Until this existed the two halves disagreed. `stripped_transcript` blanked
+    a `daimon_output` row so quote verification could not accept daimon as a
+    witness for its own claim, while the extractor kept reading the same rows
+    raw. Verification is quote-scoped, so an item could carry a real assistant
+    sentence in `quote` and daimon's own output in `text`/`because`/`scene`,
+    and arrive at `verbatim` with content the defense was built to keep out.
+    Measured on #575's guard: one derived belief was correctly downgraded to
+    `inferred`, one derived decision landed `verbatim`.
+
+    Blanked, never dropped: `[mN]` markers are positional over the full list,
+    so removing a row would renumber every later citation.
+
+    What this costs, measured rather than assumed. Chunk-cache keys derive from
+    chunk text (#48), so blanking shifts chunk boundaries and invalidates
+    entries: 28.6% of chunks over 1,166 real transcripts, against a cache that
+    reaps itself every `chunk_cache_days` (3). It is a one-time re-extraction
+    of a store that fully rotates twice a week.
+
+    What it does NOT cost: content. Of 616 items across 12 checkpoint chains,
+    156 had text appearing verbatim in the brief rendered from their own prior
+    checkpoint, and 156 of 156 were already stored in that bucket. Nothing here
+    is the only copy of anything. Carry works off checkpoint data, not off the
+    extractor's input, so carried items are untouched either way.
+
+    Open and deliberately not claimed: whether the brief as CONTEXT helps the
+    extractor interpret the session's own content. Substring matching cannot
+    see reworded reuse, and no retrospective can measure a context effect.
+    """
+    return [dict(m, content="") if isinstance(m, dict) and m.get("daimon_output")
+            else m for m in (messages or [])]
+
+
 def stripped_transcript(messages) -> str:
     """`_render_transcript`'s text with every message's injected spans removed
     — the whole-transcript VERIFICATION haystack (#440).
@@ -976,14 +1012,15 @@ def stripped_transcript(messages) -> str:
     return _render_transcript(stripped)
 
 
-def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
+def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
+                  source_ref=None, transcript_hash=None, now=None) -> int:
     """Verify every verbatim item's quote against the rendered transcript, in
     place (#125). On a hit the item gets `quote_verified: true` AND a
     `last_verified` ISO-8601 UTC stamp (#215: the staleness-budget's freshest
     signal — a carried item's world-check age is measured from here). On a
     miss it is downgraded to trust="inferred" with `quote_verified: false` and
-    the downgrade is logged (count + redacted item-text prefix — this runs
-    pre-redaction, so the raw text must not reach a log sink; #141). Items
+    the downgrade is logged (count + content hash — never the text: the line
+    lands in serialize.log, which is exempt-no-plaintext; #141, #616). Items
     already trust="inferred" are left untouched — no stamp, either field.
     Runs ONCE at serialize, PRE-redaction, so the quote is still the raw text
     (a quote whose secret redaction will later mask still verifies here
@@ -1032,11 +1069,28 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
     # MISS must not execute them for the quote-id's crime.
     signals = signal_message_ids(messages) if messages else set()
     downgraded = echoed = 0
+    digest = provenance.source_digest(transcript_hash, transcript_text)
+    # #604: ONE stamp for the whole pass, threaded from the caller's clock —
+    # the session-end stamp `created` also uses. Reading the wall clock per
+    # item made two captures of the same transcript differ whenever they
+    # straddled a second boundary (the capture-parity flake), and left a
+    # re-serialize unable to reproduce its own receipts. Scar 0016's rule:
+    # a now-consumer takes the clock, it does not fetch one. Wall clock
+    # stays the fallback for callers with no transcript stamp to thread.
+    stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=()):
+        receipt = provenance.quote_receipt(
+            source_ref, digest, outcome=outcome, checked_at=checked_at,
+            binding_mode=binding_mode, message_ids=message_ids)
+        if receipt is not None:
+            item["quote_provenance"] = receipt
     # The model never gets a vote on the echo verdict (#292 discipline, same
     # as `grounded`/`pinned`): any model-emitted value is dropped before the
     # checker re-derives it.
     for item in iter_items(checkpoint):
         item.pop(ECHO_ONLY_KEY, None)
+        item.pop("quote_provenance", None)
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
             continue
@@ -1045,9 +1099,13 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             continue
         scoped = scoped_haystack(item, texts_by_id, exclude=signals)
         if scoped is not None and quote_matches(quote, scoped):
+            checked_at = stamp
             item["quote_verified"] = True
-            item["last_verified"] = datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ")
+            item["last_verified"] = checked_at
+            quote_ids = [i for i in item.get(SOURCE_IDS_KEY) or []
+                         if isinstance(i, str) and i not in signals]
+            stamp_receipt(item, "verified", checked_at, "message-ids",
+                          quote_ids)
         elif quote_matches(quote, haystack):
             if scoped is not None:
                 # Resolved AND mismatched: the quote is real but not in its
@@ -1062,9 +1120,10 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
                 log.warning("quote verification: quote not found in its cited "
                             "message(s) — binding dropped, verified via "
                             "whole-transcript scan (#358)")
+            checked_at = stamp
             item["quote_verified"] = True
-            item["last_verified"] = datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ")
+            item["last_verified"] = checked_at
+            stamp_receipt(item, "verified", checked_at, "transcript-scan")
         else:
             # #440: a second pass over the UNSTRIPPED text separates "present
             # only in daimon's own injected output" from "absent entirely".
@@ -1080,20 +1139,25 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None) -> int:
             item["quote_verified"] = False
             # A downgraded quote is not evidence; a binding for it is noise.
             item.pop(SOURCE_IDS_KEY, None)
+            checked_at = stamp
+            stamp_receipt(item, "not-verified", checked_at,
+                          "transcript-scan")
             downgraded += 1
-            # Log-line-only scrub: item ids are not stamped until store-save,
-            # so the text is the only diagnostic handle here. The item itself
-            # stays raw (store redacts it; ids hash redacted text). Untruncated
-            # (#194): this line is the only surviving record of the downgrade —
-            # the CLI routes it to serialize.log, which holds full result lines.
-            logged, _ = redact.redact_text(item.get("text") or "")
+            # #616 (supersedes #194's untruncated payload): item ids are not
+            # stamped until store-save, so the CONTENT HASH is the diagnostic
+            # handle — the same normalize.content_key a later `forget` of this
+            # text would tombstone, so "which item downgraded" stays
+            # answerable. The text itself must never reach serialize.log: the
+            # CLI routes this line there, and logs/*.log is declared
+            # exempt-no-plaintext (surfaces.py) — a claim these writers carry.
+            key = normalize.content_key(item.get("text") or "")
             if item.get(ECHO_ONLY_KEY):
                 log.warning("quote verification: downgraded verbatim->inferred "
                             "(echo-only: quote appears only in daimon's own "
-                            "injected output): %s", logged)
+                            "injected output) (content hash %s)", key)
             else:
-                log.warning("quote verification: downgraded verbatim->inferred: %s",
-                            logged)
+                log.warning("quote verification: downgraded verbatim->inferred "
+                            "(content hash %s)", key)
     if downgraded:
         log.info("quote verification: %d verbatim item(s) downgraded to inferred"
                  " (%d echo-only)", downgraded, echoed)
@@ -1307,10 +1371,11 @@ def ground_outcomes(checkpoint, signal_ids) -> int:
         item["trust"] = "inferred"
         item[GROUNDED_KEY] = False
         downgraded += 1
-        # Same log-line-only scrub as verify_quotes: runs pre-redaction.
-        logged, _ = redact.redact_text(item.get("text") or "")
+        # Same #616 rule as verify_quotes' downgrade line: hash, never text.
+        key = normalize.content_key(item.get("text") or "")
         log.warning("outcome grounding: unwitnessed outcome claim downgraded "
-                    "verbatim->inferred (no signal cited): %s", logged)
+                    "verbatim->inferred (no signal cited) (content hash %s)",
+                    key)
     if downgraded:
         log.info("outcome grounding: %d outcome claim(s) downgraded to inferred",
                  downgraded)
@@ -1810,7 +1875,7 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
 # already stomps a model-supplied value the same way.
 _CODE_OWNED_KEYS = (
     "format_version", "created", "author",
-    "transcript_hash", "project_slug", "git_branch", "receipts",
+    "transcript_hash", "source_ref", "project_slug", "git_branch", "receipts",
     # #514: the extractor dates its own run at serialize time; a model never
     # gets to claim one (and the introspection path stays absent = unknown).
     "extraction_version",
@@ -1832,7 +1897,8 @@ _CODE_OWNED_KEYS = (
 # Safe to strip on both paths because carry.merge folds prev items in AFTER
 # serialize_strict returns — a carried item's genuine stamps never pass here.
 _CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
-                         "quote_verified", "last_verified")
+                         "quote_verified", "last_verified",
+                         "quote_provenance")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:
@@ -1981,7 +2047,8 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
 
 
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
-                     escalate=False) -> dict:
+                     escalate=False, source_ref=None, transcript_hash=None,
+                     now=None) -> dict:
     """Transcript -> validated checkpoint, or a named SerializeError.
 
     `chat` is an injectable callable (messages, **kwargs) -> str; defaults to the
@@ -2020,7 +2087,11 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise LLMCallError("deadline exhausted before the first LLM call")
 
-    transcript_text = _render_transcript(messages)
+    # #577: the extractor reads daimon's own tool output blanked, the same way
+    # verification already refuses to read it as a witness. `messages` stays
+    # unblanked below — verification, grounding and the [mN] markers all key on
+    # the original list.
+    transcript_text = _render_transcript(extraction_messages(messages))
     chunks = chunk_transcript(transcript_text, config.chunk_lines(), config.chunk_overlap())
 
     # #314: DAIMON_TIMEOUT is the field-derived floor for ONE slow call (#284,
@@ -2215,7 +2286,9 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # stamp the verdict — the briefing never re-greps. #358: items with a
     # validated binding resolve their id and compare bytes against just that
     # message, whole-transcript scan as fallback.
-    verify_quotes(checkpoint, transcript_text, messages)
+    verify_quotes(checkpoint, transcript_text, messages,
+                  source_ref=source_ref, transcript_hash=transcript_hash,
+                  now=now)
     # #359: derive the code-owned `grounded` verdict AFTER verification (it
     # must judge the surviving bindings) — outcome claims with a validated
     # signal pointer are marked grounded; unwitnessed verbatim outcome

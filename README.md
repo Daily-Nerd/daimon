@@ -45,8 +45,6 @@ And because the briefing is injected automatically when a session starts, the ag
 
 Nothing here is mocked — the transcripts, the recording scripts, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
 
-The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings.
-
 ---
 
 ## Install
@@ -73,6 +71,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 ## Beyond the briefing
 
 - **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled).
+- **`daimon why <item-id>`** — inspect a recalled item's independent capture, provenance, source, byte-integrity, current-support, verifier, lifecycle, and corroboration evidence. Add `--source` for one bounded redacted source window. See the [Trust Inspector guide](docs/trust-inspector.md).
 - **Context switching** — `daimon projects`, `daimon brief --slug <slug>`: read another project's memory deliberately, provenance-labeled — never automatic.
 - **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it, in English or Spanish.
 - **Code anchors** — `daimon anchor <file> <symbol>` pins a belief to a code symbol; drift is flagged in the next briefing. Offline, stdlib `ast`.
@@ -86,16 +85,16 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 
 - **Trust-classed, quote-pinned memory** — every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, no server: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
 - **The briefing UX** — memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
-- **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (adapter shipped, awaiting first live run); other hosts are reachable via the same thin adapter shape.
+- **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06); other hosts are reachable via the same thin adapter shape.
 
 ## Status
 
 | Surface | State |
 |---------|-------|
 | Claude Code plugin + hooks | live-validated daily |
-| CLI (`brief`, `status`, `recall`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
+| CLI (`brief`, `status`, `recall`, `why`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
 | Windsurf adapter | live-validated |
-| Codex adapter | shipped, awaiting first live run |
+| Codex adapter | live-validated capture (real sessions serialized since 2026-08-06) |
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
 | Team memory | shipped, opt-in, early |
 
@@ -111,3 +110,7 @@ Daimon is self-contained at runtime — no external memory backend, no server. T
 - [MVP — Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md) — authoritative architecture
 - [Research Logbook](./research/README.md) — findings, decisions, evidence trail
 - [Contributing](./CONTRIBUTING.md) — dev setup, tests, lint, pre-commit hooks
+
+---
+
+The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings. This one shows its sources.

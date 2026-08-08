@@ -3,7 +3,7 @@ unresolved items into the new one by code. Pure function — all clock/config
 injected."""
 import copy
 
-from daimon_briefing import carry
+from daimon_briefing import carry, provenance
 
 NOW = 1_760_000_000.0  # arbitrary fixed epoch
 
@@ -46,6 +46,18 @@ def _cp(sid, created_days_ago=0, questions=(), decisions=(), uncertainties=()):
 def _item(text, imp=7, days=2, **kw):
     return {"text": text, "trust": "inferred", "importance": imp,
             "first_seen": _iso(days), **kw}
+
+
+def _quote_receipt(session_id, checked_at, message_id, outcome="verified"):
+    source = {
+        "version": 1, "host": "claude-code", "session_id": session_id,
+        "locator": "managed", "author": "alice",
+    }
+    return provenance.quote_receipt(
+        source, {"algorithm": "sha256", "scope": "raw-file",
+                 "value": "a" * 64},
+        outcome=outcome, checked_at=checked_at,
+        binding_mode="message-ids", message_ids=[message_id])
 
 
 def test_carries_unresolved_question_with_provenance():
@@ -307,6 +319,64 @@ def test_verbatim_freeze_pops_twin_ids_when_prev_has_none():
     assert len(qs) == 1
     assert qs[0]["quote"] == _VERB_QUOTE
     assert "source_message_ids" not in qs[0]
+
+
+def test_verbatim_freeze_moves_complete_quote_receipt_atomically():
+    prev_receipt = _quote_receipt("S-prev", _iso(44), "u-orig")
+    native_receipt = _quote_receipt("S-new", _iso(0), "u-new")
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45,
+        source_message_ids=["u-orig"], quote_verified=True,
+        last_verified=_iso(44), quote_provenance=prev_receipt)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, trust="verbatim", quote="different exact words", days=0,
+        source_message_ids=["u-new"], quote_verified=True,
+        last_verified=_iso(0), quote_provenance=native_receipt)])
+
+    q = carry.merge(new, prev, NOW)["working_context"]["open_questions"][0]
+
+    assert q["quote"] == _VERB_QUOTE
+    assert q["quote_provenance"] == prev_receipt
+    assert q["quote_provenance"]["binding"]["message_ids"] == ["u-orig"]
+    # Flat last_verified remains the fresher world-check compatibility stamp;
+    # only the nested checked_at dates the frozen quote.
+    assert q["last_verified"] == _iso(0)
+    assert q["quote_provenance"]["checked_at"] == _iso(44)
+
+
+def test_exact_native_restatement_keeps_fresh_receipt_and_old_origin():
+    prev_receipt = _quote_receipt("S-origin", _iso(44), "u-orig")
+    native_receipt = _quote_receipt("S-new", _iso(0), "u-new")
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=45,
+        origin_session="S-origin", quote_provenance=prev_receipt)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_ORIG, trust="verbatim", quote=_VERB_QUOTE, days=0,
+        source_message_ids=["u-new"], quote_verified=True,
+        last_verified=_iso(0), quote_provenance=native_receipt)])
+
+    q = carry.merge(new, prev, NOW)["working_context"]["open_questions"][0]
+
+    assert q["origin_session"] == "S-origin"
+    assert q["quote_provenance"] == native_receipt
+    assert q["quote_provenance"]["source"]["session_id"] == "S-new"
+
+
+def test_freeze_legacy_prev_without_quote_removes_native_receipt():
+    native_receipt = _quote_receipt("S-new", _iso(0), "u-new")
+    prev = _cp("S-prev", 1, questions=[_item(
+        _VERB_ORIG, trust="verbatim", days=45)])
+    new = _cp("S-new", 0, questions=[_item(
+        _VERB_TWIN, trust="verbatim", quote="native quote", days=0,
+        source_message_ids=["u-new"], quote_verified=True,
+        quote_provenance=native_receipt)])
+
+    q = carry.merge(new, prev, NOW)["working_context"]["open_questions"][0]
+
+    assert "quote" not in q
+    assert "quote_provenance" not in q
+    assert "source_message_ids" not in q
+    assert "quote_verified" not in q
 
 
 def test_verbatim_freeze_because_travels_with_frozen_text():
@@ -1286,6 +1356,21 @@ def test_observed_refuses_a_verbatim_native_whose_quote_never_verified():
     assert observed == []
 
 
+def test_observed_uses_receipt_outcome_before_flat_compatibility_stamp():
+    verified = _quote_receipt("S-new", _iso(0), "m-new")
+    observed, _ = _observe(
+        [_bound()],
+        [_witness(quote_verified=False, quote_provenance=verified)])
+    assert observed == [("o-a1d001", "S-origin", "ada")]
+
+    rejected = _quote_receipt(
+        "S-new", _iso(0), "m-new", outcome="not-verified")
+    observed, _ = _observe(
+        [_bound()],
+        [_witness(quote_verified=True, quote_provenance=rejected)])
+    assert observed == []
+
+
 def test_observed_refuses_a_ratio_only_match():
     # G4: the ratio path (>=60% of the shorter term list) exists so short
     # rewordings still MERGE. It is far too loose to certify two independent
@@ -1330,6 +1415,17 @@ def test_observed_records_when_message_bindings_are_disjoint():
     observed, _ = _observe(
         [_bound(source_message_ids=["m-7"])],
         [_witness(source_message_ids=["m-9"])])
+    assert observed == [("o-a1d001", "S-origin", "ada")]
+
+
+def test_observed_uses_receipt_bindings_before_flat_compatibility_ids():
+    prev_receipt = _quote_receipt("S-origin", _iso(1), "m-prev")
+    native_receipt = _quote_receipt("S-new", _iso(0), "m-new")
+    observed, _ = _observe(
+        [_bound(source_message_ids=["m-stale"],
+                quote_provenance=prev_receipt)],
+        [_witness(source_message_ids=["m-stale"],
+                  quote_provenance=native_receipt)])
     assert observed == [("o-a1d001", "S-origin", "ada")]
 
 

@@ -34,6 +34,14 @@ FALLBACKS = [
 
 LOG_DIR = Path.home() / ".daimon" / "logs"
 
+# #605: the crash sink grows only on crashes, but it grew FOREVER — nothing
+# reaped it and, until forget started purging it, nothing deleted it either.
+# The cap bounds the plaintext that can accumulate between two forgets. Trim
+# keeps the TAIL because `status` reports the LAST crash: the newest
+# traceback is the one anyone is debugging.
+CRASH_LOG_MAX_BYTES = 262144
+CRASH_LOG_KEEP_BYTES = 65536
+
 
 def _load_redact():
     """Load the shipped redaction module (#104) from THIS file's own directory,
@@ -156,10 +164,16 @@ def age_line(latest: Path) -> str:
     return f"(checkpoint: {session_id}, written {age} ago)"
 
 
-def project_env(cwd):
-    """Child env with DAIMON_PROJECT_DIR set to `cwd`, or None to inherit the
-    parent env unchanged (pre-routing behavior when no cwd is known)."""
-    return {**os.environ, "DAIMON_PROJECT_DIR": cwd} if cwd else None
+def project_env(cwd, host=None):
+    """Child env with code-owned project/host capture hints when known."""
+    if not cwd and not host:
+        return None
+    env = dict(os.environ)
+    if cwd:
+        env["DAIMON_PROJECT_DIR"] = cwd
+    if host:
+        env["DAIMON_CAPTURE_HOST"] = host
+    return env
 
 
 def log(line: str) -> None:
@@ -252,9 +266,11 @@ def hung_after_seconds() -> int:
 
     Reads the PROCESS env only. The package form also consults ~/.daimon/env,
     so a DAIMON_HUNG_AFTER set only in that file is invisible here — the same
-    documented boundary as LOG_DIR, which the hooks hardcode while the CLI
-    honors DAIMON_LOG_DIR. A disagreement costs at most a delayed or an extra
-    sweep, never a lost transcript."""
+    documented boundary as LOG_DIR, which the hooks hardcode for serialize.log
+    while the CLI honors DAIMON_LOG_DIR. A disagreement costs at most a
+    delayed or an extra sweep, never a lost transcript. crash_log_path() is
+    the one exception: that file is inside the deletion contract (#605), so
+    the writer must at least read the process env the deleter reads."""
     try:
         return int(os.environ.get("DAIMON_HUNG_AFTER") or "1800")
     except ValueError:
@@ -423,6 +439,108 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
         log(f"session-start: catch-up sweep failed ({type(exc).__name__}: {exc})")
 
 
+def _env_file_path() -> Path:
+    """Mirror of daimon_briefing.config._env_file_path."""
+    raw = os.environ.get("DAIMON_ENV_FILE")
+    return Path(raw).expanduser() if raw else Path.home() / ".daimon" / "env"
+
+
+def _env_file_values() -> dict:
+    """Mirror of daimon_briefing.config._file_values — KEY=VALUE lines, with
+    the `export ` prefix, surrounding quotes, blank lines and `#` comments
+    tolerated. Copied rather than imported because hooks run standalone and
+    cannot import the package; config.py is the CANONICAL form and this copy
+    must follow it line-form for line-form. A behavioral-equality test over
+    a probe table of line shapes guards the drift."""
+    try:
+        text = _env_file_path().read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        if key:
+            values[key] = val
+    return values
+
+
+def _config_get(name: str) -> str:
+    """Mirror of daimon_briefing.config._get: process env WINS, env file is
+    the fallback. Present-but-empty in the process env is a value, so it
+    shadows the file exactly as it does on the package side (scar 0036 in
+    reverse — the file is consulted more often than anyone expects)."""
+    val = os.environ.get(name)
+    if val is not None:
+        return val
+    return _env_file_values().get(name) or ""
+
+
+def crash_log_path() -> Path:
+    """The crash sink, resolved the way the DELETER resolves it.
+
+    serialize-crash.log is inside the deletion contract (#605): `daimon
+    forget` purges it through config.log_dir(). A path resolved any other way
+    here has the child filling one directory while the purge reports cleanly
+    on another — silently, since a one-file purge reporting zero is
+    indistinguishable from an empty log dir. That is the #607 writer/deleter
+    split, one directory over.
+
+    So this reproduces config.log_dir() EXACTLY, including the parts that
+    look like bugs: no strip (config does not strip, so "   " is a relative
+    directory named three spaces and the writer must agree), and the env-file
+    fallback, which is the channel a GUI-launched host actually uses — shell
+    exports never reach it. Resolved per call, like config's, so a moved HOME
+    cannot split the two.
+
+    serialize.log keeps the hardcoded LOG_DIR: nothing deletes it, so nothing
+    has to agree about where it is (hung_after_seconds' documented boundary)."""
+    raw = _config_get("DAIMON_LOG_DIR")
+    base = Path(raw).expanduser() if raw else Path.home() / ".daimon" / "logs"
+    return base / "serialize-crash.log"
+
+
+def trim_crash_log(path) -> None:
+    """Cap the crash sink at CRASH_LOG_MAX_BYTES, keeping its last
+    CRASH_LOG_KEEP_BYTES (#605). Called at the spawn seams — the only moments
+    daimon touches this file — so the bound costs no separate reaper.
+
+    Rewritten IN PLACE rather than through a temp-and-rename: the file is an
+    open append target for any child still running, and replacing the inode
+    would send those writes to a file nobody reads. The cut lands mid-line;
+    harmless, because _crash_log_info anchors on the `--- crash ` header and
+    ignores everything before the last one.
+
+    Accepted, deliberately: in place means unlocked, so a crash written by a
+    concurrent child between the read() and the truncate() is cut away. That
+    is diagnostics loss, bounded to the rare overlap of a spawn with another
+    child's death throes, and the alternative (a lock in a fail-open hook
+    seam, or the inode swap above) costs more than the traceback is worth.
+    llm._log_backend_stderr made the same call for backend-stderr.log.
+
+    Best-effort and silent: the log is diagnostics, a capture is the product,
+    and a trim that raises into a spawn seam would cost the capture."""
+    try:
+        size = path.stat().st_size
+        if size <= CRASH_LOG_MAX_BYTES:
+            return
+        with path.open("r+b") as f:
+            f.seek(size - CRASH_LOG_KEEP_BYTES)
+            tail = f.read()
+            f.seek(0)
+            f.write(tail)
+            f.truncate()
+    except Exception:  # noqa: BLE001 — diagnostics must never block a spawn
+        pass
+
+
 def spawn_serialize(cli, transcript_path, env) -> None:
     """Spawn `daimon serialize <transcript>` DETACHED so the hook returns
     immediately (serialization is a 30s+ LLM call). Raises OSError on spawn
@@ -432,8 +550,10 @@ def spawn_serialize(cli, transcript_path, env) -> None:
     DON'T capture the child's stdout here — that double-logged results. stderr
     goes to a SEPARATE crash log to preserve uncaught tracebacks without
     duplicating the CLI's `error:` result lines in serialize.log."""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with (LOG_DIR / "serialize-crash.log").open("a", encoding="utf-8") as crashf:
+    crash = crash_log_path()
+    crash.parent.mkdir(parents=True, exist_ok=True)
+    trim_crash_log(crash)
+    with crash.open("a", encoding="utf-8") as crashf:
         subprocess.Popen(
             [cli, "serialize", transcript_path],
             stdin=subprocess.DEVNULL,

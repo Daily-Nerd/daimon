@@ -32,14 +32,14 @@ import logging
 import time
 from pathlib import Path
 
-from . import carry, config, normalize, serializer, store, transcript
+from . import carry, config, normalize, provenance, serializer, store, transcript
 
 log = logging.getLogger(__name__)
 
 
 def run(session_id: str, messages, *, project, chat, deadline,
         transcript_path=None, transcript_sha=None,
-        escalate: bool = False) -> Path | None:
+        escalate: bool = False, capture_host=None) -> Path | None:
     """Serialize `messages` into a checkpoint routed to `project` (used AS-IS;
     None => global pointer only — the caller decides routing, same contract
     as the old cli._run_serialize).
@@ -47,20 +47,37 @@ def run(session_id: str, messages, *, project, chat, deadline,
     Returns store.write_checkpoint's result: the checkpoint path, or None
     when the write boundary refused (kill switch, #421) — each caller renders
     its own skip/success line. Serializer failures propagate."""
+    source_ref = provenance.capture_source_ref(
+        session_id, transcript_path, author=config.author(),
+        host_hint=capture_host or config.capture_host(),
+        claude_projects=config.claude_projects_dir())
+    # #604: compute the session-end stamp BEFORE serializing so quote
+    # verification can stamp from it too. Every other time that lands on
+    # disk is threaded from this clock (`created` below, carry's `now`);
+    # verify_quotes read the wall clock instead, so two captures of one
+    # transcript disagreed whenever they straddled a second boundary and a
+    # re-serialize could not reproduce its own receipts. None (no transcript
+    # file) leaves the serializer on its wall-clock fallback.
+    session_end = (_session_end_stamp(transcript_path)
+                   if transcript_path is not None else None)
     checkpoint = serializer.serialize_strict(
-        session_id, messages, chat=chat, deadline=deadline, escalate=escalate)
+        session_id, messages, chat=chat, deadline=deadline, escalate=escalate,
+        source_ref=source_ref, transcript_hash=transcript_sha,
+        now=session_end)
     # `created` = when the SESSION ended, not when this write happens (#123).
     # Stamped here — not left to store's setdefault-now — so a heal/re-serialize
     # of an old transcript carries its true age and store's pointer guard can
     # keep it from stealing `latest` from a newer session. Needs a transcript
     # FILE; a hook host that provides none falls through to setdefault-now.
-    if transcript_path is not None:
-        checkpoint["created"] = _session_end_stamp(transcript_path)
+    if session_end is not None:
+        checkpoint["created"] = session_end
     # Bind the checkpoint to its exact source content (#125). The sha is
     # computed by the caller at read time, before any LLM work; absent
     # (unreadable file / no file) means no stamp — readers tolerate that.
     if transcript_sha:
         checkpoint["transcript_hash"] = transcript_sha
+    if source_ref is not None:
+        checkpoint["source_ref"] = source_ref
     if config.carry_enabled():
         # Deterministic carry (#33 Phase 2): fold the previous checkpoint's
         # unresolved items in BEFORE the write rotates it away. Clock = this

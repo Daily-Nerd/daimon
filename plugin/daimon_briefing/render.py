@@ -1319,3 +1319,54 @@ def _rich_stats(data: dict) -> None:
             console.print(f"[yellow]note: {pre} of those predate any "
                           f"agent-recorded resolution{when} — not a "
                           f"human-vs-agent ratio[/yellow]")
+
+
+def render_privacy_audit(results: list[dict]) -> None:
+    """Hashes only, never the text: this output gets re-serialized into
+    checkpoints, so printing a forgotten value would re-capture it."""
+    for r in results:
+        slug = r.get("slug") or "(unknown project)"
+        print(f"project {slug}: {r['surfaces_scanned']} surface(s) scanned")
+        if r.get("zero_surfaces"):
+            print("  WARNING: zero surfaces found — cannot distinguish an"
+                  " empty project from a scoping failure (not 'clean')")
+        for f in r["findings"]:
+            print(f"  RESIDUE [{f['surface']}] hash {f['content_hash']}"
+                  f" item {f.get('item_id') or '?'} in {f['path']}")
+            if f["surface"] == "team-copy":
+                print("    note: a team copy may also exist upstream,"
+                      " which no local scrub can reach")
+        for f in r["informational"]:
+            print(f"  stale [{f['surface']}] hash {f['content_hash']}"
+                  f" in {f['path']} (deleted at next index rebuild)")
+        for p in r["unscannable"]:
+            print(f"  UNSCANNABLE {p}")
+        cache = r.get("cache") or {}
+        if cache.get("entries") and cache.get("oldest_days") is not None:
+            print(f"  chunk cache: {cache['entries']} entr(y/ies), oldest"
+                  f" {cache['oldest_days']:.1f}d — value-level scan impossible"
+                  " (substring vs hash); purge is wholesale on forget")
+        elif cache.get("entries"):
+            print(f"  chunk cache: {cache['entries']} entr(y/ies) — age unknown,"
+                  " value-level scan impossible (substring vs hash); purge is"
+                  " wholesale on forget")
+        ws = r.get("windsurf") or {}
+        if ws.get("entries"):
+            age = (f", oldest {ws['oldest_days']:.1f}d"
+                   if ws.get("oldest_days") is not None else ", age unknown")
+            print(f"  windsurf transcripts: {ws['entries']} file(s){age} —"
+                  " daimon-authored conversation text; value-level scan"
+                  " impossible (substring vs hash); purge is wholesale on"
+                  " forget")
+        bl = r.get("backend_log") or {}
+        if bl.get("present"):
+            age = (f", last write {bl['age_days']:.1f}d ago"
+                   if bl.get("age_days") is not None else ", age unknown")
+            print(f"  backend stderr log: present{age} — backend echo can"
+                  " carry transcript text (#616); value-level scan impossible"
+                  " (substring vs hash); purge is wholesale on forget")
+        if not (r["findings"] or r["informational"] or r["unscannable"]
+                or r.get("zero_surfaces")):
+            print("  clean — no tombstoned value found on any surface")
+    print("note: a free-text event note merely CONTAINING a forgotten value"
+          " is undetectable by hash; only verbatim notes are caught")

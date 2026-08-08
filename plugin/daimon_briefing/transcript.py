@@ -92,6 +92,12 @@ _TOOL_RESULT_MAX_CHARS = 500
 _DAIMON_CMD_RE = re.compile(
     r"(?:^|[|;&(`]|\&\&|\|\|)\s*"
     r"(?:\S+=\S+\s+)*(?:sudo\s+)?"
+    # #585: a shell wrapper puts a QUOTE immediately before the command, and
+    # quotes are deliberately absent from the delimiter class above — adding
+    # them there would match `rg "daimon" cli.py`, which greps ABOUT daimon and
+    # whose output is a genuine witness. Recognise the wrapper explicitly
+    # instead, the same way `uv run` is handled below.
+    r"(?:(?:\S*/)?(?:ba|z|da|k)?sh\s+-[a-z]*c\s+['\"]?)?"
     r"(?:uv\s+run\s+(?:--?[\w-]+(?:[= ]\S+)?\s+)*(?:python\s+-m\s+)?)?"
     r"(?:\S*/)?daimon(?:\s|$)", re.MULTILINE)
 
@@ -204,6 +210,38 @@ def _from_jsonl(text: str) -> list[dict]:
         content = payload.get("message")
         if role and isinstance(content, str) and content.strip():
             codex_messages.append({"role": role, "content": content.strip()})
+            continue
+        # Codex CLI 0.147.0 (#622) dropped user_message/agent_message events:
+        # visible turns now arrive as item_completed with a PascalCase
+        # item.type and text as a content-block list. Block-type case differs
+        # by role in the field (UserMessage blocks say "text", AgentMessage
+        # blocks say "Text") — match it case-insensitively. AgentMessage
+        # phases (commentary, final_answer) are both assistant content.
+        if payload_type != "item_completed":
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            continue
+        role = {"UserMessage": "user", "AgentMessage": "assistant"}.get(
+            item.get("type")
+        )
+        if role is None:
+            continue
+        blocks = item.get("content")
+        if not isinstance(blocks, list):
+            continue
+        parts = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("type") or "").lower() != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        joined = "\n".join(parts)
+        if joined:
+            codex_messages.append({"role": role, "content": joined})
     if codex_messages:
         return codex_messages
 

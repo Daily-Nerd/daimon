@@ -21,7 +21,7 @@ import copy
 import json
 import os
 
-from daimon_briefing import cli, hooks, store, transcript
+from daimon_briefing import cli, hooks, provenance, store, transcript
 
 PROJECT = "/p/parity"
 SESSION = "S-parity"
@@ -49,9 +49,13 @@ _PREV = {
 # - a supersedes link with a free-text target that uniquely matches the prev
 #   decision -> bind_links pair -> supersede-candidate event in events.jsonl;
 # - a verbatim item whose quote is NOT in the transcript -> quote_verified
-#   False -> a #376 rejection row in verification.jsonl. (Deliberately no
-#   verbatim item whose quote WOULD verify: a hit stamps wall-clock
-#   `last_verified`, which would be flaky noise here, not signal.)
+#   False -> a #376 rejection row in verification.jsonl;
+# - a verbatim item whose quote DOES verify. This one was deliberately
+#   absent until #604 because a hit stamped wall-clock `last_verified`.
+#   That workaround never covered the whole hazard — #595 put a wall-clock
+#   receipt on the MISS path too, which is how this guard started failing
+#   1-3 runs in 40 on the case it thought was safe. Verification stamps are
+#   threaded from the transcript clock now, so the hit belongs here.
 _NEW_CP = json.dumps({
     "session_id": SESSION,
     "working_context": {
@@ -59,6 +63,8 @@ _NEW_CP = json.dumps({
         "open_questions": [
             {"text": "PR #6 state", "trust": "verbatim",
              "quote": "this quote appears nowhere in the transcript"},
+            {"text": "what turn 0 said", "trust": "verbatim",
+             "quote": "turn 0"},
         ],
         "recent_decisions": [
             {"text": "postgres replaces the old lookup store",
@@ -150,6 +156,12 @@ def test_hook_and_cli_capture_produce_identical_checkpoints(
     assert carried and carried[0]["carried_from"] == "S-prev"
     assert cli_cp["transcript_hash"] == transcript.file_sha256(tpath)
     assert cli_cp["created"] == _STAMPS[-1]
+    assert provenance.valid_source_ref(cli_cp["source_ref"])
+    rejected = next(
+        q for q in cli_cp["working_context"]["open_questions"]
+        if q.get("text") == "PR #6 state")
+    assert provenance.valid_quote_receipt(rejected["quote_provenance"])
+    assert rejected["quote_provenance"]["outcome"] == "not-verified"
 
     # Same events emitted through both doors (supersede-candidate emission),
     # minus the append-time `ts` wall stamp.

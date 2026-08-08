@@ -207,7 +207,11 @@ def _scan_sources():
     root = config.team_dir()
     cutoff = store.team_retention_cutoff()
     self_author = store.project_slug(config.author())
-    forgotten = store.all_forgotten_content_keys()
+    # #600 slice B: teammates' published tombstones gate the index too — an
+    # inbound row is suppressed by ANY tombstone this machine can see, local
+    # or foreign (over-suppression is this path's documented posture).
+    forgotten = (store.all_forgotten_content_keys()
+                 | store.foreign_forgotten_content_keys())
     try:
         remotes = list(root.iterdir())
     except OSError:
@@ -311,6 +315,14 @@ def _fingerprint() -> str:
         pass
     try:
         paths.extend(config.team_dir().rglob("*.json"))
+        # #600 slice B: a teammate's tombstone ledger is index CONTENT for
+        # the same reason events.jsonl is — _scan_sources suppresses rows
+        # against it — so it must be fingerprint INPUT too. Without this a
+        # pulled tombstone leaves the fingerprint unchanged, no rebuild
+        # runs, and the index keeps serving the value read_team already
+        # withholds. Naming the file .jsonl to dodge the *.json walks is
+        # exactly what made this easy to miss.
+        paths.extend(config.team_dir().rglob(store._TOMBSTONE_NAME))
     except OSError:
         pass
     entries = []
@@ -481,9 +493,19 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             "SELECT id, text, quote, scene, item_id FROM items"
             " WHERE project_slug IS ?", (bucket.name,)).fetchall()
         for rowid, text, quote, scene, item_id in rows:
+            # #599: the value can also sit in a row's quote/scene column
+            # (indexed verbatim). Whole-row delete is the fail-safe: the
+            # rebuilt row from the scrubbed checkpoint re-inserts the
+            # survivor without the field; a row only reachable here (its
+            # surface was unwritable) over-suppresses rather than serves
+            # forgotten plaintext.
             if item_id not in forgotten_ids and not (
                     forgotten_keys
-                    and normalize.content_key(text or "") in forgotten_keys):
+                    and (normalize.content_key(text or "") in forgotten_keys
+                         or (quote and normalize.content_key(quote)
+                             in forgotten_keys)
+                         or (scene and normalize.content_key(scene)
+                             in forgotten_keys))):
                 continue
             # contentless fts5: deletion is the special 'delete'
             # INSERT and must repeat the original column values
@@ -492,6 +514,62 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
                 " VALUES('delete', ?, ?, ?, ?)",
                 (rowid, text, quote, scene))
             conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
+
+
+# A dead snapshot is unambiguous after this long: a live rebuild holds its
+# tmp for seconds, and store._TMP_REAP_SECONDS set the same one-hour
+# precedent for checkpoint staging twins.
+_SNAPSHOT_REAP_SECONDS = 3600
+
+
+def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
+    """Delete index snapshots left by crashed rebuilds (#601).
+
+    rebuild() stages into `recall.db.<pid>.tmp` and only unlinks ITS OWN
+    pid's leftover — a crash under any other pid strands the snapshot (plus
+    sqlite's `-journal` sidecar) forever: store._reap_stale_tmps never visits
+    this directory and its filter is `.endswith(".tmp")`, which the sidecars
+    fail. The strands are full plaintext copies, and the unopenable sidecars
+    pinned real installs at `daimon audit privacy` exit 3 (cannot-prove).
+
+    The filter IS the registry declaration (surfaces.match → the entry
+    whose strategy is `reap`, shape `recall.db.{pid}.tmp*` with {pid}
+    digit-anchored) — never a second hand-written predicate, which would
+    reintroduce the parallel-list defect in the one path that DELETES
+    files (adversarial-review finding). `recall.db.tmp`,
+    `recall.db.bak.tmp`, `recall.db.tmp.gz` beside a DAIMON_RECALL_DB
+    override are a user's own files and stay undeclared; the live db's
+    sqlite sidecars are dash-named (`recall.db-journal`) so they cannot
+    match the dotted glob at all. Age-gated like the checkpoint reaper —
+    anything older than an hour is dead by construction (this runs
+    unattended from heal at session start on some hosts, so containment
+    is the load-bearing property). `apply=False` only lists (heal
+    --dry-run). Best-effort per file; returns the paths reaped (or
+    would-reap)."""
+    from . import surfaces
+    db = config.recall_db()
+    if now is None:
+        now = time.time()
+    reaped: list = []
+    try:
+        candidates = sorted(db.parent.glob(db.name + ".*"))
+    except OSError:
+        return reaped
+    for p in candidates:
+        entry = surfaces.match(p.name)
+        if entry is None or entry.delete != "reap":
+            continue
+        try:
+            if not p.is_file():
+                continue
+            if now - p.stat().st_mtime < _SNAPSHOT_REAP_SECONDS:
+                continue
+            if apply:
+                p.unlink()
+        except OSError:
+            continue
+        reaped.append(p)
+    return reaped
 
 
 def rebuild() -> int:
@@ -702,7 +780,7 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
         " i.session_id, i.created, i.superseded_by, i.invalidated_by,"
-        " i.importance, i.first_seen, i.frontier,"
+        " i.importance, i.first_seen, i.item_id, i.frontier,"
         " bm25(items_fts) AS rank"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"

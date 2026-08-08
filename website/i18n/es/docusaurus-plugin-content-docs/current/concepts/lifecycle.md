@@ -97,8 +97,9 @@ Qué ocurre al olvidar:
 ### Cumplimiento de durabilidad de la eliminación
 
 La afirmación "una memoria olvidada permanece olvidada" no se declara — se
-comprueba como un protocolo ejecutable. `plugin/tests/test_deletion_durability_protocol.py`
-pasa un valor olvidado por cada camino que podría resucitarlo silenciosamente y
+comprueba como un test de cumplimiento ejecutable que corre en cada commit
+([fuente](https://github.com/Daily-Nerd/daimon/blob/main/plugin/tests/test_deletion_durability_protocol.py)).
+Pasa un valor olvidado por cada camino que podría resucitarlo silenciosamente y
 demuestra que sigue ausente en cada uno, mientras un gemelo nunca-olvidado
 permanece recuperable para que ninguna verificación pase de forma vacua:
 

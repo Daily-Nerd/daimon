@@ -12,7 +12,7 @@ import copy
 import re
 from collections import Counter
 
-from . import recall, schema, scoring, store
+from . import provenance, recall, schema, scoring, store
 
 # An item id already looks like this (store._stamp_item_ids: kind-initial +
 # >=6 hex chars, optional -N collision suffix) — never treat it as free text
@@ -190,7 +190,7 @@ def _is_reversal_of(native_item: dict, prev_text: str, prev_id,
     — freeze stays the safe default), and the link must aim at the prev item
     (id-equal when already bound, `_same_item` on free text otherwise) so an
     unrelated supersedes link can't defeat the freeze."""
-    if native_item.get("quote_verified") is not True:
+    if not _capture_verified(native_item):
         return False
     links = native_item.get("links")
     if not isinstance(links, list):
@@ -210,10 +210,21 @@ def _is_reversal_of(native_item: dict, prev_text: str, prev_id,
     return False
 
 
+def _capture_verified(item: dict) -> bool:
+    """Receipt outcome is authoritative; flat stamp is legacy fallback."""
+    receipt = item.get("quote_provenance")
+    if provenance.valid_quote_receipt(receipt):
+        return receipt["outcome"] == "verified"
+    return item.get("quote_verified") is True
+
+
 def _message_ids(item: dict) -> frozenset:
     """The item's bound transcript-message ids as a set, tolerating the shapes
     a hand-edited or pre-#358 checkpoint can hold (absent, non-list, non-str
     entries) — same read-side tolerance as serializer.scoped_haystack."""
+    receipt = item.get("quote_provenance")
+    if provenance.valid_quote_receipt(receipt):
+        return frozenset(provenance.binding_message_ids(receipt))
     ids = item.get("source_message_ids")
     if not isinstance(ids, list):
         return frozenset()
@@ -238,11 +249,11 @@ def _record_corroboration(observed: list, prev_item: dict, native_item: dict,
         observing. Both sides required: a checkpoint with no session_id cannot
         prove somebody ELSE wrote the claim, and unprovable is not corroborated.
       G3 witnessed, not echoed — the NATIVE item is this session's own verified
-        verbatim. `trust` alone is a claim; `quote_verified is True` is the
-        check (and #441 is what stops daimon's own injected briefing text from
-        passing it). Read PRE-freeze: the #22 verbatim freeze overwrites the
-        native's trust/quote_verified with prev's, so afterwards this reads the
-        wrong item entirely.
+        verbatim. `trust` alone is a claim; the receipt outcome (flat
+        `quote_verified` only for legacy items) is the check, and #441 is what
+        stops daimon's own injected briefing text from passing it. Read
+        PRE-freeze: the #22 verbatim freeze overwrites the native evidence with
+        prev's, so afterwards this reads the wrong item entirely.
       G4 strong match only — identical text, or >=_MIN_SHARED shared salient
         terms. The ratio rail exists so short rewordings still MERGE; two
         shared terms out of three is nowhere near evidence of two independent
@@ -268,7 +279,7 @@ def _record_corroboration(observed: list, prev_item: dict, native_item: dict,
     if not out_sid or origin == out_sid:
         return                                                          # G2
     if (native_item.get("trust") != "verbatim"
-            or native_item.get("quote_verified") is not True):
+            or not _capture_verified(native_item)):
         return                                                          # G3
     if match_path not in (_MATCH_EXACT, _MATCH_ABSOLUTE):
         return                                                          # G4
@@ -417,6 +428,16 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                         twin.pop("because", None)
                     if item.get("quote"):
                         twin["quote"] = item["quote"]
+                        # #594: the quote and its complete deterministic
+                        # receipt are one atomic value. The native receipt
+                        # describes the now-replaced native quote and must not
+                        # survive. Legacy/partial prev evidence degrades to no
+                        # receipt instead of mixing fields across checks.
+                        receipt = item.get("quote_provenance")
+                        if provenance.valid_quote_receipt(receipt):
+                            twin["quote_provenance"] = copy.deepcopy(receipt)
+                        else:
+                            twin.pop("quote_provenance", None)
                         # source_message_ids travel WITH the quote (#358),
                         # same rail as quote_verified below: a binding
                         # attests THIS quote's origin message. The twin's
@@ -441,6 +462,15 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                             twin["quote_verified"] = True
                         else:
                             twin.pop("quote_verified", None)
+                    else:
+                        # A legacy verbatim item without a quote has no quote
+                        # evidence to freeze. Do not leave the native twin's
+                        # quote or any part of its receipt attached to the
+                        # restored previous wording.
+                        twin.pop("quote", None)
+                        twin.pop("quote_provenance", None)
+                        twin.pop("source_message_ids", None)
+                        twin.pop("quote_verified", None)
                     twin["trust"] = "verbatim"
                 if item.get("first_seen") and not twin.get("first_seen"):
                     twin["first_seen"] = item["first_seen"]

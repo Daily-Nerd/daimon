@@ -6,7 +6,8 @@ import logging
 
 import pytest
 
-from daimon_briefing import cli, serializer, store, transcript
+from daimon_briefing import (cli, normalize, provenance, serializer, store,
+                             transcript)
 from tests.conftest import FIXTURES, make_messages
 
 
@@ -250,15 +251,18 @@ def test_verify_quotes_downgrades_on_miss(caplog):
     assert n == 1
     assert item["trust"] == "inferred"
     assert item["quote_verified"] is False
-    # downgrade is visible in the log with an item-text prefix
-    assert any("fabricated decision" in r.getMessage() for r in caplog.records)
+    # downgrade is visible in the log as a content hash, never the text (#616)
+    key = normalize.content_key("a fabricated decision line")
+    assert any(key in r.getMessage() for r in caplog.records)
+    assert not any("fabricated decision" in r.getMessage()
+                   for r in caplog.records)
 
 
-def test_verify_quotes_downgrade_log_redacts_secret(caplog):
-    # #141: the downgrade warning is the one verify_quotes line that carries
-    # item text, and it fires PRE-redaction — a secret inside a downgraded
-    # item must be scrubbed in the log line while the checkpoint item itself
-    # stays raw (store redacts it at write time, ids must hash redacted text).
+def test_verify_quotes_downgrade_log_never_carries_the_secret(caplog):
+    # #141 asked for secret redaction on this line; #616 went further — the
+    # line carries no item text at all, only the content hash. The secret can
+    # therefore never appear, and the checkpoint item itself stays raw (store
+    # redacts it at write time, ids must hash redacted text).
     secret = "AKIAIOSFODNN7EXAMPLE"
     cp = _cp_with({("working_context", "recent_decisions"): [
         {"text": f"rotate key {secret} next", "trust": "verbatim",
@@ -267,9 +271,9 @@ def test_verify_quotes_downgrade_log_redacts_secret(caplog):
         serializer.verify_quotes(cp, "assistant: something entirely unrelated")
     msgs = [r.getMessage() for r in caplog.records]
     assert not any(secret in m for m in msgs)
-    assert any("[redacted:aws-key]" in m for m in msgs)
+    assert not any("rotate key" in m for m in msgs)
     item = cp["working_context"]["recent_decisions"][0]
-    assert item["text"] == f"rotate key {secret} next"  # log-only scrub
+    assert item["text"] == f"rotate key {secret} next"  # item stays raw
 
 
 def test_verify_quotes_leaves_inferred_items_unstamped():
@@ -890,6 +894,87 @@ def test_audit_quotes_stale_id_falls_back_to_whole_scan(
     assert "failed: 0" in out
 
 
+def test_audit_quotes_uses_receipt_binding_not_flat_compatibility_field(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_id_transcript(_projects_dir, slug, "SA", [
+        ("user", "we adopt the durable provenance receipt", "u-right"),
+        ("assistant", "unrelated response", "u-wrong"),
+    ])
+    source = {"version": 1, "host": "claude-code", "session_id": "SA",
+              "locator": "managed", "author": "alice"}
+    receipt = provenance.quote_receipt(
+        source, {"algorithm": "sha256", "scope": "raw-file",
+                 "value": "a" * 64},
+        outcome="verified", checked_at="2026-08-05T10:00:00Z",
+        binding_mode="message-ids", message_ids=["u-right"])
+    cp = _stored_checkpoint("SB", slug, [{
+        "text": "bound decision", "trust": "verbatim",
+        "quote": "adopt the durable provenance receipt",
+        "source_message_ids": ["u-wrong"],  # stale compatibility mirror
+        "quote_provenance": receipt, "id": "d-receipt",
+    }])
+    store.write_checkpoint("SB", cp, project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    assert "id-resolved: 1" in out
+    assert "verified: 1" in out
+
+
+def test_audit_quotes_resolves_codex_receipt_source(
+    tmp_checkpoint_dir, tmp_path, capsys, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    path = codex_home / "sessions" / "2026" / "08" / "S-codex.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "type": "event_msg",
+        "payload": {"type": "user_message",
+                    "message": "the codex source supports this quote"},
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    slug = store.project_slug("/p/A")
+    source = {"version": 1, "host": "codex", "session_id": "S-codex",
+              "locator": "managed", "author": "alice"}
+    receipt = provenance.quote_receipt(
+        source, {"algorithm": "sha256", "scope": "raw-file",
+                 "value": "b" * 64},
+        outcome="verified", checked_at="2026-08-05T10:00:00Z",
+        binding_mode="transcript-scan")
+    cp = _stored_checkpoint("S-containing", slug, [{
+        "text": "codex decision", "trust": "verbatim",
+        "quote": "codex source supports this quote",
+        "quote_provenance": receipt, "id": "d-codex",
+    }])
+    store.write_checkpoint("S-containing", cp, project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    assert "verified: 1" in out
+    assert "origin-resolved: 1" in out
+
+
+def test_audit_source_helpers_reject_unbound_items_and_use_origin_source(
+    monkeypatch,
+):
+    source = {
+        "version": provenance.SOURCE_REF_VERSION,
+        "host": "codex",
+        "session_id": "S-origin",
+        "locator": "managed",
+    }
+    monkeypatch.setattr(
+        store, "read_checkpoint", lambda session_id: {"source_ref": source})
+
+    assert cli._legacy_audit_source("../escape") is None
+    assert cli._audit_item_source({}) == (None, None)
+    assert cli._audit_item_source({"origin_session": "S-origin"}) == (
+        source, None)
+    assert cli._resolve_audit_source({}, object(), {}) is None
+
+
 # ---- #503: audit resolves a CARRIED item against its ORIGIN transcript ----
 #
 # carry.merge copies `quote` and `source_message_ids` forward when an item
@@ -948,13 +1033,11 @@ def test_audit_quotes_item_without_origin_falls_back_to_containing_checkpoint(
     assert "failed: 0" in out
 
 
-def test_audit_quotes_missing_origin_transcript_falls_back_without_crashing(
+def test_audit_quotes_missing_origin_transcript_never_falls_back(
     tmp_checkpoint_dir, _projects_dir, capsys
 ):
-    """origin_session names a session whose transcript is nowhere on disk
-    (GC'd, never captured on this host, wrong host layout). Resolution must
-    fall back to the containing checkpoint's own transcript rather than
-    crash or silently drop the item."""
+    """An unresolved bound/inferred source stays unresolved. The containing
+    transcript is not provenance and must never rescue the verdict (#594)."""
     slug = store.project_slug("/p/A")
     _write_transcript(_projects_dir, slug, "SB", [
         ("user", "this quote is only in the containing session after all"),
@@ -969,8 +1052,8 @@ def test_audit_quotes_missing_origin_transcript_falls_back_without_crashing(
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "verified: 1" in out
-    assert "failed: 0" in out
+    assert "verbatim quotes checked: 0" in out
+    assert "verified: 0" in out
 
 
 def test_audit_quotes_source_ids_resolve_against_origin_transcript(
@@ -1059,12 +1142,11 @@ def test_audit_quotes_reads_origin_slug_from_the_origin_checkpoint(
     assert "origin-resolved: 1" in out
 
 
-def test_audit_quotes_unreadable_origin_transcript_falls_back(
+def test_audit_quotes_unreadable_origin_transcript_never_falls_back(
     tmp_checkpoint_dir, _projects_dir, capsys, monkeypatch
 ):
-    """A transcript that resolves to a path but cannot be READ (permissions,
-    truncation mid-read) must degrade to the containing session, not crash the
-    whole corpus scan."""
+    """An unreadable evidence source is uncheckable, even when the containing
+    session happens to repeat the quote. No provenance substitution (#594)."""
     slug = store.project_slug("/p/A")
     _write_transcript(_projects_dir, slug, "SA", [("user", "origin text here")])
     _write_transcript(_projects_dir, slug, "SB", [
@@ -1086,8 +1168,8 @@ def test_audit_quotes_unreadable_origin_transcript_falls_back(
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
-    # Fell back to SB's own transcript, which does contain the quote.
-    assert "verified: 1" in out
+    assert "verbatim quotes checked: 0" in out
+    assert "verified: 0" in out
     assert "origin-resolved: 0" in out
 
 

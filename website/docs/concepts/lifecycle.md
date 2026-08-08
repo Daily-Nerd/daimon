@@ -89,8 +89,9 @@ What happens on forget:
 ### Deletion-durability compliance
 
 The claim "a forgotten memory stays forgotten" is not asserted — it is
-committed as an executable protocol. `plugin/tests/test_deletion_durability_protocol.py`
-runs a forgotten value through every path that could quietly resurrect it and
+committed as an executable compliance test that runs on every commit
+([source](https://github.com/Daily-Nerd/daimon/blob/main/plugin/tests/test_deletion_durability_protocol.py)).
+It runs a forgotten value through every path that could quietly resurrect it and
 proves it stays gone at each one, while a never-forgotten twin stays
 retrievable so no check can pass vacuously:
 

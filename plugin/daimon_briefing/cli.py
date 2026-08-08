@@ -27,10 +27,11 @@ import logging
 import os
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, ledger, llm, normalize, recall, receipts, redact, refutations, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -750,9 +751,34 @@ def _cmd_recall(args) -> int:
                       else " [resolved]" if sup == "resolved"
                       else f" [superseded by {sup}]")
         trust = r.get("trust") or "untagged"
-        lines.append(f"[{r['author']}] [{trust}] [{r['kind']}] {r['text']} "
+        item_id = f" [{r['item_id']}]" if r.get("item_id") else ""
+        lines.append(f"[{r['author']}] [{trust}] [{r['kind']}]{item_id} {r['text']} "
                      f"({r['session_id']}, {age} ago){superseded}")
     render.render_recall_lines(lines)
+    return 0
+
+
+def _cmd_why(args) -> int:
+    """Render one project-scoped, read-side trust receipt (#502)."""
+    _note_usage("why")
+    if args.slug and args.project:
+        print("error: --slug and --project are two answers to \"which bucket\" "
+              "— pass one", file=sys.stderr)
+        return 2
+    if not inspector.valid_item_id(args.item_id):
+        print("error: invalid item id — expected "
+              "[a-z]-[0-9a-f]{6,40}(-N)?", file=sys.stderr)
+        return 2
+    project = args.slug or _resolve_project(args.project)
+    result = inspector.inspect_item(
+        project, args.item_id, include_source=args.source)
+    if result is None:
+        print(f"no item {args.item_id!r} in this project", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        render.render_recall_lines(inspector.human_lines(result))
     return 0
 
 
@@ -1216,12 +1242,17 @@ def _cmd_forget(args) -> int:
     if not isinstance(checkpoint, dict) and not ledger:
         print("no checkpoint for this project yet — nothing to forget")
         return 1
+    # Every surface this project holds, not just the live checkpoint (#419
+    # scope): a value that had been superseded still sits in prev-N and in its
+    # session file, and resolving only against `latest` made forget answer "no
+    # item matches" about plaintext that was demonstrably on disk.
+    seen_ids: set[str] = set()
     items = []
-    if isinstance(checkpoint, dict):
-        for section, key in store._ITEM_LISTS:
-            for item in ((checkpoint.get(section) or {}).get(key) or []):
-                if isinstance(item, dict) and item.get("id"):
-                    items.append((section, key, item))
+    for _path, section, key, item in store.items_for_project(project):
+        if item["id"] in seen_ids:
+            continue          # one item, several surfaces — not several items
+        seen_ids.add(item["id"])
+        items.append((section, key, item))
     # Refutation ids and checkpoint `recent_decisions` ids SHARE the namespace
     # `r-<12 hex>`, so an exact-id lookup can legitimately hit both surfaces.
     # forget's never-guess contract decides it: an ambiguous id is refused, not
@@ -1239,14 +1270,15 @@ def _cmd_forget(args) -> int:
                  if any(carry._same_item(args.target, t, generic)
                         for t in (it.get("_texts")
                                   or [str(it.get("text") or "")]))])
-        # Several hits are only ambiguous when they are different VALUES.
-        # Removal is content removal (#418 splices sibling ids on one key), so
-        # the same sentence held in the checkpoint and in the ledger is one
-        # value in two stores, not a question for the user. Resolve on the
-        # canonical key, the same one the splices use.
-        keys = {normalize.content_key(str(it.get("text") or ""))
-                for _, _, it in hits}
-        if len(hits) == 1 or (hits and len(keys) == 1):
+        # Ambiguity is about distinct VALUES, not hit count. The same sentence
+        # carried by sibling ids, held on several surfaces, or held in both the
+        # checkpoint and the refutation ledger is one thing to forget; #418
+        # already splices sibling ids from a single key. Only genuinely
+        # different values leave the user a choice to make, and there
+        # never-guess still refuses.
+        distinct = {normalize.content_key(str(it.get("text") or ""))
+                    for _, _, it in hits}
+        if len(distinct) == 1:
             target = hits[0][2]
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
@@ -1302,8 +1334,32 @@ def _cmd_forget(args) -> int:
                                        == content_hash))]
         # allow_disabled (#421): the ONE write_checkpoint call that may run under
         # the kill switch — the rewrite that makes the deletion real on disk.
+        # rotate=False: rotation copies the CURRENT latest into prev-1 before
+        # writing, and the current latest is the PRE-forget bytes. Rotating here
+        # made the deletion manufacture a fresh copy of the value it was asked to
+        # remove, in a file that did not exist when the user ran the command.
         store.write_checkpoint(sid, checkpoint, project_dir=project,
-                               allow_disabled=True)
+                               allow_disabled=True, rotate=False)
+    # The live checkpoint is one surface of several. prev-N and superseded
+    # session files hold the same plaintext and were never in the contract
+    # (#419: plaintext is what puts a file inside it, not its role). Runs even
+    # with no live checkpoint: a ledger-only project still has these surfaces.
+    store.scrub_content_key(content_hash, project_dir=project)
+    # #600 slice A: the author's own team-mirror copies are plaintext this
+    # machine owns (#419) — scrubbed here; teammates' copies and upstream
+    # git history are the sync protocol's to converge (tombstone
+    # propagation), not a local rewrite's.
+    team_scrubbed = store.scrub_team_copies(content_hash,
+                                            project_dir=project)
+    # #600 slice B: publish the deletion itself (hash only) so teammates can
+    # suppress the value without waiting to pull the scrubbed file — and so
+    # a copy THEY extracted independently can be acted on at all.
+    store.publish_tombstone(content_hash, project_dir=project)
+    # #599: rows appended BEFORE this forget can carry the value in
+    # `item_text`/`status`/`note` — redacted in place, rows never dropped
+    # (the one ratified rewrite of the append-only ledger).
+    events_scrubbed = store.scrub_event_fields(content_hash,
+                                               project_dir=project)
     # #578: same value, second plaintext store. The ledger splices on the SAME
     # canonical key for the same reason the checkpoint splices on it rather than
     # on the id — removal is content removal, so a refutation asserting the
@@ -1321,6 +1377,37 @@ def _cmd_forget(args) -> int:
         purged, purge_err = serializer.purge_chunk_cache()
     except Exception as e:  # belt: purge_chunk_cache itself never raises
         purged, purge_err = 0, str(e)
+    # #607: the Windsurf adapter writes its own transcripts when Cascade
+    # gives it none — daimon-authored plaintext, so inside the contract.
+    # Wholesale for the same reason as the chunk cache: the tombstone is a
+    # hash, so a value inside prose cannot be located to remove selectively.
+    try:
+        ws_purged, ws_err = store.purge_windsurf_state()
+    except Exception as e:  # belt: purge_windsurf_state never raises
+        ws_purged, ws_err = 0, str(e)
+    # #605: serialize-crash.log is the detached child's RAW stderr — an
+    # uncaught traceback carries whatever the crashing frame held, and the
+    # bytes were never scrubbed (status redacted its tail on READ, #513, over
+    # a file nothing deleted). Wholesale like the two purges above: the
+    # tombstone is a hash, so a value inside a traceback cannot be located.
+    try:
+        crash_purged, crash_err = store.purge_crash_log()
+    except Exception as e:  # belt: purge_crash_log never raises
+        crash_purged, crash_err = 0, str(e)
+    # #616: backend-stderr.log holds backend stderr/stdout, which CLI
+    # backends can seed with transcript text (#141). Wholesale like the
+    # crash sink: prose diagnostics, hash tombstone, value unlocatable.
+    try:
+        backend_purged, backend_err = store.purge_backend_stderr_log()
+    except Exception as e:  # belt: purge_backend_stderr_log never raises
+        backend_purged, backend_err = 0, str(e)
+    # #616: pre-fix downgrade lines logged item text into serialize.log.
+    # Shape-targeted scrub, NOT a purge — serialize.log is also the ledger
+    # `status` parses, and the capture record must survive a forget.
+    try:
+        scrubbed_lines, scrub_err = store.scrub_serialize_log()
+    except Exception as e:  # belt: scrub_serialize_log never raises
+        scrubbed_lines, scrub_err = 0, str(e)
     _note_usage("forget")
     surfaces = []
     if isinstance(checkpoint, dict):
@@ -1331,6 +1418,13 @@ def _cmd_forget(args) -> int:
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           f"removed from {' and '.join(surfaces) or 'no store'}; "
           "tombstone recorded")
+    if team_scrubbed:
+        print(f"scrubbed {len(team_scrubbed)} own team-mirror cop(y/ies) — "
+              "run `daimon team sync` to publish; teammates' copies and "
+              "upstream git history remain until tombstone propagation")
+    if events_scrubbed:
+        print(f"redacted {events_scrubbed} event-ledger field(s) "
+              "carrying the value (rows kept, field replaced)")
     if purge_err is not None:
         print(f"warning: chunk cache purge failed: {purge_err} — "
               "cached pre-redaction chunks may persist up to "
@@ -1338,6 +1432,49 @@ def _cmd_forget(args) -> int:
     else:
         print(f"purged {purged} cached chunk extraction(s) "
               "(pre-redaction serializer cache)")
+    if ws_err is not None:
+        print(f"warning: windsurf transcript purge failed: {ws_err} — "
+              "daimon-authored conversation text may persist up to "
+              f"{config.windsurf_state_days()} day(s) (age reaper)")
+    else:
+        # Always printed, like the chunk-cache line: a silent zero is how a
+        # misconfigured store (writer and deleter disagreeing about the
+        # directory) stays invisible. The scope note is not decoration —
+        # the store is keyed by trajectory and carries no project
+        # attribution, so this purge is machine-wide by construction.
+        print(f"purged {ws_purged} daimon-authored windsurf transcript "
+              "file(s) across all projects (machine-wide: the store is keyed "
+              "by trajectory, not project); host-authored transcripts are "
+              "untouched")
+    if crash_err is not None:
+        print(f"warning: crash log purge failed: {crash_err} — serializer "
+              "tracebacks may persist (bounded to a trimmed tail at the next "
+              "spawn, never removed)")
+    else:
+        # Printed even at zero, like the two lines above: a silent zero is
+        # how a writer and a deleter disagreeing about DAIMON_LOG_DIR stays
+        # invisible. One crash log per machine, so the scope note is the
+        # same honesty the windsurf line owes.
+        print(f"purged {crash_purged} serializer crash log(s) across all "
+              "projects (machine-wide: the log is raw child stderr, not "
+              "keyed by project)")
+    if backend_err is not None:
+        print(f"warning: backend log purge failed: {backend_err} — backend "
+              "echo of transcript text may persist (byte-bounded at the "
+              "write seam, never removed)")
+    else:
+        # Same silent-zero rule as the three lines above.
+        print(f"purged {backend_purged} backend stderr log(s) across all "
+              "projects (machine-wide: backend diagnostics are not keyed "
+              "by project)")
+    if scrub_err is not None:
+        print(f"warning: serialize.log scrub failed: {scrub_err} — legacy "
+              "downgrade lines may still carry item text")
+    else:
+        # Printed even at zero, same rule again: a scrubber resolving a
+        # different log dir than the writer must not read as "nothing left".
+        print(f"scrubbed {scrubbed_lines} legacy downgrade line(s) in "
+              "serialize.log (payload replaced; ledger lines kept)")
     return 0
 
 
@@ -2331,24 +2468,6 @@ def _cmd_mcp_serve(args) -> int:
     return mcp_server.serve()
 
 
-def _find_audit_transcript(session_id: str, slug):
-    """Locate a stored checkpoint's source transcript for the #125 audit:
-    <claude_projects>/<slug>/<session_id>.jsonl, with a glob fallback across
-    buckets (a session's project may have moved or forked its bucket). Returns
-    the Path or None when nothing matches."""
-    base = config.claude_projects_dir()
-    if slug:
-        direct = base / slug / f"{session_id}.jsonl"
-        if direct.exists():
-            return direct
-    try:
-        for cand in base.glob(f"*/{session_id}.jsonl"):
-            return cand
-    except OSError:
-        pass
-    return None
-
-
 def _load_audit_transcript(tpath):
     """Parse one transcript file into the (haystack, texts_by_id) pair
     audit-quotes checks quotes against — the one place #503's per-session
@@ -2368,39 +2487,88 @@ def _load_audit_transcript(tpath):
     return haystack, texts_by_id
 
 
-def _resolve_audit_transcript(session_id: str, slug, cache: dict):
-    """Resolve one session's (haystack, texts_by_id) pair and cache it by
-    session id (#503). A corpus scan hits the same session many times — once
-    as a checkpoint's own transcript, and once per carried item in every
-    LATER checkpoint whose origin_session names it — and `--all` walks the
-    whole corpus, so re-parsing per hit would make it quadratic. A miss is
-    cached too (None), so an unresolvable session is not retried on every
-    item that names it."""
-    if session_id in cache:
-        return cache[session_id]
-    tpath = _find_audit_transcript(session_id, slug)
+def _legacy_audit_source(session_id, author=None):
+    """Explicitly inferred pre-#594 Claude candidate, never a bound receipt."""
+    if not provenance.valid_session_id(session_id):
+        return None
+    source = {
+        "version": provenance.SOURCE_REF_VERSION,
+        "host": "claude-code",
+        "session_id": session_id,
+        "locator": "managed",
+    }
+    if isinstance(author, str) and author.strip():
+        source["author"] = author.strip()
+    return source
+
+
+def _audit_item_source(item):
+    """Return (source, receipt) without containing-checkpoint fallback."""
+    receipt = item.get("quote_provenance")
+    if provenance.valid_quote_receipt(receipt):
+        return receipt["source"], receipt
+    origin = item.get("origin_session")
+    if not provenance.valid_session_id(origin):
+        return None, None
+    origin_cp = store.read_checkpoint(origin)
+    if isinstance(origin_cp, dict):
+        source = origin_cp.get("source_ref")
+        if provenance.valid_source_ref(source):
+            return source, None
+    return _legacy_audit_source(origin, item.get("origin_author")), None
+
+
+def _resolve_audit_source(source, resolver, cache: dict):
+    """Resolve and parse one strict source once per complete source identity."""
+    if not provenance.valid_source_ref(source):
+        return None
+    key = json.dumps(source, sort_keys=True, separators=(",", ":"))
+    if key in cache:
+        return cache[key]
     result = None
-    if tpath is not None:
+    resolved = resolver.resolve(source)
+    if resolved.state == "resolved" and resolved.path is not None:
         try:
-            result = _load_audit_transcript(tpath)
+            result = _load_audit_transcript(resolved.path)
         except (OSError, FileNotFoundError):
             result = None
-    cache[session_id] = result
+    cache[key] = result
     return result
+
+
+def _cmd_audit_privacy(args) -> int:
+    """Read-only tombstone residue audit — proves forget's contract instead
+    of trusting it (#583: a passing test once asserted the residue). Exit 0
+    proven clean / 1 residue / 3 cannot-prove; 3 exists because "could not
+    check" must never look like "all clean"."""
+    if getattr(args, "all_projects", False):
+        results = privacy.audit_all()
+    else:
+        results = [privacy.audit_project(_resolve_project(args.project))]
+    render.render_privacy_audit(results)
+    code = privacy.exit_code(results)
+    # One tag per OUTCOME: "the auditor ran" and "the auditor found residue"
+    # answer different questions, and folding them loses the only number that
+    # says whether the deletion contract holds in the field.
+    _note_usage({1: "audit-privacy:residue",
+                 3: "audit-privacy:unproven"}.get(code, "audit-privacy"))
+    return code
+
+
+def _cmd_audit_quotes_deprecated(args) -> int:
+    print("note: 'daimon audit-quotes' is deprecated — use 'daimon audit quotes'")
+    return _cmd_audit_quotes(args)
 
 
 def _cmd_audit_quotes(args) -> int:
     """Read-only audit (#125): re-check every stored verbatim quote against its
     source transcript with the SAME tier-f matcher serialize uses, and REPORT.
 
-    #503: resolved per ITEM, from the item's own `origin_session` stamp, not
-    from the checkpoint that merely contains it — carry.merge copies `quote`
-    and `source_message_ids` forward when an item survives into a later
-    checkpoint, but never the transcript identity they came from, so a carried
-    item checked against its containing checkpoint's transcript is checked
-    against a transcript it was never in. Falls back to the containing
-    checkpoint's own session when the stamp is absent (pre-#268 items) or its
-    transcript cannot be resolved.
+    #594: a valid item receipt is authoritative for source identity and message
+    binding. Legacy origin_session may form an explicitly inferred Claude
+    candidate, but an absent/unresolved source NEVER falls back to the
+    containing checkpoint: exact-text carry proves origin, quote evidence, and
+    containing session can be three different facts.
 
     Never rewrites a trust tag — a blind backfill would flip a large share of
     the historical corpus. Measured (#503): the overwhelming majority of
@@ -2418,6 +2586,9 @@ def _cmd_audit_quotes(args) -> int:
     scanned = paired = unpaired = items = verified = failed = id_resolved = 0
     origin_resolved = 0
     transcripts: dict = {}
+    resolver = provenance.SourceResolver(
+        claude_projects=config.claude_projects_dir(),
+        current_author=config.author())
     failures: list[tuple[str, str]] = []
     for f in sorted(files):
         try:
@@ -2431,7 +2602,10 @@ def _cmd_audit_quotes(args) -> int:
             continue
         scanned += 1
         session_id = str(cp.get("session_id") or f.stem)
-        own = _resolve_audit_transcript(session_id, slug, transcripts)
+        own_source = cp.get("source_ref")
+        if not provenance.valid_source_ref(own_source):
+            own_source = _legacy_audit_source(session_id, cp.get("author"))
+        own = _resolve_audit_source(own_source, resolver, transcripts)
         if own is not None:
             paired += 1
         else:
@@ -2442,38 +2616,27 @@ def _cmd_audit_quotes(args) -> int:
             quote = item.get("quote")
             if not isinstance(quote, str) or not quote.strip():
                 continue
-            # #503: try the item's OWN origin first. origin_session equal to
-            # the containing session (the common native-item case, stamped
-            # onto itself at write) is just `own` again — skip the lookup and
-            # go straight there. A present-but-different stamp that fails to
-            # resolve (GC'd transcript, wrong host layout) falls through to
-            # `own` too, the pre-#503 verdict, byte-identical.
-            resolved, carried = own, False
-            origin = item.get("origin_session")
-            if (isinstance(origin, str) and origin.strip()
-                    and origin != session_id):
-                origin_slug = None
-                if origin not in transcripts:
-                    origin_cp = store.read_checkpoint(origin)
-                    if isinstance(origin_cp, dict):
-                        origin_slug = origin_cp.get("project_slug")
-                from_origin = _resolve_audit_transcript(
-                    origin, origin_slug, transcripts)
-                if from_origin is not None:
-                    resolved, carried = from_origin, True
+            source, receipt = _audit_item_source(item)
+            resolved = _resolve_audit_source(source, resolver, transcripts)
             if resolved is None:
-                continue  # neither the origin nor the containing session's
-                          # transcript resolves -> unverifiable, uncounted,
-                          # same as today's unpaired-checkpoint skip.
+                continue
             haystack, texts_by_id = resolved
             items += 1
-            if carried:
+            if source.get("session_id") != session_id:
                 origin_resolved += 1
             # #358: an item bound to source message id(s) resolves the id and
             # compares bytes against just that message. Missing/invalid ids
             # (old checkpoints, moved/truncated transcripts) fall back to the
             # whole-transcript scan — the pre-#358 verdict, byte-identical.
-            scoped = serializer.scoped_haystack(item, texts_by_id)
+            checked_item = item
+            if receipt is not None:
+                checked_item = dict(item)
+                ids = provenance.binding_message_ids(receipt)
+                if ids:
+                    checked_item[serializer.SOURCE_IDS_KEY] = ids
+                else:
+                    checked_item.pop(serializer.SOURCE_IDS_KEY, None)
+            scoped = serializer.scoped_haystack(checked_item, texts_by_id)
             if scoped is not None and serializer.quote_matches(quote, scoped):
                 verified += 1
                 id_resolved += 1
@@ -2501,7 +2664,7 @@ def _cmd_audit_quotes(args) -> int:
     # no evidence either way about whether anyone reaches for it. The unpaired
     # variant is a distinct event, not a detail of this one: a run that resolved
     # no transcript verified nothing, and it is also how a host whose
-    # transcripts live outside `_find_audit_transcript`'s reach shows up at all.
+    # transcripts live outside the registered resolver's reach shows up at all.
     # #503: keyed on ANY resolved transcript, not on `paired`. Once resolution
     # is per item, a checkpoint whose own transcript is gone still verifies its
     # carried items through origin_session — `paired` counts containing
@@ -2536,6 +2699,17 @@ def _cmd_heal(args) -> int:
     wrapped directly; no restructuring of `_run_serialize` needed."""
     dry_run = getattr(args, "dry_run", False)
     force = getattr(args, "force", False)
+    # #601: heal owns repair, so the dead-index-snapshot reap lives here (the
+    # audit group is read-only by charter). Runs even when nothing is
+    # healable — the strands are what pin `audit privacy` at cannot-prove.
+    for p in recall.reap_dead_snapshots(apply=not dry_run):
+        print(f"{'would reap' if dry_run else 'reaped'} "
+              f"dead index snapshot: {p.name}")
+    # #607: same repair charter — bound how long daimon-authored Windsurf
+    # conversation text lingers between forgets.
+    for p in store.reap_windsurf_state(apply=not dry_run):
+        print(f"{'would reap' if dry_run else 'reaped'} "
+              f"aged windsurf transcript: {p.name}")
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
@@ -2594,6 +2768,23 @@ def _cmd_team_sync(args) -> int:
         render.render_team_sync(["daimon team: git not found on PATH — sync skipped"])
         return 0
     reports = teamsync.sync()
+    # #600 slice B, opt-in: apply teammates' tombstones to THIS machine's own
+    # checkpoints. TWO gates, and the flag is the load-bearing one: bare
+    # `daimon team sync` is spawned DETACHED at SessionStart by
+    # lib.spawn_team_sync with stdout to DEVNULL, exactly like heal — so a
+    # setting alone would delete local belief state unattended and silently,
+    # which is the failure this design exists to prevent. The hook never
+    # passes --apply-forget, so only a typed command can reach this.
+    # Machine-wide, matching sync's own project-agnostic contract.
+    if getattr(args, "apply_forget", False):
+        if not config.team_apply_forget():
+            print("daimon team: --apply-forget needs DAIMON_TEAM_APPLY_FORGET=1"
+                  " — a teammate's forget rewriting your own checkpoints is"
+                  " opt-in, and there is no undo", file=sys.stderr)
+        else:
+            applied = store.apply_foreign_tombstones(all_projects=True)
+            print(f"applied teammates' forget tombstones to {len(applied)} "
+                  "local surface(s) across all projects")
     # #246: fetched teammate files are fingerprint input — freshen here (the
     # SessionStart hook spawns sync detached, off the prompt path) so the
     # first recall after a fetch doesn't pay the rebuild. Unconditional on
@@ -3541,13 +3732,30 @@ def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
     """Uncaught-crash header (#92): serialize-crash.log is the detached
     child's RAW stderr fd — no logger sits in the write path, so the only
     process that can timestamp a crash is the crashing one. One ISO-stamped
-    line, then the stock traceback. Covers uncaught Python exceptions (the
-    dominant case); interpreter-level deaths still write nothing."""
+    line, then the traceback. Covers uncaught Python exceptions (the
+    dominant case); interpreter-level deaths still write nothing.
+
+    #605: the traceback is formatted HERE rather than handed to
+    sys.__excepthook__, so it can pass through redact_text on the way out.
+    The crashing process is the only one that can scrub these bytes — for
+    the same reason it is the only one that can stamp them — and #513
+    redacted the tail on READ over a file nothing deleted. Item text still
+    survives (redaction catches secrets, not beliefs), which is why the
+    purge above it is wholesale.
+
+    Fail-open, redact.py's own posture: anything that goes wrong formatting
+    or redacting falls back to the stock hook, because a swallowed traceback
+    is a crash nobody can diagnose."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cmd = next((a for a in sys.argv[1:] if not a.startswith("-")), "?")
     print(f"--- crash {stamp} pid={os.getpid()} cmd={cmd} ---",
           file=sys.stderr, flush=True)
-    sys.__excepthook__(exc_type, exc, tb)
+    try:
+        formatted = "".join(traceback.format_exception(exc_type, exc, tb))
+        redacted, _ = redact.redact_text(formatted)
+        print(redacted, end="", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001 — see fail-open above
+        sys.__excepthook__(exc_type, exc, tb)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3573,7 +3781,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd", required=True, metavar="<command>")
     sub.add_parser = functools.partial(sub.add_parser, formatter_class=fmt)
 
     p_ser = sub.add_parser("serialize", help="serialize a transcript file into a checkpoint")
@@ -3680,6 +3888,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=20, help="max results (default: 20)"
     )
     p_recall.set_defaults(func=_cmd_recall)
+
+    p_why = sub.add_parser(
+        "why", help="inspect the evidence and lifecycle receipt for one item",
+        epilog="Examples:\n"
+               "  daimon recall retry policy\n"
+               "  daimon why o-3f8a2c\n"
+               "  daimon why o-3f8a2c --source --json\n",
+    )
+    p_why.add_argument(
+        "item_id", help="exact item id shown by `daimon recall` or `daimon loops`")
+    p_why.add_argument(
+        "--source", action="store_true",
+        help="show one bounded, redacted message-level source window")
+    p_why.add_argument(
+        "--json", action="store_true", help="machine-readable evidence axes")
+    p_why.add_argument(
+        "--project",
+        help="project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_why.add_argument(
+        "--slug", metavar="SLUG",
+        help="scope to a project bucket by its slug (see `daimon projects`)")
+    p_why.set_defaults(func=_cmd_why)
 
     p_projects = sub.add_parser(
         "projects", help="list every project daimon has a checkpoint for",
@@ -3946,22 +4176,52 @@ def build_parser() -> argparse.ArgumentParser:
     p_vr.set_defaults(func=_cmd_verify_receipt)
 
     p_audit = sub.add_parser(
-        "audit-quotes",
+        "audit",
+        help="read-only auditors that verify stored guarantees",
+    )
+    audit_sub = p_audit.add_subparsers(dest="audit_cmd", required=True)
+    pa_quotes = audit_sub.add_parser(
+        "quotes",
         help="re-check stored verbatim quotes against their source transcripts "
              "and report mismatches (read-only, never rewrites tags, #125)",
         epilog="Examples:\n"
-               "  daimon audit-quotes\n"
-               "  daimon audit-quotes --all --top 20\n",
+               "  daimon audit quotes\n"
+               "  daimon audit quotes --all --top 20\n",
     )
-    p_audit.add_argument(
+    pa_quotes.add_argument(
         "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
-    p_audit.add_argument(
+    pa_quotes.add_argument(
         "--all", action="store_true",
         help="audit every project's checkpoints, not just the current one")
-    p_audit.add_argument(
+    pa_quotes.add_argument(
         "--top", type=int, default=10,
         help="how many failing quotes to list (default: 10)")
-    p_audit.set_defaults(func=_cmd_audit_quotes)
+    pa_quotes.set_defaults(func=_cmd_audit_quotes)
+    pa_priv = audit_sub.add_parser(
+        "privacy",
+        help="prove no forgotten value's plaintext survives on any surface "
+             "(read-only; exit 0 clean, 1 residue, 3 cannot-prove)",
+        epilog="Examples:\n"
+               "  daimon audit privacy\n"
+               "  daimon audit privacy --all\n",
+    )
+    # Mutually exclusive: --project scopes to ONE bucket and --all audits every
+    # bucket, so together one of them is silently ignored — and the flag that
+    # loses decides which tombstone sets were checked. Fail loud instead.
+    pa_priv_scope = pa_priv.add_mutually_exclusive_group()
+    pa_priv_scope.add_argument(
+        "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_priv_scope.add_argument(
+        "--all", action="store_true", dest="all_projects",
+        help="audit every local project, each against its own tombstone set")
+    pa_priv.set_defaults(func=_cmd_audit_privacy)
+    # Deprecated flat alias (#504-era name). metavar on the top-level
+    # subparsers (set below) keeps it out of the usage brace list.
+    p_audit_old = sub.add_parser("audit-quotes")
+    p_audit_old.add_argument("--project")
+    p_audit_old.add_argument("--all", action="store_true")
+    p_audit_old.add_argument("--top", type=int, default=10)
+    p_audit_old.set_defaults(func=_cmd_audit_quotes_deprecated)
 
     p_heal = sub.add_parser(
         "heal",
@@ -3999,6 +4259,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--project",
         help="accepted for CLI symmetry; sync is currently project-agnostic "
              "(all own checkpoints sync regardless of project)",
+    )
+    pt_sync.add_argument(
+        "--apply-forget", action="store_true", dest="apply_forget",
+        help="also rewrite THIS machine's checkpoints under teammates' forget "
+             "tombstones (#600). Requires DAIMON_TEAM_APPLY_FORGET=1; typed "
+             "only — the SessionStart hook spawns a bare sync, so this can "
+             "never delete your belief state unattended",
     )
     pt_sync.set_defaults(func=_cmd_team_sync)
     pt_status = team_sub.add_parser(
