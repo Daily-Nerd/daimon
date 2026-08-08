@@ -5379,6 +5379,22 @@ def test_status_payload_matches_status_json_output(
         "(reason: exit, project: /p/A)",
         "wrote checkpoint: /tmp/ck/S-prev.json (took 7s)",
     ])
+    # #631: the assertion is about the ASSEMBLER, not the wall clock — but
+    # each call fetches its own `now`, so a second boundary between the two
+    # builds skewed every age/freshness field by one and flaked CI. Freeze
+    # both clock sources for the comparison; ticking is exercised on purpose
+    # in the repro that filed the issue, not here.
+    frozen = time.time()
+    monkeypatch.setattr(time, "time", lambda: frozen)
+    frozen_dt = datetime.now(timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen_dt.astimezone(tz) if tz else \
+                frozen_dt.replace(tzinfo=None)
+
+    monkeypatch.setattr(cli, "datetime", _FrozenDatetime)
     rc = cli.main(["status", "--json"])
     data = json.loads(capsys.readouterr().out)
     payload, prc = cli.status_payload(None)
