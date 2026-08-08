@@ -1,47 +1,80 @@
 {
-  "landing.subtitle": {
-    "message": "Memoria de sesión que tus agentes de código pueden demostrar. Briefings con clases de confianza, citas verificadas contra el transcript, y receipts firmados."
+  "landing.hero.eyebrow": {
+    "message": "CLI de código abierto"
   },
-  "landing.cta.start": {
-    "message": "Empezar"
+  "landing.hero.title": {
+    "message": "Memoria que cualquiera puede verificar"
   },
-  "landing.quote": {
-    "message": "Deja de re-explicarte en cada sesión. La siguiente sesión abre sabiendo ya en qué estabas, qué decidiste y qué sigue abierto — con la evidencia para comprobarlo."
+  "landing.hero.sub": {
+    "message": "Otras herramientas de memoria dejan que el modelo califique su propia tarea. daimon te muestra la línea del transcript, la cita exacta y una firma que puedes verificar offline."
   },
-  "landing.feature.briefings.title": {
-    "message": "Briefings, no arranques en frío"
+  "landing.install.hosts": {
+    "message": "Elige tu host de agente"
   },
-  "landing.feature.briefings.body": {
-    "message": "Cada sesión termina en un checkpoint; la siguiente abre con lo que estabas haciendo, lo que se decidió y lo que sigue abierto."
+  "landing.install.step1": {
+    "message": "1 · instala la herramienta"
   },
-  "landing.feature.trust.title": {
-    "message": "Clases de confianza en cada ítem"
+  "landing.install.step2": {
+    "message": "2 · conéctala a {host}"
   },
-  "landing.feature.trust.body": {
-    "message": "Los ítems verbatim llevan citas exactas verificadas contra el transcript al serializar. Los inferidos lo dicen. Los arrastres desactualizados se señalan para re-verificación."
+  "landing.copy": {
+    "message": "copiar"
   },
-  "landing.feature.receipts.title": {
-    "message": "Receipts que puedes verificar offline"
+  "landing.copy.done": {
+    "message": "copiado"
   },
-  "landing.feature.receipts.body": {
-    "message": "Los checkpoints van firmados. Un tercero puede comprobar qué sabía una sesión, y cuándo, sin confiar en la máquina que lo escribió."
+  "landing.verify.title": {
+    "message": "Un checkpoint verificándose a sí mismo"
   },
-  "landing.feature.team.title": {
-    "message": "Memoria de equipo sobre git"
+  "landing.verify.claim": {
+    "message": "Cada afirmación se vuelve a comprobar contra el transcript antes de llegar a tu agente."
   },
-  "landing.feature.team.body": {
-    "message": "Los checkpoints se sincronizan por un remoto git normal con una allowlist de alcance cerrada por defecto. Sin servidor, sin cuentas."
+  "landing.replay.barTitle": {
+    "message": "repetición del checkpoint"
   },
-  "landing.feature.hosts.title": {
-    "message": "Funciona con tu host"
+  "landing.replay.aria": {
+    "message": "Repetir la verificación"
   },
-  "landing.feature.hosts.body": {
-    "message": "Claude Code, Codex, Gemini CLI y Windsurf — instalado como hooks, removido igual de fácil."
+  "landing.replay.btn": {
+    "message": "repetir"
   },
-  "landing.feature.local.title": {
-    "message": "Local y sin dependencias"
+  "landing.anatomy.title": {
+    "message": "Cómo un ítem demuestra lo que dice"
   },
-  "landing.feature.local.body": {
-    "message": "Solo stdlib de Python. Tus transcripts nunca salen de tu máquina salvo que configures un remoto de equipo."
+  "landing.anatomy.claim": {
+    "message": "Un checkpoint es el registro firmado que deja una sesión — cada línea en él se gana su clase."
+  },
+  "landing.anatomy.class.term": {
+    "message": "clase"
+  },
+  "landing.anatomy.class": {
+    "message": "se gana al comprobarla, nunca se auto-declara"
+  },
+  "landing.anatomy.words.term": {
+    "message": "palabras exactas"
+  },
+  "landing.anatomy.words": {
+    "message": "citadas del transcript, no parafraseadas"
+  },
+  "landing.anatomy.receipt.term": {
+    "message": "receipt"
+  },
+  "landing.anatomy.receipt": {
+    "message": "el número de línea y la firma que puedes consultar"
+  },
+  "landing.close.conviction": {
+    "message": "Todo lo de arriba se puede comprobar offline — sin confiar en nosotros, ni en el modelo, ni en esta página."
+  },
+  "landing.close.deps": {
+    "message": "Solo stdlib de Python"
+  },
+  "landing.close.sync": {
+    "message": "sincronización de equipo por git"
+  },
+  "landing.close.pypi": {
+    "message": "v{version} en PyPI"
+  },
+  "landing.close.docs": {
+    "message": "Leer los docs"
   }
 }
