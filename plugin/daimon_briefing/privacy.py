@@ -410,6 +410,19 @@ def audit_project(project_dir=None) -> dict:
         ws_entries += 1
         ws_oldest = age if ws_oldest is None else max(ws_oldest, age)
     result["windsurf"] = {"entries": ws_entries, "oldest_days": ws_oldest}
+    # backend-stderr.log (#616): CLI-backend echo can carry transcript text.
+    # Same store-level honesty as the chunk cache and for the same reason —
+    # the value would live as a SUBSTRING of prose diagnostics and the
+    # tombstone is a hash. Reporting the file exists (with its real age) is
+    # what the auditor can prove; forget purges it wholesale.
+    present, age_days = False, None
+    try:
+        st = (config.log_dir() / "backend-stderr.log").stat()
+        present = True
+        age_days = (time.time() - st.st_mtime) / 86400
+    except (OSError, ValueError):
+        pass                       # absent, unreadable, or corrupt env
+    result["backend_log"] = {"present": present, "age_days": age_days}
     return result
 
 

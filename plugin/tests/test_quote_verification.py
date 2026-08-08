@@ -6,7 +6,8 @@ import logging
 
 import pytest
 
-from daimon_briefing import cli, provenance, serializer, store, transcript
+from daimon_briefing import (cli, normalize, provenance, serializer, store,
+                             transcript)
 from tests.conftest import FIXTURES, make_messages
 
 
@@ -250,15 +251,18 @@ def test_verify_quotes_downgrades_on_miss(caplog):
     assert n == 1
     assert item["trust"] == "inferred"
     assert item["quote_verified"] is False
-    # downgrade is visible in the log with an item-text prefix
-    assert any("fabricated decision" in r.getMessage() for r in caplog.records)
+    # downgrade is visible in the log as a content hash, never the text (#616)
+    key = normalize.content_key("a fabricated decision line")
+    assert any(key in r.getMessage() for r in caplog.records)
+    assert not any("fabricated decision" in r.getMessage()
+                   for r in caplog.records)
 
 
-def test_verify_quotes_downgrade_log_redacts_secret(caplog):
-    # #141: the downgrade warning is the one verify_quotes line that carries
-    # item text, and it fires PRE-redaction — a secret inside a downgraded
-    # item must be scrubbed in the log line while the checkpoint item itself
-    # stays raw (store redacts it at write time, ids must hash redacted text).
+def test_verify_quotes_downgrade_log_never_carries_the_secret(caplog):
+    # #141 asked for secret redaction on this line; #616 went further — the
+    # line carries no item text at all, only the content hash. The secret can
+    # therefore never appear, and the checkpoint item itself stays raw (store
+    # redacts it at write time, ids must hash redacted text).
     secret = "AKIAIOSFODNN7EXAMPLE"
     cp = _cp_with({("working_context", "recent_decisions"): [
         {"text": f"rotate key {secret} next", "trust": "verbatim",
@@ -267,9 +271,9 @@ def test_verify_quotes_downgrade_log_redacts_secret(caplog):
         serializer.verify_quotes(cp, "assistant: something entirely unrelated")
     msgs = [r.getMessage() for r in caplog.records]
     assert not any(secret in m for m in msgs)
-    assert any("[redacted:aws-key]" in m for m in msgs)
+    assert not any("rotate key" in m for m in msgs)
     item = cp["working_context"]["recent_decisions"][0]
-    assert item["text"] == f"rotate key {secret} next"  # log-only scrub
+    assert item["text"] == f"rotate key {secret} next"  # item stays raw
 
 
 def test_verify_quotes_leaves_inferred_items_unstamped():

@@ -1099,6 +1099,20 @@ def _cmd_forget(args) -> int:
         crash_purged, crash_err = store.purge_crash_log()
     except Exception as e:  # belt: purge_crash_log never raises
         crash_purged, crash_err = 0, str(e)
+    # #616: backend-stderr.log holds backend stderr/stdout, which CLI
+    # backends can seed with transcript text (#141). Wholesale like the
+    # crash sink: prose diagnostics, hash tombstone, value unlocatable.
+    try:
+        backend_purged, backend_err = store.purge_backend_stderr_log()
+    except Exception as e:  # belt: purge_backend_stderr_log never raises
+        backend_purged, backend_err = 0, str(e)
+    # #616: pre-fix downgrade lines logged item text into serialize.log.
+    # Shape-targeted scrub, NOT a purge — serialize.log is also the ledger
+    # `status` parses, and the capture record must survive a forget.
+    try:
+        scrubbed_lines, scrub_err = store.scrub_serialize_log()
+    except Exception as e:  # belt: scrub_serialize_log never raises
+        scrubbed_lines, scrub_err = 0, str(e)
     _note_usage("forget")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           "item removed from the live checkpoint; tombstone recorded")
@@ -1142,6 +1156,23 @@ def _cmd_forget(args) -> int:
         print(f"purged {crash_purged} serializer crash log(s) across all "
               "projects (machine-wide: the log is raw child stderr, not "
               "keyed by project)")
+    if backend_err is not None:
+        print(f"warning: backend log purge failed: {backend_err} — backend "
+              "echo of transcript text may persist (byte-bounded at the "
+              "write seam, never removed)")
+    else:
+        # Same silent-zero rule as the three lines above.
+        print(f"purged {backend_purged} backend stderr log(s) across all "
+              "projects (machine-wide: backend diagnostics are not keyed "
+              "by project)")
+    if scrub_err is not None:
+        print(f"warning: serialize.log scrub failed: {scrub_err} — legacy "
+              "downgrade lines may still carry item text")
+    else:
+        # Printed even at zero, same rule again: a scrubber resolving a
+        # different log dir than the writer must not read as "nothing left".
+        print(f"scrubbed {scrubbed_lines} legacy downgrade line(s) in "
+              "serialize.log (payload replaced; ledger lines kept)")
     return 0
 
 

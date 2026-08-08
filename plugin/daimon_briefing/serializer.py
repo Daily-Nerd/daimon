@@ -21,7 +21,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from . import config, configure, ledger, llm, provenance, redact, schema
+from . import (config, configure, ledger, llm, normalize, provenance, schema)
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -1019,8 +1019,8 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     `last_verified` ISO-8601 UTC stamp (#215: the staleness-budget's freshest
     signal — a carried item's world-check age is measured from here). On a
     miss it is downgraded to trust="inferred" with `quote_verified: false` and
-    the downgrade is logged (count + redacted item-text prefix — this runs
-    pre-redaction, so the raw text must not reach a log sink; #141). Items
+    the downgrade is logged (count + content hash — never the text: the line
+    lands in serialize.log, which is exempt-no-plaintext; #141, #616). Items
     already trust="inferred" are left untouched — no stamp, either field.
     Runs ONCE at serialize, PRE-redaction, so the quote is still the raw text
     (a quote whose secret redaction will later mask still verifies here
@@ -1143,19 +1143,21 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
             stamp_receipt(item, "not-verified", checked_at,
                           "transcript-scan")
             downgraded += 1
-            # Log-line-only scrub: item ids are not stamped until store-save,
-            # so the text is the only diagnostic handle here. The item itself
-            # stays raw (store redacts it; ids hash redacted text). Untruncated
-            # (#194): this line is the only surviving record of the downgrade —
-            # the CLI routes it to serialize.log, which holds full result lines.
-            logged, _ = redact.redact_text(item.get("text") or "")
+            # #616 (supersedes #194's untruncated payload): item ids are not
+            # stamped until store-save, so the CONTENT HASH is the diagnostic
+            # handle — the same normalize.content_key a later `forget` of this
+            # text would tombstone, so "which item downgraded" stays
+            # answerable. The text itself must never reach serialize.log: the
+            # CLI routes this line there, and logs/*.log is declared
+            # exempt-no-plaintext (surfaces.py) — a claim these writers carry.
+            key = normalize.content_key(item.get("text") or "")
             if item.get(ECHO_ONLY_KEY):
                 log.warning("quote verification: downgraded verbatim->inferred "
                             "(echo-only: quote appears only in daimon's own "
-                            "injected output): %s", logged)
+                            "injected output) (content hash %s)", key)
             else:
-                log.warning("quote verification: downgraded verbatim->inferred: %s",
-                            logged)
+                log.warning("quote verification: downgraded verbatim->inferred "
+                            "(content hash %s)", key)
     if downgraded:
         log.info("quote verification: %d verbatim item(s) downgraded to inferred"
                  " (%d echo-only)", downgraded, echoed)
@@ -1369,10 +1371,11 @@ def ground_outcomes(checkpoint, signal_ids) -> int:
         item["trust"] = "inferred"
         item[GROUNDED_KEY] = False
         downgraded += 1
-        # Same log-line-only scrub as verify_quotes: runs pre-redaction.
-        logged, _ = redact.redact_text(item.get("text") or "")
+        # Same #616 rule as verify_quotes' downgrade line: hash, never text.
+        key = normalize.content_key(item.get("text") or "")
         log.warning("outcome grounding: unwitnessed outcome claim downgraded "
-                    "verbatim->inferred (no signal cited): %s", logged)
+                    "verbatim->inferred (no signal cited) (content hash %s)",
+                    key)
     if downgraded:
         log.info("outcome grounding: %d outcome claim(s) downgraded to inferred",
                  downgraded)
