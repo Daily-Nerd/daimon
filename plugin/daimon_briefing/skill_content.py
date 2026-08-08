@@ -151,8 +151,21 @@ Never present cross-project content as the current project's memory.
 | Briefing stale or missing | `daimon status` |
 | A past session failed to capture | `daimon heal` |
 | Usage and capture overview | `daimon stats` |
+| "Where did this claim come from?" | `daimon why <item-id>` |
+| A forgotten value may have survived | `daimon audit privacy` |
+| Stored quotes may have drifted | `daimon audit quotes` |
+| Is this checkpoint's receipt sound? | `daimon verify-receipt` |
 
 Report what the command shows; do not guess at capture state.
+
+`daimon why <item-id>` is the read side of every trust tag: one item's
+evidence axes — capture, provenance, source, byte integrity, current support,
+quote-check outcome, lifecycle, corroboration — with `--source` adding one
+bounded, redacted window of the originating text. Reach for it before
+repeating a `[carried]` or `[~ inferred]` claim as true, or when the user asks
+where something came from; ids come from `daimon recall` or `daimon loops`.
+The auditors are read-only: exit `0` proven clean, `1` residue found, `3`
+cannot prove — never read `3` as clean.
 
 ## MCP tool surface
 

@@ -31,8 +31,24 @@ def test_full_fits_size_budget():
     # new SECTION has to be argued for in review instead of absorbed.  Raising
     # it is allowed; doing so silently, as part of a change about something
     # else, is what this is here to prevent.
+    #
+    # RAISED 8,000 -> 8,900 on 2026-08-08 (#643), and here is the argument the
+    # rule above asks for.  This is not a change about something else: the
+    # skill content IS the subject.  `daimon why` shipped in 0.28.0 and
+    # appeared ZERO times here — the read side of every trust tag this file
+    # spends 1,500 chars teaching agents to respect was documented for humans
+    # and invisible to agents, and #596 cannot measure a command no skill
+    # surfaces.  `audit` and `verify-receipt` were absent by accident rather
+    # than decision.  The addition is ~820 chars: four symptom rows plus one
+    # paragraph naming the evidence axes, which is the part that makes the
+    # command usable rather than merely known.  New deliberate-review size is
+    # 8,417 (2026-08-08); 8,900 is that plus the same ~6% slack the 8,000
+    # carried, so rewrapping stays free and the next new section still has to
+    # argue.  What was NOT done: nothing was added to the compact body, which
+    # sits at 1,999 of its hard 2,000-char host cap — see #579 for what gets
+    # evicted when that budget is squeezed.
     full = skill_content.render_full()
-    assert len(full) <= 8000, f"full body is {len(full)} chars (cap 8000)"
+    assert len(full) <= 8900, f"full body is {len(full)} chars (cap 8900)"
 
 
 def test_full_has_trigger_only_frontmatter():
@@ -301,3 +317,32 @@ def test_compact_teaches_mcp_tools():
         assert tool in body
     assert "read-only" in body
     assert "tell the user" in body
+
+
+def test_full_teaches_the_trust_inspector():
+    """#643: `daimon why` shipped in 0.28.0 as the read-side receipt for a
+    recalled item and appeared ZERO times in the installed skill — documented
+    for people, invisible to agents. #596 asks users whether they can act on
+    its output; if no skill surfaces it, an agent never runs it unprompted and
+    the test measures the facilitator instead of the command."""
+    full = skill_content.render_full()
+    assert "daimon why" in full
+    assert "--source" in full, "the bounded source window is the disclosure step"
+
+
+def test_full_teaches_the_read_only_auditors():
+    """#643 decision: `audit` and `verify-receipt` are read-only verification
+    surfaces an agent can reasonably run itself, so their absence was
+    accidental, not decided."""
+    full = skill_content.render_full()
+    assert "daimon audit" in full
+    assert "daimon verify-receipt" in full
+
+
+def test_the_trust_verbs_reach_the_symptom_table():
+    """Triggers live in the rule text (this file's own header says so), so a
+    verb the agent cannot map to a symptom is a verb it will not reach for."""
+    full = skill_content.render_full()
+    section = full.split("## When memory looks wrong")[1].split("\n## ")[0]
+    for verb in ("daimon why", "daimon audit", "daimon verify-receipt"):
+        assert verb in section, f"{verb} has no symptom that reaches it"
