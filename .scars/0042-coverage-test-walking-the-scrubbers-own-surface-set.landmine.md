@@ -1,22 +1,22 @@
 ---
-id: 0
+id: 42
 type: landmine
 title: A residue test that enumerates surfaces via the scrubber's own walk cannot fail for a missed surface class
 severity: high
 confidence: 0.95
 created: 2026-08-07
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/tests/test_team_tombstone_propagation.py
   - path: plugin/daimon_briefing/store.py
   - pattern: "project_surfaces\("
 evidence:
-  - note: "test_opt_in_scrubs_local_copies asserted no residue by iterating store.project_surfaces(PROJECT) — the exact set scrub_content_key walks. apply_foreign_tombstones reaches only that set, so the chunk cache, crash log, adapter transcripts, events.jsonl and own team-mirror copies all kept the plaintext while the test passed and the CLI printed success. Found in the #600 slice B design review, 2026-08-07; filed as #620."
-  - note: "Second instance of the class. The first shipped a forget bug to main because a passing test asserted the residue it was meant to catch (see forget-plaintext-surfaces)."
+  - note: test_opt_in_scrubs_local_copies asserted no residue by iterating store.project_surfaces(PROJECT) — the exact set scrub_content_key walks. apply_foreign_tombstones reaches only that set, so the chunk cache, crash log, adapter transcripts, events.jsonl and own team-mirror copies all kept the plaintext while the test passed and the CLI printed success. Found in the #600 slice B design review, 2026-08-07; filed as #620.
+  - note: Second instance of the class. The first shipped a forget bug to main because a passing test asserted the residue it was meant to catch (see forget-plaintext-surfaces).
 expires:
   condition: "residue assertions enumerate surfaces from surfaces.SURFACES (plaintext=True) rather than from the walk under test"
   review_after: 2027-02-07
-status: candidate
+status: active
 ---
 
 A deletion test must not ask the code under test which files exist. When the
