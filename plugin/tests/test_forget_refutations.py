@@ -135,7 +135,16 @@ def test_forget_refuses_when_an_id_matches_a_decision_and_a_refutation(
     assert decision_id.startswith("r-")
 
     ref_id = _refute()
-    monkeypatch.setattr(refutations, "make_id", lambda *a, **k: decision_id)
+    # Force ONE record's id onto the decision id, not every record's: the
+    # duplicate check reads what records currently SAY (#646), so a blanket
+    # patch would make the first refutation collide with the second and the
+    # fixture would be asserting its own contradiction rather than forget's
+    # never-guess contract.
+    real_make_id = refutations.make_id
+    monkeypatch.setattr(
+        refutations, "make_id",
+        lambda subject, scope: (decision_id if scope == "collision"
+                                else real_make_id(subject, scope)))
     collided = refutations.assert_refutation(
         subject="a subject whose id was forced to collide", verdict="refuted",
         scope="collision", evidence=["measurement:x"], channel="cli-tty",

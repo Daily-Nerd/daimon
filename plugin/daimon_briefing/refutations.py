@@ -89,6 +89,21 @@ _MAX_TEXT = 2000
 _MAX_ANCHORS = 24
 _MAX_EVIDENCE = 24
 
+# Every field of a ledger row that can hold ITEM plaintext, flat then nested
+# (#645). One declaration, two consumers: `forget_content_key` below decides
+# which records a deletion reaches, and `privacy.audit_project` decides which
+# fields it hashes when proving the deletion happened. Hand-maintaining those
+# two lists separately is the exact shape #601 built the surface registry to
+# stop — a field the auditor reports but forget cannot reach is a permanent
+# exit 1, and a field forget reaches but the auditor ignores is a silent exit
+# 0 over live plaintext.
+#
+# `author` is deliberately absent: it is a person's name, not item text, and
+# matching a tombstone against it would let one forgotten value delete every
+# record a given author ever wrote.
+_PLAINTEXT_FIELDS = ("subject", "verdict", "scope", "revisit_when", "note")
+_PLAINTEXT_LISTS = ("anchors", "evidence")
+
 
 class RefutationError(ValueError):
     """A requested ledger transition is invalid or cannot be persisted."""
@@ -126,10 +141,22 @@ def canonical_anchor(value) -> str:
 
 
 def _anchors(values) -> list[str]:
+    """Canonical anchor set, scrubbed BEFORE it is canonicalized (#647).
+
+    `canonical_anchor` casefolds, and several of redact.py's pattern classes
+    are uppercase-dependent (aws-key, google-key, jwt), so `append`'s later
+    scrub of the nested array no longer matched what the transform had already
+    lowered. The fix is the ORDERING, not either function: the scrub runs on
+    the raw text, then canonicalization runs on the redacted result.
+
+    Both sides of the guard comparison come through here, so an anchor a user
+    can type still matches the redacted anchor that was stored.
+    """
     out = []
     seen = set()
     for raw in values or []:
-        anchor = canonical_anchor(raw)
+        clean, _ = redact.redact_text(str(raw or ""))
+        anchor = canonical_anchor(clean)
         if anchor not in seen:
             seen.add(anchor)
             out.append(anchor)
@@ -168,6 +195,38 @@ def make_id(subject: str, scope: str) -> str:
     """Stable logical id from the redacted subject+scope identity."""
     raw = f"{_text('subject', subject).casefold()}\0{_text('scope', scope).casefold()}"
     return "r-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _identity_id(record: dict) -> str:
+    """The id this record's CURRENT subject+scope would mint, or "".
+
+    The stored `refutation_id` answers a different question. It is minted once,
+    at assertion, and a `revise` may replace the subject without re-deriving it
+    — deliberately, because the id is the ledger's join key and every appended
+    row, anchor reference and `forget` target names it. So identity has two
+    faces after a revision, and the duplicate check needs the one that reflects
+    what the record SAYS now (#646).
+    """
+    try:
+        return make_id(record.get("subject") or "", record.get("scope") or "")
+    except RefutationError:
+        return ""      # a row too damaged to name an identity claims none
+
+
+def _identity_holder(ref_id: str, *, exclude: str = "",
+                     project_dir=None) -> dict | None:
+    """The record already occupying `ref_id`, by stored id or by what it now
+    says. `exclude` is the record being revised — every record collides with
+    itself under a current-subject check."""
+    existing = get(ref_id, project_dir=project_dir)
+    if existing is not None and existing.get("refutation_id") != exclude:
+        return existing
+    for record in records(project_dir=project_dir).values():
+        if record.get("refutation_id") == exclude:
+            continue
+        if _identity_id(record) == ref_id:
+            return record
+    return None
 
 
 def _stamp(event: str, refutation_id: str, channel: str,
@@ -258,8 +317,29 @@ def append(row: dict, project_dir=None) -> bool:
         return False
 
 
+def row_content_keys(row: dict) -> set[str]:
+    """Canonical keys for every plaintext field this row carries (#645).
+
+    The one reader of _PLAINTEXT_FIELDS/_PLAINTEXT_LISTS, so the deleter below
+    and `privacy.audit_project` cannot drift apart about what counts as
+    plaintext on this surface.
+    """
+    out: set[str] = set()
+    for field in _PLAINTEXT_FIELDS:
+        value = row.get(field)
+        if isinstance(value, str) and value.strip():
+            out.add(normalize.content_key(value))
+    for field in _PLAINTEXT_LISTS:
+        values = row.get(field)
+        if isinstance(values, list):
+            for value in values:
+                if isinstance(value, str) and value.strip():
+                    out.add(normalize.content_key(value))
+    return out
+
+
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
-    """Remove every record whose subject folds to `content_key` (#578).
+    """Remove every record holding `content_key` in a plaintext field (#578).
 
     The ONE path that rewrites this ledger rather than appending to it, and it
     exists because `forget` promises the content leaves the audit trail (#321,
@@ -272,6 +352,12 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     Matches on the SAME canonical key the checkpoint splice uses, never on
     substring containment: `forget` removes a value, and has never claimed to
     scrub a phrase out of records that were not targeted.
+
+    Every plaintext field is matched, not the subject alone (#645).  The audit
+    hashes them all, so a value surviving in a `verdict` or a `note` would be
+    reported as residue on a surface no deletion could reach — a permanent
+    exit 1.  Whole-VALUE equality after canonicalization keeps that honest: a
+    record goes when a field IS the forgotten value, never when one mentions it.
 
     Every row of a matched record goes, not only the row that matched.  A
     revision rewrites the subject, so an earlier row can hold an older subject
@@ -292,8 +378,7 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     doomed = {
         str(row.get("refutation_id") or "")
         for row in events(project_dir=project_dir)
-        if "subject" in row
-        and normalize.content_key(str(row.get("subject") or "")) == content_key
+        if content_key in row_content_keys(row)
     }
     doomed.discard("")
     if not doomed:
@@ -505,9 +590,12 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
             "activating with --ratify requires a human channel; this call "
             f"arrived through {channel!r}")
     ref_id = make_id(subject, scope)
-    if get(ref_id, project_dir=project_dir) is not None:
+    holder = _identity_holder(ref_id, project_dir=project_dir)
+    if holder is not None:
+        held = holder.get("refutation_id") or ref_id
         raise RefutationError(
-            f"{ref_id} already exists; use `daimon refute revise {ref_id}`")
+            f"{held} already exists for this subject and scope; use "
+            f"`daimon refute revise {held}`")
     row = _stamp("asserted", ref_id, channel)
     row.update({
         "subject": subject,
@@ -574,6 +662,24 @@ def revise(refutation_id: str, *, channel: str, evidence,
         raise RefutationError(
             "revision changes nothing; provide a new subject, verdict, scope, "
             "anchor set, or revisit condition")
+    # #646 from the revise side: a revision that moves this record onto another
+    # record's subject+scope is the same defect as asserting a duplicate, and
+    # the render would drop one of the two ratified verdicts either way.
+    # Redacted first, because that is what will be stored and therefore what a
+    # later assertion's identity is computed from.
+    if "subject" in row or "scope" in row:
+        new_subject, _ = redact.redact_text(
+            row.get("subject", current.get("subject") or ""))
+        new_scope, _ = redact.redact_text(
+            row.get("scope", current.get("scope") or ""))
+        holder = _identity_holder(make_id(new_subject, new_scope),
+                                  exclude=refutation_id,
+                                  project_dir=project_dir)
+        if holder is not None:
+            held = holder.get("refutation_id")
+            raise RefutationError(
+                f"{held} already exists for that subject and scope; a "
+                "revision cannot take over another record's identity")
     if ratified:
         row["ratified"] = True
     if not append(row, project_dir=project_dir):

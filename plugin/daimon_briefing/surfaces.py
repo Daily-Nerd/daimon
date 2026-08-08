@@ -64,6 +64,17 @@ SURFACES: tuple[Surface, ...] = (
     # -- per-project bucket ledgers (specific before the *.json generics) --
     Surface("checkpoints/{slug}/events.jsonl", "store.append_event",
             True, "append-tombstone", "audit"),
+    # -- the refutation ledger (#575): append-only like events.jsonl, but it
+    #    carries item PLAINTEXT by design (subject, verdict, scope, note,
+    #    revisit_when, anchors, evidence), so it sits in the checkpoint's
+    #    category rather than the hash-only ledger's. `rewrite` is what
+    #    refutations.forget_content_key already does: the one path that
+    #    rewrites this file, atomically, dropping every row of a matched
+    #    record. Never audit_exempt (#645) — an exemption here would silence
+    #    exit 3 in one line while the file holds the very text the registry
+    #    exists to declare. --
+    Surface("checkpoints/{slug}/refutations.jsonl", "refutations.append",
+            True, "rewrite", "forget"),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
     Surface("checkpoints/{slug}/verification.jsonl",

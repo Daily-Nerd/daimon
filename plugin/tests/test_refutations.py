@@ -373,6 +373,60 @@ def test_duplicate_assertion_requires_revision(tmp_checkpoint_dir):
     assert refutations.get(ref_id, project_dir=PROJECT)["revision"] == 1
 
 
+def test_a_subject_changing_revise_leaves_no_room_for_a_duplicate(
+        tmp_checkpoint_dir):
+    """#646: `make_id` hashes the subject at ASSERT time and is never
+    re-derived, so after a subject-changing revision the live record's id
+    still encodes the ORIGINAL subject. Checking only the derived id then
+    queries an id nothing holds, and a second record for the same subject is
+    minted — `guard` matches both while the human render prints `rows[0]`
+    plus a count, dropping a ratified verdict."""
+    ref_id = _assert(channel="cli-tty", ratified=True)
+    revised = "whole file hashes prove span claims"
+    refutations.revise(ref_id, channel="cli-tty",
+                       evidence=["measurement:566/623 origin misses"],
+                       subject=revised, project_dir=PROJECT)
+
+    with pytest.raises(refutations.RefutationError, match="already exists"):
+        _assert(subject=revised)
+    assert len(refutations.records(project_dir=PROJECT)) == 1
+
+
+def test_a_revision_cannot_take_over_another_records_identity(
+        tmp_checkpoint_dir):
+    """The mirror: the same hole reached from the revise side. Two records
+    with byte-identical subjects are the defect, whichever command mints the
+    second one."""
+    first = _assert()
+    second = _assert(subject="sharding the audit table by tenant")
+
+    with pytest.raises(refutations.RefutationError, match="already exists"):
+        refutations.revise(second, channel="cli-tty",
+                           evidence=["measurement:566/623 origin misses"],
+                           subject="original #502 receipt design",
+                           project_dir=PROJECT)
+    subjects = [r["subject"]
+                for r in refutations.records(project_dir=PROJECT).values()]
+    assert len(subjects) == len(set(subjects))
+    assert refutations.get(first, project_dir=PROJECT) is not None
+
+
+def test_a_revision_that_keeps_its_own_identity_is_still_allowed(
+        tmp_checkpoint_dir):
+    """Anti-overreach: a record always collides with ITSELF under any
+    identity check that reads current subjects, so a verdict-only revision
+    must not be refused by the duplicate guard."""
+    ref_id = _assert()
+    refutations.revise(ref_id, channel="cli-tty",
+                       evidence=["measurement:566/623 origin misses"],
+                       verdict="a sharper statement of the same finding",
+                       project_dir=PROJECT)
+
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record["verdict"] == "a sharper statement of the same finding"
+    assert record["revision"] == 2
+
+
 def test_unknown_and_terminal_lifecycle_transitions_are_refused(
         tmp_checkpoint_dir):
     unknown = "r-000000000000"
