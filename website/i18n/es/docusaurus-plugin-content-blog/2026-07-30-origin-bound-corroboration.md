@@ -39,7 +39,7 @@ encontramos que nuestro verificador de citas comparaba las citas verbatim
 contra la transcripción *sin filtrar*. Una cita copiada de una línea inyectada
 por el propio daimon pasaba la verificación y se guardaba como `verbatim`,
 `quote_verified: true` — un ítem de una sesión anterior lavado como si fuera
-testimonio fresco. Ese agujero no esperó a la funcionalidad de corroboración:
+recién atestiguado. Ese agujero no esperó a la funcionalidad de corroboración:
 salió como fix de seguridad independiente el mismo día en que se encontró, y
 la verificación ahora rechaza cualquier cita cuyo único soporte esté dentro de
 la salida del propio daimon. Los ecos rechazados tienen su propia razón en el

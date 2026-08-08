@@ -138,7 +138,7 @@ Qué nunca la gana:
   La corroboración de equipo no está en esta versión.
 
 La degradación le gana a la insignia. Cualquier cosa que contradiga un ítem —
-una [resolución](./lifecycle.md), un veredicto `superseded-by`, una supersesión
+una [resolución](./lifecycle.md), un marcador `superseded-by`, una supersesión
 marcada como probable, una nota de estado cambiado desde la captura, una
 tumba — pone el conteo en cero desde ese momento, y la contradicción se
 muestra sola. "Tres sesiones coincidieron" impreso junto a "esto probablemente

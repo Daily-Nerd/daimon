@@ -80,9 +80,10 @@ Su historial de campo hasta ahora es mayormente ruido: el primer conteo fue 4
 candidatos, 0 promovibles, y el log de falsos disparos es más largo que la
 lista de aceptados. En respuesta se agregó un filtro de calificación que
 exige las mismas obligaciones estructurales al momento de escritura
-automática, y su veredicto sigue pendiente. Te lo contamos porque los
-recibos son el punto: medimos nuestra propia herramienta, no llegó a la vara,
-la enrejamos, y la reja está a prueba. Un sistema de memoria que no puede
+automática, y sus resultados todavía se están acumulando. Te lo contamos
+porque los recibos son el punto: medimos nuestra propia herramienta, no llegó
+a la vara, la enrejamos, y ahora también medimos la reja. Un sistema de
+memoria que no puede
 rechazar sus propias escrituras es el vector de envenenamiento del que
 advierte el paper de reglas de comportamiento.
 
