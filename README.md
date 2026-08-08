@@ -45,8 +45,6 @@ And because the briefing is injected automatically when a session starts, the ag
 
 Nothing here is mocked — the transcripts, the recording scripts, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
 
-The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings.
-
 ---
 
 ## Install
@@ -111,3 +109,7 @@ Daimon is self-contained at runtime — no external memory backend, no server. T
 - [MVP — Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md) — authoritative architecture
 - [Research Logbook](./research/README.md) — findings, decisions, evidence trail
 - [Contributing](./CONTRIBUTING.md) — dev setup, tests, lint, pre-commit hooks
+
+---
+
+The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings. This one shows its sources.

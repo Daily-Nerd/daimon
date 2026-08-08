@@ -127,7 +127,7 @@ What never earns it:
   corroboration is not in this version.
 
 Demotion outranks the badge. Anything that contradicts an item — a
-[resolution](./lifecycle.md), a `superseded-by` verdict, a flagged likely
+[resolution](./lifecycle.md), a `superseded-by` marker, a flagged likely
 supersession, a state-changed-since-capture note, a tombstone — zeroes the
 count from that moment on, and the contradiction renders alone. "Three
 sessions agreed" printed next to "this is probably wrong" reads as support for

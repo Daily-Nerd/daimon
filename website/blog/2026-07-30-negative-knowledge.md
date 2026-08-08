@@ -72,9 +72,10 @@ no sessions to author from. Its field record so far is mostly noise: the
 first tally was 4 candidates, 0 promotable, and the false-trigger log is
 longer than the keep list. A qualification filter shipped in response,
 enforcing the same structural obligations at machine-write time, and its
-verdict is still pending. We tell you this because the receipts are the
-point: we measured our own tooling, it missed the bar, we gated it, and the
-gate is on trial. A memory system that cannot reject its own writes is the
+results are still accumulating. We tell you this because the receipts are
+the point: we measured our own tooling, it missed the bar, we gated it, and
+now we measure the gate too. A memory system that cannot reject its own
+writes is the
 poisoning vector the behavioral-rules paper warns about.
 
 **A human promotes.** Candidates land in `.scars/candidates/`, never in the
