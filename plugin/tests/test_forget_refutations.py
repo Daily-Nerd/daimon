@@ -55,6 +55,25 @@ def test_forget_removes_a_refutation_by_its_own_text(
     assert refutations.get(ref_id, project_dir=PROJECT) is None
 
 
+def test_forget_reaches_a_ledger_only_project_with_no_checkpoint(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # The ledger is a SECOND plaintext store, so a value can live there with no
+    # checkpoint at all — bailing on a missing checkpoint would leave that value
+    # permanently unreachable. Every other test here writes a checkpoint first,
+    # which left the whole `checkpoint is None` arm of `_cmd_forget` unexercised
+    # end to end: exactly the arm that gained `isinstance(checkpoint, dict)`
+    # guards, so a resolution that dropped one would still pass the suite.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    ref_id = _refute()
+
+    assert cli.main(["forget", SUBJECT, "--project", PROJECT]) == 0
+
+    assert SUBJECT not in _ledger_text()
+    assert refutations.get(ref_id, project_dir=PROJECT) is None
+    # The report must name the ledger, not fall through to "no store".
+    assert "refutation" in capsys.readouterr().out.lower()
+
+
 def test_forget_removes_a_refutation_by_its_id(
         tmp_checkpoint_dir, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
