@@ -75,6 +75,85 @@ def test_forget_reaches_a_ledger_only_project_with_no_checkpoint(
     assert "refutation" in capsys.readouterr().out.lower()
 
 
+_FUZZY_TARGET = "the retry budget must be per-tenant not global"
+_FUZZY_QUERY = "retry budget per-tenant"
+_NOISE = ("the retry policy was wrong for tenants",
+          "a per-tenant budget cap does not hold",
+          "budget accounting by retry count is refuted")
+
+
+def _fuzzy_arm(project, with_refutations):
+    # A project per arm: the control's tombstone would otherwise scrub the
+    # treatment's checkpoint at write time (#418's forget gate), so the two
+    # arms would not differ only by the refutations.
+    _checkpoint(_FUZZY_TARGET, "an unrelated decision about logging",
+                project_dir=project)
+    if with_refutations:
+        for index, subject in enumerate(_NOISE):
+            _refute(subject=subject, scope=f"scope-{index}",
+                    project_dir=project)
+    rc = cli.main(["forget", _FUZZY_QUERY, "--project", project])
+    stored = store.read_latest(project_dir=project, fallback=False) or {}
+    survivors = [i.get("text") for i in
+                 stored.get("working_context", {}).get("recent_decisions", [])]
+    return rc, survivors
+
+
+def test_refutations_never_make_a_checkpoint_item_unreachable_by_text(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """`carry._generic_terms` is a DOCUMENT-FREQUENCY statistic: terms carried
+    by >= _GENERIC_DF texts of ONE KIND are that kind's shared vocabulary and
+    are subtracted from the matcher. Counting the checkpoint and the ledger in
+    one pool mixes two corpora, inflates the frequency, and strips the query's
+    own terms — so recording refutations made `daimon forget "<text>"` answer
+    `no item matches` about plaintext demonstrably on disk, for the command
+    that IS the deletion contract. It worsened as the ledger grew (#648).
+
+    The invariant is REACHABILITY, not exit 0. A query that genuinely matches
+    several distinct values SHOULD be refused as ambiguous — never-guess is
+    the contract, and the user recovers by exact id. What may never happen is
+    the store claiming nothing matched while the value sits in it."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+
+    control_rc, control_left = _fuzzy_arm("/repo/fuzzy-control", False)
+    assert control_rc == 0
+    assert _FUZZY_TARGET not in control_left, "control never forgot the item"
+    capsys.readouterr()
+
+    treatment_rc, treatment_left = _fuzzy_arm("/repo/fuzzy-treatment", True)
+    out = capsys.readouterr().out
+    assert "no item matches" not in out, (
+        "forget denied a value it holds, because unrelated refutations "
+        f"contaminated the matcher:\n{out}")
+    if treatment_rc != 0:
+        # Refused as ambiguous: acceptable, but only if the item is VISIBLE in
+        # the candidate list the user is told to pick from.
+        assert _FUZZY_TARGET in out, (
+            f"refused without offering the item as a candidate:\n{out}")
+    else:
+        assert _FUZZY_TARGET not in treatment_left
+
+
+def test_a_contaminating_ledger_still_leaves_exact_id_forget_working(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """The recovery path the ambiguous refusal points at must actually work."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    project = "/repo/fuzzy-recovery"
+    _checkpoint(_FUZZY_TARGET, "an unrelated decision about logging",
+                project_dir=project)
+    for index, subject in enumerate(_NOISE):
+        _refute(subject=subject, scope=f"scope-{index}", project_dir=project)
+    stored = store.read_latest(project_dir=project, fallback=False)
+    item_id = stored["working_context"]["recent_decisions"][0]["id"]
+
+    assert cli.main(["forget", item_id, "--project", project]) == 0
+
+    left = [i.get("text") for i in
+            (store.read_latest(project_dir=project, fallback=False) or {})
+            .get("working_context", {}).get("recent_decisions", [])]
+    assert _FUZZY_TARGET not in left
+
+
 def test_forget_removes_a_refutation_by_its_id(
         tmp_checkpoint_dir, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)

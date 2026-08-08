@@ -1,4 +1,6 @@
 import json
+import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -692,6 +694,69 @@ def test_no_refute_subcommand_help_claims_a_verified_relationship(sub, capsys):
     for claim in ("evidence-bound", "contrary evidence", "contradicting",
                   "supporting evidence", "verified evidence"):
         assert claim not in help_text, f"`refute {sub} --help` claims: {claim}"
+
+
+def _by_choices_and_help(parser, out=None, texts=None):
+    """Every `--by` choice set in the tree, and every help string in it."""
+    out = set() if out is None else out
+    texts = [] if texts is None else texts
+    texts.append(parser.format_help())
+    for action in parser._actions:
+        if "--by" in (action.option_strings or []):
+            out.update(action.choices or ())
+        if getattr(action, "choices", None) and hasattr(
+                action.choices, "items"):
+            for sub in action.choices.values():
+                _by_choices_and_help(sub, out, texts)
+    return out, texts
+
+
+def test_no_help_text_offers_a_by_value_the_parser_rejects():
+    """`--by human` was DELETED — authority is derived from an observed
+    channel, not self-declared (cli.py's own note: "the deleted `--by human`
+    renamed"). Stale references survived in three help strings, including the
+    `refute add` epilog EXAMPLE, so the documented invocation exits 2.
+
+    Asserted as a rule over the whole parser tree rather than against the
+    three known strings: the next one to drift should fail here, not in a
+    user's terminal.
+
+    The rule is deliberately blunt — ANY `--by <word>` in help text must be a
+    real choice. Prose that merely mentions the flag has to end the clause
+    (`... with no --by.`) rather than trail a word, which is the right
+    pressure: help text should never read as if it were offering a value."""
+    accepted, texts = _by_choices_and_help(cli.build_parser())
+    assert accepted, "no --by choices found; the walk is not reaching them"
+    offered = {m for text in texts
+               for m in re.findall(r"--by[ =]([a-z]+)", text)}
+    rejected = sorted(offered - accepted)
+    assert not rejected, (
+        f"help text offers --by {rejected}, which argparse rejects "
+        f"(accepted: {sorted(accepted)})")
+
+
+def test_the_refute_add_example_is_an_invocation_that_runs(
+        tmp_checkpoint_dir, capsys):
+    """An epilog example is a copy-paste contract. This one shipped
+    `--by human --ratify` and exited 2."""
+    with pytest.raises(SystemExit):
+        cli.main(["refute", "add", "--help"])
+    epilog = capsys.readouterr().out
+    example = [ln.strip() for ln in epilog.splitlines()
+               if ln.strip().startswith("daimon refute add")]
+    assert example, "the example vanished; this test guards it"
+    argv = shlex.split(example[0])[1:] + ["--project", PROJECT]
+
+    # Not asserting rc: the human path legitimately refuses --ratify without a
+    # terminal. Asserting the parser ACCEPTS it — exit 2 is the argparse
+    # rejection this guards.
+    try:
+        rc = cli.main(argv)
+    except SystemExit as exc:                      # pragma: no cover - failure path
+        raise AssertionError(
+            f"the documented example does not parse: exit {exc.code}\n"
+            f"{capsys.readouterr().err}") from None
+    assert rc in (0, 1)
 
 
 def test_revision_without_anchors_keeps_the_guard_rail(tmp_checkpoint_dir):

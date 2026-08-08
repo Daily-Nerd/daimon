@@ -84,9 +84,9 @@ hit is advisory, not a command veto: verify evidence, scope, and
 `revisit_when`; withdraw, qualify, or explain the changed scope. Evidence is
 cited, not verified — check the source yourself. Agents may add candidates with
 `daimon refute add ... --by agent`; only explicit human ratification activates
-one. Never pass `--by human`, never run `daimon refute ratify`, and never run
-`daimon refute overturn --by human`: all three assert a human decision. Ask the
-user to run them.
+one. Always pass `--by agent`; omitting it claims the human path. Never run
+`daimon refute ratify`, and never run `daimon refute overturn` without it:
+both assert a human decision. Ask the user to run them.
 ## Closing loops
 
 When work in this session resolves an item the briefing listed — an open

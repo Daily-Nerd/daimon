@@ -53,7 +53,7 @@ The auditors share one exit contract, so a script can act on the answer:
 | --- | --- |
 | `daimon resolve <id or text>` | Mark an item resolved — append-only event; the item stops carrying. `--dry-run` previews the match; `--by agent --evidence "<quote>"` claims a close that is byte-checked at session end. |
 | `daimon anchor <file> <symbol>` | Bind a cognitive item to a code symbol; briefings then warn when the anchored code drifts. |
-| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires `--by human`. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active record to candidate until it is ratified again. Agent overturns remain proposals. |
+| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires the human path — an interactive terminal with `--by` omitted. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active record to candidate until it is ratified again. Agent overturns remain proposals. |
 
 ## Forget
 

@@ -1261,15 +1261,28 @@ def _cmd_forget(args) -> int:
     exact = [it for _, _, it in candidates if it["id"] == args.target]
     target = exact[0] if len(exact) == 1 else None
     if target is None:
-        texts = [t for _, _, it in candidates
-                 for t in (it.get("_texts") or [str(it.get("text") or "")])]
-        generic = carry._generic_terms(texts)
+        # `_generic_terms` is a DOCUMENT-FREQUENCY statistic over texts "of one
+        # kind" (carry.py's own wording): terms shared by >= _GENERIC_DF of them
+        # are that kind's boilerplate and are subtracted from the matcher.
+        # Counting the checkpoint and the ledger together mixes two corpora, so
+        # recording refutations inflated the frequency until the query's own
+        # terms read as generic — and `forget "<text>"` stopped reaching a
+        # checkpoint item it had deleted a moment earlier, reporting "no item
+        # matches" about plaintext on disk. Each store is counted on its own
+        # and each candidate matched against its own store's vocabulary.
+        def _texts_of(it):
+            return it.get("_texts") or [str(it.get("text") or "")]
+
+        pools = [(pool, carry._generic_terms(
+            [t for _, _, it in pool for t in _texts_of(it)]))
+            for pool in (items, ledger)]
         hits = ([(s, k, it) for s, k, it in candidates if it["id"] == args.target]
                 if len(exact) > 1 else
-                [(s, k, it) for s, k, it in candidates
+                [(s, k, it)
+                 for pool, generic in pools
+                 for s, k, it in pool
                  if any(carry._same_item(args.target, t, generic)
-                        for t in (it.get("_texts")
-                                  or [str(it.get("text") or "")]))])
+                        for t in _texts_of(it))])
         # Ambiguity is about distinct VALUES, not hit count. The same sentence
         # carried by sibling ids, held on several surfaces, or held in both the
         # checkpoint and the refutation ledger is one thing to forget; #418
@@ -4004,7 +4017,7 @@ def build_parser() -> argparse.ArgumentParser:
                "  daimon refute add --subject 'original #502 receipt design' "
                "--verdict 'whole-file hashes do not prove span claims' "
                "--scope 'carried-item receipt tiers' --anchor issue:502 "
-               "--evidence 'measurement:566/623 origin misses' --by human "
+               "--evidence 'measurement:566/623 origin misses' "
                "--ratify\n",
     )
     pr_add.add_argument("--subject", required=True, help="approach or claim rejected")
@@ -4023,7 +4036,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "interactive terminal, which is the human path")
     pr_add.add_argument(
         "--ratify", action="store_true",
-        help="activate immediately; valid only with --by human")
+        help="activate immediately; valid only on the human path, which is "
+             "an interactive terminal with no --by.")
     pr_add.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pr_add.add_argument("--json", action="store_true", help="machine-readable output")
     pr_add.set_defaults(func=_cmd_refute_add)
@@ -4056,7 +4070,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr_revise.add_argument("--by", choices=["agent"], default=None)
     pr_revise.add_argument(
         "--ratify", action="store_true",
-        help="activate the revision immediately; valid only with --by human")
+        help="activate the revision immediately; valid only on the human "
+             "path, which is an interactive terminal with no --by.")
     pr_revise.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pr_revise.add_argument("--json", action="store_true", help="machine-readable output")
     pr_revise.set_defaults(func=_cmd_refute_revise)

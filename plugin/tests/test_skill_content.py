@@ -153,7 +153,13 @@ def test_full_teaches_deliberation_guard_without_hard_veto():
     assert "--anchor" in section
     assert "not a command veto" in section
     assert "--by agent" in section
-    assert "--by human" in section
+    # This used to pin `--by human`, which the parser rejects — the skill was
+    # teaching agents about a flag value that had already been deleted, and
+    # the test held it there. Pin the BEHAVIOUR instead: the agent declares
+    # itself, and ratification is the user's to run.
+    assert "--by human" not in section
+    assert "refute ratify" in section
+    assert "Ask the" in section
 
 
 def test_compact_keeps_the_rules_a_character_budget_would_evict():
