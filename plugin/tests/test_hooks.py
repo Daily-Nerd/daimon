@@ -514,6 +514,44 @@ def test_register_wires_hooks_and_skill():
     assert all(str(p).endswith("SKILL.md") for _, p in calls["skills"])
 
 
+def _register_under(root, monkeypatch):
+    """Run register() as if the package lived at <root>/plugin/daimon_briefing."""
+    calls = []
+
+    class Ctx:
+        def register_hook(self, event, cb):
+            pass
+
+        def register_skill(self, name, path):
+            calls.append(name)
+
+    monkeypatch.setattr(
+        plugin, "__file__",
+        str(root / "plugin" / "daimon_briefing" / "__init__.py"))
+    plugin.register(Ctx())
+    return calls
+
+
+def test_register_ignores_a_skills_dir_that_is_not_daimons(tmp_path, monkeypatch):
+    # #643 moved the skills to the PLUGIN ROOT, which is the repo root — so the
+    # lookup walks three parents up. From an installed wheel that lands on an
+    # arbitrary directory, and a bare is_dir() would hand a stranger's skills/
+    # to the host as daimon's own. The plugin manifest is the proof of identity.
+    (tmp_path / "skills" / "not-ours").mkdir(parents=True)
+    (tmp_path / "skills" / "not-ours" / "SKILL.md").write_text("---\n---\n")
+
+    assert _register_under(tmp_path, monkeypatch) == []
+
+
+def test_register_finds_skills_beside_the_plugin_manifest(tmp_path, monkeypatch):
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text("{}")
+    (tmp_path / "skills" / "mine").mkdir(parents=True)
+    (tmp_path / "skills" / "mine" / "SKILL.md").write_text("---\n---\n")
+
+    assert _register_under(tmp_path, monkeypatch) == ["mine"]
+
+
 # ---- on_session_end scar harvest wiring (#76) ----
 
 

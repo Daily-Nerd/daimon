@@ -29,3 +29,34 @@ def test_pyproject_declares_spdx_license_and_urls():
     assert meta["keywords"]  # non-empty
     assert any(c.startswith("Programming Language :: Python :: 3")
                for c in meta["classifiers"])
+
+
+def test_plugin_skills_sit_where_claude_code_discovers_them():
+    """#643: `.claude-plugin/marketplace.json` sets `"source": "./"`, so the
+    plugin root IS the repository root, and Claude Code reads plugin skills
+    from `<plugin-root>/skills/`. They lived at `plugin/skills/`, one directory
+    too deep, so neither skill was discoverable — confirmed against a real
+    install at 0.28.0, whose cached tree had no `skills/` at its root.
+
+    The reference plugin (obra/superpowers) has no `skills` key in its manifest
+    and ships `<plugin-root>/skills/`; that layout, not a manifest field, is
+    what the loader honours."""
+    skills = _REPO_ROOT / "skills"
+    assert skills.is_dir(), (
+        "no skills/ at the plugin root — Claude Code cannot discover any skill")
+    shipped = sorted(p.name for p in skills.iterdir()
+                     if (p / "SKILL.md").exists())
+    assert shipped == ["daimon-briefing", "daimon-end"], shipped
+    assert not (_PLUGIN / "skills").exists(), (
+        "plugin/skills/ came back; one home only, or the two drift")
+
+
+def test_every_shipped_skill_declares_a_name_and_description():
+    """A SKILL.md without front matter never loads, and the failure is silent
+    — the skill is simply absent from the session's list."""
+    for skill in sorted((_REPO_ROOT / "skills").iterdir()):
+        text = (skill / "SKILL.md").read_text(encoding="utf-8")
+        assert text.startswith("---\n"), f"{skill.name}: no front matter"
+        front = text.split("---\n")[1]
+        assert "name:" in front, f"{skill.name}: no name"
+        assert "description:" in front, f"{skill.name}: no description"

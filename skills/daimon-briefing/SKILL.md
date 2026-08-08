@@ -100,6 +100,18 @@ backend, stdlib-only at runtime. The capabilities behind the briefing:
   prompt overlaps an open loop (see *Automatic behavior*).
 - **Trust classing.** Every item is `✓ verbatim` (pinned to an exact quote) or
   `~ inferred` (paraphrased), so you know what to trust literally.
+- **Trust inspector.** `daimon why <item-id>` is the read side of that tag: it
+  reports one item's evidence axes — capture, provenance, source, byte
+  integrity, current support, quote-check outcome, lifecycle, corroboration —
+  and `--source` adds one bounded, redacted window of the originating text.
+  Reach for it before repeating a carried or inferred claim as true, or when
+  someone asks where a claim came from. Ids come from `daimon recall` or
+  `daimon loops`.
+- **Read-only auditors.** `daimon audit quotes` re-checks stored quotes against
+  their source; `daimon audit privacy` proves no forgotten value survived;
+  `daimon verify-receipt` checks a checkpoint's signed provenance receipt. All
+  three answer with an exit code: `0` proven clean, `1` residue found, `3`
+  cannot prove — never read `3` as clean.
 - **Code-drift detection.** `daimon anchor <file> <symbol>` binds a checkpoint
   item to a code symbol; the briefing flags it under **CODE DRIFT — verify
   before trusting** when that symbol's body changes or disappears (offline,

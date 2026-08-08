@@ -23,8 +23,23 @@ def register(ctx):
     ctx.register_hook("on_session_end", hooks.on_session_end)
     ctx.register_hook("pre_llm_call", hooks.pre_llm_call)
 
-    skills_dir = Path(__file__).parent.parent / "skills"
-    if skills_dir.is_dir():
+    # #643: the skills live at the PLUGIN ROOT, which is the repository root —
+    # `.claude-plugin/marketplace.json` sets `"source": "./"`, and Claude Code
+    # discovers plugin skills at `<plugin-root>/skills/`. They used to sit at
+    # `plugin/skills/`, one level too deep, so no host could see them.
+    #
+    # An installed wheel has no repository root: `packages = ["daimon_briefing"]`
+    # ships the package alone, so registering skills here is a SOURCE-CHECKOUT
+    # capability. That is the honest state rather than a new one — the old path
+    # resolved to `site-packages/skills` and never existed either. Whether the
+    # wheel should carry them is #264's call, when hermes is actually built.
+    #
+    # Gated on the plugin manifest, not a bare is_dir(): from site-packages the
+    # third parent is an arbitrary directory, and a stranger's `skills/` must
+    # never be registered as daimon's.
+    root = Path(__file__).resolve().parents[2]
+    skills_dir = root / "skills"
+    if (root / ".claude-plugin" / "plugin.json").is_file() and skills_dir.is_dir():
         for child in sorted(skills_dir.iterdir()):
             skill_md = child / "SKILL.md"
             if child.is_dir() and skill_md.exists():
