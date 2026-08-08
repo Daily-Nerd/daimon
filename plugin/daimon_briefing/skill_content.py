@@ -21,6 +21,49 @@ _DESCRIPTION = (
     "cross-session memory looks stale, missing, or wrong."
 )
 
+# Commands that reach no skill ON PURPOSE, each with the reason (#650).
+#
+# The list exists because the alternative is silence. `daimon why` shipped in
+# 0.28.0 and reached no skill for a whole release while its human
+# documentation was complete, and nothing failed — every omission is
+# individually small and individually reasonable at the time, and there is no
+# moment where the gap becomes visible. tests/test_skill_content.py partitions
+# the command surface against this map, so a NEW command must be taught here or
+# named below. Neither answer is privileged; what is forbidden is not deciding.
+#
+# Scope: TOP-LEVEL subcommands. A nested one (`audit privacy`, `refute add`,
+# `team sync`) inherits its parent's classification.
+NOT_AGENT_FACING = {
+    # -- human setup: run once by a person configuring the machine --
+    "configure": "human setup: resolves the LLM backend and writes ~/.daimon/env",
+    "hooks": "human setup: installs host hook scripts",
+    "skill": "human setup: installs this very skill",
+    # -- internal plumbing: the hooks invoke these, never an agent --
+    "serialize": "internal: the session-end child that writes the checkpoint",
+    "write-checkpoint": "internal: the write seam serialize calls",
+    "recall-inject": "internal: the per-prompt recall hook",
+    # -- deliberate product boundaries --
+    "forget": (
+        "human-only by design: deletion is the user's call, and the full body "
+        "says so in as many words"
+    ),
+    "anchor": (
+        "user curation: which claims deserve code-drift watching is a person's "
+        "judgement about their own memory, not an agent's"
+    ),
+    "log": "human bookkeeping: a freeform timeline entry, zero-LLM",
+    "team": (
+        "read side already taught as `daimon brief --team`; the write side "
+        "(`init`, `sync`) publishes this machine's memory to a shared remote, "
+        "which is a person's decision like forget is"
+    ),
+    "audit-quotes": (
+        "deprecated alias for `audit quotes`, which IS taught; teaching both "
+        "would spend budget advertising a spelling that prints a deprecation "
+        "notice"
+    ),
+}
+
 _FULL_BODY = """\
 # Using daimon memory
 
@@ -122,8 +165,9 @@ span — the same QUOTE DISCIPLINE rule 17 holds a verbatim capture item to.
 It is byte-checked against the transcript at session end: found confirms
 and credits the resolution to you; not found leaves the loop open, nothing
 withheld early. Never use this for a loop you merely SUSPECT is stale —
-that is `reverify`/worldcheck territory, not a resolve claim. `forget`
-stays human-only.
+that is world-check territory, not a resolve claim: run
+`daimon reverify <id> --evidence "<what you checked>"` to assert a carried
+item is still true and reset its staleness clock. `forget` stays human-only.
 
 ## Handing off
 
