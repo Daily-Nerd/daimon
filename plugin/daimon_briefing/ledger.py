@@ -172,14 +172,17 @@ def _has_checkpoint(sid: str) -> bool:
     every host whose checkpoint is named by session id; the scan covers Codex,
     whose file is on disk under the rollout name the bare id cannot address
     (#634). The glob pattern is a literal — `sid` never reaches it — so no
-    session id can inject shell-style metacharacters into the match."""
+    session id can inject shell-style metacharacters into the match.
+
+    The scan needs no OSError guard, unlike this module's other filesystem
+    readers: `Path.glob` swallows a missing directory, a path that is a file
+    rather than a directory, and a permission-denied directory, returning an
+    empty iterator for all three (verified on 3.10 and 3.13, the versions CI
+    runs). A `try/except OSError` here would be unreachable."""
     if store.read_checkpoint(sid) is not None:
         return True
-    try:
-        entries = list(config.checkpoint_dir().glob("rollout-*.json"))
-    except OSError:
-        return False
-    return any(_session_key(p.stem) == sid for p in entries)
+    return any(_session_key(p.stem) == sid
+               for p in config.checkpoint_dir().glob("rollout-*.json"))
 
 
 def _session_ledger(text: str, now: float) -> dict:
