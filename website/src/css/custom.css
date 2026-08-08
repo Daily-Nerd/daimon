@@ -71,6 +71,13 @@
 .hero--daimon {
   padding: var(--dm-space-16) var(--dm-space-4) var(--dm-space-12);
   border-bottom: 1px solid var(--dm-card-border);
+  /* one background moment: a faint accent glow that dies before the install card,
+     so the artifact zone below stays clinical */
+  background: radial-gradient(
+    56rem 20rem at 50% -6rem,
+    var(--dm-accent-wash),
+    transparent 70%
+  );
 }
 .heroEyebrow {
   font-size: 0.875rem;
@@ -81,6 +88,13 @@
 .heroMark {
   font-weight: 600;
   color: var(--ifm-font-color-base);
+}
+.heroEmblem {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  vertical-align: -4px;
+  margin-right: var(--dm-space-2);
 }
 .hero--daimon h1 {
   font-size: 2.25rem;

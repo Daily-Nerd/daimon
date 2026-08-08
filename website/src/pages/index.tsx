@@ -1,5 +1,6 @@
 import Link from '@docusaurus/Link';
 import {translate} from '@docusaurus/Translate';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import {useState} from 'react';
@@ -131,6 +132,13 @@ export default function Home(): ReactNode {
       <header className="hero--daimon text--center">
         <div className="bandInner bandInner--hero">
           <p className="heroEyebrow">
+            <img
+              className="heroEmblem"
+              src={useBaseUrl('/img/emblem.svg')}
+              alt=""
+              width={20}
+              height={20}
+            />
             <span className="heroMark">daimon</span>
             <span aria-hidden="true"> · </span>
             <span>
