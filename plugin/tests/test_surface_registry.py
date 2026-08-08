@@ -52,6 +52,7 @@ def test_known_gaps_name_their_tracking_issue():
 
 def test_the_load_bearing_shapes_are_registered():
     for shape in ("checkpoints/{slug}/events.jsonl",
+                  "checkpoints/{slug}/refutations.jsonl",
                   "checkpoints/{slug}/verification.jsonl",
                   "checkpoints/{slug}/forget-hits.jsonl",
                   "checkpoints/.chunk-cache/*",

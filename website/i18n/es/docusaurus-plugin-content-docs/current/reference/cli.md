@@ -34,6 +34,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon reverify <id>` | Afirma que un ítem arrastrado sigue siendo cierto — exige evidencia y reinicia su reloj de vencimiento. También es la mitad de rechazo de un candidato a supersesión. |
 | `daimon audit quotes` | Re-verifica cada cita verbatim almacenada contra su transcripción de origen y reporta discrepancias. Solo lectura — nunca reescribe etiquetas. |
 | `daimon audit privacy` | Prueba el contrato de borrado: hashea cada campo con texto plano en cada superficie (checkpoints, punteros rotados, el registro de eventos, el espejo de equipo, el índice de recall y sus snapshots huérfanos) y reporta todo valor olvidado que haya sobrevivido. Solo lectura. |
+| `daimon refute list\|show\|search\|guard` | Lee el ledger de conocimiento negativo sin decaimiento. `guard` emite solo matches activos por ancla exacta o frase de sujeto; es consultivo y nunca bloquea un comando. Sumá `--json` para integraciones de deliberación. |
 
 Los auditores comparten un mismo contrato de salida, para que un script pueda
 actuar sobre la respuesta:
@@ -53,6 +54,7 @@ actuar sobre la respuesta:
 | --- | --- |
 | `daimon resolve <id o texto>` | Marca un ítem como resuelto — evento append-only; el ítem deja de arrastrarse. `--dry-run` previsualiza el match; `--by agent --evidence "<cita>"` reclama un cierre que se verifica byte a byte al final de la sesión. |
 | `daimon anchor <archivo> <símbolo>` | Ancla un ítem cognitivo a un símbolo de código; los briefings avisan cuando el código anclado cambió. |
+| `daimon refute add\|ratify\|revise\|overturn` | Gestiona conocimiento negativo con alcance en su propio ledger append-only. Las escrituras de agentes quedan como candidatas; solo una ratificación humana explícita activa un guard, y `ratify` exige la vía humana: una terminal interactiva y `--by` omitido. Las revisiones exigen una cita de evidencia tipada nueva, cuya forma se valida pero nunca se resuelve ni se verifica, y devuelven un registro activo a candidato hasta que se vuelva a ratificar. Los overturns de agentes siguen siendo propuestas. |
 
 ## Olvidar
 

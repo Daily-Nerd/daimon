@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -954,6 +954,257 @@ def _cmd_resolve(args) -> int:
     return 0
 
 
+# ---- refute: project-level negative-knowledge ledger (#573) ----
+
+
+def _refutation_json(record) -> str:
+    """JSON for one folded record or a list of them.
+
+    #576: every record carries `evidence_status: "cited"`.  `evidence` holds
+    typed source strings that were shape-checked and redacted on the way in and
+    never resolved — daimon does not open them, does not confirm the referent
+    exists, and does not judge whether it entails the verdict.  The text
+    renderer says so in a parenthetical; without this key a machine consumer
+    read sourced-looking strings under a key called `evidence` with nothing to
+    contradict the obvious reading.  The value is a constant today because
+    `cited` is the only status the ledger can currently earn (#581 would add a
+    resolved one).
+    """
+    def stamped(row: dict) -> dict:
+        return {**row, "evidence_status": "cited"}
+    payload = ([stamped(row) for row in record]
+               if isinstance(record, list) else stamped(record))
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _print_refutation(record: dict, *, detailed: bool = False) -> None:
+    state = record.get("state") or "candidate"
+    activation = record.get("activation") or f"{record.get('asserted_by', '?')}-proposed"
+    mark = "✗" if state == "active" else ("×" if state == "overturned" else "?")
+    print(f"[{mark} {state} · {activation}] {record['refutation_id']}  "
+          f"{record.get('subject', '')}")
+    if not detailed:
+        return
+    print(f"  Verdict: {record.get('verdict', '')}")
+    print(f"  Scope: {record.get('scope', '')}")
+    anchors = record.get("anchors") or []
+    if anchors:
+        print(f"  Anchors: {', '.join(anchors)}")
+    revisit = record.get("revisit_when") or ""
+    if revisit:
+        print(f"  Revisit when: {revisit}")
+    evidence = record.get("evidence") or []
+    for item in evidence:
+        print(f"  Evidence: {item}")
+    if evidence:
+        # #576: Evidence sits in the same Label: value register as Provenance
+        # and Authority, which ARE derived from recorded lifecycle facts.  The
+        # source string is shape-checked and never resolved, so say so here —
+        # this is the only surface a reader of `refute show` actually reads.
+        print("  (evidence sources are recorded as cited; "
+              "daimon does not verify them)")
+    print(f"  Provenance: asserted by {record.get('asserted_by', '?')} "
+          f"({record.get('asserted_author') or 'unknown'})")
+    if record.get("activation"):
+        print(f"  Authority: {record['activation']} "
+              f"({record.get('activation_author') or 'unknown'})")
+    pending = record.get("overturn_proposed")
+    if isinstance(pending, dict):
+        print(f"  Overturn proposed by {pending.get('by', '?')} — still active")
+
+
+def _refute_channel(args) -> str:
+    """The channel this invocation actually arrived through.
+
+    `--by agent` is a self-declaration of the NARROWER authority, mirroring
+    `resolve`, where the human path is likewise the ABSENCE of the flag. A
+    human path has to show an interactive terminal, and the CLI can mint
+    nothing stronger: `ui` and `signed` are in-process-only, because a channel
+    an agent can reach by shelling out is the deleted `--by human` renamed.
+    """
+    if getattr(args, "by", None) == "agent":
+        return "cli-agent"
+    if not sys.stdin.isatty():
+        raise refutations.RefutationError(
+            "this is the human path and there is no interactive terminal; "
+            "pass --by agent to record a candidate, or run it from a terminal")
+    return "cli-tty"
+
+
+def _cmd_refute_add(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        ref_id = refutations.assert_refutation(
+            subject=args.subject, verdict=args.verdict, scope=args.scope,
+            evidence=args.evidence, channel=_refute_channel(args),
+            anchors=args.anchor,
+            revisit_when=args.revisit_when or "", ratified=args.ratify,
+            project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not recorded: {exc}")
+        return 1
+    record = refutations.get(ref_id, project_dir=project)
+    _note_usage("refute:add")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+        if record["state"] == "candidate":
+            # An agent-authored candidate never gets handed its own escalation
+            # command; activation is a decision the human has to reach.
+            if getattr(args, "by", None) != "agent":
+                print(f"  Next: daimon refute ratify {ref_id} "
+                      f"--project {project}")
+            else:
+                print("  Candidate recorded. Activation requires an explicit "
+                      "human decision.")
+    return 0
+
+
+def _cmd_refute_ratify(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        refutations.ratify(args.refutation_id, channel=_refute_channel(args),
+                           note=args.note or "", project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not ratified: {exc}")
+        return 1
+    record = refutations.get(args.refutation_id, project_dir=project)
+    _note_usage("refute:ratify")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+    return 0
+
+
+def _cmd_refute_revise(args) -> int:
+    project = _resolve_project(args.project)
+    anchors = args.anchor if args.anchor is not None else None
+    try:
+        refutations.revise(
+            args.refutation_id, channel=_refute_channel(args),
+            evidence=args.evidence, subject=args.subject, verdict=args.verdict, scope=args.scope,
+            anchors=anchors, revisit_when=args.revisit_when,
+            ratified=args.ratify, project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not revised: {exc}")
+        return 1
+    record = refutations.get(args.refutation_id, project_dir=project)
+    _note_usage("refute:revise")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+        if record["state"] == "candidate":
+            print("  Revision is not load-bearing until explicit human ratification.")
+    return 0
+
+
+def _cmd_refute_overturn(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        event = refutations.overturn(
+            args.refutation_id, channel=_refute_channel(args),
+            evidence=args.evidence,
+            note=args.note or "", project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation not overturned: {exc}")
+        return 1
+    record = refutations.get(args.refutation_id, project_dir=project)
+    _note_usage("refute:overturn")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+        if event == "overturn-proposed":
+            print("  Agent evidence recorded; the active guard remains until human ratification.")
+    return 0
+
+
+def _cmd_refute_show(args) -> int:
+    project = _resolve_project(args.project)
+    record = refutations.get(args.refutation_id, project_dir=project)
+    if record is None:
+        print(f"unknown refutation: {args.refutation_id}")
+        return 1
+    _note_usage("refute:show")
+    if args.json:
+        print(_refutation_json(record))
+    else:
+        _print_refutation(record, detailed=True)
+    return 0
+
+
+def _cmd_refute_list(args) -> int:
+    project = _resolve_project(args.project)
+    wanted = set(args.state or refutations.STATES)
+    rows = [row for row in refutations.records(project_dir=project).values()
+            if row["state"] in wanted]
+    rows.sort(key=lambda row: (row.get("state") != "active",
+                               row.get("updated_at") or "",
+                               row["refutation_id"]))
+    _note_usage("refute:list")
+    if args.json:
+        print(_refutation_json(rows))
+    elif not rows:
+        print("no refutations for this project")
+    else:
+        for row in rows:
+            _print_refutation(row)
+    return 0
+
+
+def _cmd_refute_search(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        rows = refutations.search(
+            " ".join(args.query), project_dir=project,
+            states=set(args.state or refutations.STATES))
+    except refutations.RefutationError as exc:
+        print(f"refutation search refused: {exc}")
+        return 1
+    _note_usage("refute:search")
+    if args.json:
+        print(_refutation_json(rows))
+    elif not rows:
+        print("no matching refutations")
+    else:
+        for row in rows:
+            _print_refutation(row)
+    return 0
+
+
+def _cmd_refute_guard(args) -> int:
+    project = _resolve_project(args.project)
+    try:
+        rows = refutations.guard(
+            " ".join(args.query), anchors=args.anchor,
+            project_dir=project)
+    except refutations.RefutationError as exc:
+        print(f"refutation guard refused: {exc}")
+        return 1
+    # #581: split by outcome and rail, the way `resolve` splits its tags. One
+    # aggregate count cannot separate a hit from a miss, so the false-veto rate
+    # the design named as its own expansion gate is uncomputable from field
+    # data. The rails also differ in precision, so the hit tag names which one
+    # fired: an aggregate cannot say which rail generates the noise.
+    _note_usage(f"refute:guard:hit:{rows[0]['guard_match']['rail']}"
+                if rows else "refute:guard:miss")
+    if args.json:
+        print(_refutation_json(rows))
+    elif not rows:
+        if not args.quiet:
+            print("no active refutation matched exact anchors or subject")
+    else:
+        # One warning is the v1 attention budget. JSON retains every exact hit
+        # for deliberation integrations that can reconcile them in batch.
+        _print_refutation(rows[0], detailed=True)
+        if len(rows) > 1:
+            print(f"  + {len(rows) - 1} more exact match(es); use --json to inspect")
+    return 0
+
+
 def _cmd_forget(args) -> int:
     """Deliberate item removal (#321): append a tombstone event whose status
     carries a content HASH, never the text — removal means the content leaves
@@ -967,7 +1218,28 @@ def _cmd_forget(args) -> int:
     checkpoint re-mints its receipt, so the post-removal state is signed."""
     project = _resolve_project(args.project)
     checkpoint = store.read_latest(project_dir=project, fallback=False)
-    if not isinstance(checkpoint, dict):
+    # #578: the refutation ledger is a second plaintext store, so a value can
+    # live there with no checkpoint at all. Bailing on a missing checkpoint
+    # would leave that value permanently unreachable.
+    # Every subject the record has EVER carried, not only the folded one: a
+    # revision rewrites the subject, so the forgotten value can sit in an
+    # earlier row that nothing renders. Matching only the current subject would
+    # leave exactly the text `forget` exists to reach unreachable. One entry per
+    # record, so a record whose old and new subjects both match is one hit.
+    ledger_subjects: dict[str, list[str]] = {}
+    for row in refutations.events(project_dir=project):
+        ref_id = str(row.get("refutation_id") or "")
+        subject = str(row.get("subject") or "")
+        if ref_id and subject:
+            ledger_subjects.setdefault(ref_id, [])
+            if subject not in ledger_subjects[ref_id]:
+                ledger_subjects[ref_id].append(subject)
+    ledger = [
+        (None, "refutation", {"id": ref_id, "text": subjects[-1],
+                              "_texts": subjects})
+        for ref_id, subjects in ledger_subjects.items()
+    ]
+    if not isinstance(checkpoint, dict) and not ledger:
         print("no checkpoint for this project yet — nothing to forget")
         return 1
     # Every surface this project holds, not just the live checkpoint (#419
@@ -981,16 +1253,41 @@ def _cmd_forget(args) -> int:
             continue          # one item, several surfaces — not several items
         seen_ids.add(item["id"])
         items.append((section, key, item))
-    target = next((it for _, _, it in items if it["id"] == args.target), None)
+    # Refutation ids and checkpoint `recent_decisions` ids SHARE the namespace
+    # `r-<12 hex>`, so an exact-id lookup can legitimately hit both surfaces.
+    # forget's never-guess contract decides it: an ambiguous id is refused, not
+    # resolved by preferring a store.
+    candidates = items + ledger
+    exact = [it for _, _, it in candidates if it["id"] == args.target]
+    target = exact[0] if len(exact) == 1 else None
     if target is None:
-        texts = [str(it.get("text") or "") for _, _, it in items]
-        generic = carry._generic_terms(texts)
-        hits = [(s, k, it) for s, k, it in items
-                if carry._same_item(args.target, str(it.get("text") or ""), generic)]
+        # `_generic_terms` is a DOCUMENT-FREQUENCY statistic over texts "of one
+        # kind" (carry.py's own wording): terms shared by >= _GENERIC_DF of them
+        # are that kind's boilerplate and are subtracted from the matcher.
+        # Counting the checkpoint and the ledger together mixes two corpora, so
+        # recording refutations inflated the frequency until the query's own
+        # terms read as generic — and `forget "<text>"` stopped reaching a
+        # checkpoint item it had deleted a moment earlier, reporting "no item
+        # matches" about plaintext on disk. Each store is counted on its own
+        # and each candidate matched against its own store's vocabulary.
+        def _texts_of(it):
+            return it.get("_texts") or [str(it.get("text") or "")]
+
+        pools = [(pool, carry._generic_terms(
+            [t for _, _, it in pool for t in _texts_of(it)]))
+            for pool in (items, ledger)]
+        hits = ([(s, k, it) for s, k, it in candidates if it["id"] == args.target]
+                if len(exact) > 1 else
+                [(s, k, it)
+                 for pool, generic in pools
+                 for s, k, it in pool
+                 if any(carry._same_item(args.target, t, generic)
+                        for t in _texts_of(it))])
         # Ambiguity is about distinct VALUES, not hit count. The same sentence
-        # carried by sibling ids or held on several surfaces is one thing to
-        # forget; #418 already splices sibling ids from a single key. Only
-        # genuinely different values leave the user a choice to make, and there
+        # carried by sibling ids, held on several surfaces, or held in both the
+        # checkpoint and the refutation ledger is one thing to forget; #418
+        # already splices sibling ids from a single key. Only genuinely
+        # different values leave the user a choice to make, and there
         # never-guess still refuses.
         distinct = {normalize.content_key(str(it.get("text") or ""))
                     for _, _, it in hits}
@@ -1000,7 +1297,7 @@ def _cmd_forget(args) -> int:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
             print(f"{label} {args.target!r}; candidates:")
-            for _, key, it in (hits or items):
+            for _, key, it in (hits or candidates):
                 print(f"  {it['id']}  [{key}] {it.get('text', '')}")
             print("forget by exact id: daimon forget <id>")
             return 1
@@ -1014,8 +1311,11 @@ def _cmd_forget(args) -> int:
     # suppressed at capture. Still a hash, never the text: removal means the
     # content leaves the audit trail too (#321).
     content_hash = normalize.content_key(target.get("text") or "")
-    sid = str(checkpoint.get("session_id") or "")
-    if not sid:
+    sid = str((checkpoint or {}).get("session_id") or "")
+    # A checkpoint-bearing project still needs its session id to rewrite. A
+    # ledger-only value has no checkpoint to rewrite, so the missing id is not
+    # an error there.
+    if isinstance(checkpoint, dict) and not sid:
         print("checkpoint has no session_id — cannot rewrite")
         return 1
     # Tombstone BEFORE the rewrite (#418): write_checkpoint's forget gate
@@ -1036,25 +1336,27 @@ def _cmd_forget(args) -> int:
     # (store._stamp_item_ids). Removal is content removal, so every item
     # folding to the tombstoned key goes. Id kept in the predicate as a belt
     # for non-string text, which content_key canonicalizes to "".
-    for section, key in store._ITEM_LISTS:
-        lst = (checkpoint.get(section) or {}).get(key)
-        if isinstance(lst, list):
-            lst[:] = [i for i in lst
-                      if not (isinstance(i, dict)
-                              and (i.get("id") == target["id"]
-                                   or normalize.content_key(i.get("text") or "")
-                                   == content_hash))]
-    # allow_disabled (#421): the ONE write_checkpoint call that may run under
-    # the kill switch — the rewrite that makes the deletion real on disk.
-    # rotate=False: rotation copies the CURRENT latest into prev-1 before
-    # writing, and the current latest is the PRE-forget bytes. Rotating here
-    # made the deletion manufacture a fresh copy of the value it was asked to
-    # remove, in a file that did not exist when the user ran the command.
-    store.write_checkpoint(sid, checkpoint, project_dir=project,
-                           allow_disabled=True, rotate=False)
+    if isinstance(checkpoint, dict):
+        for section, key in store._ITEM_LISTS:
+            lst = (checkpoint.get(section) or {}).get(key)
+            if isinstance(lst, list):
+                lst[:] = [i for i in lst
+                          if not (isinstance(i, dict)
+                                  and (i.get("id") == target["id"]
+                                       or normalize.content_key(i.get("text") or "")
+                                       == content_hash))]
+        # allow_disabled (#421): the ONE write_checkpoint call that may run under
+        # the kill switch — the rewrite that makes the deletion real on disk.
+        # rotate=False: rotation copies the CURRENT latest into prev-1 before
+        # writing, and the current latest is the PRE-forget bytes. Rotating here
+        # made the deletion manufacture a fresh copy of the value it was asked to
+        # remove, in a file that did not exist when the user ran the command.
+        store.write_checkpoint(sid, checkpoint, project_dir=project,
+                               allow_disabled=True, rotate=False)
     # The live checkpoint is one surface of several. prev-N and superseded
     # session files hold the same plaintext and were never in the contract
-    # (#419: plaintext is what puts a file inside it, not its role).
+    # (#419: plaintext is what puts a file inside it, not its role). Runs even
+    # with no live checkpoint: a ledger-only project still has these surfaces.
     store.scrub_content_key(content_hash, project_dir=project)
     # #600 slice A: the author's own team-mirror copies are plaintext this
     # machine owns (#419) — scrubbed here; teammates' copies and upstream
@@ -1071,6 +1373,12 @@ def _cmd_forget(args) -> int:
     # (the one ratified rewrite of the append-only ledger).
     events_scrubbed = store.scrub_event_fields(content_hash,
                                                project_dir=project)
+    # #578: same value, second plaintext store. The ledger splices on the SAME
+    # canonical key for the same reason the checkpoint splices on it rather than
+    # on the id — removal is content removal, so a refutation asserting the
+    # forgotten value goes with it whether or not it was the named target.
+    forgotten_refutations = refutations.forget_content_key(
+        content_hash, project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -1114,8 +1422,15 @@ def _cmd_forget(args) -> int:
     except Exception as e:  # belt: scrub_serialize_log never raises
         scrubbed_lines, scrub_err = 0, str(e)
     _note_usage("forget")
+    surfaces = []
+    if isinstance(checkpoint, dict):
+        surfaces.append("the live checkpoint")
+    if forgotten_refutations:
+        surfaces.append(f"{len(forgotten_refutations)} refutation(s) "
+                        f"({', '.join(forgotten_refutations)})")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
-          "item removed from the live checkpoint; tombstone recorded")
+          f"removed from {' and '.join(surfaces) or 'no store'}; "
+          "tombstone recorded")
     if team_scrubbed:
         print(f"scrubbed {len(team_scrubbed)} own team-mirror cop(y/ies) — "
               "run `daimon team sync` to publish; teammates' copies and "
@@ -3683,6 +3998,130 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_loops.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_loops.set_defaults(func=_cmd_loops)
+
+    p_refute = sub.add_parser(
+        "refute",
+        help="author and query evidence-cited negative knowledge (#573)",
+        epilog="Examples:\n"
+               "  daimon refute list\n"
+               "  daimon refute search receipt verification\n"
+               "  daimon refute guard 'should we revisit #502?'\n",
+    )
+    refute_sub = p_refute.add_subparsers(dest="refute_cmd", required=True)
+    refute_sub.add_parser = functools.partial(
+        refute_sub.add_parser, formatter_class=fmt)
+
+    pr_add = refute_sub.add_parser(
+        "add", help="assert a scoped refutation; agent assertions stay candidates",
+        epilog="Example:\n"
+               "  daimon refute add --subject 'original #502 receipt design' "
+               "--verdict 'whole-file hashes do not prove span claims' "
+               "--scope 'carried-item receipt tiers' --anchor issue:502 "
+               "--evidence 'measurement:566/623 origin misses' "
+               "--ratify\n",
+    )
+    pr_add.add_argument("--subject", required=True, help="approach or claim rejected")
+    pr_add.add_argument("--verdict", required=True, help="what no longer holds")
+    pr_add.add_argument("--scope", required=True, help="where the verdict applies")
+    pr_add.add_argument(
+        "--evidence", action="append", required=True, metavar="SOURCE",
+        help="cited measurement, artifact, issue, or transcript source; recorded verbatim, not resolved or verified; repeatable")
+    pr_add.add_argument(
+        "--anchor", action="append", default=[], metavar="ANCHOR",
+        help="stable exact-match key such as issue:502 or command:daimon-why; repeatable")
+    pr_add.add_argument(
+        "--revisit-when", help="condition that makes reconsideration legitimate")
+    pr_add.add_argument("--by", choices=["agent"], default=None,
+                        help="declare yourself an agent; omit it only from an "
+                             "interactive terminal, which is the human path")
+    pr_add.add_argument(
+        "--ratify", action="store_true",
+        help="activate immediately; valid only on the human path, which is "
+             "an interactive terminal with no --by.")
+    pr_add.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_add.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_add.set_defaults(func=_cmd_refute_add)
+
+    pr_ratify = refute_sub.add_parser(
+        "ratify", help="explicitly activate a candidate as a human decision")
+    pr_ratify.add_argument("refutation_id", help="exact r-… id")
+    pr_ratify.add_argument(
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; ratification then refuses, because "
+             "activation requires a human channel")
+    pr_ratify.add_argument("--note", help="optional ratification rationale")
+    pr_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_ratify.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_ratify.set_defaults(func=_cmd_refute_ratify)
+
+    pr_revise = refute_sub.add_parser(
+        "revise", help="append a new evidence-cited version; inactive until ratified")
+    pr_revise.add_argument("refutation_id", help="exact r-… id")
+    pr_revise.add_argument("--subject", help="replacement subject")
+    pr_revise.add_argument("--verdict", help="replacement verdict")
+    pr_revise.add_argument("--scope", help="replacement scope")
+    pr_revise.add_argument(
+        "--anchor", action="append", default=None, metavar="ANCHOR",
+        help="replacement anchor set; repeatable")
+    pr_revise.add_argument("--revisit-when", help="replacement revisit condition")
+    pr_revise.add_argument(
+        "--evidence", action="append", required=True, metavar="SOURCE",
+        help="new evidence cited for the revision; recorded, not verified; repeatable")
+    pr_revise.add_argument("--by", choices=["agent"], default=None)
+    pr_revise.add_argument(
+        "--ratify", action="store_true",
+        help="activate the revision immediately; valid only on the human "
+             "path, which is an interactive terminal with no --by.")
+    pr_revise.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_revise.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_revise.set_defaults(func=_cmd_refute_revise)
+
+    pr_overturn = refute_sub.add_parser(
+        "overturn",
+        help="cite evidence against the verdict; agent calls propose, humans deactivate")
+    pr_overturn.add_argument("refutation_id", help="exact r-… id")
+    pr_overturn.add_argument(
+        "--evidence", action="append", required=True, metavar="SOURCE",
+        help="evidence cited against the active verdict; recorded, not "
+             "verified; repeatable")
+    pr_overturn.add_argument("--note", help="optional explanation")
+    pr_overturn.add_argument("--by", choices=["agent"], default=None)
+    pr_overturn.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_overturn.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_overturn.set_defaults(func=_cmd_refute_overturn)
+
+    pr_show = refute_sub.add_parser("show", help="show one refutation and its trust signals")
+    pr_show.add_argument("refutation_id", help="exact r-… id")
+    pr_show.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_show.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_show.set_defaults(func=_cmd_refute_show)
+
+    pr_list = refute_sub.add_parser("list", help="list project refutations")
+    pr_list.add_argument("--state", action="append", choices=sorted(refutations.STATES),
+                         help="filter by state; repeatable")
+    pr_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_list.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_list.set_defaults(func=_cmd_refute_list)
+
+    pr_search = refute_sub.add_parser(
+        "search", help="search the complete ledger without age decay")
+    pr_search.add_argument("query", nargs="+", help="subject, verdict, scope, or anchor terms")
+    pr_search.add_argument("--state", action="append", choices=sorted(refutations.STATES),
+                           help="filter by state; repeatable")
+    pr_search.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_search.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_search.set_defaults(func=_cmd_refute_search)
+
+    pr_guard = refute_sub.add_parser(
+        "guard", help="check active refutations by exact anchor or subject phrase")
+    pr_guard.add_argument("query", nargs="+", help="the proposed approach or user prompt")
+    pr_guard.add_argument("--anchor", action="append", default=[], metavar="ANCHOR",
+                          help="candidate action anchor; repeatable")
+    pr_guard.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_guard.add_argument("--json", action="store_true", help="machine-readable output")
+    pr_guard.add_argument("--quiet", action="store_true",
+                          help="print nothing when no active refutation matches")
+    pr_guard.set_defaults(func=_cmd_refute_guard)
 
     p_handoff = sub.add_parser(
         "handoff",

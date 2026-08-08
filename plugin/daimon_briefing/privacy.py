@@ -18,7 +18,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import config, normalize, store, surfaces, teamproject
+from . import config, normalize, refutations, store, surfaces, teamproject
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -35,6 +35,12 @@ _FIELDS = ("text", "quote", "scene")
 _EVENT_FIELDS = ("note", "item_text", "status")
 
 _EVENTS_NAME = "events.jsonl"
+
+# The refutation ledger (#645): a SECOND plaintext ledger in the same bucket.
+# Its plaintext field set is declared once, in refutations, and read from there
+# rather than restated — the deleter (refutations.forget_content_key) and this
+# auditor asking the question separately is how a surface goes unreported.
+_REFUTATIONS_NAME = "refutations.jsonl"
 
 # Files that live in the checkpoint store and hold NO item plaintext BY
 # CONSTRUCTION. Since #601 both sets are VIEWS of the declared surface
@@ -83,7 +89,8 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
     unprovable at once. Flat-dir unknowns tag None (= every audit's problem):
     `latest.json` there is the GLOBAL pointer and its neighbours may hold any
     project's session. `.chunk-cache/` is reported separately at store level;
-    `events.jsonl` is scanned as the note ledger, not as an item surface."""
+    `events.jsonl` is scanned as the note ledger and `refutations.jsonl` as the
+    negative-knowledge ledger, not as item surfaces."""
     known: list[Path] = []
     unknown: list[tuple[Path, str | None]] = []
     d = config.checkpoint_dir()
@@ -104,7 +111,8 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                         unknown.append((p, entry.name))
                     elif p.suffix == ".json":
                         known.append(p)
-                    elif p.name != _EVENTS_NAME and not _is_plaintext_free(p):
+                    elif p.name not in (_EVENTS_NAME, _REFUTATIONS_NAME) \
+                            and not _is_plaintext_free(p):
                         unknown.append((p, entry.name))
         except OSError:
             # Could not even list it — tag None, the conservative side: an
@@ -377,6 +385,33 @@ def audit_project(project_dir=None) -> dict:
                     "path": str(events),
                     "item_id": evt.get("item_ref"),
                     "content_hash": h, "surface": "events-note"})
+    # Refutation ledger (#645): the second plaintext ledger in this bucket, and
+    # the one the branch that introduced it left undeclared — so it landed in
+    # `unknown`, then `unscannable`, and pinned every audit of the project at
+    # exit 3 from the first `refute add` onward. Same read-first-ask-later
+    # posture as the event ledger above, and the same whole-value hashing.
+    # The FIELD SET is refutations' own declaration, not a copy: the deleter
+    # reads it too, so a value the audit reports is a value forget can reach.
+    ledger = config.checkpoint_dir() / slug / _REFUTATIONS_NAME
+    try:
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []                  # no refutation recorded yet
+    except (OSError, ValueError):
+        lines = []
+        result["unscannable"].append(str(ledger))
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        for h in refutations.row_content_keys(row) & keys:
+            result["findings"].append({
+                "path": str(ledger),
+                "item_id": row.get("refutation_id"),
+                "content_hash": h, "surface": "refutation-ledger"})
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.

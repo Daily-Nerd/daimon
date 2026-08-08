@@ -34,6 +34,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon reverify <id>` | Assert a carried item is still true — evidence-gated, resets its staleness clock. Also the reject half of a supersession candidate. |
 | `daimon audit quotes` | Re-check every stored verbatim quote against its source transcript and report mismatches. Read-only — it never rewrites trust tags. |
 | `daimon audit privacy` | Prove the deletion contract: hash every plaintext field on every surface (checkpoints, rotated pointers, the event ledger, the team mirror, the recall index and its orphan snapshots) and report any forgotten value that survived. Read-only. |
+| `daimon refute list\|show\|search\|guard` | Read the negative-knowledge ledger without decay. `guard` emits active exact-anchor/subject matches only; it is advisory and never blocks a command. Add `--json` for deliberation integrations. |
 
 The auditors share one exit contract, so a script can act on the answer:
 
@@ -52,6 +53,7 @@ The auditors share one exit contract, so a script can act on the answer:
 | --- | --- |
 | `daimon resolve <id or text>` | Mark an item resolved — append-only event; the item stops carrying. `--dry-run` previews the match; `--by agent --evidence "<quote>"` claims a close that is byte-checked at session end. |
 | `daimon anchor <file> <symbol>` | Bind a cognitive item to a code symbol; briefings then warn when the anchored code drifts. |
+| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires the human path — an interactive terminal with `--by` omitted. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active record to candidate until it is ratified again. Agent overturns remain proposals. |
 
 ## Forget
 

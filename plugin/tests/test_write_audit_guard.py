@@ -73,8 +73,18 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, config, policy, store, teamsync
+from daimon_briefing import cli, config, policy, refutations, store, teamsync
+
 from tests.conftest import FIXTURES, FakeChat
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _interactive_terminal(monkeypatch):
+    """These recipes drive the ratifying and overturning verbs, which are now
+    the human path: the flag that used to declare humanity is gone and an
+    observed terminal took its place."""
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
 
 # ---------------------------------------------------------------------------
 # The ratchet. Every entry is (command, path pattern) with its justification.
@@ -385,6 +395,47 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_projects():
         run(["projects"], 0)
 
+    def r_refute_add():
+        subject = "The original receipt design"
+        scope = "carried-item receipt tiers"
+        run([
+            "refute", "add", "--subject", subject,
+            "--verdict", "whole-file hashes do not prove span claims",
+            "--scope", scope, "--anchor", "issue:502",
+            "--evidence", "measurement:566/623 origin misses",
+            "--by", "agent",
+        ], 0)
+        ctx["refutation_id"] = refutations.make_id(subject, scope)
+
+    def r_refute_ratify():
+        run(["refute", "ratify", ctx["refutation_id"]], 0)
+
+    def r_refute_revise():
+        run([
+            "refute", "revise", ctx["refutation_id"],
+            "--verdict", "file hashes still do not prove individual claims",
+            "--evidence", "measurement:second corpus",
+            "--ratify",
+        ], 0)
+
+    def r_refute_overturn():
+        run([
+            "refute", "overturn", ctx["refutation_id"],
+            "--evidence", "measurement:contrary replay", "--by", "agent",
+        ], 0)
+
+    def r_refute_show():
+        run(["refute", "show", ctx["refutation_id"]], 0)
+
+    def r_refute_list():
+        run(["refute", "list"], 0)
+
+    def r_refute_search():
+        run(["refute", "search", "receipt"], 0)
+
+    def r_refute_guard():
+        run(["refute", "guard", "revisit", "#502"], 0)
+
     def r_resolve():
         run(["resolve", ctx["ids"][_T_KEEP], "--note", "shipped"], 0)
 
@@ -503,6 +554,14 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("recall",): r_recall,
         ("why",): r_why,
         ("projects",): r_projects,
+        ("refute", "add"): r_refute_add,
+        ("refute", "ratify"): r_refute_ratify,
+        ("refute", "revise"): r_refute_revise,
+        ("refute", "overturn"): r_refute_overturn,
+        ("refute", "show"): r_refute_show,
+        ("refute", "list"): r_refute_list,
+        ("refute", "search"): r_refute_search,
+        ("refute", "guard"): r_refute_guard,
         ("resolve",): r_resolve,
         ("reverify",): r_reverify,
         ("forget",): r_forget,
@@ -571,6 +630,7 @@ def test_every_command_write_carries_an_admit_frame(
     assert saw("serialize", "guard-serialize.json", "team")  # team dual-write
     assert saw("resolve", "events.jsonl")           # admit_row on the ledger
     assert saw("forget", "events.jsonl")            # tombstone append
+    assert saw("refute add", "refutations.jsonl")  # negative ledger append
     # #599: the ledger REWRITE (scrub_event_fields) must have run and been
     # governed — not merely the tombstone append hitting the same file.
     assert any(cmd == "forget" and rel.name == "events.jsonl" and governed
