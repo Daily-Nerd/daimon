@@ -316,6 +316,7 @@ def audit_project(project_dir=None) -> dict:
     if not slug:
         result["zero_surfaces"] = True
         result["cache"] = {"entries": 0, "oldest_days": None}
+        result["ledger"] = {"records": 0, "rows": 0, "bytes": 0}
         return result
     known, unknown = _checkpoint_candidates()
     # Only this project's blind spots: an unknown file in ANOTHER bucket is
@@ -400,6 +401,8 @@ def audit_project(project_dir=None) -> dict:
     except (OSError, ValueError):
         lines = []
         result["unscannable"].append(str(ledger))
+    ledger_records: set[str] = set()
+    ledger_rows = 0
     for line in lines:
         try:
             row = json.loads(line)
@@ -407,11 +410,34 @@ def audit_project(project_dir=None) -> dict:
             continue
         if not isinstance(row, dict):
             continue
+        ledger_rows += 1
+        ref_id = str(row.get("refutation_id") or "")
+        if ref_id:
+            ledger_records.add(ref_id)
         for h in refutations.row_content_keys(row) & keys:
             result["findings"].append({
                 "path": str(ledger),
                 "item_id": row.get("refutation_id"),
                 "content_hash": h, "surface": "refutation-ledger"})
+    # #648: the ledger is append-only and NOTHING reaps it by age. That is the
+    # posture, not an oversight — `daimon refute` records rejected approaches
+    # "outside checkpoint decay" (README), and a refutation is worth more with
+    # age: it exists so a lesson outlives the temptation to retry the approach.
+    # Every other reaped store here (chunk cache, windsurf state, crash log,
+    # stale tmps) holds derived or diagnostic data that is worthless when old.
+    #
+    # So the audit owes a MEASUREMENT, not a cleanup claim — the chunk cache's
+    # posture below, for the same reason: report the store, touch neither the
+    # findings nor the exit code, and never assert bounded. Rows and records
+    # are separate because the difference is the growth story: a record gains a
+    # row per lifecycle event while the record count stays put.
+    try:
+        ledger_bytes = ledger.stat().st_size
+    except OSError:
+        ledger_bytes = 0
+    result["ledger"] = {"records": len(ledger_records),
+                        "rows": ledger_rows,
+                        "bytes": ledger_bytes}
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.

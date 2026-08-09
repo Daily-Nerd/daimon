@@ -72,7 +72,34 @@ SURFACES: tuple[Surface, ...] = (
     #    rewrites this file, atomically, dropping every row of a matched
     #    record. Never audit_exempt (#645) — an exemption here would silence
     #    exit 3 in one line while the file holds the very text the registry
-    #    exists to declare. --
+    #    exists to declare.
+    #
+    #    RETENTION (#648): there is none, and that is the posture rather than
+    #    an oversight. `delete` holds one value and `rewrite` is the true one —
+    #    forget reaches this file by VALUE — so the growth story cannot live in
+    #    this field and is recorded here instead.
+    #
+    #    Nothing reaps it by age, deliberately. `daimon refute` records
+    #    rejected approaches "outside checkpoint decay" (README, and the CLI
+    #    reference in both locales), and a refutation is worth MORE with age:
+    #    it exists so a lesson outlives the temptation to retry the approach.
+    #    Every other reaped store here — chunk cache, windsurf state, crash
+    #    log, stale tmps — holds derived or diagnostic data that is worthless
+    #    when old. Reaping this one would delete the lesson exactly when it
+    #    finally becomes useful.
+    #
+    #    Growth is bounded by deliberate action instead: the only writers are
+    #    the four `refute` CLI verbs, the `mechanical` channel is a socket
+    #    nothing plugs into, and the audit reports record/row/byte counts every
+    #    run (privacy.audit_project) so this is measured, never silent.
+    #
+    #    Two things reopen it, and neither is a clock. If #581 ships mechanical
+    #    activation, something writes without a human asking. If the reported
+    #    counts actually climb, the sanctioned fix is a CANDIDATE-scoped
+    #    reaper: the design of record scopes no-decay to ACTIVE records and
+    #    already allows candidates to expire (research/experiments/
+    #    refutation-573/README.md). An active-record reaper would falsify a
+    #    published claim and needs the contract amended first. --
     Surface("checkpoints/{slug}/refutations.jsonl", "refutations.append",
             True, "rewrite", "forget"),
     # store.append_verification: "a POINTER and a REASON CODE, never the
