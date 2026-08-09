@@ -781,9 +781,31 @@ def test_status_line_marked_but_missing(tmp_checkpoint_dir, monkeypatch):
 
 def test_status_line_predates_receipts(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
-    store.write_checkpoint("S-pre2", {"session_id": "S-pre2"})  # no marker, no sidecar
+    # A genuinely pre-receipts checkpoint: written while the feature was OFF, so
+    # no marker and no sidecar, but it DOES carry a bindable transcript_hash.
+    # The hash is the point — without it this is the #653 case below, not this
+    # one, and the age wording would be a false cause.
+    monkeypatch.delenv("DAIMON_RECEIPTS", raising=False)
+    store.write_checkpoint("S-pre2", {"session_id": "S-pre2",
+                                      "transcript_hash": "ab" * 32})
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     line = receipts.status_line()
     assert "predates receipts" in line
+
+
+def test_status_line_unsigned_without_transcript_does_not_blame_age(
+    tmp_checkpoint_dir, monkeypatch
+):
+    # #653: `write-checkpoint` (the daimon-end in-session path) has no transcript
+    # to bind, so plan_mint correctly refuses to mint. Status reported that true
+    # state with a false cause — it said the checkpoint PREDATES receipts, for a
+    # checkpoint written seconds earlier. Say which of the two it actually is.
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    store.write_checkpoint("S-insession", {"session_id": "S-insession"})
+    line = receipts.status_line()
+    assert "predates receipts" not in line
+    assert "no transcript to bind" in line
+    assert "expected" in line
 
 
 # ---- cross-module #204 seams (briefing / render / config) ---------------------
