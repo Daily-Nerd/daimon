@@ -1350,6 +1350,12 @@ def render_privacy_audit(results: list[dict]) -> None:
             print(f"  chunk cache: {cache['entries']} entr(y/ies) — age unknown,"
                   " value-level scan impossible (substring vs hash); purge is"
                   " wholesale on forget")
+        led = r.get("ledger") or {}
+        if led.get("rows"):
+            print(f"  refutation ledger: {led['records']} record(s) in"
+                  f" {led['rows']} row(s), {led['bytes'] / 1024:.0f} KB —"
+                  " append-only negative knowledge; forget reaches it by"
+                  " value, nothing reaps it by age")
         ws = r.get("windsurf") or {}
         if ws.get("entries"):
             age = (f", oldest {ws['oldest_days']:.1f}d"

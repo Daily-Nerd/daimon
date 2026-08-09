@@ -202,3 +202,66 @@ def test_redaction_of_an_ordinary_anchor_changes_nothing(tmp_checkpoint_dir):
     record = refutations.get(ref_id, project_dir=PROJECT)
 
     assert record["anchors"] == ["issue:645", "command:daimon-why"]
+
+
+# -- #648: growth is reported, never silently unbounded ----------------------
+
+def test_the_audit_reports_the_ledger_at_store_level(tmp_checkpoint_dir):
+    """#648. The ledger is append-only and nothing reaps it by age. That is a
+    deliberate posture, not an oversight — `daimon refute` records rejected
+    approaches "outside checkpoint decay" (README.md), and a refutation is
+    worth MORE with age: it exists so a lesson survives long enough that
+    someone is tempted to retry the approach.
+
+    What the audit owes is therefore not a cleanup claim but a measurement.
+    Same store-level honesty the chunk cache and windsurf state already get:
+    report what is there, let the exit code alone, and never assert bounded."""
+    _checkpoint()
+    _refute()
+    _refute(subject="sharding the audit table by tenant", scope="storage")
+
+    ledger = privacy.audit_project(project_dir=PROJECT)["ledger"]
+
+    assert ledger["records"] == 2
+    assert ledger["rows"] == 2, "one asserted row per record"
+    assert ledger["bytes"] == _ledger_path().stat().st_size
+
+
+def test_the_ledger_report_counts_rows_and_records_separately(
+        tmp_checkpoint_dir):
+    """Rows and records diverge, and the difference IS the growth story: a
+    record accumulates a row per lifecycle event while the record count stays
+    put. Reporting only one of them would hide which kind of growth happened."""
+    _checkpoint()
+    ref_id = _refute()
+    refutations.ratify(ref_id, channel="cli-tty", project_dir=PROJECT)
+    refutations.revise(ref_id, channel="cli-tty", evidence=["measurement:run-2"],
+                       verdict="a sharper statement of the same finding",
+                       project_dir=PROJECT)
+
+    ledger = privacy.audit_project(project_dir=PROJECT)["ledger"]
+
+    assert ledger["records"] == 1
+    assert ledger["rows"] == 3
+
+
+def test_no_ledger_reports_zero_rather_than_absent(tmp_checkpoint_dir):
+    """A missing key would make callers guess. Zero is a fact; absent is not."""
+    _checkpoint()
+    ledger = privacy.audit_project(project_dir=PROJECT)["ledger"]
+    assert ledger == {"records": 0, "rows": 0, "bytes": 0}
+
+
+def test_the_ledger_line_reports_growth_without_claiming_retention(
+        tmp_checkpoint_dir, capsys):
+    _checkpoint()
+    _refute()
+    assert cli.main(["audit", "privacy", "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+
+    assert "refutation ledger" in out
+    assert "1 record(s)" in out
+    # The honest half: say what does NOT happen, in the report itself.
+    assert "nothing reaps it by age" in out
+    for false_claim in ("bounded", "pruned", "expires"):
+        assert false_claim not in out, f"the report claims {false_claim}"
