@@ -537,4 +537,11 @@ def status_line(project_dir=None) -> str | None:
     if checkpoint.get("receipts") is True:
         return (f"receipts: on — latest checkpoint {sid} is marked receipt-era but "
                 "its receipt is MISSING (see serialize.log)")
+    # #653: unsigned has two causes and they are not interchangeable. Ask the same
+    # gate plan_mint asks rather than assuming age: with nothing bindable there was
+    # never a receipt to make, which is the normal in-session write-checkpoint
+    # shape. Only a checkpoint that COULD have been bound predates the feature.
+    if _wrap_hex_sha256(checkpoint.get("transcript_hash")) is None:
+        return (f"receipts: on — latest checkpoint {sid} is unsigned: no transcript "
+                "to bind (expected for an in-session write-checkpoint)")
     return f"receipts: on — latest checkpoint {sid} predates receipts (unsigned)"
