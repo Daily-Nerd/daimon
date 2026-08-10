@@ -101,14 +101,28 @@ _MAX_KEY_INPUT = 4096
 _KEY_HEX_LEN = 16
 
 
+def compat_fold(text) -> str:
+    """NFKC + invisible strip, and NOTHING that changes case (#660).
+
+    Split out of `canonical_text` for scanners whose patterns are anchored on
+    uppercase ASCII: `redact.py` classes like aws-key and jwt stop matching if
+    the text is casefolded first, which is the #647 failure one layer up. A
+    compatibility form (fullwidth, mathematical alphanumeric) walks past every
+    such pattern, so a scanner must fold BEFORE it looks, then decide for
+    itself whether to keep the folded text.
+
+    Pure, stdlib-only, total, idempotent."""
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    text = unicodedata.normalize("NFKC", text)
+    return _INVISIBLE_RE.sub("", text)
+
+
 def canonical_text(text) -> str:
     """Fold `text` to a comparison-stable canonical form. Pure, stdlib-only,
     total — never raises for any input; a non-str is coerced first. Idempotent:
     canonical_text of its own output is a fixed point."""
-    if not isinstance(text, str):
-        text = "" if text is None else str(text)
-    text = unicodedata.normalize("NFKC", text)
-    text = _INVISIBLE_RE.sub("", text)
+    text = compat_fold(text)
     text = _WS_RE.sub(" ", text).strip()
     text = text.casefold()
     text = text.translate(_CONFUSABLE_TABLE)

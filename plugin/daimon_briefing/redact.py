@@ -9,6 +9,7 @@ Replacement is a stable visible marker, [redacted:<kind>]: auditable,
 never silent."""
 
 import re
+import unicodedata
 
 # (kind, compiled pattern). Order matters only for overlap (pem first: a key
 # block may contain assignment-looking lines that must not double-count).
@@ -57,6 +58,23 @@ def redact_text(s):
     if not isinstance(s, str) or not s:
         return s, counts
 
+    # #660: every pattern below is anchored on uppercase ASCII, so a credential
+    # written in a compatibility form (fullwidth, mathematical alphanumeric)
+    # matches none of them and returns an EMPTY count — indistinguishable to
+    # the caller from "there was nothing to redact". `audit privacy` then reads
+    # the surface as clean while the value sits in it, recoverable by one
+    # normalize() call. Fold BEFORE looking. Folding after would be worse than
+    # not folding: it turns an unscanned compatibility form into a literal
+    # credential once the scrub has already run.
+    #
+    # NFKC is inlined rather than imported from normalize.compat_fold because
+    # this module ships STANDALONE next to the Windsurf hook scripts (see the
+    # file list in cli.py) and must not import from the package. Keep the two
+    # in step: normalize.compat_fold is NFKC + invisible strip, this is the
+    # NFKC half. Invisible characters do not split these patterns, so the
+    # other half is not needed here.
+    original, s = s, unicodedata.normalize("NFKC", s)
+
     def _mark(kind):
         counts[kind] = counts.get(kind, 0) + 1
 
@@ -72,4 +90,9 @@ def redact_text(s):
             s = rx.sub(_sub, s)
         except re.error:  # pragma: no cover — static patterns
             continue
-    return s, counts
+    # Fold-on-hit-only: the folded text is returned ONLY when it actually held
+    # a secret. Clean input comes back byte-identical, so redaction never
+    # silently rewrites ordinary content (fullwidth CJK is legitimate text, not
+    # an evasion). When something WAS found the content is being altered
+    # anyway, and the folded form is the one that cannot be un-redacted.
+    return (s, counts) if counts else (original, counts)
