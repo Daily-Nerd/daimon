@@ -64,7 +64,15 @@ Serialization needs an LLM endpoint. If the `claude` CLI is on your PATH you are
 /plugin install daimon@daimon
 ```
 
-**Other hosts** (Windsurf, Codex, Gemini CLI) and the agent-side skill: per-host guides at [daily-nerd.github.io/daimon/docs/hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
+**Agent-side skills, any host:**
+
+```sh
+npx skills add Daily-Nerd/daimon
+```
+
+Adds `daimon-briefing` and `daimon-end` to whichever agent it detects. Use `--skill daimon-briefing` for one of them. Claude Code users who installed the plugin above already have both, so there is no need to run this as well.
+
+**Other hosts** (Windsurf, Codex, Gemini CLI): per-host guides at [daily-nerd.github.io/daimon/docs/hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
 
 That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status` — it reports capture health honestly, including failures, skips, and crashes; a failed capture self-heals on the next start.
 
