@@ -101,3 +101,55 @@ def test_credential_url_pattern_no_quadratic_blowup_on_long_scheme_run():
     # lowercase-dotted runs that never resolve to "://".
     out, counts = _one("a." * 25000)
     assert counts == {}
+
+
+# ---- #660: compatibility forms must not walk past the scrub --------------
+
+
+def _wide(s):
+    """ASCII -> fullwidth, the cheapest evasion of an uppercase-anchored rule."""
+    return "".join(chr(ord(c) - 0x21 + 0xFF01) if 0x21 <= ord(c) <= 0x7E else c
+                   for c in s)
+
+
+def _synthetic_aws_key():
+    """Built from parts so no credential-shaped literal sits in the source."""
+    return "AK" + "IA" + "".join(chr(65 + (i * 7) % 26) for i in range(16))
+
+
+def test_fullwidth_secret_is_detected_not_passed_through():
+    # The scrub returned hits={} for this input, which a caller cannot tell
+    # apart from "there was nothing to redact" — so `audit privacy` reported
+    # the surface clean while the value sat in it, recoverable by one NFKC.
+    key = _synthetic_aws_key()
+    out, counts = _one(f"avoid {_wide(key)} here")
+    assert counts.get("aws-key") == 1, f"compatibility form evaded the scrub: {counts}"
+    assert key not in out
+
+
+def test_fullwidth_secret_is_not_recoverable_by_normalizing_the_output():
+    # The actual harm: not that the stored bytes ARE the key, but that one
+    # normalize() call turns them back into it.
+    import unicodedata
+    key = _synthetic_aws_key()
+    out, _ = _one(f"avoid {_wide(key)} here")
+    assert key not in unicodedata.normalize("NFKC", out)
+
+
+def test_math_alphanumeric_secret_is_detected():
+    # Fullwidth is not the only compatibility block; the fix must be the
+    # normalization, not a fullwidth-shaped special case.
+    key = _synthetic_aws_key()
+    bold = "".join(chr(0x1D400 + ord(c) - 65) if "A" <= c <= "Z" else c for c in key)
+    _, counts = _one(f"avoid {bold} here")
+    assert counts.get("aws-key") == 1, f"math-alphanumeric form evaded: {counts}"
+
+
+def test_clean_text_is_returned_byte_identical():
+    # Fold-on-hit-only: normalization is a side effect of redacting, never a
+    # rewrite of content that had nothing to redact. Fullwidth CJK punctuation
+    # in ordinary prose must survive untouched.
+    original = "設定を確認する（フルワイド）and some ASCII"
+    out, counts = _one(original)
+    assert out == original
+    assert counts == {}
