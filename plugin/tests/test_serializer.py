@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import serializer
+from daimon_briefing import config, serializer
 from tests.conftest import make_messages
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -206,6 +206,73 @@ def test_serialize_long_session_chunks_then_merges(fake_chat_factory, monkeypatc
     # chunk calls use the D-007 serialize prompt
     assert all(c["messages"][0]["content"] == serializer.SERIALIZE_SYS
                for c in chat.calls[:-1])
+
+
+def test_chunk_prompt_restates_contract_after_the_transcript(fake_chat_factory,
+                                                             monkeypatch):
+    # #664: the output contract is the HEAD of the chunk prompt, tens of KB
+    # before the end, so a chunk ending on a finished assistant turn gets
+    # continued instead of extracted. Measured over 15 samples on one real
+    # transcript: contract at the head 0/5 parsed, contract as a genuine
+    # system role 0/5, contract restated after the chunk text 5/5. Position
+    # is the operative variable, so the contract must ALSO appear last.
+    monkeypatch.setenv("DAIMON_CHUNK_LINES", "6")
+    monkeypatch.setenv("DAIMON_CHUNK_OVERLAP", "1")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    # Serial chunks so FakeChat's call order matches chunk order, and no cache
+    # so every chunk really issues its call.
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    monkeypatch.setenv("DAIMON_CHUNK_CACHE", "0")
+    messages = make_messages(20)
+    rendered = serializer._render_transcript(messages)
+    chunks = serializer.chunk_transcript(rendered, 6, 1)
+    assert len(chunks) > 1
+
+    responses = [_valid_checkpoint_json(f"chunk{i}") for i in range(len(chunks))]
+    responses.append(_valid_checkpoint_json("S1"))
+    chat = fake_chat_factory(responses)
+    assert serializer.serialize("S1", messages, chat=chat) is not None
+
+    for call, chunk_text in zip(chat.calls[:-1], chunks):
+        body = call["messages"][1]["content"]
+        end_of_transcript = body.index(chunk_text) + len(chunk_text)
+        tail = body[end_of_transcript:]
+        # The transcript is no longer the last thing the model reads.
+        assert tail.strip(), "chunk prompt ends on transcript text"
+        # An explicit instruction not to continue the conversation.
+        assert "Do NOT continue the conversation" in tail
+        # The contract itself, not just a one-line nag: the schema key that
+        # every extraction must emit has to be present in the tail too.
+        assert "epistemic_snapshot" in tail
+
+
+def test_single_pass_prompt_restates_contract_after_the_transcript(fake_chat_factory):
+    # #664 has no cliff at DAIMON_CHUNK_LINES: a 1,199-line transcript is the
+    # same tens-of-KB gap between the contract and the end of the prompt as a
+    # chunk is, so the single-pass path gets the same tail.
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    messages = make_messages(20)
+    rendered = serializer._render_transcript(messages)
+    assert len(serializer.chunk_transcript(
+        rendered, config.chunk_lines(), config.chunk_overlap())) == 1
+
+    assert serializer.serialize_strict("S1", messages, chat=chat) is not None
+    body = chat.calls[0]["messages"][1]["content"]
+    tail = body[body.index(rendered) + len(rendered):]
+    assert "Do NOT continue the conversation" in tail
+    assert "epistemic_snapshot" in tail
+
+
+def test_single_pass_validation_retry_note_stays_last(fake_chat_factory):
+    # The retry note is the most specific instruction in the prompt, so the
+    # restated contract must not displace it from the end.
+    bad = json.dumps({"session_id": "S1", "working_context": {}})
+    chat = fake_chat_factory([bad, _valid_checkpoint_json("S1")])
+    serializer.serialize("S1", make_messages(20), chat=chat)
+    assert len(chat.calls) == 2
+    retry_body = chat.calls[1]["messages"][1]["content"]
+    assert "Do NOT continue the conversation" in retry_body
+    assert retry_body.rstrip().endswith("Re-emit the full corrected JSON.")
 
 
 def test_serialize_chunked_forwards_deadline_to_every_call(fake_chat_factory, monkeypatch):
@@ -2339,7 +2406,12 @@ def test_serialize_strict_idless_host_stays_on_todays_path(
          "source_message_ids": ["m2"]}))
     out = serializer.serialize_strict("S1", make_messages(6), chat=chat)
     sent = chat.calls[0]["messages"][1]["content"]
-    assert "[m" not in sent  # rendered transcript is marker-free
+    # Slice out the transcript itself: since #664 the user message also carries
+    # the restated contract, whose rule 19 spells out `[m12]` as an example.
+    # Those examples were always in the system prompt, so the model learns
+    # nothing new — but the marker-free claim is about the TRANSCRIPT.
+    rendered = sent.split("TRANSCRIPT:\n", 1)[1].split("--- END OF TRANSCRIPT", 1)[0]
+    assert "[m" not in rendered  # rendered transcript is marker-free
     item = out["working_context"]["recent_decisions"][0]
     assert "source_message_ids" not in item
     assert item["quote_verified"] is True
@@ -2657,6 +2729,31 @@ def test_escalation_perspectives_are_three_distinct_lanes():
         # appends its perspective — never replaces the extraction contract
         assert system.startswith(serializer.SERIALIZE_SYS)
         assert "EXTRACTION PERSPECTIVE" in system
+
+
+def test_escalated_pass_restates_its_own_perspective_contract_after_the_transcript(
+        fake_chat_factory, monkeypatch):
+    # #664, same defect on the escalation lane: each pass puts its perspective
+    # contract at the head and the transcript last. The tail must restate the
+    # contract that pass is actually running, not the default one — a pass
+    # reminded of the wrong contract would extract the wrong perspective.
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    monkeypatch.setenv("DAIMON_CHUNK_CACHE", "0")
+    chat = fake_chat_factory(
+        [_valid_checkpoint_json(f"p{i}") for i in range(3)]
+        + [_valid_checkpoint_json("merged")])
+    assert serializer.serialize_strict(
+        "S1", make_messages(20), chat=chat, escalate=True) is not None
+
+    for call in chat.calls[:3]:
+        system = call["messages"][0]["content"]
+        body = call["messages"][1]["content"]
+        tail = body[body.index("TRANSCRIPT:") + len("TRANSCRIPT:"):]
+        assert "Do NOT continue the conversation" in tail
+        # The tail carries THIS pass's perspective, not a generic reminder.
+        perspective = system.split("EXTRACTION PERSPECTIVE", 1)[1]
+        assert perspective in tail
 
 
 def test_base_prompt_untouched_by_escalation():

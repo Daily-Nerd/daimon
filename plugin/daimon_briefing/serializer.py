@@ -273,6 +273,55 @@ def _serialize_sys() -> str:
     return SERIALIZE_SYS
 
 
+def _chunk_tail_contract(system: str | None = None) -> str:
+    """The output contract, repeated AFTER the transcript text (#664).
+
+    Used by all three extraction call sites — chunked, escalated, and
+    single-pass. There is no cliff at DAIMON_CHUNK_LINES: a 1,199-line
+    transcript leaves the same tens-of-KB gap between the contract and the end
+    of the prompt as a chunk does.
+
+    `system` is the contract THIS call is running under — escalation passes
+    each carry their own perspective, and a pass reminded of the default
+    contract would be told to extract something other than what its system
+    prompt asked for. Defaults to the ordinary D-007 extraction contract.
+
+    A chunk prompt puts the contract at the head and then tens of KB of
+    transcript, so the last thing the model reads is somebody else's finished
+    conversation — and it continues that conversation instead of extracting
+    from it. The failing responses were not refusals or truncations: they were
+    substantial, well-formed status lines in the transcript's own voice
+    ("✅ All 3 agents complete."), 1,085-4,471 output tokens of the wrong shape.
+
+    Measured on the real transcript that produced #664, 5 samples per arm over
+    one chunk, varying ONLY where the contract sits:
+
+        contract at the prompt head (shipped behavior)   0/5 parsed
+        contract as a genuine system role (--system-prompt) 0/5 parsed
+        contract restated after the chunk text           5/5 parsed
+
+    So POSITION is the operative variable, not role — elevating the contract to
+    a real system message does not help (0 of 6 counting the earlier single
+    run), and repeating it last does (6 of 6). Do not "simplify" this into a
+    one-line reminder: _call_and_parse's terse retry note already sits in this
+    position and lost 3 of 3 in the field. The tested intervention is the
+    anti-continuation instruction AND the full contract together; which half
+    carries the weight was not isolated.
+
+    Cost: this repeats the system prompt once per chunk call, after the
+    variable chunk text, so it is not prefix-cacheable. That is the price of
+    the only placement measured to work.
+    """
+    return (
+        "\n\n--- END OF TRANSCRIPT CHUNK ---\n\n"
+        "Now perform the extraction described in the SYSTEM section above. "
+        "Do NOT continue the conversation. Do NOT reply as the assistant in "
+        "that transcript. Your entire response must be the single JSON object "
+        "for this chunk, starting with { and nothing before it.\n\n"
+        "Restated contract:\n" + (system if system is not None else _serialize_sys())
+    )
+
+
 def _merge_sys() -> str:
     if config.scene_traces_enabled():
         return MERGE_SYS + _SCENE_MERGE_ADDENDUM
@@ -2164,7 +2213,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             t0 = time.monotonic()
             partial = _call_and_parse(
                 chat, system,
-                f"session_id: {session_id}\n\n{body}",
+                f"session_id: {session_id}\n\n{body}{_chunk_tail_contract(system)}",
                 deadline, f"perspective {name}, chunk {i + 1} of {len(chunks)}",
             )
             log.info("perspective %s: chunk %d/%d done in %.0fs",
@@ -2192,7 +2241,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             log.info("single-pass serialize: %d lines", len(transcript_text.splitlines()))
             return _call_and_parse(
                 chat, _serialize_sys(),
-                f"session_id: {session_id}\n\nTRANSCRIPT:\n{transcript_text}{note}",
+                f"session_id: {session_id}\n\nTRANSCRIPT:\n{transcript_text}"
+                f"{_chunk_tail_contract()}{note}",
                 deadline, "transcript",
             )
         if partials is None:
@@ -2219,7 +2269,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                 partial = _call_and_parse(
                     chat, _serialize_sys(),
                     f"session_id: {session_id}\n\n"
-                    f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}",
+                    f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
+                    f"{_chunk_tail_contract()}",
                     deadline, f"chunk {i + 1} of {len(chunks)}",
                 )
                 log.info("chunk %d/%d done in %.0fs",
