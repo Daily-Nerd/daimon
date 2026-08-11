@@ -7,7 +7,8 @@ confidence: 0.9
 created: 2026-07-02
 authors: ["claude-code", "Kibukx"]
 anchors:
-  - path: research/experiments/multicycle/
+  - path: research/experiments/multicycle/run_multicycle.py
+  - path: research/experiments/multicycle/test_run.py
   - pattern: "briefing\.build\b"
 violation: "briefing\.build\((?![^)]{0,300}now=)"
 evidence:
