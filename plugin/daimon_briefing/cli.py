@@ -1563,6 +1563,10 @@ def _cmd_reverify(args) -> int:
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
+    # A typed baseline for this verb. Without it reverify's count is
+    # structurally zero, and a zero that measures missing instrumentation
+    # cannot be compared against a UI channel's count later.
+    _note_usage("reverify")
     print(f"reopened {item['id']}: {item.get('text', '')}")
     return 0
 
@@ -3369,7 +3373,8 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
             status = str(evt.get("status") or "")
             kind = str(evt.get("kind") or "")
             ts = str(evt.get("ts") or "")
-            if source == "cli" and kind == "resolution" and store.is_resolved(evt):
+            if (source in store.HUMAN_EVENT_SOURCES and kind == "resolution"
+                    and store.is_resolved(evt)):
                 human += 1
                 human_stamps.append(ts)
             elif source == "serializer" and status == capture.AGENT_VERIFIED_STATUS:

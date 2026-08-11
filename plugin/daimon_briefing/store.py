@@ -1795,6 +1795,24 @@ def forget_hit_stats(project_dir=None) -> dict:
     return out
 
 
+# Event-ledger `source` values whose authority tier is HUMAN. Declared here,
+# beside the writer that stamps the field, so consumers derive one view of
+# "a person decided this" instead of each hardcoding a literal — the same
+# single-declaration shape surfaces.py uses for delete strategies.
+#
+# `ui` is a peer of `cli`, not a replacement: the ledger is append-only and
+# every row already written says `cli`, so the set widens and never renames.
+# It matches refutations.CHANNEL_AUTHORITY["ui"] == "human", which is the
+# same claim in the refutation ledger's own vocabulary. The two vocabularies
+# stay separate on purpose — that ledger's channels distinguish `cli-tty`
+# from `cli-agent`, a split this ledger expresses through `source="agent"`.
+#
+# Widening this set widens WHO counts, never WHAT counts: callers must still
+# filter on `kind` themselves (scar 0025 — kind never isolates a fold on its
+# own), or forget's tombstones and log's freeform rows ride in as decisions.
+HUMAN_EVENT_SOURCES = frozenset({"cli", "ui"})
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "",

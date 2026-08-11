@@ -6244,6 +6244,56 @@ def _res(capsys, monkeypatch, project):
     return json.loads(capsys.readouterr().out)["resolutions"]
 
 
+def test_reverify_records_a_usage_tag(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # Language-contract 7.6 precondition: reverify emitted no usage tag at
+    # all, so its count was structurally zero. A zero that measures missing
+    # instrumentation cannot be compared against anything, which made the
+    # amendment's own falsification condition uncheckable for this verb.
+    from daimon_briefing import store
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/rv")
+    cp = {"working_context": {"open_questions": [{"text": "close then reopen"}]}}
+    store.write_checkpoint("S1", cp, project_dir="/repo/rv")
+    item = store.read_latest(project_dir="/repo/rv")[
+        "working_context"]["open_questions"][0]
+    assert cli.main(["resolve", item["id"], "--project", "/repo/rv"]) == 0
+    assert cli.main(["reverify", item["id"], "--evidence", "checked the release page",
+                     "--project", "/repo/rv"]) == 0
+
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["usage"]["reverify"] == 1
+
+
+def test_stats_resolutions_credits_a_ui_write_as_human(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # Language-contract 7.4 prerequisite: a write surface records source="ui"
+    # rather than impersonating the CLI. Human credit was pinned to
+    # source=="cli", so every click would have dropped out of the counter
+    # silently and `daimon stats` would under-report human decisions the day
+    # a UI ships.
+    _write_events(tmp_checkpoint_dir, "/repo/ui", [
+        {"item_ref": "o-ui", "source": "ui", "kind": "resolution",
+         "status": "resolved", "ts": "2026-08-11T00:00:00Z"},
+    ])
+    assert _res(capsys, monkeypatch, "/repo/ui")["human"] == 1
+
+
+def test_stats_resolutions_ui_source_still_filters_on_kind(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # Widening the source set must not widen the kind set: forget's tombstone
+    # rows and log's freeform rows are not resolve decisions, whichever
+    # channel wrote them (scar 0025 — kind never isolates a fold on its own).
+    _write_events(tmp_checkpoint_dir, "/repo/uikind", [
+        {"item_ref": "o-a", "source": "ui", "kind": "tombstone",
+         "status": "resolved", "ts": "2026-08-11T00:00:00Z"},
+        {"item_ref": "o-b", "source": "ui", "kind": "note",
+         "status": "resolved", "ts": "2026-08-11T00:00:01Z"},
+    ])
+    assert _res(capsys, monkeypatch, "/repo/uikind")["human"] == 0
+
+
 def test_stats_resolutions_reports_when_agent_credit_became_possible(
         tmp_checkpoint_dir, capsys, monkeypatch):
     # #562: a lifetime fold spanning the agent path's arrival reads as human
