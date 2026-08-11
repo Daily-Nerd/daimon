@@ -764,6 +764,124 @@ def test_call_and_parse_empty_output_error_skipped_when_deadline_exhausted():
     assert len(calls) == 1  # no second call once the deadline is gone
 
 
+# --- #663: unparseable output reaches the rescue, like a backend failure -----
+
+
+def test_call_and_parse_rescues_unparseable_output_via_the_fallback(
+        fake_chat_factory, monkeypatch):
+    # chat() returns a string, so its own rescue never fires. Once both parse
+    # attempts are spent, the configured fallback is the only thing left that
+    # could still produce a checkpoint.
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(["not json at all", "still not json"])
+    rescues = []
+
+    def fake_rescue(messages, deadline):
+        rescues.append(messages)
+        return _valid_checkpoint_json("S1")
+
+    monkeypatch.setattr(llm, "rescue_unparseable", fake_rescue)
+    ckpt = serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert ckpt is not None and ckpt["session_id"] == "S1"
+    assert len(chat.calls) == 2   # both parse attempts spent on the primary first
+    assert len(rescues) == 1      # ONE hop, never a chain
+
+
+def test_call_and_parse_still_raises_when_no_rescue_is_configured(
+        fake_chat_factory, monkeypatch):
+    # Regression guard: an install with no fallback must keep today's named
+    # failure, not a new one about the rescue.
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(["nope", "nope"])
+
+    def no_rescue(messages, deadline):
+        raise llm.NoRescueAvailable("no rescue configured for unparseable output")
+
+    monkeypatch.setattr(llm, "rescue_unparseable", no_rescue)
+    with pytest.raises(serializer.OutputParseError, match="unparseable model output"):
+        serializer.serialize_strict("S1", make_messages(20), chat=chat)
+
+
+def test_call_and_parse_raises_original_error_when_the_rescue_is_also_unparseable(
+        fake_chat_factory, monkeypatch):
+    # The rescue is one hop. A fallback that also returns prose does not earn
+    # another attempt, and the operator sees the original named failure.
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(["nope", "nope"])
+    rescues = []
+
+    def fake_rescue(messages, deadline):
+        rescues.append(messages)
+        return "the fallback returned prose too"
+
+    monkeypatch.setattr(llm, "rescue_unparseable", fake_rescue)
+    with pytest.raises(serializer.OutputParseError, match="unparseable model output"):
+        serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert len(rescues) == 1
+
+
+def test_call_and_parse_rescues_output_that_parses_to_a_non_object(
+        fake_chat_factory, monkeypatch):
+    # A response can be valid JSON and still be the wrong shape — a bare array
+    # parses fine and is not a checkpoint. Same rescue as unparseable prose:
+    # the primary produced something well formed and unusable.
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(["[1, 2, 3]", "[4, 5, 6]"])
+    rescues = []
+
+    def fake_rescue(messages, deadline):
+        rescues.append(messages)
+        return _valid_checkpoint_json("S1")
+
+    monkeypatch.setattr(llm, "rescue_unparseable", fake_rescue)
+    ckpt = serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert ckpt is not None and ckpt["session_id"] == "S1"
+    assert len(chat.calls) == 2
+    assert len(rescues) == 1
+
+
+def test_call_and_parse_non_object_without_a_rescue_keeps_its_named_error(
+        fake_chat_factory, monkeypatch):
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(["[1, 2, 3]", "[4, 5, 6]"])
+
+    def no_rescue(messages, deadline):
+        raise llm.NoRescueAvailable("no rescue configured for unparseable output")
+
+    monkeypatch.setattr(llm, "rescue_unparseable", no_rescue)
+    with pytest.raises(serializer.OutputParseError,
+                       match="is not a JSON object"):
+        serializer.serialize_strict("S1", make_messages(20), chat=chat)
+
+
+def test_call_and_parse_skips_the_rescue_when_the_deadline_is_gone(
+        fake_chat_factory, monkeypatch):
+    # A dead deadline makes the rescue hop pointless, the same guard the parse
+    # retry already applies.
+    import time
+
+    from daimon_briefing import llm
+
+    rescues = []
+    monkeypatch.setattr(llm, "rescue_unparseable",
+                        lambda m, d: rescues.append(m))
+
+    def slow_prose_chat(chat_messages, **kwargs):
+        time.sleep(0.15)
+        return "not json"
+
+    deadline = time.monotonic() + 0.05
+    with pytest.raises(serializer.OutputParseError):
+        serializer.serialize_strict("S1", make_messages(20),
+                                    chat=slow_prose_chat, deadline=deadline)
+    assert rescues == []
+
+
 # --- Live progress logging (40-min runs need a heartbeat) --------------------
 
 
