@@ -823,6 +823,42 @@ def test_call_and_parse_raises_original_error_when_the_rescue_is_also_unparseabl
     assert len(rescues) == 1
 
 
+def test_call_and_parse_rescues_output_that_parses_to_a_non_object(
+        fake_chat_factory, monkeypatch):
+    # A response can be valid JSON and still be the wrong shape — a bare array
+    # parses fine and is not a checkpoint. Same rescue as unparseable prose:
+    # the primary produced something well formed and unusable.
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(["[1, 2, 3]", "[4, 5, 6]"])
+    rescues = []
+
+    def fake_rescue(messages, deadline):
+        rescues.append(messages)
+        return _valid_checkpoint_json("S1")
+
+    monkeypatch.setattr(llm, "rescue_unparseable", fake_rescue)
+    ckpt = serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert ckpt is not None and ckpt["session_id"] == "S1"
+    assert len(chat.calls) == 2
+    assert len(rescues) == 1
+
+
+def test_call_and_parse_non_object_without_a_rescue_keeps_its_named_error(
+        fake_chat_factory, monkeypatch):
+    from daimon_briefing import llm
+
+    chat = fake_chat_factory(["[1, 2, 3]", "[4, 5, 6]"])
+
+    def no_rescue(messages, deadline):
+        raise llm.NoRescueAvailable("no rescue configured for unparseable output")
+
+    monkeypatch.setattr(llm, "rescue_unparseable", no_rescue)
+    with pytest.raises(serializer.OutputParseError,
+                       match="is not a JSON object"):
+        serializer.serialize_strict("S1", make_messages(20), chat=chat)
+
+
 def test_call_and_parse_skips_the_rescue_when_the_deadline_is_gone(
         fake_chat_factory, monkeypatch):
     # A dead deadline makes the rescue hop pointless, the same guard the parse
