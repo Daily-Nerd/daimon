@@ -41,6 +41,16 @@ class DeadlineExhausted(ChatError):
     expiry as budget expiry instead of blaming a healthy gateway."""
 
 
+class NoRescueAvailable(ChatError):
+    """rescue_unparseable() was asked for a fallback and none is configured.
+
+    A ChatError subclass so a caller that only wants "the rescue did not
+    produce anything" can catch broadly, but distinguishable so a caller can
+    tell NOTHING WAS TRIED apart from THE RESCUE ALSO FAILED. The serializer
+    needs that distinction to decide whether its own OutputParseError is
+    still the honest thing to raise (#663)."""
+
+
 class EmptyOutputError(ChatError):
     """The command backend returned rc=0 with empty (or whitespace-only) stdout.
 
@@ -451,6 +461,33 @@ def _rescue(messages, deadline, exc, primary_label):
         deadline = max(deadline,
                        time.monotonic() + config.fallback_min_seconds())
     return _chat_command(messages, deadline, resolved=fallback)
+
+
+def rescue_unparseable(messages, deadline):
+    """Hand a SUCCESSFUL-but-unusable primary response to the fallback (#663).
+
+    chat()'s rescue only fires from its two `except ChatError` branches, so it
+    covers everything that goes wrong INSIDE chat() — transport failures, a
+    non-zero exit, and rc=0-with-empty-stdout, which is a content failure that
+    reaches the rescue because EmptyOutputError subclasses ChatError. What it
+    cannot see is a response that arrives intact and turns out to be unusable:
+    by then chat() has already returned a string, and the caller discovers the
+    problem on its own. The field case was a backend returning `rc=0`,
+    `is_error: false`, `subtype: success` and prose where JSON belonged; the
+    session stayed unserializable across repeated heals while a configured
+    fallback sat unused.
+
+    Same one hop as chat()'s rescue, and deliberately routed through _rescue
+    so the three things that must travel together cannot drift: the
+    ledger-matched log literal, the _fallback_used flag, and the #341 deadline
+    re-arm. Raises NoRescueAvailable when no fallback resolves, so the caller
+    can tell "nothing was tried" from "the rescue also failed".
+    """
+    return _rescue(
+        messages, deadline,
+        NoRescueAvailable("no rescue configured for unparseable output"),
+        "primary returned unparseable output",
+    )
 
 
 def chat(messages, model=None, temperature=None, timeout=None, retries=3, deadline=None):

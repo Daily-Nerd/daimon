@@ -1880,3 +1880,43 @@ def test_rescue_posture_reresolves_liveness_every_call(monkeypatch):
     assert llm.rescue_posture() == "covered"
     live["resolves"] = False
     assert llm.rescue_posture() == "none"
+
+
+# ---- #663: a well-formed response with unusable content reaches the rescue ---
+
+
+def test_rescue_unparseable_routes_to_the_fallback(monkeypatch, caplog):
+    # The primary returned rc=0 and a successful envelope, so chat() never
+    # raised and never consulted the fallback. The caller that discovers the
+    # content is unusable needs its own way in.
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command",
+                        lambda: ("rescuecli", "text", "stdin"))
+    seen = {}
+
+    def fake_command(messages, deadline, resolved=None):
+        seen["resolved"] = resolved
+        return "FALLBACK"
+
+    monkeypatch.setattr(llm, "_chat_command", fake_command)
+    llm.reset_fallback()
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
+        out = llm.rescue_unparseable([{"role": "user", "content": "x"}], None)
+    assert out == "FALLBACK"
+    assert seen["resolved"] == ("rescuecli", "text", "stdin")
+    assert llm.fallback_used() is True
+    # The ledger counts rescues by matching this literal (ledger.py).
+    msgs = [r.getMessage() for r in caplog.records if "llm.fallback" in r.getMessage()]
+    assert msgs and msgs[0].startswith("llm.fallback backend=command")
+    assert "unparseable" in msgs[0]
+
+
+def test_rescue_unparseable_without_a_fallback_raises_no_rescue(monkeypatch):
+    # No fallback configured: the caller must be able to tell "nothing tried"
+    # apart from "the rescue also failed", so it can raise its own error.
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_resolve_fallback_command", lambda: None)
+    llm.reset_fallback()
+    with pytest.raises(llm.NoRescueAvailable):
+        llm.rescue_unparseable([{"role": "user", "content": "x"}], None)
+    assert llm.fallback_used() is False

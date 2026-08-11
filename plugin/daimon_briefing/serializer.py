@@ -1592,6 +1592,39 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 deadline is None or deadline - time.monotonic() > 0
             )
 
+        def _try_rescue():
+            """One fallback hop for a primary that returned unusable output.
+
+            chat()'s own rescue fires only from its `except ChatError`
+            branches, so it never sees a response that arrives intact and
+            turns out to be prose: by then chat() has returned a string. The
+            field case left a session unserializable across repeated heals
+            while a configured fallback sat unused (#663).
+
+            The fallback gets the PRISTINE user content, not the marked-up
+            retry text — the retry marker apologises for a previous response
+            this backend never produced, and its nonce exists to defeat a
+            gateway cache the fallback does not share.
+
+            Returns None for every "no usable checkpoint" outcome, including
+            no fallback configured, so the caller keeps raising its own named
+            error rather than a new one about the rescue.
+            """
+            if deadline is not None and deadline - time.monotonic() <= 0:
+                return None
+            try:
+                rescued = llm.rescue_unparseable(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_content},
+                    ],
+                    deadline,
+                )
+                parsed_rescue = llm.extract_json(rescued)
+            except (llm.ChatError, json.JSONDecodeError, ValueError, TypeError):
+                return None
+            return parsed_rescue if isinstance(parsed_rescue, dict) else None
+
         try:
             raw = chat(
                 [
@@ -1620,6 +1653,11 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 log.warning("unparseable output on %s (attempt %d/%d), "
                             "retrying with cache-buster", what, attempt, attempts)
                 continue
+            rescued = _try_rescue()
+            if rescued is not None:
+                log.warning("rescued unparseable output on %s via the fallback "
+                            "(#663)", what)
+                return rescued
             raise OutputParseError(
                 f"unparseable model output on {what} after {attempt} attempts: {exc}"
             ) from exc
@@ -1628,6 +1666,11 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 log.warning("unparseable output on %s (attempt %d/%d), "
                             "retrying with cache-buster", what, attempt, attempts)
                 continue
+            rescued = _try_rescue()
+            if rescued is not None:
+                log.warning("rescued non-object output on %s via the fallback "
+                            "(#663)", what)
+                return rescued
             raise OutputParseError(
                 f"model output on {what} is not a JSON object after {attempt} attempts"
             )
