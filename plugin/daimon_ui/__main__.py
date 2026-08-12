@@ -40,5 +40,5 @@ def main(argv=None):
         pass
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — exercised only as a script
     main()

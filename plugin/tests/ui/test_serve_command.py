@@ -24,9 +24,10 @@ def test_serve_subcommand_delegates_to_daimon_ui(monkeypatch, tmp_path):
     import daimon_ui.__main__ as ui_main
     monkeypatch.setattr(ui_main, "main", fake_ui_main)
     rc = cli.main(["serve", "--no-browser", "--port", "7800",
-                   "--data-dir", str(tmp_path)])
+                   "--data-dir", str(tmp_path), "--project-dir", str(tmp_path)])
     assert rc == 0
     assert "--no-browser" in captured["argv"]
+    assert "--project-dir" in captured["argv"]
     assert ["--port", "7800"] == captured["argv"][
         captured["argv"].index("--port"):captured["argv"].index("--port") + 2]
     assert str(tmp_path) in captured["argv"]

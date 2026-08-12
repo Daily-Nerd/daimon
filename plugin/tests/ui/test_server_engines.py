@@ -116,3 +116,38 @@ def test_why_missing_id_is_an_error(engine_srv):
     out = _get(engine_srv, "/api/why")
     assert out["ok"] is False
     assert set(out["error"]) == {"what", "why", "fix"}
+
+
+def test_recall_rejects_unknown_project_slug(engine_srv):
+    out = _get(engine_srv, "/api/recall?project=-nope&q=sqlite")
+    assert out["ok"] is False
+    assert set(out["error"]) == {"what", "why", "fix"}
+
+
+def test_recall_whitespace_query_is_an_error(engine_srv):
+    out = _get(engine_srv, "/api/recall?q=%20%20")
+    assert out["ok"] is False
+
+
+def test_recall_engine_failure_is_an_error_shape(engine_srv, monkeypatch):
+    from daimon_briefing import recall as recall_mod
+
+    def boom(*a, **k):
+        raise recall_mod.RecallError("no FTS5")
+
+    monkeypatch.setattr(recall_mod, "search", boom)
+    out = _get(engine_srv, "/api/recall?q=sqlite")
+    assert out["ok"] is False
+    assert "FTS5" in out["error"]["fix"]
+
+
+def test_why_rejects_unknown_project_slug(engine_srv):
+    out = _get(engine_srv, "/api/why?project=-nope&id=d-0a1b2c3d4e5f")
+    assert out["ok"] is False
+    assert set(out["error"]) == {"what", "why", "fix"}
+
+
+def test_recall_zero_limit_is_an_error(engine_srv):
+    out = _get(engine_srv, "/api/recall?q=sqlite&limit=0")
+    assert out["ok"] is False
+    assert set(out["error"]) == {"what", "why", "fix"}
