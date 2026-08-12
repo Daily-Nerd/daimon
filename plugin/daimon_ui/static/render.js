@@ -180,7 +180,10 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var isCurrent = p.slug === state.defaultSlug;
     var torn = p.active_topic == null && p.created == null && p.item_count == null;
     var chip = isCurrent ? '<span class="proj-chip">current dir</span>' : "";
-    var name = '<span class="proj-name">' + escapeHtml(slugTail(p.slug)) + "</span>";
+    // #672: prefer the write-time stamped name; the slug tail stays only as
+    // the fallback for buckets written before the stamp existed.
+    var name = '<span class="proj-name">' +
+      escapeHtml(p.project_name || slugTail(p.slug)) + "</span>";
     var age = !torn && p.created
       ? '<span class="proj-age">' + escapeHtml(fmtRelative(p.created)) + "</span>" : "";
     var topic = torn ? "Unreadable checkpoint" : (p.active_topic || "(untitled)");

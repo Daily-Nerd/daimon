@@ -97,3 +97,22 @@ def test_list_buckets_item_count_correctness(multi_buckets):
 
 def test_list_buckets_empty_data_dir(tmp_path):
     assert reader.list_buckets(tmp_path / "nope") == []
+
+
+def test_list_buckets_carries_project_name(tmp_path):
+    # #672: the write-time stamp reaches the grid; absent stamp = None so the
+    # client can fall back to its slug-tail display.
+    import json
+    d = tmp_path / "checkpoints"
+    named = d / "-p-named"
+    named.mkdir(parents=True)
+    (named / "latest.json").write_text(json.dumps(
+        {"session_id": "S", "project_name": "My Proj", "created": "2026-08-01T00:00:00Z"}))
+    anon = d / "-p-anon"
+    anon.mkdir()
+    (anon / "latest.json").write_text(json.dumps(
+        {"session_id": "S2", "created": "2026-08-02T00:00:00Z"}))
+    from daimon_ui import reader
+    by_slug = {b["slug"]: b for b in reader.list_buckets(d)}
+    assert by_slug["-p-named"]["project_name"] == "My Proj"
+    assert by_slug["-p-anon"]["project_name"] is None

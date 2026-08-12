@@ -1100,6 +1100,14 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     slug = project_slug(project_dir)
     if slug:
         checkpoint.setdefault("project_slug", slug)
+        # #672: the slug is a lossy flattening (slash, space, and hyphen all
+        # collapse to "-"), so the directory's real name is recoverable only
+        # here, at the write boundary. Optional additive field; readers fall
+        # back to slug-derived display when absent. Guarded by `slug` so the
+        # unknown-project convention stays: absent field = unknown.
+        name = Path(project_dir).name
+        if name:
+            checkpoint.setdefault("project_name", name)
     # Stamp the git branch at capture time (#222), same idempotent setdefault
     # shape. Capture-side only — read-side filtering is a follow-up. Resolved
     # from `project_dir` (the session's OWN project), never os.getcwd(): heal

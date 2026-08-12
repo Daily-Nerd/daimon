@@ -817,8 +817,12 @@ def projects_rows(project_arg=None) -> list:
         cp = b["checkpoint"] or {}
         created = cp.get("created")
         topic = ((cp.get("working_context") or {}).get("active_topic") or {})
+        name = cp.get("project_name")
         rows.append({
             "slug": b["slug"],
+            # #672 write-time stamp; None when the bucket predates it — never
+            # a slug-derived guess, the flattening is not invertible.
+            "name": name if isinstance(name, str) and name else None,
             "session_id": cp.get("session_id"),
             "created": created if isinstance(created, str) else None,
             "git_branch": cp.get("git_branch"),
@@ -856,6 +860,7 @@ def _cmd_projects(args) -> int:
             topic = topic[:_TOPIC_TEASER_CHARS - 1] + "…"
         display.append({
             "mark": "*" if r["current"] else " ",
+            "name": r["name"] or "—",
             "slug": r["slug"], "age": age,
             "branch": r["git_branch"] or "—", "topic": topic or "?",
         })
