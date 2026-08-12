@@ -156,3 +156,22 @@ def test_unreadable_session_files_land_in_partial(ledger_history):
     result = reader.project_ledger(d, slug)
     assert result["ok"] is True
     assert any("read" in p for p in result["partial"])
+
+def test_walk_skips_a_session_that_tears_between_listing_and_reading(ledger_history, monkeypatch):
+    """project_history lists from filenames; a file torn (or deleted) between
+    that listing and the walk's read must be skipped, not abort the ledger."""
+    d, slug = ledger_history
+    real = reader._load_session
+
+    def flaky(data_dir, sid):
+        if sid == "s2-bbbb":
+            return None, {"what": "torn", "why": "torn", "fix": "heal"}
+        return real(data_dir, sid)
+
+    monkeypatch.setattr(reader, "_load_session", flaky)
+    result = reader.project_ledger(d, slug)
+    assert result["ok"] is True
+    # s2 never scanned: o-ccc is first seen at s3 instead, and no changed
+    # event for o-aaa exists anywhere.
+    ids = {r["id"] for g in result["groups"] for r in g["rows"]}
+    assert "o-ccc333ccc333" in ids

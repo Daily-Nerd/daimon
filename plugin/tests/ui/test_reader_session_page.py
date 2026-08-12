@@ -63,6 +63,21 @@ def test_session_objects_carry_the_recall_kind_word(session_history):
     kinds = {o["id"]: o["kind"] for o in result["objects"]}
     assert set(kinds.values()) == {"question"}  # fixture items are open_questions
 
+def test_session_torn_between_validation_and_read_reports_the_error(session_history, monkeypatch):
+    """sid passes the history exact-match, then the file tears before the page's
+    own read: the reader must hand back the load error, not crash or invent."""
+    d, slug = session_history
+
+    def gone(data_dir, sid):
+        return None, {"what": f"Session {sid} doesn't exist.",
+                      "why": "No checkpoint file was found for that session.",
+                      "fix": "Pick a session from the project's history."}
+
+    monkeypatch.setattr(reader, "_load_session", gone)
+    result = reader.session_events(d, slug, "s2-bbbb")
+    assert result["ok"] is False
+    assert "doesn't exist" in result["error"]["what"]
+
 def test_changed_event_names_the_fields(session_history):
     d, slug = session_history
     result = reader.session_events(d, slug, "s2-bbbb")

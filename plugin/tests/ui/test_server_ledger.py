@@ -27,6 +27,11 @@ def test_session_serves_one_sessions_events(srv_flat):
     assert data["session"]["active_topic"] == "day two"
     assert "objects" in data and "counts" in data
 
+def test_session_refuses_unknown_project(srv_flat):
+    data = _get_json(srv_flat + "/api/session?project=..%2F..%2Fetc&sid=bbbb-2222")
+    assert data["ok"] is False
+    assert "isn't one this inspector knows" in data["error"]["what"]
+
 def test_session_requires_a_sid(srv_flat):
     data = _get_json(srv_flat + "/api/session?project=-tmp-proj")
     assert data["ok"] is False
