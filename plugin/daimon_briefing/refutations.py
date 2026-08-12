@@ -703,6 +703,22 @@ def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
     return event
 
 
+def listing(*, states=None, project_dir=None) -> list[dict]:
+    """Every record in `refute list` order: active first, then most recently
+    updated, ties broken by id. This sort is the CLI's presentation contract;
+    it lives here so the viewer's lane and the CLI cannot drift apart."""
+    wanted = set(states or STATES)
+    unknown = wanted - STATES
+    if unknown:
+        raise RefutationError(f"unknown state: {', '.join(sorted(unknown))}")
+    rows = [row for row in records(project_dir=project_dir).values()
+            if row["state"] in wanted]
+    rows.sort(key=lambda row: (row.get("state") != "active",
+                               row.get("updated_at") or "",
+                               row["refutation_id"]))
+    return rows
+
+
 def search(query: str, *, project_dir=None, states=None) -> list[dict]:
     query = _text("query", query)
     wanted = set(states or STATES)

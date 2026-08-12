@@ -556,44 +556,68 @@
     min-width: 0;
   }
 
-  .tag-chip {
-    display: inline-block;
-    margin-right: var(--s2);
+  /* Diff view (#670 slice 3): sign | kind | entry rows. No judgment paint —
+     added/changed/dropped are statuses the ledger records, not verdicts. */
+  .diff-cols {
+    display: grid;
+    grid-template-columns: 26px 92px 1fr;
+    gap: 14px;
+    padding: 7px 18px;
+    border-bottom: 1px solid var(--border-subtle);
     font-family: var(--mono);
-    font-size: var(--fs-xs);
+    font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.05em;
-    border-radius: 4px;
-    padding: 0 var(--s1);
-  }
-
-  .t-born { background: var(--accent-wash); color: var(--accent-chip-text); border: 1px solid var(--accent); }
-  .t-resolved { background: var(--amber-wash); color: var(--amber-chip-text); border: 1px solid var(--amber); }
-  .t-carried { background: none; color: var(--ink-tertiary); border: 1px dashed var(--border-inferred); }
-  /* Contract §8.4: LAST SEEN is a status, not a failure — danger paint here
-     rendered a judgment no word supplies (rule 1). Solid border against
-     .t-carried's dashed keeps the two states distinguishable without colour. */
-  .t-gone { background: none; color: var(--ink-tertiary); border: 1px solid var(--border-inferred); }
-  .t-trust { background: var(--accent-wash); color: var(--accent-chip-text); border: 1px solid var(--accent); }
-
-  .hist-note {
-    margin-top: var(--s1);
-    max-width: 65ch;
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
-    color: var(--ink-secondary);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .hist-suffix {
-    margin-left: var(--s2);
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     color: var(--ink-tertiary);
   }
+  .diff-rows { display: flex; flex-direction: column; }
+  .diff-row {
+    display: grid;
+    grid-template-columns: 26px 92px 1fr;
+    align-items: baseline;
+    gap: 14px;
+    width: 100%;
+    text-align: left;
+    padding: 12px 18px;
+    border: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    background: none;
+    color: var(--ink);
+    font: inherit;
+  }
+  button.diff-row { cursor: pointer; transition: background var(--transition); }
+  button.diff-row:hover { background: var(--surface-hover); }
+  .diff-row:last-child { border-bottom: 0; }
+  .diff-sign { font-family: var(--mono); font-size: 14px; color: var(--ink-secondary); }
+  .diff-kind { font-family: var(--mono); font-size: 11.5px; color: var(--ink-secondary); }
+  .diff-entry { min-width: 0; }
+  .diff-old {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-tertiary);
+    text-decoration: line-through;
+    text-decoration-color: var(--border-strong);
+    overflow-wrap: anywhere;
+  }
+  .diff-text { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+  .diff-text-dim { color: var(--ink-secondary); }
+  .diff-trans { margin-top: 3px; font-size: 13px; line-height: 1.5; color: var(--ink-secondary); }
+  .diff-meta { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--ink-tertiary); }
+  .diff-meta .glyph { vertical-align: baseline; }
+
+  /* LIFE rungs: a session-written rung is a door into its pairwise diff. */
+  .life-rung {
+    background: none;
+    border: 0;
+    padding: 0;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+  .life-rung:hover .life-label { color: var(--accent); }
+  .rung-lit .life-body { border-left: 2px solid var(--accent); padding-left: 11px; }
 
   .history-btn {
     display: inline-block;
@@ -1043,3 +1067,149 @@
     padding: 0 var(--s1);
     vertical-align: 1px;
   }
+
+  /* Refutations lane: Record | Refutes | Recorded | Origin */
+  .refut-cols {
+    display: grid;
+    grid-template-columns: 190px 1fr 130px 110px;
+    gap: 14px;
+    padding: 7px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-tertiary);
+  }
+  .refut-rows { display: flex; flex-direction: column; }
+  .refut-row {
+    display: grid;
+    grid-template-columns: 190px 1fr 130px 110px;
+    align-items: baseline;
+    gap: 14px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .refut-row:last-child { border-bottom: 0; }
+  .refut-record { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .refut-record .obj-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .refut-state { font-family: var(--mono); font-size: 10.5px; color: var(--ink-tertiary); }
+  .refut-subject { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+  .refut-anchors { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .refut-anchor {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .refut-anchor:hover { text-decoration: underline; }
+  .refut-anchor-raw { color: var(--ink-tertiary); cursor: default; }
+  .refut-anchor-raw:hover { text-decoration: none; }
+  .refut-at, .refut-origin { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+
+  @media (max-width: 720px) {
+    .refut-cols { display: none; }
+    .refut-row { grid-template-columns: 1fr; }
+  }
+
+  /* Check strip: object × checkpoint lanes. Marks reuse the trust-glyph
+     language; the lane line goes dashed after a departure. */
+  .strip-grid {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 12px 16px;
+    align-items: center;
+    padding: 14px 18px 8px;
+  }
+  .strip-heads { display: grid; justify-items: center; }
+  .strip-col-head {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .strip-col-current { color: var(--accent); }
+  .strip-obj {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .strip-obj-gone { color: var(--ink-tertiary); }
+  .strip-lane {
+    position: relative;
+    height: 22px;
+    display: grid;
+    justify-items: center;
+    align-items: center;
+  }
+  .strip-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border-subtle);
+  }
+  .strip-line-gone {
+    background: repeating-linear-gradient(to right, var(--border-subtle) 0 3px, transparent 3px 7px);
+  }
+  .strip-mark {
+    position: relative;
+    width: 9px;
+    height: 9px;
+    padding: 0;
+    border: 0;
+    background: var(--ink-secondary);
+    cursor: pointer;
+  }
+  .strip-mark:hover { box-shadow: 0 0 0 3px var(--surface-hover); }
+  .strip-mark-inferred, .strip-mark-check {
+    background: var(--bg);
+    border: 1px solid var(--ink-secondary);
+  }
+  .strip-mark-untagged {
+    background: var(--bg);
+    border: 1px dashed var(--ink-tertiary);
+  }
+  .strip-tick {
+    position: absolute;
+    left: 50%;
+    top: -7px;
+    width: 1px;
+    height: 22px;
+    background: var(--border-strong);
+  }
+  .strip-hover {
+    margin-top: 16px;
+    padding: 12px 15px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .strip-hover-meta { font-family: var(--mono); font-size: 11px; color: var(--ink-tertiary); }
+  .strip-hover-text { font-size: 13px; line-height: 1.5; }
+  .strip-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    padding: 14px 2px 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-tertiary);
+  }
+  .strip-legend > span { display: inline-flex; align-items: center; gap: 7px; }
+  .strip-legend .glyph { margin: 0; }
+  .strip-tick-legend { position: static; width: 1px; height: 12px; display: inline-block; }
+  .strip-line-legend { position: static; width: 14px; height: 1px; display: inline-block; }

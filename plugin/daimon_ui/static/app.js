@@ -1,8 +1,8 @@
 import {
-  ACT_ITEM_ID_RE, escapeHtml, fmtRelative, navCurrent, renderBioPanel,
-  renderEmptyProjects, renderError, renderLedgerSessions, renderLedgerView, renderProjCard,
-  renderSearchResults, renderSections, renderSessionView, renderSidebarScope, renderWhyView,
-  skeletonHtml
+  ACT_ITEM_ID_RE, displaySid, escapeHtml, fmtRelative, navCurrent, renderBioPanel,
+  renderDiffView, renderEmptyProjects, renderError, renderLedgerSessions, renderLedgerView,
+  renderProjCard, renderRefutationsView, renderSearchResults, renderSections,
+  renderSessionView, renderSidebarScope, renderStripView, renderWhyView, skeletonHtml
 } from "./render.js";
 import { state } from "./state.js";
 
@@ -78,9 +78,12 @@ import { state } from "./state.js";
     var slot = document.getElementById("nav-pills-slot");
     slot.innerHTML = "";
     var inProject = state.currentSlug &&
-      ["project", "ledger", "session", "search", "why"].indexOf(state.view) !== -1;
+      ["project", "ledger", "session", "search", "why", "refutations", "diff", "strip"].indexOf(state.view) !== -1;
     if (!inProject) return;
-    [["briefing", "project", goBriefing], ["ledger", "ledger", enterLedger]].forEach(function (pill) {
+    // Pill order is the frozen chrome: briefing · ledger · check strip · refutations.
+    [["briefing", "project", goBriefing], ["ledger", "ledger", enterLedger],
+     ["check strip", "strip", enterStrip],
+     ["refutations", "refutations", enterRefutations]].forEach(function (pill) {
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "nav-pill";
@@ -174,6 +177,219 @@ import { state } from "./state.js";
     Array.prototype.forEach.call(container.querySelectorAll("[data-open-session][data-sid]"), function (btn) {
       btn.addEventListener("click", function () { enterSession(btn.dataset.sid); });
     });
+  }
+  // ---- diff view (#670 slice 3): hangs off the LIFE ladder, no pill ----
+  // Ordered oldest -> newest is what the reader expects: a must precede b.
+  // Sessions arrive newest-first, so a HIGHER index is OLDER.
+  function orderPair(a, b) {
+    var ids = state.diffSessions.map(function (s) { return s.session_id; });
+    var ia = ids.indexOf(a), ib = ids.indexOf(b);
+    if (ia !== -1 && ib !== -1 && ia < ib) return { a: b, b: a };
+    return { a: a, b: b };
+  }
+  function enterDiff(a, b) {
+    if (!state.currentSlug || !a || !b || a === b) return;
+    var slug = state.currentSlug;
+    state.view = "diff";
+    state.requestId += 1;
+    var reqId = state.requestId;
+    renderNavPills();
+    var stateEl = document.getElementById("state");
+    var sectionsEl = document.getElementById("sections");
+    var mainEl = document.getElementById("main");
+    mainEl.setAttribute("aria-busy", "true");
+    if (state.pendingTimer) clearTimeout(state.pendingTimer);
+    state.pendingTimer = setTimeout(function () {
+      if (reqId !== state.requestId) return;
+      stateEl.innerHTML = skeletonHtml();
+    }, 1000);
+    Promise.all([
+      api("/api/history?project=" + encodeURIComponent(slug)),
+      api("/api/diff?project=" + encodeURIComponent(slug) +
+        "&a=" + encodeURIComponent(a) + "&b=" + encodeURIComponent(b))
+    ]).then(function (results) {
+      if (reqId !== state.requestId) return; // superseded by a newer navigation
+      clearTimeout(state.pendingTimer);
+      mainEl.removeAttribute("aria-busy");
+      var hist = results[0], diff = results[1];
+      state.diffSessions = hist.sessions || [];
+      state.diffUnreadable = hist.unreadable || 0;
+      state.diffPick = orderPair(a, b);
+      stateEl.innerHTML = "";
+      if (!diff.ok) {
+        sectionsEl.innerHTML = "";
+        showError(stateEl, diff.error);
+        return;
+      }
+      sectionsEl.innerHTML = renderDiffView(diff, state.diffSessions, state.diffPick, state.diffUnreadable);
+      toTop();
+      announce("Diff loaded.");
+      wireDiffView(sectionsEl);
+    }).catch(function () {
+      if (reqId !== state.requestId) return;
+      clearTimeout(state.pendingTimer);
+      mainEl.removeAttribute("aria-busy");
+      sectionsEl.innerHTML = "";
+      showError(stateEl, {
+        what: "Could not load the diff.",
+        why: "The request to the daimon server failed.",
+        fix: "Check the server is running and try again."
+      });
+    });
+  }
+  function wireDiffView(container) {
+    var back = container.querySelector("[data-diff-back]");
+    if (back) back.addEventListener("click", enterLedger);
+    Array.prototype.forEach.call(container.querySelectorAll(".sess-pick"), function (sel) {
+      sel.addEventListener("change", function () {
+        var pick = { a: state.diffPick.a, b: state.diffPick.b };
+        pick[sel.dataset.pick] = sel.value;
+        var ordered = orderPair(pick.a, pick.b);
+        enterDiff(ordered.a, ordered.b);
+      });
+    });
+    // A diff row opens its entry with the source rung lit: the entry's LIFE
+    // ladder highlights the newer checkpoint of the pair the row came from.
+    Array.prototype.forEach.call(container.querySelectorAll(".diff-row[data-item-id]"), function (btn) {
+      btn.addEventListener("click", function () {
+        state.whyHighlightSid = state.diffPick.b;
+        openWhy(btn.dataset.itemId);
+      });
+    });
+  }
+  // A LIFE rung opens the diff between the sighting before it and itself.
+  // The previous sighting comes from the item's own chain; an item's first
+  // sighting falls back to the previous session on disk, which shows it
+  // as added — the same attribution the ledger already makes.
+  function wireRungOpeners(panel, bio) {
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-diff-sid]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var sid = btn.dataset.diffSid;
+        var chain = (bio.trust_anatomy && bio.trust_anatomy.chain) || [];
+        var idx = -1;
+        chain.forEach(function (link, i) { if (link.session_id === sid) idx = i; });
+        var prev = idx > 0 ? chain[idx - 1].session_id : null;
+        if (prev) { enterDiff(prev, sid); return; }
+        // First sighting: the previous session on disk. The ledger's session
+        // list may not be loaded yet (entry opened from the briefing), so
+        // fetch the same /api/history list the ledger uses.
+        api("/api/history?project=" + encodeURIComponent(state.currentSlug || state.defaultSlug))
+          .then(function (hist) {
+            var ids = (hist.sessions || []).map(function (s) { return s.session_id; });
+            var at = ids.indexOf(sid);
+            var older = at !== -1 ? ids[at + 1] : null; // newest-first: +1 is older
+            if (older) enterDiff(older, sid);
+          }).catch(function () { /* no diff pair reachable — the rung stays inert */ });
+      });
+    });
+  }
+  // ---- check strip (#670 slice 3): object × checkpoint lanes ----
+  function enterStrip() {
+    if (!state.currentSlug) return;
+    var slug = state.currentSlug;
+    state.view = "strip";
+    state.requestId += 1;
+    var reqId = state.requestId;
+    renderNavPills();
+    var stateEl = document.getElementById("state");
+    var sectionsEl = document.getElementById("sections");
+    var mainEl = document.getElementById("main");
+    mainEl.setAttribute("aria-busy", "true");
+    if (state.pendingTimer) clearTimeout(state.pendingTimer);
+    state.pendingTimer = setTimeout(function () {
+      if (reqId !== state.requestId) return;
+      stateEl.innerHTML = skeletonHtml();
+    }, 1000);
+    api("/api/grid?project=" + encodeURIComponent(slug))
+      .then(function (data) {
+        if (reqId !== state.requestId) return; // superseded by a newer navigation
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        stateEl.innerHTML = "";
+        if (!data.ok) {
+          sectionsEl.innerHTML = "";
+          showError(stateEl, data.error);
+          return;
+        }
+        sectionsEl.innerHTML = renderStripView(data);
+        toTop();
+        announce("Check strip loaded.");
+        wireStripMarks(sectionsEl);
+      }).catch(function () {
+        if (reqId !== state.requestId) return;
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        sectionsEl.innerHTML = "";
+        showError(stateEl, {
+          what: "Could not load the check strip.",
+          why: "The request to the daimon server failed.",
+          fix: "Check the server is running and try again."
+        });
+      });
+  }
+  function wireStripMarks(container) {
+    var hover = container.querySelector("#strip-hover");
+    Array.prototype.forEach.call(container.querySelectorAll("[data-open-mark]"), function (btn) {
+      btn.addEventListener("click", function () {
+        // A mark opens its entry with that column's rung lit; quote-check
+        // marks carry no session, so they open the ladder unlit.
+        state.whyHighlightSid = btn.dataset.sid || null;
+        openWhy(btn.dataset.itemId);
+      });
+      btn.addEventListener("mouseenter", function () {
+        if (!hover) return;
+        var whereBits = [];
+        if (btn.dataset.sid) whereBits.push(displaySid(btn.dataset.sid));
+        whereBits.push(btn.dataset.itemId);
+        hover.innerHTML = '<span class="strip-hover-meta">hovering ' +
+          escapeHtml(whereBits.join(" · ")) + "</span>" +
+          '<span class="strip-hover-text">' + escapeHtml(btn.dataset.hover || "") + "</span>";
+      });
+    });
+  }
+  // ---- refutations lane (#670 slice 3): renders `daimon refute list` ----
+  function enterRefutations() {
+    if (!state.currentSlug) return;
+    var slug = state.currentSlug;
+    state.view = "refutations";
+    state.requestId += 1;
+    var reqId = state.requestId;
+    renderNavPills();
+    var stateEl = document.getElementById("state");
+    var sectionsEl = document.getElementById("sections");
+    var mainEl = document.getElementById("main");
+    mainEl.setAttribute("aria-busy", "true");
+    if (state.pendingTimer) clearTimeout(state.pendingTimer);
+    state.pendingTimer = setTimeout(function () {
+      if (reqId !== state.requestId) return;
+      stateEl.innerHTML = skeletonHtml();
+    }, 1000);
+    api("/api/refutations?project=" + encodeURIComponent(slug))
+      .then(function (data) {
+        if (reqId !== state.requestId) return; // superseded by a newer navigation
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        stateEl.innerHTML = "";
+        if (!data.ok) {
+          sectionsEl.innerHTML = "";
+          showError(stateEl, data.error);
+          return;
+        }
+        sectionsEl.innerHTML = renderRefutationsView(data);
+        toTop();
+        announce("Refutations loaded.");
+        wireWhyOpeners(sectionsEl);
+      }).catch(function () {
+        if (reqId !== state.requestId) return;
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        sectionsEl.innerHTML = "";
+        showError(stateEl, {
+          what: "Could not load refutations.",
+          why: "The request to the daimon server failed.",
+          fix: "Check the server is running and try again."
+        });
+      });
   }
   // ---- session page (#670 slice 2): what one session wrote ----
   function enterSession(sid) {
@@ -388,8 +604,12 @@ import { state } from "./state.js";
   function loadBiography(itemId, panel) {
     var reqId = state.requestId;
     var cacheKey = reqId + ":" + itemId;
+    function paint(data) {
+      panel.innerHTML = renderBioPanel(data, state.whyHighlightSid);
+      wireRungOpeners(panel, data);
+    }
     if (state.bioCache[cacheKey]) {
-      panel.innerHTML = renderBioPanel(state.bioCache[cacheKey]);
+      paint(state.bioCache[cacheKey]);
       return;
     }
     var timer = setTimeout(function () {
@@ -401,7 +621,7 @@ import { state } from "./state.js";
         if (reqId !== state.requestId) return; // navigated away meanwhile
         if (data.ok) {
           state.bioCache[cacheKey] = data;
-          panel.innerHTML = renderBioPanel(data);
+          paint(data);
         } else {
           panel.innerHTML = renderError(data.error);
         }
@@ -468,7 +688,13 @@ import { state } from "./state.js";
     // reader to the ledger or session page they were on, not to the briefing.
     if (state.view === "ledger") state.whyReturn = { view: "ledger" };
     else if (state.view === "session") state.whyReturn = { view: "session", sid: state.sessionSid };
+    else if (state.view === "refutations") state.whyReturn = { view: "refutations" };
+    else if (state.view === "diff") state.whyReturn = { view: "diff", a: state.diffPick.a, b: state.diffPick.b };
+    else if (state.view === "strip") state.whyReturn = { view: "strip" };
     else state.whyReturn = null;
+    // Only a diff row or a strip mark lights a rung; any other door opens
+    // the ladder unlit.
+    if (state.view !== "diff" && state.view !== "strip") state.whyHighlightSid = null;
     state.view = "why";
     renderNavPills();
     state.requestId += 1;
@@ -491,6 +717,9 @@ import { state } from "./state.js";
         if (back) back.addEventListener("click", function () {
           if (state.whyReturn && state.whyReturn.view === "session") { enterSession(state.whyReturn.sid); }
           else if (state.whyReturn && state.whyReturn.view === "ledger") { enterLedger(); }
+          else if (state.whyReturn && state.whyReturn.view === "refutations") { enterRefutations(); }
+          else if (state.whyReturn && state.whyReturn.view === "diff") { enterDiff(state.whyReturn.a, state.whyReturn.b); }
+          else if (state.whyReturn && state.whyReturn.view === "strip") { enterStrip(); }
           else if (state.lastSearchQ) { runSearch(state.lastSearchQ); }
           else if (state.activeRef) { selectCheckpoint(state.activeRef); }
           else { loadList(); }

@@ -458,11 +458,17 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         else:
             gone.append(item)
 
-    carried, trust_changed = [], []
+    # One changed list for every tracked field, values included: the diff view
+    # renders old struck through above new, so field names alone are not
+    # enough. Trust transitions are changed rows like any other — the frozen
+    # vocabulary rides "changed" (§8), nothing gets its own bucket.
+    carried, changed = [], []
     for iid in sorted(ids_a & ids_b):
         item_a, item_b = map_a[iid], map_b[iid]
-        if item_a.get("trust") != item_b.get("trust"):
-            trust_changed.append({"item": item_b, "from": item_a.get("trust"), "to": item_b.get("trust")})
+        fields = [{"field": f, "from": item_a.get(f), "to": item_b.get(f)}
+                  for f in _BIO_TRACKED_FIELDS if item_a.get(f) != item_b.get(f)]
+        if fields:
+            changed.append({"item": item_b, "fields": fields})
         else:
             carried.append({"item": item_b})
 
@@ -475,7 +481,7 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         "ok": True,
         "a": meta_a, "b": meta_b,
         "born": born, "resolved": resolved, "gone": gone,
-        "carried": carried, "trust_changed": trust_changed,
+        "carried": carried, "changed": changed,
         "partial": partial,
     }
 
@@ -486,7 +492,9 @@ def _walk_transitions(data_dir: Path, slug: str):
     now — ts is the created of its FINAL sighting, the session named is the one
     whose absence recorded it). Carried, unchanged sightings emit nothing:
     a carry is not an event, and counting it would let agreement pose as
-    corroboration. Shared by project_ledger and session_events so the two
+    corroboration. Every event carries the trust class the item held AT that
+    session — the strip draws marks with the class of the time, not today's.
+    Shared by project_ledger, session_events and project_grid so the
     surfaces can never disagree about what happened."""
     hist = project_history(data_dir, slug)
     events, latest_item, last_sight = [], {}, {}
@@ -501,21 +509,24 @@ def _walk_transitions(data_dir: Path, slug: str):
             if iid not in latest_item or iid in gone:
                 gone.discard(iid)
                 events.append({"item_id": iid, "kind": "first_seen", "ts": s["created"],
-                               "session_id": s["session_id"], "detail": None})
+                               "session_id": s["session_id"], "detail": None,
+                               "trust": item.get("trust")})
             else:
                 changed = [f for f in _BIO_TRACKED_FIELDS
                            if item.get(f) != latest_item[iid].get(f)]
                 if changed:
                     events.append({"item_id": iid, "kind": "changed", "ts": s["created"],
                                    "session_id": s["session_id"],
-                                   "detail": ", ".join(changed)})
+                                   "detail": ", ".join(changed),
+                                   "trust": item.get("trust")})
             latest_item[iid] = item
         if prev_ids is not None:
             for iid in sorted(prev_ids - set(cur)):
                 gone.add(iid)
                 events.append({"item_id": iid, "kind": "last_seen",
                                "ts": last_sight.get(iid),
-                               "session_id": s["session_id"], "detail": None})
+                               "session_id": s["session_id"], "detail": None,
+                               "trust": latest_item[iid].get("trust")})
         for iid in cur:
             last_sight[iid] = s["created"]
         prev_ids = set(cur)
@@ -779,3 +790,83 @@ def item_biography(data_dir: Path, slug: str, item_id: str) -> dict:
     window_note = "history starts here — earlier sessions may have been cleaned up" if oldest_has_item else None
     return {"ok": True, "item": last_item, "events": events,
             "window_note": window_note, "trust_anatomy": anatomy}
+
+# The strip renders a window, never a silent cap: what lies beyond each edge
+# is named in partial. Six columns is the frozen reference's width.
+GRID_COLUMNS = 6
+GRID_ROWS = 30
+
+def project_grid(data_dir: Path, slug: str) -> dict:
+    """The check strip: object × checkpoint lanes over the shared walk.
+    Sightings land in the column of the session that wrote them, with the
+    trust class of that time. A departure marks the transition session —
+    the same attribution the ledger makes — and the lane reads gone after
+    it. Quote checks carry NO session attribution on disk; each is bucketed
+    by ts into the earliest window column whose created stamp is >= its ts
+    (later than head folds into head), and the row keeps the exact ts so
+    the hover states when, not who."""
+    walk = _walk_transitions(data_dir, slug)
+    hist = project_history(data_dir, slug)["sessions"]  # newest -> oldest
+    window = list(reversed(hist[:GRID_COLUMNS]))        # oldest -> newest
+    older_columns = max(0, len(hist) - len(window))
+    columns = [{"session_id": s["session_id"], "created": s["created"],
+                "is_head": i == len(window) - 1}
+               for i, s in enumerate(window)]
+    window_ids = {c["session_id"] for c in columns}
+
+    by_item, latest_ts = {}, {}
+    for ev in walk["events"]:  # oldest -> newest
+        iid = ev["item_id"]
+        latest_ts[iid] = ev["ts"] or latest_ts.get(iid) or ""
+        entry = by_item.setdefault(iid, {"cells": {}, "checks": [], "gone_after": None})
+        # A re-appearance after a departure clears the dashed tail.
+        entry["gone_after"] = ev["session_id"] if ev["kind"] == "last_seen" else None
+        if ev["session_id"] in window_ids:
+            entry["cells"][ev["session_id"]] = {
+                "kind": ev["kind"], "trust": ev.get("trust"),
+                "ts": ev["ts"], "detail": ev["detail"]}
+
+    checks_before_window = 0
+    # No columns means no sessions, so nothing can anchor a check row —
+    # walk["items"] is empty too and the guard below would skip every row.
+    ver_rows = _jsonl_rows(data_dir / slug / "verification.jsonl") if columns else []
+    for row in ver_rows:
+        iid = row.get("item_ref")
+        if iid not in walk["items"]:
+            continue
+        ts = _norm_str(row.get("ts")) or ""
+        if ts and ts <= (columns[0]["created"] or "") and older_columns:
+            checks_before_window += 1
+            continue
+        column = columns[-1]["session_id"]  # later than head folds into head
+        for c in columns:
+            if (c["created"] or "") >= ts:
+                column = c["session_id"]
+                break
+        entry = by_item.setdefault(iid, {"cells": {}, "checks": [], "gone_after": None})
+        check, reason = _norm_str(row.get("check")), _norm_str(row.get("reason"))
+        detail = f"{check}: {reason}" if check and reason else (reason or check)
+        entry["checks"].append({"column": column, "ts": row.get("ts"), "detail": detail})
+        latest_ts[iid] = max(latest_ts.get(iid) or "", ts)
+
+    ordered = sorted(by_item, key=lambda iid: (latest_ts.get(iid) or "", iid), reverse=True)
+    shown = ordered[:GRID_ROWS]
+    rows = []
+    for iid in shown:
+        item = walk["items"].get(iid) or {}
+        entry = by_item[iid]
+        rows.append({"id": iid, "text": item.get("text"), "trust": item.get("trust"),
+                     "kind": _SECTION_KIND.get(item.get("section")),
+                     "cells": entry["cells"], "checks": entry["checks"],
+                     "gone_after": entry["gone_after"]})
+
+    partial = _ledger_partial(walk["unreadable"])
+    if older_columns:
+        partial.append(f"{older_columns} older checkpoint(s) beyond this window.")
+    if len(ordered) > len(shown):
+        partial.append(f"{len(ordered) - len(shown)} further object(s) beyond this window.")
+    if checks_before_window:
+        partial.append(f"{checks_before_window} quote check(s) predate this window.")
+
+    return {"ok": True, "columns": columns, "rows": rows,
+            "older_columns": older_columns, "partial": partial}
