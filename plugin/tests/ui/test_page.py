@@ -17,7 +17,7 @@ def test_view_links_sit_in_a_nav_landmark(srv):
     assert '<nav class="view-nav"' in html, "no view-nav landmark in page"
     nav = html.split('<nav class="view-nav"', 1)[1].split("</nav>", 1)[0]
     for needle in ['aria-label="Views"', 'id="back-link-slot"',
-                   'id="history-link-slot"', 'id="activity-link-slot"']:
+                   'id="nav-pills-slot"']:
         assert needle in nav, needle
 
 
@@ -79,12 +79,14 @@ def test_css_has_tokens_and_media_queries(srv):
         assert needle in css, needle
     assert "prefers-color-scheme" not in css, "single committed look — no theme fork"
 
-def test_activity_catch_clears_stale_sections(srv):
-    """enterActivity lives in app.js and touches the DOM, so this stays a source
+def test_session_catch_clears_stale_sections(srv):
+    """enterSession lives in app.js and touches the DOM, so this stays a source
     grep — a weaker test than the render.js behavior tests, kept deliberately and
-    labelled as such rather than dropped silently."""
+    labelled as such rather than dropped silently. (enterActivity's version of
+    this test left with the Activity button: slice 2 replaced the scaffold nav
+    with the design's pills, and the ledger/session pages read the same rows.)"""
     _, _, body = _get(srv + "/static/app.js")
     js = body.decode()
-    fn = js.split("function enterActivity", 1)[1].split("\n  function ", 1)[0]
+    fn = js.split("function enterSession", 1)[1].split("\n  function ", 1)[0]
     catch_block = fn.split(".catch(function ()", 1)[1]
     assert 'sectionsEl.innerHTML = "";' in catch_block

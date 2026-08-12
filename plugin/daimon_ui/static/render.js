@@ -167,7 +167,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
   export function renderSidebarScope(shown, total) {
     if (!(total > shown)) return "";
     return '<p class="cp-scope">Showing the ' + shown + ' most recent of ' + total +
-      ' sessions. The earlier ones are reachable in History.</p>';
+      ' sessions. Every session is listed in the ledger.</p>';
   }
 
   // A slug is a flattened path, so the true directory name is unrecoverable —
@@ -567,6 +567,156 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       gone.map(function (it) { return renderHistoryRow(it, "t-gone", "LAST SEEN", null, refA); }).join(""));
     return html;
   }
+  // ---- ledger + session page (#670 slice 2) ----
+  // Frozen event vocabulary (§8): the walk's kinds render under exactly these
+  // names — the same words the briefing, history view, and CLI already use.
+  // Nothing is coined at the render layer.
+  export const LEDGER_EVENT_LABELS = {
+    first_seen: "first seen", changed: "changed", last_seen: "last seen",
+    resolved: "resolved", quote_check: "quote check"
+  };
+  // groupTs: the containing session's created stamp. An event whose ts IS the
+  // group's own stamp repeats what the group header already says, so the row
+  // shows the bare kind; a differing ts (a last_seen naming its final sighting,
+  // a later resolution or quote check) is information and keeps its date.
+  export function ledgerEventText(ev, groupTs) {
+    var kind = ev && ev.kind;
+    if (!Object.prototype.hasOwnProperty.call(LEDGER_EVENT_LABELS, kind)) return "";
+    if (ev.ts && groupTs && ev.ts === groupTs) return LEDGER_EVENT_LABELS[kind];
+    var when = ev.ts ? " " + fmtDateTime(ev.ts) : "";
+    return LEDGER_EVENT_LABELS[kind] + when;
+  }
+  // "2 first seen · 1 changed" — zero counts stay silent; the order is the
+  // order a session writes them: births, changes, departures.
+  export function ledgerCountsText(counts) {
+    var parts = [];
+    ["first_seen", "changed", "last_seen"].forEach(function (k) {
+      var n = (counts || {})[k] || 0;
+      if (n > 0) parts.push(n + " " + LEDGER_EVENT_LABELS[k]);
+    });
+    return parts.join(" · ");
+  }
+  // UUID-shaped session ids keep the established "s-" + 8-hex short form; a
+  // human-named session renders whole. An 8-char slice of a name ("s-introspe")
+  // is garble, and two names sharing a prefix would collide — an ambiguous
+  // label in a tool whose point is that labels resolve.
+  var UUID_SID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-/;
+  export function displaySid(sid) {
+    var s = String(sid || "");
+    return UUID_SID_RE.test(s) ? "s-" + s.slice(0, 8) : s;
+  }
+  // The kind chip prints recall's word for the same item — question, decision,
+  // belief, uncertainty, contradiction. It is what separates an evergreen
+  // belief from a one-session work note, and why one sentence can honestly
+  // appear under two ids (filed as question AND as uncertainty).
+  export function kindChip(kind) {
+    return kind ? '<span class="kind-chip">' + escapeHtml(kind) + "</span>" : "";
+  }
+  export function renderLedgerRow(r, groupTs) {
+    var trust = r.trust || null;
+    var ev = '<span class="ledger-ev">' + ledgerEventText(r.last_event, groupTs) + "</span>";
+    var id = '<code class="obj-id">' + escapeHtml(r.id) + "</code>";
+    return '<button type="button" class="ledger-row" data-open-why data-item-id="' +
+      escapeHtml(r.id) + '">' + trustGlyph(trust) +
+      '<span class="it-text">' + escapeHtml(r.text || "") + kindChip(r.kind) +
+      "</span>" + id + ev + "</button>";
+  }
+  export function renderLedgerGroup(g, index) {
+    var when = fmtDateTime(g.created);
+    var counts = ledgerCountsText(g.counts);
+    var expanded = index === 0;  // newest session open, the rest behind their counts
+    var bodyId = "lg-" + escapeHtml(String(g.session_id));
+    var toggle = '<button type="button" class="ledger-ck-toggle" aria-expanded="' +
+      (expanded ? "true" : "false") + '" aria-controls="' + bodyId + '">' +
+      '<span class="disclosure" aria-hidden="true">' + (expanded ? "▾" : "▸") + "</span>" +
+      '<code class="ledger-sid">' + escapeHtml(displaySid(g.session_id)) +
+      '</code><span class="ledger-ck-meta">' + escapeHtml(when) +
+      (counts ? " · " + escapeHtml(counts) : "") + "</span></button>";
+    var open = '<button type="button" class="ledger-ck-open" data-open-session data-sid="' +
+      escapeHtml(g.session_id) + '">open session</button>';
+    var rows = (g.rows || []).map(function (r) {
+      return renderLedgerRow(r, g.created);
+    }).join("");
+    return '<section class="ledger-group" aria-label="' + escapeHtml(displaySid(g.session_id)) + '">' +
+      '<div class="ledger-ck">' + toggle + open + "</div>" +
+      '<div id="' + bodyId + '" class="ledger-body"' + (expanded ? "" : " hidden") + '>' +
+      '<div class="ledger-cols" aria-hidden="true"><span>claim</span><span>object</span>' +
+      '<span>last event</span></div><div class="ledger-rows">' + rows + "</div></div></section>";
+  }
+  export function renderLedgerView(data) {
+    var totals = data.totals || {};
+    var head = data.head ? " · head " + displaySid(data.head.session_id) : "";
+    var html = '<div class="brief-head"><h1 class="page-heading">Ledger</h1>' +
+      '<span class="brief-sub">' + escapeHtml(
+        (totals.objects || 0) + " object(s) · " + (totals.events || 0) + " event(s)" + head) +
+      "</span></div>";
+    (data.partial || []).forEach(function (p) {
+      html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
+        escapeHtml(p) + "</span></div>";
+    });
+    if (!data.groups || data.groups.length === 0) {
+      return html + '<div class="state-card"><p class="state-title">Nothing in the ledger yet</p>' +
+        "<p>Objects appear here as sessions record them — first seen, changed, last seen.</p></div>";
+    }
+    html += data.groups.map(renderLedgerGroup).join("");
+    html += '<div class="card-foot">click a row to open its entry · open session shows what it wrote</div>';
+    return html;
+  }
+  // Sidebar for the ledger and session views: every session on disk, newest
+  // first — the same list /api/history serves, so the two surfaces cannot
+  // disagree about what history holds.
+  export function renderLedgerSessions(sessions, activeSid) {
+    var head = '<p class="side-label">Sessions</p>';
+    var body = (sessions || []).map(function (s) {
+      var active = s.session_id === activeSid;
+      var topic = s.active_topic ? escapeHtml(s.active_topic) : "(untitled)";
+      var rel = fmtRelative(s.created);
+      return '<button type="button" class="cp-item sess-item' + (active ? " active" : "") +
+        '" data-sid="' + escapeHtml(s.session_id) + '" aria-current="' + (active ? "true" : "false") + '">' +
+        '<span class="cp-topic">' + topic + "</span>" +
+        '<span class="cp-meta">' + escapeHtml(displaySid(s.session_id)) +
+        (rel ? " · " + escapeHtml(rel) : "") + "</span></button>";
+    }).join("");
+    return head + body;
+  }
+  export function renderSessionObject(o) {
+    var eventsHtml = (o.events || []).map(function (e) {
+      var detail = e.detail ? '<span class="sess-ev-detail">' + escapeHtml(e.detail) + "</span>" : "";
+      return '<div class="sess-ev"><span class="sess-ev-label">' +
+        ledgerEventText(e) + "</span>" + detail + "</div>";
+    }).join("");
+    return '<div class="sess-obj"><button type="button" class="ledger-row" data-open-why data-item-id="' +
+      escapeHtml(o.id) + '">' + trustGlyph(o.trust || null) +
+      '<span class="it-text">' + escapeHtml(o.text || "") + kindChip(o.kind) + "</span>" +
+      '<code class="obj-id">' + escapeHtml(o.id) + "</code></button>" +
+      '<div class="sess-obj-events">' + eventsHtml + "</div></div>";
+  }
+  export function renderSessionView(data) {
+    var s = data.session || {};
+    var metaParts = [fmtDateTime(s.created), s.active_topic, s.author,
+                     receiptMetaText(s.receipt)].filter(Boolean);
+    var counts = ledgerCountsText(data.counts);
+    var html = '<div class="why-crumb"><button type="button" class="back-link" data-session-back>' +
+      "← ledger</button>" + '<span class="crumb-sep">/</span><code class="crumb-id">' +
+      escapeHtml(displaySid(s.session_id)) + "</code></div>";
+    html += '<div class="brief-head"><h1 class="page-heading">Session</h1>' +
+      '<span class="brief-sub">' + escapeHtml(counts ? "wrote " + counts : "wrote no recorded events") +
+      "</span></div>";
+    html += '<p class="page-meta">' + metaParts.map(escapeHtml).join(" · ") + "</p>";
+    (data.partial || []).forEach(function (p) {
+      html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
+        escapeHtml(p) + "</span></div>";
+    });
+    if (!data.objects || data.objects.length === 0) {
+      html += '<div class="state-card"><p class="state-title">No recorded events from this session</p>' +
+        "<p>Carried, unchanged items write nothing — a carry is not an event.</p></div>";
+    } else {
+      html += '<div class="sess-objs">' + data.objects.map(renderSessionObject).join("") + "</div>";
+    }
+    html += '<div class="card-foot">read-only · This page reads the ledger; it holds nothing of its own</div>';
+    return html;
+  }
+
   export function renderError(e) {
     return '<div class="state-card state-error"><p class="state-title">⚠ Error — ' +
       escapeHtml(e.what) + "</p><p>" + escapeHtml(e.why) + "</p><p><strong>Fix:</strong> " +

@@ -1,7 +1,8 @@
 import {
-  ACT_ITEM_ID_RE, escapeHtml, fmtRelative, navCurrent, renderActivityView, renderBioPanel,
-  renderEmptyProjects, renderError, renderHistoryView, renderProjCard, renderSearchResults,
-  renderSections, renderSidebarScope, renderSingleCheckpointEmpty, renderWhyView, skeletonHtml
+  ACT_ITEM_ID_RE, escapeHtml, fmtRelative, navCurrent, renderBioPanel,
+  renderEmptyProjects, renderError, renderLedgerSessions, renderLedgerView, renderProjCard,
+  renderSearchResults, renderSections, renderSessionView, renderSidebarScope, renderWhyView,
+  skeletonHtml
 } from "./render.js";
 import { state } from "./state.js";
 
@@ -23,6 +24,12 @@ import { state } from "./state.js";
   }
   function setShellView(view) {
     document.querySelector(".shell").classList.toggle("grid-view", view === "grid");
+  }
+  // Every view swap starts reading at the top. Without this, a search or a nav
+  // click from deep in a long page renders the new view 2000px above the
+  // viewport — the page looks blank and the app reads as broken or slow.
+  function toTop() {
+    window.scrollTo(0, 0);
   }
   function loadList() {
     state.requestId += 1;
@@ -64,44 +71,37 @@ import { state } from "./state.js";
     state.view = "grid";
     renderGrid();
   }
-  function renderHistoryLink() {
-    var slot = document.getElementById("history-link-slot");
-    if ((state.view === "project" || state.view === "history" || state.view === "activity") && state.currentSlug) {
+  // The mockup nav: two pills, briefing and ledger, shown whenever a project
+  // is open. The scaffold's History/Activity buttons are gone — the ledger and
+  // session pages are the design's reading of the same recorded events.
+  function renderNavPills() {
+    var slot = document.getElementById("nav-pills-slot");
+    slot.innerHTML = "";
+    var inProject = state.currentSlug &&
+      ["project", "ledger", "session", "search", "why"].indexOf(state.view) !== -1;
+    if (!inProject) return;
+    [["briefing", "project", goBriefing], ["ledger", "ledger", enterLedger]].forEach(function (pill) {
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "history-link";
-      btn.textContent = "History";
-      btn.setAttribute("aria-current", navCurrent(state.view, "history"));
-      btn.addEventListener("click", enterHistory);
-      slot.innerHTML = "";
+      btn.className = "nav-pill";
+      btn.textContent = pill[0];
+      btn.setAttribute("aria-current", navCurrent(state.view, pill[1]));
+      btn.addEventListener("click", pill[2]);
       slot.appendChild(btn);
-    } else {
-      slot.innerHTML = "";
-    }
+    });
   }
-  function renderActivityLink() {
-    var slot = document.getElementById("activity-link-slot");
-    if ((state.view === "project" || state.view === "history" || state.view === "activity") && state.currentSlug) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "history-link";
-      btn.textContent = "Activity";
-      btn.setAttribute("aria-current", navCurrent(state.view, "activity"));
-      btn.addEventListener("click", enterActivity);
-      slot.innerHTML = "";
-      slot.appendChild(btn);
-    } else {
-      slot.innerHTML = "";
-    }
+  function goBriefing() {
+    if (!state.currentSlug) return;
+    enterProject(state.currentSlug, state.cameFromGrid);
   }
-  function enterActivity() {
+  // ---- ledger (#670 slice 2): one row per object, grouped by session ----
+  function enterLedger() {
     if (!state.currentSlug) return;
     var slug = state.currentSlug;
-    state.view = "activity";
+    state.view = "ledger";
     state.requestId += 1;
     var reqId = state.requestId;
-    renderHistoryLink();
-    renderActivityLink();
+    renderNavPills();
     var stateEl = document.getElementById("state");
     var sectionsEl = document.getElementById("sections");
     var mainEl = document.getElementById("main");
@@ -111,26 +111,117 @@ import { state } from "./state.js";
       if (reqId !== state.requestId) return;
       stateEl.innerHTML = skeletonHtml();
     }, 1000);
-    api("/api/activity?project=" + encodeURIComponent(slug)).then(function (data) {
-      if (reqId !== state.requestId) return;
+    Promise.all([
+      api("/api/ledger?project=" + encodeURIComponent(slug)),
+      api("/api/history?project=" + encodeURIComponent(slug))
+    ]).then(function (results) {
+      if (reqId !== state.requestId) return; // superseded by a newer navigation
       clearTimeout(state.pendingTimer);
       mainEl.removeAttribute("aria-busy");
-      sectionsEl.innerHTML = "";
-      if (!data.ok) { showError(stateEl, data.error); return; }
-      stateEl.innerHTML = renderActivityView(data);
-      announce("Activity loaded.");
-      wireBioToggles(stateEl);
+      var ledger = results[0], hist = results[1];
+      state.ledgerSessions = hist.sessions || [];
+      stateEl.innerHTML = "";
+      if (!ledger.ok) {
+        sectionsEl.innerHTML = "";
+        showError(stateEl, ledger.error);
+        return;
+      }
+      renderSessionSidebar(null);
+      sectionsEl.innerHTML = renderLedgerView(ledger);
+      toTop();
+      announce("Ledger loaded.");
+      wireWhyOpeners(sectionsEl);
+      wireSessionOpeners(sectionsEl);
+      wireLedgerToggles(sectionsEl);
     }).catch(function () {
       if (reqId !== state.requestId) return;
       clearTimeout(state.pendingTimer);
       mainEl.removeAttribute("aria-busy");
       sectionsEl.innerHTML = "";
       showError(stateEl, {
-        what: "Could not load activity.",
+        what: "Could not load the ledger.",
         why: "The request to the daimon server failed.",
         fix: "Check the server is running and try again."
       });
     });
+  }
+  function renderSessionSidebar(activeSid) {
+    var nav = document.getElementById("sidebar");
+    nav.innerHTML = renderLedgerSessions(state.ledgerSessions, activeSid);
+    Array.prototype.forEach.call(nav.querySelectorAll(".sess-item"), function (btn) {
+      btn.addEventListener("click", function () { enterSession(btn.dataset.sid); });
+    });
+  }
+  function wireLedgerToggles(container) {
+    Array.prototype.forEach.call(container.querySelectorAll(".ledger-ck-toggle"), function (btn) {
+      btn.addEventListener("click", function () {
+        var body = document.getElementById(btn.getAttribute("aria-controls"));
+        var marker = btn.querySelector(".disclosure");
+        var open = !body.hasAttribute("hidden");
+        if (open) {
+          body.setAttribute("hidden", "");
+          btn.setAttribute("aria-expanded", "false");
+          if (marker) marker.textContent = "▸";
+        } else {
+          body.removeAttribute("hidden");
+          btn.setAttribute("aria-expanded", "true");
+          if (marker) marker.textContent = "▾";
+        }
+      });
+    });
+  }
+  function wireSessionOpeners(container) {
+    Array.prototype.forEach.call(container.querySelectorAll("[data-open-session][data-sid]"), function (btn) {
+      btn.addEventListener("click", function () { enterSession(btn.dataset.sid); });
+    });
+  }
+  // ---- session page (#670 slice 2): what one session wrote ----
+  function enterSession(sid) {
+    if (!state.currentSlug || !sid) return;
+    var slug = state.currentSlug;
+    state.view = "session";
+    state.sessionSid = sid;
+    state.requestId += 1;
+    var reqId = state.requestId;
+    renderNavPills();
+    var stateEl = document.getElementById("state");
+    var sectionsEl = document.getElementById("sections");
+    var mainEl = document.getElementById("main");
+    mainEl.setAttribute("aria-busy", "true");
+    if (state.pendingTimer) clearTimeout(state.pendingTimer);
+    state.pendingTimer = setTimeout(function () {
+      if (reqId !== state.requestId) return;
+      stateEl.innerHTML = skeletonHtml();
+    }, 1000);
+    api("/api/session?project=" + encodeURIComponent(slug) + "&sid=" + encodeURIComponent(sid))
+      .then(function (data) {
+        if (reqId !== state.requestId) return; // superseded by a newer navigation
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        stateEl.innerHTML = "";
+        if (!data.ok) {
+          sectionsEl.innerHTML = "";
+          showError(stateEl, data.error);
+          return;
+        }
+        renderSessionSidebar(sid);
+        sectionsEl.innerHTML = renderSessionView(data);
+        toTop();
+        announce("Session loaded.");
+        wireWhyOpeners(sectionsEl);
+        var back = sectionsEl.querySelector("[data-session-back]");
+        if (back) back.addEventListener("click", enterLedger);
+      }).catch(function () {
+        if (reqId !== state.requestId) return;
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        sectionsEl.innerHTML = "";
+        showError(stateEl, {
+          what: "Could not load this session.",
+          why: "The request to the daimon server failed.",
+          fix: "Check the server is running and try again."
+        });
+      });
   }
   function renderGrid() {
     state.view = "grid";
@@ -139,8 +230,7 @@ import { state } from "./state.js";
     document.getElementById("sidebar").innerHTML = "";
     document.getElementById("project").textContent = "";
     renderBackLink();
-    renderHistoryLink();
-    renderActivityLink();
+    renderNavPills();
     var stateEl = document.getElementById("state");
     var sectionsEl = document.getElementById("sections");
     if (state.projects.length === 0) {
@@ -150,6 +240,7 @@ import { state } from "./state.js";
       return;
     }
     stateEl.innerHTML = "";
+    toTop();
     announce("All projects.");
     // Current project first — it is where the user physically is — then the
     // rest stay in the server's newest-first order.
@@ -171,8 +262,7 @@ import { state } from "./state.js";
     state.cameFromGrid = !!cameFromGrid;
     setShellView("project");
     renderBackLink();
-    renderHistoryLink();
-    renderActivityLink();
+    renderNavPills();
     loadCheckpointsList(slug);
   }
   function loadCheckpointsList(slug) {
@@ -220,8 +310,7 @@ import { state } from "./state.js";
     state.requestId += 1;
     if (state.view !== "project") {
       state.view = "project";
-      renderHistoryLink();
-      renderActivityLink();
+      renderNavPills();
     }
     renderSidebar();
     loadCheckpoint(ref, state.requestId);
@@ -243,6 +332,7 @@ import { state } from "./state.js";
       stateEl.innerHTML = "";
       if (data.ok) {
         sectionsEl.innerHTML = renderSections(data);
+        toTop();
         announce("Checkpoint " + ref + " loaded.");
         wireWhyOpeners(sectionsEl);
         wireSectionToggles(sectionsEl);
@@ -339,6 +429,7 @@ import { state } from "./state.js";
     var slug = searchSlug();
     if (!slug || !q || !q.trim()) return;
     state.view = "search";
+    renderNavPills();
     state.requestId += 1;
     var reqId = state.requestId;
     var stateEl = document.getElementById("state");
@@ -354,6 +445,7 @@ import { state } from "./state.js";
         }
         state.lastSearchQ = q;
         sectionsEl.innerHTML = renderSearchResults(q, data.rows);
+        toTop();
         announce(data.rows.length + " search result(s).");
         Array.prototype.forEach.call(sectionsEl.querySelectorAll(".search-row[data-item-id]"), function (btn) {
           btn.addEventListener("click", function () { openWhy(btn.dataset.itemId); });
@@ -372,7 +464,13 @@ import { state } from "./state.js";
   function openWhy(itemId) {
     var slug = searchSlug();
     if (!slug || !ACT_ITEM_ID_RE.test(itemId || "")) return;
+    // Remember which surface the entry was opened from: back must return the
+    // reader to the ledger or session page they were on, not to the briefing.
+    if (state.view === "ledger") state.whyReturn = { view: "ledger" };
+    else if (state.view === "session") state.whyReturn = { view: "session", sid: state.sessionSid };
+    else state.whyReturn = null;
     state.view = "why";
+    renderNavPills();
     state.requestId += 1;
     var reqId = state.requestId;
     var stateEl = document.getElementById("state");
@@ -387,10 +485,13 @@ import { state } from "./state.js";
           return;
         }
         sectionsEl.innerHTML = renderWhyView(data);
+        toTop();
         announce("Entry loaded.");
         var back = sectionsEl.querySelector("[data-why-back]");
         if (back) back.addEventListener("click", function () {
-          if (state.lastSearchQ) { runSearch(state.lastSearchQ); }
+          if (state.whyReturn && state.whyReturn.view === "session") { enterSession(state.whyReturn.sid); }
+          else if (state.whyReturn && state.whyReturn.view === "ledger") { enterLedger(); }
+          else if (state.lastSearchQ) { runSearch(state.lastSearchQ); }
           else if (state.activeRef) { selectCheckpoint(state.activeRef); }
           else { loadList(); }
         });
@@ -412,7 +513,17 @@ import { state } from "./state.js";
     if (!form || !box) return;
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
+      if (state.searchTimer) clearTimeout(state.searchTimer);
       runSearch(box.value);
+    });
+    // Search-as-you-type, debounced: still one matcher — every keystroke's
+    // results are recall's, the debounce only spaces the calls out. Enter
+    // still fires immediately via the submit handler above.
+    box.addEventListener("input", function () {
+      if (state.searchTimer) clearTimeout(state.searchTimer);
+      var q = box.value;
+      if (!q || q.trim().length < 2) return;
+      state.searchTimer = setTimeout(function () { runSearch(q); }, 250);
     });
   }
   function wireSectionToggles(container) {
@@ -431,117 +542,6 @@ import { state } from "./state.js";
           btn.setAttribute("aria-expanded", "true");
           if (marker) marker.textContent = "▾";
         }
-      });
-    });
-  }
-  function enterHistory() {
-    if (!state.currentSlug) return;
-    var slug = state.currentSlug;
-    state.view = "history";
-    state.requestId += 1;
-    var reqId = state.requestId;
-    renderHistoryLink();
-    renderActivityLink();
-    var stateEl = document.getElementById("state");
-    var sectionsEl = document.getElementById("sections");
-    var mainEl = document.getElementById("main");
-    mainEl.setAttribute("aria-busy", "true");
-    if (state.pendingTimer) clearTimeout(state.pendingTimer);
-    state.pendingTimer = setTimeout(function () {
-      if (reqId !== state.requestId) return; // superseded by a newer navigation
-      stateEl.innerHTML = skeletonHtml();
-    }, 1000);
-    Promise.all([
-      api("/api/history?project=" + encodeURIComponent(slug)),
-      api("/api/diff?project=" + encodeURIComponent(slug))
-    ]).then(function (results) {
-      if (reqId !== state.requestId) return; // stale response — a newer request is in flight
-      clearTimeout(state.pendingTimer);
-      mainEl.removeAttribute("aria-busy");
-      var hist = results[0], diff = results[1];
-      state.historySessions = hist.sessions || [];
-      state.historyUnreadable = hist.unreadable || 0;
-      stateEl.innerHTML = "";
-      if (!diff.ok) {
-        sectionsEl.innerHTML = "";
-        showError(stateEl, diff.error);
-        return;
-      }
-      if (diff.empty === "single_checkpoint") {
-        sectionsEl.innerHTML = "";
-        stateEl.innerHTML = renderSingleCheckpointEmpty();
-        announce("Only one checkpoint — nothing to compare.");
-        return;
-      }
-      // Defaults must come from the filename-based session list (same source the server
-      // uses when a/b are omitted) — diff.a/diff.b meta.session_id is read from inside the
-      // checkpoint JSON and isn't guaranteed to match the filename the API expects back.
-      state.historyPick = {
-        a: state.historySessions.length > 1 ? state.historySessions[1].session_id : null,
-        b: state.historySessions.length > 0 ? state.historySessions[0].session_id : null
-      };
-      sectionsEl.innerHTML = renderHistoryView(diff);
-      announce("History loaded.");
-      wireHistoryControls(sectionsEl, slug);
-      wireSectionToggles(sectionsEl);
-      wireBioToggles(sectionsEl);
-    }).catch(function () {
-      if (reqId !== state.requestId) return; // stale response — a newer request is in flight
-      clearTimeout(state.pendingTimer);
-      mainEl.removeAttribute("aria-busy");
-      sectionsEl.innerHTML = "";
-      showError(stateEl, {
-        what: "Could not load history.",
-        why: "The request to the daimon server failed.",
-        fix: "Check the server is running and reload the page."
-      });
-    });
-  }
-  function loadDiff(slug, a, b) {
-    state.requestId += 1;
-    var reqId = state.requestId;
-    var stateEl = document.getElementById("state");
-    var sectionsEl = document.getElementById("sections");
-    var mainEl = document.getElementById("main");
-    mainEl.setAttribute("aria-busy", "true");
-    if (state.pendingTimer) clearTimeout(state.pendingTimer);
-    state.pendingTimer = setTimeout(function () {
-      if (reqId !== state.requestId) return; // superseded by a newer navigation
-      stateEl.innerHTML = skeletonHtml();
-    }, 1000);
-    api("/api/diff?project=" + encodeURIComponent(slug) + "&a=" + encodeURIComponent(a) +
-      "&b=" + encodeURIComponent(b)).then(function (diff) {
-      if (reqId !== state.requestId) return; // stale response — a newer request is in flight
-      clearTimeout(state.pendingTimer);
-      mainEl.removeAttribute("aria-busy");
-      stateEl.innerHTML = "";
-      if (!diff.ok) {
-        sectionsEl.innerHTML = "";
-        showError(stateEl, diff.error);
-        return;
-      }
-      sectionsEl.innerHTML = renderHistoryView(diff);
-      announce("Comparison updated.");
-      wireHistoryControls(sectionsEl, slug);
-      wireSectionToggles(sectionsEl);
-      wireBioToggles(sectionsEl);
-    }).catch(function () {
-      if (reqId !== state.requestId) return; // stale response — a newer request is in flight
-      clearTimeout(state.pendingTimer);
-      mainEl.removeAttribute("aria-busy");
-      sectionsEl.innerHTML = "";
-      showError(stateEl, {
-        what: "Could not load the diff.",
-        why: "The request to the daimon server failed.",
-        fix: "Check the server is running and reload the page."
-      });
-    });
-  }
-  function wireHistoryControls(container, slug) {
-    Array.prototype.forEach.call(container.querySelectorAll(".sess-pick"), function (sel) {
-      sel.addEventListener("change", function () {
-        state.historyPick[sel.dataset.pick] = sel.value;
-        loadDiff(slug, state.historyPick.a, state.historyPick.b);
       });
     });
   }
