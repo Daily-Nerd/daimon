@@ -428,7 +428,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
   var BIO_LABELS = {
     born: "FIRST SEEN", changed: "CHANGED", verified: "QUOTE CHECK", resolved: "RESOLVED", "seen-run": "CARRIED"
   };
-  export function renderBioEventRow(e) {
+  export function renderBioEventRow(e, highlightSid) {
     var dotCls = "life-dot-" + escapeHtml(e.kind === "seen-run" ? "seen" : e.kind);
     var label = BIO_LABELS[e.kind] || escapeHtml(e.kind.toUpperCase());
     var when = e.ts_or_created ? escapeHtml(fmtDate(e.ts_or_created)) : "unknown date";
@@ -441,11 +441,20 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     } else if (e.detail) {
       body = '<div class="life-detail">' + escapeHtml(e.detail) + "</div>";
     }
-    return '<li class="life-row"><div class="life-rail"><span class="life-dot ' + dotCls +
-      '"></span></div><div class="life-body"><span class="life-label">' + label +
-      '</span><span class="life-when">' + when + "</span>" + body + "</div></li>";
+    var inner = '<span class="life-label">' + label +
+      '</span><span class="life-when">' + when + "</span>" + body;
+    var lit = highlightSid && e.session_id === highlightSid;
+    // A rung a session wrote is a door into that session's pairwise diff —
+    // the diff hangs off the ladder, it has no pill of its own.
+    var bodyHtml = e.session_id
+      ? '<button type="button" class="life-body life-rung" data-diff-sid="' +
+        escapeHtml(e.session_id) + '">' + inner + "</button>"
+      : '<div class="life-body">' + inner + "</div>";
+    return '<li class="life-row' + (lit ? " rung-lit" : "") +
+      '"><div class="life-rail"><span class="life-dot ' + dotCls +
+      '"></span></div>' + bodyHtml + "</li>";
   }
-  export function renderBioPanel(data) {
+  export function renderBioPanel(data, highlightSid) {
     var anatomyHtml = renderTrustAnatomy(data);
     var events = compressBioEvents(data.events || []);
     var noteHtml = data.window_note
@@ -457,13 +466,21 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
         "<p>This item has no recorded events yet.</p></div>";
     }
     return anatomyHtml + noteHtml + '<ul class="life">' +
-      events.map(renderBioEventRow).join("") + "</ul>";
+      events.map(function (e) { return renderBioEventRow(e, highlightSid); }).join("") + "</ul>";
   }
-  export function renderHistoryPicker() {
-    var opts = state.historySessions.map(function (s) {
+  // ---- diff view (#670 slice 3): a reading of two checkpoints ----
+  // The kind words are the frozen reference's: added / changed / dropped,
+  // plus resolved for departures the events ledger closed — that word is
+  // already frozen (§8); a resolution must not be flattened into "dropped".
+  export const DIFF_KINDS = {
+    born: "added", changed: "changed", gone: "dropped", resolved: "resolved"
+  };
+  var DIFF_SIGNS = { born: "+", changed: "~", gone: "−", resolved: "−" };
+  export function renderDiffPicker(sessions, pick) {
+    var opts = (sessions || []).map(function (s) {
       return {
         id: s.session_id,
-        label: (s.active_topic || "(untitled)") + " · " + (fmtRelative(s.created) || "unknown date")
+        label: displaySid(s.session_id) + " · " + (fmtDateTime(s.created) || "unknown date")
       };
     });
     function selectHtml(pickKey, selected) {
@@ -474,97 +491,96 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
         }).join("") + '</select>';
     }
     return '<div class="sess-pickbar">' +
-      '<label class="sess-label">From' + selectHtml("a", state.historyPick.a) + '</label>' +
-      '<label class="sess-label">To' + selectHtml("b", state.historyPick.b) + '</label>' +
+      '<label class="sess-label">From' + selectHtml("a", pick.a) + '</label>' +
+      '<label class="sess-label">To' + selectHtml("b", pick.b) + '</label>' +
       '</div>';
   }
-  export function renderTagChip(cls, label) {
-    return '<span class="tag-chip ' + escapeHtml(cls) + '">' + escapeHtml(label) + '</span>';
+  // "N checkpoints apart · X added, Y changed, Z dropped" — the distance is
+  // computed from the two picked sessions' positions in the history list,
+  // never copied from a default pair (the prototype shipped that bug once).
+  export function diffSummary(sessions, pick, data) {
+    var ids = (sessions || []).map(function (s) { return s.session_id; });
+    var ia = ids.indexOf(pick.a), ib = ids.indexOf(pick.b);
+    var apart = (ia !== -1 && ib !== -1) ? Math.abs(ia - ib) : null;
+    var counts = [(data.born || []).length + " added",
+                  (data.changed || []).length + " changed",
+                  (data.gone || []).length + " dropped"];
+    if ((data.resolved || []).length) counts.push(data.resolved.length + " resolved");
+    return (apart !== null ? apart + " checkpoints apart · " : "") + counts.join(", ");
   }
-  export function renderHistoryRow(item, chipCls, chipLabel, note, suffix) {
-    var cls = "it " + trustClass(item);
-    var suffixHtml = suffix ? '<span class="hist-suffix">' + escapeHtml(suffix) + "</span>" : "";
-    var inner = renderTagChip(chipCls, chipLabel) + '<span class="it-text">' + escapeHtml(item.text) +
-      "</span>" + suffixHtml;
-    var noteHtml = note ? '<div class="hist-note">' + escapeHtml(note) + "</div>" : "";
+  // A changed row shows the old value struck through above the new one. Trust
+  // transitions ride the frozen changed-row shape: changed — "from" → "to",
+  // with "; quote supplied" folded in when the quote check flipped true in
+  // the same step (§8's ratified composite, not a coinage).
+  export function diffChangeLines(fields) {
+    var byField = {};
+    (fields || []).forEach(function (f) { byField[f.field] = f; });
+    var lines = [];
+    if (byField.text) {
+      lines.push('<div class="diff-old">' + escapeHtml(byField.text.from || "") + "</div>");
+    }
+    if (byField.trust) {
+      var to = String(byField.trust.to || "untagged");
+      if (byField.quote_verified && byField.quote_verified.to === true) to += "; quote supplied";
+      lines.push('<div class="diff-trans">changed — “' +
+        escapeHtml(String(byField.trust.from || "untagged")) + "” → “" + escapeHtml(to) + "”</div>");
+    } else if (byField.quote_verified) {
+      lines.push('<div class="diff-trans">changed — quote check ' +
+        (byField.quote_verified.to === true ? "passed" :
+          byField.quote_verified.to === false ? "failed" : "not recorded") + "</div>");
+    }
+    return lines.join("");
+  }
+  export function renderDiffRow(kind, item, extra) {
+    extra = extra || {};
+    var word = DIFF_KINDS[kind];
+    var body = "";
+    if (kind === "changed") body += diffChangeLines(extra.fields);
+    body += '<div class="diff-text' + (kind === "gone" ? " diff-text-dim" : "") + '">' +
+      escapeHtml(item.text || "") + "</div>";
+    if (kind === "resolved" && extra.note) {
+      body += '<div class="diff-trans">' + escapeHtml(extra.note) + "</div>";
+    }
+    var metaBits = [item.trust || "untagged", item.id];
+    if (kind === "gone") metaBits.push("entry retained, no longer in working set");
+    var meta = '<div class="diff-meta">' + trustGlyph(item.trust) + " " +
+      metaBits.map(escapeHtml).join(" · ") + "</div>";
+    var inner = '<span class="diff-sign" aria-hidden="true">' + DIFF_SIGNS[kind] + "</span>" +
+      '<span class="diff-kind">' + word + "</span><div class=\"diff-entry\">" + body + meta + "</div>";
     if (!item.id) {
-      return '<div class="it-wrap"><div class="' + cls + '">' + inner + noteHtml + "</div></div>";
+      return '<div class="diff-row">' + inner + "</div>";
     }
-    bioCounter += 1;
-    var bioId = "bio-" + bioCounter;
-    return '<div class="it-wrap"><button type="button" class="' + cls +
-      '" aria-expanded="false" aria-controls="' + bioId + '" data-bio-toggle data-item-id="' +
-      escapeHtml(item.id) + '">' + inner + "</button>" + noteHtml +
-      '<div class="bio-panel" id="' + bioId + '" hidden></div></div>';
+    return '<button type="button" class="diff-row" data-open-why data-item-id="' +
+      escapeHtml(item.id) + '">' + inner + "</button>";
   }
-  export function renderHistoryGroup(key, label, count, wantOpen, bodyHtml) {
-    var expanded = wantOpen && count > 0;
-    var disabled = count === 0;
-    var marker = expanded ? "▾" : "▸";
-    var btn = '<button type="button" class="sec-toggle" aria-expanded="' +
-      (expanded ? "true" : "false") + '" aria-controls="hist-sec-' + key + '"' +
-      (disabled ? " disabled" : "") + '>' + escapeHtml(label) +
-      ' <span class="count">· ' + count + '</span> <span class="disclosure" aria-hidden="true">' +
-      marker + '</span></button>';
-    var body = '<div id="hist-sec-' + key + '" class="sec-body"' + (expanded ? "" : " hidden") + '>' +
-      '<div class="items">' + bodyHtml + "</div></div>";
-    return '<section class="sec" aria-label="' + escapeHtml(label) + '">' + btn + body + "</section>";
-  }
-  function historyReferent(meta) {
-    if (!meta) return null;
-    if (meta.created) return fmtDate(meta.created);
-    return meta.session_id || null;
-  }
-  export function renderHistoryView(diffData) {
-    var born = diffData.born || [];
-    var resolved = diffData.resolved || [];
-    var trustChanged = diffData.trust_changed || [];
-    var carried = diffData.carried || [];
-    var gone = diffData.gone || [];
-
-    var aTopic = (diffData.a && diffData.a.active_topic) || "(untitled)";
-    var bTopic = (diffData.b && diffData.b.active_topic) || "(untitled)";
-    var html = '<h1 class="page-heading">History</h1>' +
-      '<p class="page-meta">' + escapeHtml(aTopic) + " → " + escapeHtml(bTopic) + "</p>";
-    html += renderHistoryPicker();
-
-    if (state.historyUnreadable > 0) {
+  export function renderDiffView(data, sessions, pick, unreadable) {
+    var html = '<div class="why-crumb"><button type="button" class="back-link" data-diff-back>' +
+      "← ledger</button><span class=\"crumb-sep\">/</span>" +
+      '<span class="crumb-id">Diff</span></div>';
+    html += '<div class="brief-head"><h1 class="page-heading">Diff</h1>' +
+      '<span class="brief-sub">' + escapeHtml(diffSummary(sessions, pick, data)) + "</span></div>";
+    html += renderDiffPicker(sessions, pick);
+    if (unreadable > 0) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
-        escapeHtml(state.historyUnreadable + " session file(s) couldn't be read and were skipped.") + "</span></div>";
+        escapeHtml(unreadable + " session file(s) couldn't be read and were skipped.") + "</span></div>";
     }
-    (diffData.partial || []).forEach(function (p) {
+    (data.partial || []).forEach(function (p) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
         escapeHtml(p) + "</span></div>";
     });
-
-    var hasChanges = born.length || resolved.length || trustChanged.length || carried.length || gone.length;
-    if (!hasChanges) {
-      html += '<div class="state-card"><p class="state-title">No changes between these sessions</p>' +
-        "<p>Items, resolutions, and trust changes will appear here once something changes " +
-        "between the two selected sessions.</p></div>";
-      return html;
+    var rows = [];
+    (data.born || []).forEach(function (it) { rows.push(renderDiffRow("born", it)); });
+    (data.changed || []).forEach(function (e) { rows.push(renderDiffRow("changed", e.item, { fields: e.fields })); });
+    (data.resolved || []).forEach(function (e) { rows.push(renderDiffRow("resolved", e.item, { note: e.note })); });
+    (data.gone || []).forEach(function (it) { rows.push(renderDiffRow("gone", it)); });
+    if (!rows.length) {
+      html += '<div class="state-card"><p class="state-title">no entries changed between these checkpoints</p>' +
+        "<p>Carried, unchanged items write nothing — a carry is not an event.</p></div>";
+    } else {
+      html += '<div class="diff-cols" aria-hidden="true"><span></span><span>Kind</span><span>Entry</span></div>';
+      html += '<div class="diff-rows">' + rows.join("") + "</div>";
     }
-
-    // Contract §8.1: the sighting states carry a named referent — the compared
-    // checkpoint's date, or its session id when the date is missing. The
-    // referent renders in the hist-suffix slot, never inside the chip: the
-    // vocabulary tripwire reads the chip's whole inner text as one token.
-    var refB = historyReferent(diffData.b);
-    var refA = historyReferent(diffData.a);
-    html += renderHistoryGroup("born", "First seen", born.length, true,
-      born.map(function (it) { return renderHistoryRow(it, "t-born", "FIRST SEEN", null, refB); }).join(""));
-    html += renderHistoryGroup("resolved", "Resolved", resolved.length, true,
-      resolved.map(function (e) { return renderHistoryRow(e.item, "t-resolved", "RESOLVED", e.note); }).join(""));
-    html += renderHistoryGroup("trust", "Trust class changed", trustChanged.length, true,
-      trustChanged.map(function (e) {
-        return renderHistoryRow(e.item, "t-trust", "TRUST CLASS CHANGED", null, e.from + " → " + e.to);
-      }).join(""));
-    html += renderHistoryGroup("carried", "Carried", carried.length, false,
-      carried.map(function (e) {
-        return renderHistoryRow(e.item, "t-carried", "CARRIED", null);
-      }).join(""));
-    html += renderHistoryGroup("gone", "Last seen", gone.length, false,
-      gone.map(function (it) { return renderHistoryRow(it, "t-gone", "LAST SEEN", null, refA); }).join(""));
+    html += '<div class="card-foot">A diff is a reading of the ledger, not a mutation of it. Both checkpoints remain on disk. Click a row to open its entry.</div>';
     return html;
   }
   // ---- ledger + session page (#670 slice 2) ----

@@ -36,6 +36,7 @@ def _write_diff_sessions(d, slug, sid_a, sid_b):
         {"text": "gone question", "id": "o-bbb222bbb222", "trust": "verbatim"},
         {"text": "trust change item", "id": "o-ccc333ccc333", "trust": "verbatim"},
         {"text": "carried item", "id": "o-ddd444ddd444", "trust": "inferred"},
+        {"text": "old wording", "id": "o-fff666fff666", "trust": "verbatim"},
         {"text": "no id item old"},
     ])
     cp_a["project_slug"] = slug
@@ -45,13 +46,14 @@ def _write_diff_sessions(d, slug, sid_a, sid_b):
         {"text": "trust change item", "id": "o-ccc333ccc333", "trust": "inferred"},
         {"text": "carried item", "id": "o-ddd444ddd444", "trust": "inferred"},
         {"text": "new born item", "id": "o-eee555eee555", "trust": "verbatim"},
+        {"text": "new wording", "id": "o-fff666fff666", "trust": "verbatim"},
         {"text": "no id item new"},
     ])
     cp_b["project_slug"] = slug
     (d / f"{sid_b}.json").write_text(json.dumps(cp_b))
 
 
-def test_diff_checkpoints_categorizes_born_resolved_gone_carried_trust_changed(flat_with_events):
+def test_diff_checkpoints_categorizes_born_resolved_gone_carried_changed(flat_with_events):
     d, slug = flat_with_events
     sid_a, sid_b = "diff-a-0001", "diff-b-0002"
     _write_diff_sessions(d, slug, sid_a, sid_b)
@@ -79,13 +81,28 @@ def test_diff_checkpoints_categorizes_born_resolved_gone_carried_trust_changed(f
     assert carried["item"]["id"] == "o-ddd444ddd444"
     assert "sessions_present" not in carried
 
-    assert len(got["trust_changed"]) == 1
-    tc = got["trust_changed"][0]
-    assert tc["item"]["id"] == "o-ccc333ccc333"
-    assert tc["from"] == "verbatim"
-    assert tc["to"] == "inferred"
-
     assert any("without an id" in p for p in got["partial"])
+
+
+def test_diff_changed_rows_carry_old_and_new_values(flat_with_events):
+    """The diff view renders strikethrough old -> new, so the reader must emit
+    the VALUES that changed, not just the field names (#670 slice 3). One
+    changed list covers every tracked field; trust transitions are changed
+    rows like any other — the frozen vocabulary rides 'changed'."""
+    d, slug = flat_with_events
+    sid_a, sid_b = "diff-a-0001", "diff-b-0002"
+    _write_diff_sessions(d, slug, sid_a, sid_b)
+
+    got = reader.diff_checkpoints(d, slug, sid_a, sid_b)
+    assert "trust_changed" not in got
+    by_id = {c["item"]["id"]: c for c in got["changed"]}
+    assert set(by_id) == {"o-ccc333ccc333", "o-fff666fff666"}
+
+    trust_fields = by_id["o-ccc333ccc333"]["fields"]
+    assert {"field": "trust", "from": "verbatim", "to": "inferred"} in trust_fields
+
+    text_fields = by_id["o-fff666fff666"]["fields"]
+    assert {"field": "text", "from": "old wording", "to": "new wording"} in text_fields
 
 
 def test_diff_checkpoints_bad_sid_a_is_error(flat_with_events):

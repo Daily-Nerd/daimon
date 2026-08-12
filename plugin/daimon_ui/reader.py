@@ -458,11 +458,17 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         else:
             gone.append(item)
 
-    carried, trust_changed = [], []
+    # One changed list for every tracked field, values included: the diff view
+    # renders old struck through above new, so field names alone are not
+    # enough. Trust transitions are changed rows like any other — the frozen
+    # vocabulary rides "changed" (§8), nothing gets its own bucket.
+    carried, changed = [], []
     for iid in sorted(ids_a & ids_b):
         item_a, item_b = map_a[iid], map_b[iid]
-        if item_a.get("trust") != item_b.get("trust"):
-            trust_changed.append({"item": item_b, "from": item_a.get("trust"), "to": item_b.get("trust")})
+        fields = [{"field": f, "from": item_a.get(f), "to": item_b.get(f)}
+                  for f in _BIO_TRACKED_FIELDS if item_a.get(f) != item_b.get(f)]
+        if fields:
+            changed.append({"item": item_b, "fields": fields})
         else:
             carried.append({"item": item_b})
 
@@ -475,7 +481,7 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         "ok": True,
         "a": meta_a, "b": meta_b,
         "born": born, "resolved": resolved, "gone": gone,
-        "carried": carried, "trust_changed": trust_changed,
+        "carried": carried, "changed": changed,
         "partial": partial,
     }
 
