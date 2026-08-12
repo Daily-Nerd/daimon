@@ -479,6 +479,165 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         "partial": partial,
     }
 
+def _walk_transitions(data_dir: Path, slug: str):
+    """Pairwise walk over every session, oldest -> newest, emitting one event per
+    recorded transition: first_seen (item appears), changed (a tracked field
+    differs from the previous sighting), last_seen (item present before, absent
+    now — ts is the created of its FINAL sighting, the session named is the one
+    whose absence recorded it). Carried, unchanged sightings emit nothing:
+    a carry is not an event, and counting it would let agreement pose as
+    corroboration. Shared by project_ledger and session_events so the two
+    surfaces can never disagree about what happened."""
+    hist = project_history(data_dir, slug)
+    events, latest_item, last_sight = [], {}, {}
+    prev_ids, gone = None, set()
+    for s in reversed(hist["sessions"]):  # oldest -> newest
+        data, err = _load_session(data_dir, s["session_id"])
+        if err:
+            continue  # torn/missing session file: skip, don't abort the whole walk
+        _, sections, _ = _normalize(data)
+        cur = _index_items(sections)
+        for iid, item in cur.items():
+            if iid not in latest_item or iid in gone:
+                gone.discard(iid)
+                events.append({"item_id": iid, "kind": "first_seen", "ts": s["created"],
+                               "session_id": s["session_id"], "detail": None})
+            else:
+                changed = [f for f in _BIO_TRACKED_FIELDS
+                           if item.get(f) != latest_item[iid].get(f)]
+                if changed:
+                    events.append({"item_id": iid, "kind": "changed", "ts": s["created"],
+                                   "session_id": s["session_id"],
+                                   "detail": ", ".join(changed)})
+            latest_item[iid] = item
+        if prev_ids is not None:
+            for iid in sorted(prev_ids - set(cur)):
+                gone.add(iid)
+                events.append({"item_id": iid, "kind": "last_seen",
+                               "ts": last_sight.get(iid),
+                               "session_id": s["session_id"], "detail": None})
+        for iid in cur:
+            last_sight[iid] = s["created"]
+        prev_ids = set(cur)
+    return {"events": events, "items": latest_item, "unreadable": hist["unreadable"]}
+
+# Row order inside a ledger group and a session page: births, then changes,
+# then departures — the order the header counts read in — id-tiebroken so the
+# output never depends on dict insertion.
+_TRANSITION_ORDER = {"first_seen": 0, "changed": 1, "last_seen": 2}
+
+# Viewer section key -> the kind word recall already prints (schema.ITEM_FIELDS
+# vocabulary: question/decision/belief/uncertainty/contradiction). The ledger's
+# chip must say exactly what a recall row for the same item says — two surfaces,
+# one vocabulary. verify_first and open_loops are both slices of open_questions.
+_SECTION_KIND = {"verify_first": "question", "open_loops": "question",
+                 "decisions": "decision", "beliefs": "belief",
+                 "uncertainties": "uncertainty", "contradictions": "contradiction"}
+
+def _ledger_partial(unreadable):
+    if not unreadable:
+        return []
+    return [f"{unreadable} session file(s) couldn't be read and are missing from the ledger."]
+
+def project_ledger(data_dir: Path, slug: str) -> dict:
+    """The ledger screen: one row per object, grouped under the session of its
+    latest recorded transition. A later resolution or quote check (own ts, no
+    session attribution in their ledgers) can overtake the LAST EVENT field,
+    but never moves the row to another group — the viewer must not invent the
+    attribution the stored rows don't carry."""
+    walk = _walk_transitions(data_dir, slug)
+    hist_sessions = project_history(data_dir, slug)["sessions"]  # newest -> oldest
+    head = None
+    if hist_sessions:
+        head = {"session_id": hist_sessions[0]["session_id"],
+                "created": hist_sessions[0]["created"]}
+
+    bucket = data_dir / slug
+    res_fold = resolutions(bucket)
+    ver_rows = _jsonl_rows(bucket / "verification.jsonl")
+
+    latest_tr = {}
+    for ev in walk["events"]:  # emitted oldest -> newest, so last write wins
+        latest_tr[ev["item_id"]] = ev
+
+    by_sid = {}
+    for iid, tr in latest_tr.items():
+        last_event = {"kind": tr["kind"], "ts": tr["ts"]}
+        res = res_fold.get(iid)
+        if res and (res.get("ts") or "") > (last_event["ts"] or ""):
+            last_event = {"kind": "resolved", "ts": res.get("ts")}
+        for row in ver_rows:
+            if row.get("item_ref") == iid and (row.get("ts") or "") > (last_event["ts"] or ""):
+                last_event = {"kind": "quote_check", "ts": row.get("ts")}
+        item = walk["items"][iid]
+        entry = by_sid.setdefault(tr["session_id"], {
+            "counts": {"first_seen": 0, "changed": 0, "last_seen": 0}, "rows": []})
+        entry["counts"][tr["kind"]] += 1
+        entry["rows"].append({"id": iid, "text": item.get("text"),
+                              "trust": item.get("trust"),
+                              "kind": _SECTION_KIND.get(item.get("section")),
+                              "transition": tr["kind"], "last_event": last_event})
+
+    groups = []
+    for s in hist_sessions:  # newest first, only sessions that kept rows
+        entry = by_sid.get(s["session_id"])
+        if entry is None:
+            continue
+        entry["rows"].sort(key=lambda r: (_TRANSITION_ORDER[r["transition"]], r["id"]))
+        groups.append({"session_id": s["session_id"], "created": s["created"],
+                       "active_topic": s.get("active_topic"),
+                       "counts": entry["counts"], "rows": entry["rows"]})
+
+    return {"ok": True, "groups": groups, "head": head,
+            "totals": {"objects": len(walk["items"]),
+                       "events": len(walk["events"]) + len(res_fold) + len(ver_rows)},
+            "partial": _ledger_partial(walk["unreadable"])}
+
+def session_events(data_dir: Path, slug: str, sid: str) -> dict:
+    """The session page: every transition the named session wrote, grouped by
+    object. sid must exact-match a session_id from project_history before any
+    path is built, same discipline as diff_checkpoints. Resolutions and quote
+    checks are deliberately absent: their ledgers record no session, and this
+    page must not claim them for one."""
+    valid_ids = {s["session_id"] for s in project_history(data_dir, slug)["sessions"]}
+    if sid not in valid_ids:
+        return {"ok": False, "error": {
+            "what": f"Session {sid!r} isn't part of {slug}'s history.",
+            "why": "The session id doesn't match any recorded checkpoint.",
+            "fix": "Pick a session from the ledger's session list.",
+        }}
+    data, err = _load_session(data_dir, sid)
+    if err:
+        return {"ok": False, "error": err}
+
+    walk = _walk_transitions(data_dir, slug)
+    mine = [ev for ev in walk["events"] if ev["session_id"] == sid]
+
+    by_item = {}
+    counts = {"first_seen": 0, "changed": 0, "last_seen": 0}
+    for ev in mine:
+        counts[ev["kind"]] += 1
+        item = walk["items"].get(ev["item_id"]) or {}
+        obj = by_item.setdefault(ev["item_id"], {
+            "id": ev["item_id"], "text": item.get("text"),
+            "trust": item.get("trust"),
+            "kind": _SECTION_KIND.get(item.get("section")), "events": []})
+        obj["events"].append({"kind": ev["kind"], "ts": ev["ts"], "detail": ev["detail"]})
+
+    objects = sorted(by_item.values(), key=lambda o: (
+        _TRANSITION_ORDER[o["events"][0]["kind"]], o["id"]))
+
+    wc = data.get("working_context") or {}
+    topic = wc.get("active_topic") if isinstance(wc.get("active_topic"), dict) else {}
+    session = {"session_id": sid, "created": data.get("created"),
+               "author": data.get("author"),
+               "active_topic": (topic or {}).get("text")}
+    if receipts_enabled(data_dir / slug):
+        session["receipt"] = receipt_state(data_dir, data)
+
+    return {"ok": True, "session": session, "objects": objects, "counts": counts,
+            "partial": _ledger_partial(walk["unreadable"])}
+
 def _bad_item_id_error(item_id):
     return {"ok": False, "error": {
         "what": f"{item_id!r} isn't a valid item id.",
