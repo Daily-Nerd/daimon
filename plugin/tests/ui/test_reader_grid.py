@@ -95,6 +95,51 @@ def test_grid_windows_columns_and_reports_what_lies_beyond(tmp_path):
     assert any("older checkpoint" in p for p in got["partial"])
 
 
+def test_grid_skips_check_rows_for_unknown_items(tmp_path):
+    d, slug = _grid_project(tmp_path)
+    (d / slug / "verification.jsonl").write_text(json.dumps({
+        "ts": "2026-08-02T23:00:00Z", "check": "quote", "reason": "compacted",
+        "item_ref": "o-feedfeedfeed"}) + "\n")
+    got = reader.project_grid(d, slug)
+    assert all(not r["checks"] for r in got["rows"])
+
+
+def test_grid_folds_checks_after_head_into_the_head_column(tmp_path):
+    d, slug = _grid_project(tmp_path)
+    (d / slug / "verification.jsonl").write_text(json.dumps({
+        "ts": "2026-08-09T23:00:00Z", "check": "quote", "reason": "compacted",
+        "item_ref": "o-aaa111aaa111"}) + "\n")
+    got = reader.project_grid(d, slug)
+    a = {r["id"]: r for r in got["rows"]}["o-aaa111aaa111"]
+    assert a["checks"][0]["column"] == "grid-s3"  # head
+
+
+def test_grid_counts_checks_that_predate_the_window(tmp_path):
+    d, slug = _grid_project(tmp_path)
+    for i in range(4, 12):
+        _write_session(d, slug, f"grid-s{i}", f"2026-08-{i:02d}T10:00:00Z", [
+            {"text": "the build gates on the bundle", "id": "o-aaa111aaa111",
+             "trust": "verbatim", "quote": "gates on the bundle"},
+        ])
+    (d / slug / "verification.jsonl").write_text(json.dumps({
+        "ts": "2026-08-02T23:00:00Z", "check": "quote", "reason": "compacted",
+        "item_ref": "o-aaa111aaa111"}) + "\n")
+    got = reader.project_grid(d, slug)
+    a = {r["id"]: r for r in got["rows"]}["o-aaa111aaa111"]
+    assert a["checks"] == []
+    assert any("quote check(s) predate this window" in p for p in got["partial"])
+
+
+def test_grid_windows_rows_and_reports_what_lies_beyond(tmp_path):
+    d, slug = _grid_project(tmp_path)
+    many = [{"text": f"object number {i}", "id": f"o-{i:012x}"}
+            for i in range(reader.GRID_ROWS + 5)]
+    _write_session(d, slug, "grid-s4", "2026-08-04T10:00:00Z", many)
+    got = reader.project_grid(d, slug)
+    assert len(got["rows"]) == reader.GRID_ROWS
+    assert any("further object(s) beyond this window" in p for p in got["partial"])
+
+
 def test_grid_unknown_project_is_empty_not_an_error(tmp_path):
     d = tmp_path / "checkpoints"
     d.mkdir()

@@ -827,23 +827,22 @@ def project_grid(data_dir: Path, slug: str) -> dict:
                 "ts": ev["ts"], "detail": ev["detail"]}
 
     checks_before_window = 0
-    for row in _jsonl_rows(data_dir / slug / "verification.jsonl"):
+    # No columns means no sessions, so nothing can anchor a check row —
+    # walk["items"] is empty too and the guard below would skip every row.
+    ver_rows = _jsonl_rows(data_dir / slug / "verification.jsonl") if columns else []
+    for row in ver_rows:
         iid = row.get("item_ref")
         if iid not in walk["items"]:
             continue
         ts = _norm_str(row.get("ts")) or ""
-        column = None
+        if ts and ts <= (columns[0]["created"] or "") and older_columns:
+            checks_before_window += 1
+            continue
+        column = columns[-1]["session_id"]  # later than head folds into head
         for c in columns:
             if (c["created"] or "") >= ts:
                 column = c["session_id"]
                 break
-        if column is None and columns:
-            column = columns[-1]["session_id"]  # later than head folds into head
-        if columns and ts and ts <= (columns[0]["created"] or "") and older_columns:
-            checks_before_window += 1
-            continue
-        if column is None:
-            continue
         entry = by_item.setdefault(iid, {"cells": {}, "checks": [], "gone_after": None})
         check, reason = _norm_str(row.get("check")), _norm_str(row.get("reason"))
         detail = f"{check}: {reason}" if check and reason else (reason or check)
