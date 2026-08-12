@@ -1,8 +1,8 @@
 import {
   ACT_ITEM_ID_RE, escapeHtml, fmtRelative, navCurrent, renderBioPanel,
   renderEmptyProjects, renderError, renderLedgerSessions, renderLedgerView, renderProjCard,
-  renderSearchResults, renderSections, renderSessionView, renderSidebarScope, renderWhyView,
-  skeletonHtml
+  renderRefutationsView, renderSearchResults, renderSections, renderSessionView,
+  renderSidebarScope, renderWhyView, skeletonHtml
 } from "./render.js";
 import { state } from "./state.js";
 
@@ -78,9 +78,11 @@ import { state } from "./state.js";
     var slot = document.getElementById("nav-pills-slot");
     slot.innerHTML = "";
     var inProject = state.currentSlug &&
-      ["project", "ledger", "session", "search", "why"].indexOf(state.view) !== -1;
+      ["project", "ledger", "session", "search", "why", "refutations"].indexOf(state.view) !== -1;
     if (!inProject) return;
-    [["briefing", "project", goBriefing], ["ledger", "ledger", enterLedger]].forEach(function (pill) {
+    // Pill order is the frozen chrome: briefing · ledger · refutations.
+    [["briefing", "project", goBriefing], ["ledger", "ledger", enterLedger],
+     ["refutations", "refutations", enterRefutations]].forEach(function (pill) {
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "nav-pill";
@@ -174,6 +176,50 @@ import { state } from "./state.js";
     Array.prototype.forEach.call(container.querySelectorAll("[data-open-session][data-sid]"), function (btn) {
       btn.addEventListener("click", function () { enterSession(btn.dataset.sid); });
     });
+  }
+  // ---- refutations lane (#670 slice 3): renders `daimon refute list` ----
+  function enterRefutations() {
+    if (!state.currentSlug) return;
+    var slug = state.currentSlug;
+    state.view = "refutations";
+    state.requestId += 1;
+    var reqId = state.requestId;
+    renderNavPills();
+    var stateEl = document.getElementById("state");
+    var sectionsEl = document.getElementById("sections");
+    var mainEl = document.getElementById("main");
+    mainEl.setAttribute("aria-busy", "true");
+    if (state.pendingTimer) clearTimeout(state.pendingTimer);
+    state.pendingTimer = setTimeout(function () {
+      if (reqId !== state.requestId) return;
+      stateEl.innerHTML = skeletonHtml();
+    }, 1000);
+    api("/api/refutations?project=" + encodeURIComponent(slug))
+      .then(function (data) {
+        if (reqId !== state.requestId) return; // superseded by a newer navigation
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        stateEl.innerHTML = "";
+        if (!data.ok) {
+          sectionsEl.innerHTML = "";
+          showError(stateEl, data.error);
+          return;
+        }
+        sectionsEl.innerHTML = renderRefutationsView(data);
+        toTop();
+        announce("Refutations loaded.");
+        wireWhyOpeners(sectionsEl);
+      }).catch(function () {
+        if (reqId !== state.requestId) return;
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        sectionsEl.innerHTML = "";
+        showError(stateEl, {
+          what: "Could not load refutations.",
+          why: "The request to the daimon server failed.",
+          fix: "Check the server is running and try again."
+        });
+      });
   }
   // ---- session page (#670 slice 2): what one session wrote ----
   function enterSession(sid) {
@@ -468,6 +514,7 @@ import { state } from "./state.js";
     // reader to the ledger or session page they were on, not to the briefing.
     if (state.view === "ledger") state.whyReturn = { view: "ledger" };
     else if (state.view === "session") state.whyReturn = { view: "session", sid: state.sessionSid };
+    else if (state.view === "refutations") state.whyReturn = { view: "refutations" };
     else state.whyReturn = null;
     state.view = "why";
     renderNavPills();
@@ -491,6 +538,7 @@ import { state } from "./state.js";
         if (back) back.addEventListener("click", function () {
           if (state.whyReturn && state.whyReturn.view === "session") { enterSession(state.whyReturn.sid); }
           else if (state.whyReturn && state.whyReturn.view === "ledger") { enterLedger(); }
+          else if (state.whyReturn && state.whyReturn.view === "refutations") { enterRefutations(); }
           else if (state.lastSearchQ) { runSearch(state.lastSearchQ); }
           else if (state.activeRef) { selectCheckpoint(state.activeRef); }
           else { loadList(); }

@@ -1161,12 +1161,8 @@ def _cmd_refute_show(args) -> int:
 
 def _cmd_refute_list(args) -> int:
     project = _resolve_project(args.project)
-    wanted = set(args.state or refutations.STATES)
-    rows = [row for row in refutations.records(project_dir=project).values()
-            if row["state"] in wanted]
-    rows.sort(key=lambda row: (row.get("state") != "active",
-                               row.get("updated_at") or "",
-                               row["refutation_id"]))
+    rows = refutations.listing(states=set(args.state or refutations.STATES),
+                               project_dir=project)
     _note_usage("refute:list")
     if args.json:
         print(_refutation_json(rows))

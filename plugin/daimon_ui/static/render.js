@@ -717,6 +717,57 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     return html;
   }
 
+  // ---- refutations lane (#670 slice 3): rows are `daimon refute list`'s ----
+  // The marker glyphs are the CLI's own (cli.py _print_refutation): ✗ active,
+  // × overturned, ? candidate. The lane renders refute list; it must not
+  // invent a second vocabulary, so the whole bracket reads exactly as the CLI
+  // prints it: [? candidate · agent-proposed].
+  export const REFUTATION_MARKS = { active: "✗", overturned: "×", candidate: "?" };
+  export function refutationMarker(r) {
+    var state = (r && r.state) || "candidate";
+    var mark = Object.prototype.hasOwnProperty.call(REFUTATION_MARKS, state)
+      ? REFUTATION_MARKS[state] : "?";
+    var activation = (r && r.activation) ||
+      ((r && r.asserted_by) || "?") + "-proposed";
+    return "[" + mark + " " + state + " · " + activation + "]";
+  }
+  function renderRefutationAnchors(anchors) {
+    if (!anchors || !anchors.length) return "";
+    var chips = anchors.map(function (a) {
+      if (ACT_ITEM_ID_RE.test(a)) {
+        return '<button type="button" class="refut-anchor" data-open-why data-item-id="' +
+          escapeHtml(a) + '">' + escapeHtml(a) + "</button>";
+      }
+      return '<span class="refut-anchor refut-anchor-raw">' + escapeHtml(a) + "</span>";
+    }).join(" ");
+    return '<div class="refut-anchors">' + chips + "</div>";
+  }
+  export function renderRefutationRow(r) {
+    return '<div class="refut-row">' +
+      '<div class="refut-record"><code class="obj-id">' + escapeHtml(r.refutation_id || "") +
+      '</code><span class="refut-state">' + escapeHtml(refutationMarker(r)) + "</span></div>" +
+      '<div class="refut-body"><span class="refut-subject">' + escapeHtml(r.subject || "") +
+      "</span>" + renderRefutationAnchors(r.anchors) + "</div>" +
+      '<span class="refut-at">' + escapeHtml(fmtDateTime(r.created_at)) + "</span>" +
+      '<span class="refut-origin">' + escapeHtml(r.asserted_author || "") + "</span></div>";
+  }
+  export function renderRefutationsView(data) {
+    var rows = data.rows || [];
+    var html = '<div class="brief-head"><h1 class="page-heading">Refutations</h1>' +
+      '<span class="brief-sub">recorded against entries · status, never judgment</span></div>';
+    if (!rows.length) {
+      // The CLI's own empty words — one vocabulary across surfaces.
+      return html + '<div class="state-card state-empty"><p class="state-title">' +
+        "no refutations for this project</p>" +
+        "<p>Records appear here as <code>daimon refute add</code> writes them.</p></div>";
+    }
+    html += '<div class="refut-cols" aria-hidden="true"><span>Record</span><span>Refutes</span>' +
+      "<span>Recorded</span><span>Origin</span></div>";
+    html += '<div class="refut-rows">' + rows.map(renderRefutationRow).join("") + "</div>";
+    html += '<div class="card-foot">These records live outside checkpoints and survive checkpoint expiry.</div>';
+    return html;
+  }
+
   export function renderError(e) {
     return '<div class="state-card state-error"><p class="state-title">⚠ Error — ' +
       escapeHtml(e.what) + "</p><p>" + escapeHtml(e.why) + "</p><p><strong>Fix:</strong> " +

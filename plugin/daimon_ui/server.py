@@ -12,7 +12,7 @@ from . import reader
 # never grows a second search engine) and inspector.inspect_item is the same
 # read-side receipt `daimon why` prints. reader.py stays daimon-import-free
 # (files are its seam); the engine boundary lives here in dispatch only.
-from daimon_briefing import inspector, recall
+from daimon_briefing import inspector, recall, refutations
 
 _PAGE = Path(__file__).parent / "page.html"
 _SLUG_RE = re.compile(r"^[\w-]+$")
@@ -190,6 +190,16 @@ class _Handler(BaseHTTPRequestHandler):
                 }})
                 return
             self._json(dict({"ok": True}, **result))
+        elif path == "/api/refutations":
+            slug = self._resolve_slug(params)
+            if slug is None:
+                self._json(self._bad_slug_error(params.get("project", [self.default_slug])[0]))
+                return
+            # The lane renders `daimon refute list` — refutations.listing is the
+            # same fold and the same order the CLI prints. A slug is already its
+            # own project_slug, so passing it as project_dir resolves to the same
+            # bucket (the inspector endpoint leans on the same property).
+            self._json({"ok": True, "rows": refutations.listing(project_dir=slug)})
         elif path == "/api/ledger":
             slug = self._resolve_slug(params)
             if slug is None:
