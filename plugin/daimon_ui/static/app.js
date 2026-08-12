@@ -151,8 +151,16 @@ import { state } from "./state.js";
     }
     stateEl.innerHTML = "";
     announce("All projects.");
-    sectionsEl.innerHTML = '<div class="proj-grid">' +
-      state.projects.map(renderProjCard).join("") + "</div>";
+    // Current project first — it is where the user physically is — then the
+    // rest stay in the server's newest-first order.
+    var ordered = state.projects.slice().sort(function (a, b) {
+      return (b.slug === state.defaultSlug) - (a.slug === state.defaultSlug);
+    });
+    sectionsEl.innerHTML =
+      '<div class="grid-head"><h1 class="page-heading">Projects</h1>' +
+      '<span class="brief-sub">' + ordered.length +
+      ' project(s) · each card is where that project left off</span></div>' +
+      '<div class="proj-grid">' + ordered.map(renderProjCard).join("") + "</div>";
     Array.prototype.forEach.call(sectionsEl.querySelectorAll(".proj-card"), function (btn) {
       btn.addEventListener("click", function () { enterProject(btn.dataset.slug, true); });
     });

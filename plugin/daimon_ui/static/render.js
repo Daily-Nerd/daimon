@@ -170,19 +170,31 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       ' sessions. The earlier ones are reachable in History.</p>';
   }
 
+  // A slug is a flattened path, so the true directory name is unrecoverable —
+  // the tail segment is a best-effort display name, never an identity.
+  export function slugTail(slug) {
+    var parts = String(slug || "").split("-").filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : String(slug || "");
+  }
   export function renderProjCard(p) {
     var isCurrent = p.slug === state.defaultSlug;
     var torn = p.active_topic == null && p.created == null && p.item_count == null;
-    var title = torn ? "Unreadable checkpoint" : (p.active_topic || "(untitled)");
-    var meta = torn ? "run daimon heal" :
-      [fmtRelative(p.created), p.item_count != null ? p.item_count + " items" : null]
-        .filter(Boolean).join(" · ");
-    var chip = isCurrent ? '<span class="proj-chip">CURRENT DIR</span>' : "";
+    var chip = isCurrent ? '<span class="proj-chip">current dir</span>' : "";
+    var name = '<span class="proj-name">' + escapeHtml(slugTail(p.slug)) + "</span>";
+    var age = !torn && p.created
+      ? '<span class="proj-age">' + escapeHtml(fmtRelative(p.created)) + "</span>" : "";
+    var topic = torn ? "Unreadable checkpoint" : (p.active_topic || "(untitled)");
+    var foot = torn ? "run daimon heal"
+      : [p.item_count != null ? p.item_count + " items" : null]
+          .filter(Boolean).join(" · ");
     return '<button type="button" class="proj-card' + (isCurrent ? " current" : "") +
       '" data-slug="' + escapeHtml(p.slug) + '">' +
-      '<span class="proj-title">' + escapeHtml(title) + '</span>' +
-      '<span class="proj-slug">' + escapeHtml(p.slug) + '</span>' +
-      '<span class="proj-meta">' + escapeHtml(meta) + '</span>' + chip + '</button>';
+      '<span class="proj-top">' + name + chip + age + "</span>" +
+      '<span class="proj-topic' + (torn || !p.active_topic ? " proj-topic-dim" : "") + '">' +
+      escapeHtml(topic) + "</span>" +
+      '<span class="proj-foot"><span class="proj-slug">' + escapeHtml(p.slug) +
+      "</span>" + (foot ? '<span class="proj-meta">' + escapeHtml(foot) + "</span>" : "") +
+      "</span></button>";
   }
   export function renderEmptyProjects() {
     return '<div class="state-card state-empty"><p class="state-title">No daimon projects yet</p>' +

@@ -418,22 +418,43 @@
     transition: background var(--transition), border-color var(--transition);
   }
 
-  .proj-card:hover { background: var(--surface-hover); }
+  .proj-card:hover { background: var(--surface-hover); border-color: #484f58; }
 
   .proj-card.current {
     border-left-color: var(--accent);
-    background: var(--accent-wash);
   }
 
-  .proj-title {
-    font-size: var(--fs-sm);
-    font-weight: 500;
+  .proj-top { display: flex; align-items: baseline; gap: 8px; width: 100%; }
+
+  .proj-name {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
     color: var(--ink);
+  }
+
+  .proj-age {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-tertiary);
+  }
+
+  /* The topic is the card's substance: the sentence this project left off on. */
+  .proj-topic {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    min-height: 2.6em;
   }
+
+  .proj-topic-dim { color: var(--ink-tertiary); font-style: italic; }
+
+  .proj-foot { display: flex; align-items: baseline; gap: 10px; width: 100%; min-width: 0; }
 
   .proj-slug, .proj-meta {
     font-family: var(--mono);
@@ -441,16 +462,33 @@
     color: var(--ink-tertiary);
   }
 
+  /* Slugs overflow from the LEFT so the distinguishing tail stays visible;
+     rtl only reorders the rendered clip, the text itself is untouched. */
+  .proj-foot .proj-slug {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .proj-foot .proj-meta { flex: none; }
+
   .proj-chip {
     font-family: var(--mono);
-    font-size: var(--fs-xs);
+    font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--accent);
     border: 1px solid var(--accent);
     border-radius: 4px;
     padding: 0 var(--s1);
   }
+
+  .grid-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
 
   .back-link {
     display: inline-flex;
