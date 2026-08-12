@@ -2,7 +2,8 @@ import {
   ACT_ITEM_ID_RE, displaySid, escapeHtml, fmtRelative, navCurrent, renderBioPanel,
   renderDiffView, renderEmptyProjects, renderError, renderLedgerSessions, renderLedgerView,
   renderProjCard, renderRefutationsView, renderSearchResults, renderSections,
-  renderSessionView, renderSidebarScope, renderStripView, renderWhyView, skeletonHtml
+  renderPrintView, renderSessionView, renderSidebarScope, renderStripView, renderWhyView,
+  skeletonHtml
 } from "./render.js";
 import { state } from "./state.js";
 
@@ -78,7 +79,7 @@ import { state } from "./state.js";
     var slot = document.getElementById("nav-pills-slot");
     slot.innerHTML = "";
     var inProject = state.currentSlug &&
-      ["project", "ledger", "session", "search", "why", "refutations", "diff", "strip"].indexOf(state.view) !== -1;
+      ["project", "ledger", "session", "search", "why", "refutations", "diff", "strip", "print"].indexOf(state.view) !== -1;
     if (!inProject) return;
     // Pill order is the frozen chrome: briefing · ledger · check strip · refutations.
     [["briefing", "project", goBriefing], ["ledger", "ledger", enterLedger],
@@ -605,6 +606,7 @@ import { state } from "./state.js";
     var reqId = state.requestId;
     var cacheKey = reqId + ":" + itemId;
     function paint(data) {
+      state.whyBio = data; // the print door reads the ladder's tail from here
       panel.innerHTML = renderBioPanel(data, state.whyHighlightSid);
       wireRungOpeners(panel, data);
     }
@@ -686,15 +688,19 @@ import { state } from "./state.js";
     if (!slug || !ACT_ITEM_ID_RE.test(itemId || "")) return;
     // Remember which surface the entry was opened from: back must return the
     // reader to the ledger or session page they were on, not to the briefing.
-    if (state.view === "ledger") state.whyReturn = { view: "ledger" };
-    else if (state.view === "session") state.whyReturn = { view: "session", sid: state.sessionSid };
-    else if (state.view === "refutations") state.whyReturn = { view: "refutations" };
-    else if (state.view === "diff") state.whyReturn = { view: "diff", a: state.diffPick.a, b: state.diffPick.b };
-    else if (state.view === "strip") state.whyReturn = { view: "strip" };
-    else state.whyReturn = null;
-    // Only a diff row or a strip mark lights a rung; any other door opens
-    // the ladder unlit.
-    if (state.view !== "diff" && state.view !== "strip") state.whyHighlightSid = null;
+    // Returning from the print view is not a new door: the entry keeps the
+    // return target and highlight it had before printing.
+    if (state.view !== "print") {
+      if (state.view === "ledger") state.whyReturn = { view: "ledger" };
+      else if (state.view === "session") state.whyReturn = { view: "session", sid: state.sessionSid };
+      else if (state.view === "refutations") state.whyReturn = { view: "refutations" };
+      else if (state.view === "diff") state.whyReturn = { view: "diff", a: state.diffPick.a, b: state.diffPick.b };
+      else if (state.view === "strip") state.whyReturn = { view: "strip" };
+      else state.whyReturn = null;
+      // Only a diff row or a strip mark lights a rung; any other door opens
+      // the ladder unlit.
+      if (state.view !== "diff" && state.view !== "strip") state.whyHighlightSid = null;
+    }
     state.view = "why";
     renderNavPills();
     state.requestId += 1;
@@ -725,12 +731,67 @@ import { state } from "./state.js";
           else { loadList(); }
         });
         var bio = document.getElementById("why-bio");
+        state.whyBio = null; // a stale ladder must not aim the print door
         if (bio) loadBiography(itemId, bio);
+        var printBtn = sectionsEl.querySelector("[data-open-print]");
+        if (printBtn) printBtn.addEventListener("click", function () {
+          var chain = (state.whyBio && state.whyBio.trust_anatomy &&
+            state.whyBio.trust_anatomy.chain) || [];
+          if (!chain.length) return; // door arms once the ladder loads
+          enterPrint(chain[chain.length - 1].session_id, itemId);
+        });
       }).catch(function () {
         if (reqId !== state.requestId) return;
         sectionsEl.innerHTML = "";
         showError(stateEl, {
           what: "Could not load this entry.",
+          why: "The request to the daimon server failed.",
+          fix: "Check the server is running and try again."
+        });
+      });
+  }
+  // ---- print view (#670 slice 4): one checkpoint, set as a printed record.
+  // Same /api/session payload the session page renders — no second walk. ----
+  function enterPrint(sid, itemId) {
+    if (!state.currentSlug || !sid) return;
+    var slug = state.currentSlug;
+    state.view = "print";
+    state.printItemId = itemId;
+    state.requestId += 1;
+    var reqId = state.requestId;
+    renderNavPills();
+    var stateEl = document.getElementById("state");
+    var sectionsEl = document.getElementById("sections");
+    var mainEl = document.getElementById("main");
+    mainEl.setAttribute("aria-busy", "true");
+    if (state.pendingTimer) clearTimeout(state.pendingTimer);
+    state.pendingTimer = setTimeout(function () {
+      if (reqId !== state.requestId) return;
+      stateEl.innerHTML = skeletonHtml();
+    }, 1000);
+    api("/api/session?project=" + encodeURIComponent(slug) + "&sid=" + encodeURIComponent(sid))
+      .then(function (data) {
+        if (reqId !== state.requestId) return; // superseded by a newer navigation
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        stateEl.innerHTML = "";
+        if (!data.ok) {
+          sectionsEl.innerHTML = "";
+          showError(stateEl, data.error);
+          return;
+        }
+        sectionsEl.innerHTML = renderPrintView(data);
+        toTop();
+        announce("Print view loaded.");
+        var back = sectionsEl.querySelector("[data-print-back]");
+        if (back) back.addEventListener("click", function () { openWhy(state.printItemId); });
+      }).catch(function () {
+        if (reqId !== state.requestId) return;
+        clearTimeout(state.pendingTimer);
+        mainEl.removeAttribute("aria-busy");
+        sectionsEl.innerHTML = "";
+        showError(stateEl, {
+          what: "Could not load the print view.",
           why: "The request to the daimon server failed.",
           fix: "Check the server is running and try again."
         });

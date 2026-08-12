@@ -97,3 +97,27 @@ def test_receipt_rides_along_only_when_the_project_opted_in(session_history):
     (d / "s2-bbbb.json").write_text(json.dumps(session))
     result = reader.session_events(d, slug, "s2-bbbb")
     assert result["session"]["receipt"]["state"] in ("match", "mismatch", "missing")
+
+def test_session_objects_carry_quote_presence_and_origin(tmp_path):
+    """The print view's provenance line states the stored quote's PRESENCE and
+    its origin session — never the quote text itself (#670 slice 4). The
+    fields ride the same session_events payload the session page reads."""
+    d = tmp_path / "checkpoints"
+    slug = "-tmp-proj"
+    (d / slug).mkdir(parents=True)
+    quoted = _item("o-aaa111aaa111", "build gates on bundle", "verbatim")
+    quoted["quote"] = "gates on the bundle"
+    quoted["origin_session"] = "s0-origin"
+    bare = _item("o-bbb222bbb222", "no class asserted here")
+    (d / "s1-aaaa.json").write_text(json.dumps(_cp(
+        "s1-aaaa", "2026-08-04T10:00:00Z", slug, [quoted, bare])))
+    (d / slug / "latest.json").write_text(json.dumps(_cp(
+        "s1-aaaa", "2026-08-04T10:00:00Z", slug, [])))
+
+    result = reader.session_events(d, slug, "s1-aaaa")
+    by_id = {o["id"]: o for o in result["objects"]}
+    assert by_id["o-aaa111aaa111"]["has_quote"] is True
+    assert by_id["o-aaa111aaa111"]["origin_session"] == "s0-origin"
+    assert "gates on the bundle" not in json.dumps(result)  # presence, not text
+    assert by_id["o-bbb222bbb222"]["has_quote"] is False
+    assert by_id["o-bbb222bbb222"]["origin_session"] is None

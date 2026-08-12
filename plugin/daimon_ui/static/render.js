@@ -972,7 +972,54 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
 
     html += '<div class="why-life"><span class="why-label">Life</span>' +
       '<div id="why-bio" class="why-bio"></div></div>';
+    // The door to the print view: the entry's own footer, per the frozen
+    // design. The button arms once the biography arrives — the print shows
+    // the checkpoint of the entry's latest sighting, and only the ladder
+    // knows which one that is.
+    html += '<div class="why-actions"><button type="button" class="ledger-ck-open" data-open-print>print view</button></div>';
     html += '<div class="card-foot">read-only · this page renders the record; it holds nothing of its own</div>';
     html += "</div></div>";
+    return html;
+  }
+
+  // ---- print view (#670 slice 4): one checkpoint, set as a printed record ----
+  // No rows, no rules: each object is a claim at reading size with its
+  // provenance as a hanging monospace margin. The provenance line states the
+  // stored quote's presence and origin, never the quote text.
+  export function printProvenance(o) {
+    if (o.has_quote) {
+      return "quote stored" + (o.origin_session ? " · " + displaySid(o.origin_session) : "");
+    }
+    return o.trust ? "no quote stored" : "no class asserted · no quote stored";
+  }
+  export function renderPrintBlock(o) {
+    var ev = (o.events && o.events[0]) || null;
+    var margin = [escapeHtml(o.id), escapeHtml(o.trust || "untagged")];
+    if (ev) margin.push(escapeHtml(ledgerEventText(ev)));
+    return '<div class="print-block">' +
+      '<div class="print-margin">' + margin.join("<br>") + "</div>" +
+      '<div class="print-body"><p class="print-claim">' + escapeHtml(o.text || "") + "</p>" +
+      '<p class="print-prov">' + escapeHtml(printProvenance(o)) + "</p></div></div>";
+  }
+  export function renderPrintView(data) {
+    var s = data.session || {};
+    var html = '<div class="why-crumb"><button type="button" class="back-link" data-print-back>' +
+      "← entry</button><span class=\"crumb-sep\">/</span>" +
+      '<span class="print-sub">print view · one checkpoint, set as a printed record</span></div>';
+    (data.partial || []).forEach(function (p) {
+      html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
+        escapeHtml(p) + "</span></div>";
+    });
+    html += '<div class="print-card">' +
+      '<div class="print-head">Checkpoint ' + escapeHtml(displaySid(s.session_id)) +
+      " · " + escapeHtml(fmtDateTime(s.created)) + "</div>";
+    if (!data.objects || data.objects.length === 0) {
+      html += '<div class="state-card"><p class="state-title">No recorded events from this session</p>' +
+        "<p>Carried, unchanged items write nothing — a carry is not an event.</p></div>";
+    } else {
+      html += '<div class="print-blocks">' + data.objects.map(renderPrintBlock).join("") + "</div>";
+    }
+    html += "</div>";
+    html += '<div class="card-foot">read-only · this page reads the ledger; it holds nothing of its own</div>';
     return html;
   }
