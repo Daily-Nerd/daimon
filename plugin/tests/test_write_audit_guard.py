@@ -108,8 +108,17 @@ KNOWN_BYPASSES = frozenset({
 
 # Commands that genuinely cannot be driven headless would be named here with
 # a reason — the guard fails on any command lacking BOTH a recipe and a
-# SKIPPED entry, so a skip can never be silent. Currently every command runs.
-SKIPPED: dict = {}
+# SKIPPED entry, so a skip can never be silent.
+SKIPPED: dict = {
+    ("serve",): (
+        "foreground HTTP server: serve_forever() never returns, so the recipe "
+        "harness cannot drive it to completion. Its write surface is bounded "
+        "by construction — the handler defines only do_GET, and its engine "
+        "calls (recall.search, inspector.inspect_item) are the same paths the "
+        "`recall` recipe already audits (tests/ui/test_server_engines.py "
+        "covers the dispatch)."
+    ),
+}
 
 # Pure log sinks, allowlisted BY FILENAME if one ever lands under an audited
 # root. Today they all live under config.log_dir() (outside the roots), so

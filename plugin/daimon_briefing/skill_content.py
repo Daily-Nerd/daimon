@@ -52,6 +52,11 @@ NOT_AGENT_FACING = {
         "judgement about their own memory, not an agent's"
     ),
     "log": "human bookkeeping: a freeform timeline entry, zero-LLM",
+    "serve": (
+        "human-only viewer: opens a local browser UI for a person to read "
+        "memory; an agent reads the same engines through brief/recall/why "
+        "and has no business holding a server open"
+    ),
     "team": (
         "read side already taught as `daimon brief --team`; the write side "
         "(`init`, `sync`) publishes this machine's memory to a shared remote, "
