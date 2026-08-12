@@ -632,7 +632,12 @@ def session_events(data_dir: Path, slug: str, sid: str) -> dict:
         obj = by_item.setdefault(ev["item_id"], {
             "id": ev["item_id"], "text": item.get("text"),
             "trust": item.get("trust"),
-            "kind": _SECTION_KIND.get(item.get("section")), "events": []})
+            "kind": _SECTION_KIND.get(item.get("section")), "events": [],
+            # The print view's provenance line: the stored quote's PRESENCE
+            # and origin, never the quote text — this payload leaves the
+            # machine for a render layer, and presence answers the question.
+            "has_quote": bool(item.get("quote")),
+            "origin_session": _norm_str(item.get("origin_session"))})
         obj["events"].append({"kind": ev["kind"], "ts": ev["ts"], "detail": ev["detail"]})
 
     objects = sorted(by_item.values(), key=lambda o: (

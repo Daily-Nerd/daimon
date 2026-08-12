@@ -7,5 +7,6 @@ export const state = {
   projects: [], defaultSlug: null, currentSlug: null, view: "loading", cameFromGrid: false,
   diffSessions: [], diffUnreadable: 0, diffPick: { a: null, b: null },
   ledgerSessions: [], sessionSid: null, whyReturn: null, whyHighlightSid: null,
+  whyBio: null, printItemId: null,
   bioCache: {}, lastSearchQ: null, searchTimer: null
 };

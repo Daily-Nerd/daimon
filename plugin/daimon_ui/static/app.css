@@ -1213,3 +1213,66 @@
   .strip-legend .glyph { margin: 0; }
   .strip-tick-legend { position: static; width: 1px; height: 12px; display: inline-block; }
   .strip-line-legend { position: static; width: 14px; height: 1px; display: inline-block; }
+
+  /* Print view: one checkpoint set as a printed record — no rows, no rules,
+     claims at reading size with provenance as a hanging monospace margin. */
+  .print-sub { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+  .print-card {
+    max-width: 720px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .print-head {
+    padding: 24px 26px 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-tertiary);
+  }
+  .print-blocks {
+    padding: 20px 26px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .print-block {
+    display: grid;
+    grid-template-columns: 118px 1fr;
+    gap: 0 18px;
+  }
+  .print-margin {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--ink-tertiary);
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .print-body { border-left: 1px solid var(--border-subtle); padding-left: 18px; min-width: 0; }
+  .print-claim {
+    margin: 0;
+    font-size: 15.5px;
+    line-height: 1.55;
+    color: var(--ink);
+    text-wrap: pretty;
+    overflow-wrap: anywhere;
+  }
+  .print-prov {
+    margin: 6px 0 0;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--ink-tertiary);
+  }
+  .why-actions { margin-top: 14px; display: flex; gap: 8px; }
+
+  @media (max-width: 720px) {
+    .print-block { grid-template-columns: 1fr; }
+    .print-margin { text-align: left; }
+    .print-body { border-left: 0; padding-left: 0; }
+  }
