@@ -733,6 +733,95 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     return html;
   }
 
+  // ---- check strip (#670 slice 3): object × checkpoint lanes ----
+  // Marks speak the viewer's two existing languages and nothing new: sighting
+  // marks wear the trust glyph of the class the item held AT that session;
+  // quote-check marks are the outlined square with the rejection tick — the
+  // ledger only records rejections, so every stored check carries one.
+  export function stripMarkHover(cell) {
+    var label = LEDGER_EVENT_LABELS[cell.kind] || cell.kind;
+    var when = cell.ts ? " · " + fmtDateTime(cell.ts) : "";
+    var detail = cell.detail ? " — " + cell.detail : "";
+    return label + detail + when;
+  }
+  function stripMark(colIndex, cls, itemId, sid, hover, inner) {
+    return '<button type="button" class="strip-mark ' + cls +
+      '" style="grid-column:' + (colIndex + 1) + '" data-open-mark data-item-id="' +
+      escapeHtml(itemId) + '"' + (sid ? ' data-sid="' + escapeHtml(sid) + '"' : "") +
+      ' data-hover="' + escapeHtml(hover) + '" aria-label="' + escapeHtml(hover) + '">' +
+      (inner || "") + "</button>";
+  }
+  export function renderStripRow(r, columns) {
+    var n = columns.length;
+    var colIndex = {};
+    columns.forEach(function (c, i) { colIndex[c.session_id] = i; });
+    var goneIdx = r.gone_after != null ? colIndex[r.gone_after] : undefined;
+    var lines;
+    if (goneIdx !== undefined) {
+      var pct = ((goneIdx + 0.5) / n) * 100;
+      lines = '<span class="strip-line" style="right:' + (100 - pct).toFixed(2) + '%"></span>' +
+        '<span class="strip-line strip-line-gone" style="left:' + pct.toFixed(2) + '%"></span>';
+    } else {
+      lines = '<span class="strip-line"></span>';
+    }
+    var marks = [];
+    Object.keys(r.cells || {}).forEach(function (sid) {
+      var i = colIndex[sid];
+      if (i === undefined) return;
+      var cell = r.cells[sid];
+      var glyph = cell.trust === "verbatim" ? "strip-mark-verbatim"
+        : cell.trust === "inferred" ? "strip-mark-inferred" : "strip-mark-untagged";
+      marks.push(stripMark(i, glyph, r.id, sid, stripMarkHover(cell)));
+    });
+    (r.checks || []).forEach(function (ck) {
+      var i = colIndex[ck.column];
+      if (i === undefined) return;
+      var hover = "quote check" + (ck.detail ? " — " + ck.detail : "") +
+        (ck.ts ? " · " + fmtDateTime(ck.ts) : "");
+      marks.push(stripMark(i, "strip-mark-check", r.id, null, hover,
+        '<span class="strip-tick" aria-hidden="true"></span>'));
+    });
+    var cols = "repeat(" + n + ",1fr)";
+    return '<span class="strip-obj' + (goneIdx !== undefined ? " strip-obj-gone" : "") +
+      '">' + escapeHtml(r.id) + "</span>" +
+      '<div class="strip-lane" style="grid-template-columns:' + cols + '">' +
+      lines + marks.join("") + "</div>";
+  }
+  export function renderStripView(data) {
+    var columns = data.columns || [];
+    var html = '<div class="brief-head"><h1 class="page-heading">Check strip</h1>' +
+      '<span class="brief-sub">one column per checkpoint · click a mark to open that event</span></div>';
+    (data.partial || []).forEach(function (p) {
+      html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
+        escapeHtml(p) + "</span></div>";
+    });
+    if (!columns.length || !(data.rows || []).length) {
+      return html + '<div class="state-card state-empty"><p class="state-title">Nothing to draw yet</p>' +
+        "<p>Lanes appear here as sessions record objects — first seen, changed, last seen.</p></div>";
+    }
+    var cols = "repeat(" + columns.length + ",1fr)";
+    var heads = columns.map(function (c) {
+      var label = escapeHtml(displaySid(c.session_id));
+      return c.is_head
+        ? '<span class="strip-col-head strip-col-current">' + label + " head</span>"
+        : '<span class="strip-col-head">' + label + "</span>";
+    }).join("");
+    html += '<div class="strip-grid">' +
+      '<span></span><div class="strip-heads" style="grid-template-columns:' + cols + '">' +
+      heads + "</div>";
+    html += (data.rows || []).map(function (r) { return renderStripRow(r, columns); }).join("");
+    html += "</div>";
+    html += '<div class="strip-hover" id="strip-hover"><span class="strip-hover-meta">hover a mark to read its event</span></div>';
+    html += '<div class="strip-legend">' +
+      '<span><span class="glyph glyph-verbatim" aria-hidden="true"></span>written / carried</span>' +
+      '<span><span class="glyph glyph-inferred" aria-hidden="true"></span>quote check</span>' +
+      '<span><span class="strip-tick strip-tick-legend" aria-hidden="true"></span>rejection recorded</span>' +
+      '<span><span class="strip-line-gone strip-line-legend" aria-hidden="true"></span>no longer carried</span>' +
+      "</div>";
+    html += '<div class="card-foot">read-only · every mark is an event the store already holds</div>';
+    return html;
+  }
+
   // ---- refutations lane (#670 slice 3): rows are `daimon refute list`'s ----
   // The marker glyphs are the CLI's own (cli.py _print_refutation): ✗ active,
   // × overturned, ? candidate. The lane renders refute list; it must not

@@ -190,6 +190,12 @@ class _Handler(BaseHTTPRequestHandler):
                 }})
                 return
             self._json(dict({"ok": True}, **result))
+        elif path == "/api/grid":
+            slug = self._resolve_slug(params)
+            if slug is None:
+                self._json(self._bad_slug_error(params.get("project", [self.default_slug])[0]))
+                return
+            self._json(reader.project_grid(self.data_dir, slug))
         elif path == "/api/refutations":
             slug = self._resolve_slug(params)
             if slug is None:

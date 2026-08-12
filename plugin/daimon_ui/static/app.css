@@ -1115,3 +1115,101 @@
     .refut-cols { display: none; }
     .refut-row { grid-template-columns: 1fr; }
   }
+
+  /* Check strip: object × checkpoint lanes. Marks reuse the trust-glyph
+     language; the lane line goes dashed after a departure. */
+  .strip-grid {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 12px 16px;
+    align-items: center;
+    padding: 14px 18px 8px;
+  }
+  .strip-heads { display: grid; justify-items: center; }
+  .strip-col-head {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .strip-col-current { color: var(--accent); }
+  .strip-obj {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .strip-obj-gone { color: var(--ink-tertiary); }
+  .strip-lane {
+    position: relative;
+    height: 22px;
+    display: grid;
+    justify-items: center;
+    align-items: center;
+  }
+  .strip-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border-subtle);
+  }
+  .strip-line-gone {
+    background: repeating-linear-gradient(to right, var(--border-subtle) 0 3px, transparent 3px 7px);
+  }
+  .strip-mark {
+    position: relative;
+    width: 9px;
+    height: 9px;
+    padding: 0;
+    border: 0;
+    background: var(--ink-secondary);
+    cursor: pointer;
+  }
+  .strip-mark:hover { box-shadow: 0 0 0 3px var(--surface-hover); }
+  .strip-mark-inferred, .strip-mark-check {
+    background: var(--bg);
+    border: 1px solid var(--ink-secondary);
+  }
+  .strip-mark-untagged {
+    background: var(--bg);
+    border: 1px dashed var(--ink-tertiary);
+  }
+  .strip-tick {
+    position: absolute;
+    left: 50%;
+    top: -7px;
+    width: 1px;
+    height: 22px;
+    background: var(--border-strong);
+  }
+  .strip-hover {
+    margin-top: 16px;
+    padding: 12px 15px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .strip-hover-meta { font-family: var(--mono); font-size: 11px; color: var(--ink-tertiary); }
+  .strip-hover-text { font-size: 13px; line-height: 1.5; }
+  .strip-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    padding: 14px 2px 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-tertiary);
+  }
+  .strip-legend > span { display: inline-flex; align-items: center; gap: 7px; }
+  .strip-legend .glyph { margin: 0; }
+  .strip-tick-legend { position: static; width: 1px; height: 12px; display: inline-block; }
+  .strip-line-legend { position: static; width: 14px; height: 1px; display: inline-block; }
