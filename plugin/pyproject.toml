@@ -92,7 +92,7 @@ python_version = "3.10"
 ignore_missing_imports = true
 
 [tool.coverage.run]
-source = ["daimon_briefing"]
+source = ["daimon_briefing", "daimon_ui"]
 # _hooks/ ships byte-identical mirrors of files whose canonical sources are
 # tested (drift-guarded by test_hooks_install.py), and the adapter scripts
 # execute only as subprocesses under the host's Python — in-process line
