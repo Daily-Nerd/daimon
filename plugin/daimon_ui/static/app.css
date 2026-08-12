@@ -799,6 +799,13 @@
     padding: 4px 10px; cursor: pointer;
   }
   .view-nav button:hover, .back-link:hover { border-color: #484f58; color: var(--ink); }
+  /* The pill for the surface being looked at reads as pressed-in, matching the
+     design chrome's active chip: same words, one look. */
+  .view-nav button[aria-current="page"] {
+    color: var(--ink);
+    background: var(--raised);
+    border-color: #484f58;
+  }
   #search-box {
     border-color: var(--border-strong); background: var(--raised); color: var(--ink);
     font-family: var(--mono); font-size: 11.5px;
@@ -885,3 +892,154 @@
   .why-life { padding: 22px 20px 14px; }
   .why-life .why-bio { margin-top: 12px; }
   .why-card .card-foot { margin-top: 8px; }
+
+  /* ---- ledger + session page (#670 slice 2) ---- */
+  .side-label {
+    margin: 0 0 var(--s2);
+    padding: var(--s2) var(--s4) 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-tertiary);
+  }
+
+  .ledger-group {
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  /* A session strip carries two controls: the strip itself discloses the
+     group's rows (newest session open by default, the rest read as their
+     counts), and a separate "open session" button jumps to the session page. */
+  .ledger-ck {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    width: 100%;
+    background: var(--inset);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .ledger-ck-toggle {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    padding: 10px 18px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+    color: var(--ink);
+    transition: background var(--transition);
+  }
+  .ledger-ck-toggle:hover { background: var(--surface-hover); }
+  .ledger-ck-toggle .disclosure {
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--ink-secondary);
+  }
+  .ledger-ck-open {
+    flex: none;
+    margin: 6px 12px 6px 0;
+    padding: 3px 10px;
+    background: none;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-secondary);
+    cursor: pointer;
+    transition: border-color var(--transition), color var(--transition);
+  }
+  .ledger-ck-open:hover { border-color: #484f58; color: var(--ink); }
+  .ledger-sid { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--ink); }
+  .ledger-ck-meta { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+
+  .ledger-cols {
+    display: grid;
+    grid-template-columns: 9px 1fr 130px 190px;
+    gap: 14px;
+    padding: 7px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-tertiary);
+  }
+  /* column 1 is the glyph gutter: "claim" starts over the text column and the
+     remaining labels auto-place over object and last event */
+  .ledger-cols span:first-child { grid-column: 2; }
+
+  .ledger-rows { display: flex; flex-direction: column; }
+
+  .ledger-row {
+    display: grid;
+    grid-template-columns: 9px 1fr 130px 190px;
+    align-items: baseline;
+    gap: 14px;
+    width: 100%;
+    text-align: left;
+    padding: 11px 18px;
+    border: 0;
+    border-bottom: 1px solid #161b22;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+    transition: background var(--transition);
+  }
+  .ledger-row:last-child { border-bottom: 0; }
+  .ledger-row:hover { background: var(--surface-hover); }
+  .ledger-row .glyph { margin-top: 0; align-self: center; }
+  .ledger-row .it-text { font-size: 13.5px; line-height: 1.5; min-width: 0; overflow-wrap: anywhere; }
+  .ledger-row .obj-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger-ev { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); white-space: nowrap; }
+
+  @media (max-width: 720px) {
+    .ledger-cols { display: none; }
+    .ledger-row { grid-template-columns: 9px 1fr; }
+    .ledger-row .obj-id, .ledger-ev { grid-column: 2; }
+  }
+
+  .sess-objs { display: flex; flex-direction: column; gap: 14px; }
+  .sess-obj {
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .sess-obj .ledger-row { border-bottom: 1px solid var(--border-subtle); }
+  .sess-obj-events { padding: 8px 18px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .sess-ev { display: flex; align-items: baseline; gap: 12px; }
+  .sess-ev-label {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--ink-secondary);
+  }
+  .sess-ev-detail { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+
+  /* Kind chip: recall's word for the item's shelf (question/decision/belief/
+     uncertainty/contradiction). Neutral paint — a kind is a category, never a
+     judgment. */
+  .kind-chip {
+    display: inline-block;
+    margin-left: 10px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    padding: 0 var(--s1);
+    vertical-align: 1px;
+  }

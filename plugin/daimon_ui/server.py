@@ -190,6 +190,26 @@ class _Handler(BaseHTTPRequestHandler):
                 }})
                 return
             self._json(dict({"ok": True}, **result))
+        elif path == "/api/ledger":
+            slug = self._resolve_slug(params)
+            if slug is None:
+                self._json(self._bad_slug_error(params.get("project", [self.default_slug])[0]))
+                return
+            self._json(reader.project_ledger(self.data_dir, slug))
+        elif path == "/api/session":
+            slug = self._resolve_slug(params)
+            if slug is None:
+                self._json(self._bad_slug_error(params.get("project", [self.default_slug])[0]))
+                return
+            sid = params.get("sid", [None])[0]
+            if not sid:
+                self._json({"ok": False, "error": {
+                    "what": "No session id was given.",
+                    "why": "/api/session needs a sid parameter to look up.",
+                    "fix": "Open a session from the ledger's session list.",
+                }})
+                return
+            self._json(reader.session_events(self.data_dir, slug, sid))
         elif path == "/api/activity":
             slug = self._resolve_slug(params)
             if slug is None:
