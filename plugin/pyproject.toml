@@ -66,7 +66,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["daimon_briefing"]
+packages = ["daimon_briefing", "daimon_ui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
