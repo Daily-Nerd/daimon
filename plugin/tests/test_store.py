@@ -2118,3 +2118,24 @@ def test_tie_rank_resolved_agent_verified_is_ordinary_rank_not_candidate_rank():
     assert store._tie_rank({"status": "resolving-candidate"}) == 0
     assert store._tie_rank({"status": "resolved-agent-verified"}) != \
         store._tie_rank({"status": "resolving-candidate"})
+
+
+def test_write_stamps_project_name(tmp_checkpoint_dir, sample_checkpoint):
+    # #672: the slug is a lossy flattening, so the directory's real name exists
+    # only at write time — stamp it or lose it.
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/My Proj")
+    blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert blob["project_name"] == "My Proj"
+
+
+def test_write_unknown_project_stamps_no_name(tmp_checkpoint_dir, sample_checkpoint):
+    store.write_checkpoint("S1", sample_checkpoint)
+    blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert "project_name" not in blob
+
+
+def test_write_does_not_overwrite_existing_project_name(tmp_checkpoint_dir, sample_checkpoint):
+    pre = {**sample_checkpoint, "project_name": "original"}
+    store.write_checkpoint("S1", pre, project_dir="/Users/x/projA")
+    blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
+    assert blob["project_name"] == "original"

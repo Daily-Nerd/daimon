@@ -7886,7 +7886,8 @@ def test_projects_json_shape(tmp_checkpoint_dir, capsys, monkeypatch):
     assert cli.main(["projects", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
     assert rows == [{
-        "slug": "-p-b", "session_id": "S-1", "created": "2026-07-11T00:00:00Z",
+        "slug": "-p-b", "name": None, "session_id": "S-1",
+        "created": "2026-07-11T00:00:00Z",
         "git_branch": "main", "topic": "topic text", "current": False,
     }]
 
@@ -8961,3 +8962,31 @@ def test_run_serialize_error_clears_heartbeat(
 def test_clear_heartbeat_missing_file_is_noop(tmp_log_dir):
     from daimon_briefing import ledger
     ledger.clear_heartbeat("S-never-stamped")  # must not raise
+
+
+def test_projects_json_includes_project_name(tmp_checkpoint_dir, capsys, monkeypatch):
+    # #672: the stamped directory name rides the row; absent stamp = None,
+    # never a slug-derived guess.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    bucket = tmp_checkpoint_dir / "-p-named"
+    bucket.mkdir(parents=True)
+    (bucket / "latest.json").write_text(json.dumps({
+        "session_id": "S-n", "project_slug": "-p-named",
+        "project_name": "named", "created": "2026-07-11T00:00:00Z"}))
+    _write_bucket(tmp_checkpoint_dir, "-p-anon", "S-a", "2026-07-10T00:00:00Z")
+    assert cli.main(["projects", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    by_slug = {r["slug"]: r for r in rows}
+    assert by_slug["-p-named"]["name"] == "named"
+    assert by_slug["-p-anon"]["name"] is None
+
+
+def test_projects_human_render_shows_name_when_present(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    bucket = tmp_checkpoint_dir / "-p-named"
+    bucket.mkdir(parents=True)
+    (bucket / "latest.json").write_text(json.dumps({
+        "session_id": "S-n", "project_slug": "-p-named",
+        "project_name": "My Proj", "created": "2026-07-11T00:00:00Z"}))
+    assert cli.main(["projects"]) == 0
+    assert "My Proj" in capsys.readouterr().out

@@ -111,10 +111,13 @@ def list_buckets(data_dir: Path) -> list[dict]:
         latest = p / "latest.json"
         if not latest.is_file():
             continue
-        created = active_topic = item_count = None
+        created = active_topic = item_count = project_name = None
         try:
             data = json.loads(latest.read_text(encoding="utf-8"))
             created = data.get("created")
+            # #672 write-time stamp; None when the bucket predates it.
+            raw_name = data.get("project_name")
+            project_name = raw_name if isinstance(raw_name, str) and raw_name else None
             wc = data.get("working_context") or {}
             es = data.get("epistemic_snapshot") or {}
             topic = wc.get("active_topic") if isinstance(wc, dict) else None
@@ -130,7 +133,8 @@ def list_buckets(data_dir: Path) -> list[dict]:
             item_count = count
         except (OSError, json.JSONDecodeError, AttributeError):
             pass  # torn latest.json: keep the bucket listed, fields stay None
-        out.append({"slug": p.name, "created": created, "active_topic": active_topic, "item_count": item_count})
+        out.append({"slug": p.name, "project_name": project_name, "created": created,
+                    "active_topic": active_topic, "item_count": item_count})
     out.sort(key=lambda b: b["created"] or "", reverse=True)  # "" sorts lowest, so None lands last
     return out
 

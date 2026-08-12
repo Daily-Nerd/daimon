@@ -890,14 +890,17 @@ def _render_lines(lines, *, footer=None) -> None:
 
 def render_projects(rows) -> None:
     """`daimon projects`: one row per checkpoint bucket. `rows` is
-    [{mark, slug, age, branch, topic}], pre-formatted strings — sorting,
-    truncation, and the current-project mark are the CLI's concern."""
+    [{mark, name, slug, age, branch, topic}], pre-formatted strings — sorting,
+    truncation, and the current-project mark are the CLI's concern. `name` is
+    the #672 write-time stamp; the slug column stays untouched because it is
+    what users copy into --slug."""
     if not supports_rich():
+        n = max((len(r["name"]) for r in rows), default=0)
         w = max((len(r["slug"]) for r in rows), default=0)
         a = max((len(r["age"]) for r in rows), default=0)
         b = max((len(r["branch"]) for r in rows), default=0)
         for r in rows:
-            print(f"{r['mark']} {r['slug']:<{w}}  {r['age']:<{a}}  "
+            print(f"{r['mark']} {r['name']:<{n}}  {r['slug']:<{w}}  {r['age']:<{a}}  "
                   f"{r['branch']:<{b}}  {r['topic']}")
         return
     from rich.console import Console
@@ -906,12 +909,13 @@ def render_projects(rows) -> None:
     console = Console()
     table = Table(show_header=True, header_style="bold")
     table.add_column("")
+    table.add_column("name")
     table.add_column("project")
     table.add_column("last")
     table.add_column("branch")
     table.add_column("topic")
     for r in rows:
-        table.add_row(r["mark"], r["slug"], r["age"], r["branch"], r["topic"])
+        table.add_row(r["mark"], r["name"], r["slug"], r["age"], r["branch"], r["topic"])
     console.print(table)
 
 

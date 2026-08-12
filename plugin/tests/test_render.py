@@ -1259,21 +1259,24 @@ def test_working_plain_body_exception_propagates(capsys):
 
 def test_render_projects_plain_exact_format(capsys):
     render.render_projects([
-        {"mark": "*", "slug": "-p-a", "age": "1h ago", "branch": "main", "topic": "work a"},
-        {"mark": " ", "slug": "-p-bb", "age": "2d ago", "branch": "—", "topic": "work b"},
+        {"mark": "*", "name": "projA", "slug": "-p-a", "age": "1h ago",
+         "branch": "main", "topic": "work a"},
+        {"mark": " ", "name": "—", "slug": "-p-bb", "age": "2d ago",
+         "branch": "—", "topic": "work b"},
     ])
     out = capsys.readouterr().out
-    assert out == ("* -p-a   1h ago  main  work a\n"
-                   "  -p-bb  2d ago  —     work b\n")
+    assert out == ("* projA  -p-a   1h ago  main  work a\n"
+                   "  —      -p-bb  2d ago  —     work b\n")
 
 
 def test_render_projects_rich_smoke(monkeypatch, capsys):
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     render.render_projects([
-        {"mark": "*", "slug": "-p-a", "age": "1h ago", "branch": "main", "topic": "work a"},
+        {"mark": "*", "name": "projA", "slug": "-p-a", "age": "1h ago",
+         "branch": "main", "topic": "work a"},
     ])
     out = capsys.readouterr().out
-    assert "-p-a" in out and "work a" in out
+    assert "-p-a" in out and "work a" in out and "projA" in out
 
 
 # --- #376 rejection ledger in stats output ---------------------------------
