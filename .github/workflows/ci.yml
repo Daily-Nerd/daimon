@@ -36,7 +36,7 @@ jobs:
         # fails loudly instead of silently touching a real ~/.daimon.
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
-          HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q --cov=daimon_briefing --cov-report=xml --junitxml=junit.xml
+          HOME="$RUNNER_TEMP/fake-home" uv run --extra dev --extra pretty pytest -q --cov=daimon_briefing --cov=daimon_ui --cov-report=xml --junitxml=junit.xml
 
       - name: Upload test results to Codecov
         if: ${{ matrix.python-version == '3.13' && !cancelled() }}

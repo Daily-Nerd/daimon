@@ -782,6 +782,24 @@ def _cmd_why(args) -> int:
     return 0
 
 
+def _cmd_serve(args) -> int:
+    """Front door to the read-only viewer (#670). Delegates to daimon_ui's own
+    argv path so there is exactly one config surface — the CLI never grows its
+    own copy of the flag handling."""
+    _note_usage("serve")
+    import daimon_ui.__main__ as ui_main
+    argv = []
+    if args.data_dir:
+        argv += ["--data-dir", args.data_dir]
+    if args.project_dir:
+        argv += ["--project-dir", args.project_dir]
+    if args.port is not None:
+        argv += ["--port", str(args.port)]
+    if args.no_browser:
+        argv.append("--no-browser")
+    return ui_main.main(argv) or 0
+
+
 # ---- projects: cross-project bucket list (#243) ----
 
 
@@ -3928,6 +3946,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--slug", metavar="SLUG",
         help="scope to a project bucket by its slug (see `daimon projects`)")
     p_why.set_defaults(func=_cmd_why)
+
+    p_serve = sub.add_parser(
+        "serve",
+        help="serve the read-only local viewer (localhost only)",
+        description="Serve the read-only local viewer on localhost. Every "
+                    "surface renders an existing engine's output; nothing "
+                    "writes.",
+        epilog="Examples:\n"
+               "  daimon serve\n"
+               "  daimon serve --port 7800 --no-browser\n",
+    )
+    p_serve.add_argument(
+        "--data-dir", default=None,
+        help="checkpoint dir (default: DAIMON_CHECKPOINT_DIR, then ~/.daimon/checkpoints)")
+    p_serve.add_argument(
+        "--project-dir", default=None,
+        help="project directory to scope to (default: cwd)")
+    p_serve.add_argument(
+        "--port", type=int, default=None, help="port to bind (default: 7717)")
+    p_serve.add_argument(
+        "--no-browser", action="store_true", help="don't open a browser tab")
+    p_serve.set_defaults(func=_cmd_serve)
 
     p_projects = sub.add_parser(
         "projects", help="list every project daimon has a checkpoint for",

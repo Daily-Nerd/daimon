@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>daimon — inspector</title>
+<link rel="stylesheet" href="/static/app.css">
+</head><body>
+<header>
+  <!-- inline SVG needs no xmlns in an HTML document, and the static-audit test
+       rightly refuses any http(s) token in served bytes -->
+  <svg class="wordmark-svg" width="92" height="20" viewBox="0 0 132 28" role="img" aria-label="daimon"><text x="0" y="21" font-family="ui-monospace,Menlo,monospace" font-size="20" font-weight="600" fill="currentColor" letter-spacing="-0.5">daimon</text><rect x="76" y="7" width="9" height="16" fill="#00d4aa"></rect></svg>
+  <span class="project-label"><span id="project"></span></span>
+  <nav class="view-nav" aria-label="Views">
+    <span id="back-link-slot"></span>
+    <span id="history-link-slot"></span>
+    <span id="activity-link-slot"></span>
+  </nav>
+  <form id="search-form" role="search">
+    <input id="search-box" type="search" placeholder="search — renders daimon recall"
+           aria-label="Search memory. Results are daimon recall's, rendered.">
+  </form>
+  <!-- branch omitted: checkpoint JSON carries no branch field; reading git would break the file-seam scope -->
+  <span class="ro">daimon serve · ./.daimon · read-only</span>
+</header>
+<div class="shell">
+  <nav id="sidebar" aria-label="Checkpoints"></nav>
+  <!-- #status, not #state, is the live region: #state receives whole views via
+       innerHTML, so announcing it would re-read the entire page on every nav. -->
+  <main id="main"><p id="status" role="status" class="sr-only"></p><div id="state"></div><div id="sections"></div></main>
+</div>
+<footer class="legend">solid verbatim · dashed inferred · dotted untagged · ⟳ carried · tap item → evidence</footer>
+<script type="module" src="/static/app.js"></script>
+</body></html>
