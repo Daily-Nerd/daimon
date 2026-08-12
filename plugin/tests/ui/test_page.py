@@ -70,11 +70,14 @@ def test_flagged_dot_paints_differently_from_ordinary_event_dots(srv):
 
 
 def test_css_has_tokens_and_media_queries(srv):
+    """The viewer commits to one dark look (the design's frozen palette), so
+    there is deliberately no prefers-color-scheme block to assert on."""
     _, _, body = _get(srv + "/static/app.css")
     css = body.decode()
     for needle in ["--s1: 4px", "--s8: 32px", "--accent",
-                   "prefers-color-scheme: dark", "prefers-reduced-motion"]:
+                   "prefers-reduced-motion"]:
         assert needle in css, needle
+    assert "prefers-color-scheme" not in css, "single committed look — no theme fork"
 
 def test_activity_catch_clears_stale_sections(srv):
     """enterActivity lives in app.js and touches the DOM, so this stays a source

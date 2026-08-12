@@ -238,7 +238,10 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var meta = data.meta || {};
     var metaParts = [meta.active_topic, fmtDate(meta.created), meta.author,
                      receiptMetaText(meta.receipt)].filter(Boolean);
-    var html = '<h1 class="page-heading">While you were away</h1>' +
+    var sub = (meta.session_id ? "s-" + String(meta.session_id).slice(0, 8) + " · " : "") +
+      "every line carries the object it came from";
+    var html = '<div class="brief-head"><h1 class="page-heading">Briefing</h1>' +
+      '<span class="brief-sub">' + escapeHtml(sub) + "</span></div>" +
       '<p class="page-meta">' + metaParts.map(escapeHtml).join(" · ") + "</p>" +
       receiptBanner(meta.receipt);
     (data.partial || []).forEach(function (p) {
@@ -287,34 +290,29 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     if (it.trust === "inferred") return "it-inferred";
     return "it-untagged";
   }
+  // Trust glyphs are the design's frozen legend: solid square = verbatim,
+  // outlined = inferred, dashed = untagged.
+  export function trustGlyph(trust) {
+    var g = trust === "verbatim" ? "glyph-verbatim"
+      : trust === "inferred" ? "glyph-inferred" : "glyph-untagged";
+    return '<span class="glyph ' + g + '" aria-hidden="true"></span>';
+  }
   export function renderItem(it, meta) {
-    var cls = "it " + trustClass(it);
     var carried = it.carried_from
       ? '<span class="chip-carried">⟳ carried from ' + escapeHtml(it.carried_from) + "</span>"
       : "";
-    var inner = '<span class="it-text">' + escapeHtml(it.text) + "</span>" + carried;
-    var hasQuote = !!it.quote;
-    var hasId = !!it.id;
-    if (!hasQuote && !hasId) {
-      return '<div class="it-wrap"><div class="' + cls + '">' + inner + "</div></div>";
+    var inner = trustGlyph(it.trust) +
+      '<span class="it-text">' + escapeHtml(it.text) + carried + "</span>";
+    // Design contract: a briefing line carries the object it came from, and
+    // clicking the line opens that entry. No inline expansion here — the entry
+    // page is where evidence lives.
+    if (it.id) {
+      return '<div class="it-wrap"><button type="button" class="brief-row ' + trustClass(it) +
+        '" data-open-why data-item-id="' + escapeHtml(it.id) + '">' + inner +
+        '<code class="obj-id">' + escapeHtml(it.id) + "</code></button></div>";
     }
-    if (hasId && !hasQuote) {
-      // No evidence to show, so the item's own button opens the biography panel directly —
-      // no empty evidence shell in between.
-      bioCounter += 1;
-      var bioId = "bio-" + bioCounter;
-      return '<div class="it-wrap"><button type="button" class="' + cls +
-        '" aria-expanded="false" aria-controls="' + bioId + '" data-bio-toggle data-item-id="' +
-        escapeHtml(it.id) + '">' + inner + "</button>" +
-        '<div class="bio-panel" id="' + bioId + '" hidden></div></div>';
-    }
-    evidenceCounter += 1;
-    var evId = "ev-" + evidenceCounter;
-    var panelHtml = renderEvidence(it, meta);
-    if (hasId) panelHtml += renderHistoryToggle(it.id);
-    return '<div class="it-wrap"><button type="button" class="' + cls +
-      '" aria-expanded="false" aria-controls="' + evId + '" data-quote="1">' + inner + "</button>" +
-      '<div class="ev" id="' + evId + '" hidden>' + panelHtml + "</div></div>";
+    return '<div class="it-wrap"><div class="brief-row brief-row-static ' + trustClass(it) + '">' +
+      inner + "</div></div>";
   }
   export function renderHistoryToggle(itemId) {
     bioCounter += 1;
@@ -580,17 +578,17 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var body = rows.map(function (r) {
       var trust = r.trust || "untagged";
       var sup = !r.superseded_by ? "" :
-        (r.superseded_by === "resolved" ? " [resolved]" : " [superseded by " + escapeHtml(r.superseded_by) + "]");
-      var id = r.item_id ? '<code class="search-id">' + escapeHtml(r.item_id) + "</code>" : "";
+        (r.superseded_by === "resolved" ? " · resolved" : " · superseded by " + escapeHtml(r.superseded_by));
+      var id = r.item_id ? '<code class="obj-id">' + escapeHtml(r.item_id) + "</code>" : "";
       var open = r.item_id ? ' data-item-id="' + escapeHtml(r.item_id) + '"' : "";
-      return '<button type="button" class="search-row"' + open + ">" +
-        '<span class="search-trust t-' + escapeHtml(trust) + '">[' + escapeHtml(trust) + "]</span>" +
-        '<span class="search-kind">[' + escapeHtml(r.kind || "") + "]</span>" +
+      return '<button type="button" class="search-row"' + open + ">" + trustGlyph(trust) +
         '<span class="search-text">' + escapeHtml(r.text || "") + "</span>" + id +
-        '<span class="search-meta">(' + escapeHtml(r.session_id || "") + ", " + ageOf(r.created) + ")" +
-        escapeHtml(sup) + "</span></button>";
+        '<span class="search-meta">' + escapeHtml(r.kind || "") + " · " +
+        escapeHtml(String(r.session_id || "").slice(0, 8)) + " · " + ageOf(r.created) +
+        sup + "</span></button>";
     }).join("");
-    return head + '<div class="search-rows">' + body + "</div>";
+    return head + '<div class="search-rows">' + body +
+      '<div class="card-foot">click any row to open its entry</div></div>';
   }
 
   // ---- why (#670): the payload is daimon why's receipt, rendered as-is.
@@ -600,32 +598,60 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var item = payload.item || {};
     var axes = payload.axes || {};
     var cor = payload.corroboration || {};
-    var html = '<div class="why-view"><div class="why-claim">' +
-      '<span class="search-trust t-' + escapeHtml(item.trust || "untagged") + '">[' +
-      escapeHtml(item.trust || "untagged") + "]</span> " +
-      '<span class="why-text">' + escapeHtml(item.text || "") + "</span>" +
-      '<code class="search-id">' + escapeHtml(item.item_id || "") + "</code></div>";
-    html += '<div class="why-origin">origin ' + escapeHtml(item.origin_session || item.session_id || "") +
-      " · " + escapeHtml(String(item.occurrences || 0)) + " occurrence(s)</div>";
+    var trust = item.trust || "untagged";
+    var origin = item.origin_session || item.session_id || "";
+
+    var html = '<div class="why-view">' +
+      '<div class="why-crumb"><button type="button" class="back-link" data-why-back>← back</button>' +
+      '<span class="crumb-sep">/</span><code class="crumb-id">' + escapeHtml(item.item_id || "") +
+      '</code><span class="crumb-trust">' + trustGlyph(trust) + escapeHtml(trust) + "</span></div>";
+
+    html += '<div class="why-card">';
+    html += '<p class="why-text">' + escapeHtml(item.text || "") + "</p>";
+    html += '<div class="why-meta"><span>origin <span class="obj-ref">' +
+      escapeHtml(String(origin).slice(0, 8)) + "</span></span><span>" +
+      escapeHtml(String(item.occurrences || 0)) + " occurrence(s)</span><span>" +
+      escapeHtml(item.kind || "") + "</span></div>";
+
     if (item.quote) {
-      html += '<div class="why-quote"><span class="why-label">stored quote</span>' +
-        "<blockquote>" + escapeHtml(item.quote) + "</blockquote></div>";
+      html += '<div class="why-quote"><div class="why-quote-head">' +
+        '<span class="why-label">Stored quote</span></div>' +
+        '<blockquote>' + escapeHtml(item.quote) + "</blockquote></div>";
     } else {
-      html += '<div class="why-quote"><span class="why-label">stored quote</span>' +
+      html += '<div class="why-quote"><div class="why-quote-head">' +
+        '<span class="why-label">Stored quote</span></div>' +
         '<p class="why-none">no quote stored</p></div>';
     }
-    html += '<div class="why-axes"><span class="why-label">evidence axes</span><dl>' +
+
+    // source_excerpt is structured: {kind, text, truncated?} — render the text,
+    // label its kind, and say when it was cut rather than pretending it wasn't.
+    var src = payload.source_excerpt;
+    if (src && src.text) {
+      html += '<div class="why-source"><span class="why-label">Transcript context · fetched now, not stored' +
+        (src.kind ? " · " + escapeHtml(String(src.kind)) : "") + "</span>" +
+        "<pre>" + escapeHtml(String(src.text)) +
+        (src.truncated ? "\n[truncated]" : "") + "</pre></div>";
+    }
+
+    // Sightings rule: agreement is not corroboration — references are listed as
+    // session referents, never a bare count alone.
+    if (cor.references && cor.references.length) {
+      html += '<div class="why-seen">seen independently in ' +
+        cor.references.map(function (s) {
+          return '<span class="obj-ref">' + escapeHtml(String(s).slice(0, 8)) + "</span>";
+        }).join(", ") + "</div>";
+    } else {
+      html += '<div class="why-seen">seen only at origin, no other sightings</div>';
+    }
+
+    html += '<div class="why-axes"><span class="why-label">Evidence axes</span><dl>' +
       Object.keys(axes).map(function (k) {
         return "<dt>" + escapeHtml(k) + "</dt><dd>" + escapeHtml(String(axes[k])) + "</dd>";
       }).join("") + "</dl></div>";
-    html += '<div class="why-cor"><span class="why-label">corroboration</span><p>' +
-      escapeHtml(String(cor.count || 0)) + " reference(s)" +
-      (cor.references && cor.references.length
-        ? ": " + cor.references.map(escapeHtml).join(", ") : "") + "</p></div>";
-    if (payload.source_excerpt) {
-      html += '<div class="why-source"><span class="why-label">transcript context · fetched now, not stored</span>' +
-        "<pre>" + escapeHtml(String(payload.source_excerpt)) + "</pre></div>";
-    }
-    html += '<div id="why-bio" class="why-bio"></div></div>';
+
+    html += '<div class="why-life"><span class="why-label">Life</span>' +
+      '<div id="why-bio" class="why-bio"></div></div>';
+    html += '<div class="card-foot">read-only · this page renders the record; it holds nothing of its own</div>';
+    html += "</div></div>";
     return html;
   }

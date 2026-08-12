@@ -236,7 +236,7 @@ import { state } from "./state.js";
       if (data.ok) {
         sectionsEl.innerHTML = renderSections(data);
         announce("Checkpoint " + ref + " loaded.");
-        wireItemToggles(sectionsEl);
+        wireWhyOpeners(sectionsEl);
         wireSectionToggles(sectionsEl);
         wireBioToggles(sectionsEl);
       } else {
@@ -321,6 +321,12 @@ import { state } from "./state.js";
   function searchSlug() {
     return state.currentSlug || state.defaultSlug;
   }
+  // Briefing lines and search rows both open the entry page the same way.
+  function wireWhyOpeners(container) {
+    Array.prototype.forEach.call(container.querySelectorAll("[data-open-why][data-item-id]"), function (btn) {
+      btn.addEventListener("click", function () { openWhy(btn.dataset.itemId); });
+    });
+  }
   function runSearch(q) {
     var slug = searchSlug();
     if (!slug || !q || !q.trim()) return;
@@ -338,6 +344,7 @@ import { state } from "./state.js";
           showError(stateEl, data.error);
           return;
         }
+        state.lastSearchQ = q;
         sectionsEl.innerHTML = renderSearchResults(q, data.rows);
         announce(data.rows.length + " search result(s).");
         Array.prototype.forEach.call(sectionsEl.querySelectorAll(".search-row[data-item-id]"), function (btn) {
@@ -373,6 +380,12 @@ import { state } from "./state.js";
         }
         sectionsEl.innerHTML = renderWhyView(data);
         announce("Entry loaded.");
+        var back = sectionsEl.querySelector("[data-why-back]");
+        if (back) back.addEventListener("click", function () {
+          if (state.lastSearchQ) { runSearch(state.lastSearchQ); }
+          else if (state.activeRef) { selectCheckpoint(state.activeRef); }
+          else { loadList(); }
+        });
         var bio = document.getElementById("why-bio");
         if (bio) loadBiography(itemId, bio);
       }).catch(function () {

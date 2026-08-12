@@ -6,49 +6,31 @@
     --fs-base: 1rem;   /* 16px */
     --fs-lg: 1.5rem;   /* 24px */
 
-    --paper: #f6f7f5;
-    --surface: #eceeec;
-    --surface-hover: #e3e5e2;
-    --border-subtle: #dfe2df;
-    --border-strong: #c9cdc9;
-    --border-inferred: #7d8279;
-    --ink: #1d211f;
-    --ink-secondary: #52584f;
-    --ink-tertiary: #626760;
-    --accent: #0e7264;
-    --accent-wash: rgba(14, 114, 100, 0.14);
-    --accent-chip-text: #0b5f54; /* darker than --accent — clears 4.5:1 on the wash-tinted chip bg */
-    --danger: #9a3b32;
-    --danger-wash: rgba(154, 59, 50, 0.08);
-    --amber: #92610e;
-    --amber-wash: rgba(146, 97, 14, 0.12);
-    --amber-chip-text: #7a4f0b; /* darker than --amber — clears 4.5:1 on the wash-tinted chip bg */
+    /* Frozen viewer palette: one dark look, committed on purpose. Values come
+       from the design reference; this file does not carry a light theme. */
+    --paper: #090c10;
+    --surface: #0d1117;
+    --surface-hover: #111820;
+    --raised: #161b22;
+    --inset: #0b0f14;
+    --border-subtle: #21262d;
+    --border-strong: #30363d;
+    --border-inferred: #8b949e;
+    --ink: #e6edf3;
+    --ink-secondary: #8b949e;
+    --ink-tertiary: #6e7681;
+    --accent: #00d4aa;
+    --accent-wash: rgba(0, 212, 170, 0.12);
+    --accent-chip-text: #00d4aa;
+    --danger: #d98f86;
+    --danger-wash: rgba(217, 143, 134, 0.12);
+    --amber: #e0b466;
+    --amber-wash: rgba(224, 180, 102, 0.12);
+    --amber-chip-text: #e0b466;
 
     --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     --transition: 180ms ease;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --paper: #171a19;
-      --surface: #1e2221;
-      --surface-hover: #242826;
-      --border-subtle: #272c2a;
-      --border-strong: #343a37;
-      --border-inferred: #65706a;
-      --ink: #eef0ee;
-      --ink-secondary: #9ba69f;
-      --ink-tertiary: #8b9691;
-      --accent: #4fb3a5;
-      --accent-wash: rgba(79, 179, 165, 0.14);
-      --accent-chip-text: var(--accent); /* dark already clears 4.5:1 at this wash alpha */
-      --danger: #d98f86;
-      --danger-wash: rgba(217, 143, 134, 0.12);
-      --amber: #e0b466;
-      --amber-wash: rgba(224, 180, 102, 0.12);
-      --amber-chip-text: var(--amber); /* dark already clears 4.5:1 at this wash alpha */
-    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -760,3 +742,108 @@
     margin: 0; padding: 10px 12px; background: var(--surface); border-radius: 6px;
     font-size: 12px; overflow-x: auto; white-space: pre-wrap;
   }
+
+  /* ---- design conformance (#670): frozen viewer look ---- */
+  header {
+    background: var(--paper);
+    border-bottom: 1px solid var(--border-subtle);
+    gap: var(--s3);
+  }
+  header .wordmark-svg { color: var(--ink); display: block; }
+  header .project-label { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+  header .ro {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-tertiary);
+    background: none; border: 0; padding: 0; letter-spacing: 0;
+  }
+  .view-nav button, .back-link {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-secondary);
+    background: none; border: 1px solid var(--border-strong); border-radius: 6px;
+    padding: 4px 10px; cursor: pointer;
+  }
+  .view-nav button:hover, .back-link:hover { border-color: #484f58; color: var(--ink); }
+  #search-box {
+    border-color: var(--border-strong); background: var(--raised); color: var(--ink);
+    font-family: var(--mono); font-size: 11.5px;
+  }
+  #search-box::placeholder { color: var(--ink-tertiary); }
+  #sidebar { background: var(--inset); border-right: 1px solid var(--border-subtle); }
+
+  .brief-head { display: flex; align-items: baseline; gap: 12px; }
+  .brief-head .page-heading { font-size: 15px; font-weight: 600; margin: 0; }
+  .brief-sub { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+  .page-meta { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+
+  .sec { border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
+         overflow: hidden; margin-bottom: 14px; }
+  .sec-toggle { width: 100%; }
+  .items { display: flex; flex-direction: column; }
+
+  .glyph { width: 9px; height: 9px; flex: none; display: inline-block; margin-top: 5px; }
+  .glyph-verbatim { background: #8b949e; }
+  .glyph-inferred { border: 1px solid #8b949e; }
+  .glyph-untagged { border: 1px dashed #6e7681; }
+
+  .brief-row {
+    display: flex; align-items: baseline; gap: 14px; width: 100%; text-align: left;
+    padding: 14px 18px; border: 0; border-bottom: 1px solid #161b22;
+    background: none; color: var(--ink); font: inherit; cursor: pointer;
+  }
+  .brief-row:hover { background: var(--surface-hover); }
+  .brief-row-static { cursor: default; }
+  .brief-row .it-text { flex: 1; font-size: 14px; line-height: 1.55; }
+  .obj-id, .obj-ref {
+    font-family: var(--mono); font-size: 11.5px; color: var(--accent);
+    background: none; border: 0; padding: 0; flex: none;
+  }
+  .chip-carried { font-family: var(--mono); font-size: 11px; color: var(--ink-tertiary); margin-left: 10px; }
+
+  .card-foot {
+    padding: 12px 18px; background: var(--inset);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-tertiary);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .search-head { padding: 0 0 4px; }
+  .search-title { font-size: 15px; font-weight: 600; }
+  .search-rows { border: 1px solid var(--border-strong); border-radius: 8px;
+                 background: var(--surface); overflow: hidden; }
+  .search-row { border-bottom: 1px solid #161b22; padding: 11px 18px; gap: 14px; }
+  .search-meta { font-family: var(--mono); font-size: 11.5px; }
+
+  .why-crumb { display: flex; align-items: center; gap: 10px; padding: 0 0 14px; }
+  .crumb-sep { font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+  .crumb-id { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .crumb-trust { margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
+                 font-family: var(--mono); font-size: 11.5px; color: var(--ink-secondary); }
+  .crumb-trust .glyph { margin-top: 0; }
+  .why-card { border: 1px solid var(--border-strong); border-radius: 8px;
+              background: var(--surface); overflow: hidden; padding-top: 22px; }
+  .why-text { margin: 0; padding: 0 20px; font-size: 18px; line-height: 1.45;
+              letter-spacing: -0.01em; max-width: 60ch; }
+  .why-meta { display: flex; flex-wrap: wrap; gap: 0 22px; padding: 14px 20px 6px;
+              font-family: var(--mono); font-size: 11.5px; color: var(--ink-tertiary); }
+  .why-label {
+    display: block; font-family: var(--mono); font-size: 10px; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-tertiary);
+  }
+  .why-quote { margin: 18px 20px 0; border: 1px solid var(--border-strong); border-radius: 8px;
+               background: var(--raised); overflow: hidden; }
+  .why-quote-head { padding: 8px 13px; border-bottom: 1px solid var(--border-subtle); background: #12171e; }
+  .why-quote blockquote { margin: 14px 15px; border-left: 2px solid #8b949e; padding-left: 13px;
+                          font-family: var(--mono); font-size: 13px; line-height: 1.65; color: var(--ink); }
+  .why-none { margin: 12px 15px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-secondary); }
+  .why-source { margin: 14px 20px 0; }
+  .why-source pre { margin: 8px 0 0; padding: 12px 15px; background: #12171e;
+                    border: 1px solid var(--border-strong); border-radius: 8px;
+                    font-size: 12.5px; line-height: 1.7; color: var(--ink-tertiary);
+                    overflow-x: auto; white-space: pre-wrap; }
+  .why-seen { margin: 14px 20px 0; padding: 11px 15px; border: 1px solid var(--border-strong);
+              border-radius: 8px; background: #12171e; font-family: var(--mono);
+              font-size: 11.5px; line-height: 1.7; color: var(--ink-secondary); }
+  .why-axes { padding: 22px 20px 6px; }
+  .why-axes dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 12px 0 0; }
+  .why-axes dt { font-family: var(--mono); font-size: 12px; color: var(--ink-secondary); }
+  .why-axes dd { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .why-life { padding: 22px 20px 14px; }
+  .why-life .why-bio { margin-top: 12px; }
+  .why-card .card-foot { margin-top: 8px; }
