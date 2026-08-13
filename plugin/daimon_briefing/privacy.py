@@ -18,7 +18,8 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import config, normalize, refutations, store, surfaces, teamproject
+from . import (config, normalize, refutations, relations, store, surfaces,
+               teamproject)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -41,6 +42,7 @@ _EVENTS_NAME = "events.jsonl"
 # rather than restated — the deleter (refutations.forget_content_key) and this
 # auditor asking the question separately is how a surface goes unreported.
 _REFUTATIONS_NAME = "refutations.jsonl"
+_RELATIONS_NAME = "relations.jsonl"
 
 # Files that live in the checkpoint store and hold NO item plaintext BY
 # CONSTRUCTION. Since #601 both sets are VIEWS of the declared surface
@@ -111,7 +113,8 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                         unknown.append((p, entry.name))
                     elif p.suffix == ".json":
                         known.append(p)
-                    elif p.name not in (_EVENTS_NAME, _REFUTATIONS_NAME) \
+                    elif p.name not in (_EVENTS_NAME, _REFUTATIONS_NAME,
+                                        _RELATIONS_NAME) \
                             and not _is_plaintext_free(p):
                         unknown.append((p, entry.name))
         except OSError:
@@ -317,6 +320,8 @@ def audit_project(project_dir=None) -> dict:
         result["zero_surfaces"] = True
         result["cache"] = {"entries": 0, "oldest_days": None}
         result["ledger"] = {"records": 0, "rows": 0, "bytes": 0}
+        result["relations"] = {"records": 0, "rows": 0, "bytes": 0,
+                               "by_state": {}}
         return result
     known, unknown = _checkpoint_candidates()
     # Only this project's blind spots: an unknown file in ANOTHER bucket is
@@ -438,6 +443,59 @@ def audit_project(project_dir=None) -> dict:
     result["ledger"] = {"records": len(ledger_records),
                         "rows": ledger_rows,
                         "bytes": ledger_bytes}
+    # Relations ledger (#678 fork A): the third bucket ledger, declared at
+    # birth so it can never repeat #645's unknown->unscannable->exit-3 arc.
+    # Rows hold ids and closed-vocabulary codes, never text — so the residue
+    # check is not a hash intersection but an ID one: an edge touching an
+    # item whose latest event is a forget tombstone is an equivalence claim
+    # about erased content, which relations.forget_item_id exists to remove.
+    # A hit here means the scrub was missed or raced; after it runs, this
+    # scan is what proves the deletion reached the edges.
+    rel_path = config.checkpoint_dir() / slug / _RELATIONS_NAME
+    try:
+        lines = rel_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []                  # no relation recorded yet
+    except (OSError, ValueError):
+        lines = []
+        result["unscannable"].append(str(rel_path))
+    tombstoned = relations.tombstoned_item_ids(project_dir=project_dir)
+    rel_records: set[str] = set()
+    rel_rows = 0
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        rel_rows += 1
+        rel_id = str(row.get("relation_id") or "")
+        if rel_id:
+            rel_records.add(rel_id)
+        for endpoint_key in ("from", "to"):
+            endpoint = row.get(endpoint_key)
+            if not isinstance(endpoint, dict):
+                continue
+            item = str(endpoint.get("item_id") or "")
+            if item and item in tombstoned:
+                result["findings"].append({
+                    "path": str(rel_path),
+                    "item_id": item,
+                    "content_hash": None,
+                    "surface": "relations-ledger"})
+    try:
+        rel_bytes = rel_path.stat().st_size
+    except OSError:
+        rel_bytes = 0
+    rel_states: dict[str, int] = {}
+    for record in relations.records(project_dir=project_dir).values():
+        state = str(record.get("state") or "")
+        rel_states[state] = rel_states.get(state, 0) + 1
+    result["relations"] = {"records": len(rel_records),
+                           "rows": rel_rows,
+                           "bytes": rel_bytes,
+                           "by_state": rel_states}
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.
