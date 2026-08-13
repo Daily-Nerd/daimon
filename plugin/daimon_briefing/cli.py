@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -1398,6 +1398,15 @@ def _cmd_forget(args) -> int:
     # forgotten value goes with it whether or not it was the named target.
     forgotten_refutations = refutations.forget_content_key(
         content_hash, project_dir=project)
+    # #678 fork A: relation rows hold no text, but an edge touching this item
+    # is an equivalence CLAIM about its content (an `exact-text` rail against
+    # a surviving twin re-derives what the value was), and post-forget the
+    # relations ledger would be the only surface binding the forgotten id to
+    # its sessions, kind, and revision-chain length. The scrub is id-keyed —
+    # the tombstone above landed on this exact id — and the audit's
+    # relations-ledger scan is what proves it reached the edges.
+    forgotten_relations = relations.forget_item_id(
+        target["id"], project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -1447,6 +1456,9 @@ def _cmd_forget(args) -> int:
     if forgotten_refutations:
         surfaces.append(f"{len(forgotten_refutations)} refutation(s) "
                         f"({', '.join(forgotten_refutations)})")
+    if forgotten_relations:
+        surfaces.append(f"{len(forgotten_relations)} relation(s) "
+                        f"({', '.join(forgotten_relations)})")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           f"removed from {' and '.join(surfaces) or 'no store'}; "
           "tombstone recorded")

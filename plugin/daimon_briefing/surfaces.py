@@ -111,6 +111,21 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/forget-hits.jsonl",
             "store.record_forget_hits", False, "exempt-no-plaintext",
             "none", audit_exempt=True),
+    # -- the relations ledger (#678 fork A): ids and closed-vocabulary codes
+    #    only — no field can carry item text (relations.py refuses at the
+    #    seam). plaintext=True anyway, deliberately: an edge is an
+    #    equivalence CLAIM about content (`exact-text` against a forgotten
+    #    endpoint asserts the forgotten value equaled a surviving item's
+    #    text), and #419's rule is that holding the sensitive relation to
+    #    content — not the file format — is what puts a surface inside the
+    #    deletion contract. `rewrite` is relations.forget_item_id, the one
+    #    path that rewrites this file, dropping every row of a record whose
+    #    edge touches a tombstoned item id. Never audit_exempt: the audit
+    #    scans endpoint ids against tombstones (privacy.audit_project) and
+    #    reports records/rows/bytes/by_state, so residue is a finding and
+    #    growth is measured, never silent. --
+    Surface("checkpoints/{slug}/relations.jsonl", "relations._append",
+            True, "rewrite", "forget"),
     # -- serializer chunk cache: PRE-redaction by design (#125), so it can
     #    only be purged wholesale (#422); age reaper bounds survivors. --
     Surface("checkpoints/.chunk-cache/*", "serializer._save_chunk_cache",
