@@ -1252,23 +1252,6 @@ def _relations_endpoint_texts(project_dir) -> dict:
     return texts
 
 
-def _print_relation(record, texts, *, detailed: bool = False) -> None:
-    frm, to = record.get("from") or {}, record.get("to") or {}
-    flag = " CONTRADICTION" if record.get("contradiction") else ""
-    print(f"{record['relation_id']}  {record['state']:<9} "
-          f"{record['type']}{flag}")
-    for label, endpoint in (("from", frm), ("to", to)):
-        item_id = str(endpoint.get("item_id") or "")
-        text = texts.get(item_id, "[unresolved]")
-        print(f"  {label}: {item_id} ({endpoint.get('session_id')}) {text}")
-    if detailed:
-        for proposal in record.get("proposals") or []:
-            print(f"  proposed by {proposal.get('matcher_version')}: "
-                  f"{', '.join(proposal.get('matched_by') or [])}")
-        if record.get("confirmed_channel"):
-            print(f"  confirmed via {record['confirmed_channel']}")
-
-
 def _cmd_relations_list(args) -> int:
     project = _resolve_project(args.project)
     records = relations.records(project_dir=project)
@@ -1293,14 +1276,11 @@ def _cmd_relations_list(args) -> int:
     _note_usage("relations:list")
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
-    elif not rows:
-        print("no relations for this project")
+        if withheld:
+            print(f"{withheld} edge(s) withheld (erased endpoint)")
     else:
-        texts = _relations_endpoint_texts(project)
-        for record in rows:
-            _print_relation(record, texts)
-    if withheld:
-        print(f"{withheld} edge(s) withheld (erased endpoint)")
+        texts = _relations_endpoint_texts(project) if rows else {}
+        render.render_relations_list(rows, texts, withheld)
     return 0
 
 
@@ -1314,8 +1294,7 @@ def _cmd_relations_show(args) -> int:
     if args.json:
         print(json.dumps(record, ensure_ascii=False, indent=2))
     else:
-        _print_relation(record, _relations_endpoint_texts(project),
-                        detailed=True)
+        render.render_relation(record, _relations_endpoint_texts(project))
     return 0
 
 

@@ -1380,3 +1380,106 @@ def render_privacy_audit(results: list[dict]) -> None:
             print("  clean — no tombstoned value found on any surface")
     print("note: a free-text event note merely CONTAINING a forgotten value"
           " is undetectable by hash; only verbatim notes are caught")
+
+
+# -- relations (#678): adjudication surfaces share one presentation seam so
+#    the CLI list and any later viewer lane cannot drift apart. Plain output
+#    is the contract the tests pin; rich is the same content, styled.
+
+_RELATION_STATE_STYLE = {
+    "candidate": "yellow",
+    "confirmed": "bold green",
+    "rejected": "red",
+    "retracted": "dim",
+}
+
+
+def _plain_relation(record, texts, *, detailed: bool = False) -> None:
+    frm, to = record.get("from") or {}, record.get("to") or {}
+    flag = " CONTRADICTION" if record.get("contradiction") else ""
+    print(f"{record['relation_id']}  {record['state']:<9} "
+          f"{record['type']}{flag}")
+    for label, endpoint in (("from", frm), ("to", to)):
+        item_id = str(endpoint.get("item_id") or "")
+        text = texts.get(item_id, "[unresolved]")
+        print(f"  {label}: {item_id} ({endpoint.get('session_id')}) {text}")
+    if detailed:
+        for proposal in record.get("proposals") or []:
+            print(f"  proposed by {proposal.get('matcher_version')}: "
+                  f"{', '.join(proposal.get('matched_by') or [])}")
+        if record.get("confirmed_channel"):
+            print(f"  confirmed via {record['confirmed_channel']}")
+
+
+def _relation_endpoint_cell(endpoint, texts) -> str:
+    item_id = str(endpoint.get("item_id") or "")
+    return f"{item_id}\n{texts.get(item_id, '[unresolved]')}"
+
+
+def _rich_relations_list(rows, texts) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(header_style="bold", pad_edge=False)
+    for column in ("relation", "state", "type", "from", "to"):
+        table.add_column(column, overflow="fold")
+    for record in rows:
+        style = _RELATION_STATE_STYLE.get(record["state"], "white")
+        type_cell = record["type"] + (
+            " [bold red]CONTRADICTION[/]" if record.get("contradiction")
+            else "")
+        table.add_row(
+            record["relation_id"],
+            f"[{style}]{record['state']}[/]",
+            type_cell,
+            _relation_endpoint_cell(record.get("from") or {}, texts),
+            _relation_endpoint_cell(record.get("to") or {}, texts),
+        )
+    Console().print(table)
+
+
+def _rich_relation(record, texts) -> None:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    body = Text()
+    style = _RELATION_STATE_STYLE.get(record["state"], "white")
+    body.append(f"{record['state']} · {record['type']}\n", style=style)
+    if record.get("contradiction"):
+        body.append("CONTRADICTION: the confirmed inverse edge also exists\n",
+                    style="bold red")
+    for label, endpoint in (("from", record.get("from") or {}),
+                            ("to", record.get("to") or {})):
+        item_id = str(endpoint.get("item_id") or "")
+        body.append(f"{label}: {item_id} ({endpoint.get('session_id')})\n",
+                    style="bold")
+        body.append(f"  {texts.get(item_id, '[unresolved]')}\n")
+    for proposal in record.get("proposals") or []:
+        body.append(f"proposed by {proposal.get('matcher_version')}: "
+                    f"{', '.join(proposal.get('matched_by') or [])}\n",
+                    style="dim")
+    if record.get("confirmed_channel"):
+        body.append(f"confirmed via {record['confirmed_channel']}\n",
+                    style="green")
+    Console().print(Panel(body, title=record["relation_id"],
+                          border_style="white", title_align="left"))
+
+
+def render_relations_list(rows, texts, withheld: int) -> None:
+    if not rows:
+        print("no relations for this project")
+    elif supports_rich():
+        _rich_relations_list(rows, texts)
+    else:
+        for record in rows:
+            _plain_relation(record, texts)
+    if withheld:
+        print(f"{withheld} edge(s) withheld (erased endpoint)")
+
+
+def render_relation(record, texts) -> None:
+    if supports_rich():
+        _rich_relation(record, texts)
+    else:
+        _plain_relation(record, texts, detailed=True)

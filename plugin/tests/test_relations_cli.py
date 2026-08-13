@@ -123,6 +123,50 @@ def test_list_state_filter_narrows_output(seeded, monkeypatch, capsys):
     assert seeded["rel_id"] in capsys.readouterr().out
 
 
+def test_rich_list_and_show_render_the_same_content(seeded, monkeypatch,
+                                                    capsys):
+    from daimon_briefing import render
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "200")
+    _tty(monkeypatch)
+    assert cli.main(["relations", "confirm", seeded["rel_id"]]) == 0
+    capsys.readouterr()
+    assert cli.main(["relations", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "confirmed" in out
+    assert "keep the relations ledger append only" in out
+    assert cli.main(["relations", "show", seeded["rel_id"]]) == 0
+    out = capsys.readouterr().out
+    assert "confirmed via cli-tty" in out
+    assert "lab-2026-08-12" in out
+
+
+def test_rich_list_marks_contradictions(seeded, monkeypatch, capsys):
+    from daimon_briefing import render
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "200")
+    _tty(monkeypatch)
+    ids = seeded["item_ids"]
+    inverse = relations.propose(
+        type_="revision-of",
+        from_endpoint={"session_id": "S1", "field": "recent_decisions",
+                       "item_id": ids[1]},
+        to_endpoint={"session_id": "S1", "field": "recent_decisions",
+                     "item_id": ids[0]},
+        matched_by=["carry-absolute"],
+        matcher_version="lab-2026-08-12",
+        channel="lab-import",
+        project_dir=PROJECT,
+    )
+    assert cli.main(["relations", "confirm", seeded["rel_id"]]) == 0
+    assert cli.main(["relations", "confirm", inverse]) == 0
+    capsys.readouterr()
+    assert cli.main(["relations", "list"]) == 0
+    assert "CONTRADICTION" in capsys.readouterr().out
+    assert cli.main(["relations", "show", inverse]) == 0
+    assert "CONTRADICTION" in capsys.readouterr().out
+
+
 def test_list_withholds_edges_touching_erased_endpoints(seeded, capsys):
     doomed = seeded["item_ids"][0]
     store.append_event(doomed, "forgotten:deadbeef01234567",
