@@ -1224,6 +1224,117 @@ def _cmd_refute_guard(args) -> int:
     return 0
 
 
+def _relations_channel() -> str:
+    """The observed write channel for a relation verdict.
+
+    Narrower than `_refute_channel` on purpose: there is no `--by agent`
+    here because agents cannot verdict relations AT ALL — the fold ignores
+    non-human channels and the module refuses them, so offering the flag
+    would only advertise a path that always fails. A verdict has to show an
+    interactive terminal; anything else is refused, not downgraded.
+    """
+    if not sys.stdin.isatty():
+        raise relations.RelationError(
+            "relation verdicts are human-only and need an interactive "
+            "terminal; there is no agent path to confirm, reject, or retract")
+    return "cli-tty"
+
+
+def _relations_endpoint_texts(project_dir) -> dict:
+    """Read-time id→text join over every project surface.  The ledger holds
+    no text by construction, so display resolves against the checkpoints —
+    and only at render time, never persisted back."""
+    texts = {}
+    for _, _, _, item in store.items_for_project(project_dir):
+        item_id = str(item.get("id") or "")
+        if item_id and item_id not in texts:
+            texts[item_id] = str(item.get("text") or "")
+    return texts
+
+
+def _print_relation(record, texts, *, detailed: bool = False) -> None:
+    frm, to = record.get("from") or {}, record.get("to") or {}
+    flag = " CONTRADICTION" if record.get("contradiction") else ""
+    print(f"{record['relation_id']}  {record['state']:<9} "
+          f"{record['type']}{flag}")
+    for label, endpoint in (("from", frm), ("to", to)):
+        item_id = str(endpoint.get("item_id") or "")
+        text = texts.get(item_id, "[unresolved]")
+        print(f"  {label}: {item_id} ({endpoint.get('session_id')}) {text}")
+    if detailed:
+        for proposal in record.get("proposals") or []:
+            print(f"  proposed by {proposal.get('matcher_version')}: "
+                  f"{', '.join(proposal.get('matched_by') or [])}")
+        if record.get("confirmed_channel"):
+            print(f"  confirmed via {record['confirmed_channel']}")
+
+
+def _cmd_relations_list(args) -> int:
+    project = _resolve_project(args.project)
+    records = relations.records(project_dir=project)
+    # Erased means TOMBSTONED, never merely absent: an edge touching a
+    # forgotten item is withheld from every rendered surface (the count is
+    # safe — it names no id), while an endpoint that only aged out of the
+    # GC window still renders as [unresolved].
+    erased = relations.tombstoned_item_ids(project_dir=project)
+    wanted = set(args.state or relations.STATES)
+    # argparse `choices` is the gate for unknown states; no re-check here.
+    rows, withheld = [], 0
+    for record in records.values():
+        touched = {str((record.get("from") or {}).get("item_id") or ""),
+                   str((record.get("to") or {}).get("item_id") or "")}
+        if touched & erased:
+            withheld += 1
+            continue
+        if record["state"] in wanted:
+            rows.append(record)
+    rows.sort(key=lambda r: (r["state"] != "candidate",
+                             r["relation_id"]))
+    _note_usage("relations:list")
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    elif not rows:
+        print("no relations for this project")
+    else:
+        texts = _relations_endpoint_texts(project)
+        for record in rows:
+            _print_relation(record, texts)
+    if withheld:
+        print(f"{withheld} edge(s) withheld (erased endpoint)")
+    return 0
+
+
+def _cmd_relations_show(args) -> int:
+    project = _resolve_project(args.project)
+    record = relations.get(args.relation_id, project_dir=project)
+    if record is None:
+        print(f"unknown relation: {args.relation_id}")
+        return 1
+    _note_usage("relations:show")
+    if args.json:
+        print(json.dumps(record, ensure_ascii=False, indent=2))
+    else:
+        _print_relation(record, _relations_endpoint_texts(project),
+                        detailed=True)
+    return 0
+
+
+def _cmd_relations_verdict(args) -> int:
+    project = _resolve_project(args.project)
+    move = {"confirm": relations.confirm, "reject": relations.reject,
+            "retract": relations.retract}[args.verdict]
+    try:
+        move(args.relation_id, channel=_relations_channel(),
+             project_dir=project)
+    except relations.RelationError as exc:
+        print(f"relation {args.verdict} refused: {exc}")
+        return 1
+    _note_usage(f"relations:{args.verdict}")
+    state = relations.records(project_dir=project)[args.relation_id]["state"]
+    print(f"{args.relation_id} -> {state}")
+    return 0
+
+
 def _cmd_forget(args) -> int:
     """Deliberate item removal (#321): append a tombstone event whose status
     carries a content HASH, never the text — removal means the content leaves
@@ -4180,6 +4291,47 @@ def build_parser() -> argparse.ArgumentParser:
     pr_guard.add_argument("--quiet", action="store_true",
                           help="print nothing when no active refutation matches")
     pr_guard.set_defaults(func=_cmd_refute_guard)
+
+    p_relations = sub.add_parser(
+        "relations",
+        help="inspect and adjudicate typed item relations (#678, shadow mode)",
+        epilog="Examples:\n"
+               "  daimon relations list\n"
+               "  daimon relations show rel-0123456789abcdef\n"
+               "  daimon relations confirm rel-0123456789abcdef\n",
+    )
+    relations_sub = p_relations.add_subparsers(dest="relations_cmd",
+                                               required=True)
+    relations_sub.add_parser = functools.partial(
+        relations_sub.add_parser, formatter_class=fmt)
+
+    prl_list = relations_sub.add_parser(
+        "list", help="candidates first; endpoint texts resolved at read time")
+    prl_list.add_argument(
+        "--state", action="append",
+        choices=sorted(relations.STATES),
+        help="filter by state; repeatable (default: all)")
+    prl_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    prl_list.add_argument("--json", action="store_true", help="machine-readable output")
+    prl_list.set_defaults(func=_cmd_relations_list)
+
+    prl_show = relations_sub.add_parser(
+        "show", help="one relation with its proposal history")
+    prl_show.add_argument("relation_id", help="exact rel-… id")
+    prl_show.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    prl_show.add_argument("--json", action="store_true", help="machine-readable output")
+    prl_show.set_defaults(func=_cmd_relations_show)
+
+    for verdict, blurb in (
+            ("confirm", "record a human confirmation of a candidate edge"),
+            ("reject", "record a human rejection; sticky against re-proposal"),
+            ("retract", "undo a confirmation; a fresh proposal may revive it")):
+        prl_verdict = relations_sub.add_parser(
+            verdict,
+            help=f"{blurb} (human-only: needs an interactive terminal)")
+        prl_verdict.add_argument("relation_id", help="exact rel-… id")
+        prl_verdict.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+        prl_verdict.set_defaults(func=_cmd_relations_verdict, verdict=verdict)
 
     p_handoff = sub.add_parser(
         "handoff",

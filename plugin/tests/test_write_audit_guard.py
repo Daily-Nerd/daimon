@@ -73,7 +73,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, config, policy, refutations, store, teamsync
+from daimon_briefing import cli, config, policy, refutations, relations, store, teamsync
 
 from tests.conftest import FIXTURES, FakeChat
 import pytest as _pytest
@@ -445,6 +445,39 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_refute_guard():
         run(["refute", "guard", "revisit", "#502"], 0)
 
+    def _seed_relation():
+        # Proposals are not CLI-exposed (lab/serializer writers only), so the
+        # verdict drives seed one candidate through the module seam — the
+        # write the guard must observe is the VERDICT row the CLI appends.
+        ctx["relation_id"] = relations.propose(
+            type_="revision-of",
+            from_endpoint={"session_id": "S1", "field": "recent_decisions",
+                           "item_id": ctx["ids"][_T_KEEP]},
+            to_endpoint={"session_id": "S1", "field": "recent_decisions",
+                         "item_id": "r-feedbeef1234"},
+            matched_by=["carry-absolute"],
+            matcher_version="guard-drive",
+            channel="lab-import",
+            project_dir=proj,
+        )
+
+    def r_relations_list():
+        _seed_relation()
+        run(["relations", "list"], 0)
+
+    def r_relations_show():
+        run(["relations", "show", ctx["relation_id"]], 0)
+
+    def r_relations_confirm():
+        run(["relations", "confirm", ctx["relation_id"]], 0)
+
+    def r_relations_reject():
+        run(["relations", "reject", ctx["relation_id"]], 0)
+
+    def r_relations_retract():
+        run(["relations", "confirm", ctx["relation_id"]], 0)
+        run(["relations", "retract", ctx["relation_id"]], 0)
+
     def r_resolve():
         run(["resolve", ctx["ids"][_T_KEEP], "--note", "shipped"], 0)
 
@@ -571,6 +604,11 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("refute", "list"): r_refute_list,
         ("refute", "search"): r_refute_search,
         ("refute", "guard"): r_refute_guard,
+        ("relations", "list"): r_relations_list,
+        ("relations", "show"): r_relations_show,
+        ("relations", "confirm"): r_relations_confirm,
+        ("relations", "reject"): r_relations_reject,
+        ("relations", "retract"): r_relations_retract,
         ("resolve",): r_resolve,
         ("reverify",): r_reverify,
         ("forget",): r_forget,
