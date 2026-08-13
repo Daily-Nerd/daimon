@@ -1,0 +1,5 @@
+# Real checkpoint text and human judgments are private by construction.
+out*/
+*.jsonl
+__pycache__/
+
