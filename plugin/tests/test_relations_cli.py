@@ -83,6 +83,9 @@ def test_confirm_on_a_terminal_confirms(seeded, monkeypatch, capsys):
     assert cli.main(["relations", "confirm", seeded["rel_id"]]) == 0
     state = relations.records(project_dir=PROJECT)[seeded["rel_id"]]["state"]
     assert state == "confirmed"
+    capsys.readouterr()
+    assert cli.main(["relations", "show", seeded["rel_id"]]) == 0
+    assert "confirmed via cli-tty" in capsys.readouterr().out
 
 
 def test_reject_and_retract_share_the_gate(seeded, monkeypatch):
@@ -98,6 +101,26 @@ def test_verdict_on_unknown_relation_fails_cleanly(seeded, monkeypatch,
                                                    capsys):
     _tty(monkeypatch)
     assert cli.main(["relations", "confirm", "rel-" + "f" * 16]) == 1
+
+
+def test_list_and_show_emit_machine_readable_json(seeded, capsys):
+    import json as jsonlib
+    assert cli.main(["relations", "list", "--json"]) == 0
+    rows = jsonlib.loads(capsys.readouterr().out)
+    assert rows[0]["relation_id"] == seeded["rel_id"]
+    assert cli.main(["relations", "show", seeded["rel_id"], "--json"]) == 0
+    record = jsonlib.loads(capsys.readouterr().out)
+    assert record["proposals"][0]["matcher_version"] == "lab-2026-08-12"
+
+
+def test_list_state_filter_narrows_output(seeded, monkeypatch, capsys):
+    _tty(monkeypatch)
+    assert cli.main(["relations", "reject", seeded["rel_id"]]) == 0
+    capsys.readouterr()
+    assert cli.main(["relations", "list", "--state", "candidate"]) == 0
+    assert "no relations" in capsys.readouterr().out
+    assert cli.main(["relations", "list", "--state", "rejected"]) == 0
+    assert seeded["rel_id"] in capsys.readouterr().out
 
 
 def test_list_withholds_edges_touching_erased_endpoints(seeded, capsys):

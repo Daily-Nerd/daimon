@@ -1278,10 +1278,7 @@ def _cmd_relations_list(args) -> int:
     # GC window still renders as [unresolved].
     erased = relations.tombstoned_item_ids(project_dir=project)
     wanted = set(args.state or relations.STATES)
-    unknown = wanted - relations.STATES
-    if unknown:
-        print(f"unknown state: {', '.join(sorted(unknown))}")
-        return 1
+    # argparse `choices` is the gate for unknown states; no re-check here.
     rows, withheld = [], 0
     for record in records.values():
         touched = {str((record.get("from") or {}).get("item_id") or ""),
