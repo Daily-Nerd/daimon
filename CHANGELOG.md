@@ -5,6 +5,35 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0](https://github.com/Daily-Nerd/daimon/compare/v0.29.0...v0.30.0) (2026-08-13)
+
+
+### Features
+
+* **cli:** relations adjudication verbs for the typed relation ledger ([#680](https://github.com/Daily-Nerd/daimon/issues/680)) ([be87378](https://github.com/Daily-Nerd/daimon/commit/be87378aae738f6ab2a2b24719e77826590b39f1))
+* **cli:** rich rendering for relations list and show ([1fc6de8](https://github.com/Daily-Nerd/daimon/commit/1fc6de84e236befa327879f7424be7bf6aec1d00)), closes [#678](https://github.com/Daily-Nerd/daimon/issues/678)
+* **relations:** typed relation ledger in shadow mode ([#679](https://github.com/Daily-Nerd/daimon/issues/679)) ([2e803a0](https://github.com/Daily-Nerd/daimon/commit/2e803a0c069b93d5d4264d8305c4ee94a5f8b875))
+* **store:** declare the human event-source set and instrument reverify ([#669](https://github.com/Daily-Nerd/daimon/issues/669)) ([45559a1](https://github.com/Daily-Nerd/daimon/commit/45559a1bfdc330618f01ea4f4c0ce6ad72a8b112))
+* **store:** stamp the project directory name on checkpoints at write time ([#673](https://github.com/Daily-Nerd/daimon/issues/673)) ([bfd4cb9](https://github.com/Daily-Nerd/daimon/commit/bfd4cb9a88c73389dbcb5e94466e46ed7695d5e7))
+* **ui:** history lane renders confirmed relations inside the entry page ([#682](https://github.com/Daily-Nerd/daimon/issues/682)) ([8b75f2f](https://github.com/Daily-Nerd/daimon/commit/8b75f2f5ca8511173e43c2d8ea443689b3a90909))
+* **ui:** ledger screen and session page for the viewer ([#675](https://github.com/Daily-Nerd/daimon/issues/675)) ([589a9d2](https://github.com/Daily-Nerd/daimon/commit/589a9d2e8494685f953cb9bcef3c99e50a65b4ac))
+* **ui:** local read-only viewer with search-as-recall and why detail ([#671](https://github.com/Daily-Nerd/daimon/issues/671)) ([d5f8628](https://github.com/Daily-Nerd/daimon/commit/d5f862874753970f977931a34932c729c1e0439d))
+* **ui:** print view sets one checkpoint as a printed record ([#677](https://github.com/Daily-Nerd/daimon/issues/677)) ([44f6f7a](https://github.com/Daily-Nerd/daimon/commit/44f6f7aaade093093d9c53f9fd7e6dbc4af85cd0))
+* **ui:** refutations lane, ladder-anchored diff, and check strip for the viewer ([#676](https://github.com/Daily-Nerd/daimon/issues/676)) ([23d1e60](https://github.com/Daily-Nerd/daimon/commit/23d1e60420f491cbc3c79df6e6e33501c8d0e0bf))
+
+
+### Bug Fixes
+
+* **llm:** let the fallback rescue an unparseable response ([#666](https://github.com/Daily-Nerd/daimon/issues/666)) ([e78527c](https://github.com/Daily-Nerd/daimon/commit/e78527cf42255ba1a441e6ba58b2859fd5c6c688)), closes [#663](https://github.com/Daily-Nerd/daimon/issues/663)
+* **privacy:** fold compatibility forms before the scrub looks at them ([#661](https://github.com/Daily-Nerd/daimon/issues/661)) ([a5f3a64](https://github.com/Daily-Nerd/daimon/commit/a5f3a642360e8495552067e916c56e63fc2e316b))
+* **receipts:** name the real reason a checkpoint is unsigned ([#654](https://github.com/Daily-Nerd/daimon/issues/654)) ([5d0910f](https://github.com/Daily-Nerd/daimon/commit/5d0910f986317e17dab80bde7356ac93614ba2cc))
+* **serializer:** restate the extraction contract after the transcript ([#665](https://github.com/Daily-Nerd/daimon/issues/665)) ([dd7b748](https://github.com/Daily-Nerd/daimon/commit/dd7b7483a4fff742d6e2d05d306c34d3db2c49ae)), closes [#664](https://github.com/Daily-Nerd/daimon/issues/664)
+
+
+### Documentation
+
+* **blog:** publish the 0.29.0 ship-log ([#657](https://github.com/Daily-Nerd/daimon/issues/657)) ([765bac0](https://github.com/Daily-Nerd/daimon/commit/765bac0c5133b8d7cb75ff6f55c1805514cd0e25))
+
 ## [0.29.0](https://github.com/Daily-Nerd/daimon/compare/v0.28.0...v0.29.0) (2026-08-08)
 
 
