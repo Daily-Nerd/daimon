@@ -972,6 +972,11 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
 
     html += '<div class="why-life"><span class="why-label">Life</span>' +
       '<div id="why-bio" class="why-bio"></div></div>';
+    // History lane (#678 Phase 3): confirmed relations only, painted async
+    // like the ladder above. Candidates and rejections never render here —
+    // a chain a reader sees is always one a person vouched for.
+    html += '<div class="why-history"><span class="why-label">History</span>' +
+      '<div id="why-history" class="why-history-body"></div></div>';
     // The door to the print view: the entry's own footer, per the frozen
     // design. The button arms once the biography arrives — the print shows
     // the checkpoint of the entry's latest sighting, and only the ladder
@@ -979,6 +984,48 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     html += '<div class="why-actions"><button type="button" class="ledger-ck-open" data-open-print>print view</button></div>';
     html += '<div class="card-foot">read-only · this page renders the record; it holds nothing of its own</div>';
     html += "</div></div>";
+    return html;
+  }
+
+  // ---- history lane (#678 Phase 3): confirmed relations for one entry ----
+  // Confirmed only, by contract: relations.for_item never returns another
+  // state, and this renderer adds no fallback that could widen it. The
+  // withheld line copies the CLI's exact wording (one frozen phrase, two
+  // surfaces). An id the read-time join cannot resolve renders with the
+  // frozen word [unresolved]; direction is shown structurally (this entry
+  // vs the counterpart chip), never with new verbs.
+  export function renderHistoryLane(payload, itemId) {
+    var rows = (payload && payload.rows) || [];
+    var texts = (payload && payload.texts) || {};
+    var withheld = (payload && payload.withheld) || 0;
+    var html = '<div class="why-history-note">confirmed by a person · candidates never shown</div>';
+    if (!rows.length && !withheld) {
+      html += '<div class="why-history-empty">no confirmed connections yet</div>';
+    }
+    html += rows.map(function (r) {
+      var from = r.from || {}, to = r.to || {};
+      var mine = String(from.item_id) === String(itemId);
+      var other = mine ? to : from;
+      var otherId = String(other.item_id || "");
+      var otherText = texts[otherId] || "[unresolved]";
+      var chip = ACT_ITEM_ID_RE.test(otherId)
+        ? '<button type="button" class="hist-chip" data-open-why data-item-id="' +
+          escapeHtml(otherId) + '">' + escapeHtml(otherText) + "</button>"
+        : '<span class="hist-chip hist-chip-raw">' + escapeHtml(otherText) + "</span>";
+      var self = '<span class="hist-self">this entry</span>';
+      var pair = r.type === "same-arc"
+        ? self + " · " + chip
+        : (mine ? self + " → " + chip : chip + " → " + self);
+      return '<div class="hist-row">' +
+        '<span class="hist-type">' + escapeHtml(r.type) + "</span>" +
+        (r.contradiction ? '<span class="hist-flag">CONTRADICTION</span>' : "") +
+        '<div class="hist-pair">' + pair + "</div>" +
+        "</div>";
+    }).join("");
+    if (withheld) {
+      html += '<div class="why-history-withheld">' + withheld +
+        " edge(s) withheld (erased endpoint)</div>";
+    }
     return html;
   }
 

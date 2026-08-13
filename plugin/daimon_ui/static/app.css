@@ -1276,3 +1276,19 @@
     .print-margin { text-align: left; }
     .print-body { border-left: 0; padding-left: 0; }
   }
+
+  /* -- history lane (#678 Phase 3): confirmed relations inside the entry -- */
+  .why-history { padding: 22px 20px 14px; }
+  .why-history-body { margin-top: 12px; }
+  .why-history-note { font-size: 11.5px; color: var(--ink-tertiary); margin-bottom: 10px; }
+  .why-history-empty { font-size: 13px; color: var(--ink-secondary); }
+  .hist-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .hist-row:first-of-type { border-top: 0; }
+  .hist-type { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .hist-flag { font-family: var(--mono); font-size: 11px; color: var(--danger, #b54d3f); font-weight: 600; }
+  .hist-pair { font-size: 13px; }
+  .hist-self { color: var(--ink-tertiary); font-size: 12px; }
+  .hist-chip { font: inherit; font-size: 13px; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+  .hist-chip:hover { text-decoration: underline; }
+  .hist-chip-raw { color: var(--ink-tertiary); cursor: default; }
+  .why-history-withheld { font-size: 11.5px; color: var(--ink-tertiary); margin-top: 10px; }

@@ -114,9 +114,10 @@ SKIPPED: dict = {
         "foreground HTTP server: serve_forever() never returns, so the recipe "
         "harness cannot drive it to completion. Its write surface is bounded "
         "by construction — the handler defines only do_GET, and its engine "
-        "calls (recall.search, inspector.inspect_item) are the same paths the "
-        "`recall` recipe already audits (tests/ui/test_server_engines.py "
-        "covers the dispatch)."
+        "calls (recall.search, inspector.inspect_item, refutations.listing, "
+        "relations.for_item/endpoint_texts — all read-only) are the same "
+        "paths the `recall`, `refute`, and `relations` recipes already audit "
+        "(tests/ui/test_server_engines.py covers the dispatch)."
     ),
 }
 
