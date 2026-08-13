@@ -2,7 +2,7 @@ import {
   ACT_ITEM_ID_RE, displaySid, escapeHtml, fmtRelative, navCurrent, renderBioPanel,
   renderDiffView, renderEmptyProjects, renderError, renderLedgerSessions, renderLedgerView,
   renderProjCard, renderRefutationsView, renderSearchResults, renderSections,
-  renderPrintView, renderSessionView, renderSidebarScope, renderStripView, renderWhyView,
+  renderHistoryLane, renderPrintView, renderSessionView, renderSidebarScope, renderStripView, renderWhyView,
   skeletonHtml
 } from "./render.js";
 import { state } from "./state.js";
@@ -637,6 +637,34 @@ import { state } from "./state.js";
         });
       });
   }
+  // History lane (#678 Phase 3): same async-panel shape as the ladder above.
+  // No cache: a confirmation made in the CLI between navigations must show
+  // on the next open, and the payload is small.
+  function loadHistory(itemId, panel) {
+    var reqId = state.requestId;
+    var timer = setTimeout(function () {
+      panel.innerHTML = skeletonHtml();
+    }, 1000);
+    api("/api/relations?project=" + encodeURIComponent(state.currentSlug) + "&id=" + encodeURIComponent(itemId))
+      .then(function (data) {
+        clearTimeout(timer);
+        if (reqId !== state.requestId) return; // navigated away meanwhile
+        if (data.ok) {
+          panel.innerHTML = renderHistoryLane(data, itemId);
+          wireWhyOpeners(panel);
+        } else {
+          panel.innerHTML = renderError(data.error);
+        }
+      }).catch(function () {
+        clearTimeout(timer);
+        if (reqId !== state.requestId) return;
+        panel.innerHTML = renderError({
+          what: "Could not load this entry's confirmed connections.",
+          why: "The request to the daimon server failed.",
+          fix: "Check the server is running and try again."
+        });
+      });
+  }
   // ---- search (#670): the box renders daimon recall — one matcher, two renderings ----
   function searchSlug() {
     return state.currentSlug || state.defaultSlug;
@@ -733,6 +761,8 @@ import { state } from "./state.js";
         var bio = document.getElementById("why-bio");
         state.whyBio = null; // a stale ladder must not aim the print door
         if (bio) loadBiography(itemId, bio);
+        var hist = document.getElementById("why-history");
+        if (hist) loadHistory(itemId, hist);
         var printBtn = sectionsEl.querySelector("[data-open-print]");
         if (printBtn) printBtn.addEventListener("click", function () {
           var chain = (state.whyBio && state.whyBio.trust_anatomy &&

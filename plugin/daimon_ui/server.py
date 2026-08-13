@@ -12,7 +12,7 @@ from . import reader
 # never grows a second search engine) and inspector.inspect_item is the same
 # read-side receipt `daimon why` prints. reader.py stays daimon-import-free
 # (files are its seam); the engine boundary lives here in dispatch only.
-from daimon_briefing import inspector, recall, refutations
+from daimon_briefing import inspector, recall, refutations, relations
 
 _PAGE = Path(__file__).parent / "page.html"
 _SLUG_RE = re.compile(r"^[\w-]+$")
@@ -206,6 +206,27 @@ class _Handler(BaseHTTPRequestHandler):
             # own project_slug, so passing it as project_dir resolves to the same
             # bucket (the inspector endpoint leans on the same property).
             self._json({"ok": True, "rows": refutations.listing(project_dir=slug)})
+        elif path == "/api/relations":
+            slug = self._resolve_slug(params)
+            if slug is None:
+                self._json(self._bad_slug_error(params.get("project", [self.default_slug])[0]))
+                return
+            # History lane (#678 Phase 3): CONFIRMED edges only — the fold,
+            # the confirmed boundary, and the erased-edge withholding all live
+            # in relations.for_item, shared with the CLI's presentation seam,
+            # so the two surfaces cannot drift. Texts are a read-time join
+            # (the ledger holds no text by construction) scoped to the ids the
+            # response actually names.
+            item_id = params.get("id", [""])[0]
+            rows, withheld = relations.for_item(item_id, project_dir=slug)
+            named = {item_id}
+            for row in rows:
+                for endpoint in (row.get("from") or {}, row.get("to") or {}):
+                    named.add(str(endpoint.get("item_id") or ""))
+            texts = {k: v for k, v in relations.endpoint_texts(slug).items()
+                     if k in named}
+            self._json({"ok": True, "rows": rows, "texts": texts,
+                        "withheld": withheld})
         elif path == "/api/ledger":
             slug = self._resolve_slug(params)
             if slug is None:

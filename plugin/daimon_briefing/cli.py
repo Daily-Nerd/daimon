@@ -1241,38 +1241,18 @@ def _relations_channel() -> str:
 
 
 def _relations_endpoint_texts(project_dir) -> dict:
-    """Read-time id→text join over every project surface.  The ledger holds
-    no text by construction, so display resolves against the checkpoints —
-    and only at render time, never persisted back."""
-    texts = {}
-    for _, _, _, item in store.items_for_project(project_dir):
-        item_id = str(item.get("id") or "")
-        if item_id and item_id not in texts:
-            texts[item_id] = str(item.get("text") or "")
-    return texts
+    """Stable cli seam over the engine's read-time id→text join."""
+    return relations.endpoint_texts(project_dir)
 
 
 def _cmd_relations_list(args) -> int:
     project = _resolve_project(args.project)
-    records = relations.records(project_dir=project)
-    # Erased means TOMBSTONED, never merely absent: an edge touching a
-    # forgotten item is withheld from every rendered surface (the count is
-    # safe — it names no id), while an endpoint that only aged out of the
-    # GC window still renders as [unresolved].
-    erased = relations.tombstoned_item_ids(project_dir=project)
-    wanted = set(args.state or relations.STATES)
-    # argparse `choices` is the gate for unknown states; no re-check here.
-    rows, withheld = [], 0
-    for record in records.values():
-        touched = {str((record.get("from") or {}).get("item_id") or ""),
-                   str((record.get("to") or {}).get("item_id") or "")}
-        if touched & erased:
-            withheld += 1
-            continue
-        if record["state"] in wanted:
-            rows.append(record)
-    rows.sort(key=lambda r: (r["state"] != "candidate",
-                             r["relation_id"]))
+    # Sort, state filter, and erased-edge withholding all live in
+    # relations.listing — the presentation contract shared with the viewer
+    # lane, so the two surfaces cannot drift. argparse `choices` already
+    # gates unknown states.
+    rows, withheld = relations.listing(
+        states=set(args.state or relations.STATES), project_dir=project)
     _note_usage("relations:list")
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))

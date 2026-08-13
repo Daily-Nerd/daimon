@@ -240,6 +240,67 @@ def test_erased_comes_from_tombstones_not_absence(bucket):
     assert "r-def123456789" not in erased
 
 
+# -- shared listing: one presentation fold for CLI and viewer (#678 P3) --
+
+def test_listing_sorts_candidates_first_and_withholds_erased(bucket):
+    kept = _propose(bucket)
+    relations.confirm(kept, channel="cli-tty", project_dir=bucket)
+    second = _propose(bucket, frm=_endpoint("S3", item="r-aaa111222333"),
+                      to=_endpoint("S1", item="r-bbb444555666"))
+    doomed = _propose(bucket, frm=_endpoint("S4", item="r-ccc777888999"),
+                      to=_endpoint("S1", item="r-ddd000111222"))
+    store.append_event("r-ccc777888999", "forgotten:deadbeef01234567",
+                       kind="tombstone", project_dir=bucket)
+    rows, withheld = relations.listing(project_dir=bucket)
+    ids = [r["relation_id"] for r in rows]
+    assert doomed not in ids
+    assert withheld == 1
+    assert ids == [second, kept]  # candidate first, then confirmed
+
+
+def test_listing_state_filter_and_unknown_state_refusal(bucket):
+    rel_id = _propose(bucket)
+    relations.reject(rel_id, channel="cli-tty", project_dir=bucket)
+    rows, _ = relations.listing(states={"rejected"}, project_dir=bucket)
+    assert [r["relation_id"] for r in rows] == [rel_id]
+    with pytest.raises(relations.RelationError):
+        relations.listing(states={"vibes"}, project_dir=bucket)
+
+
+def test_for_item_returns_confirmed_edges_only(bucket):
+    confirmed = _propose(bucket)
+    relations.confirm(confirmed, channel="cli-tty", project_dir=bucket)
+    _propose(bucket, frm=_endpoint("S3", item="r-abc123456789"),
+             to=_endpoint("S1", item="r-bbb444555666"))  # stays candidate
+    rows, withheld = relations.for_item("r-abc123456789", project_dir=bucket)
+    assert [r["relation_id"] for r in rows] == [confirmed]
+    assert withheld == 0
+    other, _ = relations.for_item("r-feedbeef1234", project_dir=bucket)
+    assert other == []
+
+
+def test_for_item_withholds_chains_touching_erased_endpoints(bucket):
+    rel_id = _propose(bucket)
+    relations.confirm(rel_id, channel="cli-tty", project_dir=bucket)
+    store.append_event("r-def123456789", "forgotten:deadbeef01234567",
+                       kind="tombstone", project_dir=bucket)
+    rows, withheld = relations.for_item("r-abc123456789", project_dir=bucket)
+    assert rows == [] and withheld == 1
+
+
+def test_endpoint_texts_joins_over_project_surfaces(bucket):
+    from daimon_briefing import policy
+    cp = {"session_id": "S1", "created": "2026-08-01T00:00:00Z",
+          "project_slug": store.project_slug(bucket),
+          "working_context": {"recent_decisions": [
+              {"text": "keep the fold deterministic", "trust": "inferred"}]}}
+    policy.stamp_item_ids(cp)
+    store.write_checkpoint("S1", cp, project_dir=bucket)
+    item_id = cp["working_context"]["recent_decisions"][0]["id"]
+    texts = relations.endpoint_texts(project_dir=bucket)
+    assert texts[item_id] == "keep the fold deterministic"
+
+
 # -- registry (fork A) --
 
 def test_registry_declares_relations_ledger_plaintext_rewrite_forget():
