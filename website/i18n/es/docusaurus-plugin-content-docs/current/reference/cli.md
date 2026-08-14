@@ -35,6 +35,8 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon audit quotes` | Re-verifica cada cita verbatim almacenada contra su transcripción de origen y reporta discrepancias. Solo lectura — nunca reescribe etiquetas. |
 | `daimon audit privacy` | Prueba el contrato de borrado: hashea cada campo con texto plano en cada superficie (checkpoints, punteros rotados, el registro de eventos, el espejo de equipo, el índice de recall y sus snapshots huérfanos) y reporta todo valor olvidado que haya sobrevivido. Solo lectura. |
 | `daimon refute list\|show\|search\|guard` | Lee el ledger de conocimiento negativo sin decaimiento. `guard` emite solo matches activos por ancla exacta o frase de sujeto; es consultivo y nunca bloquea un comando. Sumá `--json` para integraciones de deliberación. |
+| `daimon serve` | Abre el [visor local de solo lectura](viewer.md) en localhost — búsqueda como recall, páginas "why" por entrada, refutaciones, diff, check strip, vista de impresión. Nada escribe. |
+| `daimon relations list\|show\|confirm\|reject\|retract` | El [ledger de relaciones tipadas](relations.md): las máquinas proponen, solo una persona confirma, y los veredictos necesitan una terminal interactiva. Los candidatos nunca se renderizan en la superficie de una entrada. |
 
 Los auditores comparten un mismo contrato de salida, para que un script pueda
 actuar sobre la respuesta:
