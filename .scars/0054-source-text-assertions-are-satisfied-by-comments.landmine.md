@@ -1,17 +1,18 @@
 ---
-id: 0
+id: 54
 type: landmine
 title: A getsource substring assertion on a call site is satisfied by its own explaining comment
 severity: high
 confidence: 0.9
 created: 2026-08-15
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/tests/
   - pattern: "inspect\.getsource"
 evidence:
-  - pr: "693 PR 2 review round 1: both blind reviewers independently proved the mutation survives"
-  - note: "removing admit=True from capture.py's write_checkpoint call left the suite green — the comment above the call contained the same literal"
+  - pr: 693 PR 2 review round 1: both blind reviewers independently proved the mutation survives
+  - note: removing admit=True from capture.py's write_checkpoint call left the suite green — the comment above the call contained the same literal
+status: active
 ---
 
 `test_capture_path_admits` asserted `"admit=True" in inspect.getsource(capture.run)`
