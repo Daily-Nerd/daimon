@@ -1608,17 +1608,39 @@ def _cmd_forget(args) -> int:
         # selector deliberately never offers — so the preview enumerates that
         # reach non-destructively instead of naming only the selected target.
         value_key = normalize.content_key(str(target.get("text") or ""))
+        # The checkpoint splice takes every item holding the value, whatever
+        # its id — and amendments die with their item BY ID, carrying prose
+        # that is not the forgotten value, so both must be previewed too
+        # (#698 review). Same computation as the destructive path below,
+        # against the in-memory checkpoint, writing nothing.
+        spliced = set()
+        if isinstance(checkpoint, dict):
+            for section, key in store._ITEM_LISTS:
+                for i in (checkpoint.get(section) or {}).get(key) or []:
+                    if isinstance(i, dict) and (
+                            i.get("id") == target["id"]
+                            or normalize.content_key(i.get("text") or "")
+                            == value_key):
+                        spliced.add(str(i.get("id") or ""))
+        spliced.discard("")
         ref_reach = sorted({str(row.get("refutation_id") or "")
                             for row in refutations.events(project_dir=project)
                             if value_key in refutations.row_content_keys(row)})
-        amend_reach = sorted({str(row.get("amendment_id") or "")
-                              for row in amendments.events(project_dir=project)
-                              if value_key in amendments.row_content_keys(row)})
+        amend_reach = sorted({
+            str(row.get("amendment_id") or "")
+            for row in amendments.events(project_dir=project)
+            if value_key in amendments.row_content_keys(row)
+            or str(row.get("item_id") or "") in spliced})
         print(f"would forget {target['id']}: {target.get('text', '')}")
+        sibling_ids = sorted(spliced - {str(target["id"])})
+        if sibling_ids:
+            print("also removed — checkpoint siblings holding the value: "
+                  + ", ".join(sibling_ids))
         also = [rid for rid in ref_reach + amend_reach
                 if rid and rid != target["id"]]
         if also:
-            print("value-keyed reach — also removed: " + ", ".join(also))
+            print("also removed — ledger records reached by value or by "
+                  "doomed item id: " + ", ".join(also))
         return 0
     # #402: key the tombstone on the CANONICAL value (normalize.content_key),
     # not the raw bytes — so a later re-extraction of the same claim (different

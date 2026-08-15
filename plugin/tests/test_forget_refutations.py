@@ -676,3 +676,50 @@ def test_ambiguous_refusal_shows_the_values_that_differ(
     out = capsys.readouterr().out
     assert "the migration corrupted tenant rows silently" in out
     assert "the migration corrupted tenant rows completely" in out
+
+
+def test_dry_run_names_amendments_keyed_to_the_doomed_item(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review round 3: amendments die with their item by item id and
+    # carry prose that is NOT the forgotten value. Zero preview meant
+    # unrelated evidence quotes and notes vanished with no warning.
+    from daimon_briefing import amendments
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("we ship the queue rewrite before the freeze")
+    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    item_id = stored["working_context"]["recent_decisions"][0]["id"]
+    a_id = amendments.propose(
+        item_id=item_id, change="progressed",
+        evidence="the user said only the consumer half ships",
+        channel="cli-agent", project_dir=PROJECT)
+
+    assert cli.main(["forget", "we ship the queue rewrite before the freeze",
+                     "--dry-run", "--project", PROJECT]) == 0
+
+    out = capsys.readouterr().out
+    assert a_id in out
+    assert any(str(r.get("amendment_id")) == a_id
+               for r in amendments.events(project_dir=PROJECT))
+
+
+def test_dry_run_names_spliced_checkpoint_siblings(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review round 3: the checkpoint splice removes every item holding
+    # the value, whatever its id. The preview must name the siblings.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    shared = "the shared sentence across two sections"
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-07-01T00:00:00Z",
+        "working_context": {
+            "recent_decisions": [{"text": shared, "trust": "inferred"}],
+            "open_questions": [{"text": shared, "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    ids = {stored["working_context"]["recent_decisions"][0]["id"],
+           stored["working_context"]["open_questions"][0]["id"]}
+
+    assert cli.main(["forget", shared, "--dry-run", "--project", PROJECT]) == 0
+
+    out = capsys.readouterr().out
+    for item_id in ids:
+        assert item_id in out
