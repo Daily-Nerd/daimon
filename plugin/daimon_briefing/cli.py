@@ -576,7 +576,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     except Exception:
         handoff = None
     render.render_brief(checkpoint, drift=drift, teammates=teammates,
-                        handoff=handoff)
+                        handoff=handoff, project_dir=route)
     if withheld:
         render.render_brief_note([
             f"{len(withheld)} resolved item(s) withheld — "

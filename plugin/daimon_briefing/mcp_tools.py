@@ -83,7 +83,10 @@ def _brief(arguments: dict) -> str:
         return "checkpoint exists but has nothing worth surfacing."
     # Deterministic render only over MCP — the opt-in LLM re-render is a
     # human-display affordance, and a machine consumer wants stable bytes.
-    return briefing.render_plain(b, briefing.receipt_degraded(filtered))
+    # #693: the standing-rulings section rides the same strictly-scoped
+    # target as every other read in this tool.
+    return briefing.render_plain(b, briefing.receipt_degraded(filtered),
+                                 briefing.ruling_lines(target))
 
 
 def _projects(arguments: dict) -> str:

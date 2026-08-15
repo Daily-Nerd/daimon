@@ -20,7 +20,7 @@ import time
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
 # module-level import (contrast carry.py's own local-import notes, which
 # don't apply here).
-from . import (capture, carry, config, llm, receipts, schema,
+from . import (capture, carry, config, llm, receipts, refutations, schema,
                scoring, serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
@@ -718,14 +718,64 @@ _DROP_ORDER = (("beliefs", "tail"), ("uncertainties", "tail"),
                ("decisions", "head"), ("open_loops", "tail"))
 
 
-def render_plain(b: dict, degraded: bool = False) -> str:
+# ---- #693: standing rulings — the always-present positive-polarity section ----
+
+# The section renders at the TOP of the briefing, outside _DROP_ORDER: a
+# ruling is a human-ratified standing constraint, and budget pressure must
+# never silently drop the one section whose whole point is that it cannot
+# fade. Worst case (a full cap of maximum-length rulings) costs ~17-20% of
+# the default 3000-token budget — pinned by test.
+_RULING_HEADER = "Standing rulings (human-ratified — honor these):"
+
+
+def active_rulings(project_dir=None) -> list[dict]:
+    """Active rulings for the briefing section, newest-ratified first.
+
+    Fail-open: any ledger read error yields [] — a briefing must never be
+    lost to an unreadable refutations.jsonl. The renderer holds the cap on
+    its own (count backstop): a hand-edited ledger holding more actives than
+    DAIMON_RULING_CAP still renders at most the cap, newest `activated_at`
+    first — the same sort the ratify-path backstop uses."""
+    try:
+        rows = refutations.listing(states={"active"}, polarity="ruling",
+                                   project_dir=project_dir)
+        cap = config.ruling_cap()
+    except Exception:
+        return []
+    rows.sort(key=lambda r: ((r.get("activated_at") or ""),
+                             r.get("refutation_id") or ""), reverse=True)
+    return rows[:cap]
+
+
+def ruling_lines(project_dir=None) -> list[str]:
+    """The section's rendered lines ([] when no active rulings — the section
+    is skeleton furniture, but empty furniture is noise). Verdict, never
+    subject: the verdict IS the rule text (cli._print_ruling's contract, one
+    vocabulary across surfaces). Text backstop: a hand-edited verdict longer
+    than the write-time bound is clipped rather than trusted. Non-human
+    `text_authored_by` is labeled even after human ratification — who wrote
+    the words survives who approved them."""
+    rows = active_rulings(project_dir)
+    if not rows:
+        return []
+    lines = [_RULING_HEADER]
+    for row in rows:
+        verdict = str(row.get("verdict") or "")[:refutations._MAX_RULING_TEXT]
+        authored = row.get("text_authored_by")
+        suffix = ("  [agent-written]"
+                  if authored and authored != "human" else "")
+        lines.append(f"§ {verdict}{suffix}")
+    return lines
+
+
+def render_plain(b: dict, degraded: bool = False, rulings=()) -> str:
     """The deterministic briefing text. Under the #79 budget this is
     BYTE-IDENTICAL to the legacy render(); over it, long items truncate
     (sections preserved) and then whole items drop, lowest value first,
     each cut announced with a trim note. `degraded` (#204) downgrades every
     verbatim label and adds one header note when the receipt is unverifiable."""
     budget = config.brief_max_tokens()
-    text = _render_parts(b, {}, degraded)
+    text = _render_parts(b, {}, degraded, rulings)
     if not budget or estimate_tokens(text) <= budget:
         return text
 
@@ -743,7 +793,7 @@ def render_plain(b: dict, degraded: bool = False) -> str:
             for i in (b.get(key) or [])
         ]
     trimmed = {key: 0 for key, _ in _DROP_ORDER}
-    text = _render_parts(b, trimmed, degraded)
+    text = _render_parts(b, trimmed, degraded, rulings)
 
     # Stage 2: drop whole items, least valuable first, until the budget holds
     # or only the skeleton remains.
@@ -753,19 +803,26 @@ def render_plain(b: dict, degraded: bool = False) -> str:
             items.pop(-1 if end == "tail" else 0)
             b[key] = items
             trimmed[key] += 1
-            text = _render_parts(b, trimmed, degraded)
+            text = _render_parts(b, trimmed, degraded, rulings)
         if estimate_tokens(text) <= budget:
             break
     return text
 
 
-def _render_parts(b: dict, trimmed: dict, degraded: bool = False) -> str:
+def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
+                  rulings=()) -> str:
     parts = ["While you were away — here's where we left off."]
     if degraded:
         # One header note (#204), embedded in the text so the hook-injected
         # briefing carries it too — not just the human-facing CLI render.
         parts.append("")
         parts.append(DEGRADE_NOTE)
+    if rulings:
+        # #693: skeleton furniture at the top, outside _DROP_ORDER — the
+        # budget loops re-render with the same lines and can only trim the
+        # sections below.
+        parts.append("")
+        parts.extend(rulings)
 
     def _section(header: str, key: str) -> None:
         items = b.get(key) or []
@@ -834,24 +891,34 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
     return True
 
 
-def render(checkpoint) -> str | None:
+def render(checkpoint, project_dir=None) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
     LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
-    quote integrity, and falls back to deterministic on any doubt."""
+    quote integrity, and falls back to deterministic on any doubt.
+
+    `project_dir` (#693) scopes the standing-rulings section; None (legacy
+    callers, hand-built checkpoints in tests) renders without it — an
+    unscoped ledger read here would mix another project's rulings into this
+    briefing, the exact leak the polarity parameter exists to prevent."""
     b = build(checkpoint)
     if b is None:
         return None
     degraded = receipt_degraded(checkpoint)
+    rulings = ruling_lines(project_dir) if project_dir is not None else []
     if config.llm_briefing():
         rendered = _render_llm(checkpoint)
         if rendered:
             if _validate_llm_render(rendered, checkpoint):
                 # The LLM render carries no per-item marks to degrade; prepend the
                 # one header note so an unverifiable receipt still fails loud (#204).
-                return f"{DEGRADE_NOTE}\n\n{rendered}" if degraded else rendered
+                out = f"{DEGRADE_NOTE}\n\n{rendered}" if degraded else rendered
+                # #693: the LLM narrates the CHECKPOINT; rulings live outside
+                # it, so the deterministic section is prepended verbatim —
+                # never re-narrated, never trusted to a generative pass.
+                return "\n".join(rulings) + "\n\n" + out if rulings else out
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
-    return render_plain(b, degraded)
+    return render_plain(b, degraded, rulings)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

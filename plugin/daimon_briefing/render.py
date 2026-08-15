@@ -153,9 +153,15 @@ def _print_handoff(handoff) -> None:
     print("")
 
 
-def render_brief(checkpoint, drift=None, teammates=None, handoff=None) -> None:
+def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
+                 project_dir=None) -> None:
     _print_handoff(handoff)
     b = briefing.build(checkpoint)
+    # #693: one ledger read serves both render paths below; None (legacy
+    # callers) renders without the section rather than reading an unscoped
+    # ledger.
+    rulings = (briefing.ruling_lines(project_dir)
+               if project_dir is not None else [])
     if b is None:
         # Point at the real flow (#29): checkpoints come from the hooks; bare
         # `serialize` dead-ends (it needs a transcript path).
@@ -169,7 +175,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None) -> None:
     # the hermes hook. Free-form LLM text can't be sectioned into rich panels, so when
     # it is active we print its narrative regardless of TTY.
     if config.llm_briefing():
-        rendered = briefing.render(checkpoint)  # tries LLM, falls back to deterministic
+        # Tries LLM, falls back to deterministic; #693 rulings ride inside.
+        rendered = briefing.render(checkpoint, project_dir=project_dir)
         if rendered:
             print(rendered)
             _print_drift(drift)
@@ -179,9 +186,9 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None) -> None:
     # Cheap check (sidecar + byte match), computed once for both render paths.
     degraded = briefing.receipt_degraded(checkpoint)
     if not supports_rich():
-        print(briefing.render_plain(b, degraded))
+        print(briefing.render_plain(b, degraded, rulings))
     else:
-        _rich_brief(b, degraded)
+        _rich_brief(b, degraded, rulings)
     _print_drift(drift)
     _print_teammates(teammates)
 
@@ -214,7 +221,7 @@ def _print_drift(drift) -> None:
     )
 
 
-def _rich_brief(b: dict, degraded: bool = False) -> None:
+def _rich_brief(b: dict, degraded: bool = False, rulings=()) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -224,6 +231,14 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
     if degraded:
         # One header note (#204), parity with the plain path's embedded note.
         console.print(Text(briefing.DEGRADE_NOTE, style="bold red"))
+    if rulings:
+        # #693: parity with the plain path's top section — same lines, same
+        # order (rulings[0] is the header, promoted to the panel title).
+        body = Text()
+        for line in rulings[1:]:
+            body.append(f"{line}\n", style="bold")
+        console.print(Panel(body, title=rulings[0], border_style="cyan",
+                            title_align="left"))
     for key, title, style in _SECTIONS:
         items = b.get(key) or []
         if not items:

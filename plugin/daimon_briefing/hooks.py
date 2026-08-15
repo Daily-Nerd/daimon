@@ -185,7 +185,9 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
                 checkpoint, store.corroborations(project_dir=project))
         except Exception:
             pass
-        text = briefing.render(checkpoint)
+        # #693: scope the standing-rulings section to the SAME project the
+        # checkpoint was read for — never the process cwd.
+        text = briefing.render(checkpoint, project_dir=project)
         if not text:
             return None
         return {"context": text}
