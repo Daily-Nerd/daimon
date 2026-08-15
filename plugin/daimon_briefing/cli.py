@@ -1427,23 +1427,31 @@ def _cmd_forget(args) -> int:
     # #578: the refutation ledger is a second plaintext store, so a value can
     # live there with no checkpoint at all. Bailing on a missing checkpoint
     # would leave that value permanently unreachable.
-    # Every subject the record has EVER carried, not only the folded one: a
-    # revision rewrites the subject, so the forgotten value can sit in an
-    # earlier row that nothing renders. Matching only the current subject would
-    # leave exactly the text `forget` exists to reach unreachable. One entry per
-    # record, so a record whose old and new subjects both match is one hit.
-    ledger_subjects: dict[str, list[str]] = {}
+    # Every plaintext value the record has EVER carried, not only the folded
+    # ones: a revision rewrites fields, so the forgotten value can sit in an
+    # earlier row that nothing renders. #698: the field walk is the module's
+    # OWN declaration (plaintext_values, scalars only — a shared anchor or
+    # evidence token must never become a by-value target), never a hand-read
+    # `subject`. One entry per record, so a record whose old and new values
+    # both match is one hit; `text` stays the latest subject for display.
+    ledger_texts: dict[str, list[str]] = {}
+    ledger_display: dict[str, str] = {}
     for row in refutations.events(project_dir=project):
         ref_id = str(row.get("refutation_id") or "")
+        if not ref_id:
+            continue
+        for value in refutations.plaintext_values(row):
+            ledger_texts.setdefault(ref_id, [])
+            if value not in ledger_texts[ref_id]:
+                ledger_texts[ref_id].append(value)
         subject = str(row.get("subject") or "")
-        if ref_id and subject:
-            ledger_subjects.setdefault(ref_id, [])
-            if subject not in ledger_subjects[ref_id]:
-                ledger_subjects[ref_id].append(subject)
+        if subject:
+            ledger_display[ref_id] = subject
     ledger = [
-        (None, "refutation", {"id": ref_id, "text": subjects[-1],
-                              "_texts": subjects})
-        for ref_id, subjects in ledger_subjects.items()
+        (None, "refutation", {"id": ref_id,
+                              "text": ledger_display.get(ref_id, texts[0]),
+                              "_texts": texts})
+        for ref_id, texts in ledger_texts.items()
     ]
     # #691: the amendment ledger is another plaintext store — evidence quotes
     # and human notes. Same every-row posture as the refutation subjects
@@ -1506,70 +1514,136 @@ def _cmd_forget(args) -> int:
         def _texts_of(it):
             return it.get("_texts") or [str(it.get("text") or "")]
 
+        # #698 review: document frequency is per CANDIDATE, never per field.
+        # A record's subject/verdict/scope restate each other by construction,
+        # so counting them as separate documents lets one record push its own
+        # terms over the generic threshold and hide itself from its exact
+        # subject. One concatenated document per candidate keeps the statistic
+        # meaning what carry.py says it means: terms shared by >= k ITEMS.
         pools = [(pool, carry._generic_terms(
-            [t for _, _, it in pool for t in _texts_of(it)]))
+            [" ".join(_texts_of(it)) for _, _, it in pool]))
             for pool in (items, ledger, amend_pool)]
-        hits = ([(s, k, it) for s, k, it in candidates if it["id"] == args.target]
-                if len(exact) > 1 else
-                [(s, k, it)
-                 for pool, generic in pools
-                 for s, k, it in pool
-                 if any(carry._same_item(args.target, t, generic)
-                        for t in _texts_of(it))])
+        query_key = normalize.content_key(args.target)
+
+        def _matched_value(it, generic):
+            # The value the QUERY named. The exact canonical match is a rail
+            # the GENERIC FILTER can never subtract, no matter how common the
+            # value's terms have become (#698 review) — the never-guess
+            # ambiguity gate below may still refuse it when several values
+            # match. The fuzzy fallback matches each value against the
+            # candidate's own store vocabulary.
+            for t in _texts_of(it):
+                if normalize.content_key(t) == query_key:
+                    return t
+            for t in _texts_of(it):
+                if carry._same_item(args.target, t, generic):
+                    return t
+            return None
+
+        # Hits carry the value they matched IN the tuple — a side table keyed
+        # on object identity would silently degrade to display text if a
+        # refactor ever copied a candidate dict (#698 review).
+        if len(exact) > 1:
+            hits = [(s, k, it, None) for s, k, it in candidates
+                    if it["id"] == args.target]
+        else:
+            hits = [(s, k, it, value)
+                    for pool, generic in pools
+                    for s, k, it in pool
+                    for value in [_matched_value(it, generic)]
+                    if value is not None]
         # #691: an amendment's evidence is by construction ABOUT its item, so
         # a query matching the item routinely fuzzy-matches the amendment too
         # — a false-ambiguity surface, not a real second value. When an item
         # hit exists, amendment hits that merely target one of the hit items
         # are dropped: forgetting the item removes its amendments anyway
         # (forget_item_id below), so nothing becomes unreachable.
-        item_hit_ids = {it["id"] for _, k, it in hits
+        item_hit_ids = {it["id"] for _, k, it, _ in hits
                         if k not in ("refutation", "amendment")}
         if item_hit_ids:
-            hits = [(s, k, it) for s, k, it in hits
+            hits = [(s, k, it, m) for s, k, it, m in hits
                     if not (k == "amendment"
                             and it.get("_target") in item_hit_ids)]
-        # Ambiguity is about distinct VALUES, not hit count. The same sentence
-        # carried by sibling ids, held on several surfaces, or held in both the
-        # checkpoint and the refutation ledger is one thing to forget; #418
-        # already splices sibling ids from a single key. Only genuinely
-        # different values leave the user a choice to make, and there
+        # Ambiguity is about distinct MATCHED values, not hit count and never
+        # the display text. The same sentence carried by sibling ids, held on
+        # several surfaces, or held in both the checkpoint and the refutation
+        # ledger is one thing to forget; #418 already splices sibling ids from
+        # a single key. But two records matched on DIFFERENT values behind one
+        # shared display subject are two things — collapsing them over the
+        # display text silently under-deleted (#698 review). Only genuinely
+        # different matched values leave the user a choice, and there
         # never-guess still refuses.
-        distinct = {normalize.content_key(str(it.get("text") or ""))
-                    for _, _, it in hits}
+        distinct = {normalize.content_key(
+            m if m is not None else str(it.get("text") or ""))
+            for _, _, it, m in hits}
         if len(distinct) == 1:
-            target = hits[0][2]
-            # #691: an amendment record can hold several values (evidence,
-            # note, historical rows). The tombstone must key on the value
-            # the QUERY named, never on an arbitrary field — rebind `text`
-            # to the matched value before the hash below derives from it.
-            texts = target.get("_texts")
-            if isinstance(texts, list) and len(texts) > 1:
-                query_key = normalize.content_key(args.target)
-                matched = next(
-                    (t for t in texts
-                     if normalize.content_key(t) == query_key),
-                    None)
-                if matched is None:
-                    _, generic = next(
-                        (p for p in pools if target in [it for _, _, it in p[0]]),
-                        (None, carry._generic_terms(texts)))
-                    matched = next(
-                        (t for t in texts
-                         if carry._same_item(args.target, t, generic)),
-                        None)
-                if matched:
-                    target = dict(target, text=matched)
+            _, _, target, matched = hits[0]
+            # #691: a record can hold several values (evidence, note,
+            # historical rows). The tombstone must key on the value the QUERY
+            # named, never on an arbitrary field — rebind `text` to the
+            # matched value before the hash below derives from it.
+            if matched is not None and matched != target.get("text"):
+                target = dict(target, text=matched)
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
             print(f"{label} {args.target!r}; candidates:")
-            for _, key, it in (hits or candidates):
-                print(f"  {it['id']}  [{key}] {it.get('text', '')}")
+            # A never-guess refusal is only useful if the user can make the
+            # choice: when the matched value differs from the display text,
+            # show it, or two candidates separated by their verdicts render
+            # as identical lines (#698 review).
+            rows = hits or [(s, k, it, None) for s, k, it in candidates]
+            for _, key, it, m in rows:
+                line = f"  {it['id']}  [{key}] {it.get('text', '')}"
+                if m is not None and m != it.get("text"):
+                    line += f" — matched: {m}"
+                print(line)
             print("forget by exact id: daimon forget <id>")
             return 1
     if getattr(args, "dry_run", False):
         _note_usage("forget:dry-run")
+        # #698 review: forget is irreversible and this preview is the only
+        # pre-deletion check. The deleters reach EVERY record whose any
+        # declared field folds to the value's key — including list fields the
+        # selector deliberately never offers — so the preview enumerates that
+        # reach non-destructively instead of naming only the selected target.
+        value_key = normalize.content_key(str(target.get("text") or ""))
+        # The checkpoint splice takes every item holding the value, whatever
+        # its id — and amendments die with their item BY ID, carrying prose
+        # that is not the forgotten value, so both must be previewed too
+        # (#698 review). Same computation as the destructive path below,
+        # against the in-memory checkpoint, writing nothing — INCLUDING the
+        # seed: a target superseded out of the live checkpoint (or ledger-
+        # only) never appears in the walk, but its own id still reaches the
+        # amendments keyed on it.
+        spliced = {str(target["id"] or "")}
+        if isinstance(checkpoint, dict):
+            for section, key in store._ITEM_LISTS:
+                for i in (checkpoint.get(section) or {}).get(key) or []:
+                    if isinstance(i, dict) and (
+                            i.get("id") == target["id"]
+                            or normalize.content_key(i.get("text") or "")
+                            == value_key):
+                        spliced.add(str(i.get("id") or ""))
+        spliced.discard("")
+        ref_reach = sorted({str(row.get("refutation_id") or "")
+                            for row in refutations.events(project_dir=project)
+                            if value_key in refutations.row_content_keys(row)})
+        amend_reach = sorted({
+            str(row.get("amendment_id") or "")
+            for row in amendments.events(project_dir=project)
+            if value_key in amendments.row_content_keys(row)
+            or str(row.get("item_id") or "") in spliced})
         print(f"would forget {target['id']}: {target.get('text', '')}")
+        sibling_ids = sorted(spliced - {str(target["id"])})
+        if sibling_ids:
+            print("also removed — checkpoint siblings holding the value: "
+                  + ", ".join(sibling_ids))
+        also = [rid for rid in ref_reach + amend_reach
+                if rid and rid != target["id"]]
+        if also:
+            print("also removed — ledger records reached by value or by "
+                  "doomed item id: " + ", ".join(also))
         return 0
     # #402: key the tombstone on the CANONICAL value (normalize.content_key),
     # not the raw bytes — so a later re-extraction of the same claim (different
