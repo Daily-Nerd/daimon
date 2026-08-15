@@ -1591,6 +1591,27 @@ def test_cli_write_checkpoint_strips_model_claimed_grounded(
     assert "grounded" not in dec
 
 
+def test_cli_write_checkpoint_strips_model_claimed_pinned(
+        tmp_checkpoint_dir, monkeypatch):
+    # #689, same discipline: `pinned` is minted only by pin_imperatives from
+    # user-authored transcript text (#369), and that pass never runs on this
+    # path. A caller-supplied pin would survive into the recall index and
+    # exempt the item from the #452 age gate — an exemption the code never
+    # derived.
+    from daimon_briefing import store
+
+    cp = json.loads(_valid_json("S-intro"))
+    cp["epistemic_snapshot"]["strong_beliefs"] = [{
+        "text": "never push to main", "trust": "inferred", "pinned": True,
+    }]
+    _stdin(monkeypatch, json.dumps(cp))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest(project_dir="/p/A")
+    belief = ck["epistemic_snapshot"]["strong_beliefs"][0]
+    assert "pinned" not in belief
+
+
 def test_suggest_line_collapses_multiline_item_text():
     # #512: the injection line's echo strip is line-scoped (`[^\n]*`), so item
     # text carrying a newline would leave its tail in the verification
