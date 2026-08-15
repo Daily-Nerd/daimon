@@ -1046,37 +1046,60 @@ def _drop_ruling_echoes(checkpoint: dict, project_dir=None) -> list:
     """#693: drop exact echoes of ACTIVE ruling text at the admission
     boundary. The standing-rulings section renders into every session's
     context, so the next extraction can mint the ruling back as a fresh
-    belief — a copy that decays, drifts, and double-renders. Same canonical
-    machinery as the forget gate (whole-item drop on a content-key match,
-    field-level scrub for quote/scene), so the two admission filters cannot
-    diverge on what "the same text" means. Paraphrase shadows are out of
-    scope by design — they decay as ordinary beliefs.
+    belief — a copy that decays, drifts, and double-renders. Note "next
+    extraction" includes carried items: capture re-admits what it carries,
+    so a belief admitted BEFORE its ruling was ratified is deduped at the
+    next capture — deliberate, counted, and logged like any other echo.
+    Whole-item drops ONLY (policy.drop_matching_items): a ruling carries no
+    deletion promise, so an item merely QUOTING the ruling keeps its quote,
+    its trust class, and its receipts — the forget gate's field scrubs are
+    the wrong tool here. The key set covers every form the briefing
+    actually renders — bare verdict, render-clipped, "§ "-prefixed, and
+    authority-suffixed lines — so the renderer and this filter cannot
+    disagree on "the same text". Paraphrase shadows are out of scope by
+    design — they decay as ordinary beliefs.
 
     A COUNTED drop, never silent: each one is reason-coded on the hit
-    ledger (`ruling-echo`, its own counter — the echo rate stays an
-    endogenous measurement) and logged as a content hash, never the text.
-    Fail-open on any ledger read error: an unreadable refutations.jsonl
-    must never cost a capture."""
-    # Function-local import: refutations imports store at module level, so
-    # the reverse edge must be deferred to call time.
-    from . import refutations
+    ledger (`ruling-echo`, its own counter and its own timestamp — the echo
+    rate stays an endogenous measurement) and logged as a content hash,
+    never the text. The WHOLE body fails open: no echo-filter failure of
+    any kind may cost the capture it observes."""
     try:
+        # Function-local import: refutations imports store at module level,
+        # so the reverse edge must be deferred to call time.
+        from . import refutations
         rows = refutations.listing(states={"active"}, polarity="ruling",
                                    project_dir=project_dir)
+        keys = set()
+        for row in rows:
+            verdict = str(row.get("verdict") or "")
+            if not verdict:
+                continue
+            clipped = verdict[:refutations._MAX_RULING_TEXT]
+            bases = {verdict, clipped, clipped + "…"}
+            authored = row.get("text_authored_by")
+            if authored and authored != "human":
+                bases.update({f"{b}  [{authored}-written]" for b in set(bases)})
+            for base in bases:
+                keys.add(normalize.content_key(base))
+                keys.add(normalize.content_key(f"§ {base}"))
+        dropped = policy.drop_matching_items(checkpoint, keys)
+        if dropped:
+            record_forget_hits(dropped, project_dir, reason="ruling-echo")
+            for item in dropped:
+                # INFO, not WARNING: a stable ruling being re-minted every
+                # session is the expected, measured event this filter exists
+                # for — not an anomaly worth an alert per capture.
+                log.info(
+                    "ruling echo: item dropped at admission "
+                    "(content hash %s)",
+                    normalize.content_key(item.get("text") or ""))
+        return dropped
     except Exception:
+        # Fail-open must still leave a trace: if this fires AFTER the drop
+        # mutated the checkpoint, the accounting above never ran.
+        log.debug("ruling echo filter failed open", exc_info=True)
         return []
-    keys = {normalize.content_key(row["verdict"])
-            for row in rows if row.get("verdict")}
-    if not keys:
-        return []
-    dropped = policy.drop_forgotten(checkpoint, keys)
-    if dropped:
-        record_forget_hits(dropped, project_dir, reason="ruling-echo")
-        for item in dropped:
-            log.warning(
-                "ruling echo: item dropped at admission (content hash %s)",
-                normalize.content_key(item.get("text") or ""))
-    return dropped
 
 
 def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
@@ -1837,10 +1860,13 @@ def forget_hit_stats(project_dir=None) -> dict:
     log, unknown project) — same posture as verification_counts and the
     resolutions fold.
 
-    Reason-stamped rows (#693) count under their own key — `ruling-echo`
-    rows land in `ruling_echo_count`, never `count`, so the published
-    forget-suppression number stays what it always measured."""
-    out: dict = {"count": 0, "ruling_echo_count": 0, "last_hit_at": None}
+    Reason-stamped rows (#693) count under their own key AND their own
+    timestamp — `ruling-echo` rows land in `ruling_echo_count` /
+    `ruling_echo_last_at`, never `count` / `last_hit_at`, so the published
+    forget-suppression number and the stamp printed beside it both stay
+    what they always measured."""
+    out: dict = {"count": 0, "ruling_echo_count": 0, "last_hit_at": None,
+                 "ruling_echo_last_at": None}
     path = _forget_hits_path(project_dir)
     if path is None:
         return out
@@ -1856,12 +1882,13 @@ def forget_hit_stats(project_dir=None) -> dict:
         if not isinstance(row, dict):
             continue
         if row.get("reason") == "ruling-echo":
-            out["ruling_echo_count"] += 1
+            count_key, ts_key = "ruling_echo_count", "ruling_echo_last_at"
         else:
-            out["count"] += 1
+            count_key, ts_key = "count", "last_hit_at"
+        out[count_key] += 1
         ts = row.get("ts")
-        if ts and (out["last_hit_at"] is None or ts > out["last_hit_at"]):
-            out["last_hit_at"] = ts
+        if ts and (out[ts_key] is None or ts > out[ts_key]):
+            out[ts_key] = ts
     return out
 
 

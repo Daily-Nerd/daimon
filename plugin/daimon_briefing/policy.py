@@ -302,6 +302,37 @@ def bind_origin(checkpoint: dict) -> None:
                 item.setdefault(field, val)
 
 
+def drop_matching_items(checkpoint: dict, keys: set) -> list:
+    """#693: whole-item-only twin of drop_forgotten, for the ruling echo
+    filter. A ruling carries no deletion promise, so everything the forget
+    gate does BEYOND the whole-item drop is out of bounds here: no
+    quote/scene scrubs, no trust downgrades, and the active_topic singleton
+    (working context, not a decaying belief copy) is untouched. An item is
+    either an exact echo copy — text folds into `keys` — dropped whole for
+    the caller to count, or it is not touched at all. Pure, in place,
+    returns the dropped items."""
+    if not keys:
+        return []
+    dropped: list = []
+    for section, key in _ITEM_LISTS:
+        block = checkpoint.get(section)
+        if not isinstance(block, dict):
+            continue
+        lst = block.get(key)
+        if not isinstance(lst, list):
+            continue
+        kept = []
+        for item in lst:
+            if (isinstance(item, dict)
+                    and normalize.content_key(item.get("text") or "") in keys):
+                dropped.append(item)
+            else:
+                kept.append(item)
+        if len(kept) != len(lst):
+            block[key] = kept
+    return dropped
+
+
 def admit_checkpoint(checkpoint: dict, forgotten_keys: set) -> list:
     """Run the full admission pipeline, in the only valid order (module
     docstring): redact, then the forget gate, then origin binding, then
@@ -312,7 +343,12 @@ def admit_checkpoint(checkpoint: dict, forgotten_keys: set) -> list:
     bound to an origin it will not reach disk under — the same reason ids are
     stamped after it. Its position relative to stamp_item_ids is free (they
     touch disjoint fields and neither reads the other's output); it runs
-    first only so id-stamping keeps its documented place as the LAST gate."""
+    first only so id-stamping keeps its documented place as the LAST gate.
+
+    One later gate lives OUTSIDE this pipeline: store's #693 ruling echo
+    filter (admission callers only) runs after it, so echo-dropped items are
+    briefly bound and id-stamped before dropping — harmless (both stamps are
+    pure in-place) but stated here so "the only valid order" stays honest."""
     redact_checkpoint(checkpoint)
     dropped = drop_forgotten(checkpoint, forgotten_keys)
     bind_origin(checkpoint)

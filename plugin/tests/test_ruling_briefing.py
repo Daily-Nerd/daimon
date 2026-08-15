@@ -115,6 +115,122 @@ def test_no_rulings_render_is_byte_identical_to_legacy(tmp_checkpoint_dir,
             == briefing.render_plain(b))
 
 
+def _hand_ruled_row(subject, verdict, project=PROJECT):
+    """A ledger row appended RAW — the hand-edited / version-skew shape the
+    renderer backstops exist for (assert_ruling's write-time guards refuse
+    it, which is the point)."""
+    row = refutations._stamp(
+        "ruled", refutations.make_id(subject, "tests"), "cli-tty")
+    row.update({"subject": subject, "verdict": verdict, "scope": "tests",
+                "anchors": [], "revisit_when": "", "evidence": [],
+                "ratified": True})
+    assert refutations.append(row, project_dir=project)
+    return row["refutation_id"]
+
+
+def test_over_cap_truncation_is_loud(tmp_checkpoint_dir, monkeypatch):
+    for n in range(3):
+        _rule(f"loud rule number {n}", subject=f"loud subject {n}")
+    monkeypatch.setenv("DAIMON_RULING_CAP", "2")
+    lines = briefing.ruling_lines(PROJECT)
+    joined = "\n".join(lines)
+    assert "over cap" in joined  # never a silent truncation
+    assert "daimon ruling list" in joined  # and it says where the rest live
+
+
+def test_overlength_verdict_clips_with_visible_marker(tmp_checkpoint_dir):
+    long_verdict = "x" * (refutations._MAX_RULING_TEXT + 40)
+    _hand_ruled_row("hand edited subject", long_verdict)
+    lines = briefing.ruling_lines(PROJECT)
+    body = [ln for ln in lines if ln.startswith("§")]
+    assert len(body) == 1
+    assert long_verdict not in body[0]  # clipped
+    assert "…" in body[0]               # and visibly so
+
+
+def test_empty_verdict_row_never_renders_bare_glyph(tmp_checkpoint_dir):
+    _hand_ruled_row("empty verdict subject", "")
+    _hand_ruled_row("whitespace verdict subject", "   ")
+    _rule("a real rule renders")
+    lines = briefing.ruling_lines(PROJECT)
+    assert all(ln.strip() != "§" for ln in lines)
+    assert any("a real rule renders" in ln for ln in lines)
+
+
+def test_authored_label_names_the_authority(tmp_checkpoint_dir):
+    # `text_authored_by` is the AUTHORITY word (agent / mechanical), not the
+    # channel — the label must state it, one vocabulary with
+    # cli._print_ruling.
+    ruling_id = refutations.assert_ruling(
+        subject="mechanical subject", verdict="mechanically drafted rule",
+        scope="tests", evidence=["issue:693"], channel="mechanical",
+        project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    lines = briefing.ruling_lines(PROJECT)
+    assert any("[mechanical-written]" in ln for ln in lines)
+
+
+def test_llm_branch_degrade_note_precedes_rulings(tmp_checkpoint_dir,
+                                                  sample_checkpoint,
+                                                  monkeypatch):
+    # #204: the unverified-receipt note is the loudest line in the briefing;
+    # the deterministic paths render it first and the LLM path must agree.
+    _rule("note comes before me")
+    monkeypatch.setenv("DAIMON_LLM_BRIEFING", "1")
+    narrative = ('"I\'ll merge it myself later from the GitHub UI"\n'
+                 '"do we chunk below 1200 lines or single-pass?"\n'
+                 '"we adopt the D-007 prompt for the serializer"')
+    monkeypatch.setattr(briefing, "_render_llm", lambda checkpoint: narrative)
+    monkeypatch.setattr(briefing, "receipt_degraded", lambda checkpoint: True)
+    out = briefing.render(sample_checkpoint, project_dir=PROJECT)
+    assert out.index(briefing.DEGRADE_NOTE) < out.index("note comes before me")
+
+
+def test_render_surfaces_rulings_when_checkpoint_has_nothing(
+        tmp_checkpoint_dir):
+    # A ruling ratified on day one — before any checkpoint holds items — must
+    # still reach context; "nothing worth surfacing" is no longer true.
+    _rule("day one rule reaches context")
+    empty = {"session_id": "S0", "working_context": {},
+             "epistemic_snapshot": {}}
+    out = briefing.render(empty, project_dir=PROJECT)
+    assert out is not None
+    assert "§ day one rule reaches context" in out
+
+
+def test_cli_brief_shows_rulings_with_no_checkpoint(tmp_checkpoint_dir,
+                                                    capsys):
+    from daimon_briefing import cli
+    _rule("cli shows me before any checkpoint")
+    assert cli.main(["brief", "--project", PROJECT]) in (0, 1)
+    out = capsys.readouterr().out
+    assert "§ cli shows me before any checkpoint" in out
+
+
+def test_mcp_brief_shows_rulings_with_no_checkpoint(tmp_checkpoint_dir,
+                                                    monkeypatch):
+    from tests.test_mcp_server import rpc, _init, _call, _result
+    _rule("mcp shows me before any checkpoint")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _, out = rpc(_init(), _call("daimon_brief", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert "§ mcp shows me before any checkpoint" in text
+
+
+def test_hook_injects_rulings_with_no_checkpoint(tmp_checkpoint_dir,
+                                                 monkeypatch):
+    from daimon_briefing import hooks
+    _rule("hook injects me on day one")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    out = hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[],
+        is_first_turn=True, model="m", platform="cli",
+    )
+    assert out is not None
+    assert "§ hook injects me on day one" in out["context"]
+
+
 def test_hook_injected_briefing_carries_rulings(tmp_checkpoint_dir,
                                                 sample_checkpoint,
                                                 monkeypatch):

@@ -58,6 +58,11 @@ def _brief(arguments: dict) -> str:
     # Strictly scoped read (#94): never the global pointer. A named slug is
     # passed straight through; otherwise the resolved project's own bucket.
     target = slug if slug else cli._resolve_project(project_arg)
+    # #693: one strictly-scoped ledger read serves every return below —
+    # standing rulings exist before the first checkpoint does, so both
+    # no-content returns carry them too.
+    rulings = briefing.ruling_lines(target)
+    ruling_text = ("\n".join(rulings) + "\n\n") if rulings else ""
     checkpoint = store.read_latest(project_dir=target, fallback=False)
     if checkpoint is None:
         # Orientation without content: name the explicit path, leak nothing
@@ -69,7 +74,7 @@ def _brief(arguments: dict) -> str:
                 if others else
                 "no projects have checkpoints yet — the first serialized "
                 "session creates one.")
-        return f"no checkpoint for this project. {hint}"
+        return f"{ruling_text}no checkpoint for this project. {hint}"
     filtered, _withheld, _candidates = briefing.withhold(
         checkpoint, store.resolutions(project_dir=target),
         amendments=amendments.renderable(project_dir=target))
@@ -80,13 +85,11 @@ def _brief(arguments: dict) -> str:
         filtered, store.corroborations(project_dir=target))
     b = briefing.build(filtered)
     if b is None:
-        return "checkpoint exists but has nothing worth surfacing."
+        return f"{ruling_text}checkpoint exists but has nothing worth surfacing."
     # Deterministic render only over MCP — the opt-in LLM re-render is a
     # human-display affordance, and a machine consumer wants stable bytes.
-    # #693: the standing-rulings section rides the same strictly-scoped
-    # target as every other read in this tool.
     return briefing.render_plain(b, briefing.receipt_degraded(filtered),
-                                 briefing.ruling_lines(target))
+                                 rulings)
 
 
 def _projects(arguments: dict) -> str:

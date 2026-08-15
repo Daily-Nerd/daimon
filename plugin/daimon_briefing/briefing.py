@@ -729,42 +729,64 @@ _RULING_HEADER = "Standing rulings (human-ratified — honor these):"
 
 
 def active_rulings(project_dir=None) -> list[dict]:
-    """Active rulings for the briefing section, newest-ratified first.
+    """Every active ruling for the briefing section, newest-activated first
+    (ties break on refutation_id — the fold keeps no finer stamp). This is
+    the SECTION's order, chosen so the cap slice in ruling_lines keeps the
+    newest ratifications; `daimon ruling list` and the viewer lane keep
+    refutations.listing's own presentation order.
 
-    Fail-open: any ledger read error yields [] — a briefing must never be
-    lost to an unreadable refutations.jsonl. The renderer holds the cap on
-    its own (count backstop): a hand-edited ledger holding more actives than
-    DAIMON_RULING_CAP still renders at most the cap, newest `activated_at`
-    first — the same sort the ratify-path backstop uses."""
+    Fail-open: ANY error — read, fold, or sort over hand-edited rows —
+    yields [] rather than costing the briefing."""
     try:
         rows = refutations.listing(states={"active"}, polarity="ruling",
                                    project_dir=project_dir)
-        cap = config.ruling_cap()
+        rows.sort(key=lambda r: (str(r.get("activated_at") or ""),
+                                 str(r.get("refutation_id") or "")),
+                  reverse=True)
+        return rows
     except Exception:
         return []
-    rows.sort(key=lambda r: ((r.get("activated_at") or ""),
-                             r.get("refutation_id") or ""), reverse=True)
-    return rows[:cap]
 
 
 def ruling_lines(project_dir=None) -> list[str]:
     """The section's rendered lines ([] when no active rulings — the section
     is skeleton furniture, but empty furniture is noise). Verdict, never
     subject: the verdict IS the rule text (cli._print_ruling's contract, one
-    vocabulary across surfaces). Text backstop: a hand-edited verdict longer
-    than the write-time bound is clipped rather than trusted. Non-human
-    `text_authored_by` is labeled even after human ratification — who wrote
-    the words survives who approved them."""
-    rows = active_rulings(project_dir)
+    vocabulary across surfaces).
+
+    Backstops, both LOUD: more actives than DAIMON_RULING_CAP — a
+    hand-edited ledger, or simply LOWERING the cap after activations, a
+    supported move the cap guard's own error text invites — renders the
+    cap's worth PLUS a note naming how many were withheld (a silent
+    truncation of human-ratified constraints is the one failure this
+    section must never have); a hand-edited verdict longer
+    than the write-time bound is clipped with a visible marker; an empty
+    verdict renders nothing. Non-human `text_authored_by` is labeled with
+    its own AUTHORITY word (agent / mechanical — CHANNEL_AUTHORITY's
+    vocabulary, cli._print_ruling's own label) even after human
+    ratification — who wrote the words survives who approved them."""
+    rows = [r for r in active_rulings(project_dir)
+            if str(r.get("verdict") or "").strip()]
     if not rows:
         return []
+    try:
+        cap = config.ruling_cap()
+    except Exception:
+        return []
+    shown, over = rows[:cap], rows[cap:]
     lines = [_RULING_HEADER]
-    for row in rows:
-        verdict = str(row.get("verdict") or "")[:refutations._MAX_RULING_TEXT]
+    for row in shown:
+        verdict = str(row.get("verdict") or "")
+        if len(verdict) > refutations._MAX_RULING_TEXT:
+            verdict = verdict[:refutations._MAX_RULING_TEXT] + "…"
         authored = row.get("text_authored_by")
-        suffix = ("  [agent-written]"
+        suffix = (f"  [{authored}-written]"
                   if authored and authored != "human" else "")
         lines.append(f"§ {verdict}{suffix}")
+    if over:
+        plural = "s" if len(over) != 1 else ""
+        lines.append(f"  (+{len(over)} active ruling{plural} over cap — "
+                     "daimon ruling list shows all)")
     return lines
 
 
@@ -897,25 +919,32 @@ def render(checkpoint, project_dir=None) -> str | None:
     quote integrity, and falls back to deterministic on any doubt.
 
     `project_dir` (#693) scopes the standing-rulings section; None (legacy
-    callers, hand-built checkpoints in tests) renders without it — an
-    unscoped ledger read here would mix another project's rulings into this
-    briefing, the exact leak the polarity parameter exists to prevent."""
+    callers, hand-built checkpoints in tests) skips the read entirely — an
+    unknown project resolves to no ledger path and reads nothing, so the
+    guard saves a pointless call rather than preventing a leak."""
     b = build(checkpoint)
-    if b is None:
-        return None
-    degraded = receipt_degraded(checkpoint)
     rulings = ruling_lines(project_dir) if project_dir is not None else []
+    if b is None:
+        # #693: a ruling ratified before the first real checkpoint (a day-one
+        # action) must still reach context — "nothing worth surfacing" is no
+        # longer true when active rulings exist.
+        return "\n".join(rulings) if rulings else None
+    degraded = receipt_degraded(checkpoint)
     if config.llm_briefing():
         rendered = _render_llm(checkpoint)
         if rendered:
             if _validate_llm_render(rendered, checkpoint):
-                # The LLM render carries no per-item marks to degrade; prepend the
-                # one header note so an unverifiable receipt still fails loud (#204).
-                out = f"{DEGRADE_NOTE}\n\n{rendered}" if degraded else rendered
-                # #693: the LLM narrates the CHECKPOINT; rulings live outside
-                # it, so the deterministic section is prepended verbatim —
+                # The LLM render carries no per-item marks to degrade; the one
+                # header note stays FIRST on every path (#204 — the loudest
+                # line never moves below another section). #693: the LLM
+                # narrates the CHECKPOINT; rulings live outside it, so the
+                # deterministic section is prepended verbatim after the note —
                 # never re-narrated, never trusted to a generative pass.
-                return "\n".join(rulings) + "\n\n" + out if rulings else out
+                parts = ([DEGRADE_NOTE] if degraded else [])
+                if rulings:
+                    parts.append("\n".join(rulings))
+                parts.append(rendered)
+                return "\n\n".join(parts)
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
     return render_plain(b, degraded, rulings)

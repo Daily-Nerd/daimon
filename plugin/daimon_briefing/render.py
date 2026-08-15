@@ -157,12 +157,18 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                  project_dir=None) -> None:
     _print_handoff(handoff)
     b = briefing.build(checkpoint)
-    # #693: one ledger read serves both render paths below; None (legacy
-    # callers) renders without the section rather than reading an unscoped
-    # ledger.
-    rulings = (briefing.ruling_lines(project_dir)
-               if project_dir is not None else [])
+    # #693: each path below performs exactly one ledger read — the LLM path
+    # reads inside briefing.render, every other path reads here. None
+    # (legacy callers) skips the read; an unknown project resolves to no
+    # ledger path anyway, so the guard saves the call, not a leak.
     if b is None:
+        rulings = (briefing.ruling_lines(project_dir)
+                   if project_dir is not None else [])
+        if rulings:
+            # #693: standing rulings exist before the first checkpoint does —
+            # a day-one ratification must not wait for a session to end.
+            print("\n".join(rulings))
+            print("")
         # Point at the real flow (#29): checkpoints come from the hooks; bare
         # `serialize` dead-ends (it needs a transcript path).
         print("No checkpoint yet — nothing to brief. Checkpoints are written "
@@ -176,12 +182,15 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     # it is active we print its narrative regardless of TTY.
     if config.llm_briefing():
         # Tries LLM, falls back to deterministic; #693 rulings ride inside.
-        rendered = briefing.render(checkpoint, project_dir=project_dir)
-        if rendered:
-            print(rendered)
-            _print_drift(drift)
-            _print_teammates(teammates)
-            return
+        # Unconditional return: `b` is non-None here, so render() always
+        # yields text — a fall-through would double the ledger read below,
+        # and structure beats a comment at keeping that invariant.
+        print(briefing.render(checkpoint, project_dir=project_dir))
+        _print_drift(drift)
+        _print_teammates(teammates)
+        return
+    rulings = (briefing.ruling_lines(project_dir)
+               if project_dir is not None else [])
     # #204: degrade verbatim labels when the receipt can't be locally confirmed.
     # Cheap check (sidecar + byte match), computed once for both render paths.
     degraded = briefing.receipt_degraded(checkpoint)

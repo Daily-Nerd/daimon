@@ -888,15 +888,23 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
   export function renderRefutationsView(data) {
     var rows = data.rows || [];
     var rulings = data.rulings || [];
-    var html = '<div class="brief-head"><h1 class="page-heading">Refutations</h1>' +
-      '<span class="brief-sub">recorded against entries · status, never judgment</span></div>';
+    var html = "";
+    // The rulings lane is a SIBLING section ABOVE the refutations heading —
+    // the negative-polarity chrome ("status, never judgment") must never
+    // visually govern human-ratified standing constraints.
     if (rulings.length) {
-      html += '<div class="brief-head"><h2 class="page-heading">Standing rulings</h2>' +
-        '<span class="brief-sub">human-ratified standing constraints · honor, not history</span></div>';
+      // Status terms only: the lane serves EVERY state (it mirrors
+      // `daimon ruling list`), and an agent-proposed candidate under a
+      // "human-ratified" banner would assert an approval no human gave.
+      html += '<div class="brief-head"><h1 class="page-heading">Standing rulings</h1>' +
+        '<span class="brief-sub">the ledger’s positive polarity · active, proposed, retired</span></div>';
       html += '<div class="refut-cols" aria-hidden="true"><span>Record</span><span>Rule</span>' +
         "<span>Recorded</span><span>Origin</span></div>";
       html += '<div class="refut-rows">' + rulings.map(renderRulingRow).join("") + "</div>";
+      html += '<div class="card-foot">An active ruling stands until a human retires it.</div>';
     }
+    html += '<div class="brief-head"><h1 class="page-heading">Refutations</h1>' +
+      '<span class="brief-sub">recorded against entries · status, never judgment</span></div>';
     if (!rows.length) {
       // The CLI's own empty words — one vocabulary across surfaces.
       return html + '<div class="state-card state-empty"><p class="state-title">' +

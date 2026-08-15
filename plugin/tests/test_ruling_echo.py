@@ -93,14 +93,54 @@ def test_echo_drop_is_counted_under_its_own_reason(tmp_checkpoint_dir):
 def test_echo_drop_logs_content_hash_never_text(tmp_checkpoint_dir, caplog):
     import logging
     _active_ruling()
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         store.write_checkpoint("S-echo", _checkpoint(),
                                project_dir=PROJECT, admit=True)
-    echo_lines = [r.getMessage() for r in caplog.records
-                  if "ruling echo" in r.getMessage()]
-    assert echo_lines
-    assert all(VERDICT not in line for line in echo_lines)
-    assert any("content hash" in line for line in echo_lines)
+    echo = [r for r in caplog.records if "ruling echo" in r.getMessage()]
+    assert echo
+    # INFO, not WARNING: a stable ruling being re-minted every session is an
+    # expected, measured event — not an anomaly worth an alert per capture.
+    assert all(r.levelno == logging.INFO for r in echo)
+    assert all(VERDICT not in r.getMessage() for r in echo)
+    assert any("content hash" in r.getMessage() for r in echo)
+
+
+def test_rendered_line_forms_are_dropped_too(tmp_checkpoint_dir):
+    # What the briefing puts in context is not the bare verdict — it is
+    # "§ <verdict>" with an optional "  [<authority>-written]" suffix. An
+    # extractor copying that line verbatim is the most literal echo shape
+    # there is; the key set must cover it.
+    ruling_id = refutations.assert_ruling(
+        subject="friday payment deploys", verdict=VERDICT,
+        scope="payments service", evidence=["issue:693"],
+        channel="cli-agent", ratified=False, project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    cp = _checkpoint(text=f"§ {VERDICT}  [agent-written]")
+    cp["epistemic_snapshot"]["strong_beliefs"].append(
+        {"text": f"§ {VERDICT}", "trust": "inferred"})
+    out = store.write_checkpoint("S-echo", cp, project_dir=PROJECT,
+                                 admit=True)
+    beliefs = _beliefs(out)
+    assert f"§ {VERDICT}  [agent-written]" not in beliefs
+    assert f"§ {VERDICT}" not in beliefs
+    assert "an unrelated belief survives" in beliefs
+
+
+def test_active_refutation_never_drops_anything(tmp_checkpoint_dir):
+    # The polarity scope IS the safety property: an active REFUTATION whose
+    # verdict matches an item's text must never delete it at admission —
+    # that would hand the negative-polarity ledger a deletion power the
+    # design denies it.
+    ref = refutations.assert_refutation(
+        subject="friday payment deploys", verdict=VERDICT,
+        scope="payments service", evidence=["issue:693"],
+        channel="cli-tty", ratified=True, project_dir=PROJECT)
+    assert refutations.get(ref, project_dir=PROJECT)["state"] == "active"
+    out = store.write_checkpoint("S-echo", _checkpoint(),
+                                 project_dir=PROJECT, admit=True)
+    assert VERDICT in _beliefs(out)
+    stats = store.forget_hit_stats(project_dir=PROJECT)
+    assert stats["ruling_echo_count"] == 0
 
 
 def test_status_surfaces_echo_drops_when_nonzero(tmp_checkpoint_dir,
@@ -132,13 +172,116 @@ def test_filter_fails_open_on_ledger_read_error(tmp_checkpoint_dir,
 
 
 def test_capture_path_admits(tmp_checkpoint_dir, monkeypatch):
-    # capture.run is the hook-side admission caller; its write must carry
-    # the filter. Reaching through the real extractor is a serializer test,
-    # so pin the seam instead: the call site passes admit=True.
-    import inspect
+    # capture.run is the hook-side admission caller; its write must carry the
+    # filter. Spy on the seam and assert the kwarg the store actually
+    # RECEIVES — a source-text assertion here was once satisfied by a
+    # comment, which left the primary admission path guarded by nothing.
     from daimon_briefing import capture
-    src = inspect.getsource(capture.run)
-    assert "admit=True" in src
+    seen = {}
+
+    def _spy(session_id, checkpoint, project_dir=None, admit=False, **kw):
+        seen["admit"] = admit
+        return None  # kill-switch shape: capture returns right after
+
+    monkeypatch.setattr(capture.store, "write_checkpoint", _spy)
+    monkeypatch.setattr(
+        capture.serializer, "serialize_strict",
+        lambda *a, **k: {"session_id": "S-spy", "working_context": {},
+                         "epistemic_snapshot": {}})
+    assert capture.run("S-spy", [], project=PROJECT, chat=None,
+                       deadline=None) is None
+    assert seen.get("admit") is True
+
+
+def test_item_quoting_a_ruling_keeps_quote_and_trust(tmp_checkpoint_dir):
+    # An item whose own text is fresh but whose QUOTE repeats the ruling is a
+    # genuine witness, not an echo copy. A ruling carries no deletion
+    # promise; the filter must never strip fields or downgrade trust the way
+    # the forget gate does.
+    _active_ruling()
+    cp = _checkpoint(text="the team restated the deploy rule today")
+    cp["epistemic_snapshot"]["strong_beliefs"][0].update(
+        {"quote": VERDICT, "trust": "verbatim"})
+    out = store.write_checkpoint("S-echo", cp, project_dir=PROJECT,
+                                 admit=True)
+    import json
+    stored = json.loads(out.read_text(encoding="utf-8"))
+    item = stored["epistemic_snapshot"]["strong_beliefs"][0]
+    assert item["quote"] == VERDICT
+    assert item["trust"] == "verbatim"
+
+
+def test_active_topic_survives_echo_filter(tmp_checkpoint_dir):
+    # The active topic is working context, not a decaying belief copy —
+    # deleting it is context loss, not deduplication.
+    _active_ruling()
+    cp = _checkpoint(text="unrelated belief")
+    cp["working_context"]["active_topic"] = {"text": VERDICT,
+                                             "trust": "inferred"}
+    out = store.write_checkpoint("S-echo", cp, project_dir=PROJECT,
+                                 admit=True)
+    import json
+    stored = json.loads(out.read_text(encoding="utf-8"))
+    assert stored["working_context"]["active_topic"]["text"] == VERDICT
+
+
+def test_stats_last_hit_at_excludes_echo_rows(tmp_checkpoint_dir):
+    import json
+    _active_ruling()
+    path = store._forget_hits_path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        {"ts": "2020-01-01T00:00:00Z", "key": "k-forget"}) + "\n",
+        encoding="utf-8")
+    store.write_checkpoint("S-echo", _checkpoint(),
+                           project_dir=PROJECT, admit=True)
+    stats = store.forget_hit_stats(project_dir=PROJECT)
+    assert stats["count"] == 1
+    assert stats["ruling_echo_count"] == 1
+    # The forget line's timestamp must stay the forget ledger's own.
+    assert stats["last_hit_at"] == "2020-01-01T00:00:00Z"
+    assert stats["ruling_echo_last_at"] > "2020-01-01T00:00:00Z"
+
+
+def test_anchor_attach_rewrite_never_echo_drops(tmp_checkpoint_dir, tmp_path,
+                                                capsys):
+    # The anchor --attach rewrite re-writes a previously-admitted
+    # checkpoint; it must not strip items even when a ruling matching one
+    # was ratified in between.
+    from daimon_briefing import cli, refutations as refs
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "mod.py").write_text("def fn():\n    pass\n", encoding="utf-8")
+    store.write_checkpoint("S-echo", _checkpoint(), project_dir=proj)
+    refs.assert_ruling(
+        subject="friday payment deploys", verdict=VERDICT,
+        scope="payments service", evidence=["issue:693"],
+        channel="cli-tty", ratified=True, project_dir=proj)
+    rc = cli.main(["anchor", "mod.py", "fn",
+                   "--attach", "unrelated belief survives",
+                   "--project", str(proj)])
+    assert rc == 0
+    out = store.read_latest(project_dir=proj)
+    beliefs = [i["text"] for i in out["epistemic_snapshot"]["strong_beliefs"]]
+    assert VERDICT in beliefs
+
+
+def test_forget_rewrite_never_echo_drops(tmp_checkpoint_dir, monkeypatch,
+                                         capsys):
+    # The forget rewrite deletes exactly what the user named — an active
+    # ruling matching a DIFFERENT stored item must not widen the deletion.
+    from daimon_briefing import cli
+    store.write_checkpoint("S-echo", _checkpoint(), project_dir=PROJECT)
+    _active_ruling()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    stored = store.read_latest(project_dir=PROJECT)
+    doomed = next(i["id"] for i in
+                  stored["epistemic_snapshot"]["strong_beliefs"]
+                  if i["text"] == "an unrelated belief survives")
+    assert cli.main(["forget", doomed]) == 0
+    out = store.read_latest(project_dir=PROJECT)
+    beliefs = [i["text"] for i in out["epistemic_snapshot"]["strong_beliefs"]]
+    assert VERDICT in beliefs  # the ruling echo was NOT the forget target
 
 
 def test_write_checkpoint_stdin_path_admits(tmp_checkpoint_dir, monkeypatch,
