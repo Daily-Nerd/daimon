@@ -32,7 +32,8 @@ import logging
 import time
 from pathlib import Path
 
-from . import carry, config, normalize, provenance, serializer, store, transcript
+from . import (amendments, carry, config, normalize, provenance, serializer,
+               store, transcript)
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +151,15 @@ def run(session_id: str, messages, *, project, chat, deadline,
         _verify_agent_resolutions(project, messages)
     except Exception:
         log.warning("agent resolution verification pass failed", exc_info=True)
+    # #691: same posture for pending agent amendments, as its own pass —
+    # deliberately NOT folded into _verify_agent_resolutions (that function
+    # has two other consumers, briefing.withhold and cli._stats_resolutions,
+    # whose populations must stay honestly apart). Same independence from
+    # carry, same never-cost-the-checkpoint try/except.
+    try:
+        _verify_agent_amendments(project, messages)
+    except Exception:
+        log.warning("agent amendment verification pass failed", exc_info=True)
     # #376: record what the checkers REJECTED, after write_checkpoint because
     # that is where item ids are guaranteed stamped (the merge branch above
     # only stamps when it runs). Its own append-only stream, never events.jsonl
@@ -427,6 +437,46 @@ def _verify_agent_resolutions(project, messages) -> int:
                 note=f"verified agent evidence (role: {role})",
                 source="serializer", project_dir=project):
             confirmed += 1
+    return confirmed
+
+
+def _verify_agent_amendments(project, messages) -> int:
+    """#691: byte-check every pending agent amendment's evidence quote
+    against THIS session's transcript — the same matching stack the resolve
+    candidates and verbatim capture claims are held to (#125/#480), reused.
+
+    Quote found -> amendments.verify appends a mechanical-channel `verified`
+    event recording the speaker role; the amendment becomes render-worthy.
+    Quote not found -> nothing written; the candidate stands, invisible to
+    every render surface, for a human verdict or a future serialize to
+    settle. Human proposals never reach here: they land ratified at propose
+    time, and the pending filter below keys on the observed agent channel,
+    never on a caller's claim.
+
+    Scoped to `project` — the ledger path keys on project_slug, so a
+    candidate belonging to a different project can never be confirmed
+    against this transcript (the #480 cross-project discipline)."""
+    pending = {
+        a_id: record["evidence"]
+        for a_id, record in amendments.records(project_dir=project).items()
+        if record["state"] == "candidate"
+        and record.get("proposed_channel") == "cli-agent"
+    }
+    if not pending:
+        return 0
+    haystack = serializer.stripped_transcript(messages) if messages else ""
+    confirmed = 0
+    for a_id, evidence in sorted(pending.items()):
+        found, role = serializer.verify_agent_evidence(
+            evidence, messages, haystack=haystack)
+        if not found:
+            continue
+        try:
+            amendments.verify(a_id, role=str(role or "unknown"),
+                              project_dir=project)
+            confirmed += 1
+        except amendments.AmendmentError:
+            continue
     return confirmed
 
 

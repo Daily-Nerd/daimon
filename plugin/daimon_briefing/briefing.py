@@ -89,7 +89,8 @@ def corroboration_badge(item) -> str:
     n = item.get("_corroborated")
     if not isinstance(n, int) or n < CORROBORATION_MIN:
         return ""
-    if item.get("_supersede_candidate") or item.get("_worldcheck") or item.get("_agent_claim"):
+    if (item.get("_supersede_candidate") or item.get("_worldcheck")
+            or item.get("_agent_claim") or item.get("_amend")):
         return ""
     return f" [≈ corroborated ×{n}]"
 
@@ -209,6 +210,25 @@ def _line(item, degraded: bool = False, briefable: bool = False) -> str:
                  f'"{_truncate_agent_claim(claim)}"'
                  f"\n    confirm: daimon resolve {item_id} --status resolved"
                  f"\n    reject: daimon reverify {item_id}")
+    amends = item.get("_amend")
+    if isinstance(amends, list):
+        # #691: the item stays open; its state advanced under checked
+        # evidence. Every part is bounded before it reaches this line — the
+        # change vocabulary is closed at the ledger's write boundary, the
+        # label comes from the channel table or the verifier, and the quote
+        # is display-truncated. Only a machine-verified amendment offers a
+        # reject path: a human-ratified one already carries the verdict.
+        # ADDED lines only; the pinned prefix above never changes.
+        for amend in amends:
+            if not isinstance(amend, dict):
+                continue
+            role = str(amend.get("role") or "").strip()
+            label = str(amend.get("label") or "").strip()
+            detail = f"{label}, role: {role}" if role else label
+            base += (f'\n  ↷ amended — {amend.get("change")} ({detail}): '
+                     f'"{_truncate_agent_claim(amend.get("quote"))}"')
+            if label == "quote-verified" and amend.get("id"):
+                base += f"\n    reject: daimon amend reject {amend['id']}"
     return base
 
 
@@ -291,7 +311,8 @@ def build(checkpoint, now=None) -> dict | None:
 _CANDIDATE_ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,40}(-\d+)?")
 
 
-def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
+def withhold(checkpoint, resolutions: dict,
+             amendments=None) -> tuple[dict, list, list]:
     """Drop items the world has already resolved, at RENDER time only — the
     checkpoint on disk (and carry's copy of it) is never touched. `resolutions`
     is `{item_ref: latest_event}`, exactly store.resolutions()'s shape; pure,
@@ -330,11 +351,20 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
     confirm/reject pair — mixing the two would blur what a human is being
     asked to confirm.
 
+    #691: a FIFTH outcome — `amendments` is amendments.renderable()'s shape
+    ({item_id: [folded records]}, verified/ratified ONLY — the ledger's
+    renderable() already refuses candidates, so nothing unverified can reach
+    a stamp through this argument). The RETURNED COPY's item gets a transient
+    `_amend` list of bounded payloads. A separate axis from the resolution
+    chain above: an item can carry a supersede candidate AND an amendment.
+    An item being withheld keeps its drop — amendments annotate live items
+    and die with resolved ones.
+
     No resolved/candidate/pending-claim events, or a non-dict checkpoint ->
     (checkpoint, [], []) UNCHANGED, same no-op idiom as carry.merge: no copy
     is made unless something actually withholds or is stamped, so the common
     case (nothing resolved yet) costs nothing."""
-    if not isinstance(checkpoint, dict) or not resolutions:
+    if not isinstance(checkpoint, dict) or (not resolutions and not amendments):
         return checkpoint, [], []
 
     resolved_refs = {ref for ref, evt in resolutions.items() if store.is_resolved(evt)}
@@ -356,8 +386,10 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
             if new_id and _CANDIDATE_ID_SHAPE.fullmatch(new_id):
                 candidate_refs[ref] = new_id
     agent_claim_refs = capture._pending_agent_candidates(resolutions)
+    amend_refs = amendments if isinstance(amendments, dict) else {}
 
-    if not resolved_refs and not candidate_refs and not agent_claim_refs:
+    if (not resolved_refs and not candidate_refs and not agent_claim_refs
+            and not amend_refs):
         return checkpoint, [], []
     # #145: the fuzzy pool holds ONLY resolutions whose own ref is not
     # id-shaped (legacy, pre-id-stamping events). An id-bearing resolution is
@@ -379,6 +411,7 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
     to_drop = []  # [(section, key, index, item, event)]
     to_stamp = []  # [(section, key, index, event, new_id)]
     to_stamp_claim = []  # [(section, key, index, evidence)] — #480 slice 4
+    to_stamp_amend = []  # [(section, key, index, payloads)] — #691
     for section, key in store._ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
@@ -404,6 +437,20 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
                 elif item_id in agent_claim_refs:
                     to_stamp_claim.append(
                         (section, key, idx, agent_claim_refs[item_id]))
+                if item_id in amend_refs and item_id not in resolved_refs:
+                    # #691: bounded payloads only — closed change vocab from
+                    # the ledger, quote truncated at render. Skipped for a
+                    # withheld item: its annotation would die with it anyway.
+                    payloads = [
+                        {"id": str(rec.get("amendment_id") or ""),
+                         "change": str(rec.get("change") or ""),
+                         "quote": str(rec.get("evidence") or ""),
+                         "label": str(rec.get("verdict_label") or ""),
+                         "role": str(rec.get("evidence_role") or "")}
+                        for rec in amend_refs[item_id]
+                        if isinstance(rec, dict)]
+                    if payloads:
+                        to_stamp_amend.append((section, key, idx, payloads))
                 continue  # id-bearing: bound exactly or not at all, never fuzzy
             text = str(item.get("text") or "").strip()
             if not text or not resolved_texts:
@@ -416,7 +463,8 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
                     to_drop.append((section, key, idx, item, evt))
                     break
 
-    if not to_drop and not to_stamp and not to_stamp_claim:
+    if (not to_drop and not to_stamp and not to_stamp_claim
+            and not to_stamp_amend):
         return checkpoint, [], []
 
     out = copy.deepcopy(checkpoint)
@@ -433,6 +481,8 @@ def withhold(checkpoint, resolutions: dict) -> tuple[dict, list, list]:
         candidates.append((key, item, evt))
     for section, key, idx, evidence in to_stamp_claim:
         out[section][key][idx]["_agent_claim"] = evidence
+    for section, key, idx, payloads in to_stamp_amend:
+        out[section][key][idx]["_amend"] = payloads
 
     withheld = []
     drop_idx_by_list: dict[tuple[str, str], set] = {}

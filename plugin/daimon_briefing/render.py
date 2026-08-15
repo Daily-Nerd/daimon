@@ -288,6 +288,25 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
                     f"    confirm: daimon resolve {item_id} --status resolved\n"
                     f"    reject: daimon reverify {item_id}\n",
                     style="yellow")
+            amends = i.get("_amend")
+            if isinstance(amends, list):
+                # #691: parity with briefing._line's amend annotation, same
+                # repeated-here reasoning as the blocks above. Every part is
+                # bounded before it reaches this panel (closed change vocab,
+                # channel-table label, display-truncated quote).
+                for amend in amends:
+                    if not isinstance(amend, dict):
+                        continue
+                    role = str(amend.get("role") or "").strip()
+                    label = str(amend.get("label") or "").strip()
+                    detail = f"{label}, role: {role}" if role else label
+                    aq = briefing._truncate_agent_claim(amend.get("quote"))
+                    flag = (f'    ↷ amended — {amend.get("change")} '
+                            f'({detail}): "{aq}"\n')
+                    if label == "quote-verified" and amend.get("id"):
+                        flag += (f"    reject: daimon amend reject "
+                                 f"{amend['id']}\n")
+                    body.append(flag, style="cyan")
         if key == "decisions":
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:

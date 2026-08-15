@@ -12,7 +12,7 @@ distinguishably or the gate they measure goes blind.
 """
 import json
 
-from . import briefing, recall, store
+from . import amendments, briefing, recall, store
 
 
 class ToolError(Exception):
@@ -71,7 +71,8 @@ def _brief(arguments: dict) -> str:
                 "session creates one.")
         return f"no checkpoint for this project. {hint}"
     filtered, _withheld, _candidates = briefing.withhold(
-        checkpoint, store.resolutions(project_dir=target))
+        checkpoint, store.resolutions(project_dir=target),
+        amendments=amendments.renderable(project_dir=target))
     # #268: the witness count rides the same strictly-scoped target as the
     # withhold fold — an agent consumer reads the corroboration axis the human
     # brief shows, from this project's ledger and no other.

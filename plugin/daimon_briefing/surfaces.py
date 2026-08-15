@@ -102,6 +102,22 @@ SURFACES: tuple[Surface, ...] = (
     #    published claim and needs the contract amended first. --
     Surface("checkpoints/{slug}/refutations.jsonl", "refutations.append",
             True, "rewrite", "forget"),
+    # -- the amendment ledger (#691): the fourth bucket ledger — evidence
+    #    quotes and human-channel notes, both length-capped, both plaintext
+    #    by design, so it sits in the checkpoint's deletion category with
+    #    refutations. `rewrite` covers its two deleters:
+    #    amendments.forget_content_key (by value, whole-value canonical
+    #    match) and amendments.forget_item_id (rows about a forgotten item
+    #    go with it — unlike relations, these rows carry prose that can
+    #    paraphrase the removed content). Never audit_exempt: the audit
+    #    hashes the module's own _PLAINTEXT_FIELDS declaration and checks
+    #    target ids against tombstones (privacy.audit_project). No age
+    #    reaper: an amendment is lifecycle evidence for a LIVE item and
+    #    falls out of every render surface the moment its item resolves or
+    #    is forgotten; the audit reports record/row/byte counts so growth
+    #    is measured, never silent. --
+    Surface("checkpoints/{slug}/amendments.jsonl", "amendments.append",
+            True, "rewrite", "forget"),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
     Surface("checkpoints/{slug}/verification.jsonl",

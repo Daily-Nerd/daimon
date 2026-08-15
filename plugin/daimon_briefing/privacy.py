@@ -18,7 +18,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import (config, normalize, refutations, relations, store, surfaces,
+from . import (amendments, config, normalize, refutations, relations, store, surfaces,
                teamproject)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
@@ -43,6 +43,7 @@ _EVENTS_NAME = "events.jsonl"
 # auditor asking the question separately is how a surface goes unreported.
 _REFUTATIONS_NAME = "refutations.jsonl"
 _RELATIONS_NAME = "relations.jsonl"
+_AMENDMENTS_NAME = "amendments.jsonl"
 
 # Files that live in the checkpoint store and hold NO item plaintext BY
 # CONSTRUCTION. Since #601 both sets are VIEWS of the declared surface
@@ -114,7 +115,7 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                     elif p.suffix == ".json":
                         known.append(p)
                     elif p.name not in (_EVENTS_NAME, _REFUTATIONS_NAME,
-                                        _RELATIONS_NAME) \
+                                        _RELATIONS_NAME, _AMENDMENTS_NAME) \
                             and not _is_plaintext_free(p):
                         unknown.append((p, entry.name))
         except OSError:
@@ -496,6 +497,54 @@ def audit_project(project_dir=None) -> dict:
                            "rows": rel_rows,
                            "bytes": rel_bytes,
                            "by_state": rel_states}
+    # Amendment ledger (#691): the fourth bucket ledger, declared at birth
+    # like relations so it can never repeat #645's unknown->unscannable->
+    # exit-3 arc. Two residue checks, because its rows carry BOTH prose and
+    # a target id: the hash intersection over amendments' own plaintext
+    # declaration (the deleter reads the same set, so a value the audit
+    # reports is a value forget can reach), and a target-id check against
+    # tombstones — amendments.forget_item_id removes rows about a forgotten
+    # item, so a surviving one means the scrub was missed or raced.
+    amend_path = config.checkpoint_dir() / slug / _AMENDMENTS_NAME
+    try:
+        lines = amend_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []                  # no amendment recorded yet
+    except (OSError, ValueError):
+        lines = []
+        result["unscannable"].append(str(amend_path))
+    amend_records: set[str] = set()
+    amend_rows = 0
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        amend_rows += 1
+        a_id = str(row.get("amendment_id") or "")
+        if a_id:
+            amend_records.add(a_id)
+        for h in amendments.row_content_keys(row) & keys:
+            result["findings"].append({
+                "path": str(amend_path),
+                "item_id": row.get("amendment_id"),
+                "content_hash": h, "surface": "amendment-ledger"})
+        target = str(row.get("item_id") or "")
+        if target and target in tombstoned:
+            result["findings"].append({
+                "path": str(amend_path),
+                "item_id": target,
+                "content_hash": None,
+                "surface": "amendment-target"})
+    try:
+        amend_bytes = amend_path.stat().st_size
+    except OSError:
+        amend_bytes = 0
+    result["amendments"] = {"records": len(amend_records),
+                            "rows": amend_rows,
+                            "bytes": amend_bytes}
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.
