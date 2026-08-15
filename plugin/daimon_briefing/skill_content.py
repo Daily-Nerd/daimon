@@ -141,6 +141,16 @@ cited, not verified — check the source yourself. Agents may add candidates wit
 one. Always pass `--by agent`; omitting it claims the human path. Never run
 `daimon refute ratify`, and never run `daimon refute overturn` without it:
 both assert a human decision. Ask the user to run them.
+
+## Standing rulings
+Rulings are the OPPOSITE polarity: human-ratified standing constraints to
+honor, not dead approaches. Treat an active ruling as a veto, not advice.
+`daimon ruling list` shows them; `daimon refute search` returns both kinds,
+labelled. Agents may propose: `daimon ruling propose ... --by agent`, and on
+an active ruling `ruling revise --by agent` or `ruling retire --by agent`
+record proposals while the text stands. Always pass `--by agent`. Never run
+`daimon ruling ratify`, and never `ruling revise`/`retire` without the flag:
+those assert a human decision. Ask the user to run them.
 ## Closing loops
 
 When work in this session resolves an item the briefing listed — an open

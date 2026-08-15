@@ -49,8 +49,20 @@ def test_full_fits_size_budget():
     # argue.  What was NOT done: nothing was added to the compact body, which
     # sits at 1,999 of its hard 2,000-char host cap — see #579 for what gets
     # evicted when that budget is squeezed.
+    #
+    # RAISED 8,900 -> 9,900 on 2026-08-15 (#693), same discipline. The skill
+    # content is again the subject: `ruling` ships an agent-facing verb
+    # family whose entire premise is that agents HONOR standing constraints,
+    # and a command this file does not surface is invisible to agents (the
+    # `daimon why` lesson above, verbatim). The addition is ~430 chars: one
+    # section teaching polarity (a ruling is a veto, not a dead approach),
+    # the read verbs, and the propose-only boundary — the never-ratify /
+    # never-retire lines are the wedge rule this repo enforces everywhere
+    # else, stated where agents will read it. New deliberate-review size is
+    # 9,502 (2026-08-15, after review folded the proposal-verb teaching in);
+    # 9,900 keeps ~4% slack. Nothing was added to the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 8900, f"full body is {len(full)} chars (cap 8900)"
+    assert len(full) <= 9900, f"full body is {len(full)} chars (cap 9900)"
 
 
 def test_full_has_trigger_only_frontmatter():

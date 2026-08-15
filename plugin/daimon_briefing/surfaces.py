@@ -88,10 +88,20 @@ SURFACES: tuple[Surface, ...] = (
     #    when old. Reaping this one would delete the lesson exactly when it
     #    finally becomes useful.
     #
-    #    Growth is bounded by deliberate action instead: the only writers are
-    #    the four `refute` CLI verbs, the `mechanical` channel is a socket
-    #    nothing plugs into, and the audit reports record/row/byte counts every
-    #    run (privacy.audit_project) so this is measured, never silent.
+    #    Growth is bounded by deliberate action instead: the writers are the
+    #    four `refute` CLI verbs plus the four `ruling` write verbs (#693 —
+    #    the file now holds BOTH polarities; rulings share the no-reaper
+    #    rationale: an active ruling is live state, and retirement is a human
+    #    verdict, not an age), the `mechanical` channel is a socket nothing
+    #    plugs into, the two agent-writable proposal channels on a ruling
+    #    (`revision-proposed`, `overturn-proposed`) refuse past 3 open rows
+    #    PER CHANNEL since the last human verdict, and the audit reports record/row/byte
+    #    counts every run (privacy.audit_project) so this is measured, never
+    #    silent. Ruling CANDIDATES are agent proposals and reaper-eligible
+    #    under the note below, but with the #693 lifecycle no human-ratified
+    #    ruling can ever BE a candidate again — demotion is never a side
+    #    effect and no agent path demotes — so a candidate reaper cannot
+    #    delete a human constraint at agent initiative.
     #
     #    Two things reopen it, and neither is a clock. If #581 ships mechanical
     #    activation, something writes without a human asking. If the reported
