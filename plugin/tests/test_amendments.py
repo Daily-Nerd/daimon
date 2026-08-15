@@ -7,6 +7,8 @@ render; the fold is full-pass and deterministic; forget reaches the ledger
 by value and by target item.
 """
 
+import json
+
 import pytest
 
 from daimon_briefing import amendments
@@ -737,6 +739,160 @@ def test_rewrite_preserves_foreign_rows_byte_identical(project):
     survivors = path.read_text(encoding="utf-8")
     assert future_row in survivors
     assert "not json" not in survivors
+
+
+def test_cli_amend_verdict_refusal_prints_and_exits_one(project, capsys):
+    from daimon_briefing import cli, store
+    store.write_checkpoint("S-1", _checkpoint_with_item(),
+                           project_dir=project)
+    a_id = _propose(project)
+    rc = cli.main(["amend", "ratify", a_id, "--by", "agent",
+                   "--project", project])
+    assert rc == 1
+    assert "refused" in capsys.readouterr().out
+    assert amendments.get(a_id, project_dir=project)["state"] == "candidate"
+
+
+def test_cli_amend_list_json_and_empty(project, capsys):
+    from daimon_briefing import cli
+    rc = cli.main(["amend", "list", "--project", project])
+    assert rc == 0
+    assert "no amendments" in capsys.readouterr().out
+    a_id = _propose(project)
+    rc = cli.main(["amend", "list", "--json", "--project", project])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["amendment_id"] == a_id
+
+
+def test_cli_forget_fuzzy_query_rebinds_to_matched_value(project, capsys,
+                                                         monkeypatch):
+    from daimon_briefing import cli, normalize, store
+    store.write_checkpoint("S-1", _checkpoint_with_item(),
+                           project_dir=project)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    evidence = "the acme migration finished on the staging cluster"
+    rc = cli.main(["amend", ITEM, "--change", "progressed",
+                   "--evidence", evidence, "--note", "waiting on approvals",
+                   "--project", project])
+    assert rc == 0
+    a_id = amendments.make_id(ITEM, "progressed", evidence)
+    # Near-match query: not byte-equal to any stored value, so the rebind
+    # has to walk the fuzzy fallback and still key the hash on the EVIDENCE.
+    rc = cli.main(["forget", f"{evidence} yesterday", "--project", project])
+    assert rc == 0, capsys.readouterr().out
+    assert amendments.get(a_id, project_dir=project) is None
+    keys = store.forgotten_content_keys(project_dir=project)
+    assert normalize.content_key(evidence) in keys
+    assert normalize.content_key("waiting on approvals") not in keys
+
+
+def test_session_end_pass_survives_a_failing_verify(project, monkeypatch):
+    from daimon_briefing import capture
+    _propose(project, evidence="the follow-up issue is filed")
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    confirmed = capture._verify_agent_amendments(
+        project, [{"role": "user", "content": "the follow-up issue is filed"}])
+    assert confirmed == 0
+
+
+def test_capture_run_survives_broken_amendment_pass(
+        project, sample_checkpoint, fake_chat_factory, monkeypatch):
+    from tests.conftest import make_messages
+    from daimon_briefing import capture, store
+
+    def boom(proj, messages):
+        raise RuntimeError("pass broke")
+
+    monkeypatch.setattr(capture, "_verify_agent_amendments", boom)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=project)
+    chat = fake_chat_factory(json.dumps({
+        "session_id": "S-new",
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [], "recent_decisions": []},
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }))
+    out = capture.run("S-new", make_messages(10), project=project,
+                      chat=chat, deadline=None)
+    assert out is not None  # a broken pass never costs the checkpoint
+
+
+def test_line_and_rich_skip_non_dict_amend_rows(capsys):
+    pytest.importorskip("rich")
+    from daimon_briefing import briefing, render
+    stamp = {"rows": ["not-a-dict", _amend_payload()], "overflow": 0}
+    item = {"id": ITEM, "text": "t", "trust": "inferred", "_amend": stamp}
+    line = briefing._line(item, briefable=True)
+    assert "agent-proposed amendment" in line
+    b = {"external": [], "open_loops": [item], "decisions": [],
+         "active_topic": None, "beliefs": [], "uncertainties": []}
+    render._rich_brief(b)
+    assert "agent-proposed amendment" in capsys.readouterr().out
+
+
+def test_line_renders_ratified_note_on_plain_path():
+    from daimon_briefing import briefing
+    item = {"id": ITEM, "text": "t", "trust": "inferred",
+            "_amend": {"rows": [_amend_payload(
+                state="ratified", note="took the alternate route")],
+                "overflow": 0}}
+    line = briefing._line(item, briefable=True)
+    assert "note: took the alternate route" in line
+
+
+def test_append_and_torn_check_survive_unwritable_ledger(project):
+    a_id = _propose(project)
+    path = amendments._path(project)
+    path.chmod(0o000)
+    try:
+        row = amendments._stamp("proposed", "a-feedfeedfeed", "cli-agent")
+        row.update({"item_id": ITEM, "change": "changed", "evidence": "q"})
+        assert amendments.append(row, project_dir=project) is False
+    finally:
+        path.chmod(0o644)
+    assert amendments.get(a_id, project_dir=project) is not None
+
+
+def test_is_torn_survives_unopenable_path(project):
+    from daimon_briefing import config, store
+    slug = store.project_slug(project)
+    directory = config.checkpoint_dir() / slug
+    directory.mkdir(parents=True, exist_ok=True)
+    assert amendments._is_torn(directory) is False
+
+
+def test_rewrite_cleanup_survives_failing_tmp_write(project, monkeypatch):
+    import pathlib
+    a_id = _propose(project)
+    orig = pathlib.Path.write_text
+
+    def fake(self, *a, **k):
+        if self.name.endswith(".forget-tmp"):
+            raise OSError("no space left")
+        return orig(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", fake)
+    assert amendments._rewrite_without({a_id}, project_dir=project) == []
+    assert amendments.get(a_id, project_dir=project) is not None
+
+
+def test_rewrite_without_handles_missing_and_unreadable_ledger(
+        project, monkeypatch):
+    assert amendments._rewrite_without({"a-abcabcabcabc"},
+                                       project_dir=project) == []
+    a_id = _propose(project)
+    path = amendments._path(project)
+    path.chmod(0o000)
+    try:
+        assert amendments._rewrite_without({a_id},
+                                           project_dir=project) == []
+    finally:
+        path.chmod(0o644)
+    monkeypatch.setattr(amendments.os, "replace",
+                        lambda *a: (_ for _ in ()).throw(OSError("disk")))
+    assert amendments._rewrite_without({a_id}, project_dir=project) == []
+    assert amendments.get(a_id, project_dir=project) is not None
 
 
 def test_torn_last_line_costs_only_the_torn_row(project):

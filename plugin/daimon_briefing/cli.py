@@ -1457,9 +1457,9 @@ def _cmd_forget(args) -> int:
     amend_texts: dict[str, list[str]] = {}
     amend_targets: dict[str, str] = {}
     for row in amendments.events(project_dir=project):
-        a_id = str(row.get("amendment_id") or "")
-        if not a_id:
-            continue
+        # events() admits only rows whose amendment_id matched the id shape,
+        # so the key is present and non-empty by contract.
+        a_id = str(row["amendment_id"])
         target_id = str(row.get("item_id") or "")
         if target_id:
             amend_targets.setdefault(a_id, target_id)
