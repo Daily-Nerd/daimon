@@ -723,3 +723,35 @@ def test_dry_run_names_spliced_checkpoint_siblings(
     out = capsys.readouterr().out
     for item_id in ids:
         assert item_id in out
+
+
+def test_dry_run_previews_amendments_of_a_superseded_item(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review round 4: a value superseded out of the live checkpoint is
+    # still reachable (#419), and the destructive path still removes the
+    # amendments keyed on its id. The preview's splice set must be seeded
+    # with the target id or exactly those amendments die unpreviewed.
+    from daimon_briefing import amendments
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    doomed_text = "we ship the queue rewrite before the freeze"
+    _checkpoint(doomed_text)
+    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    item_id = stored["working_context"]["recent_decisions"][0]["id"]
+    a_id = amendments.propose(
+        item_id=item_id, change="progressed",
+        evidence="the user said only the consumer half ships",
+        channel="cli-agent", project_dir=PROJECT)
+    store.write_checkpoint("S2", {
+        "session_id": "S2", "created": "2026-07-02T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "a completely different later decision",
+             "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+
+    assert cli.main(["forget", doomed_text,
+                     "--dry-run", "--project", PROJECT]) == 0
+
+    out = capsys.readouterr().out
+    assert a_id in out
+    assert any(str(r.get("amendment_id")) == a_id
+               for r in amendments.events(project_dir=PROJECT))

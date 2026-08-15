@@ -1612,8 +1612,11 @@ def _cmd_forget(args) -> int:
         # its id — and amendments die with their item BY ID, carrying prose
         # that is not the forgotten value, so both must be previewed too
         # (#698 review). Same computation as the destructive path below,
-        # against the in-memory checkpoint, writing nothing.
-        spliced = set()
+        # against the in-memory checkpoint, writing nothing — INCLUDING the
+        # seed: a target superseded out of the live checkpoint (or ledger-
+        # only) never appears in the walk, but its own id still reaches the
+        # amendments keyed on it.
+        spliced = {str(target["id"] or "")}
         if isinstance(checkpoint, dict):
             for section, key in store._ITEM_LISTS:
                 for i in (checkpoint.get(section) or {}).get(key) or []:
