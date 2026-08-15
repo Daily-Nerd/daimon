@@ -856,10 +856,47 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       '<span class="refut-at">' + escapeHtml(fmtDateTime(r.created_at)) + "</span>" +
       '<span class="refut-origin">' + escapeHtml(r.asserted_author || "") + "</span></div>";
   }
+  // ---- rulings lane (#693 PR 2): the ledger's positive polarity ----
+  // Same bracket shape as the refutations lane, the CLI's own vocabulary
+  // (cli.py _print_ruling): § active, × overturned — shown as "retired" —
+  // ? candidate; agent-authored text stays labeled after human ratification.
+  // The row renders the VERDICT (the rule text), never the subject: a ruling
+  // shown under a refutation's wording is the exact inversion #693 prevents.
+  export const RULING_MARKS = { active: "§", overturned: "×", candidate: "?" };
+  export function rulingMarker(r) {
+    var state = (r && r.state) || "candidate";
+    var mark = Object.prototype.hasOwnProperty.call(RULING_MARKS, state)
+      ? RULING_MARKS[state] : "?";
+    var shown = state === "overturned" ? "retired" : state;
+    var activation = (r && r.activation) ||
+      ((r && r.asserted_by) || "?") + "-proposed";
+    var authored = r && r.text_authored_by;
+    if (state === "active" && authored && authored !== "human") {
+      activation = authored + "-written, " + activation;
+    }
+    return "[" + mark + " " + shown + " · " + activation + "]";
+  }
+  export function renderRulingRow(r) {
+    return '<div class="refut-row">' +
+      '<div class="refut-record"><code class="obj-id">' + escapeHtml(r.refutation_id || "") +
+      '</code><span class="refut-state">' + escapeHtml(rulingMarker(r)) + "</span></div>" +
+      '<div class="refut-body"><span class="refut-subject">' + escapeHtml(r.verdict || "") +
+      "</span>" + renderRefutationAnchors(r.anchors) + "</div>" +
+      '<span class="refut-at">' + escapeHtml(fmtDateTime(r.created_at)) + "</span>" +
+      '<span class="refut-origin">' + escapeHtml(r.asserted_author || "") + "</span></div>";
+  }
   export function renderRefutationsView(data) {
     var rows = data.rows || [];
+    var rulings = data.rulings || [];
     var html = '<div class="brief-head"><h1 class="page-heading">Refutations</h1>' +
       '<span class="brief-sub">recorded against entries · status, never judgment</span></div>';
+    if (rulings.length) {
+      html += '<div class="brief-head"><h2 class="page-heading">Standing rulings</h2>' +
+        '<span class="brief-sub">human-ratified standing constraints · honor, not history</span></div>';
+      html += '<div class="refut-cols" aria-hidden="true"><span>Record</span><span>Rule</span>' +
+        "<span>Recorded</span><span>Origin</span></div>";
+      html += '<div class="refut-rows">' + rulings.map(renderRulingRow).join("") + "</div>";
+    }
     if (!rows.length) {
       // The CLI's own empty words — one vocabulary across surfaces.
       return html + '<div class="state-card state-empty"><p class="state-title">' +
