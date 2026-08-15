@@ -622,3 +622,57 @@ def test_two_records_matched_on_different_verdicts_refuse_ambiguous(
 
     assert refutations.get(kept_a, project_dir=PROJECT) is not None
     assert refutations.get(kept_b, project_dir=PROJECT) is not None
+
+
+def test_dry_run_names_every_record_the_deleter_would_reach(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review round 2: forget is irreversible and dry-run is the only
+    # pre-deletion check. Three records share a scope token; the deleter
+    # removes all three, so the preview must name all three.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("an unrelated decision about logging")
+    ids = [
+        refutations.assert_refutation(
+            subject=f"a distinct subject number {n}",
+            verdict=f"a distinct verdict number {n}",
+            scope="the account migrations area",
+            evidence=[f"measurement:trace-{n}"], channel="cli-tty",
+            ratified=True, project_dir=PROJECT)
+        for n in range(3)
+    ]
+
+    assert cli.main(["forget", "the account migrations area",
+                     "--dry-run", "--project", PROJECT]) == 0
+
+    out = capsys.readouterr().out
+    for ref_id in ids:
+        assert ref_id in out
+    for ref_id in ids:
+        assert refutations.get(ref_id, project_dir=PROJECT) is not None
+
+
+def test_ambiguous_refusal_shows_the_values_that_differ(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review round 2: a never-guess refusal is only useful if the user
+    # can make the choice. Two candidates separated by their verdicts must
+    # show those verdicts, not two identical subject lines.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("an unrelated decision about logging")
+    refutations.assert_refutation(
+        subject="the account migration rewrite", scope="alpha",
+        verdict="the migration corrupted tenant rows silently",
+        evidence=["measurement:corruption-a"], channel="cli-tty",
+        ratified=True, project_dir=PROJECT)
+    refutations.assert_refutation(
+        subject="the account migration rewrite", scope="beta",
+        verdict="the migration corrupted tenant rows completely",
+        evidence=["measurement:corruption-b"], channel="cli-tty",
+        ratified=True, project_dir=PROJECT)
+
+    assert cli.main(
+        ["forget", "the migration corrupted tenant rows silently",
+         "--project", PROJECT]) == 1
+
+    out = capsys.readouterr().out
+    assert "the migration corrupted tenant rows silently" in out
+    assert "the migration corrupted tenant rows completely" in out

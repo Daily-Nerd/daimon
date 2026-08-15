@@ -1527,9 +1527,10 @@ def _cmd_forget(args) -> int:
 
         def _matched_value(it, generic):
             # The value the QUERY named. The exact canonical match is a rail
-            # the generic filter can never subtract — verbatim text sitting on
-            # disk always binds, no matter how common its terms have become
-            # (#698 review). The fuzzy fallback matches each value against the
+            # the GENERIC FILTER can never subtract, no matter how common the
+            # value's terms have become (#698 review) — the never-guess
+            # ambiguity gate below may still refuse it when several values
+            # match. The fuzzy fallback matches each value against the
             # candidate's own store vocabulary.
             for t in _texts_of(it):
                 if normalize.content_key(t) == query_key:
@@ -1539,28 +1540,28 @@ def _cmd_forget(args) -> int:
                     return t
             return None
 
-        matched_by_id: dict[int, str] = {}
+        # Hits carry the value they matched IN the tuple — a side table keyed
+        # on object identity would silently degrade to display text if a
+        # refactor ever copied a candidate dict (#698 review).
         if len(exact) > 1:
-            hits = [(s, k, it) for s, k, it in candidates
+            hits = [(s, k, it, None) for s, k, it in candidates
                     if it["id"] == args.target]
         else:
-            hits = []
-            for pool, generic in pools:
-                for s, k, it in pool:
-                    value = _matched_value(it, generic)
-                    if value is not None:
-                        hits.append((s, k, it))
-                        matched_by_id[id(it)] = value
+            hits = [(s, k, it, value)
+                    for pool, generic in pools
+                    for s, k, it in pool
+                    for value in [_matched_value(it, generic)]
+                    if value is not None]
         # #691: an amendment's evidence is by construction ABOUT its item, so
         # a query matching the item routinely fuzzy-matches the amendment too
         # — a false-ambiguity surface, not a real second value. When an item
         # hit exists, amendment hits that merely target one of the hit items
         # are dropped: forgetting the item removes its amendments anyway
         # (forget_item_id below), so nothing becomes unreachable.
-        item_hit_ids = {it["id"] for _, k, it in hits
+        item_hit_ids = {it["id"] for _, k, it, _ in hits
                         if k not in ("refutation", "amendment")}
         if item_hit_ids:
-            hits = [(s, k, it) for s, k, it in hits
+            hits = [(s, k, it, m) for s, k, it, m in hits
                     if not (k == "amendment"
                             and it.get("_target") in item_hit_ids)]
         # Ambiguity is about distinct MATCHED values, not hit count and never
@@ -1573,28 +1574,51 @@ def _cmd_forget(args) -> int:
         # different matched values leave the user a choice, and there
         # never-guess still refuses.
         distinct = {normalize.content_key(
-            matched_by_id.get(id(it), str(it.get("text") or "")))
-            for _, _, it in hits}
+            m if m is not None else str(it.get("text") or ""))
+            for _, _, it, m in hits}
         if len(distinct) == 1:
-            target = hits[0][2]
+            _, _, target, matched = hits[0]
             # #691: a record can hold several values (evidence, note,
             # historical rows). The tombstone must key on the value the QUERY
             # named, never on an arbitrary field — rebind `text` to the
             # matched value before the hash below derives from it.
-            matched = matched_by_id.get(id(target))
             if matched is not None and matched != target.get("text"):
                 target = dict(target, text=matched)
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
             print(f"{label} {args.target!r}; candidates:")
-            for _, key, it in (hits or candidates):
-                print(f"  {it['id']}  [{key}] {it.get('text', '')}")
+            # A never-guess refusal is only useful if the user can make the
+            # choice: when the matched value differs from the display text,
+            # show it, or two candidates separated by their verdicts render
+            # as identical lines (#698 review).
+            rows = hits or [(s, k, it, None) for s, k, it in candidates]
+            for _, key, it, m in rows:
+                line = f"  {it['id']}  [{key}] {it.get('text', '')}"
+                if m is not None and m != it.get("text"):
+                    line += f" — matched: {m}"
+                print(line)
             print("forget by exact id: daimon forget <id>")
             return 1
     if getattr(args, "dry_run", False):
         _note_usage("forget:dry-run")
+        # #698 review: forget is irreversible and this preview is the only
+        # pre-deletion check. The deleters reach EVERY record whose any
+        # declared field folds to the value's key — including list fields the
+        # selector deliberately never offers — so the preview enumerates that
+        # reach non-destructively instead of naming only the selected target.
+        value_key = normalize.content_key(str(target.get("text") or ""))
+        ref_reach = sorted({str(row.get("refutation_id") or "")
+                            for row in refutations.events(project_dir=project)
+                            if value_key in refutations.row_content_keys(row)})
+        amend_reach = sorted({str(row.get("amendment_id") or "")
+                              for row in amendments.events(project_dir=project)
+                              if value_key in amendments.row_content_keys(row)})
         print(f"would forget {target['id']}: {target.get('text', '')}")
+        also = [rid for rid in ref_reach + amend_reach
+                if rid and rid != target["id"]]
+        if also:
+            print("value-keyed reach — also removed: " + ", ".join(also))
         return 0
     # #402: key the tombstone on the CANONICAL value (normalize.content_key),
     # not the raw bytes — so a later re-extraction of the same claim (different
