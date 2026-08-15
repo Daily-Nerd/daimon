@@ -5,6 +5,14 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0](https://github.com/Daily-Nerd/daimon/compare/v0.30.2...v0.31.0) (2026-08-15)
+
+
+### Features
+
+* **briefing:** pinned rulings reach every context surface, with the echo loop closed ([#702](https://github.com/Daily-Nerd/daimon/issues/702)) ([f61f10c](https://github.com/Daily-Nerd/daimon/commit/f61f10c9eed0cc1da1830579c75a79d5a400175e))
+* **refutations:** pinned rulings, the ledger's positive polarity with a human-only activation ceremony ([#700](https://github.com/Daily-Nerd/daimon/issues/700)) ([9272070](https://github.com/Daily-Nerd/daimon/commit/9272070c7ce8b33f5d6315b86b66f813ad88c7c5))
+
 ## [0.30.2](https://github.com/Daily-Nerd/daimon/compare/v0.30.1...v0.30.2) (2026-08-15)
 
 
