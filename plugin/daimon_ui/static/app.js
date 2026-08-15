@@ -378,7 +378,7 @@ import { state } from "./state.js";
         }
         sectionsEl.innerHTML = renderRefutationsView(data);
         toTop();
-        announce("Refutations loaded.");
+        announce("Rulings and refutations loaded.");
         wireWhyOpeners(sectionsEl);
       }).catch(function () {
         if (reqId !== state.requestId) return;

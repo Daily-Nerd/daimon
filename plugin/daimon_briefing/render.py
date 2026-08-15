@@ -153,10 +153,22 @@ def _print_handoff(handoff) -> None:
     print("")
 
 
-def render_brief(checkpoint, drift=None, teammates=None, handoff=None) -> None:
+def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
+                 project_dir=None) -> None:
     _print_handoff(handoff)
     b = briefing.build(checkpoint)
+    # #693: each path below performs exactly one ledger read — the LLM path
+    # reads inside briefing.render, every other path reads here. None
+    # (legacy callers) skips the read; an unknown project resolves to no
+    # ledger path anyway, so the guard saves the call, not a leak.
     if b is None:
+        rulings = (briefing.ruling_lines(project_dir)
+                   if project_dir is not None else [])
+        if rulings:
+            # #693: standing rulings exist before the first checkpoint does —
+            # a day-one ratification must not wait for a session to end.
+            print("\n".join(rulings))
+            print("")
         # Point at the real flow (#29): checkpoints come from the hooks; bare
         # `serialize` dead-ends (it needs a transcript path).
         print("No checkpoint yet — nothing to brief. Checkpoints are written "
@@ -169,19 +181,23 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None) -> None:
     # the hermes hook. Free-form LLM text can't be sectioned into rich panels, so when
     # it is active we print its narrative regardless of TTY.
     if config.llm_briefing():
-        rendered = briefing.render(checkpoint)  # tries LLM, falls back to deterministic
-        if rendered:
-            print(rendered)
-            _print_drift(drift)
-            _print_teammates(teammates)
-            return
+        # Tries LLM, falls back to deterministic; #693 rulings ride inside.
+        # Unconditional return: `b` is non-None here, so render() always
+        # yields text — a fall-through would double the ledger read below,
+        # and structure beats a comment at keeping that invariant.
+        print(briefing.render(checkpoint, project_dir=project_dir))
+        _print_drift(drift)
+        _print_teammates(teammates)
+        return
+    rulings = (briefing.ruling_lines(project_dir)
+               if project_dir is not None else [])
     # #204: degrade verbatim labels when the receipt can't be locally confirmed.
     # Cheap check (sidecar + byte match), computed once for both render paths.
     degraded = briefing.receipt_degraded(checkpoint)
     if not supports_rich():
-        print(briefing.render_plain(b, degraded))
+        print(briefing.render_plain(b, degraded, rulings))
     else:
-        _rich_brief(b, degraded)
+        _rich_brief(b, degraded, rulings)
     _print_drift(drift)
     _print_teammates(teammates)
 
@@ -214,7 +230,7 @@ def _print_drift(drift) -> None:
     )
 
 
-def _rich_brief(b: dict, degraded: bool = False) -> None:
+def _rich_brief(b: dict, degraded: bool = False, rulings=()) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -224,6 +240,14 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
     if degraded:
         # One header note (#204), parity with the plain path's embedded note.
         console.print(Text(briefing.DEGRADE_NOTE, style="bold red"))
+    if rulings:
+        # #693: parity with the plain path's top section — same lines, same
+        # order (rulings[0] is the header, promoted to the panel title).
+        body = Text()
+        for line in rulings[1:]:
+            body.append(f"{line}\n", style="bold")
+        console.print(Panel(body, title=rulings[0], border_style="cyan",
+                            title_align="left"))
     for key, title, style in _SECTIONS:
         items = b.get(key) or []
         if not items:
@@ -657,6 +681,21 @@ def _forget_hits_line(data: dict) -> str | None:
             f"re-assertion{'s' if n != 1 else ''}, most recent {ts}")
 
 
+def _ruling_echo_line(data: dict) -> str | None:
+    """#693: one line when the admission filter has dropped a ruling echo on
+    this install; silent otherwise. Its own counter, never folded into the
+    forget-suppression number — the echo rate is a different measurement."""
+    fh = data.get("forget_hits")
+    if not isinstance(fh, dict):
+        return None
+    n = fh.get("ruling_echo_count") or 0
+    if not n:
+        return None
+    return (f"ruling echo (this project): dropped {n} "
+            f"re-extraction{'s' if n != 1 else ''} of active ruling text "
+            "at admission")
+
+
 def _plugin_drift_line(pd: dict) -> str:
     """#554: name BOTH versions and the command that moves the stale half.
     "out of date" alone does not say which half, and the two are updated by
@@ -706,6 +745,9 @@ def _plain_status(data: dict) -> None:
     fh_line = _forget_hits_line(data)
     if fh_line:
         print(fh_line)  # #404: one line, only when a re-assertion was suppressed
+    re_line = _ruling_echo_line(data)
+    if re_line:
+        print(re_line)  # #693: one line, only when an echo was dropped
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -799,6 +841,9 @@ def _rich_status(data: dict) -> None:
     fh_line = _forget_hits_line(data)
     if fh_line:
         console.print(fh_line)  # #404: one line, only when a re-assertion was suppressed
+    re_line = _ruling_echo_line(data)
+    if re_line:
+        console.print(re_line)  # #693: one line, only when an echo was dropped
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

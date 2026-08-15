@@ -136,7 +136,10 @@ def run(session_id: str, messages, *, project, chat, deadline,
                 project, str(checkpoint.get("session_id") or ""))
         except Exception:  # keep the unmerged checkpoint, proceed to write
             pass
-    out = store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    # admit=True (#693): capture is one of the two admission paths — new
+    # cognitive content passes the ruling echo filter here.
+    out = store.write_checkpoint(session_id, checkpoint, project_dir=project,
+                                 admit=True)
     if out is None:
         # #421: the write boundary refused (kill switch) — nothing landed, so
         # there is nothing to ledger rejections against either.

@@ -138,7 +138,8 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/verification.jsonl",
             "store.append_verification", False, "exempt-no-plaintext",
             "none", audit_exempt=True),
-    # store.record_forget_hits: {ts, key} — "NEVER the text or any prefix".
+    # store.record_forget_hits: {ts, key, reason?} — "NEVER the text or any
+    # prefix"; reason (#693) is a closed-vocabulary code ("ruling-echo").
     Surface("checkpoints/{slug}/forget-hits.jsonl",
             "store.record_forget_hits", False, "exempt-no-plaintext",
             "none", audit_exempt=True),

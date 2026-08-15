@@ -162,7 +162,10 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         project = config.resolve_project_root(config.project_dir())
         checkpoint = store.read_latest(project_dir=project)
         if checkpoint is None:
-            return None
+            # #693: standing rulings exist before the first checkpoint does —
+            # a day-one ratification must reach the very next session.
+            rulings = briefing.ruling_lines(project)
+            return {"context": "\n".join(rulings)} if rulings else None
         # Withhold (#103 I1): this in-process injection path used to render the
         # RAW checkpoint, so a resolved item still auto-injected into every new
         # session's context — `daimon brief` already suppressed it, this hook
@@ -185,7 +188,11 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
                 checkpoint, store.corroborations(project_dir=project))
         except Exception:
             pass
-        text = briefing.render(checkpoint)
+        # #693: rulings are scoped to the RESOLVED project (never the raw
+        # process cwd). Note read_latest above keeps its global fallback, so
+        # the checkpoint may be another project's — the rulings are still
+        # this project's own.
+        text = briefing.render(checkpoint, project_dir=project)
         if not text:
             return None
         return {"context": text}

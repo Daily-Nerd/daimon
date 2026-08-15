@@ -33,8 +33,14 @@ def _refutations_payload(slug):
     this lane's vocabulary (✗, "Refutes") would invert them. A rulings lane
     is its own surface. Kept as a seam so a test can assert on the ROWS the
     endpoint serves rather than grep the source."""
-    return {"ok": True, "rows": refutations.listing(
-        polarity="refutation", project_dir=slug)}
+    return {"ok": True,
+            "rows": refutations.listing(
+                polarity="refutation", project_dir=slug),
+            # #693 PR 2: the rulings lane rides the same payload, its own
+            # polarity — the two lanes never mix, and neither call is ever
+            # unscoped.
+            "rulings": refutations.listing(
+                polarity="ruling", project_dir=slug)}
 
 
 class _Handler(BaseHTTPRequestHandler):

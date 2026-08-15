@@ -1042,9 +1042,70 @@ _redact_checkpoint = policy.redact_checkpoint
 _stamp_item_ids = policy.stamp_item_ids
 
 
+def _drop_ruling_echoes(checkpoint: dict, project_dir=None) -> list:
+    """#693: drop exact echoes of ACTIVE ruling text at the admission
+    boundary. The standing-rulings section renders into every session's
+    context, so the next extraction can mint the ruling back as a fresh
+    belief — a copy that decays, drifts, and double-renders. Note "next
+    extraction" includes carried items: capture re-admits what it carries,
+    so a belief admitted BEFORE its ruling was ratified is deduped at the
+    next capture — deliberate, counted, and logged like any other echo.
+    Whole-item drops ONLY (policy.drop_matching_items): a ruling carries no
+    deletion promise, so an item merely QUOTING the ruling keeps its quote,
+    its trust class, and its receipts — the forget gate's field scrubs are
+    the wrong tool here. The key set covers every form the briefing
+    actually renders — bare verdict, render-clipped, "§ "-prefixed, and
+    authority-suffixed lines — so the renderer and this filter cannot
+    disagree on "the same text". Paraphrase shadows are out of scope by
+    design — they decay as ordinary beliefs.
+
+    A COUNTED drop, never silent: each one is reason-coded on the hit
+    ledger (`ruling-echo`, its own counter and its own timestamp — the echo
+    rate stays an endogenous measurement) and logged as a content hash,
+    never the text. The WHOLE body fails open: no echo-filter failure of
+    any kind may cost the capture it observes."""
+    try:
+        # Function-local import: refutations imports store at module level,
+        # so the reverse edge must be deferred to call time.
+        from . import refutations
+        rows = refutations.listing(states={"active"}, polarity="ruling",
+                                   project_dir=project_dir)
+        keys = set()
+        for row in rows:
+            verdict = str(row.get("verdict") or "")
+            if not verdict:
+                continue
+            clipped = verdict[:refutations._MAX_RULING_TEXT]
+            bases = {verdict, clipped, clipped + "…"}
+            authored = row.get("text_authored_by")
+            if authored and authored != "human":
+                bases.update({f"{b}  [{authored}-written]" for b in set(bases)})
+            for base in bases:
+                keys.add(normalize.content_key(base))
+                keys.add(normalize.content_key(f"§ {base}"))
+        dropped = policy.drop_matching_items(checkpoint, keys)
+        if dropped:
+            record_forget_hits(dropped, project_dir, reason="ruling-echo")
+            for item in dropped:
+                # INFO, not WARNING: a stable ruling being re-minted every
+                # session is the expected, measured event this filter exists
+                # for — not an anomaly worth an alert per capture.
+                log.info(
+                    "ruling echo: item dropped at admission "
+                    "(content hash %s)",
+                    normalize.content_key(item.get("text") or ""))
+        return dropped
+    except Exception:
+        # Fail-open must still leave a trace: if this fires AFTER the drop
+        # mutated the checkpoint, the accounting above never ran.
+        log.debug("ruling echo filter failed open", exc_info=True)
+        return []
+
+
 def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
                      allow_disabled: bool = False,
-                     rotate: bool = True) -> Path | None:
+                     rotate: bool = True,
+                     admit: bool = False) -> Path | None:
     """Write the session checkpoint + the global latest pointer, and — when the
     project is known — the per-project latest pointer too. The global pointer is
     kept for backward compatibility (pre-routing consumers and the fallback).
@@ -1059,7 +1120,14 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     exception — the same never-fatal posture as the ledger appenders. The ONE
     exemption is `allow_disabled=True`, passed only by cli._cmd_forget's
     rewrite: the maintainer ratified that deletion must still work while
-    disabled (the deletion promise outranks "disabled writes nothing")."""
+    disabled (the deletion promise outranks "disabled writes nothing").
+
+    `admit=True` (#693) marks this write as an ADMISSION of new cognitive
+    content — passed ONLY by the two admission callers (capture.run, the
+    `write-checkpoint` stdin path) — and switches on the ruling echo filter.
+    Rewrite callers stay at the default: `daimon anchor` must not strip
+    previously-admitted items, and the forget rewrite must not retroactively
+    delete outside its own contract."""
     if config.is_disabled() and not allow_disabled:
         return None
     d = config.checkpoint_dir()
@@ -1090,6 +1158,8 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
         # #404: account each suppression on the telemetry ledger. Best-effort
         # (never fatal) — a hit record must never fail the capture it observes.
         record_forget_hits(forget_dropped, project_dir)
+    if admit:
+        _drop_ruling_echoes(checkpoint, project_dir)
     # Stamp project attribution the same idempotent way. Bucket pointers rotate
     # away after `history` writes, so pointer-derived attribution EXPIRES — a
     # session older than the pointer window would lose its project forever and
@@ -1742,11 +1812,16 @@ def _forget_hits_path(project_dir=None):
     return config.checkpoint_dir() / slug / _FORGET_HITS
 
 
-def record_forget_hits(items, project_dir=None) -> bool:
+def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
     """Append one row per capture-time forget suppression (#404): {ts, key}.
     Mirrors append_verification's contract — silent no-op under the kill switch
     or an unknown project, never fatal (a telemetry write must never fail a
     capture).
+
+    `reason` (#693): a non-empty value stamps each row and routes it to its
+    own counter in forget_hit_stats — a ruling-echo drop is a different
+    measurement from a forget suppression, and folding them together would
+    inflate the number the project already publishes.
 
     Records ONLY the canonical hash key + timestamp — NEVER the text or any
     prefix of it. forget's whole guarantee (#321) is that a forgotten value's
@@ -1767,7 +1842,10 @@ def record_forget_hits(items, project_dir=None) -> bool:
                 if not isinstance(item, dict):
                     continue
                 key = normalize.content_key(item.get("text") or "")
-                f.write(json.dumps({"ts": ts, "key": key}) + "\n")
+                row = {"ts": ts, "key": key}
+                if reason:
+                    row["reason"] = reason
+                f.write(json.dumps(row) + "\n")
         return True
     except OSError:
         return False
@@ -1780,8 +1858,15 @@ def forget_hit_stats(project_dir=None) -> dict:
     did the tombstone catch a re-assertion here". Count + timestamp only — the
     ledger holds no content to surface. Fails open to zeroes (missing/corrupt
     log, unknown project) — same posture as verification_counts and the
-    resolutions fold."""
-    out: dict = {"count": 0, "last_hit_at": None}
+    resolutions fold.
+
+    Reason-stamped rows (#693) count under their own key AND their own
+    timestamp — `ruling-echo` rows land in `ruling_echo_count` /
+    `ruling_echo_last_at`, never `count` / `last_hit_at`, so the published
+    forget-suppression number and the stamp printed beside it both stay
+    what they always measured."""
+    out: dict = {"count": 0, "ruling_echo_count": 0, "last_hit_at": None,
+                 "ruling_echo_last_at": None}
     path = _forget_hits_path(project_dir)
     if path is None:
         return out
@@ -1796,10 +1881,14 @@ def forget_hit_stats(project_dir=None) -> dict:
             continue
         if not isinstance(row, dict):
             continue
-        out["count"] += 1
+        if row.get("reason") == "ruling-echo":
+            count_key, ts_key = "ruling_echo_count", "ruling_echo_last_at"
+        else:
+            count_key, ts_key = "count", "last_hit_at"
+        out[count_key] += 1
         ts = row.get("ts")
-        if ts and (out["last_hit_at"] is None or ts > out["last_hit_at"]):
-            out["last_hit_at"] = ts
+        if ts and (out[ts_key] is None or ts > out[ts_key]):
+            out[ts_key] = ts
     return out
 
 
