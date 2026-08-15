@@ -5,6 +5,18 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.2](https://github.com/Daily-Nerd/daimon/compare/v0.30.1...v0.30.2) (2026-08-15)
+
+
+### Bug Fixes
+
+* **cli:** forget by value reaches every declared plaintext field of the refutation ledger ([#699](https://github.com/Daily-Nerd/daimon/issues/699)) ([6f09b93](https://github.com/Daily-Nerd/daimon/commit/6f09b9317743dd80243011cf66626633cb6eee35))
+
+
+### Documentation
+
+* correct amendments docstring contrasts and restructure daimon-end skill ([#696](https://github.com/Daily-Nerd/daimon/issues/696)) ([26a1a49](https://github.com/Daily-Nerd/daimon/commit/26a1a49c65677f3367dc384e0dd592654f5e5383))
+
 ## [0.30.1](https://github.com/Daily-Nerd/daimon/compare/v0.30.0...v0.30.1) (2026-08-15)
 
 
