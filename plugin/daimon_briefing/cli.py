@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, schema, serializer, store, teamsync, transcript, worldcheck
+from . import amendments, anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, schema, serializer, store, teamsync, transcript, worldcheck
 from . import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -510,7 +510,12 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         # scope as [carried]), so nothing further is done with them here.
         try:
             events = store.resolutions(project_dir=route)
-            checkpoint, withheld, _candidates = briefing.withhold(checkpoint, events)
+            # #691: verified/ratified amendments annotate their items —
+            # renderable() refuses candidates, so nothing unverified can
+            # reach the render through this argument. Same fail-open.
+            checkpoint, withheld, _candidates = briefing.withhold(
+                checkpoint, events,
+                amendments=amendments.renderable(project_dir=route))
         except Exception:
             withheld = []
             events = {}
@@ -1224,6 +1229,118 @@ def _cmd_refute_guard(args) -> int:
     return 0
 
 
+# ---- #691: amendment verbs — evidence-carrying state transitions ----
+
+
+def _amend_channel(args) -> str:
+    """The channel this invocation actually arrived through — the
+    `_refute_channel` contract restated for the amendment ledger (same
+    doctrine, its own error type so refusals stay per-surface)."""
+    if getattr(args, "by", None) == "agent":
+        return "cli-agent"
+    if not sys.stdin.isatty():
+        raise amendments.AmendmentError(
+            "this is the human path and there is no interactive terminal; "
+            "pass --by agent to record a candidate, or run it from a terminal")
+    return "cli-tty"
+
+
+def _cmd_amend_propose(args) -> int:
+    project = _resolve_project(args.project)
+    item_id = str(args.item_id or "").strip()
+    # Exact-id binding against the LIVE checkpoint only — an amendment
+    # describes an open item's state, so unlike forget it never reaches into
+    # prev-N surfaces, and unlike resolve it never fuzzy-matches: the id came
+    # off a rendered ` [id]` handle or it does not exist. Loop-shaped items
+    # only (#480's scope rule, restated): amending a settled decision or
+    # belief would invite exactly the state-rewriting on settled facts that
+    # BRIEFABLE_ITEM_KEYS exists to fence off, and `daimon loops` — the
+    # discovery surface this command's errors point at — lists only these.
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    live = {
+        str(item.get("id") or "")
+        for section, key in store._ITEM_LISTS
+        if key in briefing.BRIEFABLE_ITEM_KEYS
+        for item in ((checkpoint or {}).get(section) or {}).get(key) or []
+        if isinstance(item, dict)
+    }
+    live.discard("")
+    if item_id not in live:
+        _note_usage("amend:no-match")
+        print(f"no open-loop item with id {item_id!r} — amend targets open "
+              "questions and uncertainties; `daimon loops` lists them")
+        return 1
+    if store.is_resolved(store.resolutions(project_dir=project).get(item_id)):
+        _note_usage("amend:resolved")
+        print(f"{item_id} is already resolved — an amendment describes an "
+              "OPEN item; `daimon reverify` reopens one first")
+        return 1
+    try:
+        a_id = amendments.propose(
+            item_id=item_id, change=args.change, evidence=args.evidence,
+            channel=_amend_channel(args), note=args.note or "",
+            project_dir=project)
+    except amendments.AmendmentError as exc:
+        _note_usage("amend:refused")
+        print(f"amendment not recorded: {exc}")
+        return 1
+    record = amendments.get(a_id, project_dir=project)
+    state = record["state"] if record else "candidate"
+    _note_usage("amend:agent" if getattr(args, "by", None) == "agent"
+                else "amend")
+    print(f"amendment {a_id} recorded on {item_id}: {args.change} ({state})")
+    if state == "candidate":
+        # Same posture as refute add: an agent-authored candidate is never
+        # handed its own escalation command — verification is the transcript
+        # byte-check at session end, settlement is a human's.
+        print("  evidence is byte-checked against the transcript at session "
+              "end; a human settles it earlier with `daimon amend ratify` "
+              "or `daimon amend reject`")
+    return 0
+
+
+def _cmd_amend_verdict(args) -> int:
+    project = _resolve_project(args.project)
+    verb = args.amend_cmd
+    try:
+        channel = _amend_channel(args)
+        if verb == "ratify":
+            amendments.ratify(args.amendment_id, channel=channel,
+                              project_dir=project)
+        else:
+            amendments.reject(args.amendment_id, channel=channel,
+                              note=getattr(args, "note", None) or "",
+                              project_dir=project)
+    except amendments.AmendmentError as exc:
+        _note_usage(f"amend:{verb}:refused")
+        print(f"amendment {verb} refused: {exc}")
+        return 1
+    _note_usage(f"amend:{verb}")
+    record = amendments.get(args.amendment_id, project_dir=project)
+    print(f"{args.amendment_id}: {record['state'] if record else 'unknown'}")
+    return 0
+
+
+def _cmd_amend_list(args) -> int:
+    project = _resolve_project(args.project)
+    _note_usage("amend:list")
+    rows = sorted(
+        amendments.records(project_dir=project).values(),
+        key=lambda r: (r["state"] != "candidate",
+                       r.get("updated_at") or "", r["amendment_id"]))
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print("no amendments recorded for this project")
+        return 0
+    for r in rows:
+        quote = briefing._truncate_agent_claim(r.get("evidence"))
+        print(f'{r["amendment_id"]}  {r["state"]:<9} {r["item_id"]}  '
+              f'{r["change"]}: "{quote}"')
+    return 0
+
+
 def _relations_channel() -> str:
     """The observed write channel for a relation verdict.
 
@@ -1328,7 +1445,34 @@ def _cmd_forget(args) -> int:
                               "_texts": subjects})
         for ref_id, subjects in ledger_subjects.items()
     ]
-    if not isinstance(checkpoint, dict) and not ledger:
+    # #691: the amendment ledger is another plaintext store — evidence quotes
+    # and human notes. Same every-row posture as the refutation subjects
+    # above: a value can sit in any historical row of a record. The field
+    # walk is the module's OWN declaration (plaintext_values), never a
+    # hand-copied tuple, and `text` is the FIRST value (evidence before
+    # note) — the content hash downstream must never key on a note when the
+    # user named the evidence. `_target` carries the amended item's id so
+    # the fuzzy branch can drop amendment hits that merely orbit an item
+    # the query already matched.
+    amend_texts: dict[str, list[str]] = {}
+    amend_targets: dict[str, str] = {}
+    for row in amendments.events(project_dir=project):
+        # events() admits only rows whose amendment_id matched the id shape,
+        # so the key is present and non-empty by contract.
+        a_id = str(row["amendment_id"])
+        target_id = str(row.get("item_id") or "")
+        if target_id:
+            amend_targets.setdefault(a_id, target_id)
+        for value in amendments.plaintext_values(row):
+            amend_texts.setdefault(a_id, [])
+            if value not in amend_texts[a_id]:
+                amend_texts[a_id].append(value)
+    amend_pool = [
+        (None, "amendment", {"id": a_id, "text": texts[0], "_texts": texts,
+                             "_target": amend_targets.get(a_id, "")})
+        for a_id, texts in amend_texts.items()
+    ]
+    if not isinstance(checkpoint, dict) and not ledger and not amend_pool:
         print("no checkpoint for this project yet — nothing to forget")
         return 1
     # Every surface this project holds, not just the live checkpoint (#419
@@ -1346,7 +1490,7 @@ def _cmd_forget(args) -> int:
     # `r-<12 hex>`, so an exact-id lookup can legitimately hit both surfaces.
     # forget's never-guess contract decides it: an ambiguous id is refused, not
     # resolved by preferring a store.
-    candidates = items + ledger
+    candidates = items + ledger + amend_pool
     exact = [it for _, _, it in candidates if it["id"] == args.target]
     target = exact[0] if len(exact) == 1 else None
     if target is None:
@@ -1364,7 +1508,7 @@ def _cmd_forget(args) -> int:
 
         pools = [(pool, carry._generic_terms(
             [t for _, _, it in pool for t in _texts_of(it)]))
-            for pool in (items, ledger)]
+            for pool in (items, ledger, amend_pool)]
         hits = ([(s, k, it) for s, k, it in candidates if it["id"] == args.target]
                 if len(exact) > 1 else
                 [(s, k, it)
@@ -1372,6 +1516,18 @@ def _cmd_forget(args) -> int:
                  for s, k, it in pool
                  if any(carry._same_item(args.target, t, generic)
                         for t in _texts_of(it))])
+        # #691: an amendment's evidence is by construction ABOUT its item, so
+        # a query matching the item routinely fuzzy-matches the amendment too
+        # — a false-ambiguity surface, not a real second value. When an item
+        # hit exists, amendment hits that merely target one of the hit items
+        # are dropped: forgetting the item removes its amendments anyway
+        # (forget_item_id below), so nothing becomes unreachable.
+        item_hit_ids = {it["id"] for _, k, it in hits
+                        if k not in ("refutation", "amendment")}
+        if item_hit_ids:
+            hits = [(s, k, it) for s, k, it in hits
+                    if not (k == "amendment"
+                            and it.get("_target") in item_hit_ids)]
         # Ambiguity is about distinct VALUES, not hit count. The same sentence
         # carried by sibling ids, held on several surfaces, or held in both the
         # checkpoint and the refutation ledger is one thing to forget; #418
@@ -1382,6 +1538,27 @@ def _cmd_forget(args) -> int:
                     for _, _, it in hits}
         if len(distinct) == 1:
             target = hits[0][2]
+            # #691: an amendment record can hold several values (evidence,
+            # note, historical rows). The tombstone must key on the value
+            # the QUERY named, never on an arbitrary field — rebind `text`
+            # to the matched value before the hash below derives from it.
+            texts = target.get("_texts")
+            if isinstance(texts, list) and len(texts) > 1:
+                query_key = normalize.content_key(args.target)
+                matched = next(
+                    (t for t in texts
+                     if normalize.content_key(t) == query_key),
+                    None)
+                if matched is None:
+                    _, generic = next(
+                        (p for p in pools if target in [it for _, _, it in p[0]]),
+                        (None, carry._generic_terms(texts)))
+                    matched = next(
+                        (t for t in texts
+                         if carry._same_item(args.target, t, generic)),
+                        None)
+                if matched:
+                    target = dict(target, text=matched)
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
@@ -1425,15 +1602,23 @@ def _cmd_forget(args) -> int:
     # (store._stamp_item_ids). Removal is content removal, so every item
     # folding to the tombstoned key goes. Id kept in the predicate as a belt
     # for non-string text, which content_key canonicalizes to "".
+    spliced_ids = {str(target["id"] or "")}
     if isinstance(checkpoint, dict):
         for section, key in store._ITEM_LISTS:
             lst = (checkpoint.get(section) or {}).get(key)
             if isinstance(lst, list):
-                lst[:] = [i for i in lst
-                          if not (isinstance(i, dict)
-                                  and (i.get("id") == target["id"]
-                                       or normalize.content_key(i.get("text") or "")
-                                       == content_hash))]
+                doomed = [i for i in lst
+                          if isinstance(i, dict)
+                          and (i.get("id") == target["id"]
+                               or normalize.content_key(i.get("text") or "")
+                               == content_hash)]
+                # #691: every spliced sibling id, not only the named target —
+                # amendments are keyed by item id, and an amendment about a
+                # sibling holding the same value is plaintext ABOUT the
+                # forgotten content (the #418 sibling rule, extended to the
+                # ledger that references the siblings).
+                spliced_ids.update(str(i.get("id") or "") for i in doomed)
+                lst[:] = [i for i in lst if i not in doomed]
         # allow_disabled (#421): the ONE write_checkpoint call that may run under
         # the kill switch — the rewrite that makes the deletion real on disk.
         # rotate=False: rotation copies the CURRENT latest into prev-1 before
@@ -1477,6 +1662,18 @@ def _cmd_forget(args) -> int:
     # relations-ledger scan is what proves it reached the edges.
     forgotten_relations = relations.forget_item_id(
         target["id"], project_dir=project)
+    # #691: same value, another plaintext store — and unlike relations, amend
+    # rows DO carry prose, so records targeting a forgotten item (or any of
+    # its spliced siblings) go with it — their evidence may paraphrase the
+    # removed content — and records holding the value in any plaintext field
+    # go regardless of target.
+    spliced_ids.discard("")
+    forgotten_amendment_set = set(
+        amendments.forget_content_key(content_hash, project_dir=project))
+    for doomed_id in sorted(spliced_ids):
+        forgotten_amendment_set.update(
+            amendments.forget_item_id(doomed_id, project_dir=project))
+    forgotten_amendments = sorted(forgotten_amendment_set)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -1529,6 +1726,9 @@ def _cmd_forget(args) -> int:
     if forgotten_relations:
         surfaces.append(f"{len(forgotten_relations)} relation(s) "
                         f"({', '.join(forgotten_relations)})")
+    if forgotten_amendments:
+        surfaces.append(f"{len(forgotten_amendments)} amendment(s) "
+                        f"({', '.join(forgotten_amendments)})")
     print(f"forgot {target['id']} (content hash {content_hash}) — "
           f"removed from {' and '.join(surfaces) or 'no store'}; "
           "tombstone recorded")
@@ -1698,7 +1898,13 @@ def _cmd_loops(args) -> int:
         return 0
     try:
         events = store.resolutions(project_dir=project)
-        checkpoint, _, _ = briefing.withhold(checkpoint, events)
+        # #691: amendments ride along so the listing agrees with the
+        # briefing — an agent discovering targets here must see that an
+        # item is already amended, or its cheapest probe is a duplicate
+        # proposal.
+        checkpoint, _, _ = briefing.withhold(
+            checkpoint, events,
+            amendments=amendments.renderable(project_dir=project))
     except Exception:
         pass  # fail-open, same stance as _print_suppressed
     rows = []
@@ -1716,6 +1922,12 @@ def _cmd_loops(args) -> int:
                 # item carrying a still-pending, unverified agent claim
                 # (briefing.withhold's transient stamp) is marked here too.
                 text += " (agent claim pending)"
+            amend_stamp = item.get("_amend")
+            if isinstance(amend_stamp, dict):
+                n = (len(amend_stamp.get("rows") or [])
+                     + (amend_stamp.get("overflow") or 0))
+                if n:
+                    text += f" (amended ×{n})"
             rows.append((item["id"], key, text, briefing._mark(item)))
     if not rows:
         print("no open loops")
@@ -4251,6 +4463,63 @@ def build_parser() -> argparse.ArgumentParser:
                           help="print nothing when no active refutation matches")
     pr_guard.set_defaults(func=_cmd_refute_guard)
 
+    p_amend = sub.add_parser(
+        "amend",
+        help="record an evidence-carrying state transition on a briefed item (#691)",
+        epilog="Examples:\n"
+               "  daimon amend o-1a2b3c4d5e6f --change progressed "
+               "--evidence 'the PR merged' --by agent\n"
+               "  daimon amend ratify a-0f1e2d3c4b5a\n",
+    )
+    amend_sub = p_amend.add_subparsers(dest="amend_cmd", required=True)
+    amend_sub.add_parser = functools.partial(
+        amend_sub.add_parser, formatter_class=fmt)
+
+    pa_prop = amend_sub.add_parser(
+        "propose",
+        help="propose an amendment; agent proposals stay candidates until "
+             "the session-end byte-check or a human verdict")
+    pa_prop.add_argument("item_id",
+                         help="exact item id from a briefing/loops handle")
+    pa_prop.add_argument(
+        "--change", required=True, choices=sorted(amendments.CHANGES),
+        help="the typed transition; the closed vocabulary is the render bound")
+    pa_prop.add_argument(
+        "--evidence", required=True,
+        help="verbatim transcript quote backing the change; byte-checked "
+             "against this session's transcript at session end")
+    pa_prop.add_argument("--note",
+                         help="short context; human channel only")
+    pa_prop.add_argument("--by", choices=["agent"], default=None,
+                         help="declare yourself an agent; omit it only from "
+                              "an interactive terminal, which is the human path")
+    pa_prop.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_prop.set_defaults(func=_cmd_amend_propose)
+
+    pa_ratify = amend_sub.add_parser(
+        "ratify", help="activate a candidate or verified amendment as a human decision")
+    pa_ratify.add_argument("amendment_id", help="exact a-… id")
+    pa_ratify.add_argument("--by", choices=["agent"], default=None,
+                           help="declare yourself an agent; ratification then "
+                                "refuses, because it requires a human channel")
+    pa_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_ratify.set_defaults(func=_cmd_amend_verdict)
+
+    pa_reject = amend_sub.add_parser(
+        "reject", help="reject an amendment with a reason, as a human decision")
+    pa_reject.add_argument("amendment_id", help="exact a-… id")
+    pa_reject.add_argument("--note", help="why it is wrong; kept on the record")
+    pa_reject.add_argument("--by", choices=["agent"], default=None,
+                           help="declare yourself an agent; rejection then "
+                                "refuses, because it requires a human channel")
+    pa_reject.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_reject.set_defaults(func=_cmd_amend_verdict)
+
+    pa_list = amend_sub.add_parser("list", help="list project amendments, candidates first")
+    pa_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_list.add_argument("--json", action="store_true", help="machine-readable output")
+    pa_list.set_defaults(func=_cmd_amend_list)
+
     p_relations = sub.add_parser(
         "relations",
         help="inspect and adjudicate typed item relations (#678, shadow mode)",
@@ -4584,6 +4853,14 @@ def main(argv=None) -> int:
         if tok == "--slug":
             argv[i:i + 2] = [f"--slug={argv[i + 1]}"]
             break
+
+    # #691: `daimon amend <item-id> …` is the documented propose spelling;
+    # argparse subcommands need the verb word, so fuse it pre-parse. Only an
+    # item-id-shaped second token is rewritten — verbs and ids cannot collide
+    # (no verb matches the id shape).
+    if (len(argv) > 1 and argv[0] == "amend"
+            and amendments._ITEM_ID_RE.fullmatch(argv[1])):
+        argv.insert(1, "propose")
 
     args = parser.parse_args(argv)
     return args.func(args)

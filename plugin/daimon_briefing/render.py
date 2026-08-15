@@ -288,6 +288,43 @@ def _rich_brief(b: dict, degraded: bool = False) -> None:
                     f"    confirm: daimon resolve {item_id} --status resolved\n"
                     f"    reject: daimon reverify {item_id}\n",
                     style="yellow")
+            amends = i.get("_amend")
+            if isinstance(amends, dict):
+                # #691: parity with briefing._line's amend annotation, same
+                # repeated-here reasoning as the blocks above. Two frames:
+                # human-ratified renders settled, quote-verified renders as
+                # a flagged unconfirmed agent claim with confirm/reject.
+                rows = amends.get("rows")
+                for amend in rows if isinstance(rows, list) else []:
+                    if not isinstance(amend, dict):
+                        continue
+                    change = str(amend.get("change") or "")
+                    aq = briefing._truncate_agent_claim(amend.get("quote"))
+                    a_id = amend.get("id") or "?"
+                    if amend.get("state") == "ratified":
+                        by = (", agent-proposed"
+                              if amend.get("by") == "agent" else "")
+                        flag = (f'    ↷ amended — {change} '
+                                f'({amend.get("label")}{by}): "{aq}"\n')
+                        note = str(amend.get("note") or "").strip()
+                        if note:
+                            nq = briefing._truncate_agent_claim(note)
+                            flag += f"    note: {nq}\n"
+                        body.append(flag, style="cyan")
+                    else:
+                        role = str(amend.get("role") or "").strip()
+                        body.append(
+                            f'    ⚠ agent-proposed amendment — {change} '
+                            f'(quote-verified, role: {role}), unconfirmed: '
+                            f'"{aq}"\n'
+                            f"    confirm: daimon amend ratify {a_id}\n"
+                            f"    reject: daimon amend reject {a_id}\n",
+                            style="yellow")
+                overflow = amends.get("overflow")
+                if isinstance(overflow, int) and overflow > 0:
+                    body.append(
+                        f"    … {overflow} earlier amendment(s) — "
+                        f"daimon amend list\n", style="dim")
         if key == "decisions":
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:
@@ -1360,6 +1397,18 @@ def render_privacy_audit(results: list[dict]) -> None:
                   f" {led['rows']} row(s), {led['bytes'] / 1024:.0f} KB —"
                   " append-only negative knowledge; forget reaches it by"
                   " value, nothing reaps it by age")
+        amd = r.get("amendments") or {}
+        if amd.get("rows"):
+            # #691: the growth measurement the surface registry promises —
+            # printed, not just computed, so growth is never silent. Same
+            # containment caveat as the event-note line: forget matches a
+            # WHOLE value, and a quote merely containing one is invisible
+            # to the hash scan.
+            print(f"  amendment ledger: {amd['records']} record(s) in"
+                  f" {amd['rows']} row(s), {amd['bytes'] / 1024:.0f} KB —"
+                  " forget reaches it by value (whole-value match) and by"
+                  " target item; quotes merely CONTAINING a forgotten value"
+                  " are beyond the hash scan")
         ws = r.get("windsurf") or {}
         if ws.get("entries"):
             age = (f", oldest {ws['oldest_days']:.1f}d"

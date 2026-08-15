@@ -73,7 +73,8 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, config, policy, refutations, relations, store, teamsync
+from daimon_briefing import (amendments, cli, config, policy, refutations,
+                             relations, store, teamsync)
 
 from tests.conftest import FIXTURES, FakeChat
 import pytest as _pytest
@@ -446,6 +447,29 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_refute_guard():
         run(["refute", "guard", "revisit", "#502"], 0)
 
+    def r_amend_propose():
+        # Runs BEFORE r_resolve in the recipe order: propose binds against
+        # the LIVE unresolved item, and _T_KEEP is resolved later.
+        evidence = "the follow-up PR merged"
+        run(["amend", ctx["ids"][_Q1], "--change", "progressed",
+             "--evidence", evidence, "--by", "agent"], 0)
+        ctx["amendment_id"] = amendments.make_id(
+            ctx["ids"][_Q1], "progressed", evidence)
+
+    def r_amend_ratify():
+        run(["amend", "ratify", ctx["amendment_id"]], 0)
+
+    def r_amend_reject():
+        evidence = "the scope moved to a follow-up"
+        run(["amend", ctx["ids"][_Q1], "--change", "changed",
+             "--evidence", evidence, "--by", "agent"], 0)
+        run(["amend", "reject",
+             amendments.make_id(ctx["ids"][_Q1], "changed", evidence),
+             "--note", "wrong item"], 0)
+
+    def r_amend_list():
+        run(["amend", "list"], 0)
+
     def _seed_relation():
         # Proposals are not CLI-exposed (lab/serializer writers only), so the
         # verdict drives seed one candidate through the module seam — the
@@ -605,6 +629,10 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("refute", "list"): r_refute_list,
         ("refute", "search"): r_refute_search,
         ("refute", "guard"): r_refute_guard,
+        ("amend", "propose"): r_amend_propose,
+        ("amend", "ratify"): r_amend_ratify,
+        ("amend", "reject"): r_amend_reject,
+        ("amend", "list"): r_amend_list,
         ("relations", "list"): r_relations_list,
         ("relations", "show"): r_relations_show,
         ("relations", "confirm"): r_relations_confirm,

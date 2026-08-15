@@ -180,6 +180,19 @@ that is world-check territory, not a resolve claim: run
 `daimon reverify <id> --evidence "<what you checked>"` to assert a carried
 item is still true and reset its staleness clock. `forget` stays human-only.
 
+## Amending loops
+
+Advanced-but-open loops take `daimon amend`:
+
+```
+daimon amend <id> --change progressed|blocked|changed \
+  --evidence "<quote>" --by agent
+```
+
+Verbatim contiguous span only, byte-checked at session end; renders as an
+unconfirmed agent claim until a human settles it. `amend ratify`/`reject`
+are human-only: print the command, never run it.
+
 ## Handing off
 
 A checkpoint holds what HAPPENED, not what you INTENDED. Before ending with
