@@ -11,14 +11,26 @@ restart inside that window, the next session briefs from the **previous** sessio
 stale checkpoint.
 
 This skill closes that window: the **live** session writes its own checkpoint now,
-from state it still holds. It is **provisional, belt-and-suspenders** — the
-automatic reconstruction still runs and **supersedes** this one (rotation keeps
-this as a `prev` pointer). So it does not need to be perfect to be useful, and it
-**never replaces** the automatic path.
+from state it still holds. It is provisional and **never replaces** the automatic
+path — the reconstruction still runs, supersedes this checkpoint, and keeps it as
+a `prev` pointer. So it does not need to be perfect to be useful.
 
 ## What to do when invoked
 
-1. **Emit a checkpoint JSON** from your in-context knowledge of THIS session,
+1. **Resolve closed loops FIRST.** If any briefed loop was closed this session,
+   record it before writing the checkpoint:
+
+   ```bash
+   daimon resolve <id> --by agent --evidence "<exact contiguous transcript quote>"
+   ```
+
+   (See the daimon-briefing skill's "Closing loops" section for the full
+   quote-discipline rule.) The CLI answers `claim recorded ... pending
+   verification at session end` — that is the expected output, not a failure:
+   the resolution is a provisional claim, byte-checked against the transcript
+   when the session ends.
+
+2. **Emit a checkpoint JSON** from your in-context knowledge of THIS session,
    conforming exactly to the schema:
 
    ```json
@@ -44,20 +56,16 @@ this as a `prev` pointer). So it does not need to be perfect to be useful, and i
    state may have changed *outside* the AI session (a PR you'll merge, a deploy) —
    these surface first in the briefing.
 
-2. **HONESTY RULE (load-bearing).** Mark `trust: "verbatim"` and include a `quote`
-   ONLY if you can reproduce the EXACT transcript text. Anything from an earlier,
+   Volume: 5–10 items per list; prefer the ones a fresh session would get wrong.
+
+3. **HONESTY RULE (load-bearing).** Quote only what you can reproduce exactly —
+   an honest quote helps the later merge with the automatic reconstruction, and
+   this path has no transcript to check against, so the CLI records every item
+   as `inferred` either way (#511). Anything from an earlier,
    **compacted/summarized** part of the session you can no longer quote verbatim →
    `trust: "inferred"`, no `quote`. Do not fabricate quotes.
 
-   Know what the code does with it (#511): this path has no transcript to check
-   your quote against, so the CLI **records every item as `inferred`** regardless
-   of the trust you claim — the quote is kept as a claim, it just earns no
-   verbatim mark. Byte-verified `verbatim` comes only from the automatic
-   full-transcript reconstruction that supersedes this checkpoint. Still follow
-   the rule above: an honest quote helps the later merge; a fabricated one is
-   noise either way.
-
-3. **Write it** via the CLI (reads JSON on stdin, validates the schema, routes to
+4. **Write it** via the CLI (reads JSON on stdin, validates the schema, routes to
    this project + global + a per-session file, atomically, with rotation). Write
    the JSON to a temp file and pipe it:
 
@@ -68,17 +76,12 @@ this as a `prev` pointer). So it does not need to be perfect to be useful, and i
    It prints `wrote checkpoint: <path> (source: introspection)`. If it reports a
    schema-validation error, fix the JSON and retry — do not store garbage.
 
-4. **Confirm** to the user with the printed checkpoint path.
+5. **Confirm** to the user with the printed checkpoint path.
 
 ## Rules
 
-- Before writing, consider whether any briefed loop was closed this session
-  — if so, resolve it with evidence: `daimon resolve <id> --by agent
-  --evidence "<exact contiguous transcript quote>"` (see the daimon-briefing
-  skill's "Closing loops" section for the full quote-discipline rule).
 - **Write-only.** Do NOT exit/quit the session — that is the user's action.
-- **Do not remove or disable the automatic hook.** This accelerates; it never
-  replaces. The reconstruction's verbatim fidelity is still the authoritative
-  source once it lands.
+- **Do not remove or disable the automatic hook.** The reconstruction's verbatim
+  fidelity is the authoritative source once it lands.
 - Routing/validation/atomic-write live in the CLI (`write-checkpoint`) — never
   hand-write checkpoint files or duplicate store logic.
