@@ -5,6 +5,18 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.1](https://github.com/Daily-Nerd/daimon/compare/v0.30.0...v0.30.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* **serializer:** strip model-supplied pinned; the flag is code-owned ([#690](https://github.com/Daily-Nerd/daimon/issues/690)) ([4c81e2b](https://github.com/Daily-Nerd/daimon/commit/4c81e2b27b03403301e5b0f77eea4c7b2e31e30d))
+
+
+### Documentation
+
+* **site:** reference pages for the viewer and the relations verbs ([#686](https://github.com/Daily-Nerd/daimon/issues/686)) ([9d22658](https://github.com/Daily-Nerd/daimon/commit/9d22658642fc8770519352f88f69c77df3fe4db7))
+
 ## [0.30.0](https://github.com/Daily-Nerd/daimon/compare/v0.29.0...v0.30.0) (2026-08-13)
 
 
