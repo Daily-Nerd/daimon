@@ -655,15 +655,15 @@ def test_only_declared_consumers_import_relations():
 
     import daimon_briefing
     package = pathlib.Path(daimon_briefing.__file__).parent
-    allowed = {"privacy.py", "cli.py"}
+    allowed = {"privacy.py", "cli/__init__.py"}
     import_re = re.compile(
-        r"^\s*(?:from\s+\.\s+import\s+.*\brelations\b"
+        r"^\s*(?:from\s+\.\.?\s+import\s+.*\brelations\b"
         r"|from\s+(?:daimon_briefing\.)?relations\s+import"
         r"|import\s+(?:daimon_briefing\.)?relations\b)", re.MULTILINE)
     importers = set()
-    for module in package.glob("*.py"):
+    for module in package.rglob("*.py"):
         if module.name == "relations.py":
             continue
         if import_re.search(module.read_text(encoding="utf-8")):
-            importers.add(module.name)
+            importers.add(module.relative_to(package).as_posix())
     assert importers == allowed
