@@ -546,16 +546,197 @@ def test_audit_privacy_flags_amendment_residue(project):
     row.update({"item_id": "u-abcdefabcdef", "change": "changed",
                 "evidence": "ship the fix"})
     assert amendments.append(row, project_dir=project)
+    # A row still TARGETING the forgotten item is the missed-scrub signal
+    # the id check exists for; junk lines must not sink the scan.
+    target_row = amendments._stamp("proposed", "a-feedfeedfeed", "cli-agent")
+    target_row.update({"item_id": ITEM, "change": "blocked",
+                       "evidence": "unrelated words entirely"})
+    assert amendments.append(target_row, project_dir=project)
+    path = amendments._path(project)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("junk line\n[1, 2]\n")
     result = privacy.audit_project(project_dir=project)
     surfaces = {f["surface"] for f in result["findings"]}
     assert "amendment-ledger" in surfaces
-    assert result["amendments"]["rows"] >= 1
+    assert "amendment-target" in surfaces
+    assert result["amendments"]["rows"] >= 2
 
 
 def test_audit_privacy_no_slug_shape_includes_amendments():
     from daimon_briefing import privacy
     result = privacy.audit_project(project_dir="")
     assert result["amendments"] == {"records": 0, "rows": 0, "bytes": 0}
+
+
+def _amend_payload(state="verified", **over):
+    payload = {"id": "a-abcabcabcabc", "change": "progressed",
+               "quote": "the PR merged this morning",
+               "label": ("quote-verified" if state == "verified"
+                         else "ratified (interactive)"),
+               "role": "assistant" if state == "verified" else "",
+               "state": state, "by": "agent", "note": ""}
+    payload.update(over)
+    return payload
+
+
+def test_rich_brief_renders_verified_amendment_flagged(capsys):
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+    b = {"external": [], "open_loops": [
+        {"id": ITEM, "text": "ship the fix", "trust": "inferred",
+         "_amend": {"rows": [_amend_payload()], "overflow": 2}}],
+        "decisions": [], "active_topic": None, "beliefs": [],
+        "uncertainties": []}
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "agent-proposed amendment" in out
+    assert "unconfirmed" in out
+    assert "confirm: daimon amend ratify a-abcabcabcabc" in out
+    assert "2 earlier amendment(s)" in out
+
+
+def test_rich_brief_renders_ratified_amendment_settled(capsys):
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+    b = {"external": [], "open_loops": [
+        {"id": ITEM, "text": "ship the fix", "trust": "inferred",
+         "_amend": {"rows": [_amend_payload(
+             state="ratified", note="took the alternate route")],
+             "overflow": 0}}],
+        "decisions": [], "active_topic": None, "beliefs": [],
+        "uncertainties": []}
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert "amended" in out
+    assert "agent-proposed" in out
+    assert "took the alternate route" in out
+    assert "unconfirmed" not in out
+
+
+def test_stamp_refuses_bad_event_id_and_channel():
+    with pytest.raises(amendments.AmendmentError):
+        amendments._stamp("exploded", "a-abcabcabcabc", "cli-tty")
+    with pytest.raises(amendments.AmendmentError):
+        amendments._stamp("proposed", "not-an-id", "cli-tty")
+    with pytest.raises(amendments.AmendmentError):
+        amendments._stamp("proposed", "a-abcabcabcabc", "carrier-pigeon")
+
+
+def test_propose_refused_while_disabled(project, monkeypatch):
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    with pytest.raises(amendments.AmendmentError):
+        _propose(project)
+
+
+def test_verdicts_on_unknown_amendment_refused(project):
+    with pytest.raises(amendments.AmendmentError):
+        amendments.verify("a-feedfeedfeed", role="user", project_dir=project)
+    with pytest.raises(amendments.AmendmentError):
+        amendments.ratify("a-feedfeedfeed", channel="cli-tty",
+                          project_dir=project)
+    with pytest.raises(amendments.AmendmentError):
+        amendments.reject("a-feedfeedfeed", channel="cli-tty",
+                          project_dir=project)
+
+
+def test_events_tolerates_malformed_and_foreign_rows(project):
+    a_id = _propose(project)
+    path = amendments._path(project)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("not json at all\n")
+        handle.write('{"event": "sabotage", "amendment_id": "a-abcabcabcabc"}\n')
+        handle.write('["a list, not a dict"]\n')
+    rows = amendments.events(project_dir=project)
+    assert [r["amendment_id"] for r in rows] == [a_id]
+
+
+def test_forget_paths_are_noops_on_missing_ledger(project):
+    assert amendments.forget_content_key("deadbeef",
+                                         project_dir=project) == []
+    assert amendments.forget_item_id(ITEM, project_dir=project) == []
+
+
+def test_forget_content_key_no_match_leaves_ledger_untouched(project):
+    a_id = _propose(project)
+    assert amendments.forget_content_key("0" * 16,
+                                         project_dir=project) == []
+    assert amendments.get(a_id, project_dir=project) is not None
+
+
+def test_verdicts_refused_when_write_fails(project, monkeypatch):
+    a_id = _propose(project)
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    with pytest.raises(amendments.AmendmentError):
+        amendments.ratify(a_id, channel="cli-tty", project_dir=project)
+    with pytest.raises(amendments.AmendmentError):
+        amendments.reject(a_id, channel="cli-tty", project_dir=project)
+    with pytest.raises(amendments.AmendmentError):
+        amendments.verify(a_id, role="user", project_dir=project)
+
+
+def test_events_unreadable_ledger_reads_empty(project, tmp_path):
+    from daimon_briefing import config, store
+    slug = store.project_slug(project)
+    path = config.checkpoint_dir() / slug / "amendments.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()  # a directory where a file belongs
+    assert amendments.events(project_dir=project) == []
+    assert amendments.forget_content_key("deadbeef",
+                                         project_dir=project) == []
+
+
+def test_fold_tolerates_garbage_order_values(project):
+    row = amendments._stamp("proposed", "a-abcabcabcabc", "cli-agent")
+    row.update({"item_id": ITEM, "change": "progressed", "evidence": "q",
+                "order": "not-a-number"})
+    assert amendments.append(row, project_dir=project)
+    assert "a-abcabcabcabc" in amendments.records(project_dir=project)
+
+
+def test_audit_privacy_marks_unreadable_amendment_ledger(project):
+    from daimon_briefing import config, privacy, store
+    slug = store.project_slug(project)
+    path = config.checkpoint_dir() / slug / "amendments.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()  # a directory where a file belongs -> unreadable ledger
+    result = privacy.audit_project(project_dir=project)
+    assert str(path) in result["unscannable"]
+
+
+def test_append_refuses_unknown_project():
+    row = amendments._stamp("proposed", "a-abcabcabcabc", "cli-agent")
+    row.update({"item_id": ITEM, "change": "progressed", "evidence": "q"})
+    assert amendments.append(row, project_dir="") is False
+
+
+def test_fold_ignores_duplicate_live_proposal_and_orphan_events(project):
+    a_id = _propose(project)
+    duplicate = amendments._stamp("proposed", a_id, "cli-agent")
+    duplicate.update({"item_id": ITEM, "change": "progressed",
+                      "evidence": "a different retelling"})
+    orphan = amendments._stamp("verified", "a-feedfeedfeed", "mechanical")
+    orphan["evidence_role"] = "user"
+    assert amendments.append(duplicate, project_dir=project)
+    assert amendments.append(orphan, project_dir=project)
+    records = amendments.records(project_dir=project)
+    assert records[a_id]["evidence"] == "the PR merged this morning"
+    assert "a-feedfeedfeed" not in records
+
+
+def test_rewrite_preserves_foreign_rows_byte_identical(project):
+    from daimon_briefing import normalize
+    a_id = _propose(project)
+    future_row = '{"event": "from-a-future-daimon", "amendment_id": "a-0f0f0f0f0f0f", "payload": "kept verbatim"}'
+    path = amendments._path(project)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n" + future_row + "\nnot json\n")
+    removed = amendments.forget_content_key(
+        normalize.content_key("the PR merged this morning"),
+        project_dir=project)
+    assert removed == [a_id]
+    survivors = path.read_text(encoding="utf-8")
+    assert future_row in survivors
+    assert "not json" not in survivors
 
 
 def test_torn_last_line_costs_only_the_torn_row(project):
