@@ -155,7 +155,7 @@ def test_forget_hit_stats_survives_read_error(tmp_checkpoint_dir, monkeypatch):
     p = store._forget_hits_path(_A)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.mkdir()  # a directory -> read_text raises OSError -> fail open
-    assert store.forget_hit_stats(project_dir=_A) == {"count": 0, "last_hit_at": None}
+    assert store.forget_hit_stats(project_dir=_A) == {"count": 0, "ruling_echo_count": 0, "last_hit_at": None}
 
 
 def test_unknown_project_is_a_quiet_noop(tmp_checkpoint_dir):
@@ -163,7 +163,7 @@ def test_unknown_project_is_a_quiet_noop(tmp_checkpoint_dir):
     # fails open (same posture as verification_counts / the events fold).
     assert store._forget_hits_path("") is None
     assert store.record_forget_hits([{"text": _S}], project_dir="") is False
-    assert store.forget_hit_stats(project_dir="") == {"count": 0, "last_hit_at": None}
+    assert store.forget_hit_stats(project_dir="") == {"count": 0, "ruling_echo_count": 0, "last_hit_at": None}
 
 
 def test_forgotten_key_lifted_by_reopen(tmp_checkpoint_dir, monkeypatch):

@@ -404,7 +404,11 @@ def _cmd_write_checkpoint(args) -> int:
     serializer.downgrade_unverifiable_verbatim(checkpoint)
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
-    out = store.write_checkpoint(session_id, checkpoint, project_dir=_resolve_project(args.project))
+    # admit=True (#693): the stdin path is the second admission caller — a
+    # model-authored checkpoint passes the ruling echo filter like capture's.
+    out = store.write_checkpoint(session_id, checkpoint,
+                                 project_dir=_resolve_project(args.project),
+                                 admit=True)
     if out is None:  # #421: write boundary refused (kill switch)
         print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
               file=sys.stderr)

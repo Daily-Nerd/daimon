@@ -672,6 +672,21 @@ def _forget_hits_line(data: dict) -> str | None:
             f"re-assertion{'s' if n != 1 else ''}, most recent {ts}")
 
 
+def _ruling_echo_line(data: dict) -> str | None:
+    """#693: one line when the admission filter has dropped a ruling echo on
+    this install; silent otherwise. Its own counter, never folded into the
+    forget-suppression number — the echo rate is a different measurement."""
+    fh = data.get("forget_hits")
+    if not isinstance(fh, dict):
+        return None
+    n = fh.get("ruling_echo_count") or 0
+    if not n:
+        return None
+    return (f"ruling echo (this project): dropped {n} "
+            f"re-extraction{'s' if n != 1 else ''} of active ruling text "
+            "at admission")
+
+
 def _plugin_drift_line(pd: dict) -> str:
     """#554: name BOTH versions and the command that moves the stale half.
     "out of date" alone does not say which half, and the two are updated by
@@ -721,6 +736,9 @@ def _plain_status(data: dict) -> None:
     fh_line = _forget_hits_line(data)
     if fh_line:
         print(fh_line)  # #404: one line, only when a re-assertion was suppressed
+    re_line = _ruling_echo_line(data)
+    if re_line:
+        print(re_line)  # #693: one line, only when an echo was dropped
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -814,6 +832,9 @@ def _rich_status(data: dict) -> None:
     fh_line = _forget_hits_line(data)
     if fh_line:
         console.print(fh_line)  # #404: one line, only when a re-assertion was suppressed
+    re_line = _ruling_echo_line(data)
+    if re_line:
+        console.print(re_line)  # #693: one line, only when an echo was dropped
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")
