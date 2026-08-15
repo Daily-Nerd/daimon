@@ -111,11 +111,16 @@ SURFACES: tuple[Surface, ...] = (
     #    go with it — unlike relations, these rows carry prose that can
     #    paraphrase the removed content). Never audit_exempt: the audit
     #    hashes the module's own _PLAINTEXT_FIELDS declaration and checks
-    #    target ids against tombstones (privacy.audit_project). No age
+    #    target ids against tombstones (privacy.audit_project). Honest
+    #    limit, stated because this ledger's defining field is a VERBATIM
+    #    QUOTE: forget and the audit match whole values, so a quote merely
+    #    CONTAINING a forgotten value is beyond the hash scan — the same
+    #    stated limitation as event notes, but it is this surface's normal
+    #    shape rather than its edge case (the render note says so). No age
     #    reaper: an amendment is lifecycle evidence for a LIVE item and
     #    falls out of every render surface the moment its item resolves or
-    #    is forgotten; the audit reports record/row/byte counts so growth
-    #    is measured, never silent. --
+    #    is forgotten; the audit computes AND prints record/row/byte counts
+    #    (render_privacy_audit) so growth is measured, never silent. --
     Surface("checkpoints/{slug}/amendments.jsonl", "amendments.append",
             True, "rewrite", "forget"),
     # store.append_verification: "a POINTER and a REASON CODE, never the

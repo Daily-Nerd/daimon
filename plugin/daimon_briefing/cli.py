@@ -1251,19 +1251,24 @@ def _cmd_amend_propose(args) -> int:
     # Exact-id binding against the LIVE checkpoint only — an amendment
     # describes an open item's state, so unlike forget it never reaches into
     # prev-N surfaces, and unlike resolve it never fuzzy-matches: the id came
-    # off a rendered ` [id]` handle or it does not exist.
+    # off a rendered ` [id]` handle or it does not exist. Loop-shaped items
+    # only (#480's scope rule, restated): amending a settled decision or
+    # belief would invite exactly the state-rewriting on settled facts that
+    # BRIEFABLE_ITEM_KEYS exists to fence off, and `daimon loops` — the
+    # discovery surface this command's errors point at — lists only these.
     checkpoint = store.read_latest(project_dir=project, fallback=False)
     live = {
         str(item.get("id") or "")
         for section, key in store._ITEM_LISTS
+        if key in briefing.BRIEFABLE_ITEM_KEYS
         for item in ((checkpoint or {}).get(section) or {}).get(key) or []
         if isinstance(item, dict)
     }
     live.discard("")
     if item_id not in live:
         _note_usage("amend:no-match")
-        print(f"no live item with id {item_id!r} — `daimon loops` lists "
-              "addressable open items")
+        print(f"no open-loop item with id {item_id!r} — amend targets open "
+              "questions and uncertainties; `daimon loops` lists them")
         return 1
     if store.is_resolved(store.resolutions(project_dir=project).get(item_id)):
         _note_usage("amend:resolved")
@@ -1440,20 +1445,31 @@ def _cmd_forget(args) -> int:
                               "_texts": subjects})
         for ref_id, subjects in ledger_subjects.items()
     ]
-    # #691: the amendment ledger is a third plaintext store — evidence quotes
+    # #691: the amendment ledger is another plaintext store — evidence quotes
     # and human notes. Same every-row posture as the refutation subjects
-    # above: a value can sit in any historical row of a record.
+    # above: a value can sit in any historical row of a record. The field
+    # walk is the module's OWN declaration (plaintext_values), never a
+    # hand-copied tuple, and `text` is the FIRST value (evidence before
+    # note) — the content hash downstream must never key on a note when the
+    # user named the evidence. `_target` carries the amended item's id so
+    # the fuzzy branch can drop amendment hits that merely orbit an item
+    # the query already matched.
     amend_texts: dict[str, list[str]] = {}
+    amend_targets: dict[str, str] = {}
     for row in amendments.events(project_dir=project):
         a_id = str(row.get("amendment_id") or "")
-        for field in ("evidence", "note"):
-            value = str(row.get(field) or "")
-            if a_id and value:
-                amend_texts.setdefault(a_id, [])
-                if value not in amend_texts[a_id]:
-                    amend_texts[a_id].append(value)
+        if not a_id:
+            continue
+        target_id = str(row.get("item_id") or "")
+        if target_id:
+            amend_targets.setdefault(a_id, target_id)
+        for value in amendments.plaintext_values(row):
+            amend_texts.setdefault(a_id, [])
+            if value not in amend_texts[a_id]:
+                amend_texts[a_id].append(value)
     amend_pool = [
-        (None, "amendment", {"id": a_id, "text": texts[-1], "_texts": texts})
+        (None, "amendment", {"id": a_id, "text": texts[0], "_texts": texts,
+                             "_target": amend_targets.get(a_id, "")})
         for a_id, texts in amend_texts.items()
     ]
     if not isinstance(checkpoint, dict) and not ledger and not amend_pool:
@@ -1500,6 +1516,18 @@ def _cmd_forget(args) -> int:
                  for s, k, it in pool
                  if any(carry._same_item(args.target, t, generic)
                         for t in _texts_of(it))])
+        # #691: an amendment's evidence is by construction ABOUT its item, so
+        # a query matching the item routinely fuzzy-matches the amendment too
+        # — a false-ambiguity surface, not a real second value. When an item
+        # hit exists, amendment hits that merely target one of the hit items
+        # are dropped: forgetting the item removes its amendments anyway
+        # (forget_item_id below), so nothing becomes unreachable.
+        item_hit_ids = {it["id"] for _, k, it in hits
+                        if k not in ("refutation", "amendment")}
+        if item_hit_ids:
+            hits = [(s, k, it) for s, k, it in hits
+                    if not (k == "amendment"
+                            and it.get("_target") in item_hit_ids)]
         # Ambiguity is about distinct VALUES, not hit count. The same sentence
         # carried by sibling ids, held on several surfaces, or held in both the
         # checkpoint and the refutation ledger is one thing to forget; #418
@@ -1510,6 +1538,27 @@ def _cmd_forget(args) -> int:
                     for _, _, it in hits}
         if len(distinct) == 1:
             target = hits[0][2]
+            # #691: an amendment record can hold several values (evidence,
+            # note, historical rows). The tombstone must key on the value
+            # the QUERY named, never on an arbitrary field — rebind `text`
+            # to the matched value before the hash below derives from it.
+            texts = target.get("_texts")
+            if isinstance(texts, list) and len(texts) > 1:
+                query_key = normalize.content_key(args.target)
+                matched = next(
+                    (t for t in texts
+                     if normalize.content_key(t) == query_key),
+                    None)
+                if matched is None:
+                    _, generic = next(
+                        (p for p in pools if target in [it for _, _, it in p[0]]),
+                        (None, carry._generic_terms(texts)))
+                    matched = next(
+                        (t for t in texts
+                         if carry._same_item(args.target, t, generic)),
+                        None)
+                if matched:
+                    target = dict(target, text=matched)
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"
@@ -1553,15 +1602,23 @@ def _cmd_forget(args) -> int:
     # (store._stamp_item_ids). Removal is content removal, so every item
     # folding to the tombstoned key goes. Id kept in the predicate as a belt
     # for non-string text, which content_key canonicalizes to "".
+    spliced_ids = {str(target["id"] or "")}
     if isinstance(checkpoint, dict):
         for section, key in store._ITEM_LISTS:
             lst = (checkpoint.get(section) or {}).get(key)
             if isinstance(lst, list):
-                lst[:] = [i for i in lst
-                          if not (isinstance(i, dict)
-                                  and (i.get("id") == target["id"]
-                                       or normalize.content_key(i.get("text") or "")
-                                       == content_hash))]
+                doomed = [i for i in lst
+                          if isinstance(i, dict)
+                          and (i.get("id") == target["id"]
+                               or normalize.content_key(i.get("text") or "")
+                               == content_hash)]
+                # #691: every spliced sibling id, not only the named target —
+                # amendments are keyed by item id, and an amendment about a
+                # sibling holding the same value is plaintext ABOUT the
+                # forgotten content (the #418 sibling rule, extended to the
+                # ledger that references the siblings).
+                spliced_ids.update(str(i.get("id") or "") for i in doomed)
+                lst[:] = [i for i in lst if i not in doomed]
         # allow_disabled (#421): the ONE write_checkpoint call that may run under
         # the kill switch — the rewrite that makes the deletion real on disk.
         # rotate=False: rotation copies the CURRENT latest into prev-1 before
@@ -1605,13 +1662,18 @@ def _cmd_forget(args) -> int:
     # relations-ledger scan is what proves it reached the edges.
     forgotten_relations = relations.forget_item_id(
         target["id"], project_dir=project)
-    # #691: same value, third plaintext store — and unlike relations, amend
-    # rows DO carry prose, so records targeting a forgotten item go with it
-    # (their evidence may paraphrase the removed content), and records
-    # holding the value in any plaintext field go regardless of target.
-    forgotten_amendments = sorted(set(
-        amendments.forget_content_key(content_hash, project_dir=project)
-        + amendments.forget_item_id(target["id"], project_dir=project)))
+    # #691: same value, another plaintext store — and unlike relations, amend
+    # rows DO carry prose, so records targeting a forgotten item (or any of
+    # its spliced siblings) go with it — their evidence may paraphrase the
+    # removed content — and records holding the value in any plaintext field
+    # go regardless of target.
+    spliced_ids.discard("")
+    forgotten_amendment_set = set(
+        amendments.forget_content_key(content_hash, project_dir=project))
+    for doomed_id in sorted(spliced_ids):
+        forgotten_amendment_set.update(
+            amendments.forget_item_id(doomed_id, project_dir=project))
+    forgotten_amendments = sorted(forgotten_amendment_set)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -1836,7 +1898,13 @@ def _cmd_loops(args) -> int:
         return 0
     try:
         events = store.resolutions(project_dir=project)
-        checkpoint, _, _ = briefing.withhold(checkpoint, events)
+        # #691: amendments ride along so the listing agrees with the
+        # briefing — an agent discovering targets here must see that an
+        # item is already amended, or its cheapest probe is a duplicate
+        # proposal.
+        checkpoint, _, _ = briefing.withhold(
+            checkpoint, events,
+            amendments=amendments.renderable(project_dir=project))
     except Exception:
         pass  # fail-open, same stance as _print_suppressed
     rows = []
@@ -1854,6 +1922,12 @@ def _cmd_loops(args) -> int:
                 # item carrying a still-pending, unverified agent claim
                 # (briefing.withhold's transient stamp) is marked here too.
                 text += " (agent claim pending)"
+            amend_stamp = item.get("_amend")
+            if isinstance(amend_stamp, dict):
+                n = (len(amend_stamp.get("rows") or [])
+                     + (amend_stamp.get("overflow") or 0))
+                if n:
+                    text += f" (amended ×{n})"
             rows.append((item["id"], key, text, briefing._mark(item)))
     if not rows:
         print("no open loops")

@@ -14,12 +14,15 @@ This module follows refutations.py instead: its own append-only stream, an
 observed channel recorded on every row, a deterministic full-pass fold, and
 rewrite deletion that reaches the bytes.
 
-The write path is zero-LLM and the agent only ever proposes. A candidate
-renders NOWHERE. It becomes render-worthy only through the session-end
-byte-check (mechanical channel, quote verified against the transcript,
-speaker role recorded) or a human verdict. Verification certifies
-transcription, not truth — the render side labels the role for exactly that
-reason.
+The write path is zero-LLM and the CLI exposes no verdict to agents. A
+candidate renders NOWHERE. The session-end byte-check (mechanical channel)
+moves it to `verified` — which renders as a flagged, agent-attributed,
+UNCONFIRMED claim with a confirm/reject pair, never as settled state,
+because verification certifies transcription, not truth: an agent can
+manufacture the quote by speaking it. Only a human verdict earns the
+neutral `amended` frame. A rejected amendment can be re-proposed (the
+refutations `revise` posture): rejection is a recorded verdict, not a
+permanent lock on the claim's identity.
 
 No field may carry the target item's text: the ledger names items by id only,
 and its own prose is limited to the evidence quote and a human-channel note,
@@ -44,16 +47,22 @@ from . import config, normalize, policy, redact, store
 from .refutations import CHANNEL_AUTHORITY, CHANNEL_LABEL
 
 VERSION = 1
-EVENTS = frozenset({"proposed", "verified", "ratified", "rejected", "retracted"})
-STATES = frozenset({"candidate", "verified", "ratified", "rejected", "retracted"})
-# What an amendment may say about the item, closed at the write boundary so
-# nothing free-form ever rides an agent-writable path into the briefing
-# (the worldcheck._KNOWN_STATES posture, applied at the ledger).
+EVENTS = frozenset({"proposed", "verified", "ratified", "rejected"})
+# What an amendment may say about the item, closed at the write boundary AND
+# re-checked at the read boundary (fold drops out-of-vocabulary rows), so
+# nothing free-form ever rides an agent-writable path into the briefing —
+# the worldcheck._KNOWN_STATES posture, enforced where it is read.
 CHANGES = frozenset({"progressed", "blocked", "changed"})
 # The states the briefing may render. Candidates are invisible by design:
 # an unverified annotation inline in the trusted panel would let an agent
-# assert state without verification.
+# assert state without even a transcription check. `verified` renders as a
+# flagged unconfirmed claim; `ratified` renders as settled.
 RENDER_STATES = frozenset({"verified", "ratified"})
+# Per-item render budget: newest first, the rest summarized. Without a cap
+# the amendment axis would be the briefing's only unbounded agent-writable
+# surface (every neighbour — decisions, claims, worldcheck — is capped).
+RENDER_CAP = 3
+_ROLE_MAX = 32
 _EVENT_RANK = {
     # Same-order ambiguity fails toward the human verdict applying last:
     # a same-instant reject beats a mechanical verify.
@@ -61,7 +70,6 @@ _EVENT_RANK = {
     "verified": 1,
     "ratified": 2,
     "rejected": 3,
-    "retracted": 4,
 }
 _AMEND_ID_RE = re.compile(r"a-[0-9a-f]{12}")
 # Everything policy.stamp_item_ids can mint (relations' target contract):
@@ -105,7 +113,8 @@ def make_id(item_id: str, change: str, evidence: str) -> str:
     return "a-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def _stamp(event: str, amendment_id: str, channel: str) -> dict:
+def _stamp(event: str, amendment_id: str, channel: str,
+           *, now_ns: int | None = None, event_id: str | None = None) -> dict:
     if event not in EVENTS:
         raise AmendmentError(f"unknown amendment event: {event}")
     if not _AMEND_ID_RE.fullmatch(str(amendment_id or "")):
@@ -116,14 +125,14 @@ def _stamp(event: str, amendment_id: str, channel: str) -> dict:
     # Derived, never accepted: no way to name one channel and claim another's
     # authority.
     authority = CHANNEL_AUTHORITY[channel]
-    order = time.time_ns()
+    order = time.time_ns() if now_ns is None else int(now_ns)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     return {
         "version": VERSION,
         "ts": ts,
         "order": order,
-        "event_id": uuid.uuid4().hex,
+        "event_id": event_id or uuid.uuid4().hex,
         "event": event,
         "amendment_id": amendment_id,
         "channel": channel,
@@ -214,12 +223,18 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         event = row["event"]
         current = out.get(a_id)
         if event == "proposed":
-            if current is not None:
+            # Read-boundary vocabulary check (the write boundary is not the
+            # boundary that matters — events() is deliberately tolerant, and
+            # a row edited on disk must not ride into the render).
+            if str(row.get("change") or "") not in CHANGES:
+                continue
+            if current is not None and current["state"] != "rejected":
                 continue  # duplicate logical proposal, first writer wins
             state = (
                 "ratified" if row.get("ratified") is True
                 and CHANNEL_AUTHORITY.get(row.get("channel")) == "human"
                 else "candidate")
+            reopened = current is not None
             out[a_id] = {
                 "amendment_id": a_id,
                 "state": state,
@@ -233,9 +248,11 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "proposed_author": row.get("author"),
                 "verdict_label": (CHANNEL_LABEL.get(row.get("channel"))
                                   if state == "ratified" else None),
-                "created_at": row.get("ts"),
+                "created_at": (current["created_at"] if reopened
+                               else row.get("ts")),
                 "updated_at": row.get("ts"),
-                "history_count": 1,
+                "history_count": (current["history_count"] + 1 if reopened
+                                  else 1),
             }
             continue
         if current is None:
@@ -244,11 +261,13 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         current["updated_at"] = row.get("ts") or current["updated_at"]
         if event == "verified":
             # The one mechanical transition: the session-end byte-check found
-            # the quote in the transcript. It never overrides a verdict.
+            # the quote in the transcript. It never overrides a verdict, and
+            # it never yields a settled render — see RENDER_STATES.
             if (current["state"] == "candidate"
                     and CHANNEL_AUTHORITY.get(row.get("channel")) == "mechanical"):
                 current["state"] = "verified"
-                current["evidence_role"] = str(row.get("evidence_role") or "")
+                current["evidence_role"] = str(
+                    row.get("evidence_role") or "")[:_ROLE_MAX]
                 current["verdict_label"] = "quote-verified"
         elif event == "ratified":
             if (current["state"] in ("candidate", "verified")
@@ -256,15 +275,10 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 current["state"] = "ratified"
                 current["verdict_label"] = CHANNEL_LABEL.get(row.get("channel"))
         elif event == "rejected":
-            if (current["state"] != "retracted"
-                    and CHANNEL_AUTHORITY.get(row.get("channel")) == "human"):
+            if CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
                 current["state"] = "rejected"
                 current["verdict_label"] = None
                 current["note"] = str(row.get("note") or current["note"])
-        elif event == "retracted":
-            if CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
-                current["state"] = "retracted"
-                current["verdict_label"] = None
     return out
 
 
@@ -276,22 +290,28 @@ def get(amendment_id: str, project_dir=None) -> dict | None:
     return records(project_dir=project_dir).get(amendment_id)
 
 
-def renderable(project_dir=None) -> dict[str, list[dict]]:
+def renderable(project_dir=None) -> dict[str, dict]:
     """Render-worthy amendments grouped by target item id.
 
-    The one read the briefing consumes. Only RENDER_STATES survive: a
-    candidate renders nowhere, a rejected or retracted amendment is history.
-    Sorted oldest-first per item so multiple amendments read as a timeline.
+    The one read the briefing consumes: {item_id: {"rows": [...], "overflow":
+    N}}. Only RENDER_STATES survive — a candidate renders nowhere, a rejected
+    amendment is history. Rows are the NEWEST RENDER_CAP in oldest-first
+    order (a timeline), and `overflow` counts the older ones summarized away:
+    without the cap this would be the briefing's only unbounded agent-
+    writable surface.
     """
     by_item: dict[str, list[dict]] = {}
     for record in records(project_dir=project_dir).values():
         if record["state"] not in RENDER_STATES:
             continue
         by_item.setdefault(record["item_id"], []).append(record)
-    for rows in by_item.values():
+    out: dict[str, dict] = {}
+    for item_id, rows in by_item.items():
         rows.sort(key=lambda row: (row.get("created_at") or "",
                                    row["amendment_id"]))
-    return by_item
+        out[item_id] = {"rows": rows[-RENDER_CAP:],
+                        "overflow": max(0, len(rows) - RENDER_CAP)}
+    return out
 
 
 def propose(*, item_id: str, change: str, evidence: str, channel: str,
@@ -310,13 +330,26 @@ def propose(*, item_id: str, change: str, evidence: str, channel: str,
         raise AmendmentError(
             "a note requires a human channel; agent amendments carry only "
             "the typed change and the evidence quote")
-    # Identity derives from the bytes that can actually persist.
+    # Identity derives from the bytes that can actually persist — and the
+    # length cap is re-checked AFTER redaction, because placeholder
+    # expansion can grow the persisted bytes past what the raw text passed.
     evidence, _ = redact.redact_text(evidence)
+    evidence = _text("evidence", evidence)
     a_id = make_id(item_id, change, evidence)
-    if get(a_id, project_dir=project_dir) is not None:
+    existing = get(a_id, project_dir=project_dir)
+    if existing is not None and existing["state"] != "rejected":
+        # A rejected record is deliberately re-proposable (the fold reopens
+        # it as a fresh candidate): rejection is a verdict on a proposal,
+        # not a permanent lock on the claim's identity — otherwise a human
+        # who rejected in error, or a claim that later became true, would
+        # burn the (item, change, evidence) triple forever.
+        hint = ("await the session-end byte-check or settle it with "
+                f"`daimon amend ratify {a_id}` / `daimon amend reject {a_id}`"
+                if existing["state"] in ("candidate", "verified")
+                else "it is already ratified")
         raise AmendmentError(
             f"{a_id} already exists for this item, change, and evidence; "
-            f"ratify or reject it instead")
+            f"{hint}")
     row = _stamp("proposed", a_id, channel)
     row.update({"item_id": item_id, "change": change, "evidence": evidence})
     if note:
@@ -331,16 +364,21 @@ def propose(*, item_id: str, change: str, evidence: str, channel: str,
 
 
 def verify(amendment_id: str, *, role: str, project_dir=None) -> None:
-    """Record the session-end byte-check outcome. Mechanical channel only —
-    reachable solely from the in-process capture pass, exactly like the
-    refutation ledger's `activated`. The role is the transcript speaker the
-    quote was found under; the render side labels it because verification
-    certifies transcription, not truth."""
+    """Record the session-end byte-check outcome on the mechanical channel.
+
+    No CLI verb reaches this function, but "in-process only" would overclaim:
+    `daimon serialize <path>` drives capture.run over a caller-supplied
+    transcript, so an agent CAN cause verification of bytes it authored —
+    which is exactly why a verified amendment renders as a flagged
+    unconfirmed claim, never as settled state. The role is the transcript
+    speaker the quote was found under, bounded to _ROLE_MAX at read; the
+    render labels it because verification certifies transcription, not
+    truth."""
     current = get(amendment_id, project_dir=project_dir)
     if current is None:
         raise AmendmentError(f"unknown amendment: {amendment_id}")
     row = _stamp("verified", amendment_id, "mechanical")
-    row["evidence_role"] = _text("role", role)
+    row["evidence_role"] = _text("role", role)[:_ROLE_MAX]
     if not append(row, project_dir=project_dir):
         raise AmendmentError("verification not written")
 
@@ -371,12 +409,27 @@ def reject(amendment_id: str, *, channel: str, note: str = "",
     current = get(amendment_id, project_dir=project_dir)
     if current is None:
         raise AmendmentError(f"unknown amendment: {amendment_id}")
-    if current["state"] == "retracted":
-        raise AmendmentError(f"{amendment_id} is already retracted")
     row = _stamp("rejected", amendment_id, channel)
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir):
         raise AmendmentError("rejection not written")
+
+
+def plaintext_values(row: dict) -> list[str]:
+    """Every plaintext value this row carries, evidence before note.
+
+    The forget TARGETING pool reads this (cli._cmd_forget) instead of
+    hand-copying the field tuple — the same one-declaration discipline
+    row_content_keys below gives the deleter and the auditor. `evidence_role`
+    is deliberately absent everywhere here: it is a bounded transcript role
+    token (_ROLE_MAX), not item text, the same reasoning that keeps `author`
+    out of the refutation ledger's set."""
+    out: list[str] = []
+    for field in _PLAINTEXT_FIELDS:
+        value = row.get(field)
+        if isinstance(value, str) and value.strip():
+            out.append(value)
+    return out
 
 
 def row_content_keys(row: dict) -> set[str]:

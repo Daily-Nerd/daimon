@@ -182,15 +182,16 @@ item is still true and reset its staleness clock. `forget` stays human-only.
 
 ## Amending loops
 
-A loop that ADVANCED without closing takes `daimon amend`:
+Advanced-but-open loops take `daimon amend`:
 
 ```
-daimon amend <id> --change progressed --evidence "<quote>" --by agent
+daimon amend <id> --change progressed|blocked|changed \
+  --evidence "<quote>" --by agent
 ```
 
-Also: blocked, changed. Same evidence bar as an agent resolve claim,
-byte-checked at session end; verified ones render on the item.
-`amend ratify`/`reject` assert a human verdict — ask the user.
+Verbatim contiguous span only, byte-checked at session end; renders as an
+unconfirmed agent claim until a human settles it. `amend ratify`/`reject`
+are human-only: print the command, never run it.
 
 ## Handing off
 

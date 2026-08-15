@@ -323,6 +323,7 @@ def audit_project(project_dir=None) -> dict:
         result["ledger"] = {"records": 0, "rows": 0, "bytes": 0}
         result["relations"] = {"records": 0, "rows": 0, "bytes": 0,
                                "by_state": {}}
+        result["amendments"] = {"records": 0, "rows": 0, "bytes": 0}
         return result
     known, unknown = _checkpoint_candidates()
     # Only this project's blind spots: an unknown file in ANOTHER bucket is
@@ -505,6 +506,9 @@ def audit_project(project_dir=None) -> dict:
     # reports is a value forget can reach), and a target-id check against
     # tombstones — amendments.forget_item_id removes rows about a forgotten
     # item, so a surviving one means the scrub was missed or raced.
+    # `tombstoned` is the set the RELATIONS block above computed
+    # (relations.tombstoned_item_ids) — a deliberate shared read, named here
+    # so reordering these blocks does not silently sever it.
     amend_path = config.checkpoint_dir() / slug / _AMENDMENTS_NAME
     try:
         lines = amend_path.read_text(encoding="utf-8").splitlines()

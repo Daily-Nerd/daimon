@@ -451,20 +451,20 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # Runs BEFORE r_resolve in the recipe order: propose binds against
         # the LIVE unresolved item, and _T_KEEP is resolved later.
         evidence = "the follow-up PR merged"
-        run(["amend", ctx["ids"][_T_KEEP], "--change", "progressed",
+        run(["amend", ctx["ids"][_Q1], "--change", "progressed",
              "--evidence", evidence, "--by", "agent"], 0)
         ctx["amendment_id"] = amendments.make_id(
-            ctx["ids"][_T_KEEP], "progressed", evidence)
+            ctx["ids"][_Q1], "progressed", evidence)
 
     def r_amend_ratify():
         run(["amend", "ratify", ctx["amendment_id"]], 0)
 
     def r_amend_reject():
         evidence = "the scope moved to a follow-up"
-        run(["amend", ctx["ids"][_T_KEEP], "--change", "changed",
+        run(["amend", ctx["ids"][_Q1], "--change", "changed",
              "--evidence", evidence, "--by", "agent"], 0)
         run(["amend", "reject",
-             amendments.make_id(ctx["ids"][_T_KEEP], "changed", evidence),
+             amendments.make_id(ctx["ids"][_Q1], "changed", evidence),
              "--note", "wrong item"], 0)
 
     def r_amend_list():
