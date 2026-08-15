@@ -1285,6 +1285,12 @@ def _cmd_ruling_list(args) -> int:
     _note_usage("ruling:list")
     if args.json:
         print(_refutation_json(rows))
+        active_j = sum(1 for r in rows if r.get("state") == "active")
+        cap_j = config.ruling_cap()
+        if active_j > cap_j:
+            # stderr so the JSON stays parseable and machines still learn it.
+            print(f"over cap: {active_j} active vs cap {cap_j}",
+                  file=sys.stderr)
         return 0
     if not rows:
         print("no rulings for this project")

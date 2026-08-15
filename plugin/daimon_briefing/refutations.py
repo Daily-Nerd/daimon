@@ -766,10 +766,22 @@ def _guard_open_proposals(refutation_id: str, event: str,
             if r.get("refutation_id") == refutation_id]
     # Only a HUMAN-authority verdict resets the bound — an agent-channel row
     # wearing a verdict event name is inert in the fold and must not launder
-    # the counter either.
+    # the counter either. A content-bound ratify whose displayed key no
+    # longer matches the current verdict is inert in the fold too, and the
+    # adversary controls when that happens (revise during the confirm
+    # window), so it must not hand back a proposal slot. Best-effort mirror:
+    # the record's verdict may have moved again since the row, but the
+    # reachable lever is the fresh-mismatch case this catches.
+    current_key = None
+    record = get(refutation_id, project_dir=project_dir)
+    if record is not None:
+        current_key = normalize.content_key(record.get("verdict") or "")
     verdicts = [r for r in rows
                 if CHANNEL_AUTHORITY.get(r.get("channel")) == "human"
-                and r.get("event") in ("ratified", "overturned", "revised")]
+                and r.get("event") in ("ratified", "overturned", "revised")
+                and not (r.get("event") == "ratified"
+                         and str(r.get("verdict_key") or "")
+                         and str(r.get("verdict_key")) != current_key)]
     since = max((_order(r) for r in verdicts), default=-1)
     pending = [r for r in rows
                if r.get("event") == event and _order(r) > since]
@@ -914,7 +926,10 @@ def revise(refutation_id: str, *, channel: str, evidence,
         # writes a proposal that leaves the render untouched; a human
         # revising an active ruling keeps it active — demotion is never a
         # side effect of editing (only ratify and retire change render
-        # membership).
+        # membership). The ceremony boundary is WHAT RENDERS: human edits
+        # to scope/anchors/revisit_when on an active ruling apply without a
+        # confirm because they do not move the rendered text; verdict and
+        # subject edits go through the CLI's display-and-confirm.
         _guard_ruling_text(subject, verdict)
         if current["state"] == "overturned":
             raise RefutationError(

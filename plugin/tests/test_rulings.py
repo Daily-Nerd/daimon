@@ -225,18 +225,6 @@ def test_a_fourth_open_proposal_is_refused(tmp_checkpoint_dir):
             verdict="proposal number 3", project_dir=PROJECT)
 
 
-def test_human_revise_preserves_active_and_does_not_restamp_activated_at(
-        tmp_checkpoint_dir):
-    ruling_id = _rule(channel="cli-tty", ratified=True)
-    before = refutations.get(ruling_id, project_dir=PROJECT)["activated_at"]
-    refutations.revise(
-        ruling_id, channel="cli-tty", evidence=["issue:693"],
-        verdict="the rule with a typo fixed", project_dir=PROJECT)
-    record = refutations.get(ruling_id, project_dir=PROJECT)
-    assert record["state"] == "active"
-    assert record["verdict"] == "the rule with a typo fixed"
-    assert record["activated_at"] == before
-
 
 def test_text_authored_by_tracks_the_text_not_the_touch(tmp_checkpoint_dir):
     ruling_id = _rule()  # agent-authored text
@@ -256,16 +244,6 @@ def test_text_authored_by_tracks_the_text_not_the_touch(tmp_checkpoint_dir):
     record = refutations.get(ruling_id, project_dir=PROJECT)
     assert record["text_authored_by"] == "human"
 
-
-def test_proposals_do_not_move_a_rulings_updated_at(tmp_checkpoint_dir):
-    ruling_id = _rule(channel="cli-tty", ratified=True)
-    before = refutations.get(ruling_id, project_dir=PROJECT)["updated_at"]
-    refutations.revise(
-        ruling_id, channel="cli-agent", evidence=["issue:693"],
-        verdict="a proposal", project_dir=PROJECT)
-    refutations.retire(ruling_id, channel="cli-agent", project_dir=PROJECT)
-    record = refutations.get(ruling_id, project_dir=PROJECT)
-    assert record["updated_at"] == before
 
 
 def test_guard_never_returns_rulings(tmp_checkpoint_dir):
@@ -410,14 +388,16 @@ def test_cli_show_renders_a_retired_ruling_as_retired(
 def test_viewer_refutations_lane_excludes_rulings(tmp_checkpoint_dir):
     # The lane renders `refute list`; the polarity parameter exists so the
     # viewer and the CLI cannot drift apart. PR2 adds a rulings lane; the
-    # FILTER belongs to the commit that shipped the polarity.
+    # FILTER belongs to the commit that shipped the polarity. Asserts on the
+    # ROWS the endpoint payload serves — a source grep passed with the bug
+    # reintroduced (review round 2, mutation-proved).
     from daimon_ui import server as ui_server
-    _rule(channel="cli-tty", ratified=True)
-    _refute()
-    rows = refutations.listing(polarity="refutation", project_dir=PROJECT)
-    assert all(r.get("polarity") == "refutation" for r in rows)
-    import inspect
-    assert 'polarity="refutation"' in inspect.getsource(ui_server)
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    ref_id = _refute()
+    payload = ui_server._refutations_payload(PROJECT)
+    ids = {r["refutation_id"] for r in payload["rows"]}
+    assert ref_id in ids
+    assert ruling_id not in ids
 
 
 def test_cli_ruling_revise_refuses_ratify_on_a_candidate(

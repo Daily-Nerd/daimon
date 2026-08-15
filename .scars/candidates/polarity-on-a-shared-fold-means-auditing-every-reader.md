@@ -1,32 +1,30 @@
 ---
-kind: landmine
-status: candidate
+id: 0
+type: landmine
+title: Adding a discriminating field to a shared read surface silently widens every caller you did not audit
+severity: high
+confidence: 0.9
+created: 2026-08-15
+authors: ["claude-code"]
 anchors:
   - path: plugin/daimon_briefing/refutations.py
-    symbol: listing
-violation: "refutations\\.listing\\((?!.*polarity)"
+  - path: plugin/daimon_ui/server.py
+violation: "refutations\.listing\(\s*project_dir"
+evidence:
+  - note: "issue #693 PR1 review: two blind reviewers independently executed the repro"
+expires:
+  condition: "refutations.listing grows a required polarity parameter, making unscoped calls impossible"
+  review_after: 2027-02-15
 ---
 
-# Adding a polarity to a shared fold means auditing every reader, not only the one you are editing
-
-## What happened
-
-#693 added ruling polarity to the refutation ledger's fold and scoped the CLI
-(`refute list` gained `polarity="refutation"`), but the viewer's lane at
-`daimon_ui/server.py` called `refutations.listing(project_dir=slug)`
-unfiltered — so a human-ratified standing ruling rendered in the shipped
-viewer as `[✗ active] — Refutes: <subject>`: the exact polarity inversion the
-feature was designed to prevent, on the one surface a human looks at.
-`listing()`'s own docstring says the sort lives in the module "so the
-viewer's lane and the CLI cannot drift apart"; the drift arrived through the
-PARAMETER, not the sort. Both blind reviewers found it independently; the
-viewer's test mirrored the unfiltered call and locked the bug in green.
-
-## The rule
-
-When a shared read surface (fold, listing, search) gains a discriminating
-field, enumerate EVERY caller before shipping — `rg` the function name and
-decide each call site explicitly. A caller you did not touch inherits the
-widened result set silently, and a test that mirrors the call inherits the
-bug. Same class as the forget-selector arc (#698): the property was verified
-at the layer where it is stated, not the layer where it is used.
+#693 added ruling polarity to the refutation ledger fold and scoped the CLI
+(`refute list` passes `polarity="refutation"`), but the viewer lane called
+`refutations.listing(project_dir=slug)` unfiltered — so a human-ratified
+standing ruling rendered in the shipped viewer as an active refutation of its
+own subject: the exact polarity inversion the feature was designed to
+prevent, on the surface a human actually looks at. The viewer's test mirrored
+the unfiltered call, so the suite locked the bug in green. When a shared read
+surface (fold, listing, search) gains a discriminating field, rg the function
+name and decide EVERY call site explicitly before shipping; a caller you did
+not touch inherits the widened result set silently, and any call omitting the
+polarity argument (the violation regex above) is the bug shape recurring.

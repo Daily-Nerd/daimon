@@ -28,6 +28,15 @@ _STATIC = {
     "app.js": (_STATIC_DIR / "app.js", "text/javascript; charset=utf-8"),
 }
 
+def _refutations_payload(slug):
+    """#693: refutation polarity only — the ledger holds rulings too, and
+    this lane's vocabulary (✗, "Refutes") would invert them. A rulings lane
+    is its own surface. Kept as a seam so a test can assert on the ROWS the
+    endpoint serves rather than grep the source."""
+    return {"ok": True, "rows": refutations.listing(
+        polarity="refutation", project_dir=slug)}
+
+
 class _Handler(BaseHTTPRequestHandler):
     def __init__(self, data_dir, default_slug, project_label, *a, **kw):
         self.data_dir = data_dir
@@ -205,11 +214,7 @@ class _Handler(BaseHTTPRequestHandler):
             # same fold and the same order the CLI prints. A slug is already its
             # own project_slug, so passing it as project_dir resolves to the same
             # bucket (the inspector endpoint leans on the same property).
-            # #693: refutation polarity only — the ledger now holds rulings
-            # too, and this lane's vocabulary (✗, "Refutes") would invert
-            # them. A rulings lane is its own surface.
-            self._json({"ok": True, "rows": refutations.listing(
-                polarity="refutation", project_dir=slug)})
+            self._json(_refutations_payload(slug))
         elif path == "/api/relations":
             slug = self._resolve_slug(params)
             if slug is None:
