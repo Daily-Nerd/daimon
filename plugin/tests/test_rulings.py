@@ -595,3 +595,259 @@ def test_an_inert_key_mismatched_ratify_does_not_reset_the_proposal_bound(
     refutations.revise(
         ruling_id, channel="cli-agent", evidence=["issue:693"],
         verdict="a proposal after an honoured verdict", project_dir=PROJECT)
+
+
+# --- error, json, and printer paths (patch coverage) -----------------------
+
+
+def test_propose_collision_points_at_the_holding_polarity(tmp_checkpoint_dir):
+    _rule()
+    with pytest.raises(refutations.RefutationError, match="ruling revise"):
+        _rule()
+    _refute()
+    with pytest.raises(refutations.RefutationError, match="refute revise"):
+        refutations.assert_ruling(
+            subject="single-pass migration", verdict="a rule",
+            scope="migrations", evidence=["issue:693"],
+            channel="cli-agent", project_dir=PROJECT)
+
+
+def test_module_retire_error_paths(tmp_checkpoint_dir):
+    with pytest.raises(refutations.RefutationError, match="unknown ruling"):
+        refutations.retire("r-000000000000", channel="cli-tty",
+                           project_dir=PROJECT)
+    ref_id = _refute()
+    with pytest.raises(refutations.RefutationError, match="refute overturn"):
+        refutations.retire(ref_id, channel="cli-tty", project_dir=PROJECT)
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="already retired"):
+        refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+
+
+def test_module_write_failures_surface(tmp_checkpoint_dir, monkeypatch):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    monkeypatch.setattr(refutations, "append", lambda *a, **k: False)
+    with pytest.raises(refutations.RefutationError, match="not written"):
+        refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="not written"):
+        refutations.assert_ruling(
+            subject="another area", verdict="another rule", scope="elsewhere",
+            evidence=["issue:693"], channel="cli-agent", project_dir=PROJECT)
+
+
+def test_listing_refuses_unknown_states(tmp_checkpoint_dir):
+    with pytest.raises(refutations.RefutationError, match="unknown state"):
+        refutations.listing(states={"bogus"}, project_dir=PROJECT)
+
+
+def test_guard_open_proposals_tolerates_bad_order_values(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    row = refutations._stamp("revision-proposed", ruling_id, "cli-agent")
+    row["order"] = "not-a-number"
+    assert refutations.append(row, project_dir=PROJECT)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:693"],
+        verdict="a proposal", project_dir=PROJECT)
+
+
+def test_ruling_cap_env_falls_back_on_garbage(monkeypatch):
+    from daimon_briefing import config
+    monkeypatch.setenv("DAIMON_RULING_CAP", "not-a-number")
+    assert config.ruling_cap() == 7
+
+
+def test_forget_doomed_scan_skips_unparseable_rows(
+        tmp_checkpoint_dir):
+    from daimon_briefing import normalize
+    ruling_id = _rule()
+    path = refutations._path(PROJECT)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("not json\n")
+        fh.write('"a json string, not a dict"\n')
+    removed = refutations.forget_content_key(
+        normalize.content_key("internal numbers never appear in public posts"),
+        project_dir=PROJECT)
+    assert ruling_id in removed
+
+
+def test_cli_error_and_json_paths(tmp_checkpoint_dir, _tty, monkeypatch,
+                                  capsys):
+    # Unknown ids and cross-verb pointers on every ruling verb.
+    assert cli.main(["ruling", "ratify", "r-000000000000",
+                     "--project", PROJECT]) == 1
+    assert cli.main(["ruling", "show", "r-000000000000",
+                     "--project", PROJECT]) == 1
+    assert cli.main(["ruling", "revise", "r-000000000000",
+                     "--evidence", "issue:693", "--project", PROJECT]) == 1
+    ref_id = _refute()
+    assert cli.main(["ruling", "ratify", ref_id, "--project", PROJECT]) == 1
+    assert cli.main(["ruling", "show", ref_id, "--project", PROJECT]) == 1
+    assert cli.main(["ruling", "revise", ref_id, "--evidence", "issue:693",
+                     "--project", PROJECT]) == 1
+    assert cli.main(["refute", "revise", "--evidence", "issue:693",
+                     "--verdict", "it deadlocked again", ref_id,
+                     "--project", PROJECT]) == 0
+    capsys.readouterr()
+    # Cross-verb gates on the remaining refute verbs.
+    ruling_id = _rule()
+    assert cli.main(["refute", "revise", ruling_id, "--evidence", "issue:693",
+                     "--project", PROJECT]) == 1
+    assert cli.main(["refute", "overturn", ruling_id, "--evidence",
+                     "issue:693", "--project", PROJECT]) == 1
+    assert cli.main(["refute", "show", ruling_id, "--project", PROJECT]) == 1
+    # Agent ratify path prints its refusal directly.
+    assert cli.main(["ruling", "ratify", ruling_id, "--by", "agent",
+                     "--project", PROJECT]) == 1
+    assert "human channel" in capsys.readouterr().out
+    # Propose failure surfaces (duplicate), --json success, escalation hint.
+    assert cli.main(["ruling", "propose", "--subject", "public posts",
+                     "--verdict", "x", "--scope", "publishing",
+                     "--evidence", "issue:693", "--by", "agent",
+                     "--project", PROJECT]) == 1
+    assert cli.main(["ruling", "propose", "--subject", "json area",
+                     "--verdict", "a json rule", "--scope", "json-scope",
+                     "--evidence", "issue:693", "--by", "agent", "--json",
+                     "--project", PROJECT]) == 0
+    capsys.readouterr()
+    human_id = _rule(subject="human area", verdict="a human proposed rule",
+                     scope="human-scope", channel="cli-tty")
+    assert cli.main(["ruling", "show", human_id, "--project", PROJECT]) == 0
+    capsys.readouterr()
+
+
+def test_cli_detail_json_and_ceremony_paths(tmp_checkpoint_dir, _tty,
+                                            monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True,
+                      anchors=["issue:693"],
+                      revisit_when="when the policy changes")
+    refutations.revise(  # pending revision proposal for the printer
+        ruling_id, channel="cli-agent", evidence=["issue:693"],
+        verdict="a pending proposal", project_dir=PROJECT)
+    refutations.retire(  # pending retirement proposal for the printer
+        ruling_id, channel="cli-agent", project_dir=PROJECT)
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "Anchors:" in out
+    assert "Revisit when:" in out
+    assert "Pending revision proposal" in out
+    assert "Pending retirement proposal" in out
+    assert cli.main(["ruling", "show", ruling_id, "--json",
+                     "--project", PROJECT]) == 0
+    capsys.readouterr()
+    # revise ceremony with a subject change, module refusal after confirm
+    # (cap), retire --json, list --json over-cap stderr.
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert cli.main(["ruling", "revise", ruling_id,
+                     "--subject", "public posts widened",
+                     "--evidence", "issue:693", "--project", PROJECT]) == 0
+    capsys.readouterr()
+    assert cli.main(["ruling", "retire", ruling_id, "--json",
+                     "--project", PROJECT]) == 0
+    capsys.readouterr()
+    second = _rule(subject="second area", verdict="second rule",
+                   scope="second-scope", channel="cli-tty", ratified=True)
+    monkeypatch.setenv("DAIMON_RULING_CAP", "1")
+    third = _rule(subject="third area", verdict="third rule",
+                  scope="third-scope")
+    assert cli.main(["ruling", "ratify", third, "--project", PROJECT]) == 1
+    assert "not ratified" in capsys.readouterr().out
+    assert cli.main(["ruling", "list", "--json", "--project", PROJECT]) == 0
+    captured = capsys.readouterr()
+    assert "second rule" in captured.out
+    # ratify --json sends the ceremony to stderr and JSON to stdout
+    monkeypatch.setenv("DAIMON_RULING_CAP", "7")
+    assert cli.main(["ruling", "ratify", third, "--json",
+                     "--project", PROJECT]) == 0
+    captured = capsys.readouterr()
+    assert "render into every future session" in captured.err
+    assert '"refutation_id"' in captured.out
+    assert second  # silence unused warning
+
+
+def test_cli_remaining_ruling_paths(tmp_checkpoint_dir, _tty, monkeypatch,
+                                    capsys):
+    # Human propose escalation hint; empty list; channel errors off-tty.
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    assert "no rulings" in capsys.readouterr().out
+    assert cli.main(["ruling", "propose", "--subject", "human area",
+                     "--verdict", "a human proposed rule",
+                     "--scope", "human-scope", "--evidence", "issue:693",
+                     "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "Next: daimon ruling ratify" in out
+    # Agent CLI revise on an active ruling records a proposal, with --json
+    # and plain variants; agent retire note; already-retired error; candidate
+    # revision note; ratify/revise channel errors without a terminal.
+    active_id = _rule(channel="cli-tty", ratified=True)
+    assert cli.main(["ruling", "revise", active_id, "--by", "agent",
+                     "--verdict", "an agent counterproposal",
+                     "--evidence", "issue:693", "--project", PROJECT]) == 0
+    assert "Proposal recorded" in capsys.readouterr().out
+    assert cli.main(["ruling", "revise", active_id, "--by", "agent",
+                     "--verdict", "another counterproposal", "--json",
+                     "--evidence", "issue:693", "--project", PROJECT]) == 0
+    capsys.readouterr()
+    cand = _rule(subject="cand area", verdict="cand rule", scope="cand-scope")
+    assert cli.main(["ruling", "revise", cand, "--verdict", "cand rule v2",
+                     "--evidence", "issue:693", "--project", PROJECT]) == 0
+    assert "not load-bearing" in capsys.readouterr().out
+    assert cli.main(["ruling", "retire", active_id, "--by", "agent",
+                     "--project", PROJECT]) == 0
+    assert "Retirement proposed" in capsys.readouterr().out
+    assert cli.main(["ruling", "retire", active_id,
+                     "--project", PROJECT]) == 0
+    assert cli.main(["ruling", "retire", active_id,
+                     "--project", PROJECT]) == 1
+    assert "already retired" in capsys.readouterr().out
+    # Post-ceremony module refusal: human revise steals another identity.
+    a = _rule(subject="ident a", verdict="rule a", scope="scope-a",
+              channel="cli-tty", ratified=True)
+    b = _rule(subject="ident b", verdict="rule b", scope="scope-b",
+              channel="cli-tty", ratified=True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert cli.main(["ruling", "revise", b, "--subject", "ident a",
+                     "--scope", "scope-a", "--evidence", "issue:693",
+                     "--project", PROJECT]) == 1
+    assert "not revised" in capsys.readouterr().out
+    assert a
+    # Channel errors: no terminal and no --by flag.
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False,
+                        raising=False)
+    assert cli.main(["ruling", "ratify", cand, "--project", PROJECT]) == 1
+    assert cli.main(["ruling", "revise", cand, "--verdict", "x",
+                     "--evidence", "issue:693", "--project", PROJECT]) == 1
+    capsys.readouterr()
+
+
+def test_cli_list_json_over_cap_goes_to_stderr(tmp_checkpoint_dir,
+                                               monkeypatch, capsys):
+    for n in range(2):
+        _rule(subject=f"cap area {n}", verdict=f"cap rule {n}",
+              scope=f"cap-scope-{n}", channel="cli-tty", ratified=True)
+    monkeypatch.setenv("DAIMON_RULING_CAP", "1")
+    assert cli.main(["ruling", "list", "--json", "--project", PROJECT]) == 0
+    captured = capsys.readouterr()
+    assert "over cap" in captured.err
+    assert "over cap" not in captured.out
+
+
+def test_module_agent_cannot_found_ratified(tmp_checkpoint_dir):
+    with pytest.raises(refutations.RefutationError, match="human channel"):
+        _rule(ratified=True)  # channel defaults to cli-agent
+
+
+def test_dry_run_warns_about_active_rulings(tmp_checkpoint_dir, _tty,
+                                            capsys):
+    from daimon_briefing import store
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-07-01T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "unrelated", "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    rc = cli.main(["forget", "internal numbers never appear in public posts",
+                   "--dry-run", "--project", PROJECT])
+    assert rc == 0
+    assert "removes ACTIVE ruling" in capsys.readouterr().out
+    assert refutations.get(ruling_id, project_dir=PROJECT) is not None
