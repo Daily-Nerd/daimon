@@ -38,6 +38,21 @@ def test_cli_version_flag(capsys):
     assert capsys.readouterr().out.strip() == f"daimon {__version__}"
 
 
+def test_cli_runnable_as_module(capsys, monkeypatch):
+    # #708: cli became a package; __main__.py preserves the
+    # `python -m daimon_briefing.cli` spelling the single file had.
+    import importlib
+    import runpy
+
+    from daimon_briefing import __version__
+    monkeypatch.setattr(sys, "argv", ["daimon", "--version"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("daimon_briefing.cli", run_name="__main__")
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == f"daimon {__version__}"
+    importlib.invalidate_caches()
+
+
 def test_cli_serialize_writes_checkpoint(tmp_checkpoint_dir, fake_chat_factory, capsys, monkeypatch):
     from daimon_briefing import store
 

@@ -9,7 +9,7 @@ authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/capture.py
-  - path: plugin/daimon_briefing/cli.py
+  - path: plugin/daimon_briefing/cli/
   - path: plugin/daimon_briefing/recall.py
   - path: plugin/daimon_briefing/briefing.py
   - path: plugin/tests/

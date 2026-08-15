@@ -42,7 +42,7 @@ component_management:
     - component_id: cli
       name: cli
       paths:
-        - plugin/daimon_briefing/cli.py
+        - plugin/daimon_briefing/cli/**
         - plugin/daimon_briefing/configure.py
         - plugin/daimon_briefing/config.py
     - component_id: host-hooks
