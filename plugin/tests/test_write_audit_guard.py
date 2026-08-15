@@ -447,6 +447,38 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_refute_guard():
         run(["refute", "guard", "revisit", "#502"], 0)
 
+    def r_ruling_propose():
+        subject = "public posts"
+        scope = "publishing"
+        run([
+            "ruling", "propose", "--subject", subject,
+            "--verdict", "internal numbers never appear in public posts",
+            "--scope", scope, "--evidence", "issue:693", "--by", "agent",
+        ], 0)
+        ctx["ruling_id"] = refutations.make_id(subject, scope)
+
+    def r_ruling_ratify():
+        # The confirm prompt is part of the write path: ratification binds
+        # the append to the text it displayed.
+        monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+        run(["ruling", "ratify", ctx["ruling_id"]], 0)
+
+    def r_ruling_revise():
+        run([
+            "ruling", "revise", ctx["ruling_id"],
+            "--verdict", "internal numbers never ship in public posts",
+            "--evidence", "issue:693",
+        ], 0)
+
+    def r_ruling_retire():
+        run(["ruling", "retire", ctx["ruling_id"]], 0)
+
+    def r_ruling_show():
+        run(["ruling", "show", ctx["ruling_id"]], 0)
+
+    def r_ruling_list():
+        run(["ruling", "list"], 0)
+
     def r_amend_propose():
         # Runs BEFORE r_resolve in the recipe order: propose binds against
         # the LIVE unresolved item, and _T_KEEP is resolved later.
@@ -629,6 +661,12 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("refute", "list"): r_refute_list,
         ("refute", "search"): r_refute_search,
         ("refute", "guard"): r_refute_guard,
+        ("ruling", "propose"): r_ruling_propose,
+        ("ruling", "ratify"): r_ruling_ratify,
+        ("ruling", "revise"): r_ruling_revise,
+        ("ruling", "retire"): r_ruling_retire,
+        ("ruling", "show"): r_ruling_show,
+        ("ruling", "list"): r_ruling_list,
         ("amend", "propose"): r_amend_propose,
         ("amend", "ratify"): r_amend_ratify,
         ("amend", "reject"): r_amend_reject,

@@ -266,6 +266,18 @@ def recall_db() -> Path:
     return Path.home() / ".daimon" / "recall.db"
 
 
+def ruling_cap() -> int:
+    """#693: hard cap on ACTIVE rulings, enforced at activation (refusing
+    past it forces an explicit retire-or-decline decision) rather than at
+    render, so the always-present briefing section can never silently
+    truncate. Default 7 is a render-budget default, not a claim about how
+    many rules a user has. DAIMON_RULING_CAP overrides."""
+    try:
+        return max(1, int(_get("DAIMON_RULING_CAP") or "7"))
+    except ValueError:
+        return 7
+
+
 def brief_max_tokens() -> int:
     """Token budget for the injected plain briefing (#79), estimated at
     len(text)//4 — no tokenizer dependency. 0 = unbounded. Default 3000: a

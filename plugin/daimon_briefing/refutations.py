@@ -14,6 +14,13 @@ Evidence is CITED, not verified (#576).  `_evidence` validates the shape of a
 not check that the measurement or artifact exists, and cannot establish that it
 entails the verdict.  That is why evidence text alone never activates a
 permanent negative guard, and why every surface that renders a source says so.
+
+#693 widened this ledger, deliberately, to BOTH polarities: rulings are
+human-ratified standing constraints — positive records — sharing the id
+space, fields, deletion, and audit machinery.  Polarity lives in the founding
+event name (`ruled` vs `asserted`), derived at fold time, never in a
+caller-supplied field, and the lifecycle is polarity-asymmetric: no agent
+path changes what a ruling renders.
 """
 
 from __future__ import annotations
@@ -33,6 +40,11 @@ VERSION = 1
 EVENTS = frozenset({
     "asserted", "ratified", "activated", "revised",
     "overturn-proposed", "overturned",
+    # #693: polarity lives in the FOUNDING EVENT NAME. An older reader's
+    # events() drops unknown names and its fold treats the orphan lifecycle
+    # rows as inert, so an old install never renders a ruling as a
+    # refutation — it simply does not see it.
+    "ruled", "revision-proposed",
 })
 STATES = frozenset({"candidate", "active", "overturned"})
 AUTHORITIES = frozenset({"agent", "human", "mechanical"})
@@ -72,10 +84,15 @@ CHANNEL_LABEL = {
 _EVENT_RANK = {
     # Same-order ambiguity fails toward less authority: ratification before a
     # revision leaves the revision candidate; overturn remains last.
+    # `revision-proposed` ties with `overturn-proposed` deliberately and the
+    # tie is meaningless — they write different fold keys, and rank only
+    # breaks same-`order` ties (same-nanosecond and test clocks).
     "asserted": 0,
+    "ruled": 0,
     "ratified": 1,
     "activated": 1,
     "revised": 2,
+    "revision-proposed": 3,
     "overturn-proposed": 3,
     "overturned": 4,
 }
@@ -88,6 +105,15 @@ _SPACE_RE = re.compile(r"\s+")
 _MAX_TEXT = 2000
 _MAX_ANCHORS = 24
 _MAX_EVIDENCE = 24
+# #693: a standing rule needing more is a document, not a ruling — capped at
+# WRITE time so the render never has to truncate one (a clipped conditional
+# rule is a different rule). Creates two validation regimes in one id space;
+# a ruling can never be minted to collide with a long-subject refutation.
+_MAX_RULING_TEXT = 280
+# Best-effort growth containment for the two agent-writable proposal
+# channels on a ruling (append is unlocked, so this is not an invariant;
+# read-side boundedness comes from latest-wins in the fold).
+_MAX_OPEN_PROPOSALS = 3
 
 # Every field of a ledger row that can hold ITEM plaintext, flat then nested
 # (#645). One declaration, two consumers: `forget_content_key` below decides
@@ -393,12 +419,28 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     path = _path(project_dir)
     if path is None or not path.exists():
         return []
-    doomed = {
-        str(row.get("refutation_id") or "")
-        for row in events(project_dir=project_dir)
-        if content_key in row_content_keys(row)
-    }
-    doomed.discard("")
+    # #693: the doomed set derives from RAW LINES, never from `events()` —
+    # that reader drops rows whose event name this install does not know, and
+    # a deleter inheriting the filter would leave exactly those rows on disk
+    # while the audit (which reads raw lines) reports them as residue: the
+    # permanent exit 1 this module forbids. Version-proof for any future
+    # event name; the rewrite below already walks raw lines for this reason.
+    doomed = set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        if content_key in row_content_keys(row):
+            ref_id = str(row.get("refutation_id") or "")
+            if _REF_ID_RE.fullmatch(ref_id):
+                doomed.add(ref_id)
     if not doomed:
         return []
     # Rewrite RAW LINES, never `events()` output. That reader is deliberately
@@ -485,7 +527,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         ref_id = row["refutation_id"]
         event = row["event"]
         current = out.get(ref_id)
-        if event == "asserted":
+        if event in ("asserted", "ruled"):
             if current is not None:
                 continue  # duplicate logical assertion, first writer wins
             state = (
@@ -493,6 +535,9 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 and CHANNEL_AUTHORITY.get(row.get("channel")) == "human" else "candidate")
             out[ref_id] = {
                 "refutation_id": ref_id,
+                # #693: polarity is DERIVED from the founding event name at
+                # fold time, never read from a caller-supplied field.
+                "polarity": "ruling" if event == "ruled" else "refutation",
                 "state": state,
                 "subject": str(row.get("subject") or ""),
                 "verdict": str(row.get("verdict") or ""),
@@ -502,12 +547,16 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "evidence": list(row.get("evidence") or []),
                 "asserted_by": row.get("authority"),
                 "asserted_author": row.get("author"),
+                # Who authored the CURRENT text — distinct from asserted_by
+                # so human-ratified agent prose renders as exactly that.
+                "text_authored_by": row.get("authority"),
                 "activation": (CHANNEL_LABEL.get(row.get("channel"))
                                if state == "active" else None),
                 "activation_channel": (row.get("channel")
                                        if state == "active" else None),
                 "activation_author": (
                     row.get("author") if state == "active" else None),
+                "activated_at": row.get("ts") if state == "active" else None,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
                 "revision": 1,
@@ -516,20 +565,50 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             continue
         if current is None:
             continue  # orphan lifecycle event: visible in raw audit, inert here
+        is_ruling = current.get("polarity") == "ruling"
+        # #693: fold-enforced, not CLI convention — no agent path changes
+        # what a ruling renders. An agent-authority `revised` row on an
+        # active ruling is fully inert, and a retired ruling cannot be
+        # resurrected by revise; both stay visible in the raw audit.
+        if is_ruling and event == "revised" and (
+                (current["state"] == "active"
+                 and CHANNEL_AUTHORITY.get(row.get("channel")) != "human")
+                or current["state"] == "overturned"):
+            continue
         current["history_count"] += 1
-        current["updated_at"] = row.get("ts") or current["updated_at"]
+        # #693: an agent proposal must not move a ruling's rendered age or
+        # its list/search order. Ruling polarity only — changing the shipped
+        # refutation ordering is its own decision.
+        if not (is_ruling and event in ("revision-proposed",
+                                        "overturn-proposed")):
+            current["updated_at"] = row.get("ts") or current["updated_at"]
         if event == "ratified":
             if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
+                # #693: content-bound ratification. A ratify row carrying a
+                # verdict_key activates only the text it displayed; a row
+                # with NO key is unbound and activates normally (every
+                # pre-existing ledger row is absent-key, so upgrade changes
+                # nothing for shipped refutations).
+                bound = str(row.get("verdict_key") or "")
+                if bound and bound != normalize.content_key(
+                        current.get("verdict") or ""):
+                    continue  # the text changed after it was displayed
                 current["state"] = "active"
                 current["activation"] = CHANNEL_LABEL.get(row.get("channel"))
                 current["activation_channel"] = row.get("channel")
                 current["activation_author"] = row.get("author")
+                current["activated_at"] = row.get("ts")
         elif event == "activated":
-            if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(row.get("channel")) == "mechanical":
+            # #693: mechanical activation is a refutation concept (#581);
+            # a mechanical row on a ruling stays in the raw audit, inert.
+            if (current["state"] != "overturned"
+                    and current.get("polarity") != "ruling"
+                    and CHANNEL_AUTHORITY.get(row.get("channel")) == "mechanical"):
                 current["state"] = "active"
                 current["activation"] = "mechanically-activated"
                 current["activation_channel"] = "mechanical"
                 current["activation_author"] = row.get("author")
+                current["activated_at"] = row.get("ts")
         elif event == "revised":
             for key in ("subject", "verdict", "scope", "revisit_when"):
                 if key in row:
@@ -547,6 +626,12 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # revisions walked straight through the per-row _MAX_EVIDENCE
                 # cap (74 sources against a limit of 24).
                 current["evidence"] = list(row.get("evidence") or [])
+            # #693: re-stamped ONLY when the row carries a text key — the
+            # replace-by-key-presence contract above means a human revising
+            # only scope must not relabel agent-authored text as human.
+            if "verdict" in row or "subject" in row:
+                current["text_authored_by"] = row.get("authority")
+            was_active = current["state"] == "active"
             current["state"] = (
                 "active" if row.get("ratified") is True
                 and CHANNEL_AUTHORITY.get(row.get("channel")) == "human" else "candidate")
@@ -557,8 +642,23 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 row.get("channel") if current["state"] == "active" else None)
             current["activation_author"] = (
                 row.get("author") if current["state"] == "active" else None)
+            if current["state"] == "active" and not was_active:
+                current["activated_at"] = row.get("ts")
+            elif current["state"] != "active":
+                current["activated_at"] = None
             current["revision"] += 1
             current.pop("overturn_proposed", None)
+            current.pop("revision_proposed", None)
+        elif event == "revision-proposed":
+            # #693: latest-wins; the active text and its render are untouched.
+            if current["state"] == "active":
+                current["revision_proposed"] = {
+                    "by": row.get("authority"),
+                    "evidence": list(row.get("evidence") or []),
+                    "note": str(row.get("note") or ""),
+                    "subject": str(row.get("subject") or ""),
+                    "verdict": str(row.get("verdict") or ""),
+                }
         elif event == "overturn-proposed":
             if current["state"] == "active":
                 current["overturn_proposed"] = {
@@ -611,9 +711,12 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     holder = _identity_holder(ref_id, project_dir=project_dir)
     if holder is not None:
         held = holder.get("refutation_id") or ref_id
+        # #693: polarity-aware — a collision against a ruling must not send
+        # the user to a verb that will refuse the id.
+        verb = ("ruling" if holder.get("polarity") == "ruling" else "refute")
         raise RefutationError(
             f"{held} already exists for this subject and scope; use "
-            f"`daimon refute revise {held}`")
+            f"`daimon {verb} revise {held}`")
     row = _stamp("asserted", ref_id, channel)
     row.update({
         "subject": subject,
@@ -630,8 +733,130 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     return ref_id
 
 
+def _guard_ruling_cap(project_dir=None, exclude: str = "") -> None:
+    """#693: one chokepoint for every path that activates a ruling.
+
+    Enforced at activation, never at render, so the always-present briefing
+    section can never silently truncate. Candidates are never counted."""
+    cap = config.ruling_cap()
+    active = sorted(
+        r["refutation_id"] for r in records(project_dir=project_dir).values()
+        if r.get("polarity") == "ruling" and r["state"] == "active"
+        and r["refutation_id"] != exclude)
+    if len(active) >= cap:
+        raise RefutationError(
+            f"ruling cap reached ({cap} active): {', '.join(active)} — "
+            "retire one first, or raise DAIMON_RULING_CAP deliberately")
+
+
+def _guard_open_proposals(refutation_id: str, event: str,
+                          project_dir=None) -> None:
+    """#693: best-effort growth containment for the agent-writable proposal
+    channels (append is unlocked; read-side boundedness is latest-wins)."""
+    def _order(row):
+        try:
+            return int(row.get("order") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    rows = [r for r in events(project_dir=project_dir)
+            if r.get("refutation_id") == refutation_id]
+    verdicts = [r for r in rows if r.get("event") in ("ratified", "overturned")
+                or (r.get("event") == "revised"
+                    and CHANNEL_AUTHORITY.get(r.get("channel")) == "human")]
+    since = max((_order(r) for r in verdicts), default=-1)
+    pending = [r for r in rows
+               if r.get("event") == event and _order(r) > since]
+    if len(pending) >= _MAX_OPEN_PROPOSALS:
+        raise RefutationError(
+            f"{refutation_id} already has {len(pending)} open "
+            f"{event} row(s) awaiting a human verdict")
+
+
+def _guard_ruling_text(subject, verdict) -> None:
+    for name, value in (("subject", subject), ("verdict", verdict)):
+        if value is not None and len(str(value)) > _MAX_RULING_TEXT:
+            raise RefutationError(
+                f"ruling {name} exceeds {_MAX_RULING_TEXT} chars — a "
+                "standing rule that long is a document, not a ruling")
+
+
+def assert_ruling(*, subject: str, verdict: str, scope: str,
+                  evidence, channel: str, anchors=(), revisit_when: str = "",
+                  ratified: bool = False, project_dir=None) -> str:
+    """#693: found a positive-polarity record. Same row schema, same id
+    space, same identity-collision refusal as a refutation — the polarity is
+    the founding event name (`ruled`), derived at fold time."""
+    _guard_ruling_text(subject, verdict)
+    subject = _text("subject", subject)
+    verdict = _text("verdict", verdict)
+    scope = _text("scope", scope)
+    revisit_when = _text("revisit_when", revisit_when, required=False)
+    evidence = _evidence(evidence)
+    anchors = _anchors(anchors)
+    subject, _ = redact.redact_text(subject)
+    verdict, _ = redact.redact_text(verdict)
+    scope, _ = redact.redact_text(scope)
+    if ratified and CHANNEL_AUTHORITY.get(channel) != "human":
+        raise RefutationError(
+            "activating with --ratify requires a human channel; this call "
+            f"arrived through {channel!r}")
+    if ratified:
+        _guard_ruling_cap(project_dir=project_dir)
+    ref_id = make_id(subject, scope)
+    holder = _identity_holder(ref_id, project_dir=project_dir)
+    if holder is not None:
+        held = holder.get("refutation_id") or ref_id
+        verb = ("ruling" if holder.get("polarity") == "ruling" else "refute")
+        raise RefutationError(
+            f"{held} already exists for this subject and scope; use "
+            f"`daimon {verb} revise {held}`")
+    row = _stamp("ruled", ref_id, channel)
+    row.update({
+        "subject": subject,
+        "verdict": verdict,
+        "scope": scope,
+        "anchors": anchors,
+        "revisit_when": revisit_when,
+        "evidence": evidence,
+    })
+    if ratified:
+        row["ratified"] = True
+    if not append(row, project_dir=project_dir):
+        raise RefutationError(
+            "ruling not written (daimon disabled, project unknown, or "
+            "ledger unwritable)")
+    return ref_id
+
+
+def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
+           project_dir=None) -> str:
+    """#693: end an active ruling. Human channels retire directly; an agent
+    channel gets a proposal and the ruling stands. Evidence is OPTIONAL —
+    a rule that simply stopped applying has no citation, and requiring one
+    manufactures fake evidence."""
+    current = get(ruling_id, project_dir=project_dir)
+    if current is None:
+        raise RefutationError(f"unknown ruling: {ruling_id}")
+    if current.get("polarity") != "ruling":
+        raise RefutationError(
+            f"{ruling_id} is a refutation; use `daimon refute overturn`")
+    if current["state"] == "overturned":
+        raise RefutationError(f"{ruling_id} is already retired")
+    event = ("overturned" if CHANNEL_AUTHORITY.get(channel) == "human"
+             else "overturn-proposed")
+    if event == "overturn-proposed":
+        _guard_open_proposals(ruling_id, event, project_dir=project_dir)
+    row = _stamp(event, ruling_id, channel)
+    row["evidence"] = _evidence(evidence, required=False)
+    row["note"] = _text("note", note, required=False)
+    if not append(row, project_dir=project_dir):
+        raise RefutationError("retirement not written")
+    return event
+
+
 def ratify(refutation_id: str, *, channel: str, note: str = "",
-           project_dir=None) -> None:
+           verdict_key: str = "", project_dir=None) -> None:
     # Ratification is the transition that makes a record load-bearing, so it
     # is the one that must not be self-declarable.  The caller names the
     # channel it OBSERVED; authority is derived from that, so an agent cannot
@@ -646,8 +871,16 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     if current["state"] == "overturned":
         raise RefutationError(
             "an overturned refutation cannot be ratified; revise it with new evidence first")
+    if (current.get("polarity") == "ruling"
+            and current["state"] != "active"):
+        _guard_ruling_cap(project_dir=project_dir, exclude=refutation_id)
     row = _stamp("ratified", refutation_id, channel)
     row["note"] = _text("note", note, required=False)
+    # #693: content-bound ratification — the CLI records the key of the
+    # verdict it DISPLAYED, and the fold refuses to activate any other text.
+    # A hash, never plaintext, and absent means unbound.
+    if verdict_key:
+        row["verdict_key"] = str(verdict_key)
     if not append(row, project_dir=project_dir):
         raise RefutationError("ratification not written")
 
@@ -662,7 +895,30 @@ def revise(refutation_id: str, *, channel: str, evidence,
         raise RefutationError(
             "activating a revision requires a human channel; this call "
             f"arrived through {channel!r}")
-    row = _stamp("revised", refutation_id, channel)
+    event = "revised"
+    if current.get("polarity") == "ruling":
+        # #693: the lifecycle is polarity-asymmetric. A retired ruling is
+        # not resurrectable by revise; an agent revising an ACTIVE ruling
+        # writes a proposal that leaves the render untouched; a human
+        # revising an active ruling keeps it active — demotion is never a
+        # side effect of editing (only ratify and retire change render
+        # membership).
+        _guard_ruling_text(subject, verdict)
+        if current["state"] == "overturned":
+            raise RefutationError(
+                f"{refutation_id} is retired; propose a new ruling instead "
+                "of reviving it")
+        if current["state"] == "active":
+            if CHANNEL_AUTHORITY.get(channel) != "human":
+                event = "revision-proposed"
+                _guard_open_proposals(refutation_id, event,
+                                      project_dir=project_dir)
+            else:
+                ratified = True
+        elif ratified:
+            _guard_ruling_cap(project_dir=project_dir,
+                              exclude=refutation_id)
+    row = _stamp(event, refutation_id, channel)
     row["evidence"] = _evidence(evidence)
     if subject is not None:
         row["subject"] = _text("subject", subject)
@@ -721,16 +977,20 @@ def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
     return event
 
 
-def listing(*, states=None, project_dir=None) -> list[dict]:
+def listing(*, states=None, polarity=None, project_dir=None) -> list[dict]:
     """Every record in `refute list` order: active first, then most recently
     updated, ties broken by id. This sort is the CLI's presentation contract;
-    it lives here so the viewer's lane and the CLI cannot drift apart."""
+    it lives here so the viewer's lane and the CLI cannot drift apart.
+
+    `polarity` (#693): None returns everything; "refutation"/"ruling" scopes
+    the lane — `refute list` and `ruling list` never mix polarities."""
     wanted = set(states or STATES)
     unknown = wanted - STATES
     if unknown:
         raise RefutationError(f"unknown state: {', '.join(sorted(unknown))}")
     rows = [row for row in records(project_dir=project_dir).values()
-            if row["state"] in wanted]
+            if row["state"] in wanted
+            and (polarity is None or row.get("polarity") == polarity)]
     rows.sort(key=lambda row: (row.get("state") != "active",
                                row.get("updated_at") or "",
                                row["refutation_id"]))
@@ -769,7 +1029,10 @@ def search(query: str, *, project_dir=None, states=None) -> list[dict]:
 
 
 def guard(query: str, *, anchors=(), project_dir=None) -> list[dict]:
-    """High-precision active matches only: stable anchor or subject phrase."""
+    """High-precision active matches only: stable anchor or subject phrase.
+
+    Refutation polarity only (#693): the shipped guidance reads a guard hit
+    as "this approach lost", and a standing ruling is the opposite claim."""
     query = _text("query", query)
     q = query.casefold()
     query_anchors = set(_anchors(anchors))
@@ -777,6 +1040,8 @@ def guard(query: str, *, anchors=(), project_dir=None) -> list[dict]:
     matches = []
     for record in records(project_dir=project_dir).values():
         if record["state"] != "active":
+            continue
+        if record.get("polarity") == "ruling":
             continue
         record_anchors = set(record.get("anchors") or [])
         subject = _SPACE_RE.sub(" ", record.get("subject") or "").strip().casefold()
