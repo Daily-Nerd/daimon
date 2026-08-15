@@ -1,20 +1,21 @@
 ---
-id: 0
+id: 53
 type: landmine
 title: Adding a discriminating field to a shared read surface silently widens every caller you did not audit
 severity: high
 confidence: 0.9
 created: 2026-08-15
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/refutations.py
   - path: plugin/daimon_ui/server.py
-violation: "refutations\.listing\(\s*project_dir"
 evidence:
-  - note: "issue #693 PR1 review: two blind reviewers independently executed the repro"
+  - note: issue #693 PR1 review: two blind reviewers independently executed the repro
 expires:
   condition: "refutations.listing grows a required polarity parameter, making unscoped calls impossible"
   review_after: 2027-02-15
+violation: "refutations\.listing\(\s*project_dir"
+status: active
 ---
 
 #693 added ruling polarity to the refutation ledger fold and scoped the CLI
