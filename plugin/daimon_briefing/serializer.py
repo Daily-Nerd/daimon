@@ -1982,15 +1982,20 @@ _CODE_OWNED_KEYS = (
 # re-write. That makes any value already on an item authoritative forever —
 # so a model-emitted one is a self-issued witness that corroboration counting
 # would then treat as an independent session. Stripped from freshly authored
-# model output only, exactly like `grounded`/`pinned` (#292 discipline).
+# model output only, exactly like `grounded` (#292 discipline).
 # #511: `quote_verified`/`last_verified` are verify_quotes' verdicts — on the
 # serialize path they are re-derived AFTER this strip, and on the introspection
 # path (no transcript, verify_quotes never runs) nothing may hold either stamp.
+# #689: `pinned` is pin_imperatives' verdict, minted only from user-authored
+# transcript text (#369) — that pass pops model copies itself but never runs
+# on the introspection path, so without this entry a piped checkpoint keeps a
+# self-issued pin that the recall index then honors as a #452 age-gate
+# exemption. On the serialize path pin_imperatives re-pins after this strip.
 # Safe to strip on both paths because carry.merge folds prev items in AFTER
 # serialize_strict returns — a carried item's genuine stamps never pass here.
 _CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
                          "quote_verified", "last_verified",
-                         "quote_provenance")
+                         "quote_provenance", "pinned")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:

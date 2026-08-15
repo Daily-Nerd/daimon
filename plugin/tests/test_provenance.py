@@ -187,6 +187,20 @@ def test_model_cannot_self_issue_source_or_quote_receipt():
     assert "quote_provenance" not in item
 
 
+def test_strip_code_owned_keys_removes_model_emitted_pinned():
+    # #689: `pinned` is code-owned (#292 discipline, same as `grounded`) —
+    # pin_imperatives is its only legitimate writer. The strip must remove a
+    # model-emitted value at the boundary so both capture doors share the
+    # guarantee; on the serialize path pin_imperatives re-pins genuine user
+    # imperatives after this runs.
+    item = {"text": "claim", "trust": "inferred", "pinned": True}
+    cp = _checkpoint("S-new", item, "2026-08-05T10:00:00Z")
+
+    serializer.strip_code_owned_keys(cp)
+
+    assert "pinned" not in item
+
+
 def test_resolver_unique_ambiguous_absent_remote_and_unsupported(tmp_path):
     claude = tmp_path / ".claude" / "projects"
     one = claude / "one"
