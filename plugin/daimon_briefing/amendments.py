@@ -5,11 +5,14 @@ the issue got approved, the blocker cleared, the scope changed. It is not a
 resolution (the loop is still open) and not a reverify (nothing is stale); it
 is the verb between them.
 
-Amendments are not checkpoint items and never ride events.jsonl. That store
-has no channel column (a human verdict and an agent proposal would be
-byte-identical on disk), folds latest-wins per ref (a confirmation would
-overwrite the amendment it confirms), and deletes by append-tombstone (prose
-written there outlives every deletion the user can ask for — the #419 class).
+Amendments are not checkpoint items and never ride events.jsonl. That store's
+`source` field is caller-declared and defaults to the human tier
+(HUMAN_EVENT_SOURCES classifies the values, but no write path attests them —
+authority as a caller's claim about itself, the hole refutations.py names),
+it folds latest-wins per ref (a confirmation would overwrite the amendment it
+confirms), and forget reaches its prose only by whole-value match without ever
+removing a row (the resolutions fold depends on them — scar 0025), so a
+record's existence and its ref persist there by construction.
 This module follows refutations.py instead: its own append-only stream, an
 observed channel recorded on every row, a deterministic full-pass fold, and
 rewrite deletion that reaches the bytes.
