@@ -95,6 +95,17 @@ def test_renderer_backstops_count_and_text(tmp_checkpoint_dir, monkeypatch):
     assert len(body) == 2
 
 
+def test_ruling_lines_fail_open_on_cap_read_error(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    _rule("cap failure hides me safely")
+
+    def boom():
+        raise ValueError("corrupt env")
+
+    monkeypatch.setattr(briefing.config, "ruling_cap", boom)
+    assert briefing.ruling_lines(PROJECT) == []
+
+
 def test_ruling_loader_fails_open(tmp_checkpoint_dir, sample_checkpoint,
                                   monkeypatch):
     _rule("this ruling will not load")

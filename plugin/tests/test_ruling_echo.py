@@ -143,6 +143,57 @@ def test_active_refutation_never_drops_anything(tmp_checkpoint_dir):
     assert stats["ruling_echo_count"] == 0
 
 
+def test_torn_checkpoint_shapes_never_crash_the_matcher(tmp_checkpoint_dir):
+    # Legacy/torn blobs: a section that is not a dict, a list key that is
+    # not a list — the matcher tolerates both, same posture as the forget
+    # gate's walk.
+    from daimon_briefing import normalize, policy
+    torn = {
+        "session_id": "S-torn",
+        "working_context": "not-a-dict",
+        "epistemic_snapshot": {"strong_beliefs": "not-a-list",
+                               "uncertainties": [
+                                   {"text": VERDICT, "trust": "inferred"}]},
+    }
+    dropped = policy.drop_matching_items(
+        torn, {normalize.content_key(VERDICT)})
+    assert [i["text"] for i in dropped] == [VERDICT]
+
+
+def test_hand_edited_empty_verdict_ruling_never_breaks_the_filter(
+        tmp_checkpoint_dir):
+    # A raw-appended active ruling with an empty verdict contributes no key
+    # and must not stop a real ruling's echo from dropping.
+    row = refutations._stamp(
+        "ruled", refutations.make_id("empty verdict", "tests"), "cli-tty")
+    row.update({"subject": "empty verdict", "verdict": "", "scope": "tests",
+                "anchors": [], "revisit_when": "", "evidence": [],
+                "ratified": True})
+    assert refutations.append(row, project_dir=PROJECT)
+    _active_ruling()
+    out = store.write_checkpoint("S-echo", _checkpoint(),
+                                 project_dir=PROJECT, admit=True)
+    assert VERDICT not in _beliefs(out)
+    assert store.forget_hit_stats(project_dir=PROJECT)[
+        "ruling_echo_count"] == 1
+
+
+def test_status_rich_path_surfaces_echo_drops(tmp_checkpoint_dir,
+                                              monkeypatch, capsys):
+    import pytest as _pytest
+    _pytest.importorskip("rich")
+    from daimon_briefing import cli, render
+    _active_ruling()
+    store.write_checkpoint("S-echo", _checkpoint(),
+                           project_dir=PROJECT, admit=True)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    monkeypatch.delenv("DAIMON_PLAIN", raising=False)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    assert cli.main(["status"]) == 0
+    assert "ruling echo" in capsys.readouterr().out
+
+
 def test_status_surfaces_echo_drops_when_nonzero(tmp_checkpoint_dir,
                                                  monkeypatch, capsys):
     from daimon_briefing import cli
