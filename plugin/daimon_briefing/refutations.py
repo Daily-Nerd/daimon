@@ -317,6 +317,24 @@ def append(row: dict, project_dir=None) -> bool:
         return False
 
 
+def plaintext_values(row: dict) -> list[str]:
+    """Every scalar plaintext value this row carries (#698).
+
+    The forget TARGETING pool reads this (cli._cmd_forget) instead of
+    hand-reading `subject` — the same one-declaration discipline
+    `row_content_keys` below gives the deleter and the auditor. Scalars only:
+    `anchors`/`evidence` are bounded typed tokens shared across records, so
+    offering one as a by-value target would show a single record in the
+    dry-run while the deleter removes every record carrying the token — the
+    same reasoning that keeps `author` out of the declared set entirely."""
+    out: list[str] = []
+    for field in _PLAINTEXT_FIELDS:
+        value = row.get(field)
+        if isinstance(value, str) and value.strip():
+            out.append(value)
+    return out
+
+
 def row_content_keys(row: dict) -> set[str]:
     """Canonical keys for every plaintext field this row carries (#645).
 

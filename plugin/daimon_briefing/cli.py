@@ -1427,23 +1427,31 @@ def _cmd_forget(args) -> int:
     # #578: the refutation ledger is a second plaintext store, so a value can
     # live there with no checkpoint at all. Bailing on a missing checkpoint
     # would leave that value permanently unreachable.
-    # Every subject the record has EVER carried, not only the folded one: a
-    # revision rewrites the subject, so the forgotten value can sit in an
-    # earlier row that nothing renders. Matching only the current subject would
-    # leave exactly the text `forget` exists to reach unreachable. One entry per
-    # record, so a record whose old and new subjects both match is one hit.
-    ledger_subjects: dict[str, list[str]] = {}
+    # Every plaintext value the record has EVER carried, not only the folded
+    # ones: a revision rewrites fields, so the forgotten value can sit in an
+    # earlier row that nothing renders. #698: the field walk is the module's
+    # OWN declaration (plaintext_values, scalars only — a shared anchor or
+    # evidence token must never become a by-value target), never a hand-read
+    # `subject`. One entry per record, so a record whose old and new values
+    # both match is one hit; `text` stays the latest subject for display.
+    ledger_texts: dict[str, list[str]] = {}
+    ledger_display: dict[str, str] = {}
     for row in refutations.events(project_dir=project):
         ref_id = str(row.get("refutation_id") or "")
+        if not ref_id:
+            continue
+        for value in refutations.plaintext_values(row):
+            ledger_texts.setdefault(ref_id, [])
+            if value not in ledger_texts[ref_id]:
+                ledger_texts[ref_id].append(value)
         subject = str(row.get("subject") or "")
-        if ref_id and subject:
-            ledger_subjects.setdefault(ref_id, [])
-            if subject not in ledger_subjects[ref_id]:
-                ledger_subjects[ref_id].append(subject)
+        if subject:
+            ledger_display[ref_id] = subject
     ledger = [
-        (None, "refutation", {"id": ref_id, "text": subjects[-1],
-                              "_texts": subjects})
-        for ref_id, subjects in ledger_subjects.items()
+        (None, "refutation", {"id": ref_id,
+                              "text": ledger_display.get(ref_id, texts[0]),
+                              "_texts": texts})
+        for ref_id, texts in ledger_texts.items()
     ]
     # #691: the amendment ledger is another plaintext store — evidence quotes
     # and human notes. Same every-row posture as the refutation subjects

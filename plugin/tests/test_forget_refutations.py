@@ -489,3 +489,63 @@ def test_forget_still_refuses_an_unmatched_target(
 
     assert cli.main(["forget", target, "--project", PROJECT]) == 1
     assert "no item matches" in capsys.readouterr().out
+
+
+VERDICT = "it deadlocked under concurrent writes"
+
+
+def test_plaintext_values_walks_the_declared_scalar_fields():
+    # #698: the forget TARGETING pool must read the module's own declaration,
+    # exactly as the amendment pool does (amendments.plaintext_values). Scalars
+    # only: anchors/evidence are bounded typed tokens shared across records,
+    # the reasoning that keeps `author` out of the declared set.
+    row = {
+        "subject": "receipt design", "verdict": "CANARY must never ship",
+        "scope": "receipts", "revisit_when": "when the audit lands",
+        "note": "a human note", "anchors": ["issue:698"],
+        "evidence": ["measurement:trace-1"], "author": "someone",
+    }
+    values = refutations.plaintext_values(row)
+    assert "receipt design" in values
+    assert "CANARY must never ship" in values
+    assert "receipts" in values
+    assert "when the audit lands" in values
+    assert "a human note" in values
+    assert "issue:698" not in values
+    assert "measurement:trace-1" not in values
+    assert "someone" not in values
+
+
+def test_forget_removes_a_refutation_by_its_verdict_text(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698: the natural deletion gesture for ledger prose is the text itself.
+    # Before the fix the pool hand-read `subject` only, so a verdict value
+    # answered "no item matches" while the audit promised reach by value.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("an unrelated decision about logging")
+    ref_id = _refute()
+
+    assert cli.main(["forget", VERDICT, "--project", PROJECT]) == 0
+
+    assert VERDICT not in _ledger_text()
+    assert refutations.get(ref_id, project_dir=PROJECT) is None
+
+
+def test_forget_selector_never_offers_a_shared_anchor_token(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 scoping: a typed anchor token is shared across records; offering it
+    # as a by-value target would show ONE record in the dry-run while the
+    # deleter removes every record carrying the token.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("an unrelated decision about logging")
+    kept = refutations.assert_refutation(
+        subject="a distinct subject about caching",
+        verdict="the cache thrashed", scope="caching",
+        evidence=["measurement:deadlock-trace-1"],
+        channel="cli-tty", ratified=True, project_dir=PROJECT)
+    _refute()  # shares evidence token "measurement:deadlock-trace-1"
+
+    assert cli.main(
+        ["forget", "measurement:deadlock-trace-1", "--project", PROJECT]) == 1
+
+    assert refutations.get(kept, project_dir=PROJECT) is not None
