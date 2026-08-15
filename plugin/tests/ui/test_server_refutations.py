@@ -63,7 +63,7 @@ def test_listing_is_the_cli_order(refut_proj):
         subject="the older active", verdict="does not hold",
         scope="tests", evidence=["artifact:b"], channel="cli-tty",
         ratified=True, project_dir=refut_proj)
-    rows = refutations.listing(project_dir=refut_proj)
+    rows = refutations.listing(polarity="refutation", project_dir=refut_proj)
     assert [r["refutation_id"] for r in rows] == [active, cand]
     assert rows[0]["state"] == "active"
 

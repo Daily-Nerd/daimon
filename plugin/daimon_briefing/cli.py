@@ -1233,11 +1233,11 @@ def _cmd_ruling_revise(args) -> int:
     anchors = args.anchor if args.anchor is not None else None
     try:
         refutations.revise(
-            args.ruling_id, channel=_refute_channel(args),
+            args.ruling_id, channel=channel,
             evidence=args.evidence, subject=args.subject,
             verdict=args.verdict, scope=args.scope,
             anchors=anchors, revisit_when=args.revisit_when,
-            ratified=args.ratify, project_dir=project)
+            ratified=False, project_dir=project)
     except refutations.RefutationError as exc:
         print(f"ruling not revised: {exc}")
         return 1
@@ -1959,12 +1959,21 @@ def _cmd_forget(args) -> int:
             if content_hash in refutations.row_content_keys(row)}
             | {str(target["id"])})
         if ledger_meta.get(rid) == ("ruling", "active"))
-    if doomed_rulings and not sys.stdin.isatty():
-        print("refused: this would remove ACTIVE ruling(s) "
-              + ", ".join(doomed_rulings)
-              + " — a human decision. Run it from a terminal, or ask the "
-              "user; `daimon ruling retire` records the verdict instead.")
-        return 1
+    if doomed_rulings:
+        if not sys.stdin.isatty():
+            print("refused: this would remove ACTIVE ruling(s) "
+                  + ", ".join(doomed_rulings)
+                  + " — a human decision. Run it from a terminal, or ask the "
+                  "user; `daimon ruling retire` records the verdict instead.")
+            return 1
+        # Deleting what renders is strictly more power than rewriting it,
+        # and rewriting confirms. A human can still say y (#421 unchanged).
+        print("WARNING — this removes ACTIVE ruling(s): "
+              + ", ".join(doomed_rulings))
+        answer = input("Remove? [y/N]: ").strip().casefold()
+        if answer not in ("y", "yes"):
+            print("not removed")
+            return 1
     sid = str((checkpoint or {}).get("session_id") or "")
     # A checkpoint-bearing project still needs its session id to rewrite. A
     # ledger-only value has no checkpoint to rewrite, so the missing id is not

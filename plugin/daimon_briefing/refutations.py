@@ -943,8 +943,14 @@ def revise(refutation_id: str, *, channel: str, evidence,
             else:
                 ratified = True
         elif ratified:
-            _guard_ruling_cap(project_dir=project_dir,
-                              exclude=refutation_id)
+            # Module-enforced, same reasoning as overturn(): in-process
+            # writers reach this function directly, and activating a
+            # candidate ruling here would be the revise --ratify side door
+            # one layer down — no ceremony, no content binding. The only
+            # activation paths are ratify() and found-with-ratify.
+            raise RefutationError(
+                f"a candidate ruling activates only through ratify(); "
+                f"revise {refutation_id} first, then ratify it")
     row = _stamp(event, refutation_id, channel)
     row["evidence"] = _evidence(evidence)
     if subject is not None:

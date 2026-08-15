@@ -457,8 +457,9 @@ def test_forget_refuses_an_active_ruling_without_a_terminal(
 
 
 def test_forget_from_a_terminal_still_reaches_a_ruling(
-        tmp_checkpoint_dir, _tty, capsys):
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
     from daimon_briefing import store
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     ruling_id = _rule(channel="cli-tty", ratified=True)
     store.write_checkpoint("S1", {
         "session_id": "S1", "created": "2026-07-01T00:00:00Z",
@@ -533,3 +534,64 @@ def test_ruling_list_surfaces_over_cap_state(
     monkeypatch.setenv("DAIMON_RULING_CAP", "2")
     assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
     assert "over cap" in capsys.readouterr().out
+
+
+def test_module_revise_never_activates_a_candidate_ruling(tmp_checkpoint_dir):
+    # In-process writers reach revise() directly; activation without the
+    # ceremony would be the revise --ratify side door one layer down. The
+    # only activation paths are ratify() and found-with-ratify.
+    ruling_id = _rule()
+    with pytest.raises(refutations.RefutationError):
+        refutations.revise(
+            ruling_id, channel="cli-tty", evidence=["issue:693"],
+            verdict="activated with no ceremony", ratified=True,
+            project_dir=PROJECT)
+    assert refutations.get(
+        ruling_id, project_dir=PROJECT)["state"] == "candidate"
+
+
+def test_destructive_forget_of_an_active_ruling_confirms_at_the_tty(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    # Deleting what renders is strictly more power than rewriting it, and
+    # rewriting confirms. Declining writes nothing.
+    from daimon_briefing import store
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-07-01T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "unrelated", "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+    rc = cli.main(["forget", "internal numbers never appear in public posts",
+                   "--project", PROJECT])
+    assert rc == 1
+    assert refutations.get(ruling_id, project_dir=PROJECT) is not None
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["forget", "internal numbers never appear in public posts",
+                   "--project", PROJECT])
+    assert rc == 0
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None
+
+
+def test_an_inert_key_mismatched_ratify_does_not_reset_the_proposal_bound(
+        tmp_checkpoint_dir):
+    # The adversary controls when a human ratify lands inert (revise during
+    # the confirm window); an inert verdict must not hand back a proposal
+    # slot. An honoured ratify still resets the bound.
+    from daimon_briefing import normalize
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    for n in range(3):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:693"],
+            verdict=f"proposal number {n}", project_dir=PROJECT)
+    stale_key = normalize.content_key("a text that was never displayed")
+    refutations.ratify(ruling_id, channel="cli-tty",
+                       verdict_key=stale_key, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:693"],
+            verdict="a fourth proposal", project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:693"],
+        verdict="a proposal after an honoured verdict", project_dir=PROJECT)
