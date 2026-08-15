@@ -1514,16 +1514,43 @@ def _cmd_forget(args) -> int:
         def _texts_of(it):
             return it.get("_texts") or [str(it.get("text") or "")]
 
+        # #698 review: document frequency is per CANDIDATE, never per field.
+        # A record's subject/verdict/scope restate each other by construction,
+        # so counting them as separate documents lets one record push its own
+        # terms over the generic threshold and hide itself from its exact
+        # subject. One concatenated document per candidate keeps the statistic
+        # meaning what carry.py says it means: terms shared by >= k ITEMS.
         pools = [(pool, carry._generic_terms(
-            [t for _, _, it in pool for t in _texts_of(it)]))
+            [" ".join(_texts_of(it)) for _, _, it in pool]))
             for pool in (items, ledger, amend_pool)]
-        hits = ([(s, k, it) for s, k, it in candidates if it["id"] == args.target]
-                if len(exact) > 1 else
-                [(s, k, it)
-                 for pool, generic in pools
-                 for s, k, it in pool
-                 if any(carry._same_item(args.target, t, generic)
-                        for t in _texts_of(it))])
+        query_key = normalize.content_key(args.target)
+
+        def _matched_value(it, generic):
+            # The value the QUERY named. The exact canonical match is a rail
+            # the generic filter can never subtract — verbatim text sitting on
+            # disk always binds, no matter how common its terms have become
+            # (#698 review). The fuzzy fallback matches each value against the
+            # candidate's own store vocabulary.
+            for t in _texts_of(it):
+                if normalize.content_key(t) == query_key:
+                    return t
+            for t in _texts_of(it):
+                if carry._same_item(args.target, t, generic):
+                    return t
+            return None
+
+        matched_by_id: dict[int, str] = {}
+        if len(exact) > 1:
+            hits = [(s, k, it) for s, k, it in candidates
+                    if it["id"] == args.target]
+        else:
+            hits = []
+            for pool, generic in pools:
+                for s, k, it in pool:
+                    value = _matched_value(it, generic)
+                    if value is not None:
+                        hits.append((s, k, it))
+                        matched_by_id[id(it)] = value
         # #691: an amendment's evidence is by construction ABOUT its item, so
         # a query matching the item routinely fuzzy-matches the amendment too
         # — a false-ambiguity surface, not a real second value. When an item
@@ -1536,37 +1563,27 @@ def _cmd_forget(args) -> int:
             hits = [(s, k, it) for s, k, it in hits
                     if not (k == "amendment"
                             and it.get("_target") in item_hit_ids)]
-        # Ambiguity is about distinct VALUES, not hit count. The same sentence
-        # carried by sibling ids, held on several surfaces, or held in both the
-        # checkpoint and the refutation ledger is one thing to forget; #418
-        # already splices sibling ids from a single key. Only genuinely
-        # different values leave the user a choice to make, and there
+        # Ambiguity is about distinct MATCHED values, not hit count and never
+        # the display text. The same sentence carried by sibling ids, held on
+        # several surfaces, or held in both the checkpoint and the refutation
+        # ledger is one thing to forget; #418 already splices sibling ids from
+        # a single key. But two records matched on DIFFERENT values behind one
+        # shared display subject are two things — collapsing them over the
+        # display text silently under-deleted (#698 review). Only genuinely
+        # different matched values leave the user a choice, and there
         # never-guess still refuses.
-        distinct = {normalize.content_key(str(it.get("text") or ""))
-                    for _, _, it in hits}
+        distinct = {normalize.content_key(
+            matched_by_id.get(id(it), str(it.get("text") or "")))
+            for _, _, it in hits}
         if len(distinct) == 1:
             target = hits[0][2]
-            # #691: an amendment record can hold several values (evidence,
-            # note, historical rows). The tombstone must key on the value
-            # the QUERY named, never on an arbitrary field — rebind `text`
-            # to the matched value before the hash below derives from it.
-            texts = target.get("_texts")
-            if isinstance(texts, list) and len(texts) > 1:
-                query_key = normalize.content_key(args.target)
-                matched = next(
-                    (t for t in texts
-                     if normalize.content_key(t) == query_key),
-                    None)
-                if matched is None:
-                    _, generic = next(
-                        (p for p in pools if target in [it for _, _, it in p[0]]),
-                        (None, carry._generic_terms(texts)))
-                    matched = next(
-                        (t for t in texts
-                         if carry._same_item(args.target, t, generic)),
-                        None)
-                if matched:
-                    target = dict(target, text=matched)
+            # #691: a record can hold several values (evidence, note,
+            # historical rows). The tombstone must key on the value the QUERY
+            # named, never on an arbitrary field — rebind `text` to the
+            # matched value before the hash below derives from it.
+            matched = matched_by_id.get(id(target))
+            if matched is not None and matched != target.get("text"):
+                target = dict(target, text=matched)
         else:
             _note_usage("forget:no-match" if not hits else "forget:ambiguous")
             label = "no item matches" if not hits else "ambiguous — matches"

@@ -548,4 +548,77 @@ def test_forget_selector_never_offers_a_shared_anchor_token(
     assert cli.main(
         ["forget", "measurement:deadlock-trace-1", "--project", PROJECT]) == 1
 
+    # The REASON must be the pool excluding the token, never the ambiguity
+    # gate masking an over-reach: with the token in the pool both records
+    # would hit and the refusal would read "ambiguous — matches" instead.
+    assert "no item matches" in capsys.readouterr().out
     assert refutations.get(kept, project_dir=PROJECT) is not None
+
+
+def test_forget_reaches_a_subject_whose_own_fields_share_its_terms(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review: one record's subject/verdict/scope restate each other by
+    # construction. Counting each field as its own document pushed the
+    # record's OWN terms over the generic threshold and the record became
+    # unreachable by its exact subject. Frequency is per record, and an
+    # exact canonical match must always bind.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("an unrelated decision about logging")
+    refutations.assert_refutation(
+        subject="the account migration rewrite",
+        verdict="the account migration rewrite deadlocked",
+        scope="account migration",
+        evidence=["measurement:deadlock-trace-1"], channel="cli-tty",
+        ratified=True, project_dir=PROJECT)
+
+    assert cli.main(
+        ["forget", "the account migration rewrite", "--project", PROJECT]) == 0
+
+    assert "the account migration rewrite" not in _ledger_text()
+
+
+def test_forget_fuzzy_reach_to_a_subject_survives_the_widened_pool(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review: a partial query that reached the subject before the pool
+    # widened must still reach it after.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("an unrelated decision about logging")
+    refutations.assert_refutation(
+        subject="the retry budget must be per-tenant and never global",
+        verdict="a global retry budget starved the busiest tenant under load",
+        scope="retry budget policy",
+        revisit_when="when the retry budget becomes per-tenant everywhere",
+        evidence=["measurement:starvation-trace"], channel="cli-tty",
+        ratified=True, project_dir=PROJECT)
+
+    assert cli.main(
+        ["forget", "retry budget must be per-tenant", "--project",
+         PROJECT]) == 0
+
+    assert "retry budget" not in _ledger_text()
+
+
+def test_two_records_matched_on_different_verdicts_refuse_ambiguous(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #698 review: never-guess is about distinct MATCHED values. Two records
+    # sharing a display subject but matched on different verdicts are two
+    # things; collapsing them over the display text silently under-deleted.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _checkpoint("an unrelated decision about logging")
+    kept_a = refutations.assert_refutation(
+        subject="the account migration rewrite", scope="alpha",
+        verdict="the migration corrupted tenant rows silently",
+        evidence=["measurement:corruption-a"], channel="cli-tty",
+        ratified=True, project_dir=PROJECT)
+    kept_b = refutations.assert_refutation(
+        subject="the account migration rewrite", scope="beta",
+        verdict="the migration corrupted tenant rows completely",
+        evidence=["measurement:corruption-b"], channel="cli-tty",
+        ratified=True, project_dir=PROJECT)
+
+    assert cli.main(
+        ["forget", "the migration corrupted tenant rows silently",
+         "--project", PROJECT]) == 1
+
+    assert refutations.get(kept_a, project_dir=PROJECT) is not None
+    assert refutations.get(kept_b, project_dir=PROJECT) is not None
