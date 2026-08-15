@@ -402,3 +402,154 @@ def test_cli_show_renders_a_retired_ruling_as_retired(
     out = capsys.readouterr().out
     assert "retired" in out
     assert "overturned" not in out
+
+
+# --- review round 1 findings ----------------------------------------------
+
+
+def test_viewer_refutations_lane_excludes_rulings(tmp_checkpoint_dir):
+    # The lane renders `refute list`; the polarity parameter exists so the
+    # viewer and the CLI cannot drift apart. PR2 adds a rulings lane; the
+    # FILTER belongs to the commit that shipped the polarity.
+    from daimon_ui import server as ui_server
+    _rule(channel="cli-tty", ratified=True)
+    _refute()
+    rows = refutations.listing(polarity="refutation", project_dir=PROJECT)
+    assert all(r.get("polarity") == "refutation" for r in rows)
+    import inspect
+    assert 'polarity="refutation"' in inspect.getsource(ui_server)
+
+
+def test_cli_ruling_revise_refuses_ratify_on_a_candidate(
+        tmp_checkpoint_dir, _tty, capsys):
+    # The ratification ceremony (full text, disclosure, confirm, key binding)
+    # lives in `ruling ratify`; `revise --ratify` walking around it would
+    # activate text the human was never shown.
+    ruling_id = _rule()
+    rc = cli.main(["ruling", "revise", ruling_id,
+                   "--verdict", "sharpened text", "--evidence", "issue:693",
+                   "--ratify", "--project", PROJECT])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "ruling ratify" in out
+    assert refutations.get(
+        ruling_id, project_dir=PROJECT)["state"] == "candidate"
+
+
+def test_cli_revising_an_active_rulings_text_requires_confirmation(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+    rc = cli.main(["ruling", "revise", ruling_id,
+                   "--verdict", "a different rule", "--evidence", "issue:693",
+                   "--project", PROJECT])
+    assert rc == 1
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["verdict"] == "internal numbers never appear in public posts"
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "revise", ruling_id,
+                   "--verdict", "a different rule", "--evidence", "issue:693",
+                   "--project", PROJECT])
+    assert rc == 0
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["verdict"] == "a different rule"
+    assert record["state"] == "active"
+
+
+def test_forget_refuses_an_active_ruling_without_a_terminal(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # `forget` takes no --by and no confirm; without this gate it is an
+    # agent path that un-renders a human-ratified standing constraint.
+    from daimon_briefing import store
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-07-01T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "unrelated", "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False,
+                        raising=False)
+    rc = cli.main(["forget", "internal numbers never appear in public posts",
+                   "--project", PROJECT])
+    assert rc == 1
+    assert "ruling" in capsys.readouterr().out
+    assert refutations.get(ruling_id, project_dir=PROJECT) is not None
+
+
+def test_forget_from_a_terminal_still_reaches_a_ruling(
+        tmp_checkpoint_dir, _tty, capsys):
+    from daimon_briefing import store
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-07-01T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "unrelated", "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    rc = cli.main(["forget", "internal numbers never appear in public posts",
+                   "--project", PROJECT])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ruling" in out  # the receipt names what it removed
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None
+
+
+def test_search_lines_carry_the_polarity_word(tmp_checkpoint_dir, capsys):
+    _rule(channel="cli-tty", ratified=True,
+          subject="shared area", scope="scope-r",
+          verdict="the standing rule about the shared area")
+    _refute(subject="shared area findings",
+            verdict="the shared area approach deadlocked", scope="scope-f")
+    assert cli.main(["refute", "search", "shared", "area",
+                     "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "[ruling" in out
+    assert "[refutation" in out
+
+
+def test_module_overturn_refuses_a_ruling_id(tmp_checkpoint_dir):
+    # Fold-and-module-enforced, not CLI convention: in-process writers reach
+    # overturn() directly.
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    with pytest.raises(refutations.RefutationError):
+        refutations.overturn(
+            ruling_id, channel="cli-tty", evidence=["issue:693"],
+            project_dir=PROJECT)
+
+
+def test_age_and_order_survive_proposals_across_real_seconds(
+        tmp_checkpoint_dir, monkeypatch):
+    # The earlier assertions all wrote inside one second, so they compared
+    # X == X regardless of the code. Step the clock so they bite.
+    base = refutations.time.time_ns()
+    ticks = iter(range(1, 50))
+    monkeypatch.setattr(
+        refutations.time, "time_ns",
+        lambda: base + next(ticks) * 2_000_000_000)
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    before_updated, before_activated = (
+        record["updated_at"], record["activated_at"])
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:693"],
+        verdict="a proposal", project_dir=PROJECT)
+    refutations.retire(ruling_id, channel="cli-agent", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["updated_at"] == before_updated
+    assert record["activated_at"] == before_activated
+    refutations.revise(
+        ruling_id, channel="cli-tty", evidence=["issue:693"],
+        scope="publishing widened", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["updated_at"] != before_updated
+    assert record["activated_at"] == before_activated
+
+
+def test_ruling_list_surfaces_over_cap_state(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_RULING_CAP", "3")
+    for n in range(3):
+        _rule(subject=f"area {n}", verdict=f"standing rule number {n}",
+              scope=f"scope-{n}", channel="cli-tty", ratified=True)
+    monkeypatch.setenv("DAIMON_RULING_CAP", "2")
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    assert "over cap" in capsys.readouterr().out

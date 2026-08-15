@@ -34,7 +34,8 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon reverify <id>` | Assert a carried item is still true — evidence-gated, resets its staleness clock. Also the reject half of a supersession candidate. |
 | `daimon audit quotes` | Re-check every stored verbatim quote against its source transcript and report mismatches. Read-only — it never rewrites trust tags. |
 | `daimon audit privacy` | Prove the deletion contract: hash every plaintext field on every surface (checkpoints, rotated pointers, the event ledger, the team mirror, the recall index and its orphan snapshots) and report any forgotten value that survived. Read-only. |
-| `daimon refute list\|show\|search\|guard` | Read the negative-knowledge ledger without decay. `guard` emits active exact-anchor/subject matches only; it is advisory and never blocks a command. Add `--json` for deliberation integrations. |
+| `daimon refute list\|show\|search\|guard` | Read the negative-knowledge ledger without decay. `guard` emits active exact-anchor/subject matches only; it is advisory and never blocks a command. `search` returns both polarities, labelled; `list` and `guard` stay refutation-only. Add `--json` for deliberation integrations. |
+| `daimon ruling list\|show` | Read the standing rulings: human-ratified positive constraints on the same ledger, never decayed, never re-extracted. `show` includes pending agent proposals. |
 | `daimon serve` | Open the [read-only local viewer](viewer.md) on localhost — search as recall, per-entry "why" pages, refutations, diff, check strip, print view. Nothing writes. |
 | `daimon relations list\|show\|confirm\|reject\|retract` | The [typed relation ledger](relations.md): machines propose, only a person confirms, and verdicts need an interactive terminal. Candidates never render on an entry surface. |
 
@@ -55,7 +56,8 @@ The auditors share one exit contract, so a script can act on the answer:
 | --- | --- |
 | `daimon resolve <id or text>` | Mark an item resolved — append-only event; the item stops carrying. `--dry-run` previews the match; `--by agent --evidence "<quote>"` claims a close that is byte-checked at session end. |
 | `daimon anchor <file> <symbol>` | Bind a cognitive item to a code symbol; briefings then warn when the anchored code drifts. |
-| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires the human path — an interactive terminal with `--by` omitted. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active record to candidate until it is ratified again. Agent overturns remain proposals. |
+| `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires the human path — an interactive terminal with `--by` omitted. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active refutation to candidate until it is ratified again. Agent overturns remain proposals. |
+| `daimon ruling propose\|ratify\|revise\|retire` | Manage standing rulings on the same ledger, with a stricter lifecycle: `ratify` shows the full text, discloses that it will render into every future session, and binds the activation to the text it displayed; a human revising an active ruling confirms the change and the ruling stays active; agent revise and retire calls record proposals while the text stands; activation refuses past the cap (`DAIMON_RULING_CAP`, default 7). Retirement needs no evidence citation. |
 
 ## Forget
 

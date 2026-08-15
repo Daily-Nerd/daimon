@@ -95,7 +95,7 @@ SURFACES: tuple[Surface, ...] = (
     #    verdict, not an age), the `mechanical` channel is a socket nothing
     #    plugs into, the two agent-writable proposal channels on a ruling
     #    (`revision-proposed`, `overturn-proposed`) refuse past 3 open rows
-    #    since the last human verdict, and the audit reports record/row/byte
+    #    PER CHANNEL since the last human verdict, and the audit reports record/row/byte
     #    counts every run (privacy.audit_project) so this is measured, never
     #    silent. Ruling CANDIDATES are agent proposals and reaper-eligible
     #    under the note below, but with the #693 lifecycle no human-ratified

@@ -205,7 +205,11 @@ class _Handler(BaseHTTPRequestHandler):
             # same fold and the same order the CLI prints. A slug is already its
             # own project_slug, so passing it as project_dir resolves to the same
             # bucket (the inspector endpoint leans on the same property).
-            self._json({"ok": True, "rows": refutations.listing(project_dir=slug)})
+            # #693: refutation polarity only — the ledger now holds rulings
+            # too, and this lane's vocabulary (✗, "Refutes") would invert
+            # them. A rulings lane is its own surface.
+            self._json({"ok": True, "rows": refutations.listing(
+                polarity="refutation", project_dir=slug)})
         elif path == "/api/relations":
             slug = self._resolve_slug(params)
             if slug is None:

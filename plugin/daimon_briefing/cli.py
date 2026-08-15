@@ -1005,11 +1005,13 @@ def _refutation_json(record) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
-def _print_refutation(record: dict, *, detailed: bool = False) -> None:
+def _print_refutation(record: dict, *, detailed: bool = False,
+                      tag: bool = False) -> None:
     state = record.get("state") or "candidate"
     activation = record.get("activation") or f"{record.get('asserted_by', '?')}-proposed"
     mark = "✗" if state == "active" else ("×" if state == "overturned" else "?")
-    print(f"[{mark} {state} · {activation}] {record['refutation_id']}  "
+    word = "refutation " if tag else ""
+    print(f"[{word}{mark} {state} · {activation}] {record['refutation_id']}  "
           f"{record.get('subject', '')}")
     if not detailed:
         return
@@ -1059,7 +1061,8 @@ def _refute_channel(args) -> str:
     return "cli-tty"
 
 
-def _print_ruling(record: dict, *, detailed: bool = False) -> None:
+def _print_ruling(record: dict, *, detailed: bool = False,
+                  tag: bool = False) -> None:
     """#693: a ruling renders its VERDICT (the rule text) and never the
     refutation's ✗ glyph; an overturned ruling reads "retired" (label only,
     the state vocabulary is unchanged); and text authored by a non-human
@@ -1072,8 +1075,9 @@ def _print_ruling(record: dict, *, detailed: bool = False) -> None:
     if state == "active" and authored and authored != "human":
         activation = f"{authored}-written, {activation}"
     mark = "§" if state == "active" else ("×" if state == "overturned" else "?")
-    print(f"[{mark} {shown_state} · {activation}] {record['refutation_id']}  "
-          f"{record.get('verdict', '')}")
+    word = "ruling " if tag else ""
+    print(f"[{word}{mark} {shown_state} · {activation}] "
+          f"{record['refutation_id']}  {record.get('verdict', '')}")
     if not detailed:
         return
     print(f"  Governs: {record.get('subject', '')}")
@@ -1148,19 +1152,22 @@ def _cmd_ruling_ratify(args) -> int:
         print(f"{args.ruling_id} is a refutation; use `daimon refute ratify`")
         return 1
     if channel != "cli-tty":
-        try:
-            refutations.ratify(args.ruling_id, channel=channel,
-                               note=args.note or "", project_dir=project)
-        except refutations.RefutationError as exc:
-            print(f"ruling not ratified: {exc}")
+        # Never invoke a writer to harvest its error string.
+        print("ruling not ratified: ratification requires a human channel; "
+              f"this call arrived through {channel!r}")
         return 1
     # Ratification is a signature, not an id-typing exercise: print the FULL
     # text, disclose the render consequence, and bind the append to the key
     # of the text DISPLAYED — the fold refuses to activate any other text.
-    print("About to ratify this ruling:")
-    _print_ruling(record, detailed=True)
+    # Under --json the ceremony goes to stderr so stdout stays parseable.
+    ceremony = sys.stderr if args.json else sys.stdout
+    print("About to ratify this ruling:", file=ceremony)
+    if not args.json:
+        _print_ruling(record, detailed=True)
+    else:
+        print(f"  {record.get('verdict', '')}", file=ceremony)
     print("  This text will render into every future session for this "
-          "project.")
+          "project.", file=ceremony)
     displayed_key = normalize.content_key(record.get("verdict") or "")
     answer = input("Ratify? [y/N]: ").strip().casefold()
     if answer not in ("y", "yes"):
@@ -1189,9 +1196,40 @@ def _cmd_ruling_ratify(args) -> int:
 def _cmd_ruling_revise(args) -> int:
     project = _resolve_project(args.project)
     record = refutations.get(args.ruling_id, project_dir=project)
-    if record is not None and record.get("polarity") != "ruling":
+    if record is None:
+        print(f"unknown ruling: {args.ruling_id}")
+        return 1
+    if record.get("polarity") != "ruling":
         print(f"{args.ruling_id} is a refutation; use `daimon refute revise`")
         return 1
+    if args.ratify:
+        # The ratification ceremony (full text, disclosure, confirm, key
+        # binding) lives in ONE place; a revise flag walking around it would
+        # activate text the human was never shown.
+        print("ruling revise does not activate; revise the candidate, then "
+              f"run `daimon ruling ratify {args.ruling_id}`")
+        return 1
+    try:
+        channel = _refute_channel(args)
+    except refutations.RefutationError as exc:
+        print(f"ruling not revised: {exc}")
+        return 1
+    if (record["state"] == "active" and channel == "cli-tty"
+            and (args.verdict is not None or args.subject is not None)):
+        # Rewriting what renders is the same power ratification has, and it
+        # earns trust the same way: show the change, disclose, confirm.
+        print("About to change the ACTIVE text of this ruling:")
+        _print_ruling(record, detailed=True)
+        if args.verdict is not None:
+            print(f"  New text: {args.verdict}")
+        if args.subject is not None:
+            print(f"  New governs: {args.subject}")
+        print("  This text will render into every future session for this "
+              "project.")
+        answer = input("Apply? [y/N]: ").strip().casefold()
+        if answer not in ("y", "yes"):
+            print("not revised")
+            return 1
     anchors = args.anchor if args.anchor is not None else None
     try:
         refutations.revise(
@@ -1247,11 +1285,19 @@ def _cmd_ruling_list(args) -> int:
     _note_usage("ruling:list")
     if args.json:
         print(_refutation_json(rows))
-    elif not rows:
+        return 0
+    if not rows:
         print("no rulings for this project")
-    else:
-        for row in rows:
-            _print_ruling(row)
+        return 0
+    for row in rows:
+        _print_ruling(row)
+    # The cap binds ACTIVATION; a lowered DAIMON_RULING_CAP leaves the
+    # excess active, so the over-cap state must be visible somewhere.
+    active = sum(1 for r in rows if r.get("state") == "active")
+    cap = config.ruling_cap()
+    if active > cap:
+        print(f"over cap: {active} active vs cap {cap} — retire one, or "
+              "raise DAIMON_RULING_CAP deliberately")
     return 0
 
 
@@ -1424,9 +1470,9 @@ def _cmd_refute_search(args) -> int:
         # mid-session, after the briefing has scrolled away.
         for row in rows:
             if row.get("polarity") == "ruling":
-                _print_ruling(row)
+                _print_ruling(row, tag=True)
             else:
-                _print_refutation(row)
+                _print_refutation(row, tag=True)
     return 0
 
 
@@ -1678,10 +1724,17 @@ def _cmd_forget(args) -> int:
         subject = str(row.get("subject") or "")
         if subject:
             ledger_display[ref_id] = subject
+    # #693: the ledger holds BOTH polarities; every forget surface (pool
+    # label, dry-run, gate, receipt) names a ruling as a ruling. Snapshot
+    # taken BEFORE any deletion.
+    ledger_meta = {
+        rid: (rec.get("polarity") or "refutation", rec.get("state"))
+        for rid, rec in refutations.records(project_dir=project).items()}
     ledger = [
-        (None, "refutation", {"id": ref_id,
-                              "text": ledger_display.get(ref_id, texts[0]),
-                              "_texts": texts})
+        (None, ledger_meta.get(ref_id, ("refutation", None))[0],
+         {"id": ref_id,
+          "text": ledger_display.get(ref_id, texts[0]),
+          "_texts": texts})
         for ref_id, texts in ledger_texts.items()
     ]
     # #691: the amendment ledger is another plaintext store — evidence quotes
@@ -1866,6 +1919,12 @@ def _cmd_forget(args) -> int:
             if value_key in amendments.row_content_keys(row)
             or str(row.get("item_id") or "") in spliced})
         print(f"would forget {target['id']}: {target.get('text', '')}")
+        active_rulings = sorted(
+            rid for rid in set(ref_reach) | {str(target["id"])}
+            if ledger_meta.get(rid) == ("ruling", "active"))
+        if active_rulings:
+            print("WARNING — this removes ACTIVE ruling(s): "
+                  + ", ".join(active_rulings))
         sibling_ids = sorted(spliced - {str(target["id"])})
         if sibling_ids:
             print("also removed — checkpoint siblings holding the value: "
@@ -1882,6 +1941,24 @@ def _cmd_forget(args) -> int:
     # suppressed at capture. Still a hash, never the text: removal means the
     # content leaves the audit trail too (#321).
     content_hash = normalize.content_key(target.get("text") or "")
+    # #693: forget takes no --by and asks no confirmation, so without this
+    # gate it is an agent path that un-renders a human-ratified standing
+    # constraint — the one thing no agent path may do. A human at a terminal
+    # proceeds (deletion stays the user's call, #421 posture unchanged); a
+    # non-interactive caller is pointed at the human.
+    doomed_rulings = sorted(
+        rid for rid in ({
+            str(row.get("refutation_id") or "")
+            for row in refutations.events(project_dir=project)
+            if content_hash in refutations.row_content_keys(row)}
+            | {str(target["id"])})
+        if ledger_meta.get(rid) == ("ruling", "active"))
+    if doomed_rulings and not sys.stdin.isatty():
+        print("refused: this would remove ACTIVE ruling(s) "
+              + ", ".join(doomed_rulings)
+              + " — a human decision. Run it from a terminal, or ask the "
+              "user; `daimon ruling retire` records the verdict instead.")
+        return 1
     sid = str((checkpoint or {}).get("session_id") or "")
     # A checkpoint-bearing project still needs its session id to rewrite. A
     # ledger-only value has no checkpoint to rewrite, so the missing id is not
@@ -2026,8 +2103,17 @@ def _cmd_forget(args) -> int:
     if isinstance(checkpoint, dict):
         surfaces.append("the live checkpoint")
     if forgotten_refutations:
-        surfaces.append(f"{len(forgotten_refutations)} refutation(s) "
-                        f"({', '.join(forgotten_refutations)})")
+        gone_rulings = [r for r in forgotten_refutations
+                        if ledger_meta.get(r, ("refutation", None))[0]
+                        == "ruling"]
+        gone_refuts = [r for r in forgotten_refutations
+                       if r not in gone_rulings]
+        if gone_refuts:
+            surfaces.append(f"{len(gone_refuts)} refutation(s) "
+                            f"({', '.join(gone_refuts)})")
+        if gone_rulings:
+            surfaces.append(f"{len(gone_rulings)} ruling(s) "
+                            f"({', '.join(gone_rulings)})")
     if forgotten_relations:
         surfaces.append(f"{len(forgotten_relations)} relation(s) "
                         f"({', '.join(forgotten_relations)})")
@@ -4833,10 +4919,14 @@ def build_parser() -> argparse.ArgumentParser:
     rl_revise.add_argument(
         "--evidence", action="append", required=True, metavar="SOURCE",
         help="source cited for the revision; recorded, not verified; repeatable")
-    rl_revise.add_argument("--by", choices=["agent"], default=None)
+    rl_revise.add_argument(
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; on an active ruling the call then "
+             "records a proposal and the text stands")
     rl_revise.add_argument(
         "--ratify", action="store_true",
-        help="activate the revision immediately; human path only")
+        help="refused: activation goes through `daimon ruling ratify`, "
+             "which shows the text before the write")
     rl_revise.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_revise.add_argument("--json", action="store_true", help="machine-readable output")
     rl_revise.set_defaults(func=_cmd_ruling_revise)
@@ -4849,7 +4939,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--evidence", action="append", default=None, metavar="SOURCE",
         help="optional source for why the ruling stopped applying; repeatable")
     rl_retire.add_argument("--note", help="optional explanation")
-    rl_retire.add_argument("--by", choices=["agent"], default=None)
+    rl_retire.add_argument(
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; the call then records a retirement "
+             "proposal and the ruling stands until a human verdict")
     rl_retire.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_retire.add_argument("--json", action="store_true", help="machine-readable output")
     rl_retire.set_defaults(func=_cmd_ruling_retire)

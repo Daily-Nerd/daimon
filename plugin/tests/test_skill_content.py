@@ -59,8 +59,8 @@ def test_full_fits_size_budget():
     # the read verbs, and the propose-only boundary — the never-ratify /
     # never-retire lines are the wedge rule this repo enforces everywhere
     # else, stated where agents will read it. New deliberate-review size is
-    # 9,332 (2026-08-15); 9,900 is that plus the same ~6% slack. Nothing was
-    # added to the compact body.
+    # 9,502 (2026-08-15, after review folded the proposal-verb teaching in);
+    # 9,900 keeps ~4% slack. Nothing was added to the compact body.
     full = skill_content.render_full()
     assert len(full) <= 9900, f"full body is {len(full)} chars (cap 9900)"
 
