@@ -420,3 +420,13 @@ def test_every_shipped_command_is_taught_or_declared_not_agent_facing():
 def test_every_not_agent_facing_entry_gives_a_reason():
     for name, reason in skill_content.NOT_AGENT_FACING.items():
         assert reason and reason.strip(), f"{name}: no reason recorded"
+
+
+def test_full_teaches_the_briefing_rulings_section():
+    # #693 PR 2: the briefing now renders active rulings under this exact
+    # header. The skill must teach the section by its rendered literal —
+    # a paraphrased header would leave agents unable to recognize the one
+    # section whose whole point is to be honored on sight.
+    from daimon_briefing import briefing
+    full = skill_content.render_full()
+    assert briefing._RULING_HEADER in full

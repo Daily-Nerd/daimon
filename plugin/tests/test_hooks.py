@@ -412,7 +412,7 @@ def test_on_session_end_routes_project_through_resolve_project_root(
 
     captured = {}
 
-    def _spy(session_id, checkpoint, project_dir=None):
+    def _spy(session_id, checkpoint, project_dir=None, admit=False):
         captured["project_dir"] = project_dir
         return None
 

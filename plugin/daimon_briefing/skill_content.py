@@ -145,8 +145,12 @@ both assert a human decision. Ask the user to run them.
 ## Standing rulings
 Rulings are the OPPOSITE polarity: human-ratified standing constraints to
 honor, not dead approaches. Treat an active ruling as a veto, not advice.
-`daimon ruling list` shows them; `daimon refute search` returns both kinds,
-labelled. Agents may propose: `daimon ruling propose ... --by agent`, and on
+Active rulings render at the top of every briefing as `§` lines under the
+header "Standing rulings (human-ratified — honor these):" — when that
+section is in context, honor it directly; `[agent-written]` marks text a
+human ratified but did not author.
+`daimon ruling list` shows them; `daimon refute search` returns both
+kinds, labelled. Agents may propose: `daimon ruling propose ... --by agent`, and on
 an active ruling `ruling revise --by agent` or `ruling retire --by agent`
 record proposals while the text stands. Always pass `--by agent`. Never run
 `daimon ruling ratify`, and never `ruling revise`/`retire` without the flag:
