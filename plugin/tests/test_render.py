@@ -1420,3 +1420,25 @@ def test_render_ledger_lines_rich_smoke_preserves_brackets(monkeypatch, capsys):
     assert "[? candidate" in out
     assert "Pending retirement proposal" in out
     assert "over cap: 8 active vs cap 7" in out
+
+
+def test_ledger_style_state_map():
+    # Header styling keys off the state token inside the literal bracket text;
+    # both the untagged ("[× retired") and tagged ("[ruling × retired")
+    # spellings of the ended states must dim — the bracket sits flush against
+    # the glyph in the untagged form.
+    style = render._ledger_style
+    assert style("[✗ active · ratified (interactive)] r-1  s") == "red"
+    assert style("[refutation ✗ active · x] r-1  s") == "red"
+    assert style("[§ active · ratified (interactive)] r-2  v") == "green"
+    assert style("[ruling § active · x] r-2  v") == "green"
+    assert style("[? candidate · agent-proposed] r-3  v") == "yellow"
+    assert style("[× retired · ratified (interactive)] r-4  v") == "dim"
+    assert style("[× overturned · x] r-5  s") == "dim"
+    assert style("[ruling × retired · x] r-4  v") == "dim"
+    assert style("[refutation × overturned · x] r-5  s") == "dim"
+    assert style("[unrecognized header] r-6  v") is None
+    assert style("  Pending revision proposal (agent): v2") == "yellow"
+    assert style("  (evidence sources are recorded as cited; ...)") == "dim"
+    assert style("over cap: 8 active vs cap 7") == "yellow"
+    assert style("  Governs: commit signing") is None

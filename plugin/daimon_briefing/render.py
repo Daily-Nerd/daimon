@@ -1106,7 +1106,9 @@ def _ledger_style(ln: str) -> str | None:
             return "green"
         if "? candidate" in ln:
             return "yellow"
-        if " × " in ln:
+        # both spellings: untagged "[× retired …" and tagged
+        # "[refutation × overturned …" / "[ruling × retired …"
+        if re.match(r"\[(?:\w+ )?× ", ln):
             return "dim"
         return None
     if ln.startswith("  Pending"):
