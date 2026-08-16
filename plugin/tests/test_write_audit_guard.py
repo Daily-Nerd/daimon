@@ -545,6 +545,11 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_request_list():
         run(["request", "list"], 0)
 
+    def r_request_inbox():
+        # Read-only pull, self-addressed like _open_request above so the one
+        # bucket the drive owns is both sender and recipient.
+        run(["request", "inbox"], 0)
+
     def _seed_relation():
         # Proposals are not CLI-exposed (lab/serializer writers only), so the
         # verdict drives seed one candidate through the module seam — the
@@ -722,6 +727,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("request", "done"): r_request_done,
         ("request", "reject"): r_request_reject,
         ("request", "list"): r_request_list,
+        ("request", "inbox"): r_request_inbox,
         ("relations", "list"): r_relations_list,
         ("relations", "show"): r_relations_show,
         ("relations", "confirm"): r_relations_confirm,

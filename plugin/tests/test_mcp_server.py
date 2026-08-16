@@ -100,12 +100,12 @@ def test_ping_answers_empty_object():
 # ---- tools/list ----------------------------------------------------------------
 
 
-def test_tools_list_exposes_four_read_only_tools():
+def test_tools_list_exposes_five_read_only_tools():
     _, out = rpc(_init(), {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
     tools = out[1]["result"]["tools"]
     names = {t["name"] for t in tools}
-    assert names == {"daimon_recall", "daimon_brief",
-                     "daimon_projects", "daimon_status"}
+    assert names == {"daimon_recall", "daimon_brief", "daimon_projects",
+                     "daimon_status", "requests_inbox"}
     for t in tools:
         assert t["description"]
         assert t["inputSchema"]["type"] == "object"
@@ -186,6 +186,35 @@ def test_brief_tool_no_checkpoint_gives_orientation_never_foreign_content(
     assert "no checkpoint" in text
     assert "daimon_projects" in text    # the explicit path is named
     assert "S-other" not in text        # foreign content never leaks
+
+
+def test_brief_tool_never_carries_the_request_panel(tmp_checkpoint_dir,
+                                                     sample_checkpoint,
+                                                     monkeypatch):
+    # #694 PR 2 (D2): daimon_brief is untouched — the panel injects ONLY on
+    # the CLI same-project brief path. Without a gate, every MCP client
+    # would auto-receive foreign ask/why/from_label prose (#94/#96).
+    from daimon_briefing import requests, store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-mcp-sender", {
+        "session_id": "S-mcp-sender", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/mcp-brief-sender")
+    requests.open_request(to=store.project_slug("/p/A"),
+                          ask="publish the schema", why="because",
+                          channel="cli-agent",
+                          project_dir="/p/mcp-brief-sender")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _, out = rpc(_init(), _call("daimon_brief", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert "publish the schema" not in text
+    assert "Requests waiting on you" not in text
+    # And the tool never stamped a surfaced row either — no side effect from
+    # a read-only MCP call.
+    assert requests.needs_surfaced_stamp(
+        next(iter(requests.recipient_join(project_dir="/p/A").values())))
 
 
 def test_brief_tool_slug_and_project_conflict_is_tool_error(tmp_checkpoint_dir):
@@ -271,6 +300,70 @@ def test_brief_tool_empty_briefing_states_it(tmp_checkpoint_dir,
     assert "nothing worth surfacing" in text
 
 
+# ---- requests_inbox (#694 PR 2) -----------------------------------------------
+
+
+def test_requests_inbox_tool_returns_addressed_rows(tmp_checkpoint_dir,
+                                                     monkeypatch):
+    from daimon_briefing import requests, store
+    store.write_checkpoint("S-sender", {
+        "session_id": "S-sender", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "the sender shipped something", "trust": "inferred"}]},
+    }, project_dir="/p/mcp-sender")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/mcp-recipient")
+    to = store.project_slug("/p/mcp-recipient")
+    q_id = requests.open_request(to=to, ask="publish the schema",
+                                 why="the client needs it", channel="cli-agent",
+                                 project_dir="/p/mcp-sender")
+    _, out = rpc(_init(), _call("requests_inbox", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    assert [r["request_id"] for r in rows] == [q_id]
+    assert rows[0]["ask"] == "publish the schema"
+
+
+def test_requests_inbox_tool_takes_an_explicit_project(tmp_checkpoint_dir,
+                                                        monkeypatch):
+    from daimon_briefing import requests, store
+    store.write_checkpoint("S-sender", {
+        "session_id": "S-sender", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/mcp-sender-b")
+    to = store.project_slug("/p/mcp-recipient-b")
+    q_id = requests.open_request(to=to, ask="review this", why="because",
+                                 channel="cli-agent",
+                                 project_dir="/p/mcp-sender-b")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/somewhere-else")
+    _, out = rpc(_init(),
+                _call("requests_inbox", {"project": "/p/mcp-recipient-b"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    assert [r["request_id"] for r in rows] == [q_id]
+
+
+def test_requests_inbox_tool_empty_is_an_empty_list(tmp_checkpoint_dir,
+                                                     monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/mcp-nobody-asked")
+    _, out = rpc(_init(), _call("requests_inbox", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert json.loads(text) == []
+
+
+def test_mcp_tools_expose_no_request_write_verb():
+    # #694 PR 2: the tool tier is read-only by design — open/revise/accept/
+    # reject/needs-info/suppress/done stay CLI-only.
+    from daimon_briefing import mcp_tools
+    assert "requests_inbox" in mcp_tools.HANDLERS
+    for verb in ("open", "revise", "accept", "reject", "needs_info",
+                "suppress", "done"):
+        assert not any(verb in name for name in mcp_tools.HANDLERS)
+
+
 # ---- usage logging + kill switch ----------------------------------------------
 
 
@@ -280,10 +373,12 @@ def test_tools_call_logs_mcp_usage(tmp_checkpoint_dir, tmp_log_dir,
     store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rpc(_init(), _call("daimon_projects", {}), _call("daimon_recall",
-                                                     {"query": "x"}))
+                                                     {"query": "x"}),
+       _call("requests_inbox", {}))
     usage = (config.log_dir() / "usage.log").read_text(encoding="utf-8")
     assert "mcp:projects" in usage
     assert "mcp:recall" in usage
+    assert "mcp:requests_inbox" in usage
 
 
 def test_serve_disabled_exits_clean_without_reading(monkeypatch):

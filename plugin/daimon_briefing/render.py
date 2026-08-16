@@ -154,20 +154,31 @@ def _print_handoff(handoff) -> None:
 
 
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
-                 project_dir=None) -> None:
+                 project_dir=None, worldcheck_project=None) -> None:
+    """`worldcheck_project` (#694 PR 2) is a SEPARATE gate from `project_dir`
+    — the request panel's own `worldcheck_project` pattern (D2), never keyed
+    on route: the caller passes it only on the CLI same-project brief path
+    (`cli._render_briefing_body`), never for `--slug`, the global-pointer
+    fallback body, or MCP. None here means no panel, full stop."""
     _print_handoff(handoff)
     b = briefing.build(checkpoint)
-    # #693: each path below performs exactly one ledger read — the LLM path
-    # reads inside briefing.render, every other path reads here. None
-    # (legacy callers) skips the read; an unknown project resolves to no
-    # ledger path anyway, so the guard saves the call, not a leak.
+    # #693/#694: each path below performs exactly one ledger read per
+    # section — the LLM path reads inside briefing.render, every other path
+    # reads here. None (legacy callers, or a deliberately excluded route)
+    # skips the read entirely; an unknown project resolves to no ledger path
+    # anyway, so the guard saves the call, not a leak.
     if b is None:
         rulings = (briefing.ruling_lines(project_dir)
                    if project_dir is not None else [])
-        if rulings:
-            # #693: standing rulings exist before the first checkpoint does —
-            # a day-one ratification must not wait for a session to end.
-            print("\n".join(rulings))
+        request_lines = (briefing.request_panel_lines(worldcheck_project)
+                         if worldcheck_project is not None else [])
+        if rulings or request_lines:
+            # #693/#694: standing rulings and addressed requests exist before
+            # the first checkpoint does — a day-one ratification, or the
+            # first ask ever addressed to this project, must not wait for a
+            # session to end.
+            print("\n".join(rulings + (([""] if rulings and request_lines
+                                        else []) + request_lines)))
             print("")
         # Point at the real flow (#29): checkpoints come from the hooks; bare
         # `serialize` dead-ends (it needs a transcript path).
@@ -181,23 +192,27 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     # the hermes hook. Free-form LLM text can't be sectioned into rich panels, so when
     # it is active we print its narrative regardless of TTY.
     if config.llm_briefing():
-        # Tries LLM, falls back to deterministic; #693 rulings ride inside.
-        # Unconditional return: `b` is non-None here, so render() always
-        # yields text — a fall-through would double the ledger read below,
-        # and structure beats a comment at keeping that invariant.
-        print(briefing.render(checkpoint, project_dir=project_dir))
+        # Tries LLM, falls back to deterministic; #693 rulings and #694's
+        # request panel both ride inside. Unconditional return: `b` is
+        # non-None here, so render() always yields text — a fall-through
+        # would double the ledger reads below, and structure beats a comment
+        # at keeping that invariant.
+        print(briefing.render(checkpoint, project_dir=project_dir,
+                              worldcheck_project=worldcheck_project))
         _print_drift(drift)
         _print_teammates(teammates)
         return
     rulings = (briefing.ruling_lines(project_dir)
                if project_dir is not None else [])
+    request_lines = (briefing.request_panel_lines(worldcheck_project)
+                     if worldcheck_project is not None else [])
     # #204: degrade verbatim labels when the receipt can't be locally confirmed.
     # Cheap check (sidecar + byte match), computed once for both render paths.
     degraded = briefing.receipt_degraded(checkpoint)
     if not supports_rich():
-        print(briefing.render_plain(b, degraded, rulings))
+        print(briefing.render_plain(b, degraded, rulings, request_lines))
     else:
-        _rich_brief(b, degraded, rulings)
+        _rich_brief(b, degraded, rulings, request_lines)
     _print_drift(drift)
     _print_teammates(teammates)
 
@@ -230,7 +245,8 @@ def _print_drift(drift) -> None:
     )
 
 
-def _rich_brief(b: dict, degraded: bool = False, rulings=()) -> None:
+def _rich_brief(b: dict, degraded: bool = False, rulings=(),
+                request_lines=()) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -248,6 +264,14 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=()) -> None:
             body.append(f"{line}\n", style="bold")
         console.print(Panel(body, title=rulings[0], border_style="cyan",
                             title_align="left"))
+    if request_lines:
+        # #694 PR 2: same shape as the rulings panel above, its own border
+        # color so the two skeleton sections read as distinct at a glance.
+        body = Text()
+        for line in request_lines[1:]:
+            body.append(f"{line}\n", style="bold")
+        console.print(Panel(body, title=request_lines[0],
+                            border_style="blue", title_align="left"))
     for key, title, style in _SECTIONS:
         items = b.get(key) or []
         if not items:

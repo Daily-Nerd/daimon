@@ -93,6 +93,49 @@ def _request_lines(record: dict) -> list:
     return lines
 
 
+def _inbox_lines(record: dict) -> list:
+    """One inbox entry as a record card — same three-span header shape as
+    `_request_lines`, labeled with the foreign SENDER (`From:`) instead of
+    the local `to`, since every row here was addressed to THIS project."""
+    state = str(record.get("state") or "open")
+    lines = [f"[{_MARKS.get(state, '?')} {_state_label(record)}] "
+             f"{record['request_id']}  {record.get('ask', '')}"]
+    lines.append(f"  From: {record.get('from_label') or '?'}"
+                 + (" (for a human)" if record.get("to_human") else ""))
+    lines.append(f"  Why: {record.get('why', '')}")
+    if record.get("evidence"):
+        lines.append(f"  Evidence: {record['evidence']}")
+    if record.get("supersedes"):
+        lines.append(f"  Supersedes: {requests.supersedes_label(record)}")
+    if record.get("blocking"):
+        lines.append("  Blocking: the sender is waiting on this")
+    if record.get("suppressed"):
+        lines.append("  Suppressed from the briefing panel; still listed "
+                     "here, and any verdict reverses it")
+    if record.get("note"):
+        lines.append(f"  Note: {record['note']}")
+    if record.get("done_evidence"):
+        lines.append(f"  Done: {record['done_evidence']}")
+    if record.get("revision"):
+        lines.append(f"  Revisions: {record['revision']} of "
+                     f"{requests.MAX_REVISIONS}")
+    return lines
+
+
+def _cmd_request_inbox(args) -> int:
+    project = _cli._resolve_project(args.project)
+    rows = requests.inbox_listing(project_dir=project)
+    _cli._note_usage("request:inbox")
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        render.render_ledger_lines(["no requests addressed to this project"])
+        return 0
+    render.render_ledger_records([_inbox_lines(row) for row in rows])
+    return 0
+
+
 def _resolve_to(raw) -> str:
     """The recipient slug, from either spelling the user can type.
 
@@ -329,3 +372,11 @@ def register(sub, fmt) -> None:
                          help="machine-readable output")
     _common(rq_list)
     rq_list.set_defaults(func=_cli._cmd_request_list)
+
+    rq_inbox = request_sub.add_parser(
+        "inbox", help="requests addressed TO this project, from every "
+                      "sender, undecided first")
+    rq_inbox.add_argument("--json", action="store_true",
+                          help="machine-readable output")
+    _common(rq_inbox)
+    rq_inbox.set_defaults(func=_cli._cmd_request_inbox)

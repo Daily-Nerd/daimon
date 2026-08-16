@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .. import amendments, anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+from .. import amendments, anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 from .. import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -580,7 +580,25 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     except Exception:
         handoff = None
     render.render_brief(checkpoint, drift=drift, teammates=teammates,
-                        handoff=handoff, project_dir=route)
+                        handoff=handoff, project_dir=route,
+                        worldcheck_project=worldcheck_project)
+    # #694 PR 2 (D1): the surfaced stamp, AFTER the render+print pipeline
+    # above completes — the card has already reached the terminal, so a
+    # crash between here and the write below just re-renders it next brief
+    # (the safe direction) rather than a false "surfaced". Gated on the same
+    # `worldcheck_project` parameter as the panel itself (D2) — never on
+    # `route`, which is set on every path including --slug. Fail-open, same
+    # posture as every other best-effort block in this function: a broken
+    # composer must never take the briefing down.
+    if worldcheck_project is not None:
+        try:
+            for row in requests.inbox_renderable(
+                    project_dir=worldcheck_project).get("rows") or []:
+                if requests.needs_surfaced_stamp(row):
+                    requests.stamp_surfaced(row["request_id"],
+                                            project_dir=worldcheck_project)
+        except Exception:
+            pass
     if withheld:
         render.render_brief_note([
             f"{len(withheld)} resolved item(s) withheld — "
@@ -918,6 +936,7 @@ from .amend import (  # noqa: E402
 )
 from .request import (  # noqa: E402
     _cmd_request_done,  # noqa: F401 — re-exported for compat
+    _cmd_request_inbox,  # noqa: F401 — re-exported for compat
     _cmd_request_list,  # noqa: F401 — re-exported for compat
     _cmd_request_open,  # noqa: F401 — re-exported for compat
     _cmd_request_revise,  # noqa: F401 — re-exported for compat

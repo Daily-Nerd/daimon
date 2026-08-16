@@ -995,3 +995,318 @@ def test_cli_done_on_a_rejected_request_refuses(project, recipient,
     assert rc == 1
     assert "request done refused" in capsys.readouterr().out
     assert requests.get(q_id, project_dir=project)["state"] == "rejected"
+
+
+# ---- PR 2: the join composer -----------------------------------------------
+#
+# Verdict/suppress/done rows land in the RECIPIENT's own bucket, referencing a
+# foreign request id — orphans in that bucket's per-bucket fold (PR 1's
+# `records()`). The composer is the read-time join that pairs them with their
+# origin (D0), in both directions: sender_join (a sender's asks, joined with
+# whatever the recipient decided) and recipient_join (everything addressed to
+# this project, scanning every other bucket for the origin row).
+
+
+def _seed_bucket(project_dir, session="S-bucket"):
+    """A real checkpoint bucket, so store.list_buckets() can discover it —
+    recipient_join's scan enumerates buckets the same way `daimon projects`
+    does. Only SENDER buckets need this; a recipient need not have a
+    checkpoint of its own to read its own inbox."""
+    store.write_checkpoint(session, {
+        "session_id": session, "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "something happened here", "trust": "inferred"}]},
+    }, project_dir=project_dir)
+    return store.project_slug(project_dir)
+
+
+def test_sender_join_pulls_in_the_recipients_verdict(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-a")
+    q_id = _open(project, to=recipient_slug)
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=recipient_slug)
+    joined = requests.sender_join(project_dir=project)
+    assert joined[q_id]["state"] == "needs-info"
+    # The sender's OWN per-bucket fold never sees it — PR 1 shape, unchanged:
+    # the verdict row lives in a different bucket entirely.
+    assert requests.get(q_id, project_dir=project)["state"] == "open"
+
+
+def test_sender_join_filters_suppression_d5(project):
+    """D5: to the sender, a suppressed request reads "surfaced, undecided" —
+    the recipient's own panel-attention housekeeping never crosses the join."""
+    recipient_slug = _seed_bucket("/p/req-recipient-b")
+    q_id = _open(project, to=recipient_slug)
+    requests.suppress(q_id, channel="cli-tty", project_dir=recipient_slug)
+    joined = requests.sender_join(project_dir=project)
+    assert joined[q_id]["suppressed"] is False
+    assert joined[q_id]["state"] == "open"
+
+
+def test_sender_join_a_later_verdict_still_lands_after_suppression(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-c")
+    q_id = _open(project, to=recipient_slug)
+    requests.suppress(q_id, channel="cli-tty", project_dir=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    joined = requests.sender_join(project_dir=project)
+    assert joined[q_id]["state"] == "accepted"
+
+
+def test_sender_join_on_an_unknown_project_is_empty(project):
+    assert requests.sender_join(project_dir=None) == {}
+
+
+def test_recipient_join_finds_asks_addressed_to_this_project(project):
+    sender_slug = _seed_bucket("/p/req-sender-a")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    joined = requests.recipient_join(project_dir=project)
+    assert joined[q_id]["ask"] == ASK
+    assert joined[q_id]["state"] == "open"
+    assert joined[q_id]["from_slug"] == sender_slug
+
+
+def test_recipient_join_excludes_requests_this_project_sent(project):
+    """A project's own OUTGOING asks — opened rows in its own bucket whose
+    `to` points elsewhere — must never leak into its own inbox. Only
+    requests addressed BACK to this project belong there (D0's join is
+    directional: `to == my_slug`, not "any row this bucket ever wrote)."""
+    recipient_slug = _seed_bucket("/p/req-recipient-leak")
+    requests.open_request(to=recipient_slug, ask=ASK, why=WHY,
+                          channel="cli-agent", project_dir=project)
+    assert requests.recipient_join(project_dir=project) == {}
+    assert requests.inbox_renderable(project_dir=project)["rows"] == []
+    assert requests.inbox_listing(project_dir=project) == []
+
+
+def test_recipient_join_keeps_self_addressed_requests(project):
+    """A request addressed TO the sender's own slug (self-addressed — the
+    write-audit guard's drive recipes exercise exactly this) is a legitimate
+    inbox entry; only requests addressed ELSEWHERE are excluded."""
+    my_slug = store.project_slug(project)
+    q_id = requests.open_request(to=my_slug, ask=ASK, why=WHY,
+                                 channel="cli-agent", project_dir=project)
+    joined = requests.recipient_join(project_dir=project)
+    assert joined[q_id]["ask"] == ASK
+    assert joined[q_id]["state"] == "open"
+
+
+def test_sender_join_ignores_verdict_rows_this_project_wrote_as_a_recipient(
+        project):
+    """The symmetric case: verdict/attention rows this project wrote in its
+    OWN bucket while answering a FOREIGN ask (no local `opened` row for that
+    id) must stay inert in `sender_join` too — the fold's orphan rule
+    already guarantees this (no `opened` row, no record), pinned here so a
+    future refactor of the row-gathering loop cannot regress it silently."""
+    foreign = "q-0123456789ab"
+    requests.accept(foreign, channel="cli-tty", project_dir=project)
+    requests.done(foreign, channel="cli-tty", evidence="shipped it",
+                 project_dir=project)
+    joined = requests.sender_join(project_dir=project)
+    assert foreign not in joined
+    assert joined == {}
+    # ...but the rows are still on disk, per the orphan rule's other half.
+    assert any(r.get("request_id") == foreign
+              for r in requests.events(project_dir=project))
+
+
+def test_recipient_join_merges_local_verdict_rows(project):
+    sender_slug = _seed_bucket("/p/req-sender-b")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    joined = requests.recipient_join(project_dir=project)
+    assert joined[q_id]["state"] == "accepted"
+
+
+def test_recipient_join_orphan_rule_when_sender_bucket_is_gone(project):
+    """D0: a verdict/attention row whose origin bucket is unreadable or gone
+    is inert in the join but stays visible in the raw audit."""
+    foreign = "q-0123456789ab"
+    requests.accept(foreign, channel="cli-tty", project_dir=project)
+    joined = requests.recipient_join(project_dir=project)
+    assert foreign not in joined
+    assert any(r.get("request_id") == foreign
+              for r in requests.events(project_dir=project))
+
+
+def test_recipient_join_ignores_asks_addressed_elsewhere(project):
+    sender_slug = _seed_bucket("/p/req-sender-c")
+    requests.open_request(to="-p-someone-else", ask=ASK, why=WHY,
+                          channel="cli-agent", project_dir=sender_slug)
+    assert requests.recipient_join(project_dir=project) == {}
+
+
+def test_recipient_join_on_an_unknown_project_is_empty(project):
+    assert requests.recipient_join(project_dir=None) == {}
+
+
+def test_inbox_listing_keeps_suppressed_visible_with_a_state(project):
+    sender_slug = _seed_bucket("/p/req-sender-d")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.suppress(q_id, channel="cli-tty", project_dir=project)
+    rows = requests.inbox_listing(project_dir=project)
+    assert rows[0]["request_id"] == q_id
+    assert rows[0]["suppressed"] is True
+    assert rows[0]["state"] == "open"
+
+
+def test_inbox_renderable_drops_suppressed_and_settled(project):
+    sender_slug = _seed_bucket("/p/req-sender-e")
+    to = store.project_slug(project)
+    open_id = requests.open_request(to=to, ask=ASK, why=WHY,
+                                    channel="cli-agent", project_dir=sender_slug)
+    suppressed_id = requests.open_request(
+        to=to, ask="a second ask about the release", why=WHY,
+        channel="cli-agent", project_dir=sender_slug)
+    requests.suppress(suppressed_id, channel="cli-tty", project_dir=project)
+    done_id = requests.open_request(
+        to=to, ask="a third ask, already handled", why=WHY,
+        channel="cli-agent", project_dir=sender_slug)
+    requests.done(done_id, channel="cli-tty", evidence="shipped",
+                 project_dir=project)
+    entry = requests.inbox_renderable(project_dir=project)
+    ids = {r["request_id"] for r in entry["rows"]}
+    assert ids == {open_id}
+
+
+def test_inbox_renderable_caps_and_counts_the_overflow(project):
+    sender_slug = _seed_bucket("/p/req-sender-f")
+    to = store.project_slug(project)
+    for n in range(requests.RENDER_CAP + 2):
+        requests.open_request(to=to, ask=f"ask {n} about the release",
+                              why=WHY, channel="cli-agent",
+                              project_dir=sender_slug)
+    entry = requests.inbox_renderable(project_dir=project)
+    assert len(entry["rows"]) == requests.RENDER_CAP
+    assert entry["overflow"] == 2
+
+
+def test_needs_surfaced_stamp_and_dedup(project):
+    sender_slug = _seed_bucket("/p/req-sender-g")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_surfaced_stamp(record) is True
+    assert requests.stamp_surfaced(q_id, project_dir=project) is True
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_surfaced_stamp(record) is False
+
+
+def test_stamp_dedup_earliest_wins_under_a_duplicate_write(project):
+    """Concurrent-brief TOCTOU may at worst duplicate a stamp row; the fold
+    already takes the earliest — pin it."""
+    sender_slug = _seed_bucket("/p/req-sender-h")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    assert requests.stamp_surfaced(q_id, project_dir=project) is True
+    assert requests.stamp_surfaced(q_id, project_dir=project) is True
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert set(record["surfaced"]) == {0}
+
+
+def test_stamp_dedup_resets_on_a_new_revision_epoch(project):
+    sender_slug = _seed_bucket("/p/req-sender-i")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.stamp_surfaced(q_id, project_dir=project)
+    requests.revise(q_id, channel="cli-agent", ask="a sharper ask",
+                    project_dir=sender_slug)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_surfaced_stamp(record) is True  # new epoch, unstamped
+
+
+def test_supersedes_label_names_a_forgotten_lineage(project):
+    sender_slug = _seed_bucket("/p/req-sender-j")
+    to = store.project_slug(project)
+    first = requests.open_request(to=to, ask=ASK, why=WHY,
+                                  channel="cli-agent", project_dir=sender_slug)
+    second = requests.open_request(
+        to=to, ask="review it again, with the new numbers", why=WHY,
+        channel="cli-agent", project_dir=sender_slug, supersedes=first)
+    record = requests.recipient_join(project_dir=project)[second]
+    assert requests.supersedes_label(record) == first
+    requests.forget_content_key(normalize.content_key(ASK),
+                                project_dir=sender_slug)
+    record = requests.recipient_join(project_dir=project)[second]
+    assert requests.supersedes_label(record) == f"{first} (record forgotten)"
+
+
+def test_supersedes_label_is_empty_when_there_is_no_lineage(project):
+    sender_slug = _seed_bucket("/p/req-sender-k")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.supersedes_label(record) == ""
+
+
+# ---- PR 2: `request inbox` -------------------------------------------------
+
+
+def test_cli_request_inbox_shows_addressed_asks(project, recipient, capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    capsys.readouterr()
+    rc = cli.main(["request", "inbox", "--project", OTHER])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert ASK in out
+    assert "From:" in out
+
+
+def test_cli_request_inbox_json_matches_inbox_listing(project, recipient,
+                                                       capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    capsys.readouterr()
+    rc = cli.main(["request", "inbox", "--json", "--project", OTHER])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == requests.inbox_listing(project_dir=OTHER)
+
+
+def test_cli_request_inbox_empty_says_so(recipient, capsys):
+    from daimon_briefing import cli
+    rc = cli.main(["request", "inbox", "--project", OTHER])
+    assert rc == 0
+    assert "no requests addressed to this project" in capsys.readouterr().out
+
+
+def test_cli_request_inbox_shows_the_suppressed_marker(project, recipient,
+                                                        monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.recipient_join(project_dir=OTHER)))
+    assert cli.main(["request", "suppress", q_id, "--project", OTHER]) == 0
+    capsys.readouterr()
+    rc = cli.main(["request", "inbox", "--project", OTHER])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert q_id in out and "suppressed" in out.lower()
+
+
+def test_cli_request_inbox_renders_the_forgotten_supersedes_lineage(
+        project, recipient, capsys):
+    from daimon_briefing import cli, normalize
+    assert _cli_open(project, recipient) == 0
+    first = next(iter(requests.recipient_join(project_dir=OTHER)))
+    second = requests.open_request(
+        to=store.project_slug(OTHER), ask="review it again, new numbers",
+        why=WHY, channel="cli-agent", project_dir=project, supersedes=first)
+    requests.forget_content_key(normalize.content_key(ASK),
+                                project_dir=project)
+    capsys.readouterr()
+    rc = cli.main(["request", "inbox", "--project", OTHER])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert second in out
+    assert f"{first} (record forgotten)" in out

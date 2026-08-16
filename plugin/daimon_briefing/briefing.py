@@ -20,8 +20,8 @@ import time
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
 # module-level import (contrast carry.py's own local-import notes, which
 # don't apply here).
-from . import (capture, carry, config, llm, receipts, refutations, schema,
-               scoring, serializer, store)
+from . import (capture, carry, config, llm, receipts, refutations, requests,
+               schema, scoring, serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
 # name inside that function.
@@ -790,14 +790,69 @@ def ruling_lines(project_dir=None) -> list[str]:
     return lines
 
 
-def render_plain(b: dict, degraded: bool = False, rulings=()) -> str:
+# ---- #694 PR 2: the recipient-side request panel ---------------------------
+
+# Ruling-shaped (D2): always-present, skeleton furniture, capped and loud on
+# overflow — never a section budget pressure is allowed to quietly thin out.
+_REQUEST_PANEL_HEADER = "Requests waiting on you (from other projects):"
+
+# An `ask` can be up to `requests._MAX_TEXT` (2000 chars); the panel line is
+# meant to be skimmable, not the full record — `daimon request inbox` has the
+# rest. Same display-cap idiom as `_truncate_agent_claim` above, and the
+# reason the worst-case-cap test can bound the section's cost at all.
+_REQUEST_ASK_CHARS = 160
+
+
+def _truncate_request_ask(ask: str) -> str:
+    text = str(ask or "").strip()
+    if len(text) <= _REQUEST_ASK_CHARS:
+        return text
+    return text[:_REQUEST_ASK_CHARS].rstrip() + "…"
+
+
+def request_panel_lines(project_dir=None) -> list[str]:
+    """The recipient-side panel's rendered lines ([] when nothing is
+    addressed to this project, or `project_dir` is None — the section is
+    skeleton furniture, but empty furniture is noise).
+
+    Fail-open like `ruling_lines`: ANY error from the composer yields []
+    rather than costing the briefing. `project_dir` here is the CLI's
+    `worldcheck_project` — the caller (render.render_brief /
+    cli._render_briefing_body) is the ONE place that decides whether this
+    request is same-project (D2's CLI-only gate); this function never
+    inspects route or surface on its own."""
+    if project_dir is None:
+        return []
+    try:
+        entry = requests.inbox_renderable(project_dir=project_dir)
+    except Exception:
+        return []
+    rows = entry.get("rows") or []
+    if not rows:
+        return []
+    lines = [_REQUEST_PANEL_HEADER]
+    for row in rows:
+        marker = "  [blocking]" if row.get("blocking") else ""
+        lines.append(f"→ {row['request_id']}  "
+                     f"{_truncate_request_ask(row.get('ask', ''))}{marker}")
+        lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
+    overflow = entry.get("overflow") or 0
+    if overflow:
+        plural = "s" if overflow != 1 else ""
+        lines.append(f"  (+{overflow} more waiting{plural} — "
+                     "daimon request inbox)")
+    return lines
+
+
+def render_plain(b: dict, degraded: bool = False, rulings=(),
+                 request_lines=()) -> str:
     """The deterministic briefing text. Under the #79 budget this is
     BYTE-IDENTICAL to the legacy render(); over it, long items truncate
     (sections preserved) and then whole items drop, lowest value first,
     each cut announced with a trim note. `degraded` (#204) downgrades every
     verbatim label and adds one header note when the receipt is unverifiable."""
     budget = config.brief_max_tokens()
-    text = _render_parts(b, {}, degraded, rulings)
+    text = _render_parts(b, {}, degraded, rulings, request_lines)
     if not budget or estimate_tokens(text) <= budget:
         return text
 
@@ -815,7 +870,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=()) -> str:
             for i in (b.get(key) or [])
         ]
     trimmed = {key: 0 for key, _ in _DROP_ORDER}
-    text = _render_parts(b, trimmed, degraded, rulings)
+    text = _render_parts(b, trimmed, degraded, rulings, request_lines)
 
     # Stage 2: drop whole items, least valuable first, until the budget holds
     # or only the skeleton remains.
@@ -825,14 +880,14 @@ def render_plain(b: dict, degraded: bool = False, rulings=()) -> str:
             items.pop(-1 if end == "tail" else 0)
             b[key] = items
             trimmed[key] += 1
-            text = _render_parts(b, trimmed, degraded, rulings)
+            text = _render_parts(b, trimmed, degraded, rulings, request_lines)
         if estimate_tokens(text) <= budget:
             break
     return text
 
 
 def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
-                  rulings=()) -> str:
+                  rulings=(), request_lines=()) -> str:
     parts = ["While you were away — here's where we left off."]
     if degraded:
         # One header note (#204), embedded in the text so the hook-injected
@@ -845,6 +900,12 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
         # sections below.
         parts.append("")
         parts.extend(rulings)
+    if request_lines:
+        # #694 PR 2: same posture as rulings above — skeleton furniture, the
+        # budget loops re-render with the same lines and can only trim the
+        # sections below.
+        parts.append("")
+        parts.extend(request_lines)
 
     def _section(header: str, key: str) -> None:
         items = b.get(key) or []
@@ -913,7 +974,7 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
     return True
 
 
-def render(checkpoint, project_dir=None) -> str | None:
+def render(checkpoint, project_dir=None, worldcheck_project=None) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
     LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
     quote integrity, and falls back to deterministic on any doubt.
@@ -921,14 +982,23 @@ def render(checkpoint, project_dir=None) -> str | None:
     `project_dir` (#693) scopes the standing-rulings section; None (legacy
     callers, hand-built checkpoints in tests) skips the read entirely — an
     unknown project resolves to no ledger path and reads nothing, so the
-    guard saves a pointless call rather than preventing a leak."""
+    guard saves a pointless call rather than preventing a leak.
+
+    `worldcheck_project` (#694 PR 2) scopes the incoming-request panel — a
+    SEPARATE parameter from `project_dir`, never reused, because the panel's
+    gate is narrower than the rulings section's: rulings render on every
+    route (including `--slug`), the panel only on the CLI same-project
+    path (`cli._render_briefing_body`'s own `worldcheck_project`, D2)."""
     b = build(checkpoint)
     rulings = ruling_lines(project_dir) if project_dir is not None else []
+    request_lines = (request_panel_lines(worldcheck_project)
+                     if worldcheck_project is not None else [])
     if b is None:
         # #693: a ruling ratified before the first real checkpoint (a day-one
         # action) must still reach context — "nothing worth surfacing" is no
-        # longer true when active rulings exist.
-        return "\n".join(rulings) if rulings else None
+        # longer true when active rulings or addressed requests exist.
+        skeleton = rulings + ([""] if rulings and request_lines else []) + request_lines
+        return "\n".join(skeleton) if skeleton else None
     degraded = receipt_degraded(checkpoint)
     if config.llm_briefing():
         rendered = _render_llm(checkpoint)
@@ -936,18 +1006,21 @@ def render(checkpoint, project_dir=None) -> str | None:
             if _validate_llm_render(rendered, checkpoint):
                 # The LLM render carries no per-item marks to degrade; the one
                 # header note stays FIRST on every path (#204 — the loudest
-                # line never moves below another section). #693: the LLM
-                # narrates the CHECKPOINT; rulings live outside it, so the
-                # deterministic section is prepended verbatim after the note —
-                # never re-narrated, never trusted to a generative pass.
+                # line never moves below another section). #693/#694: the LLM
+                # narrates the CHECKPOINT; rulings and the request panel live
+                # outside it, so the deterministic sections are prepended
+                # verbatim after the note — never re-narrated, never trusted
+                # to a generative pass.
                 parts = ([DEGRADE_NOTE] if degraded else [])
                 if rulings:
                     parts.append("\n".join(rulings))
+                if request_lines:
+                    parts.append("\n".join(request_lines))
                 parts.append(rendered)
                 return "\n\n".join(parts)
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
-    return render_plain(b, degraded, rulings)
+    return render_plain(b, degraded, rulings, request_lines)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

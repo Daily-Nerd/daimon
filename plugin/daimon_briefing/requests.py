@@ -700,6 +700,187 @@ def _rewrite_without(doomed: set[str], project_dir=None) -> list[str]:
     return sorted(doomed)
 
 
+# ---- PR 2: the join composer -----------------------------------------------
+#
+# Verdict/suppress/done rows land in the RECIPIENT's own bucket, referencing
+# a foreign request id — orphans in that bucket's per-bucket fold above
+# (`fold`'s own docstring: "here a lifecycle row whose `opened` lives in
+# another bucket is an orphan"). The composer is the read-time join that
+# pairs them with their origin (D0), in both directions: `sender_join` (a
+# sender's own asks, joined with whatever their recipient decided) and
+# `recipient_join` (everything addressed to this project, scanning every
+# other known bucket for the origin row). Both reduce to the same move: read
+# the raw rows of the two buckets a record spans, and hand the union to
+# `fold` — the per-bucket fold above already knows what to do with an
+# `opened` row and a same-id verdict row that arrive from different buckets,
+# because it keys everything by `request_id` alone.
+
+
+def _rows_for(request_id: str, project_dir) -> list[dict]:
+    return [row for row in events(project_dir=project_dir)
+            if row.get("request_id") == request_id]
+
+
+def _without_suppression(rows: list[dict]) -> list[dict]:
+    """D5's named composer filter: drop `suppressed` rows before folding, so
+    a sender-side join never learns its own ask was muted from the
+    recipient's panel attention — it reads as still open/undecided instead,
+    then goes stale on the normal schedule (PR 3)."""
+    return [row for row in rows if row.get("event") != "suppressed"]
+
+
+def sender_join(project_dir=None) -> dict[str, dict]:
+    """Every request this project SENT, joined with whatever its recipient
+    decided (D0) — the per-bucket `records()` above only ever sees this
+    project's OWN rows, and a verdict lives in the recipient's bucket. One
+    recipient bucket is read once per distinct `to` target, not once per
+    record. Suppression is filtered before the fold runs (D5)."""
+    sender_slug = store.project_slug(project_dir)
+    if not sender_slug:
+        return {}
+    by_id: dict[str, list] = {}
+    to_by_id: dict[str, str] = {}
+    for row in events(project_dir=sender_slug):
+        rid = str(row.get("request_id") or "")
+        by_id.setdefault(rid, []).append(row)
+        if row.get("event") == "opened":
+            to_by_id[rid] = str(row.get("to") or "")
+    cache: dict[str, list] = {}
+    for rid, to_slug in to_by_id.items():
+        if not to_slug or to_slug == sender_slug:
+            continue  # already covered by this bucket's own rows above
+        if to_slug not in cache:
+            cache[to_slug] = events(project_dir=to_slug)
+        by_id[rid] = by_id[rid] + [row for row in cache[to_slug]
+                                   if row.get("request_id") == rid]
+    rows = _without_suppression(
+        [row for group in by_id.values() for row in group])
+    return fold(rows)
+
+
+def _bucket_slugs() -> list[str]:
+    """Every project bucket that has ever written a request, scanning
+    `checkpoints/*/requests.jsonl` directly rather than `store.list_buckets()`
+    (which requires a checkpoint pointer): a project can send or answer a
+    request before it has ever serialized a session, and such a bucket must
+    still be discoverable. One `exists()` stat per subdir, so a project with
+    checkpoints but no requests ledger costs almost nothing."""
+    root = config.checkpoint_dir()
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return []
+    return [child.name for child in entries
+            if (child / "requests.jsonl").exists()]
+
+
+def recipient_join(project_dir=None) -> dict[str, dict]:
+    """Every request addressed TO this project, joined across every bucket
+    that might hold its origin (D0) — this project's own bucket holds only
+    the verdict/attention rows it wrote, orphaned in its own per-bucket fold
+    above; the `opened`/`revised` rows live in whichever bucket sent the ask.
+    Scans every bucket with a requests ledger (`_bucket_slugs`). Cost is the
+    PR 2 deliverable measured and budgeted separately.
+
+    This project's OWN bucket also holds every request it SENT (its own
+    `opened` rows), and those must never read as its own inbox — only a
+    LOCAL `opened` row whose `to` names this project (self-addressed) or a
+    verdict/attention row with NO local `opened` row at all (an orphan
+    answering a foreign ask, D0's other half) belongs here.
+
+    Every folded record carries a transient `from_slug` — the bucket whose
+    `opened` row founded it — so a supersedes reference can be resolved back
+    to its origin (`supersedes_label`) without a second scan."""
+    my_slug = store.project_slug(project_dir)
+    if not my_slug:
+        return {}
+    own_by_id: dict[str, list] = {}
+    for row in events(project_dir=my_slug):
+        own_by_id.setdefault(str(row.get("request_id") or ""), []).append(row)
+    by_id: dict[str, list] = {}
+    for rid, rows in own_by_id.items():
+        opened = next((r for r in rows if r.get("event") == "opened"), None)
+        if opened is not None and str(opened.get("to") or "") != my_slug:
+            continue  # this project's own OUTGOING ask — never its own inbox
+        by_id[rid] = rows
+    origin_of: dict[str, str] = {}
+    for slug in _bucket_slugs():
+        if slug == my_slug:
+            continue
+        grouped: dict[str, list] = {}
+        for row in events(project_dir=slug):
+            grouped.setdefault(str(row.get("request_id") or ""), []).append(row)
+        for rid, rows in grouped.items():
+            opened = next((r for r in rows if r.get("event") == "opened"),
+                         None)
+            if opened is not None and str(opened.get("to") or "") == my_slug:
+                by_id.setdefault(rid, []).extend(rows)
+                origin_of[rid] = slug
+    all_rows = [row for group in by_id.values() for row in group]
+    out = fold(all_rows)
+    for rid, record in out.items():
+        record["from_slug"] = origin_of.get(rid, "")
+    return out
+
+
+def inbox_listing(project_dir=None) -> list[dict]:
+    """Every request addressed to this project, undecided first — the
+    `request inbox` order. Suppressed records are HERE by construction
+    (D3/D5): suppression takes away panel placement, never visibility."""
+    return sorted(
+        recipient_join(project_dir=project_dir).values(),
+        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
+                       r.get("updated_at") or "", r["request_id"]))
+
+
+def inbox_renderable(project_dir=None) -> dict:
+    """The recipient-side panel data: {"rows": [...], "overflow": N} —
+    requests addressed to this project still awaiting a decision, newest
+    first, capped at RENDER_CAP with the remainder COUNTED. Suppressed
+    records are filtered here and only here (mirrors `renderable` above):
+    that is the entire effect suppress is allowed to have."""
+    rows = [r for r in recipient_join(project_dir=project_dir).values()
+            if r["state"] in _SENDER_MOVABLE and not r["suppressed"]]
+    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+              reverse=True)
+    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+
+
+def needs_surfaced_stamp(record: dict) -> bool:
+    """D1: whether a `surfaced` row already exists for this record's CURRENT
+    revision epoch. The composer already computes `surfaced` (PR 1's fold) as
+    {epoch: earliest ts}; this just names the check the stamp write consults."""
+    return record.get("revision") not in (record.get("surfaced") or {})
+
+
+def stamp_surfaced(request_id: str, project_dir=None) -> bool:
+    """Write a `surfaced` row to THIS project's own bucket, referencing a
+    foreign request id (D1) — the recipient's brief observed and rendered
+    the card. Channel `mechanical`: nobody asserted anything, the render
+    pipeline stamped what it did. Write-once is the caller's job
+    (`needs_surfaced_stamp` before calling this) — a concurrent-brief
+    duplicate is at worst a second row the fold's earliest-wins tie-break
+    absorbs for free."""
+    row = _stamp("surfaced", request_id, "mechanical")
+    return append(row, project_dir=project_dir)
+
+
+def supersedes_label(record: dict) -> str:
+    """The `supersedes` render value, or "" when the record cites none.
+    Appends "(record forgotten)" when the superseded id no longer resolves
+    in its own origin bucket (D0's supersedes extension) — a re-ask must
+    never silently look like a first ask, even after deletion at the source.
+    Resolves against `record["from_slug"]`, the origin `recipient_join`
+    stamps on every record it returns."""
+    target = str(record.get("supersedes") or "")
+    if not target:
+        return ""
+    origin = record.get("from_slug") or ""
+    if origin and get(target, project_dir=origin) is None:
+        return f"{target} (record forgotten)"
+    return target
+
+
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     """Remove every record holding `content_key` in a plaintext field.
 
