@@ -1056,6 +1056,29 @@ def test_sender_join_on_an_unknown_project_is_empty(project):
     assert requests.sender_join(project_dir=None) == {}
 
 
+def test_sender_join_folds_a_self_addressed_request_without_a_foreign_fetch(
+        project, monkeypatch):
+    """A self-addressed request (`to == sender_slug`) is entirely local — no
+    SECOND bucket exists to fetch, and `sender_join` must skip that fetch
+    rather than re-reading its own bucket a second time under a different
+    name."""
+    my_slug = store.project_slug(project)
+    q_id = requests.open_request(to=my_slug, ask=ASK, why=WHY,
+                                 channel="cli-agent", project_dir=project)
+    real_events = requests.events
+    calls = []
+
+    def _tracking(*a, **k):
+        calls.append((a, k))
+        return real_events(*a, **k)
+
+    monkeypatch.setattr(requests, "events", _tracking)
+    joined = requests.sender_join(project_dir=project)
+    assert joined[q_id]["ask"] == ASK
+    assert joined[q_id]["state"] == "open"
+    assert len(calls) == 1  # only the sender's own bucket, read once
+
+
 def test_recipient_join_finds_asks_addressed_to_this_project(project):
     sender_slug = _seed_bucket("/p/req-sender-a")
     q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
@@ -1260,6 +1283,16 @@ def test_cli_request_inbox_shows_addressed_asks(project, recipient, capsys):
     out = capsys.readouterr().out
     assert ASK in out
     assert "From:" in out
+
+
+def test_cli_request_inbox_renders_evidence(project, recipient, capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient, "--evidence", "issue:694") == 0
+    capsys.readouterr()
+    rc = cli.main(["request", "inbox", "--project", OTHER])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Evidence: issue:694" in out
 
 
 def test_cli_request_inbox_json_matches_inbox_listing(project, recipient,

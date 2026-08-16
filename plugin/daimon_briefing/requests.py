@@ -716,11 +716,6 @@ def _rewrite_without(doomed: set[str], project_dir=None) -> list[str]:
 # because it keys everything by `request_id` alone.
 
 
-def _rows_for(request_id: str, project_dir) -> list[dict]:
-    return [row for row in events(project_dir=project_dir)
-            if row.get("request_id") == request_id]
-
-
 def _without_suppression(rows: list[dict]) -> list[dict]:
     """D5's named composer filter: drop `suppressed` rows before folding, so
     a sender-side join never learns its own ask was muted from the

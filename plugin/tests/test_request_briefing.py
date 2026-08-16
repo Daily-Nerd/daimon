@@ -94,6 +94,32 @@ def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint,
     assert "publish the schema" in out
 
 
+def test_panel_rides_the_llm_opt_in_render_path(tmp_checkpoint_dir,
+                                                sample_checkpoint,
+                                                monkeypatch):
+    # #694: the request panel, like #693's rulings, is prepended verbatim
+    # OUTSIDE the LLM's narrated text on the opt-in path — never re-narrated,
+    # never trusted to a generative pass. Mirrors test_briefing.py's
+    # _llm_briefing_env + faithful-quote idiom for the rulings equivalent.
+    from daimon_briefing import llm
+    sender = _seed_sender()
+    _ask(sender)
+    monkeypatch.setenv("DAIMON_LLM_BRIEFING", "1")
+    monkeypatch.setenv("DAIMON_LLM_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "test-model")
+    faithful = (
+        'Verify: "I\'ll merge it myself later from the GitHub UI". '
+        'Open: "do we chunk below 1200 lines or single-pass?". '
+        'Decided: "we adopt the D-007 prompt for the serializer".'
+    )
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: faithful)
+    out = briefing.render(sample_checkpoint, project_dir=RECIPIENT,
+                          worldcheck_project=RECIPIENT)
+    assert "publish the schema" in out
+    assert faithful in out
+
+
 def test_render_with_no_checkpoint_still_shows_the_panel(tmp_checkpoint_dir):
     # #693's rulings precedent: a day-one ratification must not wait for a
     # session to end. Same posture here — the FIRST thing this project ever
