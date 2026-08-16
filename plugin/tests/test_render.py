@@ -1462,6 +1462,43 @@ def test_ledger_style_pending_overturn_note_is_yellow():
         "  Overturn proposed by agent — still active") == "yellow"
 
 
+def test_ledger_style_warning_register_is_yellow():
+    # #694: `request open --anyway` records an ask no bucket can surface, and
+    # says so on the same line register the lifecycle surfaces use for a
+    # degraded outcome — one word, one colour, across both families. Card
+    # prose that merely CONTAINS the word is not the register.
+    assert render._ledger_style(
+        "warning: -p-x has no bucket on this machine") == "yellow"
+    assert render._ledger_style("  Why: warning: this is prose") is None
+
+
+def test_render_ledger_lines_paints_the_warning_register(monkeypatch, capsys):
+    # The style has to survive the rich path, not merely be returned by the
+    # mapper: FORCE_COLOR makes rich emit the escapes, so a warning that
+    # stopped being coloured fails here instead of passing as a smoke test.
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_ledger_lines(["warning: no bucket for -p-x",
+                                "  Why: the release note depends on it"])
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "\x1b[33mwarning: no bucket for -p-x\x1b[0m"
+    assert lines[1] == "  Why: the release note depends on it"
+
+
+def test_render_ledger_lines_spans_a_request_id_like_a_ruling_id(
+        monkeypatch, capsys):
+    # #694 widened the header id class to the whole ledger id space. The span
+    # split is what puts the id a human copies in bold cyan; a q- header that
+    # fell back to whole-line styling would bury it.
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_ledger_lines(
+        ["[→ open · agent-asked] q-0123456789ab  review the proposal"])
+    out = capsys.readouterr().out
+    assert "\x1b[1;36mq-0123456789ab\x1b[0m" in out
+    assert "review the proposal" in out.split("\x1b[0m")[-1]
+
+
 def test_render_ledger_records_plain_is_flat(capsys):
     render.render_ledger_records([
         ["[§ active · x] r-1a2b3c4d5e6f  First."],

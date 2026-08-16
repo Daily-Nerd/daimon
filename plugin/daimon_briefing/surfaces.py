@@ -133,6 +133,31 @@ SURFACES: tuple[Surface, ...] = (
     #    (render_privacy_audit) so growth is measured, never silent. --
     Surface("checkpoints/{slug}/amendments.jsonl", "amendments.append",
             True, "rewrite", "forget"),
+    # -- the request ledger (#694): the fifth bucket ledger — one project's
+    #    ask of another, so its rows carry the ask, its rationale, a human
+    #    verdict note, and a completion quote: plaintext by design, in the
+    #    checkpoint's deletion category with refutations and amendments.
+    #    `rewrite` is requests.forget_content_key, matching the same
+    #    whole-value canonical key the checkpoint splice uses.
+    #
+    #    The cross-project shape is what makes deletion LOCAL and complete:
+    #    the recipient never holds a copy (it reads through to this file at
+    #    brief time), so one rewrite here removes the ask from every reader
+    #    at once — no tombstone propagation, nothing to chase. Rows this
+    #    bucket wrote ABOUT a foreign request are this bucket's own prose
+    #    and go by the same path; the foreign origin rows are the other
+    #    side's to delete, which is the whole point of mutual read-through.
+    #
+    #    Never audit_exempt: the audit hashes the module's own
+    #    _PLAINTEXT_FIELDS declaration (privacy.audit_project) and prints
+    #    record/row/byte counts, so growth is measured, never silent. Same
+    #    honest limit as the amendment ledger — forget matches a WHOLE
+    #    value, so an ask merely CONTAINING a forgotten value is beyond the
+    #    hash scan. No age reaper: attention decay (#694 D3) is DERIVED at
+    #    render time and deliberately never deletes a record — a request
+    #    that stopped mattering still happened. --
+    Surface("checkpoints/{slug}/requests.jsonl", "requests.append",
+            True, "rewrite", "forget"),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
     Surface("checkpoints/{slug}/verification.jsonl",

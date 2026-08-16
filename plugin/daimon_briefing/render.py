@@ -1117,10 +1117,20 @@ def _ledger_style(ln: str) -> str | None:
         return "dim"
     if ln.startswith("over cap:"):
         return "yellow"
+    if ln.startswith("warning:"):
+        # #694: `request open --anyway` records an ask no bucket can surface.
+        # Same lowercase register _lifecycle_style uses for a degraded
+        # outcome, and the same colour, so one word means one thing across
+        # both families.
+        return "yellow"
     return None
 
 
-_LEDGER_HEADER_RE = re.compile(r"^(\[[^\]]*\]) (r-[0-9a-f]{12})  (.*)$")
+# #694 widened the id class from r- to the ledger id space (r- rulings and
+# refutations, q- requests): the three-span header is a per-LINE shape, not
+# a per-ledger one, and a request card that fell back to whole-line styling
+# would bury the id a human copies.
+_LEDGER_HEADER_RE = re.compile(r"^(\[[^\]]*\]) ([rq]-[0-9a-f]{12})  (.*)$")
 
 
 def _ledger_header_spans(ln: str):
@@ -1589,6 +1599,18 @@ def render_privacy_audit(results: list[dict]) -> None:
                   " forget reaches it by value (whole-value match) and by"
                   " target item; quotes merely CONTAINING a forgotten value"
                   " are beyond the hash scan")
+        req = r.get("requests") or {}
+        if req.get("rows"):
+            # #694: same measured-not-silent promise as the two ledgers
+            # above. The containment caveat is the same one, and it matters
+            # more here: the prose was authored FOR another project, so a
+            # value quoted inside an ask is exactly the shape a whole-value
+            # hash scan cannot see.
+            print(f"  request ledger: {req['records']} record(s) in"
+                  f" {req['rows']} row(s), {req['bytes'] / 1024:.0f} KB —"
+                  " forget reaches it by value (whole-value match); asks"
+                  " merely CONTAINING a forgotten value are beyond the hash"
+                  " scan")
         ws = r.get("windsurf") or {}
         if ws.get("entries"):
             age = (f", oldest {ws['oldest_days']:.1f}d"

@@ -61,8 +61,21 @@ def test_full_fits_size_budget():
     # else, stated where agents will read it. New deliberate-review size is
     # 9,502 (2026-08-15, after review folded the proposal-verb teaching in);
     # 9,900 keeps ~4% slack. Nothing was added to the compact body.
+    #
+    # RAISED 9,900 -> 10,700 on 2026-08-16 (#694), same discipline and the
+    # same subject. `request` ships an agent-facing verb family — an agent
+    # opens, revises, and completes asks — and the alternative was declaring
+    # it NOT_AGENT_FACING, which would have been false rather than economical.
+    # The addition is ~500 chars in the cross-project section, where an agent
+    # already goes to read another project: the doctrine line (never write
+    # into another project's memory), the one command that matters, and the
+    # human-only verb list, which is the wedge rule again. What was NOT
+    # taught: the verdict flow and the inbox, because neither exists until
+    # PR 2/3 — teaching a surface before it renders is how a skill starts
+    # lying. New deliberate-review size is 10,301 (2026-08-16); 10,700 keeps
+    # the same ~4% slack. Nothing was added to the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 9900, f"full body is {len(full)} chars (cap 9900)"
+    assert len(full) <= 10700, f"full body is {len(full)} chars (cap 10700)"
 
 
 def test_full_has_trigger_only_frontmatter():
