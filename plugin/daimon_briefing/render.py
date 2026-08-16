@@ -1111,13 +1111,66 @@ def _ledger_style(ln: str) -> str | None:
         if re.match(r"\[(?:\w+ )?× ", ln):
             return "dim"
         return None
-    if ln.startswith("  Pending"):
+    if ln.startswith(("  Pending", "  Overturn proposed")):
         return "yellow"
     if ln.startswith("  (evidence sources"):
         return "dim"
     if ln.startswith("over cap:"):
         return "yellow"
     return None
+
+
+_LEDGER_HEADER_RE = re.compile(r"^(\[[^\]]*\]) (r-[0-9a-f]{12})  (.*)$")
+
+
+def _ledger_header_spans(ln: str):
+    """Split a record header into (state bracket, id, text) for span styling,
+    or None for any other line shape."""
+    m = _LEDGER_HEADER_RE.match(ln)
+    return m.groups() if m else None
+
+
+def _print_ledger_line(console, ln: str) -> None:
+    """One ledger line on the rich path. A record header gets three spans —
+    state bracket in the state's color (quiet metadata), the id bold cyan
+    (the handle a human copies), the verdict/subject in the default color
+    (prose reads as prose). A uniformly colored header buried all three
+    (#707 stage 1 feedback). Every other line keeps whole-line styling; the
+    recomposition prints exactly the plain line's characters."""
+    spans = _ledger_header_spans(ln)
+    if spans is None:
+        console.print(ln, style=_ledger_style(ln), markup=False)
+        return
+    from rich.text import Text
+
+    bracket, record_id, rest = spans
+    text = Text()
+    text.append(bracket, style=_ledger_style(bracket) or "dim")
+    text.append(" ")
+    text.append(record_id, style="bold cyan")
+    text.append("  ")
+    text.append(rest)
+    console.print(text)
+
+
+def render_ledger_records(records) -> None:
+    """A sequence of record cards (each a list of pre-formatted lines) —
+    `ruling list`, `refute list`, `refute search`. Plain path prints them
+    flat, byte-identical to the single-list form; rich separates records
+    with one blank line so wrapped verdicts don't read as a wall."""
+    if not supports_rich():
+        for lines in records:
+            for ln in lines:
+                print(ln)
+        return
+    from rich.console import Console
+
+    console = Console()
+    for i, lines in enumerate(records):
+        if i:
+            console.print("")
+        for ln in lines:
+            _print_ledger_line(console, ln)
 
 
 def render_ledger_lines(lines) -> None:
@@ -1136,7 +1189,7 @@ def render_ledger_lines(lines) -> None:
 
     console = Console()
     for ln in lines:
-        console.print(ln, style=_ledger_style(ln), markup=False)
+        _print_ledger_line(console, ln)
 
 
 # ---- stats: `daimon stats` (#68) --------------------------------------------

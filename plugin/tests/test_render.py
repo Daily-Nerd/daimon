@@ -1442,3 +1442,58 @@ def test_ledger_style_state_map():
     assert style("  (evidence sources are recorded as cited; ...)") == "dim"
     assert style("over cap: 8 active vs cap 7") == "yellow"
     assert style("  Governs: commit signing") is None
+
+
+def test_ledger_header_spans_parses_the_record_header():
+    # Header format is "[<state bracket>] <id>  <text>"; the parser feeds the
+    # rich path its three spans. Non-header lines return None and fall back to
+    # whole-line styling.
+    spans = render._ledger_header_spans(
+        "[§ active · agent-written, ratified (interactive)] "
+        "r-00809234be96  Every commit is signed.")
+    assert spans == ("[§ active · agent-written, ratified (interactive)]",
+                     "r-00809234be96", "Every commit is signed.")
+    assert render._ledger_header_spans("  Governs: commit signing") is None
+    assert render._ledger_header_spans("no rulings for this project") is None
+
+
+def test_ledger_style_pending_overturn_note_is_yellow():
+    assert render._ledger_style(
+        "  Overturn proposed by agent — still active") == "yellow"
+
+
+def test_render_ledger_records_plain_is_flat(capsys):
+    render.render_ledger_records([
+        ["[§ active · x] r-1a2b3c4d5e6f  First."],
+        ["[? candidate · y] r-9f8e7d6c5b4a  Second."],
+    ])
+    out = capsys.readouterr().out
+    assert out == ("[§ active · x] r-1a2b3c4d5e6f  First.\n"
+                   "[? candidate · y] r-9f8e7d6c5b4a  Second.\n")
+
+
+def test_render_ledger_records_rich_separates_records(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_ledger_records([
+        ["[§ active · x] r-1a2b3c4d5e6f  First."],
+        ["[? candidate · y] r-9f8e7d6c5b4a  Second."],
+    ])
+    out = capsys.readouterr().out
+    assert "First." in out and "Second." in out
+    assert "[§ active" in out          # brackets survive markup
+    assert "\n\n" in out               # one blank line between records
+
+
+def test_render_ledger_lines_rich_header_spans_preserve_content(monkeypatch, capsys):
+    # Span styling recomposes the header from parts; every character of the
+    # plain line must survive the recomposition.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_ledger_lines([
+        "[§ active · ratified (interactive)] r-00809234be96  Signed always.",
+        "  Governs: commit signing",
+    ])
+    out = capsys.readouterr().out
+    assert "[§ active · ratified (interactive)]" in out
+    assert "r-00809234be96" in out
+    assert "Signed always." in out
+    assert "Governs: commit signing" in out
