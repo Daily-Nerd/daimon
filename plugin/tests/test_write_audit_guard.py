@@ -74,7 +74,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import (amendments, cli, config, policy, refutations,
-                             relations, store, teamsync)
+                             relations, requests, store, teamsync)
 
 from tests.conftest import FIXTURES, FakeChat
 import pytest as _pytest
@@ -502,6 +502,49 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_amend_list():
         run(["amend", "list"], 0)
 
+    def _open_request(ask):
+        # Self-addressed: the drive's own project is the one bucket that
+        # exists, and `--to` takes the project DIRECTORY (a real slug starts
+        # with '-', which argparse would read as an option).
+        run(["request", "open", "--to", str(proj), "--ask", ask,
+             "--why", "the release note depends on it", "--blocking",
+             "--by", "agent"], 0)
+        newest = max(requests.records(project_dir=str(proj)).values(),
+                     key=lambda r: r["created_at"])
+        return newest["request_id"]
+
+    def r_request_open():
+        ctx["request_id"] = _open_request("publish the 0.32 schema")
+
+    def r_request_revise():
+        run(["request", "revise", ctx["request_id"],
+             "--ask", "publish the 0.32 schema before Friday",
+             "--by", "agent"], 0)
+
+    def r_request_needs_info():
+        run(["request", "needs-info", ctx["request_id"],
+             "--note", "which schema version"], 0)
+
+    def r_request_suppress():
+        run(["request", "suppress", ctx["request_id"],
+             "--note", "not this week"], 0)
+
+    def r_request_accept():
+        run(["request", "accept", ctx["request_id"]], 0)
+
+    def r_request_done():
+        run(["request", "done", ctx["request_id"],
+             "--evidence", "the schema shipped in 0.32.0", "--by", "agent"], 0)
+
+    def r_request_reject():
+        # A fresh record: rejection is sticky, so it cannot reuse the one the
+        # accept/done recipes above already settled.
+        run(["request", "reject", _open_request("rewrite the client SDK"),
+             "--note", "out of scope this quarter"], 0)
+
+    def r_request_list():
+        run(["request", "list"], 0)
+
     def _seed_relation():
         # Proposals are not CLI-exposed (lab/serializer writers only), so the
         # verdict drives seed one candidate through the module seam — the
@@ -671,6 +714,14 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("amend", "ratify"): r_amend_ratify,
         ("amend", "reject"): r_amend_reject,
         ("amend", "list"): r_amend_list,
+        ("request", "open"): r_request_open,
+        ("request", "revise"): r_request_revise,
+        ("request", "needs-info"): r_request_needs_info,
+        ("request", "suppress"): r_request_suppress,
+        ("request", "accept"): r_request_accept,
+        ("request", "done"): r_request_done,
+        ("request", "reject"): r_request_reject,
+        ("request", "list"): r_request_list,
         ("relations", "list"): r_relations_list,
         ("relations", "show"): r_relations_show,
         ("relations", "confirm"): r_relations_confirm,
@@ -745,6 +796,7 @@ def test_every_command_write_carries_an_admit_frame(
     assert saw("resolve", "events.jsonl")           # admit_row on the ledger
     assert saw("forget", "events.jsonl")            # tombstone append
     assert saw("refute add", "refutations.jsonl")  # negative ledger append
+    assert saw("request open", "requests.jsonl")   # cross-project ledger
     # #599: the ledger REWRITE (scrub_event_fields) must have run and been
     # governed — not merely the tombstone append hitting the same file.
     assert any(cmd == "forget" and rel.name == "events.jsonl" and governed

@@ -916,6 +916,14 @@ from .amend import (  # noqa: E402
     _cmd_amend_propose,  # noqa: F401 — re-exported for compat
     _cmd_amend_verdict,  # noqa: F401 — re-exported for compat
 )
+from .request import (  # noqa: E402
+    _cmd_request_done,  # noqa: F401 — re-exported for compat
+    _cmd_request_list,  # noqa: F401 — re-exported for compat
+    _cmd_request_open,  # noqa: F401 — re-exported for compat
+    _cmd_request_revise,  # noqa: F401 — re-exported for compat
+    _cmd_request_verdict,  # noqa: F401 — re-exported for compat
+    _request_channel,  # noqa: F401 — re-exported for compat
+)
 from .lifecycle import (  # noqa: E402
     _cmd_forget,  # noqa: F401 — re-exported for compat
     _cmd_loops,  # noqa: F401 — re-exported for compat
@@ -955,6 +963,7 @@ from . import (  # noqa: E402
     hooks,
     lifecycle,
     refute,
+    request,
     ruling,
     skill,
     team,
@@ -2928,6 +2937,8 @@ def build_parser() -> argparse.ArgumentParser:
     ruling.register(sub, fmt)
 
     amend.register(sub, fmt)
+
+    request.register(sub, fmt)
 
     p_relations = sub.add_parser(
         "relations",

@@ -18,8 +18,8 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import (amendments, config, normalize, refutations, relations, store, surfaces,
-               teamproject)
+from . import (amendments, config, normalize, refutations, relations, requests,
+               store, surfaces, teamproject)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -44,6 +44,7 @@ _EVENTS_NAME = "events.jsonl"
 _REFUTATIONS_NAME = "refutations.jsonl"
 _RELATIONS_NAME = "relations.jsonl"
 _AMENDMENTS_NAME = "amendments.jsonl"
+_REQUESTS_NAME = "requests.jsonl"
 
 # Files that live in the checkpoint store and hold NO item plaintext BY
 # CONSTRUCTION. Since #601 both sets are VIEWS of the declared surface
@@ -115,7 +116,8 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                     elif p.suffix == ".json":
                         known.append(p)
                     elif p.name not in (_EVENTS_NAME, _REFUTATIONS_NAME,
-                                        _RELATIONS_NAME, _AMENDMENTS_NAME) \
+                                        _RELATIONS_NAME, _AMENDMENTS_NAME,
+                                        _REQUESTS_NAME) \
                             and not _is_plaintext_free(p):
                         unknown.append((p, entry.name))
         except OSError:
@@ -324,6 +326,7 @@ def audit_project(project_dir=None) -> dict:
         result["relations"] = {"records": 0, "rows": 0, "bytes": 0,
                                "by_state": {}}
         result["amendments"] = {"records": 0, "rows": 0, "bytes": 0}
+        result["requests"] = {"records": 0, "rows": 0, "bytes": 0}
         return result
     known, unknown = _checkpoint_candidates()
     # Only this project's blind spots: an unknown file in ANOTHER bucket is
@@ -549,6 +552,48 @@ def audit_project(project_dir=None) -> dict:
     result["amendments"] = {"records": len(amend_records),
                             "rows": amend_rows,
                             "bytes": amend_bytes}
+    # Request ledger (#694): the fifth bucket ledger, declared at birth like
+    # relations and amendments so it can never repeat #645's
+    # unknown->unscannable->exit-3 arc. One residue check, not two: unlike
+    # amendments, no field here names a checkpoint item — a request is
+    # addressed to a PROJECT and carries only its own prose — so the
+    # tombstone comparison the amendment block makes against `item_id` has
+    # no counterpart, and inventing one would report a class of residue that
+    # cannot exist. The hash intersection runs over requests' own plaintext
+    # declaration, so a value the audit reports is a value forget can reach.
+    req_path = config.checkpoint_dir() / slug / _REQUESTS_NAME
+    try:
+        lines = req_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []                  # no request recorded yet
+    except (OSError, ValueError):
+        lines = []
+        result["unscannable"].append(str(req_path))
+    req_records: set[str] = set()
+    req_rows = 0
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        req_rows += 1
+        q_id = str(row.get("request_id") or "")
+        if q_id:
+            req_records.add(q_id)
+        for h in requests.row_content_keys(row) & keys:
+            result["findings"].append({
+                "path": str(req_path),
+                "item_id": row.get("request_id"),
+                "content_hash": h, "surface": "request-ledger"})
+    try:
+        req_bytes = req_path.stat().st_size
+    except OSError:
+        req_bytes = 0
+    result["requests"] = {"records": len(req_records),
+                          "rows": req_rows,
+                          "bytes": req_bytes}
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.

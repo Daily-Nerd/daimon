@@ -19,6 +19,7 @@ from .. import (
     refutations,
     relations,
     render,
+    requests,
     serializer,
     store,
 )
@@ -208,7 +209,26 @@ def _cmd_forget(args) -> int:
                              "_target": amend_targets.get(a_id, "")})
         for a_id, texts in amend_texts.items()
     ]
-    if not isinstance(checkpoint, dict) and not ledger and not amend_pool:
+    # #694: the request ledger is the fifth plaintext store — an ask, its
+    # rationale, a verdict note, a completion quote. Same every-row posture
+    # as the two pools above (a revision rewrites `ask`, so the forgotten
+    # wording can sit in a row nothing renders), and the field walk is again
+    # the module's OWN declaration. No `_target`: a request names a PROJECT,
+    # never a checkpoint item, so there is no orbiting-hit class to drop.
+    request_texts: dict[str, list[str]] = {}
+    for row in requests.events(project_dir=project):
+        # events() admits only rows whose request_id matched the id shape.
+        q_id = str(row["request_id"])
+        for value in requests.plaintext_values(row):
+            request_texts.setdefault(q_id, [])
+            if value not in request_texts[q_id]:
+                request_texts[q_id].append(value)
+    request_pool = [
+        (None, "request", {"id": q_id, "text": texts[0], "_texts": texts})
+        for q_id, texts in request_texts.items()
+    ]
+    if (not isinstance(checkpoint, dict) and not ledger and not amend_pool
+            and not request_pool):
         print("no checkpoint for this project yet — nothing to forget")
         return 1
     # Every surface this project holds, not just the live checkpoint (#419
@@ -226,7 +246,7 @@ def _cmd_forget(args) -> int:
     # `r-<12 hex>`, so an exact-id lookup can legitimately hit both surfaces.
     # forget's never-guess contract decides it: an ambiguous id is refused, not
     # resolved by preferring a store.
-    candidates = items + ledger + amend_pool
+    candidates = items + ledger + amend_pool + request_pool
     exact = [it for _, _, it in candidates if it["id"] == args.target]
     target = exact[0] if len(exact) == 1 else None
     if target is None:
@@ -250,7 +270,7 @@ def _cmd_forget(args) -> int:
         # meaning what carry.py says it means: terms shared by >= k ITEMS.
         pools = [(pool, carry._generic_terms(
             [" ".join(_texts_of(it)) for _, _, it in pool]))
-            for pool in (items, ledger, amend_pool)]
+            for pool in (items, ledger, amend_pool, request_pool)]
         query_key = normalize.content_key(args.target)
 
         def _matched_value(it, generic):
@@ -287,7 +307,7 @@ def _cmd_forget(args) -> int:
         # are dropped: forgetting the item removes its amendments anyway
         # (forget_item_id below), so nothing becomes unreachable.
         item_hit_ids = {it["id"] for _, k, it, _ in hits
-                        if k not in ("refutation", "amendment")}
+                        if k not in ("refutation", "amendment", "request")}
         if item_hit_ids:
             hits = [(s, k, it, m) for s, k, it, m in hits
                     if not (k == "amendment"
@@ -362,6 +382,10 @@ def _cmd_forget(args) -> int:
             for row in amendments.events(project_dir=project)
             if value_key in amendments.row_content_keys(row)
             or str(row.get("item_id") or "") in spliced})
+        request_reach = sorted({
+            str(row.get("request_id") or "")
+            for row in requests.events(project_dir=project)
+            if value_key in requests.row_content_keys(row)})
         preview = [f"would forget {target['id']}: {target.get('text', '')}"]
         active_rulings = sorted(
             rid for rid in set(ref_reach) | {str(target["id"])}
@@ -373,7 +397,7 @@ def _cmd_forget(args) -> int:
         if sibling_ids:
             preview.append("also removed — checkpoint siblings holding the "
                            "value: " + ", ".join(sibling_ids))
-        also = [rid for rid in ref_reach + amend_reach
+        also = [rid for rid in ref_reach + amend_reach + request_reach
                 if rid and rid != target["id"]]
         if also:
             preview.append("also removed — ledger records reached by value "
@@ -511,6 +535,14 @@ def _cmd_forget(args) -> int:
         forgotten_amendment_set.update(
             amendments.forget_item_id(doomed_id, project_dir=project))
     forgotten_amendments = sorted(forgotten_amendment_set)
+    # #694: the fifth plaintext store, and the only one whose prose was
+    # written FOR another project. Value-keyed only — a request names a
+    # project, never a checkpoint item, so there is no target-id sweep to
+    # pair with this one. Nothing enforces this dispatch; the surface
+    # registry declares the deleter but cannot call it, which is why the
+    # deletion contract for a new ledger is a hand-wired line here.
+    forgotten_requests = requests.forget_content_key(content_hash,
+                                                     project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -575,6 +607,9 @@ def _cmd_forget(args) -> int:
     if forgotten_amendments:
         surfaces.append(f"{len(forgotten_amendments)} amendment(s) "
                         f"({', '.join(forgotten_amendments)})")
+    if forgotten_requests:
+        surfaces.append(f"{len(forgotten_requests)} request(s) "
+                        f"({', '.join(forgotten_requests)})")
     report = [f"forgot {target['id']} (content hash {content_hash}) — "
               f"removed from {' and '.join(surfaces) or 'no store'}; "
               "tombstone recorded"]

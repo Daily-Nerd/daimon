@@ -226,6 +226,20 @@ Memory is per-project. To deliberately read another project's memory:
 
 Never present cross-project content as the current project's memory.
 
+## Asking another project for something
+
+Never write into another project's memory — record the ask:
+
+```
+daimon request open --to <dir> --ask "<what>" --why "<why>" --by agent
+```
+
+`daimon request list` shows this project's asks and where each stands.
+`request revise` answers a needs-info (three per record, then a new one with
+`--supersedes <id>`). `request done --evidence "<quote>"` renders as an
+unverified claim until the quote is byte-checked. `accept`, `reject`,
+`needs-info`, `suppress` are human-only: print the command, never run it.
+
 ## When memory looks wrong
 
 | Symptom | Command |
