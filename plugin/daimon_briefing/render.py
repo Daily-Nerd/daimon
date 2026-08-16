@@ -1090,6 +1090,53 @@ def render_heal_abort(lines) -> None:
     _render_lines(lines)
 
 
+# ---- ledger: refute/ruling/amend record cards (#707) -------------------------
+
+
+def _ledger_style(ln: str) -> str | None:
+    """Per-line style for a ledger record card. Header lines are literal
+    bracketed text (`[§ active · …] r-… <verdict>`), so styling keys off the
+    state token INSIDE the line — never off rich markup. Restraint on purpose:
+    the polarity glyph carries the meaning (§ standing law, ✗ negative guard),
+    color only echoes the state."""
+    if ln.startswith("["):
+        if "✗ active" in ln:
+            return "red"
+        if "§ active" in ln:
+            return "green"
+        if "? candidate" in ln:
+            return "yellow"
+        if " × " in ln:
+            return "dim"
+        return None
+    if ln.startswith("  Pending"):
+        return "yellow"
+    if ln.startswith("  (evidence sources"):
+        return "dim"
+    if ln.startswith("over cap:"):
+        return "yellow"
+    return None
+
+
+def render_ledger_lines(lines) -> None:
+    """Refutation/ruling/amendment record cards and their advisory notes
+    (#707). Plain path is the bare print loop the ledger verbs always had
+    (byte-identical); rich upgrades header lines by state and dims the
+    boilerplate. `markup=False` is load-bearing — the state header is literal
+    bracketed text rich would otherwise parse as a (silently dropped) style
+    tag. Refusal/error lines never route through here; they stay plain, the
+    same contract render_anchor_attach documents."""
+    if not supports_rich():
+        for ln in lines:
+            print(ln)
+        return
+    from rich.console import Console
+
+    console = Console()
+    for ln in lines:
+        console.print(ln, style=_ledger_style(ln), markup=False)
+
+
 # ---- stats: `daimon stats` (#68) --------------------------------------------
 
 

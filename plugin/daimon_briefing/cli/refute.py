@@ -9,7 +9,7 @@ import functools
 
 import daimon_briefing.cli as _cli
 
-from .. import refutations
+from .. import refutations, render
 from ._ledger import (
     _print_refutation,
     _print_ruling,
@@ -41,11 +41,13 @@ def _cmd_refute_add(args) -> int:
             # An agent-authored candidate never gets handed its own escalation
             # command; activation is a decision the human has to reach.
             if getattr(args, "by", None) != "agent":
-                print(f"  Next: daimon refute ratify {ref_id} "
-                      f"--project {project}")
+                render.render_ledger_lines(
+                    [f"  Next: daimon refute ratify {ref_id} "
+                     f"--project {project}"])
             else:
-                print("  Candidate recorded. Activation requires an explicit "
-                      "human decision.")
+                render.render_ledger_lines(
+                    ["  Candidate recorded. Activation requires an explicit "
+                     "human decision."])
     return 0
 
 
@@ -91,7 +93,8 @@ def _cmd_refute_revise(args) -> int:
     else:
         _print_refutation(record, detailed=True)
         if record["state"] == "candidate":
-            print("  Revision is not load-bearing until explicit human ratification.")
+            render.render_ledger_lines(
+                ["  Revision is not load-bearing until explicit human ratification."])
     return 0
 
 
@@ -115,7 +118,8 @@ def _cmd_refute_overturn(args) -> int:
     else:
         _print_refutation(record, detailed=True)
         if event == "overturn-proposed":
-            print("  Agent evidence recorded; the active guard remains until human ratification.")
+            render.render_ledger_lines(
+                ["  Agent evidence recorded; the active guard remains until human ratification."])
     return 0
 
 
@@ -143,7 +147,7 @@ def _cmd_refute_list(args) -> int:
     if args.json:
         print(_refutation_json(rows))
     elif not rows:
-        print("no refutations for this project")
+        render.render_ledger_lines(["no refutations for this project"])
     else:
         for row in rows:
             _print_refutation(row)
@@ -163,7 +167,7 @@ def _cmd_refute_search(args) -> int:
     if args.json:
         print(_refutation_json(rows))
     elif not rows:
-        print("no matching refutations")
+        render.render_ledger_lines(["no matching refutations"])
     else:
         # #693: search is the topic-addressable pull path, so it returns BOTH
         # polarities, labelled by their own printers — filtering rulings out
@@ -197,13 +201,15 @@ def _cmd_refute_guard(args) -> int:
         print(_refutation_json(rows))
     elif not rows:
         if not args.quiet:
-            print("no active refutation matched exact anchors or subject")
+            render.render_ledger_lines(
+                ["no active refutation matched exact anchors or subject"])
     else:
         # One warning is the v1 attention budget. JSON retains every exact hit
         # for deliberation integrations that can reconcile them in batch.
         _print_refutation(rows[0], detailed=True)
         if len(rows) > 1:
-            print(f"  + {len(rows) - 1} more exact match(es); use --json to inspect")
+            render.render_ledger_lines(
+                [f"  + {len(rows) - 1} more exact match(es); use --json to inspect"])
     return 0
 
 
