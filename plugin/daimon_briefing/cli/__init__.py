@@ -1053,7 +1053,7 @@ def _cmd_handoff(args) -> int:
             print("error: handoff not recorded (daimon disabled or project "
                   "unknown)", file=sys.stderr)
             return 1
-        print("handoff cleared")
+        render.render_lifecycle_lines(["handoff cleared"])
         return 0
     text = (args.text or "").strip()
     if not text:
@@ -1081,7 +1081,8 @@ def _cmd_handoff(args) -> int:
         print("error: handoff not recorded (daimon disabled or project "
               "unknown)", file=sys.stderr)
         return 1
-    print("handoff recorded — will lead the next briefing for this project.")
+    render.render_lifecycle_lines(
+        ["handoff recorded — will lead the next briefing for this project."])
     return 0
 
 
@@ -1095,7 +1096,7 @@ def _cmd_log(args) -> int:
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
-    print(f"logged [{args.kind}] {args.text}")
+    render.render_lifecycle_lines([f"logged [{args.kind}] {args.text}"])
     return 0
 
 
@@ -1708,8 +1709,7 @@ def _cmd_verify_receipt(args) -> int:
             return 2
         session_id = checkpoint["session_id"]
     rc, lines = receipts.verify_receipt(str(session_id))
-    for line in lines:
-        print(line)
+    render.render_lifecycle_lines(lines)
     return rc
 
 

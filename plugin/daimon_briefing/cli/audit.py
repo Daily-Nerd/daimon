@@ -102,7 +102,8 @@ def _cmd_audit_privacy(args) -> int:
     return code
 
 def _cmd_audit_quotes_deprecated(args) -> int:
-    print("note: 'daimon audit-quotes' is deprecated — use 'daimon audit quotes'")
+    render.render_lifecycle_lines(
+        ["note: 'daimon audit-quotes' is deprecated — use 'daimon audit quotes'"])
     return _cmd_audit_quotes(args)
 
 def _cmd_audit_quotes(args) -> int:
@@ -204,7 +205,7 @@ def _cmd_audit_quotes(args) -> int:
         lines.append(f"  top {min(top, len(failures))} failures (item text prefix):")
         for sid, text in failures[:top]:
             lines.append(f"    [{sid}] {text[:80]}")
-    print("\n".join(lines))
+    render.render_lifecycle_lines(lines)
     # #504: the only read-side verification verb recorded nothing, so there was
     # no evidence either way about whether anyone reaches for it. The unpaired
     # variant is a distinct event, not a detail of this one: a run that resolved

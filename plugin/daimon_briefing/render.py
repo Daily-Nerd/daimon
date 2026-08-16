@@ -1153,6 +1153,39 @@ def _print_ledger_line(console, ln: str) -> None:
     console.print(text)
 
 
+def _lifecycle_style(ln: str) -> str | None:
+    """Per-line style for the lifecycle/report surfaces. The forget report
+    interleaves successes with per-store degradations; the two failure
+    registers stay visually distinct — a lowercase `warning:` is a degraded
+    cleanup (yellow, the register _render_lines already uses), an uppercase
+    `WARNING` discloses removal of an ACTIVE ruling (red, the same weight the
+    active-refutation header carries)."""
+    if ln.startswith("WARNING"):
+        return "red"
+    if ln.startswith(("warning:", "⚠")):
+        return "yellow"
+    return None
+
+
+def render_lifecycle_lines(lines) -> None:
+    """Human-facing result lines of the item-lifecycle and report verbs
+    (#707 stage 2): resolve, forget (dry-run preview and success report),
+    reverify, loops, handoff, log, verify-receipt, and the quote audit.
+    Plain path is the bare print loop these commands always had
+    (byte-identical); rich styles the two warning registers. `markup=False`
+    is load-bearing — loops rows carry literal [key] [mark] brackets.
+    Refusals and error lines stay plain, the render_anchor_attach contract."""
+    if not supports_rich():
+        for ln in lines:
+            print(ln)
+        return
+    from rich.console import Console
+
+    console = Console()
+    for ln in lines:
+        console.print(ln, style=_lifecycle_style(ln), markup=False)
+
+
 def render_ledger_records(records) -> None:
     """A sequence of record cards (each a list of pre-formatted lines) —
     `ruling list`, `refute list`, `refute search`. Plain path prints them
