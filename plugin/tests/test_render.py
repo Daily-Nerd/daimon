@@ -1497,3 +1497,44 @@ def test_render_ledger_lines_rich_header_spans_preserve_content(monkeypatch, cap
     assert "r-00809234be96" in out
     assert "Signed always." in out
     assert "Governs: commit signing" in out
+
+
+# ---- lifecycle/report surfaces (#707 stage 2) ---------------------------------
+
+
+def test_render_lifecycle_lines_plain_exact_format(capsys):
+    render.render_lifecycle_lines([
+        "  o-3f8a2c1b9d7e  [open_questions] [?] does the reaper fire",
+        "forgot o-3f8a2c1b9d7e (content hash k-12) — removed from checkpoint; "
+        "tombstone recorded",
+        "warning: chunk cache purge failed: boom — cached chunks may persist",
+    ])
+    out = capsys.readouterr().out
+    assert out == (
+        "  o-3f8a2c1b9d7e  [open_questions] [?] does the reaper fire\n"
+        "forgot o-3f8a2c1b9d7e (content hash k-12) — removed from checkpoint; "
+        "tombstone recorded\n"
+        "warning: chunk cache purge failed: boom — cached chunks may persist\n"
+    )
+
+
+def test_render_lifecycle_lines_rich_smoke_preserves_brackets(monkeypatch, capsys):
+    # loops rows carry literal [key] [mark] brackets; rich markup parsing
+    # would silently eat them — same guard as the recall and ledger lines.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_lifecycle_lines([
+        "  o-3f8a2c1b9d7e  [open_questions] [?] does the reaper fire",
+        "WARNING — this removes ACTIVE ruling(s): r-1a2b3c4d5e6f",
+    ])
+    out = capsys.readouterr().out
+    assert "[open_questions]" in out
+    assert "[?]" in out
+    assert "WARNING — this removes ACTIVE" in out
+
+
+def test_lifecycle_style_map():
+    style = render._lifecycle_style
+    assert style("WARNING — this removes ACTIVE ruling(s): r-1") == "red"
+    assert style("warning: purge failed: boom") == "yellow"
+    assert style("forgot o-1 (content hash k) — removed") is None
+    assert style("  o-1  [open_questions] [?] text") is None

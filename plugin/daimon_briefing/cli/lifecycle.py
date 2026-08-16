@@ -18,6 +18,7 @@ from .. import (
     normalize,
     refutations,
     relations,
+    render,
     serializer,
     store,
 )
@@ -109,7 +110,8 @@ def _cmd_resolve(args) -> int:
         # exists to expose. Not silent either: the tag still shows up in
         # `daimon stats` usage counts, just apart from resolve/resolve:*.
         _cli._note_usage("resolve:dry-run")
-        print(f"would resolve {target['id']}: {target.get('text', '')} [{effective_status}]")
+        render.render_lifecycle_lines(
+            [f"would resolve {target['id']}: {target.get('text', '')} [{effective_status}]"])
         return 0
     ok = store.append_event(
         target["id"], effective_status,
@@ -121,11 +123,13 @@ def _cmd_resolve(args) -> int:
         return 1
     if by_agent:
         _cli._note_usage("resolve:agent")
-        print(f"claim recorded {target['id']}: {target.get('text', '')} "
-              "— pending verification at session end")
+        render.render_lifecycle_lines(
+            [f"claim recorded {target['id']}: {target.get('text', '')} "
+             "— pending verification at session end"])
         return 0
     _cli._note_usage("resolve")
-    print(f"resolved {target['id']}: {target.get('text', '')} [{args.status}]")
+    render.render_lifecycle_lines(
+        [f"resolved {target['id']}: {target.get('text', '')} [{args.status}]"])
     return 0
 
 def _cmd_forget(args) -> int:
@@ -358,22 +362,23 @@ def _cmd_forget(args) -> int:
             for row in amendments.events(project_dir=project)
             if value_key in amendments.row_content_keys(row)
             or str(row.get("item_id") or "") in spliced})
-        print(f"would forget {target['id']}: {target.get('text', '')}")
+        preview = [f"would forget {target['id']}: {target.get('text', '')}"]
         active_rulings = sorted(
             rid for rid in set(ref_reach) | {str(target["id"])}
             if ledger_meta.get(rid) == ("ruling", "active"))
         if active_rulings:
-            print("WARNING — this removes ACTIVE ruling(s): "
-                  + ", ".join(active_rulings))
+            preview.append("WARNING — this removes ACTIVE ruling(s): "
+                           + ", ".join(active_rulings))
         sibling_ids = sorted(spliced - {str(target["id"])})
         if sibling_ids:
-            print("also removed — checkpoint siblings holding the value: "
-                  + ", ".join(sibling_ids))
+            preview.append("also removed — checkpoint siblings holding the "
+                           "value: " + ", ".join(sibling_ids))
         also = [rid for rid in ref_reach + amend_reach
                 if rid and rid != target["id"]]
         if also:
-            print("also removed — ledger records reached by value or by "
-                  "doomed item id: " + ", ".join(also))
+            preview.append("also removed — ledger records reached by value "
+                           "or by doomed item id: " + ", ".join(also))
+        render.render_lifecycle_lines(preview)
         return 0
     # #402: key the tombstone on the CANONICAL value (normalize.content_key),
     # not the raw bytes — so a later re-extraction of the same claim (different
@@ -402,8 +407,9 @@ def _cmd_forget(args) -> int:
             return 1
         # Deleting what renders is strictly more power than rewriting it,
         # and rewriting confirms. A human can still say y (#421 unchanged).
-        print("WARNING — this removes ACTIVE ruling(s): "
-              + ", ".join(doomed_rulings))
+        render.render_lifecycle_lines(
+            ["WARNING — this removes ACTIVE ruling(s): "
+             + ", ".join(doomed_rulings)])
         answer = input("Remove? [y/N]: ").strip().casefold()
         if answer not in ("y", "yes"):
             print("not removed")
@@ -569,66 +575,76 @@ def _cmd_forget(args) -> int:
     if forgotten_amendments:
         surfaces.append(f"{len(forgotten_amendments)} amendment(s) "
                         f"({', '.join(forgotten_amendments)})")
-    print(f"forgot {target['id']} (content hash {content_hash}) — "
-          f"removed from {' and '.join(surfaces) or 'no store'}; "
-          "tombstone recorded")
+    report = [f"forgot {target['id']} (content hash {content_hash}) — "
+              f"removed from {' and '.join(surfaces) or 'no store'}; "
+              "tombstone recorded"]
     if team_scrubbed:
-        print(f"scrubbed {len(team_scrubbed)} own team-mirror cop(y/ies) — "
-              "run `daimon team sync` to publish; teammates' copies and "
-              "upstream git history remain until tombstone propagation")
+        report.append(
+            f"scrubbed {len(team_scrubbed)} own team-mirror cop(y/ies) — "
+            "run `daimon team sync` to publish; teammates' copies and "
+            "upstream git history remain until tombstone propagation")
     if events_scrubbed:
-        print(f"redacted {events_scrubbed} event-ledger field(s) "
-              "carrying the value (rows kept, field replaced)")
+        report.append(f"redacted {events_scrubbed} event-ledger field(s) "
+                      "carrying the value (rows kept, field replaced)")
     if purge_err is not None:
-        print(f"warning: chunk cache purge failed: {purge_err} — "
-              "cached pre-redaction chunks may persist up to "
-              f"{config.chunk_cache_days()} day(s) (age reaper)")
+        report.append(f"warning: chunk cache purge failed: {purge_err} — "
+                      "cached pre-redaction chunks may persist up to "
+                      f"{config.chunk_cache_days()} day(s) (age reaper)")
     else:
-        print(f"purged {purged} cached chunk extraction(s) "
-              "(pre-redaction serializer cache)")
+        report.append(f"purged {purged} cached chunk extraction(s) "
+                      "(pre-redaction serializer cache)")
     if ws_err is not None:
-        print(f"warning: windsurf transcript purge failed: {ws_err} — "
-              "daimon-authored conversation text may persist up to "
-              f"{config.windsurf_state_days()} day(s) (age reaper)")
+        report.append(
+            f"warning: windsurf transcript purge failed: {ws_err} — "
+            "daimon-authored conversation text may persist up to "
+            f"{config.windsurf_state_days()} day(s) (age reaper)")
     else:
-        # Always printed, like the chunk-cache line: a silent zero is how a
+        # Always reported, like the chunk-cache line: a silent zero is how a
         # misconfigured store (writer and deleter disagreeing about the
         # directory) stays invisible. The scope note is not decoration —
         # the store is keyed by trajectory and carries no project
         # attribution, so this purge is machine-wide by construction.
-        print(f"purged {ws_purged} daimon-authored windsurf transcript "
-              "file(s) across all projects (machine-wide: the store is keyed "
-              "by trajectory, not project); host-authored transcripts are "
-              "untouched")
+        report.append(
+            f"purged {ws_purged} daimon-authored windsurf transcript "
+            "file(s) across all projects (machine-wide: the store is keyed "
+            "by trajectory, not project); host-authored transcripts are "
+            "untouched")
     if crash_err is not None:
-        print(f"warning: crash log purge failed: {crash_err} — serializer "
-              "tracebacks may persist (bounded to a trimmed tail at the next "
-              "spawn, never removed)")
+        report.append(
+            f"warning: crash log purge failed: {crash_err} — serializer "
+            "tracebacks may persist (bounded to a trimmed tail at the next "
+            "spawn, never removed)")
     else:
-        # Printed even at zero, like the two lines above: a silent zero is
+        # Reported even at zero, like the two lines above: a silent zero is
         # how a writer and a deleter disagreeing about DAIMON_LOG_DIR stays
         # invisible. One crash log per machine, so the scope note is the
         # same honesty the windsurf line owes.
-        print(f"purged {crash_purged} serializer crash log(s) across all "
-              "projects (machine-wide: the log is raw child stderr, not "
-              "keyed by project)")
+        report.append(
+            f"purged {crash_purged} serializer crash log(s) across all "
+            "projects (machine-wide: the log is raw child stderr, not "
+            "keyed by project)")
     if backend_err is not None:
-        print(f"warning: backend log purge failed: {backend_err} — backend "
-              "echo of transcript text may persist (byte-bounded at the "
-              "write seam, never removed)")
+        report.append(
+            f"warning: backend log purge failed: {backend_err} — backend "
+            "echo of transcript text may persist (byte-bounded at the "
+            "write seam, never removed)")
     else:
         # Same silent-zero rule as the three lines above.
-        print(f"purged {backend_purged} backend stderr log(s) across all "
-              "projects (machine-wide: backend diagnostics are not keyed "
-              "by project)")
+        report.append(
+            f"purged {backend_purged} backend stderr log(s) across all "
+            "projects (machine-wide: backend diagnostics are not keyed "
+            "by project)")
     if scrub_err is not None:
-        print(f"warning: serialize.log scrub failed: {scrub_err} — legacy "
-              "downgrade lines may still carry item text")
+        report.append(
+            f"warning: serialize.log scrub failed: {scrub_err} — legacy "
+            "downgrade lines may still carry item text")
     else:
-        # Printed even at zero, same rule again: a scrubber resolving a
+        # Reported even at zero, same rule again: a scrubber resolving a
         # different log dir than the writer must not read as "nothing left".
-        print(f"scrubbed {scrubbed_lines} legacy downgrade line(s) in "
-              "serialize.log (payload replaced; ledger lines kept)")
+        report.append(
+            f"scrubbed {scrubbed_lines} legacy downgrade line(s) in "
+            "serialize.log (payload replaced; ledger lines kept)")
+    render.render_lifecycle_lines(report)
     return 0
 
 def _is_supersede_candidate(item_id: str, project) -> bool:
@@ -706,7 +722,8 @@ def _cmd_reverify(args) -> int:
     # structurally zero, and a zero that measures missing instrumentation
     # cannot be compared against a UI channel's count later.
     _cli._note_usage("reverify")
-    print(f"reopened {item['id']}: {item.get('text', '')}")
+    render.render_lifecycle_lines(
+        [f"reopened {item['id']}: {item.get('text', '')}"])
     return 0
 
 def _cmd_loops(args) -> int:
@@ -767,10 +784,11 @@ def _cmd_loops(args) -> int:
                     text += f" (amended ×{n})"
             rows.append((item["id"], key, text, briefing._mark(item)))
     if not rows:
-        print("no open loops")
+        render.render_lifecycle_lines(["no open loops"])
         return 0
-    for item_id, key, text, mark in rows:
-        print(f"  {item_id}  [{key}] [{mark}] {text}")
+    render.render_lifecycle_lines(
+        [f"  {item_id}  [{key}] [{mark}] {text}"
+         for item_id, key, text, mark in rows])
     return 0
 
 
