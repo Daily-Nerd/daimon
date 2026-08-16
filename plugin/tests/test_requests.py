@@ -756,3 +756,242 @@ def test_cli_says_so_when_the_answered_request_is_not_in_this_bucket(
     assert rc == 0
     out = capsys.readouterr().out
     assert "no matching request in this bucket" in out
+
+
+# ---- refusal, degradation, and tolerance edges ----------------------------
+
+
+def test_stamp_refuses_a_malformed_id_and_an_unknown_channel(project):
+    """Nothing reaches the ledger through a hand-built row either: the stamp
+    is where an id shape and a channel name are checked, and a channel it
+    does not know has no authority to derive."""
+    with pytest.raises(requests.RequestError):
+        requests._stamp("opened", "not-an-id", "cli-tty")
+    with pytest.raises(requests.RequestError):
+        requests._stamp("opened", "q-0123456789ab", "cli-ui")
+    assert not _rows_or_empty(project)
+
+
+def _rows_or_empty(project):
+    path = requests._path(project)
+    return [] if path is None or not path.exists() else _rows(project)
+
+
+def test_a_missing_ledger_is_not_torn(project, tmp_path):
+    """`_is_torn` answers for a file it cannot stat: the first append to a
+    fresh bucket must not prepend a repair newline."""
+    assert requests._is_torn(tmp_path / "never-written.jsonl") is False
+    _open(project)
+    assert requests._path(project).read_text(
+        encoding="utf-8").startswith("{")
+
+
+def test_the_kill_switch_stops_the_ledger(project, monkeypatch):
+    """#421 posture: with daimon disabled the write path is a no-op, and the
+    verbs say so instead of reporting a record nobody wrote."""
+    q_id = _open(project)
+    before = len(_rows(project))
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert requests.append(requests._stamp("suppressed", q_id, "cli-tty"),
+                           project_dir=project) is False
+    for call in (
+            lambda: _open(project, ask="an ask written while disabled"),
+            lambda: requests.revise(q_id, channel="cli-agent", ask="nope",
+                                    project_dir=project),
+            lambda: requests.accept(q_id, channel="cli-tty",
+                                    project_dir=project),
+            lambda: requests.suppress(q_id, channel="cli-tty",
+                                      project_dir=project),
+            lambda: requests.done(q_id, channel="cli-tty", evidence="x",
+                                  project_dir=project)):
+        with pytest.raises(requests.RequestError):
+            call()
+    assert len(_rows(project)) == before
+
+
+def test_an_unwritable_bucket_degrades_instead_of_raising(project):
+    """A bucket path occupied by a FILE cannot hold a ledger. `append` is the
+    layer that must not explode — it reports failure, and the verbs above it
+    turn that into a refusal."""
+    bucket = config.checkpoint_dir() / store.project_slug(project)
+    bucket.parent.mkdir(parents=True, exist_ok=True)
+    bucket.write_text("not a directory", encoding="utf-8")
+    assert requests.append(requests._stamp("opened", "q-0123456789ab",
+                                           "cli-tty"),
+                           project_dir=project) is False
+    with pytest.raises(requests.RequestError):
+        _open(project)
+
+
+def test_an_unreadable_ledger_reads_empty_and_deletes_nothing(project):
+    """Undecodable bytes are a read failure, not a licence to rewrite: the
+    tolerant reader returns nothing and the deleter touches nothing."""
+    q_id = _open(project)
+    path = requests._path(project)
+    before = path.read_bytes()
+    path.write_bytes(b"\xff\xfe not utf-8 at all\n")
+    assert requests.events(project_dir=project) == []
+    assert requests.records(project_dir=project) == {}
+    assert requests._rewrite_without({q_id}, project_dir=project) == []
+    assert path.read_bytes() != before        # still the corrupt bytes
+    assert path.read_bytes() == b"\xff\xfe not utf-8 at all\n"
+
+
+def test_fold_tolerates_garbage_ordering_values(project):
+    """`order` and `_line` come off disk; a non-integer must fall back to the
+    default rather than sink the whole fold."""
+    q_id = _open(project)
+    rows = requests.events(project_dir=project)
+    rows[0]["order"] = "not-a-number"
+    rows[0]["_line"] = [1]
+    assert requests.fold(rows)[q_id]["state"] == "open"
+
+
+def test_a_second_opened_row_never_rewrites_the_first(project):
+    """Duplicate logical opens: first writer wins, so a replayed row cannot
+    quietly change what the recipient was asked."""
+    q_id = _open(project)
+    replay = requests._stamp("opened", q_id, "cli-tty")
+    replay.update({"to": RECIPIENT, "ask": "something else entirely",
+                   "why": WHY})
+    assert requests.append(replay, project_dir=project)
+    assert requests.get(q_id, project_dir=project)["ask"] == ASK
+
+
+@pytest.mark.parametrize("field,value", [("to", ""), ("to", "not/a/slug"),
+                                         ("ask", "   ")])
+def test_an_opened_row_missing_its_addressing_never_founds_a_record(
+        project, field, value):
+    """The read-boundary shape check: a row edited on disk into something
+    unaddressable is inert, not a record addressed to nobody."""
+    row = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, field: value})
+    assert requests.append(row, project_dir=project)
+    assert requests.records(project_dir=project) == {}
+
+
+def test_open_refuses_a_malformed_recipient_or_supersedes_id(project):
+    with pytest.raises(requests.RequestError):
+        _open(project, to="not/a/slug")
+    with pytest.raises(requests.RequestError):
+        _open(project, supersedes="q-nope")
+
+
+def test_open_refuses_when_the_sender_project_is_unknown():
+    with pytest.raises(requests.RequestError):
+        requests.open_request(to=RECIPIENT, ask=ASK, why=WHY,
+                              channel="cli-agent", project_dir=None)
+
+
+def test_the_same_ask_twice_in_one_second_is_refused_not_collided(
+        project, monkeypatch):
+    """The id hashes the second, so a re-ask inside one second would land on
+    the record already open. It is refused instead of overwriting it."""
+    monkeypatch.setattr(requests.time, "time_ns", lambda: 1_786_000_000 * 10 ** 9)
+    first = _open(project)
+    with pytest.raises(requests.RequestError):
+        _open(project)
+    assert list(requests.records(project_dir=project)) == [first]
+
+
+def test_revise_can_replace_the_evidence_alone(project):
+    q_id = _open(project, evidence="issue:694")
+    requests.revise(q_id, channel="cli-agent", evidence="issue:712",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["evidence"] == "issue:712"
+    assert record["ask"] == ASK and record["revision"] == 1
+
+
+# ---- forget: the rewrite edges -------------------------------------------
+
+
+def test_a_deletion_aimed_at_a_bucket_with_no_ledger_removes_nothing(project):
+    assert requests._rewrite_without({"q-0123456789ab"},
+                                     project_dir=project) == []
+    assert requests._rewrite_without({"q-0123456789ab"},
+                                     project_dir=None) == []
+
+
+def test_the_rewrite_drops_blank_and_torn_lines_it_passes_over(project):
+    """Torn rows are expendable — keeping one would leave bytes behind that
+    the deletion was asked to remove."""
+    doomed = _open(project)
+    kept = _open(project, ask="an unrelated ask about the docs site")
+    path = requests._path(project)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+        handle.write('{"request_id": "q-abcabcabcabc", "ask": "half a r')
+    assert requests.forget_content_key(normalize.content_key(ASK),
+                                       project_dir=project) == [doomed]
+    text = path.read_text(encoding="utf-8")
+    assert "half a r" not in text
+    assert "" not in text.splitlines()
+    assert set(requests.records(project_dir=project)) == {kept}
+
+
+def test_a_failed_swap_leaves_the_ledger_whole_and_no_tmp_behind(
+        project, monkeypatch):
+    """Atomic or nothing: if the replace fails, the deletion reports that it
+    removed nothing rather than leaving a half-written ledger."""
+    q_id = _open(project)
+    path = requests._path(project)
+    before = path.read_text(encoding="utf-8")
+
+    def boom(src, dst):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(requests.os, "replace", boom)
+    assert requests.forget_content_key(normalize.content_key(ASK),
+                                       project_dir=project) == []
+    assert path.read_text(encoding="utf-8") == before
+    assert requests.get(q_id, project_dir=project) is not None
+    assert not list(path.parent.glob("*.forget-tmp"))
+
+
+def test_a_failed_swap_survives_an_undeletable_tmp(project, monkeypatch):
+    """The cleanup of the temp file is best-effort; a failure there must not
+    turn a degraded deletion into a crash."""
+    _open(project)
+    monkeypatch.setattr(requests.os, "replace",
+                        lambda src, dst: (_ for _ in ()).throw(OSError()))
+    real_unlink = type(requests._path(project)).unlink
+
+    def deny(self, missing_ok=False):
+        if self.name.endswith(".forget-tmp"):
+            raise OSError("EPERM")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(type(requests._path(project)), "unlink", deny)
+    assert requests.forget_content_key(normalize.content_key(ASK),
+                                       project_dir=project) == []
+
+
+# ---- CLI: the remaining refusal and card branches -------------------------
+
+
+def test_cli_list_renders_evidence_and_supersedes(project, recipient, capsys):
+    from daimon_briefing import cli
+    first = _open(project, evidence="issue:694")
+    second = _open(project, ask="review it again, with the new numbers",
+                   supersedes=first)
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Evidence: issue:694" in out
+    assert f"Supersedes: {first}" in out
+    assert second in out
+
+
+def test_cli_done_on_a_rejected_request_refuses(project, recipient,
+                                                monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    q_id = _open(project)
+    assert cli.main(["request", "reject", q_id, "--note", "out of scope",
+                     "--project", project]) == 0
+    capsys.readouterr()
+    rc = cli.main(["request", "done", q_id, "--evidence", "I did it anyway",
+                   "--by", "agent", "--project", project])
+    assert rc == 1
+    assert "request done refused" in capsys.readouterr().out
+    assert requests.get(q_id, project_dir=project)["state"] == "rejected"
