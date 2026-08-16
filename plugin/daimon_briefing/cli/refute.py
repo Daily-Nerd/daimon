@@ -12,10 +12,11 @@ import daimon_briefing.cli as _cli
 from .. import refutations, render
 from ._ledger import (
     _print_refutation,
-    _print_ruling,
     _refutation_json,
+    _refutation_lines,
     _refuse_ruling_id,
     _refute_channel,
+    _ruling_lines,
 )
 
 
@@ -149,8 +150,7 @@ def _cmd_refute_list(args) -> int:
     elif not rows:
         render.render_ledger_lines(["no refutations for this project"])
     else:
-        for row in rows:
-            _print_refutation(row)
+        render.render_ledger_records([_refutation_lines(row) for row in rows])
     return 0
 
 
@@ -173,11 +173,12 @@ def _cmd_refute_search(args) -> int:
         # polarities, labelled by their own printers — filtering rulings out
         # would leave the records that matter most with no pull surface
         # mid-session, after the briefing has scrolled away.
-        for row in rows:
-            if row.get("polarity") == "ruling":
-                _print_ruling(row, tag=True)
-            else:
-                _print_refutation(row, tag=True)
+        render.render_ledger_records([
+            _ruling_lines(row, tag=True)
+            if row.get("polarity") == "ruling"
+            else _refutation_lines(row, tag=True)
+            for row in rows
+        ])
     return 0
 
 

@@ -12,7 +12,12 @@ import sys
 import daimon_briefing.cli as _cli
 
 from .. import config, normalize, refutations, render
-from ._ledger import _print_ruling, _refutation_json, _refute_channel
+from ._ledger import (
+    _print_ruling,
+    _refutation_json,
+    _refute_channel,
+    _ruling_lines,
+)
 
 
 def _cmd_ruling_propose(args) -> int:
@@ -206,8 +211,7 @@ def _cmd_ruling_list(args) -> int:
     if not rows:
         render.render_ledger_lines(["no rulings for this project"])
         return 0
-    for row in rows:
-        _print_ruling(row)
+    render.render_ledger_records([_ruling_lines(row) for row in rows])
     # The cap binds ACTIVATION; a lowered DAIMON_RULING_CAP leaves the
     # excess active, so the over-cap state must be visible somewhere.
     active = sum(1 for r in rows if r.get("state") == "active")
