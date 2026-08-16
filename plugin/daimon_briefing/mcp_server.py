@@ -97,6 +97,23 @@ def _tool_descriptors():
             },
             "annotations": {"readOnlyHint": True},
         },
+        {
+            "name": "requests_inbox",
+            "description": (
+                "Requests other daimon projects have addressed to this one "
+                "(the cross-project ask ledger, #694). Deliberate pull, "
+                "never ambient — daimon_brief does not carry this content. "
+                "Read-only: opening, answering, or deciding a request is "
+                "CLI-only (`daimon request ...`)."),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string",
+                                "description": "project directory path"},
+                },
+            },
+            "annotations": {"readOnlyHint": True},
+        },
     ]
 
 

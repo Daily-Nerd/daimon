@@ -114,6 +114,51 @@ def test_render_brief_no_content(capsys):
     assert "session end" in out  # checkpoints come from hooks automatically
 
 
+# ---- #694 PR 2: the request panel's worldcheck_project gate -----------------
+
+
+def _seed_request(recipient_dir, ask="publish the schema"):
+    from daimon_briefing import requests, store
+    store.write_checkpoint("S-render-req-sender", {
+        "session_id": "S-render-req-sender", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/render-req-sender")
+    to = store.project_slug(recipient_dir)
+    return requests.open_request(
+        to=to, ask=ask, why="because", channel="cli-agent",
+        project_dir="/p/render-req-sender")
+
+
+def test_render_brief_shows_the_panel_when_worldcheck_project_is_given(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    _seed_request("/p/render-req-recipient-a")
+    render.render_brief(sample_checkpoint,
+                        worldcheck_project="/p/render-req-recipient-a")
+    out = capsys.readouterr().out
+    assert "publish the schema" in out
+
+
+def test_render_brief_hides_the_panel_without_worldcheck_project(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # D2: NEVER key on project_dir/route alone — a caller that omits
+    # worldcheck_project (the --slug / global-fallback / MCP shape) must get
+    # no panel even though a matching request exists.
+    _seed_request("/p/render-req-recipient-b")
+    render.render_brief(sample_checkpoint,
+                        project_dir="/p/render-req-recipient-b")
+    out = capsys.readouterr().out
+    assert "publish the schema" not in out
+
+
+def test_render_brief_no_checkpoint_still_shows_the_panel(
+        tmp_checkpoint_dir, capsys):
+    _seed_request("/p/render-req-recipient-c")
+    render.render_brief({}, worldcheck_project="/p/render-req-recipient-c")
+    out = capsys.readouterr().out
+    assert "publish the schema" in out
+
+
 def _serialize_status_data(last):
     return {
         "project": "/repo/x",

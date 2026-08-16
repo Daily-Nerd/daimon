@@ -240,6 +240,11 @@ daimon request open --to <dir> --ask "<what>" --why "<why>" --by agent
 unverified claim until the quote is byte-checked. `accept`, `reject`,
 `needs-info`, `suppress` are human-only: print the command, never run it.
 
+Requests OTHER projects addressed to this one surface automatically at the
+top of `daimon brief` (capped at 3, with an overflow count). `daimon request
+inbox` lists every one, including any the panel dropped for attention —
+`--suppress` hides a card from the panel, never from `list`/`inbox`.
+
 ## When memory looks wrong
 
 | Symptom | Command |

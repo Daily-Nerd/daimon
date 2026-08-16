@@ -12,7 +12,7 @@ distinguishably or the gate they measure goes blind.
 """
 import json
 
-from . import amendments, briefing, recall, store
+from . import amendments, briefing, recall, requests, store
 
 
 class ToolError(Exception):
@@ -105,9 +105,23 @@ def _status(arguments: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+def _requests_inbox(arguments: dict) -> str:
+    """Read-only pull (#694 PR 2): requests other projects have addressed to
+    this one. Deliberate — daimon_brief does NOT carry this content (D2's
+    CLI-only gate); an MCP client that wants it calls this tool explicitly.
+    Every write verb (open/revise/accept/reject/needs-info/suppress/done)
+    stays CLI-only — no tool here mutates the ledger."""
+    _note("requests_inbox")
+    from . import cli
+    project = cli._resolve_project(arguments.get("project") or None)
+    rows = requests.inbox_listing(project_dir=project)
+    return json.dumps(rows, ensure_ascii=False, indent=2)
+
+
 HANDLERS = {
     "daimon_recall": _recall,
     "daimon_brief": _brief,
     "daimon_projects": _projects,
     "daimon_status": _status,
+    "requests_inbox": _requests_inbox,
 }
