@@ -9,7 +9,7 @@ they cannot live inside either family module without a cross-family import.
 import json
 import sys
 
-from .. import refutations
+from .. import refutations, render
 
 
 def _refutation_json(record) -> str:
@@ -32,42 +32,49 @@ def _refutation_json(record) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
-def _print_refutation(record: dict, *, detailed: bool = False,
-                      tag: bool = False) -> None:
+def _refutation_lines(record: dict, *, detailed: bool = False,
+                      tag: bool = False) -> list:
     state = record.get("state") or "candidate"
     activation = record.get("activation") or f"{record.get('asserted_by', '?')}-proposed"
     mark = "✗" if state == "active" else ("×" if state == "overturned" else "?")
     word = "refutation " if tag else ""
-    print(f"[{word}{mark} {state} · {activation}] {record['refutation_id']}  "
-          f"{record.get('subject', '')}")
+    lines = [f"[{word}{mark} {state} · {activation}] {record['refutation_id']}  "
+             f"{record.get('subject', '')}"]
     if not detailed:
-        return
-    print(f"  Verdict: {record.get('verdict', '')}")
-    print(f"  Scope: {record.get('scope', '')}")
+        return lines
+    lines.append(f"  Verdict: {record.get('verdict', '')}")
+    lines.append(f"  Scope: {record.get('scope', '')}")
     anchors = record.get("anchors") or []
     if anchors:
-        print(f"  Anchors: {', '.join(anchors)}")
+        lines.append(f"  Anchors: {', '.join(anchors)}")
     revisit = record.get("revisit_when") or ""
     if revisit:
-        print(f"  Revisit when: {revisit}")
+        lines.append(f"  Revisit when: {revisit}")
     evidence = record.get("evidence") or []
     for item in evidence:
-        print(f"  Evidence: {item}")
+        lines.append(f"  Evidence: {item}")
     if evidence:
         # #576: Evidence sits in the same Label: value register as Provenance
         # and Authority, which ARE derived from recorded lifecycle facts.  The
         # source string is shape-checked and never resolved, so say so here —
         # this is the only surface a reader of `refute show` actually reads.
-        print("  (evidence sources are recorded as cited; "
-              "daimon does not verify them)")
-    print(f"  Provenance: asserted by {record.get('asserted_by', '?')} "
-          f"({record.get('asserted_author') or 'unknown'})")
+        lines.append("  (evidence sources are recorded as cited; "
+                     "daimon does not verify them)")
+    lines.append(f"  Provenance: asserted by {record.get('asserted_by', '?')} "
+                 f"({record.get('asserted_author') or 'unknown'})")
     if record.get("activation"):
-        print(f"  Authority: {record['activation']} "
-              f"({record.get('activation_author') or 'unknown'})")
+        lines.append(f"  Authority: {record['activation']} "
+                     f"({record.get('activation_author') or 'unknown'})")
     pending = record.get("overturn_proposed")
     if isinstance(pending, dict):
-        print(f"  Overturn proposed by {pending.get('by', '?')} — still active")
+        lines.append(f"  Overturn proposed by {pending.get('by', '?')} — still active")
+    return lines
+
+
+def _print_refutation(record: dict, *, detailed: bool = False,
+                      tag: bool = False) -> None:
+    render.render_ledger_lines(
+        _refutation_lines(record, detailed=detailed, tag=tag))
 
 
 def _refute_channel(args) -> str:
@@ -88,8 +95,8 @@ def _refute_channel(args) -> str:
     return "cli-tty"
 
 
-def _print_ruling(record: dict, *, detailed: bool = False,
-                  tag: bool = False) -> None:
+def _ruling_lines(record: dict, *, detailed: bool = False,
+                  tag: bool = False) -> list:
     """#693: a ruling renders its VERDICT (the rule text) and never the
     refutation's ✗ glyph; an overturned ruling reads "retired" (label only,
     the state vocabulary is unchanged); and text authored by a non-human
@@ -103,27 +110,34 @@ def _print_ruling(record: dict, *, detailed: bool = False,
         activation = f"{authored}-written, {activation}"
     mark = "§" if state == "active" else ("×" if state == "overturned" else "?")
     word = "ruling " if tag else ""
-    print(f"[{word}{mark} {shown_state} · {activation}] "
-          f"{record['refutation_id']}  {record.get('verdict', '')}")
+    lines = [f"[{word}{mark} {shown_state} · {activation}] "
+             f"{record['refutation_id']}  {record.get('verdict', '')}"]
     if not detailed:
-        return
-    print(f"  Governs: {record.get('subject', '')}")
-    print(f"  Scope: {record.get('scope', '')}")
+        return lines
+    lines.append(f"  Governs: {record.get('subject', '')}")
+    lines.append(f"  Scope: {record.get('scope', '')}")
     anchors = record.get("anchors") or []
     if anchors:
-        print(f"  Anchors: {', '.join(anchors)}")
+        lines.append(f"  Anchors: {', '.join(anchors)}")
     revisit = record.get("revisit_when") or ""
     if revisit:
-        print(f"  Revisit when: {revisit}")
+        lines.append(f"  Revisit when: {revisit}")
     for item in record.get("evidence") or []:
-        print(f"  Evidence: {item}")
+        lines.append(f"  Evidence: {item}")
     proposal = record.get("revision_proposed")
     if proposal:
-        print(f"  Pending revision proposal ({proposal.get('by', '?')}): "
-              f"{proposal.get('verdict') or proposal.get('subject') or ''}")
+        lines.append(f"  Pending revision proposal ({proposal.get('by', '?')}): "
+                     f"{proposal.get('verdict') or proposal.get('subject') or ''}")
     retirement = record.get("overturn_proposed")
     if retirement:
-        print(f"  Pending retirement proposal ({retirement.get('by', '?')})")
+        lines.append(f"  Pending retirement proposal ({retirement.get('by', '?')})")
+    return lines
+
+
+def _print_ruling(record: dict, *, detailed: bool = False,
+                  tag: bool = False) -> None:
+    render.render_ledger_lines(
+        _ruling_lines(record, detailed=detailed, tag=tag))
 
 
 def _refuse_ruling_id(record, verb: str) -> bool:

@@ -11,7 +11,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import config, normalize, refutations
+from .. import config, normalize, refutations, render
 from ._ledger import _print_ruling, _refutation_json, _refute_channel
 
 
@@ -35,11 +35,13 @@ def _cmd_ruling_propose(args) -> int:
         _print_ruling(record, detailed=True)
         if record["state"] == "candidate":
             if getattr(args, "by", None) != "agent":
-                print(f"  Next: daimon ruling ratify {ruling_id} "
-                      f"--project {project}")
+                render.render_ledger_lines(
+                    [f"  Next: daimon ruling ratify {ruling_id} "
+                     f"--project {project}"])
             else:
-                print("  Candidate recorded. Activation requires an explicit "
-                      "human decision.")
+                render.render_ledger_lines(
+                    ["  Candidate recorded. Activation requires an explicit "
+                     "human decision."])
     return 0
 
 
@@ -154,11 +156,13 @@ def _cmd_ruling_revise(args) -> int:
     else:
         _print_ruling(record, detailed=True)
         if record.get("revision_proposed"):
-            print("  Proposal recorded; the active ruling is untouched "
-                  "until a human verdict.")
+            render.render_ledger_lines(
+                ["  Proposal recorded; the active ruling is untouched "
+                 "until a human verdict."])
         elif record["state"] == "candidate":
-            print("  Revision is not load-bearing until explicit human "
-                  "ratification.")
+            render.render_ledger_lines(
+                ["  Revision is not load-bearing until explicit human "
+                 "ratification."])
     return 0
 
 
@@ -179,8 +183,9 @@ def _cmd_ruling_retire(args) -> int:
     else:
         _print_ruling(record, detailed=True)
         if event == "overturn-proposed":
-            print("  Retirement proposed; the ruling stands until a human "
-                  "verdict.")
+            render.render_ledger_lines(
+                ["  Retirement proposed; the ruling stands until a human "
+                 "verdict."])
     return 0
 
 
@@ -199,7 +204,7 @@ def _cmd_ruling_list(args) -> int:
                   file=sys.stderr)
         return 0
     if not rows:
-        print("no rulings for this project")
+        render.render_ledger_lines(["no rulings for this project"])
         return 0
     for row in rows:
         _print_ruling(row)
@@ -208,8 +213,9 @@ def _cmd_ruling_list(args) -> int:
     active = sum(1 for r in rows if r.get("state") == "active")
     cap = config.ruling_cap()
     if active > cap:
-        print(f"over cap: {active} active vs cap {cap} — retire one, or "
-              "raise DAIMON_RULING_CAP deliberately")
+        render.render_ledger_lines(
+            [f"over cap: {active} active vs cap {cap} — retire one, or "
+             "raise DAIMON_RULING_CAP deliberately"])
     return 0
 
 

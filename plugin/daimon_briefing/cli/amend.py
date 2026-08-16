@@ -12,7 +12,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import amendments, briefing, store
+from .. import amendments, briefing, render, store
 
 
 def _amend_channel(args) -> str:
@@ -71,14 +71,16 @@ def _cmd_amend_propose(args) -> int:
     state = record["state"] if record else "candidate"
     _cli._note_usage("amend:agent" if getattr(args, "by", None) == "agent"
                      else "amend")
-    print(f"amendment {a_id} recorded on {item_id}: {args.change} ({state})")
+    render.render_ledger_lines(
+        [f"amendment {a_id} recorded on {item_id}: {args.change} ({state})"])
     if state == "candidate":
         # Same posture as refute add: an agent-authored candidate is never
         # handed its own escalation command — verification is the transcript
         # byte-check at session end, settlement is a human's.
-        print("  evidence is byte-checked against the transcript at session "
-              "end; a human settles it earlier with `daimon amend ratify` "
-              "or `daimon amend reject`")
+        render.render_ledger_lines(
+            ["  evidence is byte-checked against the transcript at session "
+             "end; a human settles it earlier with `daimon amend ratify` "
+             "or `daimon amend reject`"])
     return 0
 
 
@@ -100,7 +102,8 @@ def _cmd_amend_verdict(args) -> int:
         return 1
     _cli._note_usage(f"amend:{verb}")
     record = amendments.get(args.amendment_id, project_dir=project)
-    print(f"{args.amendment_id}: {record['state'] if record else 'unknown'}")
+    render.render_ledger_lines(
+        [f"{args.amendment_id}: {record['state'] if record else 'unknown'}"])
     return 0
 
 
@@ -115,12 +118,14 @@ def _cmd_amend_list(args) -> int:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
     if not rows:
-        print("no amendments recorded for this project")
+        render.render_ledger_lines(["no amendments recorded for this project"])
         return 0
+    lines = []
     for r in rows:
         quote = briefing._truncate_agent_claim(r.get("evidence"))
-        print(f'{r["amendment_id"]}  {r["state"]:<9} {r["item_id"]}  '
-              f'{r["change"]}: "{quote}"')
+        lines.append(f'{r["amendment_id"]}  {r["state"]:<9} {r["item_id"]}  '
+                     f'{r["change"]}: "{quote}"')
+    render.render_ledger_lines(lines)
     return 0
 
 
