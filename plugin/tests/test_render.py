@@ -159,6 +159,64 @@ def test_render_brief_no_checkpoint_still_shows_the_panel(
     assert "publish the schema" in out
 
 
+# ---- #694 PR 3: the sender-side verdict panel's worldcheck_project gate ----
+
+
+def _seed_verdict(sender_dir, ask="publish the schema"):
+    from daimon_briefing import requests, store
+    recipient_dir = sender_dir + "-recipient"
+    store.write_checkpoint("S-render-verdict-recipient", {
+        "session_id": "S-render-verdict-recipient",
+        "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir=recipient_dir)
+    to = store.project_slug(recipient_dir)
+    q_id = requests.open_request(to=to, ask=ask, why="because",
+                                 channel="cli-agent", project_dir=sender_dir)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_dir)
+    return q_id
+
+
+def test_render_brief_shows_the_verdict_panel_when_worldcheck_project_given(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    _seed_verdict("/p/render-verdict-sender-a")
+    render.render_brief(sample_checkpoint,
+                        worldcheck_project="/p/render-verdict-sender-a")
+    out = capsys.readouterr().out
+    assert "publish the schema" in out
+    assert "accepted" in out
+
+
+def test_render_brief_hides_the_verdict_panel_without_worldcheck_project(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    _seed_verdict("/p/render-verdict-sender-b")
+    render.render_brief(sample_checkpoint,
+                        project_dir="/p/render-verdict-sender-b")
+    out = capsys.readouterr().out
+    assert "publish the schema" not in out
+
+
+def test_render_brief_no_checkpoint_still_shows_the_verdict_panel(
+        tmp_checkpoint_dir, capsys):
+    _seed_verdict("/p/render-verdict-sender-c")
+    render.render_brief({}, worldcheck_project="/p/render-verdict-sender-c")
+    out = capsys.readouterr().out
+    assert "publish the schema" in out
+
+
+def test_render_brief_rich_smoke_shows_the_verdict_panel(
+        monkeypatch, tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # Rich path: content-only (see test_render_brief_rich_smoke for rationale).
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    _seed_verdict("/p/render-verdict-sender-rich")
+    render.render_brief(sample_checkpoint,
+                        worldcheck_project="/p/render-verdict-sender-rich")
+    out = capsys.readouterr().out
+    assert "publish the schema" in out
+    assert "accepted" in out
+
+
 def _serialize_status_data(last):
     return {
         "project": "/repo/x",
@@ -282,6 +340,29 @@ def _status_data():
         "last": {"result": {"outcome": "success", "line": "wrote checkpoint: /c/x.json (took 1s)"},
                  "spawn": {"session_id": "S-proj", "age": "1m"}},
     }
+
+
+def test_render_status_shows_requests_line_when_nonzero(capsys):
+    data = _status_data()
+    data["requests"] = {"open_sent": 2, "awaiting_you": 1}
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "requests: 2 open sent, 1 awaiting you" in out
+
+
+def test_render_status_requests_line_silent_when_zero(capsys):
+    data = _status_data()
+    data["requests"] = {"open_sent": 0, "awaiting_you": 0}
+    render.render_status(data)
+    assert "requests:" not in capsys.readouterr().out
+
+
+def test_render_status_requests_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = _status_data()
+    data["requests"] = {"open_sent": 2, "awaiting_you": 1}
+    render.render_status(data)
+    assert "open sent" in capsys.readouterr().out
 
 
 def test_render_status_plain_exact_format(capsys):

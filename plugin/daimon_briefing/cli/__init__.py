@@ -599,6 +599,17 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                                             project_dir=worldcheck_project)
         except Exception:
             pass
+        # #694 PR 3 (D1, sender side): same posture, same gate, same
+        # post-print timing — a crash before this line just re-renders the
+        # verdict card next brief instead of a false "verdict_surfaced".
+        try:
+            for row in requests.verdict_renderable(
+                    project_dir=worldcheck_project).get("rows") or []:
+                if requests.needs_verdict_surfaced_stamp(row):
+                    requests.stamp_verdict_surfaced(
+                        row["request_id"], project_dir=worldcheck_project)
+        except Exception:
+            pass
     if withheld:
         render.render_brief_note([
             f"{len(withheld)} resolved item(s) withheld — "
@@ -1846,6 +1857,13 @@ def _status_world(project_arg=None) -> dict:
     # surfaced only when non-zero (same "quiet by default" rule). Claim
     # snapshots stay in the ledger; status shows only the number.
     forget_hits = store.forget_hit_stats(project)
+    # #694 PR 3: the requests summary — {open_sent, awaiting_you}. Fail-open,
+    # same posture as every other best-effort status fact: a broken composer
+    # must never take `status` down with it.
+    try:
+        request_counts = requests.status_counts(project_dir=project)
+    except Exception:
+        request_counts = {"open_sent": 0, "awaiting_you": 0}
     identity = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
@@ -1864,7 +1882,7 @@ def _status_world(project_arg=None) -> dict:
         "hook_drift": hook_drift, "plugin_drift": plugin_drift,
         "rescue_gap": rescue_gap,
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
-        "forget_hits": forget_hits, "rc": rc,
+        "forget_hits": forget_hits, "requests": request_counts, "rc": rc,
     }
 
 
@@ -1884,6 +1902,7 @@ def status_payload(project_arg=None) -> tuple:
         "rescue_gap": w["rescue_gap"],
         "rescue_posture": w["rescue_posture"],
         "forget_hits": w["forget_hits"],
+        "requests": w["requests"],
     }
     return payload, w["rc"]
 
@@ -1909,6 +1928,7 @@ def _cmd_status(args) -> int:
         "rescue_posture": w["rescue_posture"],
         "rescue_window_errors": w["rescue_window_errors"],
         "forget_hits": w["forget_hits"],
+        "requests": w["requests"],
     })
     return w["rc"]
 

@@ -844,15 +844,62 @@ def request_panel_lines(project_dir=None) -> list[str]:
     return lines
 
 
+# ---- #694 PR 3: the sender-side verdict panel -------------------------------
+
+_VERDICT_PANEL_HEADER = "Verdicts on requests you sent:"
+
+# Mirrors cli/request.py's _MARKS glyph-per-state — a separate small table
+# rather than an import, because briefing.py must not depend on the cli
+# package (the dependency runs the other way: cli imports briefing/render).
+_VERDICT_MARKS = {"needs-info": "?", "accepted": "✓", "rejected": "×",
+                  "done": "✔"}
+
+
+def verdict_panel_lines(project_dir=None) -> list[str]:
+    """The sender-side panel's rendered lines ([] when nothing this project
+    sent has been decided yet, or `project_dir` is None). Same posture as
+    `request_panel_lines`: fail-open, skeleton furniture, never silently
+    truncated over RENDER_CAP. `project_dir` is the CLI's
+    `worldcheck_project` — same D2 CLI-only gate, same caller contract."""
+    if project_dir is None:
+        return []
+    try:
+        entry = requests.verdict_renderable(project_dir=project_dir)
+    except Exception:
+        return []
+    rows = entry.get("rows") or []
+    if not rows:
+        return []
+    lines = [_VERDICT_PANEL_HEADER]
+    for row in rows:
+        state = str(row.get("state") or "")
+        mark = _VERDICT_MARKS.get(state, "?")
+        lines.append(f"{mark} {state}  {row['request_id']}  "
+                     f"{_truncate_request_ask(row.get('ask', ''))}")
+        lines.append(f"  To: {row.get('to') or '?'}")
+        note = str(row.get("note") or "").strip()
+        if note:
+            lines.append(f"  Note: {_truncate_request_ask(note)}")
+        done_evidence = str(row.get("done_evidence") or "").strip()
+        if done_evidence:
+            lines.append(f"  Done: {_truncate_request_ask(done_evidence)}")
+    overflow = entry.get("overflow") or 0
+    if overflow:
+        plural = "s" if overflow != 1 else ""
+        lines.append(f"  (+{overflow} more decided{plural} — "
+                     "daimon request list)")
+    return lines
+
+
 def render_plain(b: dict, degraded: bool = False, rulings=(),
-                 request_lines=()) -> str:
+                 request_lines=(), verdict_lines=()) -> str:
     """The deterministic briefing text. Under the #79 budget this is
     BYTE-IDENTICAL to the legacy render(); over it, long items truncate
     (sections preserved) and then whole items drop, lowest value first,
     each cut announced with a trim note. `degraded` (#204) downgrades every
     verbatim label and adds one header note when the receipt is unverifiable."""
     budget = config.brief_max_tokens()
-    text = _render_parts(b, {}, degraded, rulings, request_lines)
+    text = _render_parts(b, {}, degraded, rulings, request_lines, verdict_lines)
     if not budget or estimate_tokens(text) <= budget:
         return text
 
@@ -870,7 +917,8 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
             for i in (b.get(key) or [])
         ]
     trimmed = {key: 0 for key, _ in _DROP_ORDER}
-    text = _render_parts(b, trimmed, degraded, rulings, request_lines)
+    text = _render_parts(b, trimmed, degraded, rulings, request_lines,
+                         verdict_lines)
 
     # Stage 2: drop whole items, least valuable first, until the budget holds
     # or only the skeleton remains.
@@ -880,14 +928,15 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
             items.pop(-1 if end == "tail" else 0)
             b[key] = items
             trimmed[key] += 1
-            text = _render_parts(b, trimmed, degraded, rulings, request_lines)
+            text = _render_parts(b, trimmed, degraded, rulings, request_lines,
+                                 verdict_lines)
         if estimate_tokens(text) <= budget:
             break
     return text
 
 
 def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
-                  rulings=(), request_lines=()) -> str:
+                  rulings=(), request_lines=(), verdict_lines=()) -> str:
     parts = ["While you were away — here's where we left off."]
     if degraded:
         # One header note (#204), embedded in the text so the hook-injected
@@ -906,6 +955,10 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
         # sections below.
         parts.append("")
         parts.extend(request_lines)
+    if verdict_lines:
+        # #694 PR 3: same posture — skeleton furniture, outside _DROP_ORDER.
+        parts.append("")
+        parts.extend(verdict_lines)
 
     def _section(header: str, key: str) -> None:
         items = b.get(key) or []
@@ -984,21 +1037,28 @@ def render(checkpoint, project_dir=None, worldcheck_project=None) -> str | None:
     unknown project resolves to no ledger path and reads nothing, so the
     guard saves a pointless call rather than preventing a leak.
 
-    `worldcheck_project` (#694 PR 2) scopes the incoming-request panel — a
-    SEPARATE parameter from `project_dir`, never reused, because the panel's
-    gate is narrower than the rulings section's: rulings render on every
-    route (including `--slug`), the panel only on the CLI same-project
-    path (`cli._render_briefing_body`'s own `worldcheck_project`, D2)."""
+    `worldcheck_project` (#694 PR 2/3) scopes the incoming-request panel AND
+    the sender-side verdict panel — a SEPARATE parameter from `project_dir`,
+    never reused, because both panels' gate is narrower than the rulings
+    section's: rulings render on every route (including `--slug`), the
+    panels only on the CLI same-project path (`cli._render_briefing_body`'s
+    own `worldcheck_project`, D2)."""
     b = build(checkpoint)
     rulings = ruling_lines(project_dir) if project_dir is not None else []
     request_lines = (request_panel_lines(worldcheck_project)
                      if worldcheck_project is not None else [])
+    verdict_lines = (verdict_panel_lines(worldcheck_project)
+                     if worldcheck_project is not None else [])
+    skeleton_blocks = [blk for blk in (rulings, request_lines, verdict_lines)
+                       if blk]
     if b is None:
-        # #693: a ruling ratified before the first real checkpoint (a day-one
-        # action) must still reach context — "nothing worth surfacing" is no
-        # longer true when active rulings or addressed requests exist.
-        skeleton = rulings + ([""] if rulings and request_lines else []) + request_lines
-        return "\n".join(skeleton) if skeleton else None
+        # #693/#694: a ruling ratified, a request addressed, or a verdict
+        # decided before the first real checkpoint (a day-one action) must
+        # still reach context — "nothing worth surfacing" is no longer true
+        # when any of the three exist.
+        if not skeleton_blocks:
+            return None
+        return "\n\n".join("\n".join(blk) for blk in skeleton_blocks)
     degraded = receipt_degraded(checkpoint)
     if config.llm_briefing():
         rendered = _render_llm(checkpoint)
@@ -1007,20 +1067,17 @@ def render(checkpoint, project_dir=None, worldcheck_project=None) -> str | None:
                 # The LLM render carries no per-item marks to degrade; the one
                 # header note stays FIRST on every path (#204 — the loudest
                 # line never moves below another section). #693/#694: the LLM
-                # narrates the CHECKPOINT; rulings and the request panel live
-                # outside it, so the deterministic sections are prepended
-                # verbatim after the note — never re-narrated, never trusted
-                # to a generative pass.
+                # narrates the CHECKPOINT; rulings and both request panels
+                # live outside it, so the deterministic sections are
+                # prepended verbatim after the note — never re-narrated,
+                # never trusted to a generative pass.
                 parts = ([DEGRADE_NOTE] if degraded else [])
-                if rulings:
-                    parts.append("\n".join(rulings))
-                if request_lines:
-                    parts.append("\n".join(request_lines))
+                parts.extend("\n".join(blk) for blk in skeleton_blocks)
                 parts.append(rendered)
                 return "\n\n".join(parts)
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
-    return render_plain(b, degraded, rulings, request_lines)
+    return render_plain(b, degraded, rulings, request_lines, verdict_lines)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

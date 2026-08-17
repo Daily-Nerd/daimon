@@ -62,20 +62,30 @@ def test_full_fits_size_budget():
     # 9,502 (2026-08-15, after review folded the proposal-verb teaching in);
     # 9,900 keeps ~4% slack. Nothing was added to the compact body.
     #
-    # RAISED 9,900 -> 10,700 on 2026-08-16 (#694), same discipline and the
-    # same subject. `request` ships an agent-facing verb family — an agent
-    # opens, revises, and completes asks — and the alternative was declaring
-    # it NOT_AGENT_FACING, which would have been false rather than economical.
-    # The addition is ~500 chars in the cross-project section, where an agent
-    # already goes to read another project: the doctrine line (never write
-    # into another project's memory), the one command that matters, and the
-    # human-only verb list, which is the wedge rule again. What was NOT
-    # taught: the verdict flow and the inbox, because neither exists until
-    # PR 2/3 — teaching a surface before it renders is how a skill starts
-    # lying. New deliberate-review size is 10,301 (2026-08-16); 10,700 keeps
-    # the same ~4% slack. Nothing was added to the compact body.
+    # RAISED 9,900 -> 10,700 on 2026-08-16 (#694 PR 2), same discipline and
+    # the same subject. `request` ships an agent-facing verb family — an
+    # agent opens, revises, and completes asks — and the alternative was
+    # declaring it NOT_AGENT_FACING, which would have been false rather than
+    # economical. The addition is ~500 chars in the cross-project section,
+    # where an agent already goes to read another project: the doctrine line
+    # (never write into another project's memory), the one command that
+    # matters, and the human-only verb list, which is the wedge rule again.
+    # What was NOT taught: the verdict flow and the inbox, because neither
+    # exists until PR 2/3 — teaching a surface before it renders is how a
+    # skill starts lying. New deliberate-review size is 10,301 (2026-08-16);
+    # 10,700 keeps the same ~4% slack. Nothing was added to the compact body.
+    #
+    # RAISED 10,700 -> 11,400 on 2026-08-16 (#694 PR 3), closing the arc: the
+    # gap PR 2's note named is now real. The addition is ~350 chars in the
+    # SAME cross-project section: decisions on requests this project sent
+    # now surface in its own brief too (not just incoming asks), the `done`
+    # claim's byte-check qualifier, and what a `stale` label means — an
+    # agent seeing "stale" must not read it as invalid and stop. New
+    # deliberate-review size is 10,951 (2026-08-16); 11,400 keeps the same
+    # ~4% slack. Nothing was added to the compact body (already at its
+    # 2,000-char hard cap since #579).
     full = skill_content.render_full()
-    assert len(full) <= 10700, f"full body is {len(full)} chars (cap 10700)"
+    assert len(full) <= 11400, f"full body is {len(full)} chars (cap 11400)"
 
 
 def test_full_has_trigger_only_frontmatter():
