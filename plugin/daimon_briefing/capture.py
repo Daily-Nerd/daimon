@@ -32,8 +32,8 @@ import logging
 import time
 from pathlib import Path
 
-from . import (amendments, carry, config, normalize, provenance, serializer,
-               store, transcript)
+from . import (amendments, carry, config, normalize, provenance, requests,
+               serializer, store, transcript)
 
 log = logging.getLogger(__name__)
 
@@ -163,6 +163,16 @@ def run(session_id: str, messages, *, project, chat, deadline,
         _verify_agent_amendments(project, messages)
     except Exception:
         log.warning("agent amendment verification pass failed", exc_info=True)
+    # #694 PR 3 (D8): same posture again — its own pass, deliberately NOT
+    # folded into either pass above (each ledger's pending population must
+    # stay honestly apart, same reasoning as the amendments/resolutions
+    # split). Same independence from carry, same never-cost-the-checkpoint
+    # try/except.
+    try:
+        _verify_agent_request_done(project, messages)
+    except Exception:
+        log.warning("agent request-done verification pass failed",
+                    exc_info=True)
     # #376: record what the checkers REJECTED, after write_checkpoint because
     # that is where item ids are guaranteed stamped (the merge branch above
     # only stamps when it runs). Its own append-only stream, never events.jsonl
@@ -480,6 +490,59 @@ def _verify_agent_amendments(project, messages) -> int:
             confirmed += 1
         except amendments.AmendmentError:
             continue
+    return confirmed
+
+
+def _verify_agent_request_done(project, messages) -> int:
+    """#694 PR 3 (D8): byte-check every un-verified agent `done` row's
+    evidence quote against THIS session's transcript — the same matching
+    stack the resolve candidates and amendments are held to (#125/#480/
+    #691), reused, not duplicated.
+
+    Reads RAW EVENTS, not `requests.records(project_dir=project)`: a `done`
+    row this project wrote as the RECIPIENT of a FOREIGN ask (#694's mutual
+    read-through — the recipient answers in its own bucket) is an ORPHAN in
+    its own per-bucket fold, invisible to `records()`. The raw row is what
+    this pass verifies; the sender's join is what makes the flag meaningful
+    on the other side, with no foreign write.
+
+    Quote found -> `requests.verify_done` appends a mechanical-channel
+    `done_verified` row recording the speaker role; the fold clears
+    `done_claimed` and the render drops the "(claimed, unverified)"
+    qualifier. Quote not found -> nothing written; the claim stands exactly
+    as before, for a human verdict or a future serialize to settle. Human
+    `done` never reaches here: it was never claimed in the first place, and
+    the pending filter below keys on the observed agent authority, never on
+    a caller's claim."""
+    rows = requests.events(project_dir=project)
+    already_verified = {
+        str(row.get("request_id") or "") for row in rows
+        if row.get("event") == "done_verified"}
+    pending: dict[str, str] = {}
+    for row in rows:
+        if row.get("event") != "done":
+            continue
+        rid = str(row.get("request_id") or "")
+        if not rid or rid in already_verified:
+            continue
+        if requests.CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) \
+                != "agent":
+            continue
+        evidence = str(row.get("evidence") or "").strip()
+        if evidence:
+            pending[rid] = evidence
+    if not pending:
+        return 0
+    haystack = serializer.stripped_transcript(messages) if messages else ""
+    confirmed = 0
+    for rid, evidence in sorted(pending.items()):
+        found, role = serializer.verify_agent_evidence(
+            evidence, messages, haystack=haystack)
+        if not found:
+            continue
+        if requests.verify_done(rid, role=str(role or "unknown"),
+                                project_dir=project):
+            confirmed += 1
     return confirmed
 
 

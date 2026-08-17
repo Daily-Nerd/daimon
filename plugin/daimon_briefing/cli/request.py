@@ -29,7 +29,7 @@ _VERDICT_CALLS = {
     "suppress": "suppress",
 }
 _MARKS = {"open": "→", "needs-info": "?", "accepted": "✓",
-          "rejected": "×", "done": "✔"}
+          "rejected": "×", "done": "✔", "stale": "⏳"}
 # Near-match budget for an unknown `--to`: enough to catch a typo, few
 # enough that the refusal stays a refusal rather than a project directory.
 _SUGGESTIONS = 3
@@ -49,22 +49,26 @@ def _request_channel(args) -> str:
     return "cli-tty"
 
 
-def _state_label(record: dict) -> str:
-    """#694 D8: an agent's completion claim is never rendered as fact. The
-    session-end byte-check (PR 3) is what drops the qualifier."""
+def _state_label(record: dict, project_dir=None) -> str:
+    """#694 D8: an agent's completion claim is never rendered as fact — the
+    session-end byte-check drops the qualifier once `verify_done` clears
+    `done_claimed`. D3: an open/needs-info record whose surfaced anchor has
+    aged past STALE_AFTER_SESSIONS renders `stale` instead — never written
+    to disk, recomputed fresh on every call via `requests.render_state`."""
     if record.get("state") == "done" and record.get("done_claimed"):
         return "done (claimed, unverified)"
-    return str(record.get("state") or "open")
+    return requests.render_state(record, project_dir=project_dir)
 
 
-def _request_lines(record: dict) -> list:
+def _request_lines(record: dict, project_dir=None) -> list:
     """One request as a record card. The header follows the #711 three-span
     shape (state bracket, id, prose); the body carries the two-party facts a
     one-liner would drop — who it is addressed to, why, and whether the
     sender is blocked on it."""
-    state = str(record.get("state") or "open")
+    state = requests.render_state(record, project_dir=project_dir)
     who = record.get("verdict_label") or f"{record.get('opened_by', '?')}-asked"
-    lines = [f"[{_MARKS.get(state, '?')} {_state_label(record)} · {who}] "
+    lines = [f"[{_MARKS.get(state, '?')} "
+             f"{_state_label(record, project_dir=project_dir)} · {who}] "
              f"{record['request_id']}  {record.get('ask', '')}"]
     to = record.get("to", "")
     lines.append(f"  To: {to}" + (" (for a human)" if record.get("to_human")
@@ -93,12 +97,13 @@ def _request_lines(record: dict) -> list:
     return lines
 
 
-def _inbox_lines(record: dict) -> list:
+def _inbox_lines(record: dict, project_dir=None) -> list:
     """One inbox entry as a record card — same three-span header shape as
     `_request_lines`, labeled with the foreign SENDER (`From:`) instead of
     the local `to`, since every row here was addressed to THIS project."""
-    state = str(record.get("state") or "open")
-    lines = [f"[{_MARKS.get(state, '?')} {_state_label(record)}] "
+    state = requests.render_state(record, project_dir=project_dir)
+    lines = [f"[{_MARKS.get(state, '?')} "
+             f"{_state_label(record, project_dir=project_dir)}] "
              f"{record['request_id']}  {record.get('ask', '')}"]
     lines.append(f"  From: {record.get('from_label') or '?'}"
                  + (" (for a human)" if record.get("to_human") else ""))
@@ -132,7 +137,8 @@ def _cmd_request_inbox(args) -> int:
     if not rows:
         render.render_ledger_lines(["no requests addressed to this project"])
         return 0
-    render.render_ledger_records([_inbox_lines(row) for row in rows])
+    render.render_ledger_records(
+        [_inbox_lines(row, project_dir=project) for row in rows])
     return 0
 
 
@@ -185,8 +191,9 @@ def _cmd_request_open(args) -> int:
              "never surfaced there and never decays; it stays in "
              "`daimon request list` until that project serializes a session"])
     record = requests.get(q_id, project_dir=project)
-    render.render_ledger_lines(_request_lines(record) if record else
-                               [f"request {q_id} recorded"])
+    render.render_ledger_lines(
+        _request_lines(record, project_dir=project) if record else
+        [f"request {q_id} recorded"])
     return 0
 
 
@@ -202,7 +209,7 @@ def _cmd_request_revise(args) -> int:
         return 1
     _cli._note_usage("request:revise")
     record = requests.get(args.request_id, project_dir=project)
-    render.render_ledger_lines(_request_lines(record))
+    render.render_ledger_lines(_request_lines(record, project_dir=project))
     return 0
 
 
@@ -236,7 +243,7 @@ def _report(request_id: str, project, verb: str) -> None:
              "project's ask joins its origin at read time, and until then "
              "it renders nowhere"])
         return
-    render.render_ledger_lines(_request_lines(record))
+    render.render_ledger_lines(_request_lines(record, project_dir=project))
 
 
 def _cmd_request_done(args) -> int:
@@ -263,7 +270,8 @@ def _cmd_request_list(args) -> int:
     if not rows:
         render.render_ledger_lines(["no requests for this project"])
         return 0
-    render.render_ledger_records([_request_lines(row) for row in rows])
+    render.render_ledger_records(
+        [_request_lines(row, project_dir=project) for row in rows])
     return 0
 
 

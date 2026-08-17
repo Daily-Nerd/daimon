@@ -1307,6 +1307,72 @@ def _bucket_ckpt(tmp_checkpoint_dir, slug, name, created, session_id,
     (d / name).write_text(json.dumps(ck))
 
 
+# ---- sessions_since_count: the baton's counting shape, extracted (#694 PR 3) ----
+
+
+def test_sessions_since_count_counts_distinct_sessions_after_ts(
+        tmp_checkpoint_dir):
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    _bucket_ckpt(tmp_checkpoint_dir, slug, "latest.json",
+                 "2026-08-02T11:00:00Z", "S-1")
+    assert store.sessions_since_count("2026-08-02T10:00:00Z", "/p/A") == 1
+    assert store.sessions_since_count("2026-08-02T12:00:00Z", "/p/A") == 0
+
+
+def test_sessions_since_count_excludes_introspection(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    _bucket_ckpt(tmp_checkpoint_dir, slug, "latest.json",
+                 "2026-08-02T11:00:00Z", "S-1", source="introspection")
+    assert store.sessions_since_count("2026-08-02T10:00:00Z", "/p/A") == 0
+
+
+def test_sessions_since_count_same_session_counts_once(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    _bucket_ckpt(tmp_checkpoint_dir, slug, "prev-1.json",
+                 "2026-08-02T10:05:00Z", "S-1")
+    _bucket_ckpt(tmp_checkpoint_dir, slug, "latest.json",
+                 "2026-08-02T10:06:00Z", "S-1")
+    assert store.sessions_since_count("2026-08-02T10:00:00Z", "/p/A") == 1
+
+
+def test_sessions_since_count_zero_without_a_ts(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    _bucket_ckpt(tmp_checkpoint_dir, slug, "latest.json",
+                 "2026-08-02T11:00:00Z", "S-1")
+    assert store.sessions_since_count("", "/p/A") == 0
+
+
+def test_sessions_since_count_unknown_project_is_zero(tmp_checkpoint_dir):
+    from daimon_briefing import store
+    assert store.sessions_since_count("2026-08-02T10:00:00Z", None) == 0
+
+
+def test_sessions_since_count_survives_an_unreadable_bucket(
+        tmp_checkpoint_dir):
+    # The bucket directory itself is unreadable (occupied by a file, or a
+    # permissions/TOCTOU failure) — iterdir() raises, and the count degrades
+    # to 0 rather than propagating.
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_checkpoint_dir / slug).write_text("not a directory")
+    assert store.sessions_since_count("2026-08-02T10:00:00Z", "/p/A") == 0
+
+
+def test_sessions_since_count_survives_an_unreadable_pointer(
+        tmp_checkpoint_dir):
+    from daimon_briefing import store
+    slug = store.project_slug("/p/A")
+    _bucket_ckpt(tmp_checkpoint_dir, slug, "latest.json",
+                 "2026-08-02T11:00:00Z", "S-1")
+    (tmp_checkpoint_dir / slug / "prev-1.json").write_text("{torn")
+    assert store.sessions_since_count("2026-08-02T10:00:00Z", "/p/A") == 1
+
+
 def test_active_handoff_none_without_events(tmp_checkpoint_dir):
     from daimon_briefing import store
     assert store.active_handoff("/p/A") is None

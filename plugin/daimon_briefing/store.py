@@ -1655,6 +1655,50 @@ def _events_path(project_dir=None):
     return config.checkpoint_dir() / slug / "events.jsonl"
 
 
+def sessions_since_count(ts: str, project_dir=None) -> int:
+    """Count of distinct non-introspection sessions that have serialized a
+    checkpoint POINTER (latest.json / prev-N.json) for `project_dir` with a
+    `created` stamp strictly AFTER `ts`.
+
+    Extracted from `active_handoff`'s baton consumption count (#523,
+    store.py — this WAS the inline block at its old line 1698-1721): a
+    crashed session never serializes, so it never counts; an introspection
+    checkpoint (a /daimon-end provisional, superseded by its own
+    reconstruction) is excluded so one real session is never counted twice.
+    Distinct SESSION IDS are the unit, not pointer files — rotation can
+    leave more than one pointer from a single re-serialize or heal.
+    Fail-open: an unreadable bucket, a torn pointer, or an empty `ts`
+    contributes nothing, never raises.
+
+    Shared by `active_handoff`'s 2-session threshold and #694 PR 3's
+    request staleness derivation (D3) — the SAME counting shape at a
+    caller-chosen threshold, never a hardcoded 2."""
+    ts = str(ts or "")
+    if not ts:
+        return 0
+    slug = project_slug(project_dir)
+    if not slug:
+        return 0
+    d = config.checkpoint_dir() / slug
+    try:
+        entries = list(d.iterdir())
+    except OSError:
+        return 0
+    consumers = set()
+    for p in entries:
+        if not _POINTER_RE.match(p.name):
+            continue
+        try:
+            ck = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(ck, dict) or ck.get("source") == "introspection":
+            continue
+        if str(ck.get("created") or "") > ts and ck.get("session_id"):
+            consumers.add(str(ck["session_id"]))
+    return len(consumers)
+
+
 def active_handoff(project_dir=None) -> dict | None:
     """The project's active baton (#523), or None.
 
@@ -1696,28 +1740,7 @@ def active_handoff(project_dir=None) -> dict | None:
             or not str(latest.get("note") or "").strip()):
         return None
     ts = str(latest.get("ts") or "")
-    slug = project_slug(project_dir)
-    consumers = set()
-    if slug:
-        d = config.checkpoint_dir() / slug
-        try:
-            entries = list(d.iterdir())
-        except OSError:  # pragma: no cover — TOCTOU only: the events file
-            # was just read from this dir, so it exists; the guard is for a
-            # bucket deleted mid-call, and the fail-open promise must hold.
-            entries = []
-        for p in entries:
-            if not _POINTER_RE.match(p.name):
-                continue
-            try:
-                ck = json.loads(p.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(ck, dict) or ck.get("source") == "introspection":
-                continue
-            if str(ck.get("created") or "") > ts and ck.get("session_id"):
-                consumers.add(str(ck["session_id"]))
-    if len(consumers) >= 2:
+    if sessions_since_count(ts, project_dir) >= 2:
         return None
     return {"ts": ts, "note": str(latest["note"])}
 

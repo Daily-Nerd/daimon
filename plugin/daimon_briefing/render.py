@@ -155,11 +155,12 @@ def _print_handoff(handoff) -> None:
 
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                  project_dir=None, worldcheck_project=None) -> None:
-    """`worldcheck_project` (#694 PR 2) is a SEPARATE gate from `project_dir`
-    — the request panel's own `worldcheck_project` pattern (D2), never keyed
-    on route: the caller passes it only on the CLI same-project brief path
+    """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
+    `project_dir` — the incoming-request panel's AND the sender-side
+    verdict panel's `worldcheck_project` pattern (D2), never keyed on
+    route: the caller passes it only on the CLI same-project brief path
     (`cli._render_briefing_body`), never for `--slug`, the global-pointer
-    fallback body, or MCP. None here means no panel, full stop."""
+    fallback body, or MCP. None here means neither panel, full stop."""
     _print_handoff(handoff)
     b = briefing.build(checkpoint)
     # #693/#694: each path below performs exactly one ledger read per
@@ -172,13 +173,15 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                    if project_dir is not None else [])
         request_lines = (briefing.request_panel_lines(worldcheck_project)
                          if worldcheck_project is not None else [])
-        if rulings or request_lines:
-            # #693/#694: standing rulings and addressed requests exist before
-            # the first checkpoint does — a day-one ratification, or the
-            # first ask ever addressed to this project, must not wait for a
-            # session to end.
-            print("\n".join(rulings + (([""] if rulings and request_lines
-                                        else []) + request_lines)))
+        verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
+                         if worldcheck_project is not None else [])
+        blocks = [blk for blk in (rulings, request_lines, verdict_lines) if blk]
+        if blocks:
+            # #693/#694: standing rulings, addressed requests, and decided
+            # verdicts exist before the first checkpoint does — a day-one
+            # ratification, or the first ask/verdict this project ever sees,
+            # must not wait for a session to end.
+            print("\n\n".join("\n".join(blk) for blk in blocks))
             print("")
         # Point at the real flow (#29): checkpoints come from the hooks; bare
         # `serialize` dead-ends (it needs a transcript path).
@@ -193,7 +196,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     # it is active we print its narrative regardless of TTY.
     if config.llm_briefing():
         # Tries LLM, falls back to deterministic; #693 rulings and #694's
-        # request panel both ride inside. Unconditional return: `b` is
+        # two request panels all ride inside. Unconditional return: `b` is
         # non-None here, so render() always yields text — a fall-through
         # would double the ledger reads below, and structure beats a comment
         # at keeping that invariant.
@@ -206,13 +209,16 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                if project_dir is not None else [])
     request_lines = (briefing.request_panel_lines(worldcheck_project)
                      if worldcheck_project is not None else [])
+    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
+                     if worldcheck_project is not None else [])
     # #204: degrade verbatim labels when the receipt can't be locally confirmed.
     # Cheap check (sidecar + byte match), computed once for both render paths.
     degraded = briefing.receipt_degraded(checkpoint)
     if not supports_rich():
-        print(briefing.render_plain(b, degraded, rulings, request_lines))
+        print(briefing.render_plain(b, degraded, rulings, request_lines,
+                                    verdict_lines))
     else:
-        _rich_brief(b, degraded, rulings, request_lines)
+        _rich_brief(b, degraded, rulings, request_lines, verdict_lines)
     _print_drift(drift)
     _print_teammates(teammates)
 
@@ -246,7 +252,7 @@ def _print_drift(drift) -> None:
 
 
 def _rich_brief(b: dict, degraded: bool = False, rulings=(),
-                request_lines=()) -> None:
+                request_lines=(), verdict_lines=()) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -272,6 +278,14 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
             body.append(f"{line}\n", style="bold")
         console.print(Panel(body, title=request_lines[0],
                             border_style="blue", title_align="left"))
+    if verdict_lines:
+        # #694 PR 3: same shape, its own border color — three skeleton
+        # sections must each read as distinct at a glance.
+        body = Text()
+        for line in verdict_lines[1:]:
+            body.append(f"{line}\n", style="bold")
+        console.print(Panel(body, title=verdict_lines[0],
+                            border_style="green", title_align="left"))
     for key, title, style in _SECTIONS:
         items = b.get(key) or []
         if not items:
@@ -705,6 +719,22 @@ def _forget_hits_line(data: dict) -> str | None:
             f"re-assertion{'s' if n != 1 else ''}, most recent {ts}")
 
 
+def _requests_line(data: dict) -> str | None:
+    """#694 PR 3: one line summarizing the cross-project ask ledger — open
+    sent / awaiting-you counts, read through the composer so the numbers
+    agree with both ambient panels. Silent when both are zero (same "quiet
+    by default" rule as the team/receipts/forget-hits lines)."""
+    counts = data.get("requests")
+    if not isinstance(counts, dict):
+        return None
+    sent = counts.get("open_sent") or 0
+    awaiting = counts.get("awaiting_you") or 0
+    if not sent and not awaiting:
+        return None
+    return (f"requests: {sent} open sent, {awaiting} awaiting you — "
+            "daimon request list / inbox")
+
+
 def _ruling_echo_line(data: dict) -> str | None:
     """#693: one line when the admission filter has dropped a ruling echo on
     this install; silent otherwise. Its own counter, never folded into the
@@ -772,6 +802,9 @@ def _plain_status(data: dict) -> None:
     re_line = _ruling_echo_line(data)
     if re_line:
         print(re_line)  # #693: one line, only when an echo was dropped
+    rq_line = _requests_line(data)
+    if rq_line:
+        print(rq_line)  # #694 PR 3: one line, only when non-zero
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -868,6 +901,9 @@ def _rich_status(data: dict) -> None:
     re_line = _ruling_echo_line(data)
     if re_line:
         console.print(re_line)  # #693: one line, only when an echo was dropped
+    rq_line = _requests_line(data)
+    if rq_line:
+        console.print(rq_line)  # #694 PR 3: one line, only when non-zero
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

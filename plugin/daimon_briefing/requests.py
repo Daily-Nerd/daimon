@@ -59,11 +59,17 @@ VERSION = 1
 # `verdict_surfaced` (the sender's brief stamped the answer) are written by
 # the inbox and return-path PRs, but their fold handling ships here — an
 # older reader that dropped them would silently re-render decided work.
+#
+# #694 PR 3 widens it ONCE, deliberately, with `done_verified` — the
+# session-end byte-check confirming an agent's `done` evidence quote against
+# the transcript. The format is frozen PER-PR, not for the whole arc (the
+# design's own implementation note): an older reader drops the unknown row
+# and keeps rendering "done (claimed, unverified)" — the safe direction.
 EVENTS = frozenset({
     "opened", "revised",
     "surfaced", "verdict_surfaced",
     "needs_info", "accepted", "rejected", "done",
-    "suppressed",
+    "suppressed", "done_verified",
 })
 # What a folded record may render as. `stale` is derived from consumption
 # (PR 3's baton count), never appended — an expiry that writes a row would
@@ -106,6 +112,9 @@ _EVENT_RANK = {
     "needs_info": 5,
     "accepted": 6,
     "rejected": 7,
+    # Verification always answers a `done` row that already landed; ranked
+    # last so a same-`order` tie (test clocks) can never process it first.
+    "done_verified": 8,
 }
 _REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
 # store.project_slug's output: every non-word char munged to '-'. Validated
@@ -116,6 +125,9 @@ _SLUG_RE = re.compile(r"[\w-]{1,255}")
 _SPACE_RE = re.compile(r"\s+")
 _MAX_TEXT = 2000
 _LABEL_MAX = 64
+# The verify_done transcript-speaker role, same bound amendments.py's
+# _ROLE_MAX uses for the identical session-end byte-check shape.
+_ROLE_MAX = 64
 
 # Every field of a ledger row that can hold plaintext (#645 discipline).
 # One declaration, two consumers: `forget_content_key` decides which records
@@ -334,6 +346,10 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "done_by": None,
                 "done_claimed": False,
                 "done_evidence": "",
+                # #694 PR 3 (D8): set only by a `done_verified` row landing
+                # on a currently-claimed completion — never on disk, the
+                # session-end byte-check's own timestamp.
+                "done_verified_at": None,
                 "suppressed": False,
                 # {revision epoch: earliest surfaced ts} — D1's write-once
                 # dedup key, consulted by the stamp PR 2 adds.
@@ -393,6 +409,19 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         if event == "done" and not str(row.get("evidence") or "").strip():
             # D8: `done` is the one either-channel state move, and its price
             # is evidence. A row without it never lands.
+            continue
+        if event == "done_verified":
+            # #694 PR 3 (D8): the session-end byte-check confirmed the
+            # agent's `done` evidence quote. Certifies TRANSCRIPTION, not
+            # truth — clears the "claimed, unverified" qualifier without
+            # moving state or any verdict field. Inert unless the record is
+            # CURRENTLY a claimed completion: a stray/duplicate row, one
+            # answering a human `done` (never claimed), or one that arrived
+            # before any `done` at all changes nothing.
+            if current["state"] == "done" and current["done_claimed"]:
+                current["history_count"] += 1
+                current["done_claimed"] = False
+                current["done_verified_at"] = row.get("ts")
             continue
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
@@ -631,6 +660,25 @@ def done(request_id: str, *, channel: str, evidence: str,
         raise RequestError("completion not written")
 
 
+def verify_done(request_id: str, *, role: str, project_dir=None) -> bool:
+    """Record the session-end byte-check outcome for an agent's `done`
+    evidence quote (channel `mechanical`), written to THIS bucket — where
+    the `done` row it verifies lives (#694 PR 3, D8).
+
+    No `get()` gate, unlike `amendments.verify`: a `done` row this pass
+    verifies may be an ORPHAN in this bucket's own per-bucket fold above (a
+    foreign ask this project answered as the recipient — its `opened` row
+    lives in the sender's bucket). The raw row is what matters; the fold's
+    `done_verified` handling and the composer's read-through are what make
+    the flag meaningful to whichever side is watching. The role is the
+    transcript speaker the quote was found under, bounded to _ROLE_MAX —
+    verification certifies transcription, not truth, and the render never
+    drops that qualifier just because a role was recorded."""
+    row = _stamp("done_verified", request_id, "mechanical")
+    row["evidence_role"] = _text("role", role)[:_ROLE_MAX]
+    return append(row, project_dir=project_dir)
+
+
 def plaintext_values(row: dict) -> list[str]:
     """Every plaintext value this row carries, in declaration order.
 
@@ -831,11 +879,100 @@ def inbox_listing(project_dir=None) -> list[dict]:
 def inbox_renderable(project_dir=None) -> dict:
     """The recipient-side panel data: {"rows": [...], "overflow": N} —
     requests addressed to this project still awaiting a decision, newest
-    first, capped at RENDER_CAP with the remainder COUNTED. Suppressed
-    records are filtered here and only here (mirrors `renderable` above):
-    that is the entire effect suppress is allowed to have."""
+    first, capped at RENDER_CAP with the remainder COUNTED. Suppressed AND
+    stale records are filtered here and only here (mirrors `renderable`
+    above, extended by D3): that is the entire effect suppress/staleness is
+    allowed to have on the ambient panel — both stay fully visible in
+    `inbox_listing`."""
     rows = [r for r in recipient_join(project_dir=project_dir).values()
-            if r["state"] in _SENDER_MOVABLE and not r["suppressed"]]
+            if r["state"] in _SENDER_MOVABLE and not r["suppressed"]
+            and not is_stale(r, project_dir=project_dir)]
+    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+              reverse=True)
+    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+
+
+# ---- #694 PR 3: D3 — consumption-based expiry, derived, never written -----
+
+# Recipient side: an open/needs-info record goes `stale` once this many
+# distinct non-introspection RECIPIENT sessions have serialized past the
+# surfaced anchor with no verdict. Named, not the baton's inlined 2
+# (store.sessions_since_count's threshold is caller-chosen).
+STALE_AFTER_SESSIONS = 3
+# Sender side: a decided record (accepted/rejected/needs-info/done) leaves
+# the sender's verdict PANEL after this many distinct non-introspection
+# SENDER sessions have serialized past `verdict_surfaced_at`. The record
+# itself never changes — only ambient panel placement.
+VERDICT_PANEL_SESSIONS = 2
+# States the sender-side verdict panel surfaces: everything settled enough
+# for the sender to be told about it. "open" is deliberately absent — an
+# ask nobody has acted on yet has nothing to report.
+_VERDICT_STATES = frozenset({"needs-info", "accepted", "rejected", "done"})
+
+
+def is_stale(record: dict, project_dir=None) -> bool:
+    """D3 recipient side: True once an open/needs-info record's surfaced
+    anchor — the first `surfaced` ts of its LATEST revision epoch — has aged
+    past STALE_AFTER_SESSIONS distinct non-introspection sessions serialized
+    for `project_dir` (the RECIPIENT's own bucket) with no verdict landing
+    in between. Never surfaced -> no anchor -> never decays. Every other
+    state is a permanent fact — a verdict or a completion never goes stale."""
+    if record.get("state") not in _SENDER_MOVABLE:
+        return False
+    anchor = (record.get("surfaced") or {}).get(record.get("revision"))
+    if not anchor:
+        return False
+    return store.sessions_since_count(anchor, project_dir) >= STALE_AFTER_SESSIONS
+
+
+def render_state(record: dict, project_dir=None) -> str:
+    """The state LABEL for `request list`/`inbox` (D3): `stale` in place of
+    `open`/`needs-info` once `is_stale`, else the record's real state.
+    Recomputed fresh on every call — `stale` is never written to disk."""
+    return "stale" if is_stale(record, project_dir=project_dir) \
+        else str(record.get("state") or "open")
+
+
+def needs_verdict_surfaced_stamp(record: dict) -> bool:
+    """D1, sender side: whether a `verdict_surfaced` row already exists for
+    this record. Write-once per RECORD, not per revision epoch — unlike the
+    recipient's `surfaced` stamp, a verdict is terminal once it lands, so
+    there is only ever one thing to stamp."""
+    return record.get("verdict_surfaced_at") is None
+
+
+def stamp_verdict_surfaced(request_id: str, project_dir=None) -> bool:
+    """Write a `verdict_surfaced` row to THIS project's own bucket (the
+    SENDER's) — its brief observed and rendered the verdict card. Channel
+    `mechanical`, same posture as `stamp_surfaced`. Write-once is the
+    caller's job (`needs_verdict_surfaced_stamp` first) — the fold's
+    earliest-wins tie-break absorbs a concurrent-brief duplicate for free."""
+    row = _stamp("verdict_surfaced", request_id, "mechanical")
+    return append(row, project_dir=project_dir)
+
+
+def verdict_panel_expired(record: dict, project_dir=None) -> bool:
+    """D3 sender side: True once VERDICT_PANEL_SESSIONS distinct non-
+    introspection sessions have serialized for `project_dir` (the SENDER's
+    own bucket) past `verdict_surfaced_at`. Never stamped yet -> never
+    expired — the panel still owes the sender its first look."""
+    anchor = record.get("verdict_surfaced_at")
+    if not anchor:
+        return False
+    return (store.sessions_since_count(anchor, project_dir)
+            >= VERDICT_PANEL_SESSIONS)
+
+
+def verdict_renderable(project_dir=None) -> dict:
+    """The sender-side verdict panel data: {"rows": [...], "overflow": N} —
+    requests THIS project SENT whose recipient gave a verdict or completion
+    claim, read through `sender_join` (so suppression stays hidden, D5),
+    newest first, capped at RENDER_CAP with the remainder COUNTED. Expired
+    verdicts (D3) are filtered here and only here — the record stays fully
+    readable through `sender_join`, only ambient panel attention decays."""
+    rows = [r for r in sender_join(project_dir=project_dir).values()
+            if r["state"] in _VERDICT_STATES
+            and not verdict_panel_expired(r, project_dir=project_dir)]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
@@ -874,6 +1011,22 @@ def supersedes_label(record: dict) -> str:
     if origin and get(target, project_dir=origin) is None:
         return f"{target} (record forgotten)"
     return target
+
+
+def status_counts(project_dir=None) -> dict:
+    """{"open_sent": N, "awaiting_you": N} for `daimon status`'s one-line
+    summary (#694 PR 3). Read through the composer (`sender_join`/
+    `recipient_join`) rather than the per-bucket fold, so the counts agree
+    with the two ambient panels rather than the pre-PR-2 per-bucket view.
+
+    A full honest count, not an attention-filtered one: suppressed and
+    stale records still await a decision, so they count here even though
+    neither panel renders them."""
+    sent = sum(1 for r in sender_join(project_dir=project_dir).values()
+              if r["state"] in _SENDER_MOVABLE)
+    awaiting = sum(1 for r in recipient_join(project_dir=project_dir).values()
+                  if r["state"] in _SENDER_MOVABLE)
+    return {"open_sent": sent, "awaiting_you": awaiting}
 
 
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:

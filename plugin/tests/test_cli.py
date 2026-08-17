@@ -717,7 +717,10 @@ def test_cli_status_json_shape(
                          "skipped_recent", "recall_error", "recall_index",
                          "receipts", "capture_alarm", "hook_drift",
                          "plugin_drift", "rescue_gap", "rescue_posture",
-                         "forget_hits"}
+                         "forget_hits", "requests"}
+    # #694 PR 3: the requests summary — {open_sent, awaiting_you}, always
+    # present (zeros when nothing is recorded, never absent/null).
+    assert data["requests"] == {"open_sent": 0, "awaiting_you": 0}
     assert data["plugin_drift"] is None  # #554 no plugin installed -> null
     assert data["capture_alarm"] is None  # #265 FAIL-only probe silent by default
     assert data["forget_hits"]["count"] == 0  # #404 nothing suppressed yet
@@ -732,6 +735,72 @@ def test_cli_status_json_shape(
     assert data["last_serialize"]["result"]["outcome"] == "success"
     assert data["last_serialize"]["result"]["duration_seconds"] == 7
     assert data["last_serialize"]["spawn"]["session_id"] == "S-prev"
+
+
+def test_cli_status_json_reflects_real_request_counts(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import requests, store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-req-a")
+    store.write_checkpoint("S-recipient", {
+        "session_id": "S-recipient", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/status-req-a-recipient")
+    requests.open_request(
+        to=store.project_slug("/p/status-req-a-recipient"), ask="hey",
+        why="because", channel="cli-agent", project_dir="/p/status-req-a")
+    rc = cli.main(["status", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["requests"] == {"open_sent": 1, "awaiting_you": 0}
+
+
+def test_cli_status_plain_shows_the_requests_line_when_nonzero(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import requests, store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-req-b")
+    store.write_checkpoint("S-recipient-b", {
+        "session_id": "S-recipient-b", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/status-req-b-recipient")
+    requests.open_request(
+        to=store.project_slug("/p/status-req-b-recipient"), ask="hey",
+        why="because", channel="cli-agent", project_dir="/p/status-req-b")
+    rc = cli.main(["status"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "1 open sent" in out
+
+
+def test_cli_status_survives_a_broken_requests_status_counts(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import requests
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-req-broken")
+
+    def boom(project_dir=None):
+        raise RuntimeError("composer broke")
+
+    monkeypatch.setattr(requests, "status_counts", boom)
+    rc = cli.main(["status", "--json"])
+    assert rc == 1  # no checkpoint at all here, unrelated to the composer
+    data = json.loads(capsys.readouterr().out)
+    assert data["requests"] == {"open_sent": 0, "awaiting_you": 0}
+
+
+def test_cli_status_plain_silent_when_nothing_recorded(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-req-c")
+    store.write_checkpoint("S-c", {
+        "session_id": "S-c", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/status-req-c")
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    assert "open sent" not in out
+    assert "awaiting you" not in out
 
 
 def test_cli_status_json_exit_1_when_nothing(tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):

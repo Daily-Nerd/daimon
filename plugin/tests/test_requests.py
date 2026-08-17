@@ -8,10 +8,24 @@ is the object, its fold, and its deletion contract.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from daimon_briefing import config, normalize, redact, requests, store
+
+
+def _iso(offset_seconds=0):
+    return (datetime.now(timezone.utc)
+            + timedelta(seconds=offset_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _serialize(project_dir, session_id, created):
+    store.write_checkpoint(session_id, {
+        "session_id": session_id, "created": created,
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir=project_dir)
 
 
 @pytest.fixture
@@ -266,6 +280,208 @@ def test_done_without_evidence_is_inert_in_the_fold(project):
     assert requests.append(requests._stamp("done", q_id, "cli-tty"),
                            project_dir=project)
     assert requests.get(q_id, project_dir=project)["state"] == "open"
+
+
+# ---- #694 PR 3: done_verified — the session-end byte-check ----------------
+
+
+def test_verify_done_writes_a_mechanical_channel_row(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="merged in PR #712",
+                 project_dir=project)
+    assert requests.get(q_id, project_dir=project)["done_claimed"] is True
+    assert requests.verify_done(q_id, role="assistant",
+                                project_dir=project) is True
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_claimed"] is False
+    assert record["done_verified_at"]
+
+
+def test_verify_done_role_is_capped_and_recorded(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped it",
+                 project_dir=project)
+    requests.verify_done(q_id, role="x" * 200, project_dir=project)
+    rows = [r for r in requests.events(project_dir=project)
+            if r.get("event") == "done_verified"]
+    assert len(rows[0]["evidence_role"]) <= 64
+
+
+def test_done_verified_is_inert_on_a_human_done(project):
+    """A human `done` is never a claim (D8) — nothing to verify, and a
+    stray/duplicate `done_verified` row must not fabricate a verified flag
+    on a record that never carried the unverified qualifier."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-tty", evidence="I did it myself",
+                 project_dir=project)
+    assert requests.get(q_id, project_dir=project)["done_claimed"] is False
+    requests.verify_done(q_id, role="human", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["done_claimed"] is False
+    assert record["done_verified_at"] is None
+
+
+def test_done_verified_is_inert_without_a_done_first(project):
+    q_id = _open(project)
+    requests.verify_done(q_id, role="assistant", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_verified_at"] is None
+
+
+def test_done_verified_on_an_orphan_id_is_written_but_inert(project):
+    """D8/PR 3: a `done` an agent completed for a FOREIGN ask is an orphan in
+    THIS bucket's own per-bucket fold (its `opened` row lives elsewhere) —
+    `verify_done` still writes the row here (where the `done` row lives),
+    and the composer's read-through is what makes it meaningful."""
+    foreign = "q-0123456789ab"
+    assert requests.verify_done(foreign, role="assistant",
+                                project_dir=project) is True
+    assert requests.records(project_dir=project) == {}
+    assert any(r.get("event") == "done_verified"
+              for r in requests.events(project_dir=project))
+
+
+def test_done_verified_is_deterministic_under_reorder(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped it",
+                 project_dir=project)
+    requests.verify_done(q_id, role="assistant", project_dir=project)
+    rows = requests.events(project_dir=project)
+    forward = requests.fold(rows)[q_id]
+    backward = requests.fold(list(reversed(rows)))[q_id]
+    assert forward == backward
+    assert forward["done_claimed"] is False
+
+
+# ---- #694 PR 3: _verify_agent_request_done() — the session-end pass -------
+
+
+def test_session_end_verifies_agent_request_done_quote(project):
+    from daimon_briefing import capture
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent",
+                 evidence="the follow-up issue is filed", project_dir=project)
+    messages = [{"role": "user", "content": "ok, the follow-up issue is filed now"}]
+    confirmed = capture._verify_agent_request_done(project, messages)
+    assert confirmed == 1
+    record = requests.get(q_id, project_dir=project)
+    assert record["done_claimed"] is False
+    assert record["done_verified_at"]
+
+
+def test_session_end_leaves_unfound_done_quote_as_claimed(project):
+    from daimon_briefing import capture
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="something never said",
+                 project_dir=project)
+    confirmed = capture._verify_agent_request_done(
+        project, [{"role": "user", "content": "entirely different words"}])
+    assert confirmed == 0
+    assert requests.get(q_id, project_dir=project)["done_claimed"] is True
+
+
+def test_session_end_pass_skips_human_done(project):
+    from daimon_briefing import capture
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-tty", evidence="the deploy target moved",
+                 project_dir=project)
+    confirmed = capture._verify_agent_request_done(
+        project, [{"role": "user", "content": "the deploy target moved"}])
+    assert confirmed == 0
+    record = requests.get(q_id, project_dir=project)
+    assert record["done_claimed"] is False   # never claimed to begin with
+    assert record["done_verified_at"] is None
+
+
+def test_session_end_verifies_a_foreign_asks_done_row_in_this_bucket(project):
+    """The recipient-side case (D8): a `done` row this project wrote
+    answering a FOREIGN ask is an orphan in its OWN per-bucket fold — the
+    pass reads raw events, not `records()`, so it still finds and verifies
+    it. The sender's join is what makes the flag meaningful."""
+    from daimon_briefing import capture
+    foreign = "q-0123456789ab"
+    requests.done(foreign, channel="cli-agent", evidence="the fix shipped",
+                 project_dir=project)
+    confirmed = capture._verify_agent_request_done(
+        project, [{"role": "assistant", "content": "the fix shipped in v2"}])
+    assert confirmed == 1
+    rows = [r for r in requests.events(project_dir=project)
+           if r.get("event") == "done_verified"]
+    assert rows and rows[0]["request_id"] == foreign
+
+
+def test_session_end_pass_is_idempotent(project):
+    from daimon_briefing import capture
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped it",
+                 project_dir=project)
+    msgs = [{"role": "user", "content": "shipped it"}]
+    n1 = capture._verify_agent_request_done(project, msgs)
+    n2 = capture._verify_agent_request_done(project, msgs)
+    assert n1 == 1
+    assert n2 == 0  # already verified — no duplicate done_verified row
+
+
+def test_session_end_pass_survives_a_failing_verify(project, monkeypatch):
+    from daimon_briefing import capture
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped it",
+                 project_dir=project)
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    confirmed = capture._verify_agent_request_done(
+        project, [{"role": "user", "content": "shipped it"}])
+    assert confirmed == 0
+
+
+def test_capture_run_survives_a_broken_request_done_pass(
+        project, sample_checkpoint, fake_chat_factory, monkeypatch):
+    from tests.conftest import make_messages
+    from daimon_briefing import capture
+
+    def boom(proj, messages):
+        raise RuntimeError("pass broke")
+
+    monkeypatch.setattr(capture, "_verify_agent_request_done", boom)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=project)
+    chat = fake_chat_factory(json.dumps({
+        "session_id": "S-new",
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [], "recent_decisions": []},
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }))
+    out = capture.run("S-new", make_messages(10), project=project,
+                      chat=chat, deadline=None)
+    assert out is not None  # a broken pass never costs the checkpoint
+
+
+def test_capture_run_wires_the_request_done_pass(
+        project, sample_checkpoint, fake_chat_factory, monkeypatch):
+    """Belt for the hand-wiring itself (#694 PR 3's named checklist item):
+    capture.run must actually CALL the pass, not just tolerate its absence."""
+    from tests.conftest import make_messages
+    from daimon_briefing import capture
+
+    calls = []
+
+    def spy(proj, messages):
+        calls.append((proj, messages))
+        return 0
+
+    monkeypatch.setattr(capture, "_verify_agent_request_done", spy)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=project)
+    chat = fake_chat_factory(json.dumps({
+        "session_id": "S-new",
+        "working_context": {
+            "active_topic": {"text": "t", "trust": "inferred"},
+            "open_questions": [], "recent_decisions": []},
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }))
+    capture.run("S-new", make_messages(10), project=project, chat=chat,
+               deadline=None)
+    assert len(calls) == 1
 
 
 # ---- suppress: attention, never state -------------------------------------
@@ -686,10 +902,15 @@ def test_audit_privacy_no_slug_shape_includes_requests():
 
 def test_the_event_vocabulary_is_frozen():
     """PR 1 freezes the format so PR 2/3 cannot widen it by accident: rows
-    an older reader drops are rows it silently re-renders as undecided."""
+    an older reader drops are rows it silently re-renders as undecided.
+    #694 PR 3 widens it ONCE, deliberately, with `done_verified` (the
+    design's own implementation note 2: an older reader drops the unknown
+    row and keeps rendering "done (claimed, unverified)" — the safe
+    direction)."""
     assert set(requests.EVENTS) == {
         "opened", "revised", "surfaced", "verdict_surfaced",
-        "needs_info", "accepted", "rejected", "done", "suppressed"}
+        "needs_info", "accepted", "rejected", "done", "suppressed",
+        "done_verified"}
 
 
 def test_the_fold_reaches_every_render_state_but_never_stale(project):
@@ -1271,6 +1492,223 @@ def test_supersedes_label_is_empty_when_there_is_no_lineage(project):
     assert requests.supersedes_label(record) == ""
 
 
+# ---- #694 PR 3: D3 stale derivation (recipient side, K=3) ------------------
+
+
+def test_is_stale_never_surfaced_never_decays(project):
+    sender_slug = _seed_bucket("/p/req-sender-stale-a")
+    recipient = "/p/req-recipient-stale-a"
+    q_id = requests.open_request(to=store.project_slug(recipient), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert record["surfaced"] == {}
+    for n in range(5):
+        _serialize(recipient, f"S-never-{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
+
+
+def test_is_stale_after_three_recipient_sessions_past_the_anchor(project):
+    sender_slug = _seed_bucket("/p/req-sender-stale-b")
+    recipient = "/p/req-recipient-stale-b"
+    q_id = requests.open_request(to=store.project_slug(recipient), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.stamp_surfaced(q_id, project_dir=recipient)
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
+    for n in range(requests.STALE_AFTER_SESSIONS - 1):
+        _serialize(recipient, f"S-b{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False  # 2 of 3
+    _serialize(recipient, "S-b-last",
+              _iso(requests.STALE_AFTER_SESSIONS + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is True
+
+
+def test_is_stale_never_applies_to_a_decided_state(project):
+    sender_slug = _seed_bucket("/p/req-sender-stale-c")
+    recipient = "/p/req-recipient-stale-c"
+    q_id = requests.open_request(to=store.project_slug(recipient), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.stamp_surfaced(q_id, project_dir=recipient)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(recipient, f"S-c{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert record["state"] == "accepted"
+    assert requests.is_stale(record, project_dir=recipient) is False
+
+
+def test_render_state_labels_stale_without_writing_it(project):
+    sender_slug = _seed_bucket("/p/req-sender-stale-d")
+    recipient = "/p/req-recipient-stale-d"
+    q_id = requests.open_request(to=store.project_slug(recipient), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.stamp_surfaced(q_id, project_dir=recipient)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(recipient, f"S-d{n}", _iso(n + 1))
+    before = requests.events(project_dir=recipient)
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.render_state(record, project_dir=recipient) == "stale"
+    assert record["state"] == "open"  # never written to disk
+    assert requests.events(project_dir=recipient) == before  # no new row
+
+
+def test_inbox_renderable_drops_stale_but_inbox_listing_keeps_it(project):
+    sender_slug = _seed_bucket("/p/req-sender-stale-e")
+    recipient = "/p/req-recipient-stale-e"
+    q_id = requests.open_request(to=store.project_slug(recipient), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.stamp_surfaced(q_id, project_dir=recipient)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(recipient, f"S-e{n}", _iso(n + 1))
+    assert requests.inbox_renderable(project_dir=recipient)["rows"] == []
+    rows = requests.inbox_listing(project_dir=recipient)
+    assert rows[0]["request_id"] == q_id
+
+
+# ---- #694 PR 3: sender-side verdict panel (D2/D3, K=2) ---------------------
+
+
+def test_needs_verdict_surfaced_stamp_and_dedup(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-a")
+    q_id = _open(project, to=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.needs_verdict_surfaced_stamp(record) is True
+    assert requests.stamp_verdict_surfaced(q_id, project_dir=project) is True
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.needs_verdict_surfaced_stamp(record) is False
+    assert record["verdict_surfaced_at"]
+
+
+def test_stamp_verdict_surfaced_is_write_once_earliest_wins(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-b")
+    q_id = _open(project, to=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    assert requests.stamp_verdict_surfaced(q_id, project_dir=project) is True
+    assert requests.stamp_verdict_surfaced(q_id, project_dir=project) is True
+    rows = [r for r in requests.events(project_dir=project)
+            if r.get("event") == "verdict_surfaced"]
+    assert len(rows) == 2  # both written…
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert record["verdict_surfaced_at"] == rows[0]["ts"]  # …fold takes earliest
+
+
+def test_verdict_panel_expired_after_two_sender_sessions(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-c")
+    q_id = _open(project, to=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    requests.stamp_verdict_surfaced(q_id, project_dir=project)
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.verdict_panel_expired(record, project_dir=project) is False
+    _serialize(project, "S-vp-0", _iso(1))
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.verdict_panel_expired(record, project_dir=project) is False
+    _serialize(project, "S-vp-1", _iso(requests.VERDICT_PANEL_SESSIONS + 1))
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.verdict_panel_expired(record, project_dir=project) is True
+
+
+def test_verdict_panel_never_expires_before_the_first_stamp(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-d")
+    q_id = _open(project, to=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert record["verdict_surfaced_at"] is None
+    assert requests.verdict_panel_expired(record, project_dir=project) is False
+
+
+def test_verdict_renderable_shows_decided_requests_only(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-e")
+    open_id = _open(project, to=recipient_slug, ask="still open, no verdict")
+    accepted_id = _open(project, to=recipient_slug,
+                        ask="accepted, should show")
+    requests.accept(accepted_id, channel="cli-tty", project_dir=recipient_slug)
+    entry = requests.verdict_renderable(project_dir=project)
+    ids = {r["request_id"] for r in entry["rows"]}
+    assert ids == {accepted_id}
+    assert open_id not in ids
+
+
+def test_verdict_renderable_caps_and_counts_the_overflow(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-f")
+    for n in range(requests.RENDER_CAP + 2):
+        q_id = _open(project, to=recipient_slug,
+                     ask=f"ask {n} about the release")
+        requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    entry = requests.verdict_renderable(project_dir=project)
+    assert len(entry["rows"]) == requests.RENDER_CAP
+    assert entry["overflow"] == 2
+
+
+def test_verdict_renderable_excludes_expired_verdicts(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-g")
+    q_id = _open(project, to=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    requests.stamp_verdict_surfaced(q_id, project_dir=project)
+    for n in range(requests.VERDICT_PANEL_SESSIONS + 1):
+        _serialize(project, f"S-vpe-{n}", _iso(n + 1))
+    entry = requests.verdict_renderable(project_dir=project)
+    assert entry["rows"] == []
+
+
+def test_verdict_renderable_still_visible_in_sender_join(project):
+    """D3: only ambient panel attention decays — the record itself stays
+    fully readable through the composer regardless of expiry."""
+    recipient_slug = _seed_bucket("/p/req-recipient-verdict-h")
+    q_id = _open(project, to=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    requests.stamp_verdict_surfaced(q_id, project_dir=project)
+    for n in range(requests.VERDICT_PANEL_SESSIONS + 1):
+        _serialize(project, f"S-vpv-{n}", _iso(n + 1))
+    assert requests.verdict_renderable(project_dir=project)["rows"] == []
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert record["state"] == "accepted"
+
+
+# ---- #694 PR 3: status counts ----------------------------------------------
+
+
+def test_status_counts_open_sent_and_awaiting_you(project):
+    recipient_slug = _seed_bucket("/p/req-status-recipient-a")
+    _open(project, to=recipient_slug, ask="still open")
+    accepted_id = _open(project, to=recipient_slug, ask="decided already")
+    requests.accept(accepted_id, channel="cli-tty", project_dir=recipient_slug)
+    sender_slug = _seed_bucket("/p/req-status-sender-b")
+    requests.open_request(to=store.project_slug(project), ask="please look",
+                          why="because", channel="cli-agent",
+                          project_dir=sender_slug)
+    counts = requests.status_counts(project_dir=project)
+    assert counts == {"open_sent": 1, "awaiting_you": 1}
+
+
+def test_status_counts_zero_with_nothing_recorded(project):
+    assert requests.status_counts(project_dir=project) == \
+        {"open_sent": 0, "awaiting_you": 0}
+
+
+def test_status_counts_unknown_project_is_zero():
+    assert requests.status_counts(project_dir=None) == \
+        {"open_sent": 0, "awaiting_you": 0}
+
+
+def test_status_counts_include_suppressed_and_stale(project):
+    """Status is a full honest count, not an attention-filtered display:
+    suppressed/stale requests are still awaiting a decision."""
+    recipient_slug = _seed_bucket("/p/req-status-recipient-c")
+    q_id = _open(project, to=recipient_slug)
+    requests.suppress(q_id, channel="cli-tty", project_dir=recipient_slug)
+    assert requests.status_counts(project_dir=project) == \
+        {"open_sent": 1, "awaiting_you": 0}
+
+
 # ---- PR 2: `request inbox` -------------------------------------------------
 
 
@@ -1325,6 +1763,40 @@ def test_cli_request_inbox_shows_the_suppressed_marker(project, recipient,
     assert rc == 0
     out = capsys.readouterr().out
     assert q_id in out and "suppressed" in out.lower()
+
+
+def test_cli_request_inbox_shows_the_stale_label(project, recipient, capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.recipient_join(project_dir=OTHER)))
+    requests.stamp_surfaced(q_id, project_dir=OTHER)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(OTHER, f"S-cli-stale-{n}", _iso(n + 1))
+    capsys.readouterr()
+    rc = cli.main(["request", "inbox", "--project", OTHER])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "stale" in out
+    assert q_id in out
+
+
+def test_cli_request_list_shows_the_stale_label_when_self_addressed(
+        project, capsys):
+    from daimon_briefing import cli
+    my_slug = store.project_slug(project)
+    rc = cli.main(["request", "open", "--to", project, "--ask", ASK,
+                   "--why", WHY, "--by", "agent", "--anyway",
+                   "--project", project])
+    assert rc == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    requests.stamp_surfaced(q_id, project_dir=my_slug)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(project, f"S-list-stale-{n}", _iso(n + 1))
+    capsys.readouterr()
+    rc = cli.main(["request", "list", "--project", project])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "stale" in out
 
 
 def test_cli_request_inbox_renders_the_forgotten_supersedes_lineage(

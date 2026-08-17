@@ -245,6 +245,12 @@ top of `daimon brief` (capped at 3, with an overflow count). `daimon request
 inbox` lists every one, including any the panel dropped for attention —
 `--suppress` hides a card from the panel, never from `list`/`inbox`.
 
+Decisions on requests THIS project sent also surface in your own brief
+(accepted/rejected/needs-info/done) — no need to poll `request list` for
+them. An agent's `done` claim renders "claimed, unverified" until the
+next session-end byte-checks the evidence quote; a `stale` label in
+`list`/`inbox` means unanswered too long, not invalid — still act on it.
+
 ## When memory looks wrong
 
 | Symptom | Command |
