@@ -307,7 +307,8 @@ def _cmd_forget(args) -> int:
         # are dropped: forgetting the item removes its amendments anyway
         # (forget_item_id below), so nothing becomes unreachable.
         item_hit_ids = {it["id"] for _, k, it, _ in hits
-                        if k not in ("refutation", "amendment", "request")}
+                        if k not in ("refutation", "ruling", "amendment",
+                                     "request")}
         if item_hit_ids:
             hits = [(s, k, it, m) for s, k, it, m in hits
                     if not (k == "amendment"
