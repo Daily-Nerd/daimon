@@ -523,6 +523,45 @@ def test_cli_forget_reaches_amendments_of_spliced_siblings(project, capsys):
     assert amendments.get(a_id, project_dir=project) is None
 
 
+def test_forget_does_not_cascade_an_amendment_via_a_ruling_id_collision(
+        project, capsys):
+    """#715: `item_hit_ids` (cli/lifecycle.py) excludes "refutation"/
+    "amendment"/"request" kinds from counting as checkpoint-item hits, but
+    NOT "ruling" — the #693 polarity that shares the refutation ledger's
+    `r-<12hex>` id shape, which is ALSO a valid amendment item-id shape
+    (`_ITEM_ID_RE` admits `r-...`). An amendment whose target happens to be
+    a ruling's id is real prose about that ruling, not a checkpoint item —
+    forgetting the ruling must never silently cascade-delete it.
+
+    Pre-fix: the ruling's id lands in `item_hit_ids`, the amendment hit is
+    dropped as "orbiting an item hit", the ruling becomes the sole
+    unambiguous target, forget SUCCEEDS, and `forget_item_id(ruling_id)`
+    deletes the amendment as a side effect. Post-fix: the ruling is
+    excluded, the amendment hit survives, two DISTINCT values remain, and
+    forget REFUSES (ambiguous) — nothing is deleted."""
+    from daimon_briefing import amendments, cli, refutations
+    ref_id = refutations.assert_ruling(
+        subject="the quokka migration protocol",
+        verdict="always stage before prod",
+        scope="this project",
+        evidence=["issue:715"],
+        channel="cli-agent",  # candidate, not active — no confirm prompt
+        project_dir=project,
+    )
+    a_id = amendments.propose(
+        item_id=ref_id, change="progressed",
+        evidence="the quokka migration protocol landed last night",
+        channel="cli-agent", project_dir=project)
+    rc = cli.main(["forget", "the quokka migration protocol",
+                   "--project", project])
+    out = capsys.readouterr().out
+    assert rc == 1, out
+    assert "ambiguous" in out
+    assert a_id in out
+    assert refutations.get(ref_id, project_dir=project) is not None
+    assert amendments.get(a_id, project_dir=project) is not None
+
+
 def test_cli_forget_item_text_not_made_ambiguous_by_its_amendment(
         project, capsys):
     from daimon_briefing import cli, store
