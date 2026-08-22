@@ -65,6 +65,40 @@ The auditors share one exit contract, so a script can act on the answer:
 | --- | --- |
 | `daimon forget <id or text>` | Remove one item's content from disk and index, leaving a hash-only tombstone. The deletion survives re-serialization of the original transcript. |
 
+## Cross-project requests
+
+A request lives in the sender's own project bucket; the recipient answers
+with verdict rows in its own bucket. The folded record is a read-time join —
+nobody ever writes into another project's ledger.
+
+| command | what it does |
+| --- | --- |
+| `daimon request open --to <dir> --ask "…" --why "…"` | Ask another project for something. `--to` takes the recipient's project **directory**, not its slug (a real slug starts with `-`, which argparse reads as an option — `--to=<slug>` also works). Validated against `daimon projects`, with near-match suggestions on a typo; `--anyway` records the ask against a project that has never serialized on this machine. `--blocking` and `--to-human` are flags on the record. Either channel. |
+| `daimon request revise <id> [--ask] [--why] [--evidence]` | Answer a needs-info, or sharpen an open ask. Either channel; capped at 3 revisions per record lifetime — past the cap, open a new request with `--supersedes <id>` to keep the lineage visible. |
+| `daimon request accept\|reject\|needs-info <id> [--note]` | Land a verdict. Human-only — requires an interactive terminal. `reject` is final for that record; the sender supersedes with a new request rather than asking again. |
+| `daimon request suppress <id> [--note]` | Drop a request out of the recipient's own briefing panel. Human-only; the record stays in `list`/`inbox`, and any later verdict reverses it. |
+| `daimon request done <id> --evidence "<quote>"` | Report the ask as satisfied. Either channel; an agent's claim renders `done (claimed, unverified)` until the recipient's next session-end byte-checks the evidence quote against its transcript. A human `done` renders plainly. |
+| `daimon request list` | This project's own sent requests, undecided first. `--json` for machines. |
+| `daimon request inbox` | Requests addressed TO this project, from every sender, undecided first — including ones the briefing panel dropped for attention. `--json` for machines. |
+
+Two panels ride the same-project CLI `brief` only — never `--slug`, the
+global-pointer fallback, or MCP. The recipient sees "Requests waiting on
+you"; the sender sees "Verdicts on requests you sent". Each is capped at 3
+cards with a loud `+N more …` overflow line naming the command that shows
+the rest — never a silent drop. Suppression is recipient-side attention
+only: the sender's panel still reads a suppressed request as "surfaced,
+undecided". An unanswered request renders `stale` after 3 recipient
+sessions pass with no verdict; a decided one leaves the sender's panel
+after 2 sender sessions. Attention decays — records never delete, and both
+stay fully visible in `list`/`inbox`.
+
+`daimon status` adds a one-line summary, `requests: N open sent, M
+awaiting you`, silent when both are zero.
+
+The [MCP server](mcp.md) exposes the recipient-side view as the read-only
+`requests_inbox` tool. `daimon_brief` never carries request content, and no
+request write verb is reachable over MCP.
+
 ## Status
 
 | command | what it does |
