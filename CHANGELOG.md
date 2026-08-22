@@ -5,6 +5,29 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.0](https://github.com/Daily-Nerd/daimon/compare/v0.31.0...v0.32.0) (2026-08-22)
+
+
+### Features
+
+* **briefing:** cross-project request inbox and panel — PR 2 of [#694](https://github.com/Daily-Nerd/daimon/issues/694) ([#714](https://github.com/Daily-Nerd/daimon/issues/714)) ([db76fd9](https://github.com/Daily-Nerd/daimon/commit/db76fd9ab3656c662574bd0679a09b0ea2c40160))
+* **briefing:** request return path closes the cross-project arc — PR 3 of [#694](https://github.com/Daily-Nerd/daimon/issues/694) ([#716](https://github.com/Daily-Nerd/daimon/issues/716)) ([e4b28e9](https://github.com/Daily-Nerd/daimon/commit/e4b28e9a3e0286803b0952d62d3da806989459bf))
+* **render:** ledger record headers style their spans apart ([#711](https://github.com/Daily-Nerd/daimon/issues/711)) ([b3cdfb7](https://github.com/Daily-Nerd/daimon/commit/b3cdfb7ca93d890ce039c47775e1a9b77f881840))
+* **render:** lifecycle and report verbs route through render.py ([#712](https://github.com/Daily-Nerd/daimon/issues/712)) ([7f2f16e](https://github.com/Daily-Nerd/daimon/commit/7f2f16eb74f226a61e726171e11c8274dcd86b04))
+* **render:** route ledger verb output through render.py ([#710](https://github.com/Daily-Nerd/daimon/issues/710)) ([359ebda](https://github.com/Daily-Nerd/daimon/commit/359ebda09ba318282591a86ab1804b0c7a83e5d9))
+* **store:** cross-project requests object — PR 1 of [#694](https://github.com/Daily-Nerd/daimon/issues/694) ([#713](https://github.com/Daily-Nerd/daimon/issues/713)) ([cfab76d](https://github.com/Daily-Nerd/daimon/commit/cfab76dc96399d75b56a9cf7dd095eb007803e58))
+
+
+### Bug Fixes
+
+* **cli:** forget never counts a ruling hit as an item hit ([#717](https://github.com/Daily-Nerd/daimon/issues/717)) ([c8120dc](https://github.com/Daily-Nerd/daimon/commit/c8120dc527fddd9d32c78731881238f132020478))
+
+
+### Documentation
+
+* **blog:** publish the 0.31.0 ship-log ([#705](https://github.com/Daily-Nerd/daimon/issues/705)) ([7262dff](https://github.com/Daily-Nerd/daimon/commit/7262dff9b4e52eb7db7fade075b26dd60a3e7202))
+* **site:** document the cross-project request family ([#721](https://github.com/Daily-Nerd/daimon/issues/721)) ([08068cd](https://github.com/Daily-Nerd/daimon/commit/08068cd6db2c7ca1238795e585088f5d740da8cf))
+
 ## [0.31.0](https://github.com/Daily-Nerd/daimon/compare/v0.30.2...v0.31.0) (2026-08-15)
 
 
