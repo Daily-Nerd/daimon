@@ -64,6 +64,25 @@ def _cp(texts, carried=True, with_ids=True):
     }
 
 
+@pytest.fixture(autouse=True)
+def _generous_worldcheck_budget(monkeypatch):
+    """#718: `check()`'s aggregate wall-clock budget (BUDGET_SECONDS, 0.8s in
+    production) races REAL elapsed time — under a loaded or coverage-
+    instrumented run, a probe that would ordinarily return well inside the
+    budget can still get killed mid-flight by `_run_probes`'s deadline check,
+    failing a test for a reason that has nothing to do with the semantics
+    under test (observed: test_check_dedup_same_ref_probes_once_stamps_all).
+
+    Every test in this module gets an effectively-infinite budget by
+    default, so the deadline can never bind here. Tests that deliberately
+    exercise the deadline CONTRACT ITSELF (search this file for
+    `BUDGET_SECONDS`) set their own small value or a negative
+    already-exhausted one inside the test body — that call simply overrides
+    this fixture's default, the same monkeypatch-layering every other
+    per-test override in this suite already relies on."""
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 300.0)
+
+
 @pytest.fixture
 def proj(tmp_path):
     """A real directory to act as the project root — Popen(cwd=...) needs it
