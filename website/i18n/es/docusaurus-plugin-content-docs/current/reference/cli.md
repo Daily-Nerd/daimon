@@ -66,6 +66,44 @@ actuar sobre la respuesta:
 | --- | --- |
 | `daimon forget <id o texto>` | Elimina el contenido de un ítem del disco y del índice, dejando una lápida de solo-hash. La eliminación sobrevive a re-serializar la transcripción original. |
 
+## Solicitudes entre proyectos
+
+Una solicitud vive en el bucket del proyecto que la envía; el destinatario
+responde con filas de veredicto en su propio bucket. El registro combinado
+es un join en tiempo de lectura — nadie escribe jamás en el ledger de otro
+proyecto.
+
+| comando | qué hace |
+| --- | --- |
+| `daimon request open --to <dir> --ask "…" --why "…"` | Pide algo a otro proyecto. `--to` toma el **directorio** del proyecto destinatario, no su slug (un slug real empieza con `-`, que argparse lee como una opción — `--to=<slug>` también funciona). Se valida contra `daimon projects`, con sugerencias por parecido ante un typo; `--anyway` registra el pedido igual contra un proyecto que nunca serializó en esta máquina. `--blocking` y `--to-human` son flags del registro. Cualquier canal. |
+| `daimon request revise <id> [--ask] [--why] [--evidence]` | Responde un needs-info, o afina una solicitud abierta. Cualquier canal; tope de 3 revisiones por registro — superado el tope, se abre una nueva solicitud con `--supersedes <id>` para mantener visible el linaje. |
+| `daimon request accept\|reject\|needs-info <id> [--note]` | Registra un veredicto. Solo humano — requiere una terminal interactiva. `reject` es definitivo para ese registro; el remitente reemplaza con una nueva solicitud en vez de volver a pedir. |
+| `daimon request suppress <id> [--note]` | Saca una solicitud del panel de briefing propio del destinatario. Solo humano; el registro sigue en `list`/`inbox`, y cualquier veredicto posterior lo revierte. |
+| `daimon request done <id> --evidence "<cita>"` | Reporta la solicitud como satisfecha. Cualquier canal; el reclamo de un agente se renderiza como `done (claimed, unverified)` hasta que el próximo fin de sesión del destinatario verifica byte a byte la cita de evidencia contra su transcripción. Un `done` humano se renderiza sin más. |
+| `daimon request list` | Las solicitudes enviadas por este proyecto, primero las que siguen sin decidir. `--json` para máquinas. |
+| `daimon request inbox` | Solicitudes que otros proyectos dirigieron a este, de cualquier remitente, primero las que siguen sin decidir — incluidas las que el panel de briefing dejó fuera de la atención. `--json` para máquinas. |
+
+Dos paneles viajan solo con el `brief` de CLI del mismo proyecto — nunca con
+`--slug`, el fallback al puntero global, ni por MCP. El destinatario ve
+"Requests waiting on you"; el remitente ve "Verdicts on requests you sent".
+Cada uno tiene un tope de 3 tarjetas con una línea de desborde bien visible
+(`+N more …`) que nombra el comando para ver el resto — nunca un descarte
+silencioso. La supresión es solo atención del lado del destinatario: el
+panel del remitente sigue mostrando una solicitud suprimida como publicada
+y sin decidir. Una solicitud sin responder pasa a `stale` después de 3
+sesiones del destinatario sin veredicto; una ya decidida sale del panel del
+remitente después de 2 sesiones del remitente. La atención decae — los
+registros nunca se eliminan, y ambos siguen totalmente visibles en
+`list`/`inbox`.
+
+`daimon status` agrega un resumen de una línea, `requests: N open sent, M
+awaiting you`, silencioso cuando los dos son cero.
+
+El [servidor MCP](mcp.md) expone la vista del lado del destinatario como la
+herramienta de solo lectura `requests_inbox`. `daimon_brief` nunca lleva
+contenido de solicitudes, y ningún verbo de escritura de solicitudes es
+alcanzable por MCP.
+
 ## Estado
 
 | comando | qué hace |
