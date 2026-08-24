@@ -3,7 +3,7 @@
 `daimon mcp serve` expone la memoria de daimon como una superficie de
 herramientas MCP sobre stdio — para hosts que hablan MCP pero no tienen un
 sistema de hooks al que daimon pueda engancharse. Es opt-in (nada lo registra
-por ti), de solo lectura (cuatro herramientas, cero escrituras) y biblioteca
+por ti), de solo lectura (cinco herramientas, cero escrituras) y biblioteca
 estándar pura (sin dependencias extra, igual que el resto de daimon).
 
 ```bash
@@ -18,8 +18,9 @@ daimon mcp serve   # bloquea y sirve JSON-RPC por stdio hasta EOF
 | `daimon_brief` | El último briefing del proyecto actual — render determinista, etiquetado por confianza, con resoluciones retenidas |
 | `daimon_projects` | Cada proyecto del que daimon tiene memoria: slug, sesión, rama, último tema |
 | `daimon_status` | Salud de captura: frescura del checkpoint, resultado del último serialize, fallas pendientes, alarmas — el mismo payload que `daimon status --json` |
+| `requests_inbox` | Solicitudes que otros proyectos dirigieron a este — el lado de lectura del [ledger de solicitudes entre proyectos](cli.md#solicitudes-entre-proyectos). `daimon_brief` nunca lleva este contenido; abrir, responder o decidir una solicitud es exclusivo de la CLI. |
 
-Las cuatro llevan `readOnlyHint`. Las fallas a nivel de herramienta
+Las cinco llevan `readOnlyHint`. Las fallas a nivel de herramienta
 (argumentos inválidos, FTS5 ausente) vuelven como resultados `isError` que el
 agente puede leer; nunca matan el servidor.
 
