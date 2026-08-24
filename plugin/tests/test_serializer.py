@@ -1625,6 +1625,71 @@ def test_strip_code_owned_keys_clears_item_origin_on_the_introspection_path():
     assert item["text"] == "q"  # nothing else disturbed
 
 
+def test_serialize_strips_model_supplied_item_id(fake_chat_factory):
+    """#684: `id` is load-bearing identity — it keys the recall index,
+    lifecycle events (resolve, forget tombstones, supersede-candidates),
+    corroboration, and relation-ledger endpoints. `policy.stamp_item_ids`
+    trusts ANY present id as authoritative, so a model-chosen id names an
+    identity the code never derived. Stripped at the same boundary as
+    `origin_session`/`origin_author`: freshly parsed model output, before
+    stamp_item_ids (or carry.merge) ever sees it."""
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    for item in [spoofed["working_context"]["active_topic"],
+                 spoofed["working_context"]["open_questions"][0],
+                 spoofed["working_context"]["recent_decisions"][0]]:
+        item["id"] = "o-modelchosenid"
+    chat = fake_chat_factory(json.dumps(spoofed))
+
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+
+    assert ckpt is not None
+    for item in serializer.iter_items(ckpt):
+        assert "id" not in item
+
+
+def test_strip_code_owned_keys_clears_item_id_on_the_introspection_path():
+    """`daimon write-checkpoint` takes a dict a live model authored directly
+    — the same spoofing surface, one level down (cli calls this function for
+    exactly that reason)."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["working_context"]["open_questions"][0]["id"] = "o-forgedforged1"
+
+    serializer.strip_code_owned_keys(ckpt)
+
+    item = ckpt["working_context"]["open_questions"][0]
+    assert "id" not in item
+    assert item["text"] == "q"  # nothing else disturbed
+
+
+def test_serialize_strips_a_model_emitted_id_that_collides_across_items(
+        fake_chat_factory):
+    """#684: `stamp_item_ids`' setdefault-shaped check (`if item.get("id"):
+    seen.add(...); continue`) trusts ANY present id, so two different items
+    sharing one model-supplied value would keep sharing it forever — the
+    second item silently inheriting the first's lifecycle and corroboration
+    history. Stripping removes the shared value from BOTH before
+    stamp_item_ids ever runs, so each item earns its own text-derived id
+    instead of colliding into one identity."""
+    from daimon_briefing import policy
+
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    spoofed["working_context"]["open_questions"][0]["id"] = "o-collideddddd1"
+    spoofed["working_context"]["recent_decisions"][0]["id"] = "o-collideddddd1"
+    chat = fake_chat_factory(json.dumps(spoofed))
+
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+
+    assert ckpt is not None
+    q = ckpt["working_context"]["open_questions"][0]
+    d = ckpt["working_context"]["recent_decisions"][0]
+    assert "id" not in q
+    assert "id" not in d
+    policy.stamp_item_ids(ckpt)
+    assert q["id"] != "o-collideddddd1"
+    assert d["id"] != "o-collideddddd1"
+    assert q["id"] != d["id"]  # never silently share one identity
+
+
 def test_validate_accepts_decision_with_because():
     """#525 follow-on (F4): decisions may carry a `because` clause — the
     stated reasoning, extracted only when the transcript states it."""
