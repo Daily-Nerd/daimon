@@ -5,6 +5,19 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.1](https://github.com/Daily-Nerd/daimon/compare/v0.32.0...v0.32.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **serializer:** strip model-supplied carried_from and first_seen ([#726](https://github.com/Daily-Nerd/daimon/issues/726)) ([cfcce84](https://github.com/Daily-Nerd/daimon/commit/cfcce848191eebaefb74e1e105a8447bc8590e28))
+* **serializer:** strip model-supplied item ids; id is code-owned ([#724](https://github.com/Daily-Nerd/daimon/issues/724)) ([18d7b58](https://github.com/Daily-Nerd/daimon/commit/18d7b58dbde2772631c6030e68174cdd852cfa96))
+
+
+### Documentation
+
+* **site:** Spanish mirror for the cross-project request docs ([#722](https://github.com/Daily-Nerd/daimon/issues/722)) ([a8964ad](https://github.com/Daily-Nerd/daimon/commit/a8964ad6f635c4f440f0a2f0b41862feb9feccda))
+
 ## [0.32.0](https://github.com/Daily-Nerd/daimon/compare/v0.31.0...v0.32.0) (2026-08-22)
 
 
