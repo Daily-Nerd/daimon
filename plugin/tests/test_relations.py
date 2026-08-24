@@ -197,6 +197,153 @@ def test_inverse_confirmed_revisions_are_flagged_never_resolved(bucket):
     assert folded[a]["state"] == "confirmed"  # surfaced, not auto-resolved
 
 
+# -- #683: item-level cycle detection (the exact-inverse pass is SESSION- --
+# -- exact; a genuine item-level cycle confirmed through different       --
+# -- occurrences must still flag)                                       --
+
+
+def test_item_level_cycle_flags_through_different_sessions(bucket):
+    """#683's exact repro: X revision-of Y confirmed entirely within S1, Y
+    revision-of X confirmed entirely within S2 — different session PAIRS on
+    each edge, so make_id's (session_id, item_id) hash never matches its own
+    inverse and the old exact-inverse pass misses it. Item level, both items
+    are confirmed as revising each other — the docstring's own intent."""
+    a = _propose(bucket,
+                 frm=_endpoint("S1", item="r-abc123456789"),
+                 to=_endpoint("S1", item="r-def123456789"))
+    b = _propose(bucket,
+                 frm=_endpoint("S2", item="r-def123456789"),
+                 to=_endpoint("S2", item="r-abc123456789"))
+    relations.confirm(a, channel="cli-tty", project_dir=bucket)
+    relations.confirm(b, channel="cli-tty", project_dir=bucket)
+    folded = relations.records(project_dir=bucket)
+    assert folded[a]["contradiction"] is True
+    assert folded[b]["contradiction"] is True
+    assert folded[a]["state"] == "confirmed"  # surfaced, not auto-resolved
+
+
+def test_item_level_pass_still_flags_a_same_session_reversal(bucket):
+    """Existing behavior preserved: a reversal confirmed within the SAME
+    session pair (what the exact-inverse pass already caught) still flags
+    under the new item-level pass too."""
+    a = _propose(bucket,
+                 frm=_endpoint("S1", item="r-abc123456789"),
+                 to=_endpoint("S1", item="r-def123456789"))
+    b = _propose(bucket,
+                 frm=_endpoint("S1", item="r-def123456789"),
+                 to=_endpoint("S1", item="r-abc123456789"))
+    relations.confirm(a, channel="cli-tty", project_dir=bucket)
+    relations.confirm(b, channel="cli-tty", project_dir=bucket)
+    folded = relations.records(project_dir=bucket)
+    assert folded[a]["contradiction"] is True
+    assert folded[b]["contradiction"] is True
+
+
+def test_item_level_pass_skips_self_edges_across_occurrences(bucket):
+    """propose() does not require from.item_id != to.item_id. A confirmed
+    X-to-X edge's reversed item key equals its own key, and a SECOND
+    occurrence of the identical self-edge (different session, same item on
+    both sides) must not cross-flag it either."""
+    a = _propose(bucket,
+                 frm=_endpoint("S1", item="r-abc123456789"),
+                 to=_endpoint("S1", item="r-abc123456789"))
+    b = _propose(bucket,
+                 frm=_endpoint("S2", item="r-abc123456789"),
+                 to=_endpoint("S2", item="r-abc123456789"))
+    relations.confirm(a, channel="cli-tty", project_dir=bucket)
+    relations.confirm(b, channel="cli-tty", project_dir=bucket)
+    folded = relations.records(project_dir=bucket)
+    assert folded[a]["contradiction"] is False
+    assert folded[b]["contradiction"] is False
+
+
+def test_item_level_pass_skips_symmetric_type_even_hand_reversed(bucket):
+    """propose() canonicalizes endpoint order for symmetric types so one
+    fact mints one record — such a pair cannot form a cycle by
+    construction. Hand-crafted rows bypass that canonicalization (the same
+    raw-row idiom test_contradiction_pass_skips_symmetric_and_forged_types
+    uses for the exact-inverse pass), so the item-level pass needs its own
+    explicit skip too, not a free ride on propose()'s guarantee."""
+    x = _endpoint("S1", item="r-abc123456789")
+    y = _endpoint("S2", item="r-def123456789")
+    a = relations._stamp("proposed", "rel-" + "d" * 16, "lab-import")
+    a.update({"type": "same-arc", "from": x, "to": y,
+             "matched_by": ["carry-absolute"], "matcher_version": "lineage-v1"})
+    assert relations._append(a, project_dir=bucket)
+    assert relations._append(
+        relations._stamp("confirmed", "rel-" + "d" * 16, "cli-tty"),
+        project_dir=bucket)
+    b = relations._stamp("proposed", "rel-" + "e" * 16, "lab-import")
+    b.update({"type": "same-arc", "from": y, "to": x,
+             "matched_by": ["carry-absolute"], "matcher_version": "lineage-v1"})
+    assert relations._append(b, project_dir=bucket)
+    assert relations._append(
+        relations._stamp("confirmed", "rel-" + "e" * 16, "cli-tty"),
+        project_dir=bucket)
+    folded = relations.records(project_dir=bucket)
+    assert folded["rel-" + "d" * 16]["contradiction"] is False
+    assert folded["rel-" + "e" * 16]["contradiction"] is False
+
+
+def test_item_level_pass_ignores_an_unconfirmed_twin(bucket):
+    """Only a CONFIRMED pair is a cycle worth surfacing — a rejected or
+    still-candidate reversal is not."""
+    a = _propose(bucket,
+                 frm=_endpoint("S1", item="r-abc123456789"),
+                 to=_endpoint("S1", item="r-def123456789"))
+    b = _propose(bucket,
+                 frm=_endpoint("S2", item="r-def123456789"),
+                 to=_endpoint("S2", item="r-abc123456789"))
+    relations.confirm(a, channel="cli-tty", project_dir=bucket)
+    relations.reject(b, channel="cli-tty", project_dir=bucket)
+    folded = relations.records(project_dir=bucket)
+    assert folded[a]["contradiction"] is False
+    assert folded[b]["contradiction"] is False
+
+
+def test_item_level_pass_flags_the_oscillation_shape_deliberately(bucket):
+    """#683's decided posture: item ids are content-derived (sha1 of kind +
+    text), so an id names a text, not a moment. A→B revised, then B revised
+    back into a word-for-word restatement of A (same item id as the
+    original, by construction) is three legitimate revisions that ALSO
+    forms an item-level cycle — and it flags regardless, exactly like any
+    other cycle. No oscillation guard: the marker is attention for human
+    review, and suppressing it here would hide invented continuity behind
+    a plausible-sounding explanation."""
+    a = _propose(bucket,
+                 frm=_endpoint("S2", item="r-abc123456789"),  # A revised into B
+                 to=_endpoint("S2", item="r-def123456789"))
+    b = _propose(bucket,
+                 frm=_endpoint("S3", item="r-def123456789"),  # B revised back
+                 to=_endpoint("S3", item="r-abc123456789"))   # to restated A
+    relations.confirm(a, channel="cli-tty", project_dir=bucket)
+    relations.confirm(b, channel="cli-tty", project_dir=bucket)
+    folded = relations.records(project_dir=bucket)
+    assert folded[a]["contradiction"] is True
+    assert folded[b]["contradiction"] is True
+
+
+def test_exact_inverse_pass_survives_an_endpoint_missing_session_id(bucket):
+    """#683: the self-edge guard added to the exact-inverse pass short-
+    circuits on an ABSENT item_id before `make_id` ever runs — so the
+    pre-existing `except (RelationError, KeyError)` guard is now reached
+    only by a row whose item_id survives that check (present, distinct)
+    but whose endpoint dict is missing `session_id` entirely, which
+    `make_id` cannot hash. Still must not raise."""
+    damaged_from = relations._stamp("proposed", "rel-" + "f" * 16, "lab-import")
+    damaged_from.update({"type": "revision-of",
+                         "from": {"item_id": "r-abc123456789"},
+                         "to": {"item_id": "r-def123456789"},
+                         "matched_by": ["carry-absolute"],
+                         "matcher_version": "lineage-v1"})
+    assert relations._append(damaged_from, project_dir=bucket)
+    assert relations._append(
+        relations._stamp("confirmed", "rel-" + "f" * 16, "cli-tty"),
+        project_dir=bucket)
+    folded = relations.records(project_dir=bucket)
+    assert folded["rel-" + "f" * 16]["contradiction"] is False
+
+
 def test_torn_append_costs_exactly_the_torn_row(bucket):
     rel_id = _propose(bucket)
     path = relations._path(bucket)

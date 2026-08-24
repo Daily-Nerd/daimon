@@ -383,10 +383,21 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     # A confirmed directional edge whose confirmed INVERSE also exists is a
     # cycle asserting each item revises the other — invented continuity in
     # its most literal form.  Surfaced on both records, never auto-resolved.
+    # #683: self-edges are excluded here too — a confirmed X-to-X edge's
+    # inverse hashes to its OWN id (make_id(type, to, from) degenerates to
+    # make_id(type, from, to) when from == to), so an unguarded lookup finds
+    # itself and flags a lone record against itself. Discovered while adding
+    # the item-level pass below, which needs the identical guard; fixed here
+    # too so a self-edge never flags regardless of which pass would
+    # otherwise have caught it.
     for record in out.values():
         if record["state"] != "confirmed":
             continue
         if record["type"] in SYMMETRIC_TYPES or record["type"] not in TYPES:
+            continue
+        from_item = record["from"].get("item_id")
+        to_item = record["to"].get("item_id")
+        if not from_item or not to_item or from_item == to_item:
             continue
         try:
             inverse = make_id(record["type"], record["to"], record["from"])
@@ -396,6 +407,54 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         if twin is not None and twin["state"] == "confirmed":
             record["contradiction"] = True
             twin["contradiction"] = True
+    # #683: the pass above is SESSION-exact (make_id hashes (session_id,
+    # item_id) per endpoint), so a genuine item-level cycle confirmed
+    # through two DIFFERENT session pairs never matches its inverse id and
+    # slips through unflagged — the docstring's own intent ("a cycle
+    # asserting each item revises the other") is item-level, not
+    # occurrence-level. This second pass restates the same check at item
+    # granularity: index confirmed directional edges by
+    # (type, from.item_id, to.item_id), then flag a confirmed record whose
+    # REVERSED item-id key is also confirmed — regardless of which
+    # session/occurrence carried each side. Same self-edge and symmetric-
+    # type guards as the pass above, for the same reasons; "distinct
+    # relation id" is checked explicitly too, though the item-id guard
+    # already makes a self-match structurally unreachable.
+    #
+    # Deliberately no oscillation guard: item ids are content-derived (a
+    # sha1 of kind+text), so an id names a text, not a moment. A verbatim
+    # A->B->A-restated chain is three legitimate revisions that also forms
+    # an item-level cycle, and it flags exactly like any other cycle — the
+    # marker is attention for human review, not a claim about how the cycle
+    # arose, and suppressing it here would hide invented continuity behind
+    # a plausible-sounding explanation.
+    by_item_key: dict[tuple, list[dict]] = {}
+    for record in out.values():
+        if record["state"] != "confirmed":
+            continue
+        if record["type"] in SYMMETRIC_TYPES or record["type"] not in TYPES:
+            continue
+        from_item = record["from"].get("item_id")
+        to_item = record["to"].get("item_id")
+        if not from_item or not to_item or from_item == to_item:
+            continue
+        by_item_key.setdefault(
+            (record["type"], from_item, to_item), []).append(record)
+    for (type_, from_item, to_item), records_here in by_item_key.items():
+        twins = by_item_key.get((type_, to_item, from_item))
+        if not twins:
+            continue
+        for record in records_here:
+            for twin in twins:
+                if twin["relation_id"] == record["relation_id"]:
+                    continue  # pragma: no cover — structurally unreachable:
+                    # from_item != to_item (checked above) already means a
+                    # record's own key can never equal its reversed key, so
+                    # `twins` can never contain `record` itself. Kept as the
+                    # explicit "distinct relation id" guard #683 names,
+                    # belt for the item-id guard rather than a reachable path.
+                record["contradiction"] = True
+                twin["contradiction"] = True
     return out
 
 
