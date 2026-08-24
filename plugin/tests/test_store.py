@@ -1119,6 +1119,28 @@ def test_first_seen_idempotent_on_rewrite(tmp_checkpoint_dir, sample_checkpoint)
     assert _first_seens(back)[carried_text] == "2026-01-01T00:00:00Z"
 
 
+def test_725_first_seen_pipeline_unaffected_by_the_new_strip_entry(
+        tmp_checkpoint_dir, sample_checkpoint):
+    """#725: `first_seen` joined serializer.py's `_CODE_OWNED_ITEM_KEYS`, but
+    `_stamp_first_seen`'s own idempotent guard — the ONLY legitimate writer
+    of this field — never routes through that strip (write_checkpoint runs
+    downstream of serialize_strict, which has already returned). A fresh
+    item still gets stamped, and a legitimately re-written item keeps its
+    existing stamp, exactly as before the fix."""
+    import copy as _copy
+
+    fresh = _stamped(sample_checkpoint, "S-1", 3)
+    store.write_checkpoint("S-1", fresh, project_dir="/p/A")
+    back = store.read_checkpoint("S-1")
+    assert back["working_context"]["active_topic"].get("first_seen") == back["created"]
+
+    rewritten = _copy.deepcopy(back)
+    rewritten["working_context"]["open_questions"][0]["first_seen"] = "2026-01-01T00:00:00Z"
+    store.write_checkpoint("S-1", rewritten, project_dir="/p/A")
+    back2 = store.read_checkpoint("S-1")
+    assert back2["working_context"]["open_questions"][0]["first_seen"] == "2026-01-01T00:00:00Z"
+
+
 # ---- #31 audit tail: importance-pinned GC, tmp reaping, pointer lock --------
 
 
