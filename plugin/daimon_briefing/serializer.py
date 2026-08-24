@@ -2000,11 +2000,24 @@ _CODE_OWNED_KEYS = (
 # item's id — a silent inheritance of that item's entire lifecycle and
 # corroboration history. Same #292 discipline as every entry above: stripped
 # from freshly authored model output only.
+# #725: `carried_from` is stamped only by carry.merge's setdefault, on a PREV
+# item read fresh off disk — never on a freshly parsed model output. A
+# model-forged value on its own fresh claim would make a brand-new, first-
+# time assertion masquerade as inherited from an earlier session: the
+# `[carried]` render marker, the #215 staleness budget, and corroboration's
+# native-vs-carried split would all read it as older and less scrutinized
+# than it actually is.
+# #725: `first_seen` is the per-item birth stamp store._stamp_first_seen
+# derives, guarded by the EXACT bug shape #684 fixed for `id` (`if
+# item.get("first_seen"): continue` — any present value is trusted forever).
+# A model-forged old timestamp would feed scoring.py's effective-weight/decay
+# calculation directly, letting a claim manufacture its own apparent age.
 # Safe to strip on both paths because carry.merge folds prev items in AFTER
 # serialize_strict returns — a carried item's genuine stamps never pass here.
 _CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
                          "quote_verified", "last_verified",
-                         "quote_provenance", "pinned", "id")
+                         "quote_provenance", "pinned", "id",
+                         "carried_from", "first_seen")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:

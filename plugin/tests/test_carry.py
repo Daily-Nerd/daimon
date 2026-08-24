@@ -78,6 +78,18 @@ def test_origin_provenance_survives_chains():
     assert out["working_context"]["open_questions"][0]["carried_from"] == "S-origin"
 
 
+def test_725_carried_from_still_stamped_after_joining_the_strip_tuple():
+    """#725: `carried_from` joined serializer.py's `_CODE_OWNED_ITEM_KEYS`, so
+    a model can no longer forge it into fresh output. `carry.merge`'s own
+    setdefault stamp — the ONLY legitimate writer of this field — is
+    unaffected: `prev` is read fresh off disk, after serialize_strict's
+    strip has already returned, so a genuinely carried item must still gain
+    the stamp exactly as before the fix."""
+    prev = _cp("S-prev", 1, questions=[_item("zephyr ledger drop unresolved")])
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    assert out["working_context"]["open_questions"][0]["carried_from"] == "S-prev"
+
+
 def test_weight_floor_drops_stale_low_importance():
     # imp-2 decision 60 days old: 0.2 * 0.4 * 0.1 = 0.008 < 0.05 -> falls off.
     # imp-7 open question 60 days old: escalated well above floor -> carries.

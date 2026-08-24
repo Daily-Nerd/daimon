@@ -1690,6 +1690,78 @@ def test_serialize_strips_a_model_emitted_id_that_collides_across_items(
     assert q["id"] != d["id"]  # never silently share one identity
 
 
+def test_serialize_strips_model_supplied_carried_from(fake_chat_factory):
+    """#725: `carried_from` is stamped only by `carry.merge` (setdefault, on
+    a PREV item read fresh off disk — never a freshly parsed model output),
+    so a model-emitted value on its own claim is always a forgery. Left
+    un-stripped, it would make a brand-new, first-time assertion masquerade
+    as inherited from an earlier session: the `[carried]` render marker,
+    the #215 staleness budget, and corroboration's native-vs-carried split
+    would all read it as older and less scrutinized than it actually is."""
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    for item in [spoofed["working_context"]["active_topic"],
+                 spoofed["working_context"]["open_questions"][0],
+                 spoofed["working_context"]["recent_decisions"][0]]:
+        item["carried_from"] = "S-forged-origin"
+    chat = fake_chat_factory(json.dumps(spoofed))
+
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+
+    assert ckpt is not None
+    for item in serializer.iter_items(ckpt):
+        assert "carried_from" not in item
+
+
+def test_strip_code_owned_keys_clears_carried_from_on_the_introspection_path():
+    """`daimon write-checkpoint` takes a dict a live model authored directly
+    — the same spoofing surface, one level down (cli calls this function for
+    exactly that reason)."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["working_context"]["open_questions"][0]["carried_from"] = "S-forged"
+
+    serializer.strip_code_owned_keys(ckpt)
+
+    item = ckpt["working_context"]["open_questions"][0]
+    assert "carried_from" not in item
+    assert item["text"] == "q"  # nothing else disturbed
+
+
+def test_serialize_strips_model_supplied_first_seen(fake_chat_factory):
+    """#725: `first_seen` is the per-item birth stamp `store._stamp_first_seen`
+    derives (verbatim carry-over on an exact-text match, otherwise this
+    checkpoint's own `created`) — its own idempotent guard (`if
+    item.get("first_seen"): continue`) is the EXACT bug shape #684 fixed for
+    `id`. A model-forged old timestamp would survive untouched and feed
+    `scoring.py`'s effective-weight/decay calculation directly, letting a
+    brand-new claim manufacture its own apparent age and ranking."""
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    for item in [spoofed["working_context"]["active_topic"],
+                 spoofed["working_context"]["open_questions"][0],
+                 spoofed["working_context"]["recent_decisions"][0]]:
+        item["first_seen"] = "1999-01-01T00:00:00Z"
+    chat = fake_chat_factory(json.dumps(spoofed))
+
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+
+    assert ckpt is not None
+    for item in serializer.iter_items(ckpt):
+        assert "first_seen" not in item
+
+
+def test_strip_code_owned_keys_clears_first_seen_on_the_introspection_path():
+    """`daimon write-checkpoint` takes a dict a live model authored directly
+    — the same spoofing surface, one level down (cli calls this function for
+    exactly that reason)."""
+    ckpt = json.loads(_valid_checkpoint_json("S1"))
+    ckpt["working_context"]["open_questions"][0]["first_seen"] = "1999-01-01T00:00:00Z"
+
+    serializer.strip_code_owned_keys(ckpt)
+
+    item = ckpt["working_context"]["open_questions"][0]
+    assert "first_seen" not in item
+    assert item["text"] == "q"  # nothing else disturbed
+
+
 def test_validate_accepts_decision_with_because():
     """#525 follow-on (F4): decisions may carry a `because` clause — the
     stated reasoning, extracted only when the transcript states it."""
