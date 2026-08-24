@@ -1991,11 +1991,20 @@ _CODE_OWNED_KEYS = (
 # on the introspection path, so without this entry a piped checkpoint keeps a
 # self-issued pin that the recall index then honors as a #452 age-gate
 # exemption. On the serialize path pin_imperatives re-pins after this strip.
+# #684: `id` is the highest-stakes entry in this set — the PROJECT-GLOBAL key
+# recall, resolve/forget tombstones, supersede-candidates, corroboration, and
+# relation-ledger endpoints all bind identity to. `policy.stamp_item_ids`
+# trusts ANY present id as authoritative (`if item.get("id"): seen.add(...);
+# continue`), so an un-stripped model-emitted value is either a self-chosen
+# identity the code never derived, or — if it happens to match another
+# item's id — a silent inheritance of that item's entire lifecycle and
+# corroboration history. Same #292 discipline as every entry above: stripped
+# from freshly authored model output only.
 # Safe to strip on both paths because carry.merge folds prev items in AFTER
 # serialize_strict returns — a carried item's genuine stamps never pass here.
 _CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
                          "quote_verified", "last_verified",
-                         "quote_provenance", "pinned")
+                         "quote_provenance", "pinned", "id")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:
