@@ -78,7 +78,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 
 ## Beyond the briefing
 
-- **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled).
+- **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled). This is also the working-set boundary, stated plainly: one live checkpoint per project feeds the briefing, and an item that falls out of [carry](https://daily-nerd.github.io/daimon/docs/concepts/carry/) never re-enters a briefing on its own — it stays reachable here, permanently, but only when asked for.
 - **`daimon why <item-id>`** — inspect a recalled item's independent capture, provenance, source, byte-integrity, current-support, verifier, lifecycle, and corroboration evidence. Add `--source` for one bounded redacted source window. See the [Trust Inspector guide](docs/trust-inspector.md).
 - **Context switching** — `daimon projects`, `daimon brief --slug <slug>`: read another project's memory deliberately, provenance-labeled — never automatic.
 - **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it, in English or Spanish.
