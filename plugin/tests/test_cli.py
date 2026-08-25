@@ -2057,6 +2057,17 @@ def test_top_level_help_has_examples(capsys):
     assert "daimon brief" in out
 
 
+def test_top_level_help_points_home(capsys):
+    # #736: a pip/uv install's first touch is --help; it must carry the docs
+    # and issue-tracker URLs so terminal-only users have a pointer home.
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "https://daily-nerd.github.io/daimon/" in out
+    assert "https://github.com/Daily-Nerd/daimon/issues" in out
+
+
 def test_status_help_has_example(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["status", "--help"])
