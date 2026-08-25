@@ -43,6 +43,18 @@ Todas las perillas están en la
 [referencia de configuración](../getting-started/configuration), incluido
 `DAIMON_CARRY` (interruptor maestro, encendido por defecto).
 
+## Qué significa salir del arrastre
+
+La memoria viva es un checkpoint por proyecto, y un briefing muestra solo lo
+que el arrastre conserva. Cuando un ítem decae — o el tope por tipo lo
+recorta — no se borra: sobrevive en los archivos históricos de sesión y en el
+índice de recall, y `daimon recall <términos>` lo alcanza para siempre. Pero
+nunca volverá a entrar a un briefing por sí solo. Ese es el trade deliberado
+de un producto de briefing: el conjunto de trabajo se mantiene legible
+precisamente porque todo lo que queda afuera solo se alcanza cuando se pide.
+Si el silencio de un briefing te sorprende, la respuesta es `recall`, no una
+memoria perdida.
+
 ## La advertencia de desactualización
 
 El arrastre tiene un modo de falla del que daimon advierte explícitamente: un

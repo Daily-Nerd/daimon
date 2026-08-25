@@ -39,6 +39,17 @@ All knobs live in the
 [configuration reference](../getting-started/configuration.md), including
 `DAIMON_CARRY` (master switch, on by default).
 
+## What leaving carry means
+
+The live memory is one checkpoint per project, and a briefing renders only
+what carry keeps. When an item decays out — or the per-kind cap trims it —
+it is not deleted: it survives in the historical session files and the recall
+index, and `daimon recall <terms>` reaches it permanently. But it will never
+re-enter a briefing on its own. That is the deliberate trade of a briefing
+product: the working set stays skimmable precisely because everything outside
+it is reachable only when asked for. If silence in a briefing surprises you,
+`recall` is the answer, not a lost memory.
+
 ## The staleness warning
 
 Carry has a failure mode daimon warns about explicitly: an item can ride
