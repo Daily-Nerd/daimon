@@ -14,7 +14,8 @@ import json
 import re
 from pathlib import Path
 
-from . import config, provenance, redact, schema, serializer, store, transcript
+from . import (config, provenance, recall, redact, schema, serializer, store,
+               transcript)
 
 
 SCHEMA_VERSION = 1
@@ -247,20 +248,52 @@ def _bounded_source(item, receipt, resolution, messages) -> dict:
     }
 
 
+def _index_only_reason(row: dict) -> str:
+    """Why this row is index-backed rather than a local project surface
+    (#674): the two real divergence paths the investigation proved. A local
+    flat file named for the row's session_id existing on disk means recall
+    attributed it via the pointer-fallback (_bucket_slugs) that
+    project_surfaces's membership test does not honor; its absence means the
+    row can only have come from recall's team-dir scan. Display-only — never
+    a claim about forget/membership reach."""
+    session_id = row.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        local_file = config.checkpoint_dir() / f"{session_id}.json"
+        if local_file.is_file():
+            return "pointer-attributed-legacy"
+    return "team-mirror"
+
+
 def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
                  resolver=None) -> dict | None:
     """Inspect one exact item inside one explicit project scope."""
     occurrences = _item_occurrences(project_dir, item_id)
     resolutions = store.resolutions(project_dir=project_dir)
     event = resolutions.get(item_id)
+    index_row = None
     if not occurrences and event is None:
-        return None
+        # #674: recall's index reaches surfaces this project's own walk
+        # structurally cannot (team-mirrored checkpoints, pointer-attributed
+        # legacy files). Read-only display fallback only — never widens what
+        # forget/project_surfaces/the privacy audit treat as this project's
+        # surfaces, and never fires once a local resolution event exists
+        # (that branch below already answers, forgotten included).
+        index_row = recall.lookup_item(item_id, project_dir=project_dir)
+        if index_row is None:
+            return None
 
     if occurrences:
         selected = occurrences[0]
         checkpoint = selected["checkpoint"]
         item = selected["item"]
         kind = selected["kind"]
+    elif index_row is not None:
+        checkpoint = {"author": index_row.get("author"),
+                     "session_id": index_row.get("session_id")}
+        item = {"text": index_row.get("text"),
+                "trust": index_row.get("trust"),
+                "quote": index_row.get("quote") or None}
+        kind = index_row.get("kind") or "unknown"
     else:
         checkpoint = {}
         item = {}
@@ -332,6 +365,14 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
             "source": event.get("source"),
         } if isinstance(event, dict) else None),
     }
+    if index_row is not None:
+        result["index_only"] = {
+            "reason": _index_only_reason(index_row),
+            "note": ("this project's own checkpoint surfaces do not hold "
+                     "this item; content is served from the recall index "
+                     "and its exact bytes cannot be independently verified "
+                     "on this machine"),
+        }
     if include_source:
         result["source_excerpt"] = _bounded_source(
             item, receipt, resolution, messages)
@@ -365,6 +406,10 @@ def human_lines(result: dict) -> list[str]:
         f"Verifier: {axes['verifier_comparison']}",
         f"Lifecycle: {axes['lifecycle']}",
     ]
+    index_only = result.get("index_only")
+    if isinstance(index_only, dict):
+        lines.append(
+            f"Index-only ({index_only['reason']}): {index_only['note']}")
     corroboration = result["corroboration"]
     refs = ", ".join(corroboration["references"])
     lines.append(

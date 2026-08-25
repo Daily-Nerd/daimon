@@ -840,6 +840,52 @@ def search(query: str, project_dir=None, all_projects: bool = False,
             return []
 
 
+def lookup_item(item_id: str, project_dir=None, slug: str | None = None) -> dict | None:
+    """Single-id read against the (auto-refreshed) index (#674).
+
+    `why`'s own walk (store.project_surfaces) only ever sees this project's
+    local flat/pointer surfaces — never the team dir, and only a stampless
+    legacy file that happens to sit inside its project's bucket directory.
+    The index is deliberately more permissive (team ingestion, #158
+    _bucket_slugs pointer-derived attribution for legacy files), so a row
+    can exist here for an id `why`'s walk structurally cannot reach.
+
+    This is a companion to search(), never a substitute for its scoping:
+    same project_slug equality (never team_project/granted-segments), same
+    fail-open posture (any index trouble degrades to None, not a raise —
+    the caller's own "not found" refusal is the safe default already).
+    Read-only. Callers must never treat a hit here as license to widen what
+    forget/project_surfaces/the privacy audit consider this project's own
+    surfaces — this only ever feeds a DISPLAY fallback.
+
+    Returns the newest matching row (ties broken by `created`), or None."""
+    want = slug if slug else store.project_slug(project_dir)
+    if want is None:
+        return None
+    try:
+        _ensure_fresh()
+    except (OSError, sqlite3.Error, RecallError) as exc:
+        _note_error("lookup_item.refresh", exc)
+    try:
+        conn = sqlite3.connect(str(config.recall_db()))
+        try:
+            cur = conn.execute(
+                "SELECT text, quote, trust, kind, author, project_slug,"
+                " session_id, created, superseded_by, item_id, frontier"
+                " FROM items WHERE item_id = ? AND project_slug = ?"
+                " ORDER BY created DESC LIMIT 1",
+                (item_id, want),
+            )
+            cols = [c[0] for c in cur.description]
+            row = cur.fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        _note_error("lookup_item", exc)
+        return None
+    return dict(zip(cols, row)) if row is not None else None
+
+
 # ---- #125: proactive suggestion — "you worked on this before" ----
 
 # Words that carry no retrieval signal in a work prompt: English function words

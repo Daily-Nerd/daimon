@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, inspector, provenance, recall, redact, store, transcript
+from daimon_briefing import (cli, config, inspector, provenance, recall,
+                              redact, store, transcript)
 
 
 _PROJECT = "/p/A"
@@ -74,6 +75,40 @@ def _write_checkpoint(session_id, items, *, project=_PROJECT,
                       created="2026-08-05T10:00:00Z"):
     checkpoint = _checkpoint(session_id, items, created)
     assert store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    return checkpoint
+
+
+def _write_team_checkpoint(session_id, items, *, project=_PROJECT,
+                           author="alice", created="2026-08-05T10:00:00Z"):
+    """A checkpoint that exists ONLY in the team mirror (#674) — no local flat
+    file, no local bucket — the shape `why`'s own walk (store.project_surfaces)
+    structurally cannot reach, but recall's index (team-scan, #111) does."""
+    checkpoint = _checkpoint(session_id, items, created)
+    checkpoint["author"] = author
+    checkpoint["project_slug"] = store.project_slug(project)
+    d = config.team_dir() / "local" / "authors" / author
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{session_id}.json").write_text(
+        json.dumps(checkpoint), encoding="utf-8")
+    return checkpoint
+
+
+def _write_stampless_pointer_checkpoint(session_id, items, *, project=_PROJECT,
+                                        created="2026-08-05T10:00:00Z"):
+    """A LOCAL flat checkpoint with no embedded project_slug stamp, attributed
+    to `project` only via the per-project bucket pointer (#674) — the exact
+    legacy shape recall._bucket_slugs resolves but project_surfaces's
+    membership test (physical bucket residence or an OWN stamp) does not."""
+    checkpoint = _checkpoint(session_id, items, created)
+    d = config.checkpoint_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{session_id}.json").write_text(
+        json.dumps(checkpoint), encoding="utf-8")
+    slug = store.project_slug(project)
+    bucket = d / slug
+    bucket.mkdir(parents=True, exist_ok=True)
+    (bucket / "latest.json").write_text(
+        json.dumps({"session_id": session_id}), encoding="utf-8")
     return checkpoint
 
 
@@ -589,3 +624,111 @@ def test_recall_exposes_item_id_in_json_and_human_output(
         project_dir=_PROJECT, current_session="S-now")
     assert suggestions
     assert all("item_id" not in row for row in suggestions)
+
+
+# ---- #674: why falls back to the recall index when its own walk misses ----
+
+
+def test_why_answers_a_team_mirror_only_item_from_the_index(
+    tmp_checkpoint_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_team_checkpoint("S-team-only", [_item(quote=None)])
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result is not None
+    assert result["item"]["text"] == "durable trust decision"
+    assert result["item"]["session_id"] == "S-team-only"
+    assert result["item"]["occurrences"] == 0
+    assert result["axes"]["provenance"] == "legacy-unbound"
+    assert result["axes"]["bytes"] == "unknown"
+    assert result["axes"]["current_support"] == "not-checked"
+    assert result["index_only"]["reason"] == "team-mirror"
+    human = "\n".join(inspector.human_lines(result))
+    assert "recall index" in human.lower()
+
+
+def test_why_answers_a_stampless_pointer_attributed_item_from_the_index(
+    tmp_checkpoint_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_stampless_pointer_checkpoint("S-stampless", [_item(quote=None)])
+    # Sanity per the investigation: why's own walk sees only the bucket's
+    # pointer file (no item content), never the stampless flat file.
+    surfaces = store.project_surfaces(_PROJECT)
+    assert all(p.name != "S-stampless.json" for p in surfaces)
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result is not None
+    assert result["item"]["session_id"] == "S-stampless"
+    assert result["index_only"]["reason"] == "pointer-attributed-legacy"
+
+
+def test_why_still_refuses_an_id_in_neither_surfaces_nor_index(
+    tmp_checkpoint_dir, monkeypatch, capsys
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    # A populated index for this SAME project, but never for this id — proves
+    # the fallback is precise, not "any index activity counts as a hit".
+    _write_team_checkpoint("S-other", [_item(item_id="o-other000000", quote=None)])
+
+    assert inspector.inspect_item(_PROJECT, _ITEM_ID) is None
+    assert cli.main(["why", _ITEM_ID, "--project", _PROJECT]) == 1
+    assert "no item" in capsys.readouterr().err
+
+
+def test_forgotten_team_only_item_is_not_resurrected(
+    tmp_checkpoint_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_team_checkpoint("S-team-forgotten", [_item(quote=None)])
+    assert store.append_event(
+        _ITEM_ID, "forgotten:" + "a" * 64,
+        project_dir=_PROJECT, allow_disabled=True)
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result is not None
+    assert result["axes"]["lifecycle"] == "forgotten"
+    assert "index_only" not in result
+    # The row itself is gone too (recall's own rebuild-time scrub) — the
+    # fallback finding nothing is not what protects this; the scrub is.
+    hits = recall.search("durable trust", project_dir=_PROJECT, all_projects=True)
+    assert not any(h.get("item_id") == _ITEM_ID for h in hits)
+
+
+def test_local_surface_answer_is_unperturbed_by_the_index_fallback(
+    tmp_checkpoint_dir, monkeypatch, tmp_path, capsys
+):
+    # Parity: an item why already answers from its own surfaces must never
+    # gain the new index_only key or otherwise change shape. This mirrors
+    # test_why_json_matches_golden_and_command_is_read_only_except_usage,
+    # which already asserts full dict equality against the golden file —
+    # that test staying green after this change IS the parity proof; this
+    # test adds the explicit negative assertion for readability.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    monkeypatch.setenv(
+        "DAIMON_CLAUDE_PROJECTS_DIR", str(tmp_path / "no-transcripts"))
+    _write_checkpoint("S-bound", [
+        _item(receipt=_receipt(_source(), "a" * 64)),
+    ])
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert "index_only" not in result
+
+
+def test_index_fallback_answers_a_freshly_synced_item_without_manual_rebuild(
+    tmp_checkpoint_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+
+    assert inspector.inspect_item(_PROJECT, _ITEM_ID) is None
+
+    _write_team_checkpoint("S-fresh", [_item(quote=None)])
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+    assert result is not None
+    assert result["item"]["session_id"] == "S-fresh"
