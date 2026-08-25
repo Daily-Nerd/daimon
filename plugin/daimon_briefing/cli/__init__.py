@@ -2812,7 +2812,10 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Examples:\n"
                "  daimon brief                 render the latest briefing\n"
                "  daimon status                checkpoint presence + last serialize\n"
-               "  daimon configure             detect/repair the LLM backend\n",
+               "  daimon configure             detect/repair the LLM backend\n"
+               "\n"
+               "Docs:   https://daily-nerd.github.io/daimon/\n"
+               "Issues: https://github.com/Daily-Nerd/daimon/issues\n",
         formatter_class=fmt,
     )
     parser.add_argument(
