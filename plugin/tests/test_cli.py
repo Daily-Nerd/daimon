@@ -717,10 +717,13 @@ def test_cli_status_json_shape(
                          "skipped_recent", "recall_error", "recall_index",
                          "receipts", "capture_alarm", "hook_drift",
                          "plugin_drift", "rescue_gap", "rescue_posture",
-                         "forget_hits", "requests"}
+                         "forget_hits", "requests", "handoff"}
     # #694 PR 3: the requests summary — {open_sent, awaiting_you}, always
     # present (zeros when nothing is recorded, never absent/null).
     assert data["requests"] == {"open_sent": 0, "awaiting_you": 0}
+    # #662: no baton written -> explicit null, same optional-fact convention
+    # as recall_index/team/receipts (never absent, never a fabricated shape).
+    assert data["handoff"] is None
     assert data["plugin_drift"] is None  # #554 no plugin installed -> null
     assert data["capture_alarm"] is None  # #265 FAIL-only probe silent by default
     assert data["forget_hits"]["count"] == 0  # #404 nothing suppressed yet
@@ -771,6 +774,121 @@ def test_cli_status_plain_shows_the_requests_line_when_nonzero(
     assert rc == 0
     out = capsys.readouterr().out
     assert "1 open sent" in out
+
+
+# ---- #662: status reports a waiting handoff baton -----------------------
+
+
+def test_cli_status_json_reports_a_waiting_handoff_baton(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # The second-order motive from the issue: an agent confirming its own
+    # handoff write via status, without rendering a full briefing. Drive the
+    # write through the real CLI, not a hand-built event.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-baton-a")
+    store.write_checkpoint("S-a", {
+        "session_id": "S-a", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/status-baton-a")
+    assert cli.main(["handoff", "Ship the release next.",
+                     "--project", "/p/status-baton-a"]) == 0
+    capsys.readouterr()
+
+    rc = cli.main(["status", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["handoff"]["written_at"]
+    # The baton TEXT belongs to the briefing, not status (the issue is
+    # explicit) — the field must never carry the note.
+    assert "note" not in data["handoff"]
+    assert "Ship the release next." not in json.dumps(data)
+
+
+def test_cli_status_plain_shows_the_handoff_line_when_waiting(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-baton-b")
+    store.write_checkpoint("S-b", {
+        "session_id": "S-b", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/status-baton-b")
+    assert cli.main(["handoff", "Ship the release next.",
+                     "--project", "/p/status-baton-b"]) == 0
+    capsys.readouterr()
+
+    rc = cli.main(["status"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "handoff" in out.lower()
+    assert "Ship the release next." not in out
+
+
+def test_cli_status_silent_on_handoff_when_none_written(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-baton-c")
+    store.write_checkpoint("S-c", {
+        "session_id": "S-c", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/status-baton-c")
+    rc = cli.main(["status"])
+    assert rc == 0
+    assert "handoff" not in capsys.readouterr().out.lower()
+
+
+def test_cli_status_silent_on_handoff_once_consumed(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # Consumed = two distinct non-introspection sessions serialized after the
+    # write (store.active_handoff's own rule, mirrored from
+    # test_cli_handoff_no_warning_after_baton_consumed) — a consumed baton
+    # must render exactly like no baton at all, never a stale "waiting" line.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-baton-d")
+    slug = store.project_slug("/p/status-baton-d")
+    d = tmp_checkpoint_dir / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "events.jsonl").write_text(json.dumps(
+        {"ts": "2026-08-02T10:00:00Z", "kind": "handoff", "item_ref": "",
+         "status": "active", "note": "old consumed baton",
+         "source": "cli"}) + "\n")
+    for name, created, sid in (("prev-1.json", "2026-08-02T10:05:00Z",
+                                "S-writer"),
+                               ("latest.json", "2026-08-02T12:00:00Z",
+                                "S-consumer")):
+        (d / name).write_text(json.dumps(
+            {"session_id": sid, "created": created,
+             "working_context": {}, "epistemic_snapshot": {}}))
+    assert store.active_handoff("/p/status-baton-d") is None
+
+    payload, rc = cli.status_payload("/p/status-baton-d")
+    assert rc == 0
+    assert payload["handoff"] is None
+    cli.main(["status", "--project", "/p/status-baton-d"])
+    assert "handoff" not in capsys.readouterr().out.lower()
+
+
+def test_cli_status_handoff_fails_open_on_a_broken_reader(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # Same fail-open posture as the requests summary (#694 PR 3): a broken
+    # reader must never take `status` down with it.
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/status-baton-e")
+    store.write_checkpoint("S-e", {
+        "session_id": "S-e", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/status-baton-e")
+
+    def boom(project_dir=None):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(store, "active_handoff", boom)
+    rc = cli.main(["status", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["handoff"] is None
 
 
 def test_cli_status_survives_a_broken_requests_status_counts(

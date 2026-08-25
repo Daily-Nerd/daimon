@@ -1864,6 +1864,18 @@ def _status_world(project_arg=None) -> dict:
         request_counts = requests.status_counts(project_dir=project)
     except Exception:
         request_counts = {"open_sent": 0, "awaiting_you": 0}
+    # #662: a waiting handoff baton, or None once consumed/absent — the same
+    # optional-fact convention as recall_index (dict-or-None, never a
+    # fabricated zero-shape). store.active_handoff already encodes "waiting
+    # only" (None once two sessions have serialized past it, #523); the
+    # note text stays OUT of status by the issue's own instruction — it
+    # belongs to `brief`, not here. Fail-open like every other best-effort
+    # status fact: a broken reader must never take status down with it.
+    try:
+        _baton = store.active_handoff(project)
+        handoff = {"written_at": _baton["ts"]} if _baton else None
+    except Exception:
+        handoff = None
     identity = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
@@ -1882,7 +1894,8 @@ def _status_world(project_arg=None) -> dict:
         "hook_drift": hook_drift, "plugin_drift": plugin_drift,
         "rescue_gap": rescue_gap,
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
-        "forget_hits": forget_hits, "requests": request_counts, "rc": rc,
+        "forget_hits": forget_hits, "requests": request_counts,
+        "handoff": handoff, "rc": rc,
     }
 
 
@@ -1903,6 +1916,7 @@ def status_payload(project_arg=None) -> tuple:
         "rescue_posture": w["rescue_posture"],
         "forget_hits": w["forget_hits"],
         "requests": w["requests"],
+        "handoff": w["handoff"],
     }
     return payload, w["rc"]
 
@@ -1929,6 +1943,7 @@ def _cmd_status(args) -> int:
         "rescue_window_errors": w["rescue_window_errors"],
         "forget_hits": w["forget_hits"],
         "requests": w["requests"],
+        "handoff": w["handoff"],
     })
     return w["rc"]
 
