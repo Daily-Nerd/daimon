@@ -702,6 +702,14 @@ def test_cli_status_json_shape(
 
     store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    # #731: _plugin_drift_present() reads Path.home()/.claude/plugins/... —
+    # the DEVELOPER'S REAL machine state, untouched by the checkpoint/log/
+    # team/recall isolation the autouse fixture provides. The shape test
+    # below asserts the documented no-plugin state as a controlled
+    # precondition, not an assumption about whoever's machine runs it (this
+    # failed on every dev box whose installed Claude Code plugin copy lags
+    # the daimon CLI version, #731).
+    monkeypatch.setattr(cli, "_plugin_drift_present", lambda: None)
     _write_log(
         tmp_log_dir,
         [
