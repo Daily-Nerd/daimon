@@ -750,6 +750,21 @@ def _ruling_echo_line(data: dict) -> str | None:
             "at admission")
 
 
+def _handoff_line(data: dict) -> str | None:
+    """#662: one line when a handoff baton is waiting — this project wrote
+    one and no session has consumed it yet. `data["handoff"]` is already
+    "waiting only" (store.active_handoff returns None once two sessions
+    have serialized past it, #523); silent otherwise, same "quiet by
+    default" rule as the team/receipts/forget-hits/requests lines. Never
+    the baton TEXT — that belongs to `daimon brief`, not status (the issue
+    is explicit)."""
+    handoff = data.get("handoff")
+    if not isinstance(handoff, dict):
+        return None
+    written_at = handoff.get("written_at") or "unknown"
+    return f"handoff: waiting baton, written {written_at} — daimon brief"
+
+
 def _plugin_drift_line(pd: dict) -> str:
     """#554: name BOTH versions and the command that moves the stale half.
     "out of date" alone does not say which half, and the two are updated by
@@ -805,6 +820,9 @@ def _plain_status(data: dict) -> None:
     rq_line = _requests_line(data)
     if rq_line:
         print(rq_line)  # #694 PR 3: one line, only when non-zero
+    ho_line = _handoff_line(data)
+    if ho_line:
+        print(ho_line)  # #662: one line, only when a baton is waiting
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -904,6 +922,9 @@ def _rich_status(data: dict) -> None:
     rq_line = _requests_line(data)
     if rq_line:
         console.print(rq_line)  # #694 PR 3: one line, only when non-zero
+    ho_line = _handoff_line(data)
+    if ho_line:
+        console.print(ho_line)  # #662: one line, only when a baton is waiting
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

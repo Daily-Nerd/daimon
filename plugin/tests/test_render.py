@@ -365,6 +365,46 @@ def test_render_status_requests_rich_smoke(monkeypatch, capsys):
     assert "open sent" in capsys.readouterr().out
 
 
+# ---- #662: status's waiting-handoff-baton line ------------------------------
+
+
+def test_render_status_shows_handoff_line_when_waiting(capsys):
+    data = _status_data()
+    data["handoff"] = {"written_at": "2026-08-10T22:15:49Z"}
+    render.render_status(data)
+    out = capsys.readouterr().out
+    assert "handoff" in out.lower()
+    assert "2026-08-10T22:15:49Z" in out
+    assert "daimon brief" in out
+
+
+def test_render_status_handoff_line_silent_when_absent(capsys):
+    data = _status_data()
+    data["handoff"] = None
+    render.render_status(data)
+    assert "handoff" not in capsys.readouterr().out.lower()
+
+
+def test_render_status_handoff_line_never_shows_the_baton_text(capsys):
+    # #662: the issue is explicit — the note belongs to the briefing, not
+    # status. Pinned at the render function itself, not just the payload
+    # shape, so a future caller stuffing "note" in by mistake still cannot
+    # leak it through this line.
+    data = _status_data()
+    data["handoff"] = {"written_at": "2026-08-10T22:15:49Z",
+                       "note": "should never appear"}
+    render.render_status(data)
+    assert "should never appear" not in capsys.readouterr().out
+
+
+def test_render_status_handoff_rich_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = _status_data()
+    data["handoff"] = {"written_at": "2026-08-10T22:15:49Z"}
+    render.render_status(data)
+    assert "handoff" in capsys.readouterr().out.lower()
+
+
 def test_render_status_plain_exact_format(capsys):
     # Plain output is deterministic — assert exact lines, not substrings.
     render.render_status(_status_data())
