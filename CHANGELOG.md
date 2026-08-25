@@ -5,6 +5,19 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0](https://github.com/Daily-Nerd/daimon/compare/v0.32.1...v0.33.0) (2026-08-25)
+
+
+### Features
+
+* **cli:** status reports a waiting handoff baton ([#730](https://github.com/Daily-Nerd/daimon/issues/730)) ([45bd653](https://github.com/Daily-Nerd/daimon/commit/45bd653e874f60edc024d235a71148a6b7dc0d71))
+
+
+### Bug Fixes
+
+* **inspector:** why answers recall-surfaced ids through an index fallback ([#729](https://github.com/Daily-Nerd/daimon/issues/729)) ([161543e](https://github.com/Daily-Nerd/daimon/commit/161543e659dbe845c21b5d3df5e1769ab0572c51))
+* **relations:** contradiction fold catches item-level cycles ([#727](https://github.com/Daily-Nerd/daimon/issues/727)) ([ebf185e](https://github.com/Daily-Nerd/daimon/commit/ebf185e613cadb0d918618e66f996c8f7db7958c))
+
 ## [0.32.1](https://github.com/Daily-Nerd/daimon/compare/v0.32.0...v0.32.1) (2026-08-24)
 
 
