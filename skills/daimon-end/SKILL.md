@@ -30,7 +30,22 @@ a `prev` pointer. So it does not need to be perfect to be useful.
    the resolution is a provisional claim, byte-checked against the transcript
    when the session ends.
 
-2. **Emit a checkpoint JSON** from your in-context knowledge of THIS session,
+2. **Decide whether to hand off.** The baton is a different instrument from the
+   checkpoint: the checkpoint captures full state, the baton is the ONE
+   deliberate message that leads the next briefing. If the next session should
+   start somewhere specific — a reply to check, a play whose timing matters, a
+   decision waiting on the human — write it now:
+
+   ```bash
+   daimon handoff "<where the next session should start, and why>"
+   ```
+
+   Skipping is a valid decision when the checkpoint alone suffices; a baton
+   that merely restates the checkpoint is noise. But make the decision
+   consciously — a session that captures everything and hands off nothing
+   leaves the next session to infer its own starting point.
+
+3. **Emit a checkpoint JSON** from your in-context knowledge of THIS session,
    conforming exactly to the schema:
 
    ```json
@@ -58,14 +73,14 @@ a `prev` pointer. So it does not need to be perfect to be useful.
 
    Volume: 5–10 items per list; prefer the ones a fresh session would get wrong.
 
-3. **HONESTY RULE (load-bearing).** Quote only what you can reproduce exactly —
+4. **HONESTY RULE (load-bearing).** Quote only what you can reproduce exactly —
    an honest quote helps the later merge with the automatic reconstruction, and
    this path has no transcript to check against, so the CLI records every item
    as `inferred` either way (#511). Anything from an earlier,
    **compacted/summarized** part of the session you can no longer quote verbatim →
    `trust: "inferred"`, no `quote`. Do not fabricate quotes.
 
-4. **Write it** via the CLI (reads JSON on stdin, validates the schema, routes to
+5. **Write it** via the CLI (reads JSON on stdin, validates the schema, routes to
    this project + global + a per-session file, atomically, with rotation). Write
    the JSON to a temp file and pipe it:
 
@@ -76,7 +91,7 @@ a `prev` pointer. So it does not need to be perfect to be useful.
    It prints `wrote checkpoint: <path> (source: introspection)`. If it reports a
    schema-validation error, fix the JSON and retry — do not store garbage.
 
-5. **Confirm** to the user with the printed checkpoint path.
+6. **Confirm** to the user with the printed checkpoint path.
 
 ## Rules
 
