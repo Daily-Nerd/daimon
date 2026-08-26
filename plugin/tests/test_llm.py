@@ -1984,6 +1984,17 @@ def test_fallback_missing_binary_none_when_no_fallback_resolves(monkeypatch):
     assert llm.fallback_missing_binary() is None
 
 
+def test_missing_binary_unsplittable_command_reports_itself():
+    # An unbalanced quote cannot shlex.split, so it cannot exec either —
+    # the whole string IS the missing name (#747).
+    assert llm._missing_binary("'unbalanced") == "'unbalanced"
+
+
+def test_missing_binary_empty_command_reports_itself():
+    assert llm._missing_binary("") == ""
+    assert llm._missing_binary("   ") == "   "
+
+
 # ---- #748: a failed rescue exec must not destroy the primary's diagnostic ----
 
 

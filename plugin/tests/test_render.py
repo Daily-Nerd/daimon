@@ -660,6 +660,19 @@ def test_render_configure_rich_smoke(monkeypatch, capsys):
     assert "ready" in out.lower()
 
 
+def test_render_configure_rich_carries_binary_warnings(monkeypatch, capsys):
+    # #747: the rich doctor must carry the missing-binary warnings the plain
+    # view prints — same content-only bar as the smoke test above.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    st = _cfg_ready()
+    st["fallback_missing_binary"] = "1"
+    st["fallback_command"] = "1"
+    st["fallback_source"] = "explicit"
+    render.render_configure(st)
+    out = capsys.readouterr().out
+    assert "fallback binary not found" in out
+
+
 # --- _explain(): one-line backend explanation, all branches -----------------
 
 @pytest.mark.parametrize("st, expected", [
