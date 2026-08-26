@@ -1741,3 +1741,39 @@ def test_lifecycle_style_map():
     assert style("warning: purge failed: boom") == "yellow"
     assert style("forgot o-1 (content hash k) — removed") is None
     assert style("  o-1  [open_questions] [?] text") is None
+
+
+# ---- #742: rescue effectiveness on the stats window line -------------------
+
+
+def _window(**overrides):
+    w = {"days": 14, "success": 10, "skipped": 0, "errors": 2,
+         "fallback_attempts": 0, "fallback_serializes": 0, "starved": 0,
+         "error_rate_pct": 16.7}
+    w.update(overrides)
+    return {"window": w}
+
+
+def test_capture_window_line_shows_starved_when_nonzero():
+    lines = render._capture_window_lines(_window(starved=2))
+    assert any("starved 2" in ln for ln in lines)
+
+
+def test_capture_window_line_omits_starved_when_zero():
+    lines = render._capture_window_lines(_window())
+    assert not any("starved" in ln for ln in lines)
+
+
+def test_rescue_gate_warns_below_half_of_attempts():
+    lines = render._capture_window_lines(
+        _window(fallback_attempts=3, fallback_serializes=1))
+    assert any("rescue succeeded 1 of 3" in ln and "50%" in ln
+               for ln in lines)
+
+
+def test_rescue_gate_silent_with_no_attempts_or_healthy_rate():
+    assert not any("rescue succeeded" in ln
+                   for ln in render._capture_window_lines(_window()))
+    assert not any("rescue succeeded" in ln
+                   for ln in render._capture_window_lines(
+                       _window(fallback_attempts=2, fallback_serializes=1)))
