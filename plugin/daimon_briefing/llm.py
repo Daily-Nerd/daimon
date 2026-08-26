@@ -416,6 +416,12 @@ def rescue_posture() -> str:
     """
     resolved = resolve_backend()
     fallback = _resolve_fallback_command()
+    # #747: resolving is not existing. DAIMON_LLM_COMMAND_FALLBACK=1 made the
+    # rescue binary a program named `1` and posture read "covered" — an exec
+    # that can only fail is no rescue, so both edges below must see no
+    # fallback. The doctor names the missing binary (configure.status()).
+    if fallback is not None and _missing_binary(fallback[0]):
+        fallback = None
     if resolved["backend"] in ("command", "claude-cli"):
         # #475: a command primary DOES have a rescue direction now, but only
         # when one is configured. Absent a fallback this must still read
@@ -443,6 +449,15 @@ def _rescue(messages, deadline, exc, primary_label):
     fallback = _resolve_fallback_command()
     if not (config.llm_fallback() and fallback is not None):
         raise exc
+    missing = _missing_binary(fallback[0])
+    if missing:
+        # #747 coherence: posture already reads this config as none/gap, so
+        # runtime must not attempt the doomed exec — that would log the
+        # ledger-counted attempt literal, set _fallback_used, and bury the
+        # primary's diagnostic under "binary not found" (#748 field case).
+        # The primary error surfaces untouched instead.
+        log.warning("llm.rescue skipped: fallback binary not found (%s)", missing)
+        raise exc
     # #533: budget expiry is daimon's own clock, not a backend error — the
     # label decides which of two very different things gets debugged.
     reason = ("serialize deadline expired"
@@ -460,7 +475,20 @@ def _rescue(messages, deadline, exc, primary_label):
         # floor; a healthy remaining budget is never shrunk.
         deadline = max(deadline,
                        time.monotonic() + config.fallback_min_seconds())
-    return _chat_command(messages, deadline, resolved=fallback)
+    try:
+        return _chat_command(messages, deadline, resolved=fallback)
+    except ChatError as rescue_exc:
+        # #748: the rescue's own failure must not destroy the primary's
+        # diagnostic (field case: "binary not found: 1" buried the real "No
+        # LLM model" error). Chain both — exception TEXT only, never payloads
+        # (#744 redaction rule). Re-raised as the SAME type so
+        # EmptyOutputError keeps its serializer retry class. `exc` is a
+        # NoRescueAvailable placeholder on the rescue_unparseable path, where
+        # `reason` is the honest primary description.
+        primary = reason if isinstance(exc, NoRescueAvailable) else str(exc)
+        raise type(rescue_exc)(
+            f"rescue failed: {rescue_exc}; primary: {primary}"
+        ) from rescue_exc
 
 
 def rescue_unparseable(messages, deadline):
@@ -618,6 +646,41 @@ def _resolve_fallback_command():
     if resolve_backend()["backend"] not in ("command", "claude-cli"):
         return _resolve_command()
     return None
+
+
+def _missing_binary(command_str) -> str | None:
+    """argv[0] of `command_str` when exec would refuse it, else None (#747).
+
+    Splits with the same shlex.split _chat_command execs through, so this can
+    never disagree with the exec about what argv[0] IS. shutil.which honours
+    both PATH lookups and explicit paths; an unsplittable or empty command
+    string cannot exec either, so it reports as its own missing name.
+
+    ADVISORY: the check runs under the CALLING process's PATH — a detached
+    hook child's PATH can differ, so exec can still fail after a None here
+    (accepted limitation; the #748 chain covers that path)."""
+    try:
+        argv = shlex.split(command_str)
+    except ValueError:
+        return command_str
+    if not argv:
+        return command_str
+    return None if shutil.which(argv[0]) else argv[0]
+
+
+def fallback_missing_binary() -> str | None:
+    """The resolved rescue's argv[0] when it does not exist, else None —
+    the doctor's #747 surface, derived from the same resolution _rescue runs."""
+    fallback = _resolve_fallback_command()
+    return _missing_binary(fallback[0]) if fallback else None
+
+
+def command_missing_binary() -> str | None:
+    """#747 half two: the resolved PRIMARY command's argv[0] when it does not
+    exist, else None. Same advisory seam as fallback_missing_binary — the
+    doctor warns, ready semantics stay untouched (changing them ripples)."""
+    cmd = _resolve_command()
+    return _missing_binary(cmd[0]) if cmd else None
 
 
 def _extract_output(stdout, output_spec):

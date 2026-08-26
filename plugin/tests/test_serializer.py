@@ -2993,6 +2993,22 @@ def test_serialize_strict_min_messages_ignores_tool_rows(
     assert chat.calls == []
 
 
+def test_conversation_message_count_excludes_tool_rows():
+    # #750: THE too-short count, shared by both capture doors — hooks.py gated
+    # on raw len() while serialize_strict counted non-tool rows (#359), so the
+    # two doors disagreed on any tool-heavy transcript.
+    msgs = make_messages(4) + [
+        {"role": "tool", "content": "ok", "id": f"t-{i}", "tool_result": True}
+        for i in range(3)
+    ]
+    assert serializer.conversation_message_count(msgs) == 4
+
+
+def test_conversation_message_count_handles_empty_and_none():
+    assert serializer.conversation_message_count([]) == 0
+    assert serializer.conversation_message_count(None) == 0
+
+
 # ---- #360: perspective-diverse escalation (heal-path only) ----
 #
 # Escalation is the heal tier for failed serializes: N extraction passes over

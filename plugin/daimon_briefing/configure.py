@@ -59,6 +59,13 @@ def status() -> dict:
         # child fails minutes later.
         "fallback_command": fb[0] if fb else None,
         "fallback_input": fb[2] if fb else None,
+        # #747: a binary that RESOLVES but does not exist read as working
+        # everywhere (field case: DAIMON_LLM_COMMAND_FALLBACK=1). Name it here
+        # so the doctor can say so before a detached hook child discovers it.
+        # Advisory only — ready semantics unchanged; both fields come from
+        # llm's own seams so this view can never disagree with the runtime.
+        "command_missing_binary": llm.command_missing_binary(),
+        "fallback_missing_binary": llm.fallback_missing_binary(),
         "fallback_source": (
             "explicit" if config.llm_command_fallback()
             else ("legacy-command" if fb else None)

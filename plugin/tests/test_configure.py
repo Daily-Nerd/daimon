@@ -11,6 +11,8 @@ _LLM_VARS = (
     "DAIMON_LLM_MODEL", "LITELLM_MODEL",
     "DAIMON_LLM_BASE_URL", "LITELLM_BASE_URL",
     "DAIMON_LLM_COMMAND", "DAIMON_LLM_COMMAND_OUTPUT", "DAIMON_LLM_COMMAND_INPUT",
+    "DAIMON_LLM_COMMAND_FALLBACK", "DAIMON_LLM_COMMAND_FALLBACK_OUTPUT",
+    "DAIMON_LLM_COMMAND_FALLBACK_INPUT",
 )
 
 
@@ -170,6 +172,55 @@ def test_status_input_none_when_no_backend_resolves(clean_llm_env):
     st = configure.status()
     assert st["command"] is None
     assert st["input"] is None
+
+
+# ---- #747: the doctor names a fallback binary that does not exist ----
+
+
+def test_status_names_a_missing_fallback_binary(clean_llm_env):
+    # Field case: DAIMON_LLM_COMMAND_FALLBACK=1 — the rescue binary is a
+    # program named `1`, which exists nowhere.
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND_FALLBACK", "1")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["fallback_command"] == "1"
+    assert st["fallback_missing_binary"] == "1"
+
+
+def test_status_fallback_missing_binary_none_when_it_exists(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "litellm")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND_FALLBACK", "claude -p")
+    _set_claude(clean_llm_env, True)  # which() resolves only `claude`
+    st = configure.status()
+    assert st["fallback_missing_binary"] is None
+
+
+def test_status_fallback_missing_binary_none_without_a_fallback(clean_llm_env):
+    _set_claude(clean_llm_env, False)
+    st = configure.status()
+    assert st["fallback_command"] is None
+    assert st["fallback_missing_binary"] is None
+
+
+def test_status_names_a_missing_primary_command_binary(clean_llm_env):
+    # #747 half two: the PRIMARY command backend gets the same existence
+    # check — ready semantics unchanged (that ripples), the field is the
+    # honest floor for the doctor to warn from.
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "command")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "ghostcli -p")
+    _set_claude(clean_llm_env, False)  # which() resolves nothing
+    st = configure.status()
+    assert st["ready"] is True
+    assert st["command_missing_binary"] == "ghostcli"
+
+
+def test_status_command_missing_binary_none_when_it_exists(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_BACKEND", "command")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "claude -p")
+    _set_claude(clean_llm_env, True)  # which() resolves only `claude`
+    st = configure.status()
+    assert st["command_missing_binary"] is None
 
 
 # ---- write_env: merge, preserve, chmod 600, no-empty-file ----

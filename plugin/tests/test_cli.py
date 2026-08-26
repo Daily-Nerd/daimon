@@ -1610,6 +1610,178 @@ def test_cli_configure_not_ready_non_tty_prints_guidance(
     assert not env_file.exists()
 
 
+def test_cli_configure_doctor_names_missing_fallback_binary(
+    capsys, monkeypatch, tmp_path
+):
+    # #747 field case: DAIMON_LLM_COMMAND_FALLBACK=1 made the rescue a program
+    # named `1`; the doctor is the one surface built to catch that before a
+    # detached hook child fails minutes later.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "1")
+    _set_claude(monkeypatch, True)
+
+    rc = cli.main(["configure"])
+    assert rc == 0  # primary is ready; the fallback problem is a warning
+    out = capsys.readouterr().out
+    assert "fallback binary not found: 1" in out
+
+
+def test_cli_configure_doctor_silent_when_fallback_binary_exists(
+    capsys, monkeypatch, tmp_path
+):
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "claude -p")
+    _set_claude(monkeypatch, True)
+
+    rc = cli.main(["configure"])
+    assert rc == 0
+    assert "fallback binary not found" not in capsys.readouterr().out
+
+
+# ---- #749: the non-interactive write path must fail loud, not lie with rc 0 ----
+
+
+def test_cli_configure_flag_write_not_ready_returns_1(capsys, monkeypatch, tmp_path):
+    # A --backend write that lands on ready=False used to return 0 — scripts
+    # read rc, not the panel.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+
+    rc = cli.main(["configure", "--backend", "litellm", "--api-key", "K"])
+    assert rc == 1  # no model -> litellm not ready
+    err = capsys.readouterr().err
+    assert "not ready" in err
+    # The write itself still happened — rc 1 reports the state, not a rollback.
+    from daimon_briefing import config
+    assert config._file_values()["DAIMON_LLM_BACKEND"] == "litellm"
+
+
+def test_cli_configure_test_with_write_flags_is_an_error(capsys, monkeypatch, tmp_path):
+    # --test used to short-circuit BEFORE the write branch: it tested the OLD
+    # config and silently discarded the write flags.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+
+    rc = cli.main(["configure", "--backend", "litellm", "--model", "M", "--test"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--test" in err
+    assert not env_file.exists()  # nothing written, nothing tested — no half-state
+
+
+def test_cli_configure_warns_on_cross_backend_flags(capsys, monkeypatch, tmp_path):
+    # litellm value flags on a command-backend write were silently dropped.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+
+    rc = cli.main([
+        "configure", "--backend", "command", "--command", "mycli -p",
+        "--model", "M", "--api-key", "K",
+    ])
+    assert rc == 0  # command backend with a command is ready
+    err = capsys.readouterr().err
+    assert "--model" in err and "--api-key" in err
+    assert "ignored" in err
+    from daimon_briefing import config
+    values = config._file_values()
+    assert "DAIMON_LLM_MODEL" not in values
+    assert "DAIMON_LLM_API_KEY" not in values
+
+
+def test_cli_configure_warns_on_value_flags_with_claude_cli(capsys, monkeypatch, tmp_path):
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, True)
+
+    rc = cli.main(["configure", "--backend", "claude-cli", "--command", "mycli -p"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "--command" in err and "ignored" in err
+    from daimon_briefing import config
+    assert "DAIMON_LLM_COMMAND" not in config._file_values()
+
+
+def test_cli_configure_value_flags_without_backend_error(capsys, monkeypatch, tmp_path):
+    # #749: the third silent-drop door — a value flag without --backend fell
+    # through every branch untouched, so `--model M` looked like it configured
+    # a model.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+
+    rc = cli.main(["configure", "--model", "M"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--model" in err and "--backend" in err
+    assert not env_file.exists()
+
+
+def test_cli_configure_test_refuses_wizard_flags(capsys, monkeypatch, tmp_path):
+    # #749: --timeout/--author/--team-remote are consumed only by the --init
+    # wizard; `--timeout 600 --test` silently tested with the flag dropped.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, False)
+
+    rc = cli.main(["configure", "--timeout", "600", "--test"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--timeout" in err
+    assert not env_file.exists()
+
+
+def test_cli_configure_warns_on_wizard_flags_without_init(capsys, monkeypatch, tmp_path):
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    _set_claude(monkeypatch, True)
+
+    rc = cli.main([
+        "configure", "--backend", "claude-cli",
+        "--timeout", "600", "--author", "al",
+    ])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "--timeout" in err and "--author" in err
+    assert "--init" in err
+    from daimon_briefing import config
+    assert "DAIMON_TIMEOUT" not in config._file_values()
+
+
+def test_cli_configure_doctor_names_missing_primary_binary(
+    capsys, monkeypatch, tmp_path
+):
+    # #747 half two: the PRIMARY command backend gets the same existence
+    # check as the fallback — advisory warning only, ready semantics
+    # unchanged in this slice.
+    env_file = tmp_path / "env"
+    monkeypatch.setenv("DAIMON_ENV_FILE", str(env_file))
+    _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "ghostcli -p")
+    _set_claude(monkeypatch, False)  # which() resolves nothing
+
+    rc = cli.main(["configure"])
+    assert rc == 0  # ready stays ready; the warning is the honest floor
+    out = capsys.readouterr().out
+    assert "command binary not found: ghostcli" in out
+
+
 def test_cli_configure_interactive_litellm(capsys, monkeypatch, tmp_path):
     # Not ready + TTY + no flags -> interactive prompt path via the _prompt seam.
     env_file = tmp_path / "env"
@@ -5708,6 +5880,24 @@ def test_stats_capture_window_counts_starved(tmp_log_dir):
     assert cap["window"]["starved"] == 1
 
 
+def test_stats_capture_chained_rescue_failure_is_not_starved(tmp_log_dir):
+    # #748 chains "...; primary: LLM deadline exhausted before command
+    # backend" into the rescue's own error line — that rescue RAN and failed,
+    # so the bare-substring starved match must not fire on the chained shape.
+    # Only a bare primary starved line is a starved call.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "error: LLM call failed on transcript: ChatError: rescue failed: "
+        "command backend exited 2 (stderr: /x); primary: LLM deadline "
+        "exhausted before command backend (transcript: /t/S1.jsonl) after 840s",
+        "error: LLM deadline exhausted before command backend "
+        "(transcript: /t/S2.jsonl) after 840s",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["errors"] == 2
+    assert cap["starved"] == 1
+
+
 def test_cli_mcp_serve_registered_and_honors_kill_switch(monkeypatch):
     # #261: `daimon mcp serve` exists; disabled daimon refuses to serve but
     # exits 0 — it must never break a host's MCP startup.
@@ -5795,6 +5985,7 @@ def test_status_no_rescue_warning_when_command_resolves(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_LLM_API_KEY", "k")
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
     cli.main(["status"])   # rc reflects checkpoint health, not this warning
     out = capsys.readouterr().out
     assert "no fallback backend resolves" not in out
@@ -5827,6 +6018,9 @@ def test_cli_status_rescue_gap_matches_posture_across_all_rows(
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", fallback)
     monkeypatch.setattr(config, "llm_api_key", lambda: api_key)
     monkeypatch.setattr(llm, "_resolve_command", lambda: command)
+    # #747: posture now checks the fallback binary exists — pin which() so
+    # the "covered" row does not depend on a real `claude` on PATH.
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")
     payload, _ = cli.status_payload(None)
     assert payload["rescue_posture"] == expected_posture
     assert payload["rescue_gap"] == (expected_posture == "gap")
@@ -5881,6 +6075,7 @@ def test_status_covered_disabled_no_backend_stay_silent(
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(config, "llm_api_key", lambda: "k")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")  # #747
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -5906,6 +6101,7 @@ def test_stats_plain_fallback_line_suffix_covered(
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(config, "llm_api_key", lambda: "k")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
     store.write_checkpoint("S1", sample_checkpoint)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
@@ -5920,6 +6116,7 @@ def test_stats_rich_fallback_line_suffix_covered(
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(config, "llm_api_key", lambda: "k")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
     store.write_checkpoint("S1", sample_checkpoint)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out

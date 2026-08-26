@@ -649,6 +649,7 @@ def test_chat_litellm_falls_back_on_error(monkeypatch):
         raise llm.ChatError("gateway down")
     monkeypatch.setattr(llm, "_chat_litellm", boom)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     assert llm.chat([{"role": "user", "content": "x"}]) == "FALLBACK"
 
@@ -833,6 +834,7 @@ def test_rescue_posture_keyless_litellm_with_a_command_is_covered(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(config, "llm_api_key", lambda: None)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")  # #747
     assert llm.rescue_posture() == "covered"
 
 
@@ -869,6 +871,7 @@ def test_rescue_posture_covered(monkeypatch):
     monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")  # #747
     assert llm.rescue_posture() == "covered"
 
 
@@ -891,6 +894,7 @@ def test_rescue_posture_unknown_backend_string_joins_litellm_family(monkeypatch)
     # joins, and this test would be asking two questions at once.
     monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")  # #747
     assert llm.rescue_posture() == "covered"
     monkeypatch.setattr(llm, "_resolve_command", lambda: None)
     assert llm.rescue_posture() == "gap"
@@ -908,6 +912,7 @@ def test_chat_fallback_sets_flag(monkeypatch):
         raise llm.ChatError("gateway down")
     monkeypatch.setattr(llm, "_chat_litellm", boom)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     llm.reset_fallback()
     assert llm.fallback_used() is False
@@ -1228,6 +1233,7 @@ def test_chat_fallback_extends_drained_deadline(monkeypatch):
     monkeypatch.setattr(llm, "_chat_litellm",
                         lambda *a, **k: (_ for _ in ()).throw(llm.ChatError("down")))
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     seen = {}
 
     def fake_command(messages, deadline, resolved=None):
@@ -1248,6 +1254,7 @@ def test_chat_fallback_keeps_larger_remaining_budget(monkeypatch):
     monkeypatch.setattr(llm, "_chat_litellm",
                         lambda *a, **k: (_ for _ in ()).throw(llm.ChatError("down")))
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     seen = {}
 
     def fake_command(messages, deadline, resolved=None):
@@ -1267,6 +1274,7 @@ def test_chat_fallback_no_deadline_stays_none(monkeypatch):
     monkeypatch.setattr(llm, "_chat_litellm",
                         lambda *a, **k: (_ for _ in ()).throw(llm.ChatError("down")))
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     seen = {}
 
     def fake_command(messages, deadline, resolved=None):
@@ -1568,6 +1576,7 @@ def test_chat_fallback_log_names_deadline_expiry(monkeypatch, caplog):
 
     monkeypatch.setattr(llm, "_chat_litellm", budget_gone)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     llm.reset_fallback()
     with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
@@ -1586,6 +1595,7 @@ def test_chat_fallback_log_still_names_backend_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(llm, "_chat_litellm", boom)
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("mycli", "text"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     monkeypatch.setattr(llm, "_chat_command", lambda m, deadline, resolved=None: "FALLBACK")
     llm.reset_fallback()
     with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
@@ -1717,6 +1727,7 @@ def test_chat_command_primary_falls_back_on_error(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_fallback_command",
                         lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
 
     def dispatch(messages, deadline, resolved=None):
         if resolved is None:
@@ -1736,6 +1747,7 @@ def test_chat_command_primary_fallback_sets_the_flag(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_fallback_command",
                         lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     monkeypatch.setattr(llm, "_chat_command",
                         lambda m, deadline, resolved=None: (
                             "OK" if resolved else (_ for _ in ()).throw(llm.ChatError("x"))))
@@ -1775,6 +1787,7 @@ def test_chat_command_primary_fallback_rearms_a_drained_deadline(monkeypatch):
     monkeypatch.setattr(config, "fallback_min_seconds", lambda: 300)
     monkeypatch.setattr(llm, "_resolve_fallback_command",
                         lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     seen = {}
 
     def dispatch(messages, deadline, resolved=None):
@@ -1797,6 +1810,7 @@ def test_chat_command_primary_fallback_log_keeps_the_ledger_literal(monkeypatch,
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_fallback_command",
                         lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     monkeypatch.setattr(llm, "_chat_command",
                         lambda m, deadline, resolved=None: (
                             "OK" if resolved else (_ for _ in ()).throw(llm.ChatError("x"))))
@@ -1814,6 +1828,7 @@ def test_chat_command_uses_the_resolved_fallback_triple(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     triple = ("rescuecli --json", "json:answer", "arg")
     monkeypatch.setattr(llm, "_resolve_fallback_command", lambda: triple)
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     seen = {}
 
     def dispatch(messages, deadline, resolved=None):
@@ -1848,6 +1863,7 @@ def test_rescue_posture_command_backend_is_covered_with_a_fallback(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_fallback_command",
                         lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")  # #747
     assert llm.rescue_posture() == "covered"
 
 
@@ -1877,6 +1893,7 @@ def test_rescue_posture_reresolves_liveness_every_call(monkeypatch):
     live = {"resolves": True}
     monkeypatch.setattr(llm, "_resolve_fallback_command",
                         lambda: ("rescuecli", "text", "stdin") if live["resolves"] else None)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")  # #747
     assert llm.rescue_posture() == "covered"
     live["resolves"] = False
     assert llm.rescue_posture() == "none"
@@ -1892,6 +1909,7 @@ def test_rescue_unparseable_routes_to_the_fallback(monkeypatch, caplog):
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_fallback_command",
                         lambda: ("rescuecli", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: binary "exists"
     seen = {}
 
     def fake_command(messages, deadline, resolved=None):
@@ -1919,4 +1937,133 @@ def test_rescue_unparseable_without_a_fallback_raises_no_rescue(monkeypatch):
     llm.reset_fallback()
     with pytest.raises(llm.NoRescueAvailable):
         llm.rescue_unparseable([{"role": "user", "content": "x"}], None)
+    assert llm.fallback_used() is False
+
+
+# ---- #747: a fallback whose binary does not exist is not a rescue ----
+
+
+def test_rescue_posture_command_edge_not_covered_for_missing_fallback_binary(monkeypatch):
+    # Field case: DAIMON_LLM_COMMAND_FALLBACK=1 made the rescue binary a
+    # program named `1`; posture read "covered" for an exec that can only fail.
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "primarycli -x")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "1")
+    monkeypatch.setattr(llm.shutil, "which", lambda b: None)
+    assert llm.rescue_posture() == "none"
+
+
+def test_rescue_posture_litellm_edge_not_covered_for_missing_fallback_binary(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setattr(config, "llm_api_key", lambda: "sk-key")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "1")
+    monkeypatch.setattr(llm.shutil, "which", lambda b: None)
+    assert llm.rescue_posture() == "gap"
+
+
+def test_fallback_missing_binary_names_argv0(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "1 --flag value")
+    monkeypatch.setattr(llm.shutil, "which", lambda b: None)
+    assert llm.fallback_missing_binary() == "1"
+
+
+def test_fallback_missing_binary_none_when_binary_exists(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "rescuecli -p")
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")
+    assert llm.fallback_missing_binary() is None
+
+
+def test_fallback_missing_binary_none_when_no_fallback_resolves(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND_FALLBACK", raising=False)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: None)
+    assert llm.fallback_missing_binary() is None
+
+
+def test_missing_binary_unsplittable_command_reports_itself():
+    # An unbalanced quote cannot shlex.split, so it cannot exec either —
+    # the whole string IS the missing name (#747).
+    assert llm._missing_binary("'unbalanced") == "'unbalanced"
+
+
+def test_missing_binary_empty_command_reports_itself():
+    assert llm._missing_binary("") == ""
+    assert llm._missing_binary("   ") == "   "
+
+
+# ---- #748: a failed rescue exec must not destroy the primary's diagnostic ----
+
+
+def test_rescue_exec_failure_preserves_primary_diagnostic(monkeypatch, caplog):
+    # Field case: the real error was the missing model, but the surfaced error
+    # was "command backend binary not found: 1" — the rescue's own failure
+    # overwrote the one diagnostic worth acting on. which() is pinned to say
+    # the binary exists while exec still refuses it: the advisory pre-check
+    # runs under THIS process's PATH, and the exec's view can differ — the
+    # chain is exactly for the failures the pre-check cannot see.
+    primary = "No LLM model (set DAIMON_LLM_MODEL or LITELLM_MODEL)."
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "1")
+
+    def boom(*a, **k):
+        raise llm.ChatError(primary)
+
+    def missing(argv, stdin_text, timeout, env, cwd):
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")
+    monkeypatch.setattr(llm, "_chat_litellm", boom)
+    monkeypatch.setattr(llm, "_run_command", missing)
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
+        with pytest.raises(llm.ChatError) as exc:
+            llm.chat([{"role": "user", "content": "x"}])
+    text = str(exc.value)
+    assert "command backend binary not found: 1" in text
+    assert primary in text
+    # The ledger literal must survive the new failure path (ledger.py counts
+    # attempts by matching it).
+    assert any(r.getMessage().startswith("llm.fallback backend=command")
+               for r in caplog.records)
+
+
+def test_rescue_empty_output_keeps_retry_class_and_primary_text(monkeypatch):
+    # EmptyOutputError is the serializer's cache-buster retry class — chaining
+    # the primary's text must not demote it to a plain ChatError.
+    primary = "gateway down"
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "fbcli")
+    monkeypatch.setattr(llm, "_chat_litellm",
+                        lambda *a, **k: (_ for _ in ()).throw(llm.ChatError(primary)))
+    monkeypatch.setattr(llm.shutil, "which", lambda b: f"/usr/bin/{b}")
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (0, "", ""))
+    with pytest.raises(llm.EmptyOutputError) as exc:
+        llm.chat([{"role": "user", "content": "x"}])
+    assert primary in str(exc.value)
+
+
+def test_rescue_not_attempted_when_fallback_binary_is_missing(monkeypatch, caplog):
+    # Runtime must agree with posture (#747 reads this config as none/gap):
+    # attempting the doomed exec would log the ledger-counted attempt literal,
+    # set _fallback_used, and bury the primary's diagnostic. The primary error
+    # surfaces verbatim instead — the honest read of the field case.
+    primary = "No LLM model (set DAIMON_LLM_MODEL or LITELLM_MODEL)."
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "1")
+    monkeypatch.setattr(llm, "_chat_litellm",
+                        lambda *a, **k: (_ for _ in ()).throw(llm.ChatError(primary)))
+    monkeypatch.setattr(llm.shutil, "which", lambda b: None)
+    llm.reset_fallback()
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
+        with pytest.raises(llm.ChatError) as exc:
+            llm.chat([{"role": "user", "content": "x"}])
+    assert str(exc.value) == primary
+    assert not any(r.getMessage().startswith("llm.fallback backend=command")
+                   for r in caplog.records)
     assert llm.fallback_used() is False

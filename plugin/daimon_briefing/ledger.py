@@ -602,7 +602,11 @@ def _stats_capture(now=None) -> dict:
                 # #742: the budget died before the command backend ran a
                 # single call — an error still, but its own class: nothing
                 # about the backend failed, the shared deadline starved it.
-                if "deadline exhausted before command backend" in line:
+                # #748's chained shape ("rescue failed: ...; primary: LLM
+                # deadline exhausted before command backend") carries the
+                # substring for a rescue that RAN and failed — never starved.
+                if ("deadline exhausted before command backend" in line
+                        and "rescue failed:" not in line):
                     out["starved"] += 1
                     if in_window:
                         win["starved"] += 1

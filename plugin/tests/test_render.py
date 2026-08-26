@@ -660,6 +660,19 @@ def test_render_configure_rich_smoke(monkeypatch, capsys):
     assert "ready" in out.lower()
 
 
+def test_render_configure_rich_carries_binary_warnings(monkeypatch, capsys):
+    # #747: the rich doctor must carry the missing-binary warnings the plain
+    # view prints — same content-only bar as the smoke test above.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    st = _cfg_ready()
+    st["fallback_missing_binary"] = "1"
+    st["fallback_command"] = "1"
+    st["fallback_source"] = "explicit"
+    render.render_configure(st)
+    out = capsys.readouterr().out
+    assert "fallback binary not found" in out
+
+
 # --- _explain(): one-line backend explanation, all branches -----------------
 
 @pytest.mark.parametrize("st, expected", [
@@ -717,6 +730,36 @@ def test_explain_omits_note_for_default_stdin_input():
     st = {"resolved_backend": "command", "ready": True, "command_source": "explicit",
           "command": "devin -p", "input": "stdin"}
     assert render._explain(st) == "backend: command (devin -p)"
+
+
+# ---- #747: the doctor's missing-binary warnings name the RIGHT env knob ----
+
+
+def test_fallback_binary_warning_names_the_knob_by_source():
+    # The rescue can resolve from two different knobs: an explicit
+    # DAIMON_LLM_COMMAND_FALLBACK, or the #475 legacy shim from
+    # DAIMON_LLM_COMMAND — the fix advice must name the one actually set.
+    explicit = render._fallback_binary_warning({
+        "fallback_missing_binary": "1", "fallback_command": "1",
+        "fallback_source": "explicit"})
+    assert "DAIMON_LLM_COMMAND_FALLBACK" in explicit
+    legacy = render._fallback_binary_warning({
+        "fallback_missing_binary": "ghostcli", "fallback_command": "ghostcli -p",
+        "fallback_source": "legacy-command"})
+    assert "DAIMON_LLM_COMMAND" in legacy
+    assert "DAIMON_LLM_COMMAND_FALLBACK" not in legacy
+
+
+def test_fallback_binary_warning_none_when_nothing_is_missing():
+    assert render._fallback_binary_warning({"fallback_missing_binary": None}) is None
+
+
+def test_command_binary_warning_names_the_primary_knob():
+    warning = render._command_binary_warning({
+        "command_missing_binary": "ghostcli", "command": "ghostcli -p"})
+    assert "command binary not found: ghostcli" in warning
+    assert "DAIMON_LLM_COMMAND" in warning
+    assert render._command_binary_warning({"command_missing_binary": None}) is None
 
 
 def test_render_brief_honors_llm_briefing_when_present(monkeypatch, sample_checkpoint, capsys):
