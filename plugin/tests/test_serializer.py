@@ -1175,6 +1175,36 @@ def test_validation_failure_retries_once_with_nonce(fake_chat_factory, monkeypat
     assert "quote" in second  # the reminder names the observed failure mode
 
 
+# ---- #743: retries carry the failure diagnostic back to the model ----
+
+
+def test_validation_resample_prompt_carries_the_rejection_reason(
+        fake_chat_factory, monkeypatch):
+    # #743: the resample note was a static quote lecture regardless of what
+    # the validator rejected — a missing-keys or bad-trust-class rejection got
+    # an irrelevant reminder and the retry repeated the identical violation.
+    # The resample prompt must name the actual rejection.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = fake_chat_factory([_invalid_checkpoint_json(), _valid_checkpoint_json("S1")])
+    serializer.serialize_strict("S1", make_messages(6), chat=chat)
+    assert len(chat.calls) == 2
+    second = chat.calls[1]["messages"][-1]["content"]
+    assert ("working_context.recent_decisions[0]: trust=verbatim item has "
+            "no quote") in second
+
+
+def test_parse_retry_marker_carries_the_parse_diagnostic(fake_chat_factory):
+    # #743: the parse retry said only "the previous response was unparseable".
+    # The diagnostic (position info, never raw model output) tells the model
+    # what actually came back wrong.
+    chat = fake_chat_factory(["not json, just prose",
+                              _valid_checkpoint_json("S1")])
+    serializer.serialize_strict("S1", make_messages(20), chat=chat)
+    assert len(chat.calls) == 2
+    retry_user = chat.calls[1]["messages"][1]["content"]
+    assert "no JSON object/array found in response" in retry_user
+
+
 # ---- #555: validation reports WHICH predicate rejected the checkpoint ----
 
 
