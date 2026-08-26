@@ -8,6 +8,28 @@
     "verdict": "BELOW MINIMUM — counts reported, no rate claim, decision rule NOT evaluated. The chunk cache reaps at 3 days, so the joinable population accrues forward; re-run as clean serializes accumulate.",
     "measured": "2026-08-04, single machine"
   },
+  "rerun_2026_08_26": {
+    "joined_sessions": 0,
+    "instrument": "unmodified as committed in #569; working tree verified clean before the run; executed in a dedicated session",
+    "exclusions": {
+      "rule1-no-write": 52,
+      "no-flat-checkpoint": 48,
+      "single-pass (no merge ran, out of scope)": 46,
+      "rule1-multi-spawn (retry present)": 31,
+      "rule2-cache-miss (3-day reap or key drift)": 31,
+      "rule1-ambiguous-window (concurrent serializes)": 29,
+      "no-transcript": 4,
+      "sessions_in_log": 241
+    },
+    "verdict": "STILL BELOW MINIMUM, joined 0 of 241 — the accrual prediction from 2026-08-04 did not hold. No rate claim, decision rule NOT evaluated.",
+    "why_zero_diagnosis": [
+      "stamp formula verified unchanged: serializer._chunk_cache_key and cache_key_for agree byte-for-byte (v2 NUL-separated, same field order), so this is not key-derivation drift",
+      "the dominant killers are population structure, not the instrument: rule-1 exclusions (112 of 241) come from this machine's many concurrent, healed, or unwritten serializes — bursts of parallel subagent sessions make every overlapping window mutually ambiguous, which the protocol correctly refuses to join",
+      "the 3-day cache reap means only the last ~3 days can ever join, and a clean solo CHUNKED serialize inside that window is rare on this machine (most short sessions are single-pass, out of scope)",
+      "the two 08-04 joins now read rule2-cache-miss as expected: their cache aged out"
+    ],
+    "path_forward": "environment change, not protocol change: raising DAIMON_CHUNK_CACHE_DAYS on the measuring machine widens the joinable window so population can accrue. That retains pre-redaction chunk partials longer, a privacy trade requiring an explicit operator decision; recorded here as the identified unblock, not taken unilaterally."
+  },
   "population": {
     "sessions_in_log": 172,
     "exclusions": {
