@@ -1577,13 +1577,16 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
     """
     attempts = 1 + parse_retries
     run_nonce = uuid.uuid4().hex[:12]
+    # #743: the marker names WHAT failed, not just that something did — exception
+    # text only (position info), never `raw` itself, which can echo request contents.
+    last_error = "unknown failure"
     for attempt in range(1, attempts + 1):
         content = user_content
         if attempt > 1:
             content += (
                 f"\n\n(retry attempt {attempt} [{run_nonce}] — the previous "
-                f"response was unparseable; output ONLY the JSON object, "
-                f"no prose, no reasoning)"
+                f"response failed with: {last_error}; output ONLY the JSON "
+                f"object, no prose, no reasoning)"
             )
 
         def _can_retry(_attempt=attempt):
@@ -1638,6 +1641,7 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
             )
         except llm.EmptyOutputError as exc:
             if _can_retry():
+                last_error = "the response was empty"
                 log.warning("empty output on %s (attempt %d/%d), "
                             "retrying with cache-buster", what, attempt, attempts)
                 continue
@@ -1650,6 +1654,7 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             if _can_retry():
                 # Never log `raw` — model output can echo request contents.
+                last_error = f"unparseable: {exc}"
                 log.warning("unparseable output on %s (attempt %d/%d), "
                             "retrying with cache-buster", what, attempt, attempts)
                 continue
@@ -1663,6 +1668,7 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
             ) from exc
         if not isinstance(parsed, dict):
             if _can_retry():
+                last_error = "parsed to a non-object (array or scalar)"
                 log.warning("unparseable output on %s (attempt %d/%d), "
                             "retrying with cache-buster", what, attempt, attempts)
                 continue
@@ -2242,9 +2248,12 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # but gateway response caches replay the SAME bad body for a byte-identical
     # retry — so heal could never recover. Same lesson _call_and_parse already
     # encodes for parse failures.
+    # #743: the note names the actual rejection — a static quote lecture let a
+    # missing-keys or bad-trust-class retry repeat the identical violation.
     _RETRY_NOTE = (
-        "\n\nattempt 2: the previous output failed schema validation — "
-        'every trust="verbatim" item MUST carry its exact transcript quote in '
+        "\n\nattempt 2: the previous output failed schema validation with: "
+        "{reason}. "
+        'Every trust="verbatim" item MUST carry its exact transcript quote in '
         "its `quote` field (never inlined into `text`). The quote must be "
         "copy-pasted exactly from the transcript, elisions marked with `...`. "
         "Re-emit the full corrected JSON."
@@ -2375,7 +2384,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                 log.info("resample budget re-armed to %ds (#553)",
                          config.resample_min_seconds())
                 deadline = floor
-        checkpoint = _produce(_RETRY_NOTE)
+        checkpoint = _produce(_RETRY_NOTE.format(reason=first_reason))
         strip_code_owned_keys(checkpoint)
         checkpoint["session_id"] = session_id
     reason = validation_reason(checkpoint)
