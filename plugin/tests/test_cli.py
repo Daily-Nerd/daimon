@@ -5985,6 +5985,7 @@ def test_status_no_rescue_warning_when_command_resolves(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_LLM_API_KEY", "k")
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
     cli.main(["status"])   # rc reflects checkpoint health, not this warning
     out = capsys.readouterr().out
     assert "no fallback backend resolves" not in out
@@ -6100,6 +6101,7 @@ def test_stats_plain_fallback_line_suffix_covered(
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(config, "llm_api_key", lambda: "k")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
     store.write_checkpoint("S1", sample_checkpoint)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
@@ -6114,6 +6116,7 @@ def test_stats_rich_fallback_line_suffix_covered(
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
     monkeypatch.setattr(config, "llm_api_key", lambda: "k")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
     store.write_checkpoint("S1", sample_checkpoint)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
