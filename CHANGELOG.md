@@ -5,6 +5,27 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.34.0](https://github.com/Daily-Nerd/daimon/compare/v0.33.0...v0.34.0) (2026-08-26)
+
+
+### Features
+
+* **cli:** help epilog points to docs and issue tracker ([#737](https://github.com/Daily-Nerd/daimon/issues/737)) ([e069831](https://github.com/Daily-Nerd/daimon/commit/e0698313334023d0eb0c12dcf771d3a520b89406))
+* **serializer:** retries carry the failure diagnostic back to the model ([#744](https://github.com/Daily-Nerd/daimon/issues/744)) ([84e6a59](https://github.com/Daily-Nerd/daimon/commit/84e6a5973eb4835f6023d8ad4c80afafc1c589bb))
+* **skill:** daimon-end surfaces the handoff decision ([#734](https://github.com/Daily-Nerd/daimon/issues/734)) ([629d8a6](https://github.com/Daily-Nerd/daimon/commit/629d8a6d7c9f39857dbfb39416d483af7b5aefa2))
+
+
+### Bug Fixes
+
+* **cli:** brief renders the handoff baton when the project has no checkpoint ([#741](https://github.com/Daily-Nerd/daimon/issues/741)) ([113230c](https://github.com/Daily-Nerd/daimon/commit/113230c557fa56672a625920617022cffae6b5d6))
+* **config:** silent misconfiguration reads as healthy across rescue, configure, and the capture gate ([#753](https://github.com/Daily-Nerd/daimon/issues/753)) ([488b13b](https://github.com/Daily-Nerd/daimon/commit/488b13b347769942d4f79209e724cbdfcf781297))
+* **serializer:** stats classifies starved rescues and gates rescue effectiveness ([#745](https://github.com/Daily-Nerd/daimon/issues/745)) ([91c6631](https://github.com/Daily-Nerd/daimon/commit/91c66318d6ae6b47f714d3d1b102c659e939c96b))
+
+
+### Documentation
+
+* state the single-live-checkpoint working-set trade ([#739](https://github.com/Daily-Nerd/daimon/issues/739)) ([7d89c18](https://github.com/Daily-Nerd/daimon/commit/7d89c18d39615dabcd74b31ba9e783b70a4b047e))
+
 ## [0.33.0](https://github.com/Daily-Nerd/daimon/compare/v0.32.1...v0.33.0) (2026-08-25)
 
 
