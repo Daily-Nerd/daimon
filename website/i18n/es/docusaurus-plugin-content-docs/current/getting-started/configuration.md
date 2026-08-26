@@ -149,14 +149,18 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 
 La serialización necesita un endpoint de LLM. `daimon configure` es la vía
 prevista para definir estas variables. La URL, la key y el modelo caen cada
-uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida.
+uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida. El
+backend `litellm` necesita **ambas** `DAIMON_LLM_MODEL` y
+`DAIMON_LLM_API_KEY`; mientras falte alguna, `daimon configure` reporta
+`backend: litellm — missing: ...` nombrando exactamente qué falta — esa línea
+significa que la configuración está incompleta, no que el endpoint esté caído.
 
 | Variable | Default | Qué hace |
 |---|---|---|
 | `DAIMON_LLM_BACKEND` | `auto` | Transporte: `auto` (litellm si hay credenciales, si no un CLI de comando **nombrado** si alguno resuelve), `litellm`, `command` o `claude-cli`. `claude-cli` es la opción sin configuración: ejecuta un `claude` encontrado en el PATH con un preset incorporado y no necesita nada más. `command` requiere `DAIMON_LLM_COMMAND`. |
 | `DAIMON_LLM_BASE_URL` | `http://localhost:4000` | URL del endpoint compatible con OpenAI (se recorta la barra final). Cae a `LITELLM_BASE_URL`. |
-| `DAIMON_LLM_API_KEY` | sin definir | API key del endpoint. Cae a `LITELLM_API_KEY`. |
-| `DAIMON_LLM_MODEL` | sin definir | Nombre de modelo a enviar. Cae a `LITELLM_MODEL`. |
+| `DAIMON_LLM_API_KEY` | sin definir | API key del endpoint. **Obligatoria para el backend `litellm`.** Cae a `LITELLM_API_KEY`. |
+| `DAIMON_LLM_MODEL` | sin definir | Nombre de modelo a enviar. **Obligatorio para el backend `litellm`.** Cae a `LITELLM_MODEL`. |
 | `DAIMON_LLM_TEMPERATURE` | `0.0` | Temperatura de muestreo de cada llamada de chat. `0.0` para extracción determinista; algunos upstreams rechazan cualquier valor que no sea uno fijo. |
 | `DAIMON_LLM_FALLBACK` | on | Cuando el backend primario falla, cae automáticamente al comando de rescate (`DAIMON_LLM_COMMAND_FALLBACK`). Aplica tanto a un primario litellm como a uno `command`. Ponlo en `0` para desactivarlo. |
 | `DAIMON_FALLBACK_MIN_SECONDS` | `DAIMON_TIMEOUT` | Presupuesto mínimo garantizado al comando de rescate al entrar. El primario pudo haber agotado el deadline compartido reintentando la misma falla que el rescate existe para resolver, lo que lo mataría al llegar; un presupuesto restante sano nunca se recorta. |

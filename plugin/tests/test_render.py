@@ -719,6 +719,36 @@ def test_explain_omits_note_for_default_stdin_input():
     assert render._explain(st) == "backend: command (devin -p)"
 
 
+# ---- #747: the doctor's missing-binary warnings name the RIGHT env knob ----
+
+
+def test_fallback_binary_warning_names_the_knob_by_source():
+    # The rescue can resolve from two different knobs: an explicit
+    # DAIMON_LLM_COMMAND_FALLBACK, or the #475 legacy shim from
+    # DAIMON_LLM_COMMAND — the fix advice must name the one actually set.
+    explicit = render._fallback_binary_warning({
+        "fallback_missing_binary": "1", "fallback_command": "1",
+        "fallback_source": "explicit"})
+    assert "DAIMON_LLM_COMMAND_FALLBACK" in explicit
+    legacy = render._fallback_binary_warning({
+        "fallback_missing_binary": "ghostcli", "fallback_command": "ghostcli -p",
+        "fallback_source": "legacy-command"})
+    assert "DAIMON_LLM_COMMAND" in legacy
+    assert "DAIMON_LLM_COMMAND_FALLBACK" not in legacy
+
+
+def test_fallback_binary_warning_none_when_nothing_is_missing():
+    assert render._fallback_binary_warning({"fallback_missing_binary": None}) is None
+
+
+def test_command_binary_warning_names_the_primary_knob():
+    warning = render._command_binary_warning({
+        "command_missing_binary": "ghostcli", "command": "ghostcli -p"})
+    assert "command binary not found: ghostcli" in warning
+    assert "DAIMON_LLM_COMMAND" in warning
+    assert render._command_binary_warning({"command_missing_binary": None}) is None
+
+
 def test_render_brief_honors_llm_briefing_when_present(monkeypatch, sample_checkpoint, capsys):
     # When DAIMON_LLM_BRIEFING is opted in, the CLI brief must surface the LLM
     # narrative (same source of truth as the hermes hook), not the deterministic text.

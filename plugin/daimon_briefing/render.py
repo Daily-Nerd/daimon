@@ -526,11 +526,46 @@ def render_configure(st: dict) -> None:
         _plain_configure(st)
 
 
+def _command_binary_warning(st: dict) -> str | None:
+    """#747 half two: the PRIMARY command's binary can be missing too — the
+    doctor warns and names it; ready semantics stay untouched in this slice.
+    A missing primary implies an explicit DAIMON_LLM_COMMAND: the claude-cli
+    preset only resolves when its binary is on PATH."""
+    missing = st.get("command_missing_binary")
+    if not missing:
+        return None
+    return (f"⚠ command binary not found: {missing} — the configured backend "
+            f"({st.get('command')}) cannot run; fix DAIMON_LLM_COMMAND")
+
+
+def _fallback_binary_warning(st: dict) -> str | None:
+    """#747: the doctor line for a rescue whose binary does not exist — the
+    posture already refuses to read "covered", but only this view can NAME the
+    binary (field case: DAIMON_LLM_COMMAND_FALLBACK=1). The fix advice names
+    the knob the rescue actually resolved from: the #475 legacy shim reads
+    DAIMON_LLM_COMMAND, not the fallback variable."""
+    missing = st.get("fallback_missing_binary")
+    if not missing:
+        return None
+    knob = ("DAIMON_LLM_COMMAND"
+            if st.get("fallback_source") == "legacy-command"
+            else "DAIMON_LLM_COMMAND_FALLBACK")
+    return (f"⚠ fallback binary not found: {missing} — the configured rescue "
+            f"({st.get('fallback_command')}) cannot run; fix {knob}")
+
+
+def _configure_warnings(st: dict) -> list:
+    return [w for w in (_command_binary_warning(st),
+                        _fallback_binary_warning(st)) if w]
+
+
 def _plain_configure(st: dict) -> None:
     mark = "✓" if st["ready"] else "✗"
     state = "ready" if st["ready"] else "not ready"
     print(f"{mark} {state} — {_explain(st)}")
     print(f"  env file: {st['env_file']}")
+    for warning in _configure_warnings(st):
+        print(f"  {warning}")
 
 
 def _rich_configure(st: dict) -> None:
@@ -541,6 +576,8 @@ def _rich_configure(st: dict) -> None:
     style = "green" if st["ready"] else "red"
     state = "ready" if st["ready"] else "not ready"
     body = f"[{style}]{state}[/{style}] — {_explain(st)}\nenv file: [dim]{st['env_file']}[/dim]"
+    for warning in _configure_warnings(st):
+        body += f"\n[yellow]{warning}[/yellow]"
     console.print(Panel(body, title="daimon configure", border_style=style, title_align="left"))
 
 

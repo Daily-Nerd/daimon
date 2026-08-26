@@ -2065,9 +2065,35 @@ def _run_backend_test() -> int:
     return 0
 
 
+def _configure_write_flags(args) -> list:
+    """The value flags of a non-interactive configure write, as (name, value)
+    pairs — one list so the #749 --test guard, the no---backend guard, and the
+    cross-backend warning can never disagree about what counts as a write flag."""
+    return [(name, value) for name, value in (
+        ("--api-key", args.api_key),
+        ("--model", args.model),
+        ("--base-url", args.base_url),
+        ("--command", args.command),
+        ("--output", args.output),
+        ("--input", args.input),
+    ) if value]
+
+
+def _configure_wizard_flags(args) -> list:
+    """Flags consumed ONLY by the --init wizard, as (name, value) pairs — same
+    shared-list pattern as _configure_write_flags, so the --test guard and the
+    ignored-without---init warning can never drift (#749)."""
+    return [(name, value) for name, value in (
+        ("--timeout", getattr(args, "timeout", None)),
+        ("--author", getattr(args, "author", None)),
+        ("--team-remote", getattr(args, "team_remote", None)),
+    ) if value]
+
+
 def _configure_flag_updates(args) -> dict:
     """Backend flags -> env updates (the non-interactive write path)."""
     updates = {"DAIMON_LLM_BACKEND": args.backend}
+    litellm_flags = ("--api-key", "--model", "--base-url")
     if args.backend == "litellm":
         if args.api_key:
             updates["DAIMON_LLM_API_KEY"] = args.api_key
@@ -2075,6 +2101,7 @@ def _configure_flag_updates(args) -> dict:
             updates["DAIMON_LLM_MODEL"] = args.model
         if args.base_url:
             updates["DAIMON_LLM_BASE_URL"] = args.base_url
+        applies = litellm_flags
     elif args.backend == "command":
         if args.command:
             updates["DAIMON_LLM_COMMAND"] = args.command
@@ -2082,7 +2109,16 @@ def _configure_flag_updates(args) -> dict:
             updates["DAIMON_LLM_COMMAND_OUTPUT"] = args.output
         if args.input:
             updates["DAIMON_LLM_COMMAND_INPUT"] = args.input
-    # claude-cli: just pin the backend, no credentials needed.
+        applies = ("--command", "--output", "--input")
+    else:
+        # claude-cli: just pin the backend, no credentials needed.
+        applies = ()
+    # #749(c): a flag belonging to another backend was dropped without a word,
+    # so `--backend command --model x` looked like it configured a model.
+    for name, _ in _configure_write_flags(args):
+        if name not in applies:
+            print(f"warning: {name} ignored for backend {args.backend}",
+                  file=sys.stderr)
     return updates
 
 
@@ -2210,8 +2246,34 @@ def _cmd_configure(args) -> int:
     """
     if getattr(args, "init", False):
         return _configure_wizard(args)
+    wizard_flags = _configure_wizard_flags(args)
     if getattr(args, "test", False):
+        # #749(b): --test used to short-circuit BEFORE the write branch —
+        # `--backend litellm --model x --test` tested the OLD config and
+        # silently discarded the write flags. Wizard-only flags (--timeout/
+        # --author/--team-remote) would drop the same way. Refuse both.
+        other_flags = ([("--backend", args.backend)] if args.backend else []) \
+            + _configure_write_flags(args) + wizard_flags
+        if other_flags:
+            names = ", ".join(name for name, _ in other_flags)
+            print(f"error: --test cannot be combined with other flags "
+                  f"({names}) — apply them first (write flags via --backend, "
+                  "wizard flags via --init), then run `daimon configure "
+                  "--test` against the new config.",
+                  file=sys.stderr)
+            return 2
         return _run_backend_test()
+    if _configure_write_flags(args) and not args.backend:
+        # #749: the third silent-drop door — a value flag without --backend
+        # fell through every branch below untouched.
+        names = ", ".join(name for name, _ in _configure_write_flags(args))
+        print(f"error: value flags ({names}) require --backend "
+              "{litellm,command,claude-cli}", file=sys.stderr)
+        return 2
+    for name, _ in wizard_flags:
+        # Consumed only by the --init wizard; anywhere else it would drop
+        # silently (#749).
+        print(f"warning: {name} ignored without --init", file=sys.stderr)
 
     st = configure.status()
     render.render_configure(st)
@@ -2219,7 +2281,15 @@ def _cmd_configure(args) -> int:
     if args.backend:
         path = configure.write_env(_configure_flag_updates(args))
         render.render_configure_lines([f"wrote {path}"])
-        render.render_configure(configure.status())  # reprint the new resolved state
+        st = configure.status()
+        render.render_configure(st)  # reprint the new resolved state
+        if not st["ready"]:
+            # #749(a): a write that lands not-ready must fail loud — scripts
+            # read the rc, not the panel. The no-flag doctor path above keeps
+            # returning 0; only the WRITE claims an outcome.
+            print("not ready after write — see the doctor line above",
+                  file=sys.stderr)
+            return 1
         return 0
 
     if st["ready"]:

@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (amendments, briefing, capture, config, harvest, llm, recall,
-               serializer, store, transcript)
+from . import (amendments, briefing, capture, config, harvest, ledger, llm,
+               recall, serializer, store, transcript)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -91,7 +91,23 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 )
                 return
         messages = transcript.from_session(session_id)
-        if not messages or len(messages) < config.min_messages():
+        if not messages:
+            # scar 0045: 0 parsed messages is the host-format-drift signature,
+            # never a short session — the official skip line would legitimize
+            # the loss as a policy outcome. Bare return, no skip record.
+            return
+        # #750: the SAME non-tool count serialize_strict gates on — raw len()
+        # here let a tool-heavy transcript pass this door only to be refused
+        # inside the pipeline. And a genuine skip is RECORDED, the way the CLI
+        # door records its (cli.__init__ TooShortError branch): a bare return
+        # left the session invisible to `daimon stats`. n == 0 stays scar-0045
+        # territory (rows parsed, zero conversation) — no skip line either.
+        n = serializer.conversation_message_count(messages)
+        if n < config.min_messages():
+            if n >= 1:
+                ledger._append_serialize_log(
+                    f"skipped serialize for {session_id}: transcript too short "
+                    f"({n} < {config.min_messages()} messages)")
             return
         root = config.resolve_project_root(config.project_dir())
         try:
@@ -114,6 +130,9 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 transcript_sha=transcript_sha, capture_host=platform,
             )
         except serializer.TooShortError:
+            # Unreachable while both doors share conversation_message_count
+            # (#750); kept defensive. No ledger append here — a drift could
+            # carry n == 0, and scar 0045 forbids recording that as a skip.
             log.info("daimon: no checkpoint produced for session %s (skip)", session_id)
             return
         if out is None:

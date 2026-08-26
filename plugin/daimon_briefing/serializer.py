@@ -2171,6 +2171,18 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
             pass
 
 
+def conversation_message_count(messages) -> int:
+    """Non-tool rows — THE too-short count, for BOTH capture doors (#750).
+
+    #359: tool rows are evidence, not conversation — they never count toward
+    the too-short gate, so surfacing them cannot let a two-turn session sneak
+    past it. hooks.on_session_end gated on raw len() while serialize_strict
+    counted this way, so a tool-heavy transcript passed one door and was
+    refused by the other."""
+    return sum(1 for m in messages or []
+               if not (isinstance(m, dict) and m.get("tool_result")))
+
+
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                      escalate=False, source_ref=None, transcript_hash=None,
                      now=None) -> dict:
@@ -2194,11 +2206,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     """
     if chat is None:
         chat = llm.chat
-    # #359: tool rows are evidence, not conversation — they never count
-    # toward the too-short gate, so surfacing them cannot let a two-turn
-    # session sneak past it.
-    n = sum(1 for m in messages or []
-            if not (isinstance(m, dict) and m.get("tool_result")))
+    n = conversation_message_count(messages)
     if n < config.min_messages():
         raise TooShortError(
             f"transcript too short ({n} < {config.min_messages()} messages)"

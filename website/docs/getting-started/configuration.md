@@ -138,14 +138,18 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 
 Serialization needs an LLM endpoint. `daimon configure` is the intended way to
 set these. The URL, key, and model each fall back to a `LITELLM_*` variable if
-the `DAIMON_*` form is unset.
+the `DAIMON_*` form is unset. The `litellm` backend needs **both**
+`DAIMON_LLM_MODEL` and `DAIMON_LLM_API_KEY`; while either is missing,
+`daimon configure` reports `backend: litellm — missing: ...` naming exactly
+what is absent — that line means the config is incomplete, not that the
+endpoint is down.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_LLM_BACKEND` | `auto` | Transport: `auto` (litellm if credentials exist, else a named command CLI if one resolves), `litellm`, `command`, or `claude-cli`. `claude-cli` is the zero-config option: it runs a `claude` found on PATH with a built-in preset and needs nothing else set. `command` requires `DAIMON_LLM_COMMAND`. |
 | `DAIMON_LLM_BASE_URL` | `http://localhost:4000` | OpenAI-compatible endpoint URL (trailing slash trimmed). Falls back to `LITELLM_BASE_URL`. |
-| `DAIMON_LLM_API_KEY` | unset | API key for the endpoint. Falls back to `LITELLM_API_KEY`. |
-| `DAIMON_LLM_MODEL` | unset | Model name to send. Falls back to `LITELLM_MODEL`. |
+| `DAIMON_LLM_API_KEY` | unset | API key for the endpoint. **Required for the `litellm` backend.** Falls back to `LITELLM_API_KEY`. |
+| `DAIMON_LLM_MODEL` | unset | Model name to send. **Required for the `litellm` backend.** Falls back to `LITELLM_MODEL`. |
 | `DAIMON_LLM_TEMPERATURE` | `0.0` | Sampling temperature for every chat call. `0.0` for deterministic extraction; some upstreams reject anything but a fixed value. |
 | `DAIMON_LLM_FALLBACK` | on | When the primary backend fails, auto-fall-back to the rescue command (`DAIMON_LLM_COMMAND_FALLBACK`). Applies to both a litellm and a `command` primary. Set to `0` to disable. |
 | `DAIMON_FALLBACK_MIN_SECONDS` | `DAIMON_TIMEOUT` | Minimum budget the rescue command is guaranteed on entry. The primary may have drained the shared serialize deadline retrying the very failure the rescue exists to fix, which would kill the rescue on arrival; a healthy remaining budget is never shrunk. |
