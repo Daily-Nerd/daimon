@@ -1337,18 +1337,29 @@ def _capture_window_lines(c: dict) -> list[str]:
     """#364: the rolling-window capture-rate line(s), shared verbatim by the
     plain and rich stats renderers. Second line only when the rolling error
     rate trips the reopen gate recorded on #364."""
-    from .ledger import _CAPTURE_ERROR_GATE_PCT
+    from .ledger import _CAPTURE_ERROR_GATE_PCT, _RESCUE_GATE_PCT
     w = c.get("window")
     if not w:
         return []
     rate = w["error_rate_pct"]
+    # #742: starved appears only when nonzero — a healthy window keeps the
+    # line shape every existing reader knows.
+    starved = w.get("starved", 0)
+    starved_part = f"starved {starved}  " if starved else ""
     lines = [f"last {w['days']}d: serialized {w['success']}  "
              f"errors {w['errors']}  rescued {w['fallback_serializes']}  "
+             f"{starved_part}"
              f"error rate: {'n/a' if rate is None else f'{rate}%'}"]
     if rate is not None and rate > _CAPTURE_ERROR_GATE_PCT:
         lines.append(f"⚠ capture error rate {rate}% (last {w['days']}d) "
                      f"exceeds the {_CAPTURE_ERROR_GATE_PCT}% gate — see "
                      "`daimon status` for failing serializes")
+    attempts = w.get("fallback_attempts", 0)
+    rescued = w.get("fallback_serializes", 0)
+    if attempts and rescued * 100 < attempts * _RESCUE_GATE_PCT:
+        lines.append(f"⚠ rescue succeeded {rescued} of {attempts} attempts "
+                     f"(last {w['days']}d) — below the {_RESCUE_GATE_PCT}% "
+                     "gate recorded on #742")
     return lines
 
 

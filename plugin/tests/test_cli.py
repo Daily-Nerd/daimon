@@ -5677,6 +5677,37 @@ def test_stats_capture_counts_fallback_attempts(tmp_log_dir):
     assert cap["errors"] == 1
 
 
+def test_stats_capture_counts_starved_before_backend(tmp_log_dir):
+    # #742: a deadline that dies before the command backend runs a single call
+    # is its own class — the budget starved the call, the backend never failed.
+    # It stays an error (capture should have worked) AND is tagged starved.
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "error: LLM call failed on merge level 1, group 1 of 1: ChatError: "
+        "LLM deadline exhausted before command backend "
+        "(transcript: /t/S1.jsonl) after 840s",
+        "error: LLM call failed on transcript: ChatError: unreachable "
+        "(transcript: /t/S2.jsonl) after 12s",
+    ])
+    cap = ledger._stats_capture()
+    assert cap["errors"] == 2
+    assert cap["starved"] == 1
+
+
+def test_stats_capture_window_counts_starved(tmp_log_dir):
+    from datetime import datetime, timezone
+    from daimon_briefing import ledger
+    _write_log(tmp_log_dir, [
+        "2026-07-16T01:00:00Z session-end: spawn serialize for S1",
+        "error: LLM call failed on chunk 1 of 2: ChatError: "
+        "LLM deadline exhausted before command backend "
+        "(transcript: /t/S1.jsonl) after 420s",
+    ])
+    cap = ledger._stats_capture(
+        now=datetime(2026, 7, 17, tzinfo=timezone.utc))
+    assert cap["window"]["starved"] == 1
+
+
 def test_cli_mcp_serve_registered_and_honors_kill_switch(monkeypatch):
     # #261: `daimon mcp serve` exists; disabled daimon refuses to serve but
     # exits 0 — it must never break a host's MCP startup.
@@ -6098,7 +6129,7 @@ def test_stats_json_includes_capture_window(tmp_checkpoint_dir, tmp_log_dir,
     data = json.loads(capsys.readouterr().out)
     assert set(data["capture"]["window"]) == {
         "days", "success", "skipped", "errors", "fallback_attempts",
-        "fallback_serializes", "error_rate_pct"}
+        "fallback_serializes", "starved", "error_rate_pct"}
 
 
 def test_stats_plain_renders_capture_window_line(tmp_checkpoint_dir,

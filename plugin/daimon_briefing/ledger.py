@@ -496,6 +496,8 @@ def _is_result_line(line: str) -> bool:
 # it means the foundation the whole product sits on is failing too often.
 _CAPTURE_WINDOW_DAYS = 14
 _CAPTURE_ERROR_GATE_PCT = 10
+# #742: rescue success below this share of windowed attempts reopens that issue.
+_RESCUE_GATE_PCT = 50
 
 
 def _stats_capture(now=None) -> dict:
@@ -535,9 +537,9 @@ def _stats_capture(now=None) -> dict:
     counts."""
     win = {"days": _CAPTURE_WINDOW_DAYS, "success": 0, "skipped": 0,
            "errors": 0, "fallback_attempts": 0, "fallback_serializes": 0,
-           "error_rate_pct": None}
+           "starved": 0, "error_rate_pct": None}
     out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
-           "fallback_attempts": 0,
+           "fallback_attempts": 0, "starved": 0,
            "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0,
            "window": win}
     try:
@@ -597,6 +599,13 @@ def _stats_capture(now=None) -> dict:
                 out["errors"] += 1
                 if in_window:
                     win["errors"] += 1
+                # #742: the budget died before the command backend ran a
+                # single call — an error still, but its own class: nothing
+                # about the backend failed, the shared deadline starved it.
+                if "deadline exhausted before command backend" in line:
+                    out["starved"] += 1
+                    if in_window:
+                        win["starved"] += 1
             continue
         hm = _STATS_HOST_RE.match(line)
         if hm:
