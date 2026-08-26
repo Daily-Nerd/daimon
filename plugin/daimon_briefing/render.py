@@ -153,6 +153,13 @@ def _print_handoff(handoff) -> None:
     print("")
 
 
+def render_handoff(handoff) -> None:
+    """Public seam for the baton block alone (#740): the no-checkpoint brief
+    path never reaches render_brief, but a baton left for a fresh project is
+    the only orientation that project has and must still lead the output."""
+    _print_handoff(handoff)
+
+
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                  project_dir=None, worldcheck_project=None) -> None:
     """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from

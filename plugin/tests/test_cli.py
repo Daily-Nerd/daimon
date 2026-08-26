@@ -4596,6 +4596,27 @@ def test_brief_fallback_header_only_by_default(
     assert "D-007" not in out
 
 
+def test_brief_fallback_header_still_renders_handoff_baton(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #740: a baton left for a checkpoint-less project is the ONLY orientation
+    # that project has, and the header-only early return dropped it while
+    # `daimon status` said "waiting baton". The baton must lead even the
+    # no-briefing note.
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    assert cli.main(["handoff", "Wire the gateway first. Beware rate limits.",
+                     "--project", "/repo/fresh"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["brief", "--project", "/repo/fresh"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "HANDOFF" in out
+    assert "Wire the gateway first" in out
+    assert "no briefing for this project yet" in out.lower()
+    # still header-only: the foreign checkpoint's body stays suppressed
+    assert "PR #6 state" not in out
+
+
 def test_brief_fallback_full_via_flag(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store

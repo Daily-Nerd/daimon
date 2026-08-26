@@ -674,6 +674,11 @@ def _cmd_brief(args) -> int:
         slug = str(checkpoint.get("project_slug") or "").strip() or "another project"
         epoch = store._created_epoch(checkpoint.get("created"))
         age = f"{_format_age(time.time() - epoch)} ago" if epoch else "age unknown"
+        # #740: a baton left for a checkpoint-less project is the only
+        # orientation it has — status says "waiting baton"; brief must not
+        # swallow it on the header-only path. Read-only: consumption stays
+        # serialize-count-based in store.active_handoff.
+        render.render_handoff(store.active_handoff(project))
         render.render_brief_note([
             "No briefing for this project yet — the first serialized session "
             "will create one.",
