@@ -6,9 +6,9 @@ registro append-only en modo sombra: las relaciones existen junto a tu memoria
 y nunca cambian por sí solas lo que hace cualquier otra superficie.
 
 La frontera de autoridad es todo el diseño: **las máquinas pueden proponer, y
-ninguna puede confirmar.** Un veredicto requiere una terminal interactiva, y no
+ninguna puede confirmar.** Una decisión requiere una terminal interactiva, y no
 existe flag que lo delegue a un agente. Los candidatos nunca se renderizan en
-la superficie de una entrada — la lista de adjudicación es el único lugar
+la superficie de una entrada — la lista de decisión es el único lugar
 donde son visibles. Una cadena que un lector ve en el panel History del visor
 es una que una persona avaló.
 
@@ -32,11 +32,11 @@ endpoint que simplemente envejeció fuera de la ventana de retención de
 checkpoints es distinto: se renderiza como `[unresolved]` y sigue siendo un
 registro válido.
 
-## Consejo de adjudicación
+## Consejos para decidir
 
 Leé la cadena completa antes de confirmar sus edges. Dos items pueden parecer
 relacionados de a pares porque comparten vocabulario del proyecto siendo
-pensamientos distintos — los veredictos honestos son "es el mismo pensamiento
+pensamientos distintos — las decisiones honestas son "es el mismo pensamiento
 evolucionando" (confirm), "esta edge está mal" (reject), o dejar el candidato
 en paz cuando no estás seguro. Un candidato sin confirmar es inerte; una
 confirmación equivocada no.

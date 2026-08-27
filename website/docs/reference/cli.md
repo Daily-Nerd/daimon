@@ -37,7 +37,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon refute list\|show\|search\|guard` | Read the negative-knowledge ledger without decay. `guard` emits active exact-anchor/subject matches only; it is advisory and never blocks a command. `search` returns both polarities, labelled; `list` and `guard` stay refutation-only. Add `--json` for deliberation integrations. |
 | `daimon ruling list\|show` | Read the standing rulings: human-ratified positive constraints on the same ledger, never decayed, never re-extracted. `show` includes pending agent proposals. |
 | `daimon serve` | Open the [read-only local viewer](viewer.md) on localhost — search as recall, per-entry "why" pages, refutations, diff, check strip, print view. Nothing writes. |
-| `daimon relations list\|show\|confirm\|reject\|retract` | The [typed relation ledger](relations.md): machines propose, only a person confirms, and verdicts need an interactive terminal. Candidates never render on an entry surface. |
+| `daimon relations list\|show\|confirm\|reject\|retract` | The [typed relation ledger](relations.md): machines propose, only a person confirms, and deciding needs an interactive terminal. Candidates never render on an entry surface. |
 
 The auditors share one exit contract, so a script can act on the answer:
 
@@ -68,15 +68,15 @@ The auditors share one exit contract, so a script can act on the answer:
 ## Cross-project requests
 
 A request lives in the sender's own project bucket; the recipient answers
-with verdict rows in its own bucket. The folded record is a read-time join —
+with decision rows in its own bucket. The folded record is a read-time join —
 nobody ever writes into another project's ledger.
 
 | command | what it does |
 | --- | --- |
 | `daimon request open --to <dir> --ask "…" --why "…"` | Ask another project for something. `--to` takes the recipient's project **directory**, not its slug (a real slug starts with `-`, which argparse reads as an option — `--to=<slug>` also works). Validated against `daimon projects`, with near-match suggestions on a typo; `--anyway` records the ask against a project that has never serialized on this machine. `--blocking` and `--to-human` are flags on the record. Either channel. |
 | `daimon request revise <id> [--ask] [--why] [--evidence]` | Answer a needs-info, or sharpen an open ask. Either channel; capped at 3 revisions per record lifetime — past the cap, open a new request with `--supersedes <id>` to keep the lineage visible. |
-| `daimon request accept\|reject\|needs-info <id> [--note]` | Land a verdict. Human-only — requires an interactive terminal. `reject` is final for that record; the sender supersedes with a new request rather than asking again. |
-| `daimon request suppress <id> [--note]` | Drop a request out of the recipient's own briefing panel. Human-only; the record stays in `list`/`inbox`, and any later verdict reverses it. |
+| `daimon request accept\|reject\|needs-info <id> [--note]` | Land a decision. Human-only — requires an interactive terminal. `reject` is final for that record; the sender supersedes with a new request rather than asking again. |
+| `daimon request suppress <id> [--note]` | Drop a request out of the recipient's own briefing panel. Human-only; the record stays in `list`/`inbox`, and any later decision reverses it. |
 | `daimon request done <id> --evidence "<quote>"` | Report the ask as satisfied. Either channel; an agent's claim renders `done (claimed, unverified)` until the recipient's next session-end byte-checks the evidence quote against its transcript. A human `done` renders plainly. |
 | `daimon request list` | This project's own sent requests, undecided first. `--json` for machines. |
 | `daimon request inbox` | Requests addressed TO this project, from every sender, undecided first — including ones the briefing panel dropped for attention. `--json` for machines. |
@@ -88,7 +88,7 @@ cards with a loud `+N more …` overflow line naming the command that shows
 the rest — never a silent drop. Suppression is recipient-side attention
 only: the sender's panel still reads a suppressed request as "surfaced,
 undecided". An unanswered request renders `stale` after 3 recipient
-sessions pass with no verdict; a decided one leaves the sender's panel
+sessions pass with no decision; a decided one leaves the sender's panel
 after 2 sender sessions. Attention decays — records never delete, and both
 stay fully visible in `list`/`inbox`.
 

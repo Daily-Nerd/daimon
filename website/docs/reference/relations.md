@@ -6,9 +6,9 @@ shadow mode: relations exist alongside your memory and never change what any
 other surface does on their own.
 
 The authority boundary is the whole design: **machines may propose, and none
-may confirm.** A verdict requires an interactive terminal, and there is no
+may confirm.** A decision requires an interactive terminal, and there is no
 flag that delegates it to an agent. Candidates never render on an entry's
-surface — the adjudication list is the one place they are visible. A chain a
+surface — the decision list is the one place they are visible. A chain a
 reader sees in the viewer's History panel is one a person vouched for.
 
 ## Verbs
@@ -30,10 +30,10 @@ is the same, and it names no id. An endpoint that merely aged out of the
 checkpoint retention window is different: it renders as `[unresolved]` and
 stays a valid record.
 
-## Adjudication advice
+## Advice for deciding
 
 Read a chain whole before confirming its edges. Two items can look related
 pairwise because they share project vocabulary while being different thoughts —
-the honest verdicts are "this is the same thought evolving" (confirm),
+the honest decisions are "this is the same thought evolving" (confirm),
 "this edge is wrong" (reject), or leaving the candidate alone when you are
 not sure. An unconfirmed candidate is inert; a wrong confirmation is not.

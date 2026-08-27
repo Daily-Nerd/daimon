@@ -37,7 +37,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon refute list\|show\|search\|guard` | Lee el ledger de conocimiento negativo sin decaimiento. `guard` emite solo matches activos por ancla exacta o frase de sujeto; es consultivo y nunca bloquea un comando. `search` devuelve ambas polaridades, etiquetadas; `list` y `guard` quedan solo para refutaciones. Sumá `--json` para integraciones de deliberación. |
 | `daimon ruling list\|show` | Lee las reglas vigentes: restricciones positivas ratificadas por humanos en el mismo ledger, que nunca decaen ni se re-extraen. `show` incluye propuestas de agentes pendientes. |
 | `daimon serve` | Abre el [visor local de solo lectura](viewer.md) en localhost — búsqueda como recall, páginas "why" por entrada, refutaciones, diff, check strip, vista de impresión. Nada escribe. |
-| `daimon relations list\|show\|confirm\|reject\|retract` | El [ledger de relaciones tipadas](relations.md): las máquinas proponen, solo una persona confirma, y los veredictos necesitan una terminal interactiva. Los candidatos nunca se renderizan en la superficie de una entrada. |
+| `daimon relations list\|show\|confirm\|reject\|retract` | El [ledger de relaciones tipadas](relations.md): las máquinas proponen, solo una persona confirma, y decidir necesita una terminal interactiva. Los candidatos nunca se renderizan en la superficie de una entrada. |
 
 Los auditores comparten un mismo contrato de salida, para que un script pueda
 actuar sobre la respuesta:
@@ -69,7 +69,7 @@ actuar sobre la respuesta:
 ## Solicitudes entre proyectos
 
 Una solicitud vive en el bucket del proyecto que la envía; el destinatario
-responde con filas de veredicto en su propio bucket. El registro combinado
+responde con filas de decisión en su propio bucket. El registro combinado
 es un join en tiempo de lectura — nadie escribe jamás en el ledger de otro
 proyecto.
 
@@ -77,8 +77,8 @@ proyecto.
 | --- | --- |
 | `daimon request open --to <dir> --ask "…" --why "…"` | Pide algo a otro proyecto. `--to` toma el **directorio** del proyecto destinatario, no su slug (un slug real empieza con `-`, que argparse lee como una opción — `--to=<slug>` también funciona). Se valida contra `daimon projects`, con sugerencias por parecido ante un typo; `--anyway` registra el pedido igual contra un proyecto que nunca serializó en esta máquina. `--blocking` y `--to-human` son flags del registro. Cualquier canal. |
 | `daimon request revise <id> [--ask] [--why] [--evidence]` | Responde un needs-info, o afina una solicitud abierta. Cualquier canal; tope de 3 revisiones por registro — superado el tope, se abre una nueva solicitud con `--supersedes <id>` para mantener visible el linaje. |
-| `daimon request accept\|reject\|needs-info <id> [--note]` | Registra un veredicto. Solo humano — requiere una terminal interactiva. `reject` es definitivo para ese registro; el remitente reemplaza con una nueva solicitud en vez de volver a pedir. |
-| `daimon request suppress <id> [--note]` | Saca una solicitud del panel de briefing propio del destinatario. Solo humano; el registro sigue en `list`/`inbox`, y cualquier veredicto posterior lo revierte. |
+| `daimon request accept\|reject\|needs-info <id> [--note]` | Registra una decisión. Solo humano — requiere una terminal interactiva. `reject` es definitivo para ese registro; el remitente reemplaza con una nueva solicitud en vez de volver a pedir. |
+| `daimon request suppress <id> [--note]` | Saca una solicitud del panel de briefing propio del destinatario. Solo humano; el registro sigue en `list`/`inbox`, y cualquier decisión posterior lo revierte. |
 | `daimon request done <id> --evidence "<cita>"` | Reporta la solicitud como satisfecha. Cualquier canal; el reclamo de un agente se renderiza como `done (claimed, unverified)` hasta que el próximo fin de sesión del destinatario verifica byte a byte la cita de evidencia contra su transcripción. Un `done` humano se renderiza sin más. |
 | `daimon request list` | Las solicitudes enviadas por este proyecto, primero las que siguen sin decidir. `--json` para máquinas. |
 | `daimon request inbox` | Solicitudes que otros proyectos dirigieron a este, de cualquier remitente, primero las que siguen sin decidir — incluidas las que el panel de briefing dejó fuera de la atención. `--json` para máquinas. |
@@ -91,7 +91,7 @@ Cada uno tiene un tope de 3 tarjetas con una línea de desborde bien visible
 silencioso. La supresión es solo atención del lado del destinatario: el
 panel del remitente sigue mostrando una solicitud suprimida como publicada
 y sin decidir. Una solicitud sin responder pasa a `stale` después de 3
-sesiones del destinatario sin veredicto; una ya decidida sale del panel del
+sesiones del destinatario sin decisión; una ya decidida sale del panel del
 remitente después de 2 sesiones del remitente. La atención decae — los
 registros nunca se eliminan, y ambos siguen totalmente visibles en
 `list`/`inbox`.
