@@ -65,9 +65,15 @@ VERSION = 1
 # the transcript. The format is frozen PER-PR, not for the whole arc (the
 # design's own implementation note): an older reader drops the unknown row
 # and keeps rendering "done (claimed, unverified)" — the safe direction.
+#
+# #756 widens it a second time, on the same terms, with `delivered`: the
+# live-delivery render stamped this ask into a running session. Same safe
+# direction on an older reader — the row drops, the record reads as
+# undelivered, and the worst case is a repeated nudge rather than a
+# swallowed ask. It is an attention row like `surfaced`, never a state.
 EVENTS = frozenset({
     "opened", "revised",
-    "surfaced", "verdict_surfaced",
+    "surfaced", "verdict_surfaced", "delivered",
     "needs_info", "accepted", "rejected", "done",
     "suppressed", "done_verified",
 })
@@ -107,6 +113,7 @@ _EVENT_RANK = {
     "revised": 1,
     "surfaced": 2,
     "verdict_surfaced": 2,
+    "delivered": 2,
     "suppressed": 3,
     "done": 4,
     "needs_info": 5,
@@ -354,6 +361,12 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # {revision epoch: earliest surfaced ts} — D1's write-once
                 # dedup key, consulted by the stamp PR 2 adds.
                 "surfaced": {},
+                # #756: {revision epoch: {session id: earliest delivered ts}}.
+                # One level deeper than `surfaced` on purpose — a brief
+                # renders an ask once per epoch, but live delivery owes it to
+                # every session running in that epoch, so the session id is
+                # part of the write-once key rather than a field beside it.
+                "delivered": {},
                 "verdict_surfaced_at": None,
                 "revision": 0,
                 "created_at": row.get("ts"),
@@ -385,6 +398,18 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             current["history_count"] += 1
             if current["verdict_surfaced_at"] is None:
                 current["verdict_surfaced_at"] = row.get("ts")
+            continue
+        if event == "delivered":
+            # Same attention-row posture as `surfaced`: counted in history,
+            # never moving `updated_at`. A row that lost its session id is
+            # inert rather than epoch-wide — deduping every session at once
+            # off one malformed row would silently starve the live sessions
+            # it never actually reached.
+            current["history_count"] += 1
+            session = str(row.get("session") or "").strip()
+            if session:
+                current["delivered"].setdefault(current["revision"], {}) \
+                    .setdefault(session, row.get("ts"))
             continue
         if event == "suppressed":
             current["history_count"] += 1
@@ -994,6 +1019,34 @@ def stamp_surfaced(request_id: str, project_dir=None) -> bool:
     duplicate is at worst a second row the fold's earliest-wins tie-break
     absorbs for free."""
     row = _stamp("surfaced", request_id, "mechanical")
+    return append(row, project_dir=project_dir)
+
+
+def needs_delivered_stamp(record: dict, session: str) -> bool:
+    """#756: whether THIS session has already been delivered this record's
+    CURRENT revision epoch. Write-once per (request id, epoch, session) — a
+    revise opens a new epoch, so every live session re-receives the
+    sharpened ask, which is the behaviour the design asked for."""
+    epoch = (record.get("delivered") or {}).get(record.get("revision")) or {}
+    return str(session or "").strip() not in epoch
+
+
+def stamp_delivered(request_id: str, session: str, project_dir=None) -> bool:
+    """Write a `delivered` row to THIS project's own bucket (the
+    RECIPIENT's), recording that the live-delivery surface rendered this ask
+    into `session`. Channel `mechanical`, same posture as `stamp_surfaced`:
+    nobody asserted anything, the render pipeline stamped what it did.
+    Write-once is the caller's job (`needs_delivered_stamp` first); the
+    fold's earliest-wins tie-break absorbs a concurrent duplicate for free.
+
+    The session id is required, not optional: it is half the dedup key, and
+    a stamp without it would read as "delivered" to sessions that never saw
+    the ask."""
+    session = str(session or "").strip()
+    if not session:
+        raise RequestError("delivered stamp requires a session id")
+    row = _stamp("delivered", request_id, "mechanical")
+    row["session"] = session
     return append(row, project_dir=project_dir)
 
 
