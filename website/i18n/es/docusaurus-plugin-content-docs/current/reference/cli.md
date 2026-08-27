@@ -66,7 +66,7 @@ actuar sobre la respuesta:
 | --- | --- |
 | `daimon forget <id o texto>` | Elimina el contenido de un ítem del disco y del índice, dejando una lápida de solo-hash. La eliminación sobrevive a re-serializar la transcripción original. |
 
-## Solicitudes entre proyectos
+## Coordinar
 
 Una solicitud vive en el bucket del proyecto que la envía; el destinatario
 responde con filas de decisión en su propio bucket. El registro combinado

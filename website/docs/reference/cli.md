@@ -65,7 +65,7 @@ The auditors share one exit contract, so a script can act on the answer:
 | --- | --- |
 | `daimon forget <id or text>` | Remove one item's content from disk and index, leaving a hash-only tombstone. The deletion survives re-serialization of the original transcript. |
 
-## Cross-project requests
+## Coordinate
 
 A request lives in the sender's own project bucket; the recipient answers
 with decision rows in its own bucket. The folded record is a read-time join —
