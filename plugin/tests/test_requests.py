@@ -906,9 +906,11 @@ def test_the_event_vocabulary_is_frozen():
     #694 PR 3 widens it ONCE, deliberately, with `done_verified` (the
     design's own implementation note 2: an older reader drops the unknown
     row and keeps rendering "done (claimed, unverified)" — the safe
-    direction)."""
+    direction). #756 widens it a second time, on the same terms, with
+    `delivered`: an older reader drops the row, reads the record as
+    undelivered, and at worst repeats a nudge."""
     assert set(requests.EVENTS) == {
-        "opened", "revised", "surfaced", "verdict_surfaced",
+        "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
         "needs_info", "accepted", "rejected", "done", "suppressed",
         "done_verified"}
 
@@ -1815,3 +1817,120 @@ def test_cli_request_inbox_renders_the_forgotten_supersedes_lineage(
     out = capsys.readouterr().out
     assert second in out
     assert f"{first} (record forgotten)" in out
+
+
+# ---- live delivery (#756, PR 1 — the ledger layer) -------------------------
+#
+# The design's invariant: the ledger stays store-and-forward and only the
+# render surface gains a second door. Delivery adds zero assertion power, so
+# `delivered` is an attention row exactly like `surfaced` — mechanical
+# channel, never moves the record's age, never touches its state. What it
+# does NOT share with `surfaced` is the dedup key: a brief renders a request
+# once per revision epoch, but delivery renders it once per epoch PER LIVE
+# SESSION, because two sessions running side by side each need the ask.
+
+
+def test_delivered_is_in_the_event_vocabulary():
+    """The second deliberate widening (after #694 PR 3's `done_verified`).
+    An older reader drops the unknown row and keeps rendering the request as
+    undelivered — a duplicate nudge, never a swallowed ask."""
+    assert "delivered" in requests.EVENTS
+
+
+def test_delivered_rows_fold_per_session_within_a_revision_epoch(project):
+    """Write-once per (request id, revision epoch, session id): two live
+    sessions each receive the ask, and a second stamp for a session already
+    delivered to is absorbed earliest-wins."""
+    q_id = _open(project)
+    rows = requests.events(project_dir=project)
+    base = rows[0]["order"]
+
+    def at(seconds, session):
+        row = requests._stamp("delivered", q_id, "mechanical",
+                              now_ns=base + seconds * 10 ** 9)
+        row["session"] = session
+        return row
+
+    rows.append(at(10, "S-alpha"))
+    rows.append(at(20, "S-alpha"))
+    rows.append(at(30, "S-beta"))
+    record = requests.fold(rows)[q_id]
+    assert set(record["delivered"]) == {0}
+    assert set(record["delivered"][0]) == {"S-alpha", "S-beta"}
+    # Earliest row for a session wins: the 20s stamp never overwrote the 10s.
+    assert record["delivered"][0]["S-alpha"] == requests._ts(base + 10 * 10 ** 9)
+
+
+def test_a_revise_reopens_delivery_for_every_session(project):
+    """D3: a revise clears the stamp so the sharpened ask re-delivers — the
+    same epoch mechanism `surfaced` uses, so a session that already saw the
+    old ask sees the new one."""
+    q_id = _open(project)
+    rows = requests.events(project_dir=project)
+    base = rows[0]["order"]
+
+    def at(seconds, session):
+        row = requests._stamp("delivered", q_id, "mechanical",
+                              now_ns=base + seconds * 10 ** 9)
+        row["session"] = session
+        return row
+
+    rows.append(at(10, "S-alpha"))
+    revised = requests._stamp("revised", q_id, "cli-agent",
+                              now_ns=base + 20 * 10 ** 9)
+    revised["ask"] = "the sharpened ask, after a revise"
+    rows.append(revised)
+    rows.append(at(30, "S-alpha"))
+    record = requests.fold(rows)[q_id]
+    assert set(record["delivered"]) == {0, 1}
+    assert record["delivered"][1]["S-alpha"] == requests._ts(base + 30 * 10 ** 9)
+
+
+def test_a_delivered_row_without_a_session_is_inert(project):
+    """The session id IS the dedup key. A row that lost it (hand-edited, or
+    written by a future path that forgot) must not silently dedup every
+    session at once — it folds away instead."""
+    q_id = _open(project)
+    rows = requests.events(project_dir=project)
+    rows.append(requests._stamp("delivered", q_id, "mechanical"))
+    assert requests.fold(rows)[q_id]["delivered"] == {}
+
+
+def test_delivered_never_moves_the_records_age(project):
+    """An attention row, like `surfaced`: a session that merely received the
+    nudge must not make an untouched ask sort as freshly updated."""
+    q_id = _open(project)
+    before = requests.get(q_id, project_dir=project)["updated_at"]
+    assert requests.stamp_delivered(q_id, "S-alpha", project_dir=project)
+    after = requests.get(q_id, project_dir=project)
+    assert after["updated_at"] == before
+    assert after["state"] == "open"
+
+
+def test_needs_delivered_stamp_is_per_session(project):
+    sender_slug = _seed_bucket("/p/req-sender-deliver")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_delivered_stamp(record, "S-alpha") is True
+    assert requests.stamp_delivered(q_id, "S-alpha", project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_delivered_stamp(record, "S-alpha") is False
+    # A second live session still owes the ask.
+    assert requests.needs_delivered_stamp(record, "S-beta") is True
+
+
+def test_stamp_delivered_carries_the_session_and_stays_mechanical(project):
+    q_id = _open(project)
+    assert requests.stamp_delivered(q_id, "S-alpha", project_dir=project)
+    row = [r for r in _rows(project) if r["event"] == "delivered"][0]
+    assert row["session"] == "S-alpha"
+    assert row["channel"] == "mechanical"
+    assert row["authority"] == requests.CHANNEL_AUTHORITY["mechanical"]
+
+
+def test_stamp_delivered_refuses_a_blank_session(project):
+    q_id = _open(project)
+    with pytest.raises(requests.RequestError):
+        requests.stamp_delivered(q_id, "   ", project_dir=project)
