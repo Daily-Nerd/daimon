@@ -83,7 +83,7 @@ nobody ever writes into another project's ledger.
 
 Two panels ride the same-project CLI `brief` only — never `--slug`, the
 global-pointer fallback, or MCP. The recipient sees "Requests waiting on
-you"; the sender sees "Verdicts on requests you sent". Each is capped at 3
+you"; the sender sees "Decisions on requests you sent". Each is capped at 3
 cards with a loud `+N more …` overflow line naming the command that shows
 the rest — never a silent drop. Suppression is recipient-side attention
 only: the sender's panel still reads a suppressed request as "surfaced,

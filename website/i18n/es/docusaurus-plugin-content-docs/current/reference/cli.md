@@ -85,7 +85,7 @@ proyecto.
 
 Dos paneles viajan solo con el `brief` de CLI del mismo proyecto — nunca con
 `--slug`, el fallback al puntero global, ni por MCP. El destinatario ve
-"Requests waiting on you"; el remitente ve "Verdicts on requests you sent".
+"Requests waiting on you"; el remitente ve "Decisions on requests you sent".
 Cada uno tiene un tope de 3 tarjetas con una línea de desborde bien visible
 (`+N more …`) que nombra el comando para ver el resto — nunca un descarte
 silencioso. La supresión es solo atención del lado del destinatario: el
