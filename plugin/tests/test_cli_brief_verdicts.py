@@ -40,6 +40,31 @@ def test_cli_brief_shows_the_verdict_panel_on_the_normal_path(
     assert "accepted" in out
 
 
+def test_the_two_request_panel_headings_render_verbatim(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """Both request-panel headings are registered public strings, frozen the
+    same way the four older briefing headings are.
+
+    Nothing pinned them before this: the panel tests assert the ASK text, and
+    the only line that named a heading was a negative assertion, so a heading
+    could have been renamed, mistyped, or dropped and the whole suite would
+    still pass. That is how the sender-side heading carried the wrong word
+    long enough to reach a reference page and its translation.
+
+    Rename either string and this fails — deliberately. The fix is to change
+    the registration first and this assertion second, never the reverse."""
+    from daimon_briefing import briefing
+    assert briefing._REQUEST_PANEL_HEADER == \
+        "Requests waiting on you (from other projects):"
+    assert briefing._VERDICT_PANEL_HEADER == "Decisions on requests you sent:"
+
+    sender = "/p/cbv-sender-headings"
+    _accepted_ask(sender, recipient_dir="/p/cbv-recipient-headings")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", sender)
+    assert cli.main(["brief"]) == 0
+    assert briefing._VERDICT_PANEL_HEADER in capsys.readouterr().out
+
+
 def test_cli_brief_stamps_verdict_surfaced_after_the_print(
         tmp_checkpoint_dir, monkeypatch, capsys):
     sender = "/p/cbv-sender-b"
@@ -129,7 +154,7 @@ def test_cli_brief_no_decided_requests_shows_no_verdict_panel(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", sender)
     rc = cli.main(["brief"])
     assert rc == 0
-    assert "Verdicts on requests you sent" not in capsys.readouterr().out
+    assert "Decisions on requests you sent" not in capsys.readouterr().out
 
 
 def test_cli_brief_shows_both_panels_together(tmp_checkpoint_dir,

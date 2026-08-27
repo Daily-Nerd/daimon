@@ -846,7 +846,7 @@ def request_panel_lines(project_dir=None) -> list[str]:
 
 # ---- #694 PR 3: the sender-side verdict panel -------------------------------
 
-_VERDICT_PANEL_HEADER = "Verdicts on requests you sent:"
+_VERDICT_PANEL_HEADER = "Decisions on requests you sent:"
 
 # Mirrors cli/request.py's _MARKS glyph-per-state — a separate small table
 # rather than an import, because briefing.py must not depend on the cli
