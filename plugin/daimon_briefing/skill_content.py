@@ -50,14 +50,14 @@ NOT_AGENT_FACING = {
         "says so in as many words"
     ),
     "relations": (
-        "human adjudication surface (#678 shadow mode): verdicts require an "
+        "human decision surface (#678 shadow mode): deciding requires an "
         "interactive terminal and agents cannot confirm, reject, or retract "
         "at all; candidates are behaviorally inert, so there is nothing an "
         "agent should do here yet"
     ),
     "anchor": (
         "user curation: which claims deserve code-drift watching is a person's "
-        "judgement about their own memory, not an agent's"
+        "decision about their own memory, not an agent's"
     ),
     "log": "human bookkeeping: a freeform timeline entry, zero-LLM",
     "serve": (

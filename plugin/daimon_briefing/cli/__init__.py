@@ -3075,7 +3075,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_relations = sub.add_parser(
         "relations",
-        help="inspect and adjudicate typed item relations (#678, shadow mode)",
+        help="inspect and decide typed item relations (#678, shadow mode)",
         epilog="Examples:\n"
                "  daimon relations list\n"
                "  daimon relations show rel-0123456789abcdef\n"
