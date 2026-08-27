@@ -18,7 +18,7 @@ daimon mcp serve   # bloquea y sirve JSON-RPC por stdio hasta EOF
 | `daimon_brief` | El último briefing del proyecto actual — render determinista, etiquetado por confianza, con resoluciones retenidas |
 | `daimon_projects` | Cada proyecto del que daimon tiene memoria: slug, sesión, rama, último tema |
 | `daimon_status` | Salud de captura: frescura del checkpoint, resultado del último serialize, fallas pendientes, alarmas — el mismo payload que `daimon status --json` |
-| `requests_inbox` | Solicitudes que otros proyectos dirigieron a este — el lado de lectura del [ledger de solicitudes entre proyectos](cli.md#solicitudes-entre-proyectos). `daimon_brief` nunca lleva este contenido; abrir, responder o decidir una solicitud es exclusivo de la CLI. |
+| `requests_inbox` | Solicitudes que otros proyectos dirigieron a este — el lado de lectura del [ledger de solicitudes entre proyectos](cli.md#coordinar). `daimon_brief` nunca lleva este contenido; abrir, responder o decidir una solicitud es exclusivo de la CLI. |
 
 Las cinco llevan `readOnlyHint`. Las fallas a nivel de herramienta
 (argumentos inválidos, FTS5 ausente) vuelven como resultados `isError` que el

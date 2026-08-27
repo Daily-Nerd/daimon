@@ -17,7 +17,7 @@ daimon mcp serve   # blocks, serves JSON-RPC on stdio until EOF
 | `daimon_brief` | The latest briefing for the current project — deterministic render, trust-tagged, resolutions withheld |
 | `daimon_projects` | Every project daimon has memory for: slug, session, branch, last topic |
 | `daimon_status` | Capture health: checkpoint freshness, last serialize result, outstanding failures, alarms — same payload as `daimon status --json` |
-| `requests_inbox` | Requests other projects have addressed to this one — the read-only pull side of the [cross-project request ledger](cli.md#cross-project-requests). `daimon_brief` never carries this content; opening, answering, or deciding a request is CLI-only. |
+| `requests_inbox` | Requests other projects have addressed to this one — the read-only pull side of the [cross-project request ledger](cli.md#coordinate). `daimon_brief` never carries this content; opening, answering, or deciding a request is CLI-only. |
 
 All five carry `readOnlyHint`. Tool-level failures (bad arguments, missing
 FTS5) come back as `isError` results the agent can read; they never kill the
