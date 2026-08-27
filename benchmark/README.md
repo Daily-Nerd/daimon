@@ -26,6 +26,14 @@ This is the part that matters more than any single figure:
   verifiability (provenance, trust tags, quote-checking). The honest framing
   publishes both the recall number and that trade — including the efficiency
   story (`avg_injected_tokens`), which is what the recall buys you at answer time.
+  Measured (`research/experiments/ungated-arm/`, replayed over the frozen
+  interim-54 stores): the trust gate's downgrades cost **zero** raw recall on
+  this instrument — reverting all 726 downgraded labels (2.9% of indexed items)
+  leaves every ranking identical, because downgrades rewrite trust labels, not
+  the indexed text. The trade is paid in metadata honesty, not recall; what
+  recall gap remains is ranking and content selection on accepted sessions.
+  Unmeasured there, stated plainly: whether a lenient serializer would accept
+  or phrase sessions differently (that arm needs LLM runs).
 
 ## What is measured
 
