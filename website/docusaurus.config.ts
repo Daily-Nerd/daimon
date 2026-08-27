@@ -26,6 +26,11 @@ const config: Config = {
   projectName: 'daimon', // Usually your repo name.
 
   onBrokenLinks: 'throw',
+  // A link to a heading that no longer exists resolves to the page and
+  // silently drops the reader at the top, so the default 'warn' is one
+  // line in a build log nobody reads. #767 orphaned two such links by
+  // renaming one heading; the diff caught them, the build did not.
+  onBrokenAnchors: 'throw',
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
