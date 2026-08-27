@@ -1342,3 +1342,76 @@ def test_windsurf_probe_hunt_finds_id_in_arbitrary_files(tmp_path):
     assert "conv.leveldb-log" in report
     assert "hola" in report          # context head around the match
     assert "noise.txt" not in report
+
+
+# ---- live request delivery on the same hook (#756) ------------------------
+#
+# Delivery rides the UserPromptSubmit hook that already exists rather than a
+# second hook entry. A second entry would spawn a second interpreter on every
+# prompt for every user (~36ms measured) to serve a feature that ships OFF,
+# so the flag is read in-process and the ledger is only reached when it is on.
+
+
+def _seed_addressed_request(cwd):
+    """One undecided ask addressed to `cwd`'s project, from another bucket."""
+    from daimon_briefing import requests, store as _store
+    store.write_checkpoint(
+        "S-sender-seed",
+        {"session_id": "S-sender-seed", "created": "2026-06-20T00:00:00Z",
+         "working_context": {"recent_decisions": [
+             {"text": "x", "trust": "inferred"}]}},
+        project_dir="/Users/x/projSender")
+    return requests.open_request(
+        to=_store.project_slug(cwd),
+        ask="confirm the delivery stamp lands before Friday",
+        why="the sender is blocked on it", channel="cli-agent",
+        project_dir="/Users/x/projSender")
+
+
+def test_prompt_hook_does_not_deliver_while_the_flag_is_off(
+        tmp_checkpoint_dir, tmp_path):
+    cwd = "/Users/x/projDeliver"
+    q_id = _seed_addressed_request(cwd)
+    proc = _run(PROMPT_HOOK, {"cwd": cwd, "session_id": "S-now",
+                              "prompt": "what should I look at next?"},
+                tmp_path)
+    assert proc.returncode == 0
+    assert q_id not in proc.stdout
+
+
+def test_prompt_hook_delivers_an_addressed_request_when_enabled(
+        tmp_checkpoint_dir, tmp_path):
+    cwd = "/Users/x/projDeliver"
+    q_id = _seed_addressed_request(cwd)
+    proc = _run(PROMPT_HOOK, {"cwd": cwd, "session_id": "S-now",
+                              "prompt": "what should I look at next?"},
+                tmp_path, extra_env={"DAIMON_LIVE_DELIVERY": "1"})
+    assert proc.returncode == 0
+    assert q_id in proc.stdout
+    assert "confirm the delivery stamp lands before Friday" in proc.stdout
+
+
+def test_prompt_hook_delivers_even_on_a_slash_command(
+        tmp_checkpoint_dir, tmp_path):
+    """The recall gate skips slash commands because a host directive is
+    nobody asking for prior work. An ask addressed to this project is owed
+    regardless of what the user typed, so delivery does not share that gate."""
+    cwd = "/Users/x/projDeliver"
+    q_id = _seed_addressed_request(cwd)
+    proc = _run(PROMPT_HOOK, {"cwd": cwd, "session_id": "S-now",
+                              "prompt": "/status"},
+                tmp_path, extra_env={"DAIMON_LIVE_DELIVERY": "1"})
+    assert proc.returncode == 0
+    assert q_id in proc.stdout
+    assert "daimon recall:" not in proc.stdout
+
+
+def test_prompt_hook_delivers_once_per_session(tmp_checkpoint_dir, tmp_path):
+    cwd = "/Users/x/projDeliver"
+    q_id = _seed_addressed_request(cwd)
+    env = {"DAIMON_LIVE_DELIVERY": "1"}
+    payload = {"cwd": cwd, "session_id": "S-now", "prompt": "anything new?"}
+    first = _run(PROMPT_HOOK, payload, tmp_path, extra_env=env)
+    assert q_id in first.stdout
+    second = _run(PROMPT_HOOK, payload, tmp_path, extra_env=env)
+    assert second.returncode == 0 and q_id not in second.stdout
