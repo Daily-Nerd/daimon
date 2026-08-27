@@ -639,3 +639,15 @@ def test_llm_stream_default_on_with_opt_out(monkeypatch):
     assert config.llm_stream() is True
     monkeypatch.setenv("DAIMON_LLM_STREAM", "0")
     assert config.llm_stream() is False
+
+
+def test_live_delivery_defaults_off(monkeypatch):
+    """#756: briefing-only is the default posture. An always-on consumer
+    turns delivery on deliberately; every short session is unaffected."""
+    monkeypatch.delenv("DAIMON_LIVE_DELIVERY", raising=False)
+    assert config.live_delivery_enabled() is False
+
+
+def test_live_delivery_flag_reads_the_env(monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    assert config.live_delivery_enabled() is True

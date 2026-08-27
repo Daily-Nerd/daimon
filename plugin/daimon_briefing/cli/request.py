@@ -18,7 +18,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import render, requests, store
+from .. import config, render, requests, store
 
 # Verdicts land under their own verb names; the ledger's event vocabulary
 # spells one of them with an underscore.
@@ -139,6 +139,58 @@ def _cmd_request_inbox(args) -> int:
         return 0
     render.render_ledger_records(
         [_inbox_lines(row, project_dir=project) for row in rows])
+    return 0
+
+
+def _inject_lines(record: dict) -> list[str]:
+    """One delivered ask, compressed to what decides it. Deliberately
+    thinner than `_inbox_lines`: this lands mid-session on the agent's
+    context budget, not on a surface someone opened to read."""
+    lines = [f"daimon request: {record['request_id']} from "
+             f"{record.get('from_label') or '?'}"
+             + (" (for a human)" if record.get("to_human") else "")
+             + (" [blocking: the sender is waiting]"
+                if record.get("blocking") else "")]
+    lines.append(f"  Ask: {record.get('ask', '')}")
+    if record.get("why"):
+        lines.append(f"  Why: {record['why']}")
+    return lines
+
+
+def _cmd_request_inject(args) -> int:
+    """Print the undecided asks this session has not been shown, or nothing.
+
+    rc 0 ALWAYS. This sits on the user's per-prompt critical path, exactly
+    like `recall-inject`, and a nudge is never worth blocking a prompt on —
+    every failure below is silent by design.
+
+    The stamp is written AFTER the render, the same ordering the brief's
+    `surfaced` stamp uses: a crash between printing and stamping re-delivers
+    next turn (a duplicate nudge) rather than recording a delivery that
+    never reached anyone."""
+    if not config.live_delivery_enabled():
+        return 0
+    session = str(getattr(args, "session", None) or "").strip()
+    if not session:
+        return 0
+    _cli._note_usage("request-inject")
+    try:
+        project = _cli._resolve_project(args.project)
+        rows = requests.deliverable(session, project_dir=project)
+        if not rows:
+            return 0
+        out = []
+        for record in rows:
+            out.extend(_inject_lines(record))
+        # The verbs that decide are human-only (D8); the line names the
+        # surface that lists them rather than a verb the agent cannot run.
+        out.append("Undecided. Full records: `daimon request inbox`")
+        print("\n".join(out))
+        for record in rows:
+            requests.stamp_delivered(record["request_id"], session,
+                                     project_dir=project)
+    except Exception:  # noqa: BLE001 — per-prompt path: never block a prompt
+        return 0
     return 0
 
 

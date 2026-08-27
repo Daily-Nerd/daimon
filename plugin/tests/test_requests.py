@@ -1934,3 +1934,180 @@ def test_stamp_delivered_refuses_a_blank_session(project):
     q_id = _open(project)
     with pytest.raises(requests.RequestError):
         requests.stamp_delivered(q_id, "   ", project_dir=project)
+
+
+# ---- live delivery (#756, PR 2 — selection and the hook backend) ----------
+#
+# What may be delivered is exactly what the brief panel would have rendered:
+# undecided, unsuppressed, not stale. The design's whole claim is that
+# delivery is a second door onto the same record, so the day the panel's
+# filter and delivery's filter disagree, one of them is showing an ask the
+# other decided was not worth attention.
+
+
+def test_deliverable_is_the_panel_filter_plus_this_session(project):
+    sender = _seed_bucket("/p/deliver-sender-a")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender)
+    rows = requests.deliverable("S-alpha", project_dir=project)
+    assert [r["request_id"] for r in rows] == [q_id]
+    # Delivered once, gone for THIS session, still owed to the next one.
+    assert requests.stamp_delivered(q_id, "S-alpha", project_dir=project)
+    assert requests.deliverable("S-alpha", project_dir=project) == []
+    assert [r["request_id"] for r in
+            requests.deliverable("S-beta", project_dir=project)] == [q_id]
+
+
+def test_deliverable_excludes_decided_suppressed_and_stale(project):
+    sender = _seed_bucket("/p/deliver-sender-b")
+
+    def ask(text):
+        return requests.open_request(to=store.project_slug(project), ask=text,
+                                     why=WHY, channel="cli-agent",
+                                     project_dir=sender)
+
+    decided = ask("the decided ask, already answered")
+    requests.accept(decided, channel="cli-tty", project_dir=project)
+    suppressed = ask("the suppressed ask, hidden from the panel")
+    requests.suppress(suppressed, channel="cli-tty", project_dir=project)
+    stale = ask("the stale ask, whose attention decayed")
+    requests.stamp_surfaced(stale, project_dir=project)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(project, f"S-deliver-stale-{n}", _iso(n + 1))
+    live = ask("the live ask, still owed a decision")
+    ids = {r["request_id"] for r in
+           requests.deliverable("S-alpha", project_dir=project)}
+    assert ids == {live}
+
+
+def test_deliverable_re_offers_a_revised_ask_to_a_delivered_session(project):
+    sender = _seed_bucket("/p/deliver-sender-c")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender)
+    assert requests.stamp_delivered(q_id, "S-alpha", project_dir=project)
+    assert requests.deliverable("S-alpha", project_dir=project) == []
+    requests.revise(q_id, channel="cli-agent", ask="the sharpened ask",
+                    project_dir=sender)
+    assert [r["request_id"] for r in
+            requests.deliverable("S-alpha", project_dir=project)] == [q_id]
+
+
+def test_deliverable_caps_at_the_render_budget(project):
+    sender = _seed_bucket("/p/deliver-sender-d")
+    for n in range(requests.RENDER_CAP + 2):
+        requests.open_request(to=store.project_slug(project),
+                              ask=f"ask number {n} about the release",
+                              why=WHY, channel="cli-agent", project_dir=sender)
+    assert len(requests.deliverable("S-alpha", project_dir=project)) \
+        == requests.RENDER_CAP
+
+
+def test_deliverable_never_offers_this_projects_own_outgoing_ask(project):
+    _open(project)
+    assert requests.deliverable("S-alpha", project_dir=project) == []
+
+
+def test_deliverable_without_a_session_offers_nothing(project):
+    """The session id is half the write-once key. With no session there is
+    nothing to dedup against, so delivering would re-nudge forever."""
+    sender = _seed_bucket("/p/deliver-sender-e")
+    requests.open_request(to=store.project_slug(project), ask=ASK, why=WHY,
+                          channel="cli-agent", project_dir=sender)
+    assert requests.deliverable("", project_dir=project) == []
+
+
+# ---- the hook backend -----------------------------------------------------
+
+
+def _inject(project, session="S-alpha"):
+    from daimon_briefing import cli
+    return cli.main(["request-inject", "--project", project,
+                     "--session", session])
+
+
+def test_request_inject_is_silent_while_the_flag_is_off(
+        project, capsys, monkeypatch):
+    """Default OFF: briefing-only is the correct posture for short sessions
+    and the noise budget errs toward silence."""
+    monkeypatch.delenv("DAIMON_LIVE_DELIVERY", raising=False)
+    sender = _seed_bucket("/p/deliver-sender-f")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender)
+    capsys.readouterr()
+    assert _inject(project) == 0
+    assert capsys.readouterr().out == ""
+    # Nothing stamped either: an undelivered ask must stay undelivered.
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_delivered_stamp(record, "S-alpha") is True
+
+
+def test_request_inject_renders_the_ask_and_stamps_it(
+        project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/deliver-sender-g")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender)
+    capsys.readouterr()
+    assert _inject(project) == 0
+    out = capsys.readouterr().out
+    assert q_id in out
+    assert ASK in out
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_delivered_stamp(record, "S-alpha") is False
+
+
+def test_request_inject_delivers_once_per_session(
+        project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/deliver-sender-h")
+    requests.open_request(to=store.project_slug(project), ask=ASK, why=WHY,
+                          channel="cli-agent", project_dir=sender)
+    capsys.readouterr()
+    assert _inject(project) == 0
+    assert capsys.readouterr().out.strip()
+    assert _inject(project) == 0
+    assert capsys.readouterr().out == ""
+    # A different live session still receives it.
+    assert _inject(project, session="S-beta") == 0
+    assert capsys.readouterr().out.strip()
+
+
+def test_request_inject_says_how_to_act_on_the_ask(
+        project, capsys, monkeypatch):
+    """The nudge is useless without the verb that answers it, and the verbs
+    that decide are human-only — the line must not imply the agent can."""
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/deliver-sender-i")
+    requests.open_request(to=store.project_slug(project), ask=ASK, why=WHY,
+                          channel="cli-agent", project_dir=sender)
+    capsys.readouterr()
+    assert _inject(project) == 0
+    assert "daimon request inbox" in capsys.readouterr().out
+
+
+def test_request_inject_returns_zero_when_the_ledger_is_unreadable(
+        project, capsys, monkeypatch):
+    """It sits on the user's per-prompt critical path: a broken ledger must
+    cost a nudge, never the prompt (fail-open, like recall-inject)."""
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    monkeypatch.setattr(requests, "deliverable",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError))
+    capsys.readouterr()
+    assert _inject(project) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_request_inject_needs_no_session_to_stay_quiet(
+        project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/deliver-sender-j")
+    requests.open_request(to=store.project_slug(project), ask=ASK, why=WHY,
+                          channel="cli-agent", project_dir=sender)
+    from daimon_briefing import cli
+    capsys.readouterr()
+    assert cli.main(["request-inject", "--project", project]) == 0
+    assert capsys.readouterr().out == ""
