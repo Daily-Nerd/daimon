@@ -953,6 +953,7 @@ from .amend import (  # noqa: E402
 from .request import (  # noqa: E402
     _cmd_request_done,  # noqa: F401 — re-exported for compat
     _cmd_request_inbox,  # noqa: F401 — re-exported for compat
+    _cmd_request_inject,  # noqa: F401 — re-exported for compat
     _cmd_request_list,  # noqa: F401 — re-exported for compat
     _cmd_request_open,  # noqa: F401 — re-exported for compat
     _cmd_request_revise,  # noqa: F401 — re-exported for compat
@@ -3146,6 +3147,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_inject.add_argument("--session", default=None,
                           help="current session id (excluded from matches; keys the cooldown)")
     p_inject.set_defaults(func=_cmd_recall_inject)
+
+    # #756: the second UserPromptSubmit backend, top-level beside
+    # `recall-inject` rather than under `request` — it is a hook backend, not
+    # one of the request object's verbs, and the command-catalogue guard
+    # (#650) only partitions the TOP-LEVEL surface, so a subcommand here
+    # would reach no skill and trip no test.
+    p_rq_inject = sub.add_parser(
+        "request-inject",
+        help="live-delivery backend for the UserPromptSubmit hook (#756): "
+             "prints undecided asks this session has not been shown, rc 0 always",
+    )
+    p_rq_inject.add_argument("--project", default=None,
+                             help="project dir for scoping (defaults to cwd detection)")
+    p_rq_inject.add_argument("--session", default=None,
+                             help="current session id (half the delivery write-once key)")
+    p_rq_inject.set_defaults(func=_cmd_request_inject)
 
     p_status = sub.add_parser(
         "status", help="checkpoint presence/age + last serialize outcome",

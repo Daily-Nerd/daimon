@@ -581,6 +581,17 @@ def worldcheck_enabled() -> bool:
     return _flag("DAIMON_WORLDCHECK")
 
 
+def live_delivery_enabled() -> bool:
+    """Opt-in (#756): deliver an undecided request into a LIVE session at its
+    next turn boundary, instead of making it wait for that session's next
+    SessionStart brief. Default OFF (#318 flag precedent): briefing-only is
+    the correct posture for short sessions, and the #125 noise budget errs
+    toward silence — an always-on consumer, whose sessions outlive the asks
+    addressed to them, turns this on deliberately. Flag off, the per-prompt
+    path never reads the request ledger at all."""
+    return _flag("DAIMON_LIVE_DELIVERY")
+
+
 def heal_escalation_enabled() -> bool:
     """Opt-in (#360): `daimon heal` escalates its re-serialize to
     perspective-diverse extraction — N passes over the transcript from

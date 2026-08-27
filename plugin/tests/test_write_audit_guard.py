@@ -550,6 +550,16 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # bucket the drive owns is both sender and recipient.
         run(["request", "inbox"], 0)
 
+    def r_request_inject():
+        # #756: the live-delivery hook backend. Self-addressed like
+        # `r_request_inbox` so the one bucket the drive owns is both sender
+        # and recipient. The flag is OFF by default and the command returns
+        # before touching the ledger, so the write this guard must observe —
+        # the `delivered` stamp — only happens with it explicitly on.
+        _open_request("ship the delivery stamp")
+        run(["request-inject", "--session", "S-live"], 0,
+            env=(("DAIMON_LIVE_DELIVERY", "1"),))
+
     def _seed_relation():
         # Proposals are not CLI-exposed (lab/serializer writers only), so the
         # verdict drives seed one candidate through the module seam — the
@@ -740,6 +750,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("handoff",): r_handoff,
         ("loops",): r_loops,
         ("recall-inject",): r_recall_inject,
+        ("request-inject",): r_request_inject,
         ("status",): r_status,
         ("verify-receipt",): r_verify_receipt,
         ("audit-quotes",): r_audit_quotes,

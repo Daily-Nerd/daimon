@@ -901,6 +901,18 @@ def inbox_listing(project_dir=None) -> list[dict]:
                        r.get("updated_at") or "", r["request_id"]))
 
 
+def _deserves_attention(record: dict, project_dir=None) -> bool:
+    """The one predicate deciding whether an addressed ask still deserves
+    AMBIENT attention: undecided, unsuppressed, not stale. Named once
+    because it now has two consumers — the brief panel (`inbox_renderable`)
+    and live delivery (`deliverable`, #756) — and the design's whole claim
+    is that delivery is a second door onto the record the brief would have
+    rendered. The day the two filters disagree, one of them is nudging
+    about an ask the other already decided was not worth attention."""
+    return (record["state"] in _SENDER_MOVABLE and not record["suppressed"]
+            and not is_stale(record, project_dir=project_dir))
+
+
 def inbox_renderable(project_dir=None) -> dict:
     """The recipient-side panel data: {"rows": [...], "overflow": N} —
     requests addressed to this project still awaiting a decision, newest
@@ -910,11 +922,33 @@ def inbox_renderable(project_dir=None) -> dict:
     allowed to have on the ambient panel — both stay fully visible in
     `inbox_listing`."""
     rows = [r for r in recipient_join(project_dir=project_dir).values()
-            if r["state"] in _SENDER_MOVABLE and not r["suppressed"]
-            and not is_stale(r, project_dir=project_dir)]
+            if _deserves_attention(r, project_dir=project_dir)]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+
+
+def deliverable(session: str, project_dir=None) -> list[dict]:
+    """#756: the asks addressed to this project that `session` has not yet
+    been delivered THIS revision epoch — the panel's own filter, narrowed by
+    what this one session has already seen.
+
+    Ordering and cap follow the panel deliberately (newest first, RENDER_CAP)
+    so a live nudge and the next brief agree about which asks matter. The
+    dedup filter runs BEFORE the cap: capping first would let three
+    already-delivered asks hide a fourth that nobody has seen.
+
+    No session id means no dedup key, and re-nudging every turn forever is
+    worse than not nudging — so it returns nothing rather than everything."""
+    session = str(session or "").strip()
+    if not session:
+        return []
+    rows = [r for r in recipient_join(project_dir=project_dir).values()
+            if _deserves_attention(r, project_dir=project_dir)
+            and needs_delivered_stamp(r, session)]
+    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+              reverse=True)
+    return rows[:RENDER_CAP]
 
 
 # ---- #694 PR 3: D3 — consumption-based expiry, derived, never written -----
