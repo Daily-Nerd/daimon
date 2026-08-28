@@ -2462,6 +2462,33 @@ def test_cli_anchor_attach_no_checkpoint_exits_nonzero(
     assert "no checkpoint" in capsys.readouterr().err.lower()
 
 
+def test_cli_anchor_attach_refuses_another_projects_checkpoint(
+    tmp_checkpoint_dir, capsys, monkeypatch, tmp_path, sample_checkpoint
+):
+    # #789: --attach PERSISTS what it reads, and read_latest's docstring says
+    # such callers must never see the global pointer (#94). With the fallback
+    # left on, a project with no checkpoint of its own re-wrote ANOTHER
+    # project's checkpoint into its own bucket, while the project that actually
+    # owns the item never received the anchor.
+    from daimon_briefing import store
+
+    other = (tmp_path / "other").resolve()
+    other.mkdir()
+    store.write_checkpoint("S-other", sample_checkpoint, project_dir=other)
+    proj = _anchor_proj(tmp_path, monkeypatch)  # no bucket of its own
+    capsys.readouterr()
+
+    rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "PINNING",
+                   "--project", str(proj)])
+    assert rc != 0
+    assert "no checkpoint" in capsys.readouterr().err.lower()
+    # No bucket minted for proj out of another project's content.
+    assert not (tmp_checkpoint_dir / store.project_slug(proj) / "latest.json").exists()
+    # And the owning project's checkpoint is untouched.
+    owner = store.read_latest(project_dir=other, fallback=False)
+    assert "anchored_to" not in owner["epistemic_snapshot"]["strong_beliefs"][0]
+
+
 def test_cli_anchor_attach_missing_session_id_exits_nonzero(
     tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path
 ):
