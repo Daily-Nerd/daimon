@@ -1403,6 +1403,32 @@ def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
         return None
 
 
+def read_latest_reportable(project_dir=None) -> dict | None:
+    """The latest checkpoint a surface may REPORT ON as this project's, or None.
+
+    #791: a surface scoped to one project must not answer with another project's
+    record, but refusing every fallback is too blunt. `read_latest`'s global
+    pointer holds three different things, and only one of them is foreign:
+
+    - the project's own checkpoint, which is always fine;
+    - an UN-ROUTED checkpoint, written before a project was known and carrying
+      no `project_slug` stamp, which belongs to nobody and stays readable so
+      pre-routing stores keep working;
+    - another project's checkpoint, which is the one to refuse.
+
+    Membership is decided by the payload's own `project_slug`, the same way
+    team fan-in decides it, rather than by which pointer the read came through.
+    """
+    checkpoint = read_latest(project_dir=project_dir)
+    if not isinstance(checkpoint, dict):
+        return None
+    slug = project_slug(project_dir)
+    stamped = str(checkpoint.get("project_slug") or "").strip()
+    if slug and stamped and stamped != slug:
+        return None
+    return checkpoint
+
+
 # ---- team memory (#111): opt-in shared mirror, derive-never-write shared state ----
 
 # Phase 1 has a single local remote-slug; Phase 3 (#113) adds synced remotes as

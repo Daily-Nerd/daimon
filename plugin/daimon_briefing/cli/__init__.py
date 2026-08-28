@@ -1770,7 +1770,10 @@ def _cmd_verify_receipt(args) -> int:
     session_id = getattr(args, "session_id", None)
     if not session_id:
         project = _resolve_project(args.project)
-        checkpoint = store.read_latest(project_dir=project)
+        # #791: the docstring above says the default target is THIS project's
+        # latest checkpoint, and the fallback let it be another project's. An
+        # un-routed checkpoint is still this project's to verify.
+        checkpoint = store.read_latest_reportable(project)
         if not isinstance(checkpoint, dict) or not checkpoint.get("session_id"):
             print("no checkpoint for this project yet — nothing to verify")
             return 2
