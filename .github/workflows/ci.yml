@@ -103,5 +103,11 @@ jobs:
       # Dogfood: the repo's own scar graph must always parse and lint clean.
       # A malformed scar silently never fires — this gate makes that class
       # of rot unmergeable.
+      #
+      # PINNED (#774): unpinned, `uvx` resolves the newest release at run
+      # time, so this gate's DEFINITION could change with no commit here — a
+      # new check lands as a red build on whoever opens the next PR, about
+      # rot their change did not introduce. Bump this deliberately, in its
+      # own PR, where new findings are the subject rather than a surprise.
       - name: scar lint
-        run: uvx --from scar-cli scar lint
+        run: uvx --from scar-cli==0.19.0 scar lint
