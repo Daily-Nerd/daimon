@@ -851,6 +851,23 @@ def _decide_age(waiting_since: str) -> str:
     return f"{hours // 24}d" if hours >= 24 else f"{hours}h"
 
 
+def _foreign_footer_lines(counts: dict) -> list:
+    """Slice 3 footer: how much waits on the human in every OTHER project,
+    counts only. Follows the shipped counts-by-project precedent
+    (`cli/__init__.py`'s zero-match `recall` retry) — render the number and
+    the owning slug, count-descending, and tell the operator how to act,
+    never the record itself.
+    """
+    if not counts:
+        return []
+    total = sum(counts.values())
+    lines = [f"{total} more waiting in other projects:"]
+    lines += [f"  {slug} ({n})" for slug, n in
+              sorted(counts.items(), key=lambda kv: -kv[1])]
+    lines.append("open that project to act on them")
+    return lines
+
+
 def _cmd_decide(args) -> int:
     """`decide` — everything waiting on a HUMAN, with the command that closes it.
 
@@ -863,7 +880,8 @@ def _cmd_decide(args) -> int:
     ask addressed here has its `opened` row in the SENDER's bucket, so it is
     read cross-bucket via `requests.recipient_join` (rendering your own mail,
     not scar 0055's violation). Other projects' OWN record text still arrives
-    as counts, then as text behind an explicit flag, because printing another
+    as counts (slice 3's footer, `pending.foreign_counts`), then as text
+    behind an explicit flag in a future slice, because printing another
     bucket's record text would copy it into THIS project's checkpoint where
     its owner's `forget` cannot reach it (scar 0055).
     """
@@ -872,13 +890,17 @@ def _cmd_decide(args) -> int:
     result = pending.queue(project_dir=project)
     rows = result.get("rows") or []
     suppressed = (result.get("excluded") or {}).get("suppressed") or 0
+    foreign = pending.foreign_counts(project_dir=project)
     if not rows:
         # "nothing waiting" would be a false claim while records sit
         # suppressed: the human set those aside, they did not go away.
-        render.render_ledger_lines(
-            ["nothing waiting on you in this project"] if not suppressed
-            else [f"nothing listed for you in this project "
-                  f"({suppressed} suppressed — daimon request inbox)"])
+        lines = (["nothing waiting on you in this project"] if not suppressed
+                  else [f"nothing listed for you in this project "
+                        f"({suppressed} suppressed — daimon request inbox)"])
+        # Same false-claim risk one level up: an empty LOCAL queue must not
+        # read as an empty queue everywhere.
+        lines += _foreign_footer_lines(foreign)
+        render.render_ledger_lines(lines)
         return 0
 
     render.render_ledger_lines([_DECIDE_HEADER])
@@ -904,6 +926,9 @@ def _cmd_decide(args) -> int:
         # claiming a completeness it does not have.
         render.render_ledger_lines(
             [f"  ({suppressed} suppressed — daimon request inbox)"])
+    footer = _foreign_footer_lines(foreign)
+    if footer:
+        render.render_ledger_lines(footer)
     return 0
 
 

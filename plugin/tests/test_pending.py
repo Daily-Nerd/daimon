@@ -258,3 +258,152 @@ def test_an_unreadable_request_ledger_does_not_empty_the_queue(project,
     assert _kinds(result) == ["ruling"]
     # The suppressed count is unknown rather than zero when its source failed.
     assert result["excluded"]["suppressed"] == 0
+
+
+# --- foreign counts (slice 3) -------------------------------------------------
+#
+# `pending.foreign_counts` answers a different question than `queue`: not
+# "what is waiting on me here" but "how much is waiting on the human in
+# EVERY OTHER project". Integers only — never records, ids, or text, because
+# printing a foreign bucket's plaintext into THIS project's checkpoint is
+# exactly what scar 0055 forbids. The observer in these tests is a THIRD
+# project, distinct from sender and recipient, so a count landing on the
+# right slug is never an accident of which bucket happened to be "project".
+
+
+def test_a_foreign_addressed_request_is_counted_for_its_recipient(project):
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask="please review the PR", why="ready to merge",
+        channel="cli-agent", project_dir="/p/A")
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts[b] == 1
+
+
+def test_this_projects_own_waiting_decisions_are_not_in_the_foreign_counts(
+        project):
+    requests.open_request(
+        to=store.project_slug(project), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+
+    counts = pending.foreign_counts(project_dir=project)
+
+    assert store.project_slug(project) not in counts
+
+
+def test_a_suppressed_foreign_request_is_not_counted(project):
+    b = store.project_slug("/p/B")
+    q_id = requests.open_request(
+        to=b, ask="please review", why="ready", channel="cli-agent",
+        project_dir="/p/A")
+    requests.suppress(q_id, channel="cli-tty", project_dir=b)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts.get(b, 0) == 0
+
+
+def test_a_decided_foreign_request_is_not_counted(project):
+    b = store.project_slug("/p/B")
+    q_id = requests.open_request(
+        to=b, ask="please review", why="ready", channel="cli-agent",
+        project_dir="/p/A")
+    requests.accept(q_id, channel="cli-tty", project_dir=b)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts.get(b, 0) == 0
+
+
+def test_a_rejected_foreign_request_is_not_counted(project):
+    b = store.project_slug("/p/B")
+    q_id = requests.open_request(
+        to=b, ask="please review", why="ready", channel="cli-agent",
+        project_dir="/p/A")
+    requests.reject(q_id, channel="cli-tty", project_dir=b)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts.get(b, 0) == 0
+
+
+def test_foreign_candidate_rulings_and_refutations_are_counted(project):
+    b = "/p/B"
+    refutations.assert_ruling(
+        subject="release", verdict="a standing rule", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir=b)
+    refutations.assert_refutation(
+        subject="idf recall", verdict="does not improve recall",
+        scope="repo", evidence=["measurement:n=50"], channel="cli-agent",
+        project_dir=b)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts[store.project_slug(b)] == 2
+
+
+def test_foreign_verified_amendments_are_counted(project):
+    b = "/p/B"
+    a_id = amendments.propose(
+        item_id="o-1234567890ab", change="progressed",
+        evidence="the PR merged this morning", channel="cli-agent",
+        project_dir=b)
+    amendments.verify(a_id, role="assistant", project_dir=b)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts[store.project_slug(b)] == 1
+
+
+def test_an_unverified_amendment_candidate_is_not_counted(project):
+    b = "/p/B"
+    amendments.propose(
+        item_id="o-1234567890ab", change="progressed",
+        evidence="the PR merged this morning", channel="cli-agent",
+        project_dir=b)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts.get(store.project_slug(b), 0) == 0
+
+
+def test_foreign_counts_returns_integers_only(project):
+    requests.open_request(
+        to=store.project_slug("/p/B"), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+    refutations.assert_ruling(
+        subject="release", verdict="a standing rule", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir="/p/B")
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts
+    assert all(isinstance(v, int) for v in counts.values())
+
+
+def test_an_unreadable_foreign_ledger_degrades_that_bucket_only(project,
+                                                                 monkeypatch):
+    """Fail-open per bucket, per lane — the same posture `queue` holds for
+    this project's own lanes. A foreign fleet scan that raised on one bad
+    bucket would be strictly worse than `queue`'s own degradation story."""
+    requests.open_request(
+        to=store.project_slug("/p/B"), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+    refutations.assert_ruling(
+        subject="release", verdict="a standing rule", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir="/p/D")
+
+    def boom(*_args, **_kwargs):
+        raise OSError("ledger unreadable")
+
+    monkeypatch.setattr(pending.amendments, "records", boom)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts[store.project_slug("/p/B")] == 1
+    assert counts[store.project_slug("/p/D")] == 1
+    # And the local queue this project owes is untouched by a foreign-lane
+    # failure.
+    assert pending.queue(project_dir=project)["rows"] == []

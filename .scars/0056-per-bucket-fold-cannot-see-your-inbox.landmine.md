@@ -1,22 +1,22 @@
 ---
-id: 0
+id: 56
 type: landmine
 title: A per-bucket requests fold reads your OUTGOING asks, never your inbox — an ask is stored in the sender's bucket
 severity: high
 confidence: 0.95
 created: 2026-08-28
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/pending.py
   - pattern: "requests\.records\("
 evidence:
   - commit: 8cdbede
-  - note: "daimon decide shipped listing 4 outgoing asks and omitting 2 asks addressed to this project, verified against real ledgers 2026-08-28"
-  - note: "requests.py:472 records() == fold(events(project_dir)) reads ONE file; requests.py:845 recipient_join() is the cross-bucket join and drops outgoing at :872-874"
+  - note: daimon decide shipped listing 4 outgoing asks and omitting 2 asks addressed to this project, verified against real ledgers 2026-08-28
+  - note: requests.py:472 records() == fold(events(project_dir)) reads ONE file; requests.py:845 recipient_join() is the cross-bucket join and drops outgoing at :872-874
 expires:
   condition: "requests grow a recipient-side index, or open_request dual-writes an addressed-to row into the recipient's bucket, so a per-bucket fold can see an inbox"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 `requests.records(project_dir=X)` is `fold(events(X))` (requests.py:472): it reads exactly
