@@ -126,3 +126,41 @@ def test_decide_queue_time_cost_stays_within_budget(tmp_checkpoint_dir,
     assert elapsed_ms <= _DECIDE_BUDGET_MS, (
         f"pending.queue cost {elapsed_ms:.2f}ms exceeds the "
         f"{_DECIDE_BUDGET_MS}ms budget over {N_BUCKETS} buckets")
+
+
+# #766 slice 3: `pending.foreign_counts` reads every bucket's requests ledger
+# in ONE fleet-wide pass (grouped by request_id, folded once per group) plus
+# one direct read of refutations.jsonl and amendments.jsonl per foreign
+# bucket — deliberately NOT `pending.queue(project_dir=foreign_slug)` called
+# once per foreign project, which would each pay `recipient_join`'s own
+# fleet scan and turn the whole thing O(N^2) (91.4ms measured that way over
+# 25 buckets against this same 150ms budget, and it only gets worse as the
+# fleet grows).
+#
+# Budget reasoning: measured on this machine at ~4-6ms for 50 buckets — see
+# the printed line this test emits; cheaper than the panel/decide numbers
+# above because most of the fleet has neither a requests, refutations, nor
+# amendments ledger for this test's foreign buckets, so each per-lane read
+# is a single `exists()`-and-return-empty rather than a parse. Same fleet as
+# the two measurements above (`_seed()`, 50 buckets), so 150ms keeps them
+# comparable rather than inventing a new number tuned to look good — tight
+# enough that a regression (e.g. a per-foreign-project `queue()` call
+# reintroducing the O(N^2) shape this function exists to avoid) would still
+# fail it well before the budget is reached.
+_FOREIGN_BUDGET_MS = 150.0
+
+
+def test_foreign_counts_time_cost_stays_within_budget(tmp_checkpoint_dir,
+                                                       capsys):
+    _seed()
+    start = time.perf_counter()
+    result = pending.foreign_counts(project_dir=RECIPIENT)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    assert result, "measurement is void if nothing waits elsewhere"
+    with capsys.disabled():
+        print(f"\n#766 slice 3 foreign-counts scan cost: {elapsed_ms:.2f}ms "
+             f"over {N_BUCKETS} buckets — budget {_FOREIGN_BUDGET_MS}ms")
+    assert elapsed_ms <= _FOREIGN_BUDGET_MS, (
+        f"pending.foreign_counts cost {elapsed_ms:.2f}ms exceeds the "
+        f"{_FOREIGN_BUDGET_MS}ms budget over {N_BUCKETS} buckets")

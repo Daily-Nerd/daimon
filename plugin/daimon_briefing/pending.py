@@ -16,15 +16,16 @@ checkpoint pointers rather than reads. A composer that stamped would make the
 person READING their own queue the mechanism that ages those asks out of the
 agent's panel — decay inverted into deletion.
 
-SCOPE, slice 1: the ruling/refutation and amendment lanes are this project's
-buckets only. Foreign projects contribute counts in slice 3 and text only
-behind an explicit `--all-projects` in slice 4. That split is not caution,
-it is scar 0055: the serializer captures tool_result payloads, so inside an
-agent session CLI stdout is checkpoint input. Printing another bucket's
-record text copies that plaintext into THIS project's checkpoint, where
-`forget` in the origin project can never reach it. Same doctrine `recall.py`
-already applies when it widens: counts by project, never content, because
-crossing projects stays user-invoked.
+SCOPE, slice 1: the ruling/refutation and amendment lanes render this
+project's own buckets only. Slice 3 (`foreign_counts`) widens that to every
+OTHER project too, but as INTEGERS ONLY — text stays behind an explicit
+`--all-projects` reserved for slice 4. That split is not caution, it is
+scar 0055: the serializer captures tool_result payloads, so inside an agent
+session CLI stdout is checkpoint input. Printing another bucket's record
+text copies that plaintext into THIS project's checkpoint, where `forget`
+in the origin project can never reach it. Same doctrine `recall.py` already
+applies when it widens: counts by project, never content, because crossing
+projects stays user-invoked.
 
 The REQUEST lane is the deliberate exception, and always has been: an ask
 addressed to this project has its `opened` row in the SENDER's bucket, so an
@@ -41,7 +42,7 @@ its outgoing asks to someone else) stays behind the explicit flag.
 
 from __future__ import annotations
 
-from . import amendments, refutations, requests, store
+from . import amendments, config, refutations, requests, store
 
 
 # Requests first: someone else is blocked on them. Then quote-verified
@@ -220,3 +221,144 @@ def queue(*, project_dir=None) -> dict:
         "rows": [row for row, _seq in pairs],
         "excluded": {"suppressed": suppressed},
     }
+
+
+# ---- slice 3: foreign counts -----------------------------------------------
+#
+# `queue` answers "what is waiting on me, HERE". `foreign_counts` answers a
+# different question: how much is waiting on the human in every OTHER
+# project — as INTEGERS ONLY. Scar 0055 governs this surface completely: the
+# serializer captures tool_result payloads, so printing a foreign bucket's
+# own record text into a `daimon decide` run inside THIS project copies that
+# plaintext into THIS project's checkpoint, where the origin's `forget` can
+# never reach it. So nothing below may return a record, an id, or text —
+# only a count per owning slug.
+
+
+def _strip_plaintext(row: dict) -> dict:
+    """Presence sentinel for every field `requests._PLAINTEXT_FIELDS` names:
+    `"x"` if the original held non-whitespace content, `""` otherwise. Every
+    other key passes through untouched. Applied at the READ boundary, before
+    folding, so a foreign bucket's ask/why/note/evidence/from_label never
+    travels through this project's process as real text.
+
+    A sentinel, not a dropped field: `requests.fold`'s read-boundary shape
+    check (requests.py:333) rejects an `opened` row whose `ask` is empty, so
+    dropping the field would silently undercount and disagree with what
+    `decide` shows inside the owning project.
+    """
+    out = dict(row)
+    for field in requests._PLAINTEXT_FIELDS:
+        if field in out:
+            out[field] = "x" if str(out.get(field) or "").strip() else ""
+    return out
+
+
+def _foreign_request_counts(slug: str) -> dict[str, int]:
+    """Every foreign project's waiting request count, in ONE fleet-wide pass.
+
+    A request's rows can span two buckets — the `opened` row in the
+    sender's, a verdict or suppression in the recipient's — so computing
+    this per foreign project via `queue`/`recipient_join` would each rescan
+    every bucket in the fleet: O(N^2). Here every bucket
+    (`requests._bucket_slugs()`) is read exactly once, rows are grouped by
+    `request_id` across buckets, and each group is folded once — reusing
+    `requests.fold` rather than a second counting state machine, so this
+    lane can never drift from the transitions `queue`'s own request lane
+    already trusts (suppression, rejection terminality, the human-only
+    verdict re-check).
+    """
+    by_id: dict[str, list] = {}
+    for bucket in requests._bucket_slugs():
+        try:
+            rows = requests.events(project_dir=bucket)
+        except Exception:
+            continue
+        for row in rows:
+            # `events` already filtered every row through `_REQUEST_ID_RE`
+            # (requests.py:285-288), so the id is present and well-formed
+            # here — no second guard, which would be unreachable.
+            rid = str(row.get("request_id") or "")
+            by_id.setdefault(rid, []).append(_strip_plaintext(row))
+    counts: dict[str, int] = {}
+    for rows in by_id.values():
+        try:
+            folded = requests.fold(rows)
+        except Exception:
+            continue
+        for record in folded.values():
+            to = str(record.get("to") or "")
+            if not to or to == slug:
+                continue  # this project's own inbox is `queue`'s, not ours
+            if record.get("state") not in requests._SENDER_MOVABLE:
+                continue
+            if record.get("suppressed"):
+                continue
+            counts[to] = counts.get(to, 0) + 1
+    return counts
+
+
+def _ledger_bucket_slugs() -> list[str]:
+    """Every project bucket directory under the checkpoint root.
+
+    Unlike the request lane, rulings/refutations and amendments are
+    genuinely single-bucket ledgers — a foreign bucket's own record lives
+    only in that bucket, never split across two. So every bucket has to be
+    checked directly rather than joined; a bucket with no refutations.jsonl
+    or amendments.jsonl yet simply reads back `{}` from `.records()`.
+    """
+    try:
+        return [child.name for child in
+                sorted(config.checkpoint_dir().iterdir()) if child.is_dir()]
+    except OSError:
+        return []
+
+
+def _foreign_ledger_counts(slug: str) -> dict[str, int]:
+    """Candidate rulings/refutations and verified amendments in every OTHER
+    bucket, read directly (single-bucket lanes) — fail-open per bucket, per
+    lane, matching `queue`'s own degradation posture. Only `state` survives
+    past the read: the record itself (subject, verdict, evidence text) is
+    dropped before this returns.
+    """
+    counts: dict[str, int] = {}
+    for bucket in _ledger_bucket_slugs():
+        if bucket == slug:
+            continue
+        try:
+            for record in refutations.records(project_dir=bucket).values():
+                if record.get("state") == "candidate":
+                    counts[bucket] = counts.get(bucket, 0) + 1
+        except Exception:
+            pass
+        try:
+            for record in amendments.records(project_dir=bucket).values():
+                if record.get("state") == "verified":
+                    counts[bucket] = counts.get(bucket, 0) + 1
+        except Exception:
+            pass
+    return counts
+
+
+def foreign_counts(*, project_dir=None) -> dict[str, int]:
+    """{"slug": waiting_count} for every OTHER project's decide queue —
+    integers only, never records, ids, or text. This project's own slug is
+    excluded; its own queue is `queue()` above.
+
+    Fail-open at both lane boundaries: an unreadable foreign bucket
+    degrades that bucket's contribution, never the whole count, and never
+    `queue`'s own local result.
+    """
+    slug = store.project_slug(project_dir)
+    counts: dict[str, int] = {}
+    try:
+        for foreign_slug, n in _foreign_request_counts(slug).items():
+            counts[foreign_slug] = counts.get(foreign_slug, 0) + n
+    except Exception:
+        pass
+    try:
+        for foreign_slug, n in _foreign_ledger_counts(slug).items():
+            counts[foreign_slug] = counts.get(foreign_slug, 0) + n
+    except Exception:
+        pass
+    return counts

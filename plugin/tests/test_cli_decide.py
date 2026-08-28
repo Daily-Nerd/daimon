@@ -11,7 +11,15 @@ as text only behind an explicit flag in slice 4, per scar 0055.
 
 import pytest
 
-from daimon_briefing import amendments, cli, refutations, render, requests, store
+from daimon_briefing import (
+    amendments,
+    cli,
+    pending,
+    refutations,
+    render,
+    requests,
+    store,
+)
 
 
 @pytest.fixture
@@ -185,3 +193,64 @@ def test_a_populated_queue_still_admits_what_it_is_not_showing(project, capsys):
     assert "never bump to 1.0 without a human call" in out   # listed
     assert muted not in out                                   # not listed
     assert "1 suppressed" in out                              # admitted
+
+
+# --- foreign counts (slice 3) -------------------------------------------------
+
+def test_decide_footer_shows_foreign_counts_never_text(project, capsys):
+    """The plaintext guarantee, pinned structurally: scar 0055 forbids a
+    foreign bucket's own prose from crossing into THIS project's stdout
+    (and therefore its checkpoint). Seed a request whose ask/why/evidence
+    each carry a distinctive sentinel and prove it never lands in output —
+    only the owning slug and an integer count may.
+    """
+    sentinel = "UNIQUE-PLAINTEXT-SENTINEL-990177"
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask=f"do the thing {sentinel}", why=f"because {sentinel}",
+        evidence=f"proof {sentinel}", channel="cli-agent",
+        project_dir="/p/A")
+    # A local ruling too, so this exercises the POPULATED path (footer after
+    # the cards and the suppressed line), not just the empty-queue branch.
+    _ruling(project)
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+
+    assert sentinel not in out
+    assert b in out
+    assert "1 more waiting in other projects" in out
+
+
+def test_empty_local_queue_still_reports_foreign_counts(project, capsys):
+    """The sibling of the ordinary populated case: nothing waits HERE, but
+    the empty-queue path must not silently drop the fact that something
+    waits elsewhere.
+    """
+    requests.open_request(
+        to=store.project_slug("/p/B"), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+
+    assert "nothing waiting on you in this project" in out
+    assert store.project_slug("/p/B") in out
+
+
+def test_no_foreign_activity_means_no_footer(project, capsys):
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+
+    assert "more waiting in other projects" not in out
+
+
+def test_foreign_counts_returns_integers_only(project):
+    requests.open_request(
+        to=store.project_slug("/p/B"), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+
+    result = pending.foreign_counts(project_dir=project)
+
+    assert result
+    assert all(isinstance(v, int) for v in result.values())
