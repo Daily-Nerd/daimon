@@ -89,8 +89,21 @@ _TOOL_RESULT_MAX_CHARS = 500
 # `rg daimon cli.py` greps ABOUT daimon and its output is a genuine witness
 # (measured: a blanket tool-row strip costs 9.5% of the corpus's verifiable
 # quotes; this invocation-scoped rule costs 0.06%).
+#
+# #781: the backtick is NOT in the delimiter class, though it opens a command
+# substitution in shell. In a repository whose own directory is named `daimon`
+# and whose issue bodies, PR bodies, docstrings and commit messages discuss its
+# commands constantly, a backtick opens a markdown inline code span far more
+# often. Measured over the local corpus: 127 rows were flagged ONLY by that
+# delimiter and NOT ONE was a shell substitution — every one was prose a person
+# wrote, blanked from the extractor as though daimon had produced it.
+# The substitution it protected is still covered: `$(...)` reaches this pattern
+# through the `(` delimiter, which is the spelling anyone writes today. The
+# residual is legacy backtick substitution, which fails toward admitting an
+# echo rather than destroying a witness — a real trade, measured at zero here
+# and pinned by test_modern_command_substitution_still_matches.
 _DAIMON_CMD_RE = re.compile(
-    r"(?:^|[|;&(`]|\&\&|\|\|)\s*"
+    r"(?:^|[|;&(]|\&\&|\|\|)\s*"
     r"(?:\S+=\S+\s+)*(?:sudo\s+)?"
     # #778: `timeout` is the only wrapper with measured field usage, and the
     # case that earns it is `timeout N daimon handoff`, whose output is the
