@@ -167,3 +167,48 @@ def test_every_row_carries_its_project(project):
     row = pending.queue(project_dir=project)["rows"][0]
 
     assert row["slug"] == store.project_slug(project)
+
+
+# --- degradation --------------------------------------------------------------
+
+def test_one_unreadable_ledger_degrades_its_own_lane_only(project, monkeypatch):
+    """Fail-open per source, not per queue.
+
+    A human-facing backlog that silently renders nothing is worse than one that
+    renders less: an empty queue reads as "you owe nothing", which is the one
+    false claim this surface must never make. So a source that blows up costs
+    its own lane and nothing else.
+    """
+    refutations.assert_ruling(
+        subject="release", verdict="a standing rule", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir=project)
+    requests.open_request(
+        to=store.project_slug(project), ask="an ask", why="why",
+        channel="cli-agent", project_dir=project)
+
+    def boom(*_args, **_kwargs):
+        raise OSError("ledger unreadable")
+
+    monkeypatch.setattr(pending.refutations, "records", boom)
+
+    result = pending.queue(project_dir=project)
+
+    assert _kinds(result) == ["request"]
+
+
+def test_an_unreadable_request_ledger_does_not_empty_the_queue(project,
+                                                               monkeypatch):
+    refutations.assert_ruling(
+        subject="release", verdict="a standing rule", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir=project)
+
+    def boom(*_args, **_kwargs):
+        raise OSError("ledger unreadable")
+
+    monkeypatch.setattr(pending.requests, "records", boom)
+
+    result = pending.queue(project_dir=project)
+
+    assert _kinds(result) == ["ruling"]
+    # The suppressed count is unknown rather than zero when its source failed.
+    assert result["excluded"]["suppressed"] == 0
