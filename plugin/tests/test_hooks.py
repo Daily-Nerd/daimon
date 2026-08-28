@@ -512,8 +512,9 @@ def test_pre_llm_call_routes_project_through_resolve_project_root(
 
     captured = {}
 
-    def _spy(project_dir=None):
+    def _spy(project_dir=None, fallback=True):
         captured["project_dir"] = project_dir
+        captured["fallback"] = fallback
         return None
 
     monkeypatch.setattr(hooks.store, "read_latest", _spy)
@@ -891,3 +892,85 @@ def test_on_session_end_warms_index_after_write(tmp_checkpoint_dir, fake_chat_fa
         session_id="S-warm", completed=True, interrupted=False, model="m", platform="cli"
     )
     assert calls == [1]
+
+
+# ---- #784: the injection path must not render another project's checkpoint ----
+
+
+def _foreign_checkpoint_with_project_b(tmp_path, monkeypatch, sample_checkpoint):
+    """Project A holds the only checkpoint, so the GLOBAL pointer points at A.
+    Project B has no bucket at all. Returns B's path, routed as the session's
+    project."""
+    from daimon_briefing import store
+
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=str(project_a))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project_b))
+    return project_a, project_b
+
+
+def test_pre_llm_call_does_not_inject_another_projects_checkpoint(
+    tmp_checkpoint_dir, sample_checkpoint, tmp_path, monkeypatch
+):
+    """A fresh project's first session must not receive project A's briefing."""
+    _foreign_checkpoint_with_project_b(tmp_path, monkeypatch, sample_checkpoint)
+    out = hooks.pre_llm_call(
+        session_id="S-b", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    text = (out or {}).get("context", "")
+    assert "PR #6" not in text, "another project's checkpoint body was injected"
+
+
+def test_pre_llm_call_global_fallback_is_opt_in(
+    tmp_checkpoint_dir, sample_checkpoint, tmp_path, monkeypatch
+):
+    """Single-project users who opted in keep today's behavior, same env var
+    that governs `daimon brief`."""
+    _foreign_checkpoint_with_project_b(tmp_path, monkeypatch, sample_checkpoint)
+    monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
+    out = hooks.pre_llm_call(
+        session_id="S-b", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert "PR #6" in (out or {}).get("context", "")
+
+
+def test_pre_llm_call_torn_project_pointer_does_not_fall_through_to_foreign_body(
+    tmp_checkpoint_dir, sample_checkpoint, tmp_path, monkeypatch
+):
+    """A torn own-pointer is not the same as 'no data'. read_latest treats it as
+    absent and falls through, so a project WITH a bucket can still be handed a
+    foreign body. Detecting the fallback by path existence cannot see this."""
+    from daimon_briefing import store
+
+    _project_a, project_b = _foreign_checkpoint_with_project_b(
+        tmp_path, monkeypatch, sample_checkpoint)
+    torn = store.project_latest_path(str(project_b))
+    torn.parent.mkdir(parents=True, exist_ok=True)
+    torn.write_text("{not json", encoding="utf-8")
+    out = hooks.pre_llm_call(
+        session_id="S-b", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert "PR #6" not in (out or {}).get("context", "")
+
+
+def test_pre_llm_call_unknown_project_still_reads_the_global_pointer(
+    tmp_checkpoint_dir, sample_checkpoint, monkeypatch
+):
+    """#784 must not cost pre-routing hosts their briefing. With no project
+    identity there is no per-project pointer to prefer and nothing is foreign,
+    so the global pointer stays the briefing of record."""
+    from daimon_briefing import store
+
+    monkeypatch.delenv("DAIMON_PROJECT_DIR", raising=False)
+    store.write_checkpoint("S-prev", sample_checkpoint)
+    out = hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert "PR #6" in (out or {}).get("context", "")

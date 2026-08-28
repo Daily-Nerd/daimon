@@ -179,7 +179,20 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         if not is_first_turn:
             return None
         project = config.resolve_project_root(config.project_dir())
-        checkpoint = store.read_latest(project_dir=project)
+        # #784: read_latest's global pointer is the most recent checkpoint of ANY
+        # project, so a project with no bucket of its own was injected with a
+        # foreign briefing on its first session. `daimon brief` already suppresses
+        # that body by default (#96); this path did not, and it is the path with no
+        # human reader. Same gate, same env var, so the two surfaces state the same
+        # world. Asking read_latest not to fall back (rather than detecting after
+        # the fact that it did) also covers the torn own-pointer, which falls
+        # through to the global pointer while the project's path still exists.
+        # The fallback stays ON when the project is UNKNOWN: there is no per-project
+        # pointer to prefer, the global one is the only briefing that exists, and
+        # nothing is foreign to a session with no project identity (pre-routing
+        # hosts that do not pass a cwd). The leak needs a KNOWN project.
+        allow_foreign = project is None or config.brief_global_fallback()
+        checkpoint = store.read_latest(project_dir=project, fallback=allow_foreign)
         if checkpoint is None:
             # #693: standing rulings exist before the first checkpoint does —
             # a day-one ratification must reach the very next session.

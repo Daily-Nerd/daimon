@@ -1406,13 +1406,18 @@ def _cmd_recall_inject(args) -> int:
             return 0
         project = _resolve_project(args.project)
         session = str(args.session or "")
-        # Never re-suggest what the SessionStart briefing already carried: the
-        # project's latest and the global latest are briefed by definition.
+        # Never re-suggest what the SessionStart briefing already carried.
+        # #784: that is ONE checkpoint, and which one depends on the same gate the
+        # injection hook reads — the project's own, and the global pointer only when
+        # the operator opted into the foreign body. Excluding the global latest
+        # unconditionally suppressed recall of a session that was never briefed.
         exclude = set()
-        for cp in (store.read_latest(project), store.read_latest()):
-            sid = (cp or {}).get("session_id")
-            if sid:
-                exclude.add(str(sid))
+        briefed = store.read_latest(
+            project_dir=project,
+            fallback=project is None or config.brief_global_fallback())
+        sid = (briefed or {}).get("session_id")
+        if sid:
+            exclude.add(str(sid))
         seen_file = _seen_path(session)
         origin_counts, seen_keys = (_load_seen(seen_file) if seen_file
                                     else ({}, set()))
