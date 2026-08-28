@@ -13,7 +13,7 @@ feature than the one that will actually ship once PR 3 lands.
 """
 import time
 
-from daimon_briefing import requests, store
+from daimon_briefing import pending, requests, store
 
 RECIPIENT = "/p/scan-cost-recipient"
 N_BUCKETS = 50          # "a realistic multi-bucket store" per the PR brief
@@ -85,3 +85,44 @@ def test_combined_brief_time_cost_stays_within_budget(tmp_checkpoint_dir,
     assert elapsed_ms <= _BUDGET_MS, (
         f"combined composer+panel+stamp cost {elapsed_ms:.2f}ms exceeds the "
         f"{_BUDGET_MS}ms budget over {N_BUCKETS} buckets")
+
+
+# The fix for the polarity bug: `daimon decide`'s request lane now sources
+# from `requests.recipient_join` (see `pending._request_rows`) instead of
+# the per-bucket `requests.records`, so it pays the same fleet-scan
+# `_bucket_slugs` walks. On top of that, the append-order tiebreak
+# (`pending._order_key`) reads each ADDRESSED bucket's `events()` a second
+# time to seat the `seq` a foreign record has no local index for — one extra
+# read per addressed bucket, not per fleet bucket.
+#
+# Budget reasoning: measured on this machine at ~3-4ms over the same
+# 50-bucket/8-addressed fleet (`_seed()`) — see the printed line this test
+# emits. Cheaper than the panel measurement above (~35-45ms) for a real
+# reason, not a fluke: `decide` is a pure reader (#8 of the fix that added
+# this test — see `pending.py`'s "WHY IT WRITES NOTHING"), so it never pays
+# `stamp_surfaced`'s per-row write, and it skips the PR-3-shaped stub scan
+# the panel test folds in. What it DOES pay is the same fleet walk
+# (`_bucket_slugs` + one `events()` read per bucket) plus one extra
+# `events()` read per ADDRESSED bucket for the append-order `seq` — bounded
+# by N_ADDRESSED (8), not N_BUCKETS (50). 150ms keeps the panel's budget
+# rather than tightening to the observed number: a slower disk or CI runner
+# should not trip this on a healthy run, while a regression (e.g. re-reading
+# every bucket, not just the addressed ones, for `seq`) still would.
+_DECIDE_BUDGET_MS = 150.0
+
+
+def test_decide_queue_time_cost_stays_within_budget(tmp_checkpoint_dir,
+                                                     capsys):
+    _seed()
+    start = time.perf_counter()
+    result = pending.queue(project_dir=RECIPIENT)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    assert result["rows"], "measurement is void if nothing was addressed here"
+    with capsys.disabled():
+        print(f"\n#766 decide request-lane scan cost: {elapsed_ms:.2f}ms "
+             f"over {N_BUCKETS} buckets ({N_ADDRESSED} addressed) — "
+             f"budget {_DECIDE_BUDGET_MS}ms")
+    assert elapsed_ms <= _DECIDE_BUDGET_MS, (
+        f"pending.queue cost {elapsed_ms:.2f}ms exceeds the "
+        f"{_DECIDE_BUDGET_MS}ms budget over {N_BUCKETS} buckets")
