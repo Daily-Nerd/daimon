@@ -407,3 +407,100 @@ def test_an_unreadable_foreign_ledger_degrades_that_bucket_only(project,
     # And the local queue this project owes is untouched by a foreign-lane
     # failure.
     assert pending.queue(project_dir=project)["rows"] == []
+
+
+def test_an_unreadable_foreign_bucket_does_not_sink_the_fleet_pass(project,
+                                                                   monkeypatch):
+    """The fleet pass reads every bucket; one that raises must cost that
+    bucket alone. `requests.events` is already best-effort about malformed
+    lines, so reaching this branch takes a failure it cannot absorb (a
+    permission error on the path itself) — which is exactly the case that
+    must not take the whole count down with it."""
+    requests.open_request(
+        to=store.project_slug("/p/B"), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+    real_events = pending.requests.events
+    bad = store.project_slug("/p/A")
+
+    def selective(*args, **kwargs):
+        if kwargs.get("project_dir") == bad:
+            raise OSError("bucket unreadable")
+        return real_events(*args, **kwargs)
+
+    monkeypatch.setattr(pending.requests, "events", selective)
+
+    # The only sender bucket is unreadable, so its ask cannot be counted —
+    # but the call returns a count rather than raising, and the local queue
+    # is untouched.
+    assert pending.foreign_counts(project_dir="/p/C") == {}
+    assert pending.queue(project_dir=project)["rows"] == []
+
+
+def test_an_unfoldable_request_group_is_skipped_not_fatal(project, monkeypatch):
+    """One malformed group must not cost the other projects their counts."""
+    requests.open_request(
+        to=store.project_slug("/p/B"), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+
+    def boom(*_args, **_kwargs):
+        raise ValueError("unfoldable")
+
+    monkeypatch.setattr(pending.requests, "fold", boom)
+
+    assert pending.foreign_counts(project_dir="/p/C") == {}
+    assert pending.queue(project_dir=project)["rows"] == []
+
+
+def test_an_unreadable_foreign_ruling_ledger_degrades_that_lane_only(
+        project, monkeypatch):
+    """The refutations half of the ledger lane fails open independently of
+    the amendments half — one bad lane must not cost the other."""
+    a_id = amendments.propose(
+        item_id="o-1234567890ab", change="progressed",
+        evidence="a quote that was verified", channel="cli-agent",
+        project_dir="/p/D")
+    amendments.verify(a_id, role="assistant", project_dir="/p/D")
+
+    def boom(*_args, **_kwargs):
+        raise OSError("ledger unreadable")
+
+    monkeypatch.setattr(pending.refutations, "records", boom)
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts[store.project_slug("/p/D")] == 1
+    assert pending.queue(project_dir=project)["rows"] == []
+
+
+def test_a_failing_request_lane_still_yields_the_ledger_counts(project,
+                                                              monkeypatch):
+    """Outer fail-open: the two lanes are independent at the top level too,
+    so a request lane that raises leaves the ledger counts intact."""
+    refutations.assert_ruling(
+        subject="release", verdict="a standing rule", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir="/p/D")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("request lane exploded")
+
+    monkeypatch.setattr(pending, "_foreign_request_counts", boom)
+
+    assert pending.foreign_counts(project_dir="/p/C") == {
+        store.project_slug("/p/D"): 1}
+
+
+def test_a_failing_ledger_lane_still_yields_the_request_counts(project,
+                                                               monkeypatch):
+    """The mirror of the above: a ledger lane that raises leaves the request
+    counts intact."""
+    requests.open_request(
+        to=store.project_slug("/p/B"), ask="please review", why="ready",
+        channel="cli-agent", project_dir="/p/A")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("ledger lane exploded")
+
+    monkeypatch.setattr(pending, "_foreign_ledger_counts", boom)
+
+    assert pending.foreign_counts(project_dir="/p/C") == {
+        store.project_slug("/p/B"): 1}

@@ -275,9 +275,10 @@ def _foreign_request_counts(slug: str) -> dict[str, int]:
         except Exception:
             continue
         for row in rows:
+            # `events` already filtered every row through `_REQUEST_ID_RE`
+            # (requests.py:285-288), so the id is present and well-formed
+            # here — no second guard, which would be unreachable.
             rid = str(row.get("request_id") or "")
-            if not rid:
-                continue
             by_id.setdefault(rid, []).append(_strip_plaintext(row))
     counts: dict[str, int] = {}
     for rows in by_id.values():
