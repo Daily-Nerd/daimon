@@ -1,20 +1,20 @@
 ---
-id: 0
+id: 60
 type: deadend
 title: benchmark/.cache warm-looking legacy entries are unreplayable; offline replays must use .work stores
 severity: medium
 confidence: 0.9
 created: 2026-08-26
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/tests/bench/cache.py
-  - pattern: "cache\.get|CheckpointCache"
+  - pattern: "CheckpointCache"
 evidence:
-  - note: "2026-08-26 ungated-arm replay: 7521 of 7723 entries in benchmark/.cache are pre-#343 raw checkpoints (no envelope); cache.get counts every one as legacy_misses and returns None"
+  - note: 2026-08-26 ungated-arm replay: 7521 of 7723 entries in benchmark/.cache are pre-#343 raw checkpoints (no envelope); cache.get counts every one as legacy_misses and returns None
 expires:
   condition: "the .cache is re-warmed with #343 envelope entries (each carries served_model), or the legacy entries are purged"
   review_after: 2027-02-26
-status: candidate
+status: active
 ---
 
 Tried to build a zero-LLM benchmark replay on top of the serialized-checkpoint

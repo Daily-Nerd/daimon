@@ -1,20 +1,20 @@
 ---
-id: 0
+id: 57
 type: deadend
 title: Blanket fallback=False on a reporting surface refuses UN-ROUTED checkpoints too
 severity: medium
 confidence: 0.9
 created: 2026-08-28
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/receipts.py
   - path: plugin/daimon_briefing/store.py
 evidence:
-  - note: "#791 — tried, broke test_cli_verify_receipt_default_uses_latest, replaced"
+  - note: #791 — tried, broke test_cli_verify_receipt_default_uses_latest, replaced
 expires:
   condition: "un-routed (project_slug-less) checkpoints no longer exist in any store"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 Fixing a cross-project read by passing `fallback=False` is right for callers that

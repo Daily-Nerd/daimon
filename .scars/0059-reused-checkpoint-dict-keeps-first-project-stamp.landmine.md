@@ -1,21 +1,21 @@
 ---
-id: 0
+id: 59
 type: landmine
 title: write_checkpoint stamps project_slug with setdefault, so a reused dict keeps the FIRST project's stamp
 severity: medium
 confidence: 0.95
 created: 2026-08-28
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/receipts.py
   - pattern: "setdefault.*project_slug"
 evidence:
-  - note: "#791 — read_latest_reportable decides membership by the payload stamp"
+  - note: #791 — read_latest_reportable decides membership by the payload stamp
 expires:
   condition: "write_checkpoint re-stamps project_slug from project_dir on every write"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 `write_checkpoint` MUTATES the dict it is handed, in place, and stamps identity
