@@ -859,10 +859,13 @@ def _cmd_decide(args) -> int:
     can never age an ask out of the agent's panel (`is_stale` measures against
     the `surfaced` anchor, and this never writes one).
 
-    Scoped to this project. Other projects arrive as counts, then as text behind
-    an explicit flag, because printing another bucket's record text would copy
-    it into THIS project's checkpoint where its owner's `forget` cannot reach
-    it (scar 0055).
+    Scoped to this project — except the request lane, which is an inbox: an
+    ask addressed here has its `opened` row in the SENDER's bucket, so it is
+    read cross-bucket via `requests.recipient_join` (rendering your own mail,
+    not scar 0055's violation). Other projects' OWN record text still arrives
+    as counts, then as text behind an explicit flag, because printing another
+    bucket's record text would copy it into THIS project's checkpoint where
+    its owner's `forget` cannot reach it (scar 0055).
     """
     _cli._note_usage("decide")
     project = _cli._resolve_project(args.project)

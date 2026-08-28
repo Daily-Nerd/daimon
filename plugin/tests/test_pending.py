@@ -127,6 +127,28 @@ def test_a_decided_request_is_not_owed(project):
     assert pending.queue(project_dir=project)["rows"] == []
 
 
+def test_a_foreign_addressed_request_is_owed_but_our_own_outgoing_ask_is_not(
+        project):
+    """The request lane is an INBOX: the `opened` row for an ask addressed
+    to this project lives in the SENDER's bucket, not ours, so the lane has
+    to be sourced from `requests.recipient_join` (the cross-bucket join),
+    never the per-bucket `requests.records` (this bucket's own file only).
+    Both directions matter: a foreign ask addressed HERE must appear, and
+    this project's own OUTGOING ask to someone else must never appear —
+    exactly the split `recipient_join` already keeps (requests.py:871-874)."""
+    inbound_id = requests.open_request(
+        to=store.project_slug(project), ask="please review the PR",
+        why="ready to merge", channel="cli-agent", project_dir="/p/B")
+    outbound_id = requests.open_request(
+        to=store.project_slug("/p/B"), ask="please look at this later",
+        why="fyi", channel="cli-agent", project_dir=project)
+
+    result = pending.queue(project_dir=project)
+
+    assert _ids(result) == [inbound_id]
+    assert outbound_id not in _ids(result)
+
+
 # --- ordering and posture ----------------------------------------------------
 
 def test_oldest_waits_first(project):
@@ -139,6 +161,27 @@ def test_oldest_waits_first(project):
     second = refutations.assert_ruling(
         subject="b", verdict="the newer rule", scope="repo",
         evidence=["issue:2"], channel="cli-agent", project_dir=project)
+
+    assert _ids(pending.queue(project_dir=project)) == [first, second]
+
+
+def test_two_foreign_asks_with_identical_timestamps_keep_append_order(
+        project, monkeypatch):
+    """`_order_key`'s append-order tiebreak (pending.py:58) is deliberate:
+    `created_at` is second-resolution and ties routinely, so in an
+    append-only log the first WRITTEN is first waiting. Sourcing the lane
+    from `recipient_join` must not lose this — the `seq` used to break the
+    tie has to come from the ORIGIN bucket's event order (via the record's
+    `from_slug`), not a local index that does not exist for a foreign ask.
+    Two asks from the same foreign sender, same second, pin it."""
+    monkeypatch.setattr(requests.time, "time_ns",
+                        lambda: 1_786_000_000 * 10 ** 9)
+    first = requests.open_request(
+        to=store.project_slug(project), ask="review the first PR",
+        why="ready", channel="cli-agent", project_dir="/p/B")
+    second = requests.open_request(
+        to=store.project_slug(project), ask="review the second PR",
+        why="ready too", channel="cli-agent", project_dir="/p/B")
 
     assert _ids(pending.queue(project_dir=project)) == [first, second]
 
@@ -205,7 +248,10 @@ def test_an_unreadable_request_ledger_does_not_empty_the_queue(project,
     def boom(*_args, **_kwargs):
         raise OSError("ledger unreadable")
 
-    monkeypatch.setattr(pending.requests, "records", boom)
+    # The request lane now sources from `recipient_join` (the cross-bucket
+    # inbox join), not `records` (the per-bucket fold) — see
+    # test_a_foreign_addressed_request_is_owed_but_our_own_outgoing_ask_is_not.
+    monkeypatch.setattr(pending.requests, "recipient_join", boom)
 
     result = pending.queue(project_dir=project)
 

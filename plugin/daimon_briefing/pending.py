@@ -16,14 +16,27 @@ checkpoint pointers rather than reads. A composer that stamped would make the
 person READING their own queue the mechanism that ages those asks out of the
 agent's panel — decay inverted into deletion.
 
-SCOPE, slice 1: this project's buckets only. Foreign projects contribute counts
-in slice 3 and text only behind an explicit `--all-projects` in slice 4. That
-split is not caution, it is scar 0055: the serializer captures tool_result
-payloads, so inside an agent session CLI stdout is checkpoint input. Printing
-another bucket's record text copies that plaintext into THIS project's
-checkpoint, where `forget` in the origin project can never reach it. Same
-doctrine `recall.py` already applies when it widens: counts by project, never
-content, because crossing projects stays user-invoked.
+SCOPE, slice 1: the ruling/refutation and amendment lanes are this project's
+buckets only. Foreign projects contribute counts in slice 3 and text only
+behind an explicit `--all-projects` in slice 4. That split is not caution,
+it is scar 0055: the serializer captures tool_result payloads, so inside an
+agent session CLI stdout is checkpoint input. Printing another bucket's
+record text copies that plaintext into THIS project's checkpoint, where
+`forget` in the origin project can never reach it. Same doctrine `recall.py`
+already applies when it widens: counts by project, never content, because
+crossing projects stays user-invoked.
+
+The REQUEST lane is the deliberate exception, and always has been: an ask
+addressed to this project has its `opened` row in the SENDER's bucket, so an
+inbox is inherently cross-bucket — there is no single-bucket reading of "asks
+addressed to me" any more than `requests.inbox_listing` (its shipped panel
+precedent) has one. That is not scar 0055's violation, it is the sentence
+right after it: the scar's own closing lines say the shipped request panel
+"shows only asks addressed to THIS project" and is bounded by exactly that.
+Rendering an ask addressed to you is rendering your own mail, not a foreign
+bucket's plaintext. What scar 0055 still forbids stands untouched: a FOREIGN
+project's own record text (its rulings, its refutations, its amendments, or
+its outgoing asks to someone else) stays behind the explicit flag.
 """
 
 from __future__ import annotations
@@ -67,10 +80,33 @@ def _order_key(row: dict, seq: int) -> tuple:
 
 
 def _request_rows(project_dir, slug) -> tuple[list, int]:
-    """Asks addressed to this project that no human has answered."""
-    records = requests.records(project_dir=project_dir)
-    seen = [row.get("request_id") for row in requests.events(
-        project_dir=project_dir)]
+    """Asks addressed to this project that no human has answered.
+
+    Sourced from `requests.recipient_join`, the cross-bucket inbox join —
+    never `requests.records`, which folds only this bucket's own file. An
+    ask addressed here has its `opened` row in the SENDER's bucket, so a
+    per-bucket fold cannot see it; `recipient_join` already keeps the two
+    directions apart (requests.py:871-874), excluding this project's own
+    outgoing asks. `requests.inbox_listing` is the shipped precedent for
+    consuming it, including this same `state not in _SENDER_MOVABLE` filter.
+    """
+    records = requests.recipient_join(project_dir=project_dir)
+    # `seq` breaks the `waiting_since` tie on append order (see
+    # `_order_key`), and that order lives in whichever bucket actually wrote
+    # the `opened` row — the record's own `from_slug`, or this bucket itself
+    # for a self-addressed ask (`from_slug` is empty for those). Cache each
+    # origin bucket's event order so a bucket with several addressed asks is
+    # read once, not once per record.
+    seq_cache: dict[str, list] = {}
+
+    def _seq(record, rid) -> int:
+        origin = record.get("from_slug") or slug
+        if origin not in seq_cache:
+            seq_cache[origin] = [row.get("request_id") for row in
+                                 requests.events(project_dir=origin)]
+        seen = seq_cache[origin]
+        return seen.index(rid) if rid in seen else 0
+
     rows, suppressed = [], 0
     for rid, record in records.items():
         if record.get("state") not in requests._SENDER_MOVABLE:
@@ -92,7 +128,7 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
                 ("reject", f"daimon request reject {rid} --note \"<why>\""),
                 ("needs-info", f"daimon request needs-info {rid}"),
             ]),
-            seen.index(rid) if rid in seen else 0))
+            _seq(record, rid)))
     return rows, suppressed
 
 
