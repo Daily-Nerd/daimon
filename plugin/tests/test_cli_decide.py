@@ -165,3 +165,23 @@ def test_an_unreadable_timestamp_costs_the_age_and_nothing_else():
     assert lifecycle._decide_age("not a timestamp") == ""
     assert lifecycle._decide_age("") == ""
     assert lifecycle._decide_age(None) == ""
+
+
+def test_a_populated_queue_still_admits_what_it_is_not_showing(project, capsys):
+    """The sibling of the empty-queue case, and the ordinary one: items ARE
+    listed and something is also set aside. The footer is what stops the queue
+    claiming a completeness it does not have, so it has to survive a refactor
+    that only ever looks at the populated path.
+    """
+    _ruling(project)
+    muted = requests.open_request(
+        to=store.project_slug(project), ask="a muted ask",
+        why="why", channel="cli-agent", project_dir=project)
+    requests.suppress(muted, channel="cli-tty", project_dir=project)
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+
+    assert "never bump to 1.0 without a human call" in out   # listed
+    assert muted not in out                                   # not listed
+    assert "1 suppressed" in out                              # admitted
