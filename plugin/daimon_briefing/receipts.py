@@ -527,7 +527,10 @@ def status_line(project_dir=None) -> str | None:
     if not config.receipts_enabled():
         return None
     from . import store
-    checkpoint = store.read_latest(project_dir=project_dir)
+    # #791: this line names the session it reports on, so it must not answer
+    # with another project's record. An un-routed checkpoint still counts as
+    # reportable, which keeps pre-routing stores working.
+    checkpoint = store.read_latest_reportable(project_dir)
     if not isinstance(checkpoint, dict) or not checkpoint.get("session_id"):
         return "receipts: on — no checkpoint to sign yet"
     sid = str(checkpoint["session_id"])

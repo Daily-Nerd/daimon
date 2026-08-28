@@ -771,6 +771,52 @@ def test_status_line_no_checkpoint(tmp_checkpoint_dir, monkeypatch):
     assert receipts.status_line() == "receipts: on — no checkpoint to sign yet"
 
 
+def test_status_line_never_reports_another_projects_session(
+        tmp_checkpoint_dir, tmp_path, monkeypatch):
+    # #791: a surface scoped to one project must not answer with another
+    # project's record. read_latest falls back to the global pointer, so a
+    # project with no bucket reported on, and NAMED, the most recent session of
+    # any project.
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    other = (tmp_path / "other").resolve()
+    other.mkdir()
+    store.write_checkpoint("S-FOREIGN", {"session_id": "S-FOREIGN"},
+                           project_dir=str(other))
+    mine = (tmp_path / "mine").resolve()
+    mine.mkdir()
+    line = receipts.status_line(project_dir=str(mine))
+    assert "S-FOREIGN" not in line, "another project's session id was rendered"
+    assert "no checkpoint to sign yet" in line
+
+
+def test_status_line_unknown_project_still_reads_the_global_pointer(
+        tmp_checkpoint_dir, monkeypatch):
+    # #791 must not cost the pre-routing case its line: with no project identity
+    # there is no per-project pointer to prefer and nothing is foreign (#784).
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    store.write_checkpoint("S-global", {"session_id": "S-global"})
+    assert "S-global" in receipts.status_line()
+
+
+def test_cli_verify_receipt_never_targets_another_projects_session(
+        tmp_checkpoint_dir, tmp_path, capsys):
+    # #791: the docstring says the default target is the CURRENT project's
+    # latest checkpoint. With the fallback on it verified, and named, another
+    # project's session instead.
+    other = (tmp_path / "vr-other").resolve()
+    other.mkdir()
+    store.write_checkpoint("S-FOREIGN", {"session_id": "S-FOREIGN"},
+                           project_dir=str(other))
+    mine = (tmp_path / "vr-mine").resolve()
+    mine.mkdir()
+    capsys.readouterr()
+    rc = cli.main(["verify-receipt", "--project", str(mine)])
+    out = capsys.readouterr().out
+    assert "S-FOREIGN" not in out, "another project's session id was rendered"
+    assert rc == 2
+    assert "no checkpoint for this project yet" in out
+
+
 def test_status_line_marked_but_missing(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     # A receipt-era marker but no sidecar (mint failed) -> MISSING line.

@@ -2227,3 +2227,35 @@ def test_write_does_not_overwrite_existing_project_name(tmp_checkpoint_dir, samp
     store.write_checkpoint("S1", pre, project_dir="/Users/x/projA")
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert blob["project_name"] == "original"
+
+
+# ---- #791: what a project-scoped surface may report on ----
+
+
+def test_read_latest_reportable_returns_the_projects_own_checkpoint(tmp_checkpoint_dir, tmp_path):
+    mine = (tmp_path / "rlr-mine").resolve()
+    mine.mkdir()
+    store.write_checkpoint("S-mine", {"session_id": "S-mine"}, project_dir=str(mine))
+    got = store.read_latest_reportable(str(mine))
+    assert (got or {}).get("session_id") == "S-mine"
+
+
+def test_read_latest_reportable_refuses_another_projects_checkpoint(tmp_checkpoint_dir, tmp_path):
+    other = (tmp_path / "rlr-other").resolve()
+    other.mkdir()
+    store.write_checkpoint("S-other", {"session_id": "S-other"}, project_dir=str(other))
+    mine = (tmp_path / "rlr-mine2").resolve()
+    mine.mkdir()
+    # read_latest WOULD hand this project the other one's checkpoint.
+    assert store.read_latest(project_dir=str(mine))["session_id"] == "S-other"
+    assert store.read_latest_reportable(str(mine)) is None
+
+
+def test_read_latest_reportable_allows_an_unrouted_checkpoint(tmp_checkpoint_dir, tmp_path):
+    # Written before a project was known, so it carries no project_slug stamp
+    # and belongs to nobody. Pre-routing stores must keep working.
+    store.write_checkpoint("S-unrouted", {"session_id": "S-unrouted"})
+    mine = (tmp_path / "rlr-mine3").resolve()
+    mine.mkdir()
+    got = store.read_latest_reportable(str(mine))
+    assert (got or {}).get("session_id") == "S-unrouted"
