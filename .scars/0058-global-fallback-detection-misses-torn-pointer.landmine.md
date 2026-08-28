@@ -1,23 +1,23 @@
 ---
-id: 0
+id: 58
 type: landmine
 title: Detecting read_latest's global fallback by path existence misses the torn own-pointer
 severity: high
 confidence: 0.95
 created: 2026-08-28
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/hooks.py
   - path: plugin/daimon_briefing/cli/__init__.py
-  - pattern: "fallback_used|project_latest_path\\([^)]*\\)[^\\n]*exists\\(\\)"
+violation: "project_latest_path\([^)]*\)[^\n]*exists\(\)"
 evidence:
-  - note: "#787 — brief rendered a foreign body on a torn own pointer"
-  - note: "#784 — the SessionStart injection rendered another project's checkpoint"
+  - note: #787 — brief rendered a foreign body on a torn own pointer
+  - note: #784 — the SessionStart injection rendered another project's checkpoint
 expires:
   condition: "read_latest reports whether it fell back, instead of callers inferring it"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 `store.read_latest()` falls back to the global pointer (the most recent checkpoint
