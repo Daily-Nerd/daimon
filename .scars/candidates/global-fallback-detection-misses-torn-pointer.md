@@ -12,6 +12,7 @@ anchors:
   - path: plugin/daimon_briefing/cli/__init__.py
   - pattern: "fallback_used|project_latest_path\\([^)]*\\)[^\\n]*exists\\(\\)"
 evidence:
+  - note: "#787 — brief rendered a foreign body on a torn own pointer"
   - note: "#784 — the SessionStart injection rendered another project's checkpoint"
 expires:
   condition: "read_latest reports whether it fell back, instead of callers inferring it"
@@ -28,13 +29,14 @@ anyway (`store.py:1376-1403`).
 
 So the natural detection, comparing `store.project_latest_path(project)` against
 `.exists()`, is blind to the second case. It concludes the checkpoint is local
-while the caller is in fact holding another project's data. `daimon brief` still
-computes `fallback_used` exactly that way (`cli/__init__.py:665-667`), which means
-its #96 foreign-body suppression does not fire on a torn own-pointer.
+while the caller is in fact holding another project's data. `daimon brief` shipped
+that detection and its #96 foreign-body suppression therefore did not fire on a
+torn own-pointer (#787); both call sites now decide before the read instead.
 
-Do NOT copy that detection into a new caller. Ask `read_latest` not to fall back
-in the first place, by passing `fallback=` computed from policy, which is what the
-injection hook does after #784. Deciding before the read cannot be fooled by
+Do NOT reintroduce that detection in a new caller. Ask `read_latest` not to fall
+back in the first place, by passing `fallback=` computed from policy (the injection
+hook after #784), or read the own pointer with `fallback=False` first and let its
+absence be the answer (`brief` after #787). Deciding before the read cannot be fooled by
 either case. Note the policy has a second half: when the project is UNKNOWN the
 fallback must stay ON, because there is no per-project pointer to prefer and
 nothing is foreign to a session with no project identity. A fix that suppresses
