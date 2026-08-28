@@ -344,6 +344,46 @@ def test_cli_brief_falls_back_to_global(tmp_checkpoint_dir, sample_checkpoint, c
     assert "PR #6" not in out
 
 
+def test_cli_brief_torn_own_pointer_still_suppresses_the_foreign_body(
+    tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch
+):
+    # #787: read_latest reaches the global pointer by TWO routes. The second is a
+    # torn own pointer: the path exists, the read raises, and it falls through
+    # anyway. Detecting the fallback by path existence cannot see that, so the
+    # #96 suppression did not fire and a foreign body rendered with no note.
+    from daimon_briefing import store
+
+    store.write_checkpoint("S-global", sample_checkpoint, project_dir="/p/A")
+    torn = store.project_latest_path("/p/B")
+    torn.parent.mkdir(parents=True, exist_ok=True)
+    torn.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/B")
+    rc = cli.main(["brief"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "PR #6" not in out, "foreign body rendered on a torn own pointer"
+    assert "no briefing for this project yet" in out.lower()
+
+
+def test_cli_brief_torn_own_pointer_opt_in_still_shows_the_foreign_body(
+    tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch
+):
+    # The opt-in is unchanged by #787: an operator who asked for the foreign
+    # body still gets it, by the same env var that governs the absent-pointer
+    # route.
+    from daimon_briefing import store
+
+    store.write_checkpoint("S-global", sample_checkpoint, project_dir="/p/A")
+    torn = store.project_latest_path("/p/B")
+    torn.parent.mkdir(parents=True, exist_ok=True)
+    torn.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/B")
+    monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
+    rc = cli.main(["brief"])
+    assert rc == 0
+    assert "PR #6" in capsys.readouterr().out
+
+
 def test_cli_brief_routes_to_cwd_when_no_env(
     tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path
 ):

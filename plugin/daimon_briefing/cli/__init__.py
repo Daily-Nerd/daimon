@@ -661,10 +661,19 @@ def _cmd_brief(args) -> int:
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
-    checkpoint = store.read_latest(project_dir=project)
-    proj_path = store.project_latest_path(project)
-    fallback_used = (checkpoint is not None and proj_path is not None
-                     and not proj_path.exists())
+    # #787: whether the fallback fired is what read_latest DID, not what the
+    # filesystem shows. It reaches the global pointer by TWO routes: an absent
+    # own pointer, and a TORN one, which falls through while its path still
+    # exists. Comparing project_latest_path() against exists() is blind to the
+    # second, so the #96 suppression did not fire and a foreign body rendered
+    # with no note and no opt-in. Ask for the project's own pointer first and
+    # let its absence BE the answer — that cannot be fooled by either route.
+    own = store.read_latest(project_dir=project, fallback=False)
+    checkpoint = own if own is not None else store.read_latest(project_dir=project)
+    # project_latest_path is None when the project is unknown, and nothing is
+    # foreign to a session with no project identity (#784).
+    fallback_used = (own is None and checkpoint is not None
+                     and store.project_latest_path(project) is not None)
     if fallback_used and not (getattr(args, "global_fallback", False)
                               or config.brief_global_fallback()):
         # Header-only fallback (#96): the foreign body is suppressed — one
