@@ -42,6 +42,23 @@ RECOGNISED = [
     "zsh -c 'daimon recall foo'",
     "/bin/sh -c 'daimon brief'",
     "bash -lc 'daimon brief'",
+    # #778: the module spelling, which is how the CLI runs from a source
+    # checkout and is therefore what anyone testing a branch produces. It is
+    # in no manifest section — `daimon_briefing.cli` is reachable because
+    # `cli/__main__.py` exists — so a test driven off `[project.scripts]`
+    # would not have covered it.
+    "python -m daimon_briefing.cli decide",
+    "python3 -m daimon_briefing.cli brief",
+    "uv run --project plugin python -m daimon_briefing.cli decide",
+    "uv run --quiet python -m daimon_briefing refute ratify r-0123456789ab",
+    "/usr/bin/python3.12 -m daimon_briefing.cli status",
+    # #778: `timeout` is the one wrapper with real field usage, and the case
+    # that matters is `timeout N daimon handoff`, whose output is the densest
+    # memory content daimon renders.
+    "timeout 120 daimon handoff \"clear the backup volume\"",
+    "timeout 60 daimon loops",
+    "timeout -k 5 30s daimon brief",
+    "timeout 60 DAIMON_ENV_FILE=/tmp/e daimon status",
 ]
 
 NOT_RECOGNISED = [
@@ -54,6 +71,18 @@ NOT_RECOGNISED = [
     "echo daimon",
     "cat daimon.log",
     "ls ~/.daimon",
+    # #778: measured against the real corpus rather than invented. This repo's
+    # own directory is named `daimon` and its slug is `Daily-Nerd/daimon`, so
+    # prose and paths mentioning it vastly outnumber invocations. Every line
+    # below is a real corpus shape, and each one must keep its witness value.
+    "git status",
+    "gh issue create --repo Daily-Nerd/daimon --title 'fix: x'",
+    "gh run watch --repo Daily-Nerd/daimon 12345",
+    "bat plugin/daimon_briefing/cli/__init__.py",
+    "git commit -m 'fix: create workdir before daimon brief spawn'",
+    # A commit heredoc quoting a skill name. Observed as a real false positive
+    # while measuring, which is why it is pinned here rather than imagined.
+    "git commit -F - <<'EOF'\nchore(readme): document daimon-briefing\nEOF",
 ]
 
 

@@ -92,14 +92,31 @@ _TOOL_RESULT_MAX_CHARS = 500
 _DAIMON_CMD_RE = re.compile(
     r"(?:^|[|;&(`]|\&\&|\|\|)\s*"
     r"(?:\S+=\S+\s+)*(?:sudo\s+)?"
+    # #778: `timeout` is the only wrapper with measured field usage, and the
+    # case that earns it is `timeout N daimon handoff`, whose output is the
+    # densest memory content daimon renders. Flags and the duration are both
+    # consumed (`timeout -k 5 30s daimon ...`). Env assignments repeat after
+    # it because both `timeout 60 FOO=1 daimon` and `FOO=1 timeout 60 daimon`
+    # are real orderings. The wider wrapper family (`nice`, `xargs`, `env`,
+    # `time`) is deliberately NOT enumerated: measured usage is zero and each
+    # one adds prose-matching surface next to a repo whose own directory is
+    # named `daimon`.
+    r"(?:timeout\s+(?:-\S+\s+|\d+[a-z]*\s+)*)?"
+    r"(?:\S+=\S+\s+)*"
     # #585: a shell wrapper puts a QUOTE immediately before the command, and
     # quotes are deliberately absent from the delimiter class above — adding
     # them there would match `rg "daimon" cli.py`, which greps ABOUT daimon and
     # whose output is a genuine witness. Recognise the wrapper explicitly
     # instead, the same way `uv run` is handled below.
     r"(?:(?:\S*/)?(?:ba|z|da|k)?sh\s+-[a-z]*c\s+['\"]?)?"
-    r"(?:uv\s+run\s+(?:--?[\w-]+(?:[= ]\S+)?\s+)*(?:python\s+-m\s+)?)?"
-    r"(?:\S*/)?daimon(?:\s|$)", re.MULTILINE)
+    r"(?:uv\s+run\s+(?:--?[\w-]+(?:[= ]\S+)?\s+)*)?"
+    # #778: the module spelling gets its own branch. The old inline
+    # `(?:python\s+-m\s+)?` could never fire: it required a following bare
+    # `daimon`, and the module is `daimon_briefing`. This is how the CLI runs
+    # from a source checkout, so it is what anyone testing a branch produces,
+    # and it appears in no manifest section at all.
+    r"(?:(?:\S*/)?python[\d.]*\s+-m\s+daimon_briefing(?:\.[\w.]+)?(?:\s|$)"
+    r"|(?:\S*/)?daimon(?:\s|$))", re.MULTILINE)
 
 
 def _is_daimon_tool_use(block: dict) -> bool:
