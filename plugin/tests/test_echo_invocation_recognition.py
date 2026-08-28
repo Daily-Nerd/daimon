@@ -83,6 +83,16 @@ NOT_RECOGNISED = [
     # A commit heredoc quoting a skill name. Observed as a real false positive
     # while measuring, which is why it is pinned here rather than imagined.
     "git commit -F - <<'EOF'\nchore(readme): document daimon-briefing\nEOF",
+    # #781: a backtick opens a command substitution in shell, but in this
+    # repository it far more often opens a markdown inline code span, because
+    # every issue body, PR body, docstring and commit message here discusses
+    # daimon's own commands. Measured: 127 rows were flagged ONLY by the
+    # backtick delimiter and NONE was a shell substitution. Each line below is
+    # a real corpus shape.
+    "git commit -m 'fix: `daimon status` explained every unsigned checkpoint'",
+    "cat > body.md <<'EOF'\n- `daimon --help` now ends with the docs URLs\nEOF",
+    "python3 - <<'PY'\n\"\"\"Do items trace to `daimon brief` output?\"\"\"\nPY",
+    "gh issue comment 1 --body 'the echo counter in `daimon status` is capped'",
 ]
 
 
@@ -96,6 +106,17 @@ def test_daimon_invocations_are_recognised(cmd):
 def test_commands_about_daimon_stay_witnesses(cmd):
     assert not transcript._is_daimon_tool_use(_use(cmd)), (
         f"over-broad match destroys a legitimate witness: {cmd!r}")
+
+
+def test_modern_command_substitution_still_matches():
+    """#781 removes the backtick from the delimiter class, so the substitution
+    it protected has to be covered by the spelling people actually write.
+    `$(...)` reaches the matcher through the `(` delimiter, which is why
+    dropping the backtick costs no genuine coverage."""
+    for cmd in ["V=$(daimon --version)",
+                "echo \"at $(daimon status --json | head -1)\"",
+                "test -n \"$(daimon loops)\""]:
+        assert transcript._is_daimon_tool_use(_use(cmd)), cmd
 
 
 def test_mcp_tool_names_still_match():
