@@ -432,7 +432,14 @@ def _cmd_anchor(args) -> int:
     # matching cognitive item and re-write through the NORMAL store path, so
     # rotation + stamping apply — the attached state becomes latest, the
     # pre-attach state is retained as prev-1.
-    checkpoint = store.read_latest(project_dir=project)
+    # #789: this caller PERSISTS what it reads, so it takes the fallback=False
+    # branch read_latest documents for exactly that class (#94). With the global
+    # fallback left on, a project with no bucket of its own re-wrote ANOTHER
+    # project's checkpoint into its bucket under that project's session_id, and
+    # the project that owns the item never received the anchor while the command
+    # reported success. Refusing is the correct outcome: there is nothing here to
+    # attach to, and the message below already says so.
+    checkpoint = store.read_latest(project_dir=project, fallback=False)
     if checkpoint is None:
         print(f"error: no checkpoint found for {project} — nothing to attach to",
               file=sys.stderr)
