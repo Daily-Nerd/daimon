@@ -1,10 +1,11 @@
-"""Item lifecycle verbs — `resolve`, `forget`, `reverify`, and `loops` (#708 move).
+"""Item lifecycle verbs — `resolve`, `forget`, `reverify`, `loops`, `decide`.
 
 Shared helpers that remain in the package `__init__` are reached through the
 module object (`_cli.<name>`) so the `cli.<name>` seam tests and hosts patch
 keeps working on moved code.
 """
 
+import datetime
 import sys
 
 import daimon_briefing.cli as _cli
@@ -16,6 +17,7 @@ from .. import (
     carry,
     config,
     normalize,
+    pending,
     refutations,
     relations,
     render,
@@ -828,6 +830,80 @@ def _cmd_loops(args) -> int:
     return 0
 
 
+# Pinned by tests/test_cli_decide.py, deliberately: this is the string a
+# reader learns to scan for, and the sibling of the brief's already-registered
+# "Decisions on requests you sent:". Change the registration before the string.
+_DECIDE_HEADER = "Decisions waiting on you:"
+
+
+def _decide_age(waiting_since: str) -> str:
+    """Coarse age for the header bracket. Days once there is a day to show,
+    hours before that: a backlog is read in days, and false precision on a
+    record that has waited three weeks helps nobody."""
+    try:
+        started = datetime.datetime.strptime(
+            waiting_since, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=datetime.timezone.utc)
+    except (ValueError, TypeError):
+        return ""
+    delta = datetime.datetime.now(datetime.timezone.utc) - started
+    hours = int(delta.total_seconds() // 3600)
+    return f"{hours // 24}d" if hours >= 24 else f"{hours}h"
+
+
+def _cmd_decide(args) -> int:
+    """`decide` — everything waiting on a HUMAN, with the command that closes it.
+
+    The mirror of `loops`: that lists what the agent still owes, this lists what
+    you still owe. A pure reader — it stamps nothing, so opening your own queue
+    can never age an ask out of the agent's panel (`is_stale` measures against
+    the `surfaced` anchor, and this never writes one).
+
+    Scoped to this project. Other projects arrive as counts, then as text behind
+    an explicit flag, because printing another bucket's record text would copy
+    it into THIS project's checkpoint where its owner's `forget` cannot reach
+    it (scar 0055).
+    """
+    _cli._note_usage("decide")
+    project = _cli._resolve_project(args.project)
+    result = pending.queue(project_dir=project)
+    rows = result.get("rows") or []
+    suppressed = (result.get("excluded") or {}).get("suppressed") or 0
+    if not rows:
+        # "nothing waiting" would be a false claim while records sit
+        # suppressed: the human set those aside, they did not go away.
+        render.render_ledger_lines(
+            ["nothing waiting on you in this project"] if not suppressed
+            else [f"nothing listed for you in this project "
+                  f"({suppressed} suppressed — daimon request inbox)"])
+        return 0
+
+    render.render_ledger_lines([_DECIDE_HEADER])
+    cards = []
+    for row in rows:
+        age = _decide_age(row.get("waiting_since") or "")
+        tag = row["kind"] + (f" · {age}" if age else "")
+        blocking = " [blocking: the sender says it is waiting]" if row.get(
+            "blocking") else ""
+        # Two spaces after the id: `render._LEDGER_HEADER_RE` reads that shape
+        # to give the id its own span, because it is what a human copies.
+        card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
+        if row.get("context"):
+            card.append(f"  {row['context']}")
+        card += [f"    {label}: {command}"
+                 for label, command in row.get("commands") or []]
+        cards.append(card)
+    render.render_ledger_records(cards)
+
+    if suppressed:
+        # Counted, never listed: `suppress` is human-only, so this is the
+        # owner's own "not now" — but a queue that hid the fact would be
+        # claiming a completeness it does not have.
+        render.render_ledger_lines(
+            [f"  ({suppressed} suppressed — daimon request inbox)"])
+    return 0
+
+
 def register(sub, fmt) -> None:
     """Register the `lifecycle` parser family on the top-level subparsers."""
     p_resolve = sub.add_parser(
@@ -890,3 +966,11 @@ def register(sub, fmt) -> None:
     )
     p_loops.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_loops.set_defaults(func=_cli._cmd_loops)
+
+    p_decide = sub.add_parser(
+        "decide", help="list what is waiting on YOU with the command that "
+        "closes each (#766) — the human-side mirror of daimon loops",
+        epilog="Examples:\n  daimon decide\n  daimon decide --project .\n",
+    )
+    p_decide.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_decide.set_defaults(func=_cli._cmd_decide)

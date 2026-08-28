@@ -453,3 +453,23 @@ def test_full_teaches_the_briefing_rulings_section():
     from daimon_briefing import briefing
     full = skill_content.render_full()
     assert briefing._RULING_HEADER in full
+
+
+# ---- #766: the handed-over command needs somewhere to land ----
+
+def test_skill_points_the_handed_over_command_at_decide():
+    """The skill tells an agent twice to print a human-only command and never
+    run it. Before `decide` those commands landed in a chat message and
+    scrolled away, which is why the agent ended up acting as the human's
+    reminder system. Naming the queue lets it say where the command went once
+    instead of repeating itself.
+    """
+    full = skill_content.render_full()
+
+    assert "daimon decide" in full
+    # Named where the human-only verbs are actually taught, not in some
+    # distant section an agent reading about requests would never reach.
+    section = full.split("## Asking another project for something")[1]
+    section = section.split("\n## ")[0]
+    assert "human-only: print the command, never run it" in section
+    assert "daimon decide" in section

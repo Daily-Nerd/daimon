@@ -623,6 +623,15 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # (e.g. it starts writing) trips this guard immediately.
         run(["loops"], 0)
 
+    def r_decide():
+        # #766: pure read — the human's queue, composed over ledgers that
+        # already exist. Driven here for the same reason as `loops`, and for
+        # one more: `decide` must never stamp `surfaced`. That anchor drives
+        # `is_stale`, so a stamping reader would age an ask out of the agent's
+        # panel because a human looked at it. This guard is where that
+        # regression surfaces.
+        run(["decide"], 0)
+
     def r_recall_inject():
         run(["recall-inject", "--session", "S-live"], 0,
             stdin="anything about the gateway seam?")
@@ -749,6 +758,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("log",): r_log,
         ("handoff",): r_handoff,
         ("loops",): r_loops,
+        ("decide",): r_decide,
         ("recall-inject",): r_recall_inject,
         ("request-inject",): r_request_inject,
         ("status",): r_status,

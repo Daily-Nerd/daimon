@@ -241,6 +241,8 @@ daimon request open --to <dir> --ask "<what>" --why "<why>" --by agent
 `--supersedes <id>`). `request done --evidence "<quote>"` renders as an
 unverified claim until the quote is byte-checked. `accept`, `reject`,
 `needs-info`, `suppress` are human-only: print the command, never run it.
+`daimon decide` lists every such command still waiting on a person, across
+this project's ledgers, so say it lands there and stop repeating the ask.
 
 Requests OTHER projects addressed to this one surface automatically at the
 top of `daimon brief` (capped at 3, with an overflow count). `daimon request

@@ -962,6 +962,7 @@ from .request import (  # noqa: E402
 )
 from .lifecycle import (  # noqa: E402
     _cmd_forget,  # noqa: F401 — re-exported for compat
+    _cmd_decide,  # noqa: F401 — re-exported for compat
     _cmd_loops,  # noqa: F401 — re-exported for compat
     _cmd_resolve,  # noqa: F401 — re-exported for compat
     _cmd_reverify,  # noqa: F401 — re-exported for compat
