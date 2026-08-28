@@ -15,6 +15,7 @@ evidence:
 expires:
   condition: "FMR scoring no longer uses LLM-as-judge"
   review_after: 2027-06-09
+status: active
 ---
 
 The first probe judge defined `grounded` as "supported by the ground truth

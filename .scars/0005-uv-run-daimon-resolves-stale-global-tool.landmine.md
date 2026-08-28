@@ -17,6 +17,7 @@ evidence:
 expires:
   condition: "pyproject.toml moves to the repo root, or the global `daimon` uv tool is installed --editable"
   review_after: 2027-01-01
+status: active
 ---
 
 The package's `pyproject.toml` lives in `plugin/`, not the repo root. `uv run daimon`
