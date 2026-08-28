@@ -136,3 +136,32 @@ def test_an_amendment_names_the_item_it_amends(project, capsys):
 
     assert "o-1234567890ab" in out
     assert "progressed" in out
+
+
+# --- age formatting -----------------------------------------------------------
+
+def test_age_reads_in_days_once_there_is_a_day_to_show():
+    """A backlog is read in days. False precision on something that has waited
+    three weeks helps nobody, so hours only appear below one day."""
+    import datetime
+
+    from daimon_briefing.cli import lifecycle
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+
+    assert lifecycle._decide_age(
+        (now - datetime.timedelta(hours=3)).strftime(fmt)) == "3h"
+    assert lifecycle._decide_age(
+        (now - datetime.timedelta(days=21)).strftime(fmt)) == "21d"
+
+
+def test_an_unreadable_timestamp_costs_the_age_and_nothing_else():
+    """A row whose stamp cannot be parsed still has a decision attached to it.
+    Dropping the row would hide work; dropping the age loses nothing that
+    matters."""
+    from daimon_briefing.cli import lifecycle
+
+    assert lifecycle._decide_age("not a timestamp") == ""
+    assert lifecycle._decide_age("") == ""
+    assert lifecycle._decide_age(None) == ""
