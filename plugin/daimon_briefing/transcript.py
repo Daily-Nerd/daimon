@@ -130,6 +130,28 @@ _DAIMON_CMD_RE = re.compile(
     # and it appears in no manifest section at all.
     r"(?:(?:\S*/)?python[\d.]*\s+-m\s+daimon_briefing(?:\.[\w.]+)?(?:\s|$)"
     r"|(?:\S*/)?daimon(?:\s|$))", re.MULTILINE)
+# #783: re.MULTILINE means `^` matches at every line start, not just the start of
+# the command. That is mostly right — a multi-line script whose second line invokes
+# daimon is a genuine invocation — but it also matches a line of PROSE that happens
+# to begin with `daimon`, inside a heredoc body or a quoted argument. Those rows are
+# blanked from the extractor as though daimon had produced them.
+# Measured before deciding, at three corpus definitions so the answer could not rest
+# on one: of the matches anchored at a non-first line start, ~13% are prose (heredoc
+# body plus quoted string) and ~87% are genuine commands. The number that decides the
+# trade is COMMANDS FLAGGED ONLY BY PROSE, since anything with a real invocation
+# elsewhere is flagged correctly regardless: that is ~2.3%, stable across all three.
+# Kept as-is, deliberately. Heredoc opener/terminator tracking is short and was
+# written to take this measurement, but it would not touch the quoted-string group,
+# so it narrows the family without closing it. Dropping re.MULTILINE is worse still:
+# it loses ordinary multi-line shell, which is common and genuine.
+# Two things a future editor should know. The affected commands are mostly commit
+# bodies and prose file writes, so the count is low while the content per command is
+# dense — do not read 2.3% as uniformly cheap. And `daimon audit quotes` cannot judge
+# a change here: it returns identical output with this detection disabled entirely,
+# so it is never the gate. The cost lands on what the extractor reads, and that half
+# has no instrument today; when it gets one, revisit. This is the third narrowing of
+# this pattern, and #591 is the standing argument that provenance belongs on the
+# message rather than inferred from a command string.
 
 
 def _is_daimon_tool_use(block: dict) -> bool:
