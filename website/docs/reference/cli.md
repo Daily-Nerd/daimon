@@ -107,6 +107,7 @@ request write verb is reachable over MCP.
 | `daimon stats` | Local usage and capture aggregates — nothing is transmitted; sharing the output is a deliberate paste. `--json` for machines. |
 | `daimon log --text "…"` | Append a freeform timeline event to the project's event log — zero-LLM, audit-trail only. |
 | `daimon loops` | List open, addressable loop items with their ids — the read counterpart to `resolve`'s write path. |
+| `daimon decide` | List what is waiting on YOU, each with the one command that closes it — the human-side mirror of `loops`. Reads records that already exist and writes nothing at all, so opening it never changes what the agent is shown. Scoped to this project. |
 | `daimon projects` | List every project daimon holds a checkpoint for, with topic teasers. |
 | `daimon team init\|sync\|status` | Shared team memory via a sidecar repo — default-closed routing, shape-redacted before anything syncs. |
 

@@ -1255,7 +1255,10 @@ def _ledger_style(ln: str) -> str | None:
 # refutations, q- requests): the three-span header is a per-LINE shape, not
 # a per-ledger one, and a request card that fell back to whole-line styling
 # would bury the id a human copies.
-_LEDGER_HEADER_RE = re.compile(r"^(\[[^\]]*\]) ([rq]-[0-9a-f]{12})  (.*)$")
+# #766 adds a- (amendments), which `decide` renders beside the other two.
+# The failure this prevents is silent: the plain path is byte-identical
+# either way, so only the rich path loses the id it was meant to highlight.
+_LEDGER_HEADER_RE = re.compile(r"^(\[[^\]]*\]) ([rqa]-[0-9a-f]{12})  (.*)$")
 
 
 def _ledger_header_spans(ln: str):

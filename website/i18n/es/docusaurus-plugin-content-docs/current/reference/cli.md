@@ -112,6 +112,7 @@ alcanzable por MCP.
 | `daimon stats` | Agregados locales de uso y captura — nada se transmite; compartir la salida es un pegado deliberado. `--json` para máquinas. |
 | `daimon log --text "…"` | Agrega un evento libre a la línea de tiempo del proyecto — cero LLM, solo rastro de auditoría. |
 | `daimon loops` | Lista los loops abiertos direccionables con sus ids — la contraparte de lectura del camino de escritura de `resolve`. |
+| `daimon decide` | Lista lo que está esperando por VOS, cada cosa con el único comando que la cierra — el espejo del lado humano de `loops`. Lee registros que ya existen y no escribe nada, así que abrirlo nunca cambia lo que el agente ve. Acotado a este proyecto. |
 | `daimon projects` | Lista cada proyecto con checkpoint, con un adelanto del tema. |
 | `daimon team init\|sync\|status` | Memoria de equipo compartida vía repo sidecar — ruteo cerrado por defecto, redacción por forma antes de sincronizar nada. |
 
