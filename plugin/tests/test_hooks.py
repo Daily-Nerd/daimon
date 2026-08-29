@@ -422,7 +422,11 @@ def test_pre_llm_call_never_raises_when_config_raises(tmp_checkpoint_dir, monkey
 
 
 def test_pre_llm_call_never_raises_when_read_latest_raises(tmp_checkpoint_dir, monkeypatch):
-    monkeypatch.setattr(hooks.store, "read_latest", _raiser)
+    # Installed over the symbol pre_llm_call ACTUALLY calls (#795 stage 2):
+    # left on read_latest, this fake would sit on a symbol nobody calls, the
+    # injected failure would never fire, and the fail-open guard would stop
+    # being tested in a green suite.
+    monkeypatch.setattr(hooks.store, "read_latest_body", _raiser)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
@@ -512,18 +516,75 @@ def test_pre_llm_call_routes_project_through_resolve_project_root(
 
     captured = {}
 
-    def _spy(project_dir=None, fallback=True):
+    def _spy(project_dir=None, *, route, admit):
         captured["project_dir"] = project_dir
-        captured["fallback"] = fallback
+        captured["route"] = route
+        captured["admit"] = admit
         return None
 
-    monkeypatch.setattr(hooks.store, "read_latest", _spy)
+    monkeypatch.setattr(hooks.store, "read_latest_body", _spy)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
     )
-    assert out is None  # read_latest returned None
+    assert out is None  # the read returned None
     assert captured["project_dir"] == "/git/top"
+
+
+# ---- #795 stage 2: the injection read's ROUTE argument, asserted (#784) ----
+# No test anywhere asserted the foreign-suppression argument at the injection
+# site — the tenant-leak fix shipped with no unit-level guard on the one line
+# that carries it. After the enum migration a wrong Route returns another
+# project's dict with the right type and no exception, so this argument test
+# is the only thing between a bad edit and the #784 leak.
+
+
+def _route_spy(captured):
+    def _spy(project_dir=None, *, route, admit):
+        captured.update(project_dir=project_dir, route=route, admit=admit)
+        return None
+    return _spy
+
+
+def test_pre_llm_call_reads_own_route_for_a_known_project(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setattr(hooks.config, "resolve_project_root", lambda raw: "/git/top")
+    captured = {}
+    monkeypatch.setattr(hooks.store, "read_latest_body", _route_spy(captured))
+    out = hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert out is None
+    assert captured["route"] is store.Route.OWN
+    assert captured["admit"] is store.Admit.ANY
+    assert captured["project_dir"] == "/git/top"
+
+
+def test_pre_llm_call_falls_back_only_when_project_is_unknown(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setattr(hooks.config, "resolve_project_root", lambda raw: None)
+    captured = {}
+    monkeypatch.setattr(hooks.store, "read_latest_body", _route_spy(captured))
+    hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert captured["route"] is store.Route.OWN_ELSE_GLOBAL
+    assert captured["admit"] is store.Admit.ANY
+
+
+def test_pre_llm_call_env_opt_in_restores_the_global_fallback(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setattr(hooks.config, "resolve_project_root", lambda raw: "/git/top")
+    monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
+    captured = {}
+    monkeypatch.setattr(hooks.store, "read_latest_body", _route_spy(captured))
+    hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert captured["route"] is store.Route.OWN_ELSE_GLOBAL
 
 
 # ---- #103 I1: pre_llm_call must withhold resolved items before injecting ----

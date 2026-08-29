@@ -190,9 +190,13 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # The fallback stays ON when the project is UNKNOWN: there is no per-project
         # pointer to prefer, the global one is the only briefing that exists, and
         # nothing is foreign to a session with no project identity (pre-routing
-        # hosts that do not pass a cwd). The leak needs a KNOWN project.
-        allow_foreign = project is None or config.brief_global_fallback()
-        checkpoint = store.read_latest(project_dir=project, fallback=allow_foreign)
+        # hosts that do not pass a cwd). The leak needs a KNOWN project. The
+        # policy lives once, in briefing.injection_read_route, shared with the
+        # recall-inject surface so the two cannot drift (#795).
+        checkpoint = store.read_latest_body(
+            project_dir=project,
+            route=briefing.injection_read_route(project),
+            admit=store.Admit.ANY)
         if checkpoint is None:
             # #693: standing rulings exist before the first checkpoint does —
             # a day-one ratification must reach the very next session.
