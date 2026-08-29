@@ -170,8 +170,16 @@ def source_digest(transcript_hash, rendered_transcript: str) -> dict:
 
 
 def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
-                  binding_mode: str, message_ids=()) -> dict | None:
-    """Build a complete item receipt from code-derived inputs."""
+                  binding_mode: str, message_ids=(),
+                  stitching=None) -> dict | None:
+    """Build a complete item receipt from code-derived inputs.
+
+    `stitching` (#829, optional): the serializer's fragment-attribution
+    verdict — {"cross_message": bool, "cross_role": bool} — recorded only
+    for verified quotes where per-message attribution was possible. Absent
+    means unknown (legacy receipts, transcript-less callers), never False.
+    Additive under version 1: the field is optional, so every pre-#829
+    receipt stays valid."""
     if not valid_source_ref(source_ref) or outcome not in _OUTCOMES:
         return None
     if binding_mode not in _BINDING_MODES:
@@ -193,6 +201,11 @@ def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
         "checked_at": checked_at,
         "binding": {"mode": binding_mode, "message_ids": ids},
     }
+    if isinstance(stitching, dict):
+        receipt["stitching"] = {
+            "cross_message": bool(stitching.get("cross_message")),
+            "cross_role": bool(stitching.get("cross_role")),
+        }
     return receipt if valid_quote_receipt(receipt) else None
 
 
@@ -235,6 +248,16 @@ def valid_quote_receipt(value) -> bool:
         return False
     if len(ids) != len(set(ids)):
         return False
+    stitching = value.get("stitching")
+    if stitching is not None:
+        # #829: optional (absent = unknown on every pre-#829 receipt); when
+        # present, exactly the two boolean verdicts — a non-bool would let a
+        # truthy junk value read as an attribution the code never derived.
+        if not isinstance(stitching, dict):
+            return False
+        for key in ("cross_message", "cross_role"):
+            if not isinstance(stitching.get(key), bool):
+                return False
     return binding["mode"] != "transcript-scan" or not ids
 
 

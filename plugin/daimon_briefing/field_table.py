@@ -198,7 +198,14 @@ ITEM_RULES: tuple[FieldRule, ...] = (
                   "outcome: enum[verified, not-verified]",
                   "checked_at: string (" + _TIMESTAMP + ")",
                   "binding: object {mode: enum[message-ids, "
-                  "transcript-scan], message_ids: array of string}")),
+                  "transcript-scan], message_ids: array of string}",
+                  "stitching?: object {cross_message: boolean, cross_role: "
+                  "boolean} — verified receipts only, when per-message "
+                  "attribution was possible (#829); true means NO single "
+                  "message (or single role) can account for all matched "
+                  "quote fragments, i.e. the quote was stitched across "
+                  "turns or speakers; absent = unknown (legacy receipts, "
+                  "transcript-less captures)")),
         "Durable per-item evidence receipt (#594, provenance.quote_receipt). "
         "verifier is an OBJECT {id, version}: consumers normalizing it as a "
         "string rendered every verified claim's verifier as absent."),

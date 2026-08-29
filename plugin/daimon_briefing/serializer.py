@@ -858,15 +858,30 @@ def quote_matches(quote, haystack) -> bool:
     contract the docstring described was only ever met at the quote's edges."""
     if not isinstance(quote, str) or not isinstance(haystack, str):
         return False
-    hay = _normalize_for_match(haystack)
+    fragments = _quote_fragments(quote)
+    if not fragments:
+        return False
+    return _fragments_in_order(fragments, _normalize_for_match(haystack))
+
+
+def _quote_fragments(quote: str) -> list:
+    """The ordered, normalized, length-filtered fragments quote_matches scans
+    for — split on ellipsis and redaction markers (#505). Factored out (#829)
+    so stitching attribution replays the SAME fragment view the matcher used,
+    never a second parse that could drift."""
     fragments = []
     for raw in _ELLIPSIS_RE.split(quote):
         for piece in _REDACTED_RE.split(raw):
             frag = _normalize_for_match(piece)
             if len(frag) >= _MIN_FRAGMENT:
                 fragments.append(frag)
-    if not fragments:
-        return False
+    return fragments
+
+
+def _fragments_in_order(fragments, hay: str) -> bool:
+    """Every fragment appears in `hay` IN ORDER, each searched from the
+    previous fragment's match end — quote_matches' scan, over an
+    already-normalized haystack."""
     pos = 0
     for frag in fragments:
         idx = hay.find(frag, pos)
@@ -874,6 +889,36 @@ def quote_matches(quote, haystack) -> bool:
             return False
         pos = idx + len(frag)
     return True
+
+
+def _stitching_flags(quote, candidates) -> dict | None:
+    """The #829 stitching record for a VERIFIED quote, or None when
+    attribution is impossible (no usable fragments, or no per-message texts).
+    `candidates` is the ordered (role, normalized-stripped-text) view of the
+    messages the verification vouched against.
+
+    Necessity semantics, deliberately: a flag is True only when NO single
+    message (cross_message) or no single role's messages, joined in order
+    (cross_role), can account for every matched fragment — never merely
+    because the flat-haystack scan happened to satisfy a fragment across a
+    boundary it did not need to cross. Which occurrence a flat scan matched
+    is ambiguous by construction; whether ONE message could have said the
+    whole quote is not. Recording only: rule 17 (SERIALIZE_SYS) stays
+    doctrine, verification outcomes are untouched, and the follow-up
+    enforcement is gated on the violation rate this measures (#829)."""
+    fragments = _quote_fragments(quote) if isinstance(quote, str) else []
+    usable = [(role, text) for role, text in candidates if text]
+    if not fragments or not usable:
+        return None
+    cross_message = not any(
+        _fragments_in_order(fragments, text) for _, text in usable)
+    by_role: dict = {}
+    for role, text in usable:
+        by_role.setdefault(role, []).append(text)
+    cross_role = not any(
+        _fragments_in_order(fragments, " ".join(texts))
+        for texts in by_role.values())
+    return {"cross_message": cross_message, "cross_role": cross_role}
 
 
 # ---- #440: daimon's own injected output is not a witness ----
@@ -1047,7 +1092,14 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     (see strip_injected) — a quote copied out of a recall line or a briefing
     block is an echo, not a witness, and must never earn `verbatim`. A miss
     is re-checked against the unstripped text so an echoed quote is ledgered
-    under `echo-only` rather than the generic absent-quote reason."""
+    under `echo-only` rather than the generic absent-quote reason.
+
+    #829: every verified receipt additionally records a `stitching` verdict —
+    whether the matched fragments could have come from one message / one role
+    (_stitching_flags' necessity semantics) — when `messages` provides a
+    per-message view. Recording only, never an outcome change: rule 17's
+    no-stitching doctrine (SERIALIZE_SYS) gains a measurement, not an
+    enforcement; the follow-up enforcement is gated on the measured rate."""
     # #440: the RAW pair survives alongside the stripped haystacks, read on
     # the failure path only — to tell an echoed quote from an absent one.
     # #512: daimon-output tool rows are blanked in the STRIPPED map (their
@@ -1074,12 +1126,44 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     # stays the fallback for callers with no transcript stamp to thread.
     stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=()):
+    def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=(),
+                      stitching=None):
         receipt = provenance.quote_receipt(
             source_ref, digest, outcome=outcome, checked_at=checked_at,
-            binding_mode=binding_mode, message_ids=message_ids)
+            binding_mode=binding_mode, message_ids=message_ids,
+            stitching=stitching)
         if receipt is not None:
             item["quote_provenance"] = receipt
+
+    # #829: fragment-to-message attribution for the receipt's stitching
+    # record — built from the SAME stripped view the verification haystacks
+    # vouch for (daimon-output rows blanked, injected spans removed),
+    # normalized once per message. Lazy: a session with no verbatim hit
+    # never pays the normalization pass. Without `messages` there is no
+    # per-message view, so receipts stay stitching-less — absent = unknown,
+    # the project convention, never a guessed False.
+    _attr_rows: list | None = None
+    _attr_by_id: dict = {}
+
+    def _attribution(ids=None):
+        nonlocal _attr_rows
+        if _attr_rows is None:
+            _attr_rows = []
+            # No non-dict guard, same reasoning as stripped_transcript: a
+            # message list that reaches here already rendered through
+            # _render_transcript, which raises on any non-dict row.
+            for m in messages or []:
+                text = ("" if m.get("daimon_output")
+                        else strip_injected(_message_text(m)))
+                mid = _message_id(m)
+                if mid is not None:
+                    _attr_by_id[mid] = len(_attr_rows)
+                _attr_rows.append((m.get("role", "unknown"),
+                                   _normalize_for_match(text)))
+        if ids is None:
+            return _attr_rows
+        # Cited order, mirroring scoped_haystack's join order.
+        return [_attr_rows[_attr_by_id[i]] for i in ids if i in _attr_by_id]
     # The model never gets a vote on the echo verdict (#292 discipline, same
     # as `grounded`/`pinned`): any model-emitted value is dropped before the
     # checker re-derives it.
@@ -1100,7 +1184,10 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
             quote_ids = [i for i in item.get(SOURCE_IDS_KEY) or []
                          if isinstance(i, str) and i not in signals]
             stamp_receipt(item, "verified", checked_at, "message-ids",
-                          quote_ids)
+                          quote_ids,
+                          stitching=(_stitching_flags(
+                              quote, _attribution(quote_ids))
+                              if messages else None))
         elif quote_matches(quote, haystack):
             if scoped is not None:
                 # Resolved AND mismatched: the quote is real but not in its
@@ -1118,7 +1205,9 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
             checked_at = stamp
             item["quote_verified"] = True
             item["last_verified"] = checked_at
-            stamp_receipt(item, "verified", checked_at, "transcript-scan")
+            stamp_receipt(item, "verified", checked_at, "transcript-scan",
+                          stitching=(_stitching_flags(quote, _attribution())
+                                     if messages else None))
         else:
             # #440: a second pass over the UNSTRIPPED text separates "present
             # only in daimon's own injected output" from "absent entirely".
