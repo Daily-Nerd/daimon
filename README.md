@@ -91,7 +91,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 
 ## What's net-new here
 
-- **Trust-classed, quote-pinned memory** — every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, no server: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
+- **Trust-classed, quote-pinned memory:** every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, and no required daemon: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
 - **The briefing UX** — memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
 - **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06); other hosts are reachable via the same thin adapter shape.
 
@@ -106,7 +106,11 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
 | Team memory | shipped, opt-in, early |
 
-Daimon is self-contained at runtime — no external memory backend, no server. The full evidence trail behind every design decision lives in [research/](./research/README.md); the architecture is documented in [docs/MVP-DREAM-BRIEFING.md](./docs/MVP-DREAM-BRIEFING.md).
+Daimon is self-contained at runtime: no external memory backend or required daemon.
+The MCP server and browser viewer are optional local read surfaces. The full evidence
+trail behind every design decision lives in [research/](./research/README.md); the
+current component map is documented in
+[Runtime Architecture](./docs/RUNTIME-ARCHITECTURE.md).
 
 **License:** Apache-2.0 · **Org:** [Daily-Nerd](https://github.com/Daily-Nerd) · This repository starts at v0.2.0 (earlier development happened in a private lab repo; the research trail ships in [research/](./research/README.md)).
 
@@ -115,7 +119,8 @@ Daimon is self-contained at runtime — no external memory backend, no server. T
 ## Docs
 
 - **[Documentation site](https://daily-nerd.github.io/daimon/)** — setup, hosts, configuration, concepts
-- [MVP — Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md) — authoritative architecture
+- [Runtime Architecture](./docs/RUNTIME-ARCHITECTURE.md): current layers, components, and data flow
+- [MVP: Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md): historical foundation of the shipped runtime
 - [Research Logbook](./research/README.md) — findings, decisions, evidence trail
 - [Contributing](./CONTRIBUTING.md) — dev setup, tests, lint, pre-commit hooks
 

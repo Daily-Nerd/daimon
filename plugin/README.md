@@ -6,7 +6,8 @@ Your AI coding agent forgets everything between sessions. **Daimon** writes a sm
 cognitive checkpoint when a session ends, then renders a "while you were away"
 briefing when the next one starts — so the agent resumes from a faithful record of
 where you left off instead of a confident guess. Everything runs locally: per-project
-JSON checkpoints plus a derived SQLite index, no server, no external memory backend.
+JSON checkpoints plus a derived SQLite index, no required daemon, no external memory
+backend. The MCP server and browser viewer are optional local read surfaces.
 
 Every briefing item carries a trust class. `✓ verbatim` items are pinned to an exact
 quote from the transcript and are never reworded. `~ inferred` items are the agent's
