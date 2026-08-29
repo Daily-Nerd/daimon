@@ -1,22 +1,22 @@
 ---
-id: 0
+id: 62
 type: fence
 title: spawn_serialize callers test `is False`, not falsiness, because ~16 test fakes return None
 severity: medium
 confidence: 0.85
 created: 2026-08-29
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: hook/
   - path: plugin/daimon_briefing/_hooks/
-  - pattern: "spawn_serialize\\(.*\\) is False|lib\\.spawn_serialize"
+  - pattern: "spawn_serialize"
 evidence:
-  - commit: 681c234
+  - commit: bb3d2dd
   - pr: 814
 expires:
   condition: "every `monkeypatch.setattr(lib, 'spawn_serialize', ...)` fake in plugin/tests returns an explicit bool, at which point plain falsiness is safe"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 `spawn_serialize` returns `False` when it skipped the spawn because a serialize
