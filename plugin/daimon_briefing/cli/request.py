@@ -157,6 +157,29 @@ def _inject_lines(record: dict) -> list[str]:
     return lines
 
 
+_INJECT_VERDICT_MARKS = {"needs-info": "?", "accepted": "✓",
+                         "rejected": "×", "done": "✔"}
+
+
+def _verdict_inject_lines(record: dict) -> list[str]:
+    """One delivered verdict, compressed to what the sender acts on. Same
+    posture as `_inject_lines`: this lands mid-session on the agent's context
+    budget. The note is the recipient's answer to THIS project's own ask, so
+    it is this project's mail rather than a foreign record being rendered."""
+    state = str(record.get("state") or "")
+    mark = _INJECT_VERDICT_MARKS.get(state, "?")
+    lines = [f"daimon verdict: {mark} {state}  {record['request_id']} "
+             f"(to {record.get('to') or '?'})"]
+    lines.append(f"  Ask: {record.get('ask', '')}")
+    note = str(record.get("note") or "").strip()
+    if note:
+        lines.append(f"  Note: {note}")
+    evidence = str(record.get("done_evidence") or "").strip()
+    if evidence:
+        lines.append(f"  Done: {evidence}")
+    return lines
+
+
 def _cmd_request_inject(args) -> int:
     """Print the undecided asks this session has not been shown, or nothing.
 
@@ -177,10 +200,17 @@ def _cmd_request_inject(args) -> int:
     try:
         project = _cli._resolve_project(args.project)
         entry = requests.deliverable(session, project_dir=project)
+        verdicts = requests.verdict_deliverable(session, project_dir=project)
         rows = entry["rows"]
-        if not rows:
+        if not rows and not verdicts["rows"]:
             return 0
         out = []
+        for record in verdicts["rows"]:
+            out.extend(_verdict_inject_lines(record))
+        if verdicts["overflow"]:
+            plural = "s" if verdicts["overflow"] != 1 else ""
+            out.append(f"(+{verdicts['overflow']} more decided{plural}, "
+                       "not shown here)")
         for record in rows:
             out.extend(_inject_lines(record))
         # #800: name what the cap withheld, in the panel's own words. Without
@@ -192,8 +222,14 @@ def _cmd_request_inject(args) -> int:
             out.append(f"(+{overflow} more waiting{plural}, not shown here)")
         # The verbs that decide are human-only (D8); the line names the
         # surface that lists them rather than a verb the agent cannot run.
-        out.append("Undecided. Full records: `daimon request inbox`")
+        # Only when there ARE undecided asks: a delivery carrying nothing but
+        # verdicts has nothing awaiting a decision to point at.
+        if rows:
+            out.append("Undecided. Full records: `daimon request inbox`")
         print("\n".join(out))
+        for record in verdicts["rows"]:
+            requests.stamp_verdict_delivered(record["request_id"], session,
+                                             project_dir=project)
         for record in rows:
             requests.stamp_delivered(record["request_id"], session,
                                      project_dir=project)
