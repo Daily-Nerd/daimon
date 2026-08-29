@@ -950,27 +950,33 @@ def inbox_renderable(project_dir=None) -> dict:
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
-def deliverable(session: str, project_dir=None) -> list[dict]:
+def deliverable(session: str, project_dir=None) -> dict:
     """#756: the asks addressed to this project that `session` has not yet
     been delivered THIS revision epoch — the panel's own filter, narrowed by
-    what this one session has already seen.
+    what this one session has already seen. `{"rows": [...], "overflow": N}`.
 
     Ordering and cap follow the panel deliberately (newest first, RENDER_CAP)
     so a live nudge and the next brief agree about which asks matter. The
     dedup filter runs BEFORE the cap: capping first would let three
     already-delivered asks hide a fourth that nobody has seen.
 
+    #800: the remainder is COUNTED, the same shape and for the same reason as
+    `renderable()` above — silently dropping an addressed ask is the one
+    failure this feature cannot have, and this path inherited the cap without
+    the signal that made it safe. The count is taken AFTER the dedup filter,
+    so it never reports asks this session has already been shown.
+
     No session id means no dedup key, and re-nudging every turn forever is
     worse than not nudging — so it returns nothing rather than everything."""
     session = str(session or "").strip()
     if not session:
-        return []
+        return {"rows": [], "overflow": 0}
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)
             and needs_delivered_stamp(r, session)]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
-    return rows[:RENDER_CAP]
+    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
 # ---- #694 PR 3: D3 — consumption-based expiry, derived, never written -----
