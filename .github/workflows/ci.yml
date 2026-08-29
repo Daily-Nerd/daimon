@@ -91,6 +91,17 @@ jobs:
         continue-on-error: true
         run: uv run --extra dev mypy daimon_briefing
 
+      # #795: a ReadResult reaching a body-only call site is a SILENT wrong
+      # answer (a frozen dataclass is truthy, not None and not a dict), so
+      # this step is blocking while mypy above stays advisory: any mypy
+      # finding that mentions ReadResult outside store.py fails the build.
+      # Scoped by symbol, not path, so it needs no baseline and survives
+      # until the #795 stage 4 cleanup.
+      - name: mypy ReadResult containment
+        run: |
+          uv run --extra dev mypy daimon_briefing > mypy-out.txt || true
+          ! grep "ReadResult" mypy-out.txt | grep -v "^daimon_briefing/store.py"
+
   scar-lint:
     name: scar lint
     runs-on: ubuntu-latest
