@@ -13,6 +13,7 @@ from daimon_briefing import store
 HOOK_DIR = Path(__file__).parents[2] / "hook"
 START_HOOK = HOOK_DIR / "daimon-codex-session-start.py"
 STOP_HOOK = HOOK_DIR / "daimon-codex-stop.py"
+SESSION_END_HOOK = HOOK_DIR / "daimon-codex-session-end.py"
 MANAGER = HOOK_DIR / "codex-hooks.py"
 LIB_NAME = "_daimon_hook_lib.py"
 VENV_BIN = Path(sys.executable).parent
@@ -471,3 +472,76 @@ def test_codex_hooks_install_copies_lib_uninstall_removes_it(tmp_path):
     assert _manager(tmp_path, "uninstall").returncode == 0
     assert not lib.exists()  # removed once no daimon hook remains
     assert not (hooks_dir / "daimon-codex-session-start.py").exists()
+
+
+# ---- #813: SessionEnd must not spawn over a live Stop child ----
+
+
+def test_codex_session_end_skips_when_a_stop_serialize_is_in_flight(
+    tmp_path, tmp_checkpoint_dir
+):
+    """The field case #813 reports, end to end.
+
+    Stop forks a detached serialize; SessionEnd fires 55s later, unthrottled,
+    and forked a second one over the still-running first. Both wrote. The
+    SessionEnd docstring argued this was covered because it writes the Stop
+    hook's marker, but that marker only stops a LATER Stop.
+
+    Two details this pins deliberately:
+
+    - The payload `session_id` and the transcript STEM are different strings
+      here, exactly as Codex produces them. `daimon serialize` keys its
+      heartbeat off the filename (`cli:233`), so a guard keyed on the payload
+      id would match nothing and silently never fire.
+    - The log line must say SKIPPED. `ledger` parses "spawned serialize", and a
+      spawn with no result classifies as hung and invites `heal` to retry work
+      that never started.
+    """
+    fake_bin, capture = _fake_cli(tmp_path)
+    transcript = tmp_path / "rollout-2026-08-28T22-41-50-01a04bd2.jsonl"
+    transcript.write_text("{}\n")
+
+    beats = tmp_path / ".daimon" / "logs" / "heartbeats"
+    beats.mkdir(parents=True)
+    (beats / transcript.stem).write_text("some-project-slug")  # Stop's child, live
+
+    payload = {
+        "session_id": "01a04bd2",  # NOT the stem — this is the trap
+        "transcript_path": str(transcript),
+        "cwd": "/Users/x/projA",
+        "hook_event_name": "SessionEnd",
+    }
+    result = _run(SESSION_END_HOOK, payload, tmp_path,
+                  extra_env={"PATH": str(fake_bin)})
+
+    assert result.returncode == 0
+    time.sleep(0.2)
+    assert not capture.exists()  # no second serialize forked
+
+    log = (tmp_path / ".daimon" / "logs" / "serialize.log").read_text(encoding="utf-8")
+    assert "skipped serialize" in log
+    assert "spawned serialize" not in log
+
+
+def test_codex_session_end_still_spawns_when_nothing_is_in_flight(
+    tmp_path, tmp_checkpoint_dir
+):
+    """Liveness control for the guard above: the ordinary graceful exit must
+    still serialize."""
+    fake_bin, capture = _fake_cli(tmp_path)
+    transcript = tmp_path / "rollout-2026-08-28T22-41-50-01a04bd2.jsonl"
+    transcript.write_text("{}\n")
+
+    payload = {
+        "session_id": "01a04bd2",
+        "transcript_path": str(transcript),
+        "cwd": "/Users/x/projA",
+        "hook_event_name": "SessionEnd",
+    }
+    result = _run(SESSION_END_HOOK, payload, tmp_path,
+                  extra_env={"PATH": str(fake_bin)})
+
+    assert result.returncode == 0
+    _wait_for(capture)
+    log = (tmp_path / ".daimon" / "logs" / "serialize.log").read_text(encoding="utf-8")
+    assert "spawned serialize" in log

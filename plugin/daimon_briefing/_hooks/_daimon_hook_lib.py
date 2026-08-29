@@ -318,6 +318,17 @@ def _in_flight_stems() -> set:
     return stems
 
 
+def _serialize_in_flight(transcript_path) -> bool:
+    """True when a LIVE serialize is already running for this transcript
+    (#813). Fails OPEN — an unreadable heartbeat dir must never block a
+    genuine capture, which is the same direction `_in_flight_stems` takes."""
+    try:
+        return Path(transcript_path).stem in _in_flight_stems()
+    except Exception:  # noqa: BLE001 — a broken guard must not cost a capture
+        return False
+
+
+
 def _failed_session_stems() -> set:
     """Transcript stems (session ids) whose LATEST serialize.log outcome is a
     recorded failure — a lightweight, read-only echo of
@@ -541,15 +552,46 @@ def trim_crash_log(path) -> None:
         pass
 
 
-def spawn_serialize(cli, transcript_path, env) -> None:
+def spawn_serialize(cli, transcript_path, env):
     """Spawn `daimon serialize <transcript>` DETACHED so the hook returns
     immediately (serialization is a 30s+ LLM call). Raises OSError on spawn
     failure so the caller can log its own host-tagged diagnostic.
 
+    Returns False when the spawn was SKIPPED because a serialize for this same
+    transcript is already in flight (#813); any other return means it spawned.
+    Callers must test `is False` and log a skip line instead of a spawn line —
+    see the note on the sentinel below.
+
     The CLI logs its result lines to serialize.log first-class (FR #27), so we
     DON'T capture the child's stdout here — that double-logged results. stderr
     goes to a SEPARATE crash log to preserve uncaught tracebacks without
-    duplicating the CLI's `error:` result lines in serialize.log."""
+    duplicating the CLI's `error:` result lines in serialize.log.
+
+    #813, the in-flight guard: #545 established that two serializes of one
+    transcript are last-writer-wins and uncorrelated with quality, built
+    `_in_flight_stems` for it, and wired it to `sweep_orphans` alone. The two
+    Codex hook spawn paths never consulted it, so a `Stop` child still running
+    when `SessionEnd` fires produced two full runs of the same transcript. The
+    check belongs HERE, with the spawn, so every caller inherits it rather than
+    each one having to remember.
+
+    Keyed on the transcript STEM, never on a host payload's session id. The CLI
+    derives its session id from the filename (`cli:233`, `session_id =
+    path.stem`) and that is the name `ledger.touch_heartbeat` stamps, while a
+    Codex payload's `session_id` is a different string entirely. Keying on the
+    payload id would match no heartbeat ever and leave a guard that looks
+    implemented and does nothing.
+
+    Known narrowing, not a total fix: the child stamps its first heartbeat
+    after interpreter start and its own preflight, so two spawns inside that
+    startup window both see an empty set and both run. Stamping from the PARENT
+    would close it and open something worse — a child that dies before its
+    first touch would leave a stamp that blocks the session for the whole
+    hung-after ceiling. The observed race is minutes wide; this narrows it to
+    seconds, and `heal` remains the answer for the rest.
+    """
+    if _serialize_in_flight(transcript_path):
+        return False
     crash = crash_log_path()
     crash.parent.mkdir(parents=True, exist_ok=True)
     trim_crash_log(crash)
