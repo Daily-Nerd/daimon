@@ -79,63 +79,9 @@ def run(session_id: str, messages, *, project, chat, deadline,
         checkpoint["transcript_hash"] = transcript_sha
     if source_ref is not None:
         checkpoint["source_ref"] = source_ref
-    if config.carry_enabled():
-        # Deterministic carry (#33 Phase 2): fold the previous checkpoint's
-        # unresolved items in BEFORE the write rotates it away. Clock = this
-        # checkpoint's own stamp (scar: never default to wall clock when a
-        # stamp exists), wall time only as fallback for stampless paths.
-        # Advisory feature — a raise here must never cost us the checkpoint
-        # itself (a briefing missing carried items is strictly better than
-        # no briefing at all; same idiom as the rejection-ledger swallow below).
-        try:
-            # fallback=False (#94): on a project's first serialize there is no
-            # per-project pointer, and the global pointer is another project's
-            # checkpoint — carrying from it would write foreign items into
-            # this project's bucket permanently. No prev -> no carry.
-            prev = store.read_latest(project, fallback=False)
-            now = store._created_epoch(checkpoint.get("created")) or time.time()
-            events = store.resolutions(project_dir=project)
-            resolved = frozenset(ref for ref, evt in events.items()
-                                 if store.is_resolved(evt))
-            # #268: merge's observation sink — every prev/native pair that
-            # clears the corroboration predicate, as (item_id, origin_session,
-            # origin_author). merge only DECIDES; the ledger write is ours.
-            observed: list = []
-            checkpoint = carry.merge(checkpoint, prev, now,
-                                     floor=config.carry_floor(),
-                                     cap=config.carry_max(),
-                                     resolved=resolved,
-                                     observed=observed)
-            # #14: text-target supersession links bound to prev-item ids ->
-            # candidate events, gated so a human verdict is never overridden
-            # (see _emit_supersede_candidates). Same fail-open try as merge
-            # itself — a broken emission must never cost the checkpoint.
-            # Stamp ids BEFORE binding: fresh natives are only stamped inside
-            # write_checkpoint (after this block), so without this every new
-            # item binds with new_id="" and the event carries no target.
-            # Setdefault-idempotent — write_checkpoint's re-stamp no-ops.
-            store._stamp_item_ids(checkpoint)
-            pairs = carry.bind_links(checkpoint, prev)
-            # ONE forgotten-keys read for both emitters (#268): each writes to
-            # the same append-only log, each must refuse a tombstoned value,
-            # and both must see the same ledger the `resolved` set above was
-            # computed from. A raise here aborts BOTH emissions and keeps the
-            # checkpoint — the fail-safe direction either emitter would take
-            # on its own.
-            forgotten = store.forgotten_content_keys(project_dir=project)
-            _emit_supersede_candidates(pairs, events, project,
-                                       forgotten=forgotten)
-            # Corroboration rows land AFTER the candidates, deliberately: the
-            # same capture can suggest a supersession and record an agreement
-            # about the same item, and the corroboration reader measures its
-            # count against the LATEST contradiction — so the candidate has to
-            # be on the log first for that comparison to be honest.
-            _emit_corroborations(
-                observed, events,
-                _forgotten_item_ids(forgotten, checkpoint, prev),
-                project, str(checkpoint.get("session_id") or ""))
-        except Exception:  # keep the unmerged checkpoint, proceed to write
-            pass
+    # #811: carry is part of writing a checkpoint, not a step capture happens
+    # to perform. Shared with the introspection path via capture.carry_forward.
+    checkpoint = carry_forward(checkpoint, project)
     # admit=True (#693): capture is one of the two admission paths — new
     # cognitive content passes the ruling echo filter here.
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project,
@@ -558,3 +504,88 @@ def _session_end_stamp(path) -> str:
     except OSError:
         mtime = time.time()
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mtime))
+
+
+def carry_forward(checkpoint: dict, project) -> dict:
+    """Fold the project's previous checkpoint forward into `checkpoint` and
+    emit the ledger rows that decision produces (#33 Phase 2, #14, #268).
+
+    Extracted from `run` so it can be shared (#811). EVERY write path rotates
+    the pointer chain (`store._rotate_pointers`), and `brief` renders `latest`
+    alone and never walks prev-N, so a write that rotates without carrying
+    silently ends the reachable history of whatever it displaced. With one
+    session that is harmless — the displaced checkpoint is the same session's
+    own earlier state. With two sessions sharing a bucket it orphans the other
+    session's record outright, which is the field case #811 was filed from.
+    Carry belongs with the rotation, not with one of its callers.
+
+    Advisory: any raise inside costs the carried items and never the
+    checkpoint (a briefing missing carried items beats no briefing at all).
+    Returns the merged checkpoint, or `checkpoint` unchanged when carry is
+    disabled or fails.
+
+    Callers must run this AFTER their own provenance stripping. On the
+    introspection path in particular, #511: carry's freeze prefers `verbatim`,
+    so a model-claimed verbatim reaching this function before
+    `serializer.downgrade_unverifiable_verbatim` would be preferred over
+    genuinely extracted content.
+    """
+    if not config.carry_enabled():
+        return checkpoint
+    # Deterministic carry (#33 Phase 2): fold the previous checkpoint's
+    # unresolved items in BEFORE the write rotates it away. Clock = this
+    # checkpoint's own stamp (scar: never default to wall clock when a
+    # stamp exists), wall time only as fallback for stampless paths.
+    # Advisory feature — a raise here must never cost us the checkpoint
+    # itself (a briefing missing carried items is strictly better than
+    # no briefing at all; same idiom as `run`'s rejection-ledger swallow).
+    try:
+        # fallback=False (#94): on a project's first serialize there is no
+        # per-project pointer, and the global pointer is another project's
+        # checkpoint — carrying from it would write foreign items into
+        # this project's bucket permanently. No prev -> no carry.
+        prev = store.read_latest(project, fallback=False)
+        now = store._created_epoch(checkpoint.get("created")) or time.time()
+        events = store.resolutions(project_dir=project)
+        resolved = frozenset(ref for ref, evt in events.items()
+                             if store.is_resolved(evt))
+        # #268: merge's observation sink — every prev/native pair that
+        # clears the corroboration predicate, as (item_id, origin_session,
+        # origin_author). merge only DECIDES; the ledger write is ours.
+        observed: list = []
+        checkpoint = carry.merge(checkpoint, prev, now,
+                                 floor=config.carry_floor(),
+                                 cap=config.carry_max(),
+                                 resolved=resolved,
+                                 observed=observed)
+        # #14: text-target supersession links bound to prev-item ids ->
+        # candidate events, gated so a human verdict is never overridden
+        # (see _emit_supersede_candidates). Same fail-open try as merge
+        # itself — a broken emission must never cost the checkpoint.
+        # Stamp ids BEFORE binding: fresh natives are only stamped inside
+        # write_checkpoint (after this block), so without this every new
+        # item binds with new_id="" and the event carries no target.
+        # Setdefault-idempotent — write_checkpoint's re-stamp no-ops.
+        store._stamp_item_ids(checkpoint)
+        pairs = carry.bind_links(checkpoint, prev)
+        # ONE forgotten-keys read for both emitters (#268): each writes to
+        # the same append-only log, each must refuse a tombstoned value,
+        # and both must see the same ledger the `resolved` set above was
+        # computed from. A raise here aborts BOTH emissions and keeps the
+        # checkpoint — the fail-safe direction either emitter would take
+        # on its own.
+        forgotten = store.forgotten_content_keys(project_dir=project)
+        _emit_supersede_candidates(pairs, events, project,
+                                   forgotten=forgotten)
+        # Corroboration rows land AFTER the candidates, deliberately: the
+        # same capture can suggest a supersession and record an agreement
+        # about the same item, and the corroboration reader measures its
+        # count against the LATEST contradiction — so the candidate has to
+        # be on the log first for that comparison to be honest.
+        _emit_corroborations(
+            observed, events,
+            _forgotten_item_ids(forgotten, checkpoint, prev),
+            project, str(checkpoint.get("session_id") or ""))
+    except Exception:  # keep the unmerged checkpoint, proceed to write
+        pass
+    return checkpoint

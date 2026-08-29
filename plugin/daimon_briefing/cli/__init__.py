@@ -404,10 +404,23 @@ def _cmd_write_checkpoint(args) -> int:
     serializer.downgrade_unverifiable_verbatim(checkpoint)
     checkpoint["source"] = args.source  # provenance: introspection vs reconstruction
     session_id = str(checkpoint["session_id"])
+    project = _resolve_project(args.project)
+    # #811: this write rotates the pointer chain exactly like a serialize, and
+    # `brief` reads `latest` alone (never prev-N). Without carry it therefore
+    # ENDS the reachable history of whatever it displaces. The docstring above
+    # reasons that is safe because a later reconstruction supersedes it — true
+    # only while `latest` holds this session's own earlier state. Two sessions
+    # in one bucket break that assumption and the earlier one is orphaned.
+    #
+    # Placement is load-bearing: strictly AFTER the four provenance strips, and
+    # #511 in particular. Carry's #22 freeze prefers `verbatim`, so carrying
+    # before downgrade_unverifiable_verbatim would let a model-claimed verbatim
+    # this path can never check beat genuinely extracted prev content.
+    checkpoint = capture.carry_forward(checkpoint, project)
     # admit=True (#693): the stdin path is the second admission caller — a
     # model-authored checkpoint passes the ruling echo filter like capture's.
     out = store.write_checkpoint(session_id, checkpoint,
-                                 project_dir=_resolve_project(args.project),
+                                 project_dir=project,
                                  admit=True)
     if out is None:  # #421: write boundary refused (kill switch)
         print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
