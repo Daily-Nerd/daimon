@@ -5,6 +5,40 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.0](https://github.com/Daily-Nerd/daimon/compare/v0.34.0...v0.35.0) (2026-08-29)
+
+
+### Features
+
+* **decide:** add the human decision queue, scoped to this project ([#775](https://github.com/Daily-Nerd/daimon/issues/775)) ([8cdbede](https://github.com/Daily-Nerd/daimon/commit/8cdbede503438ccefb96d27767027273df44b221))
+* **decide:** count what waits in other projects, never their text ([#777](https://github.com/Daily-Nerd/daimon/issues/777)) ([21628d8](https://github.com/Daily-Nerd/daimon/commit/21628d8ff3b002c8e43e3184f7d55da1483f0e63))
+* **requests:** deliver a verdict back to the sender at its next turn boundary ([#807](https://github.com/Daily-Nerd/daimon/issues/807)) ([20813c2](https://github.com/Daily-Nerd/daimon/commit/20813c216a18692ede3c7944c07edbb0a5df597c))
+* **requests:** ledger layer for live request delivery ([#757](https://github.com/Daily-Nerd/daimon/issues/757)) ([79f8a0e](https://github.com/Daily-Nerd/daimon/commit/79f8a0eb96a22282049279ac81b38c7419285b15))
+* **requests:** live request delivery at the next turn boundary ([#759](https://github.com/Daily-Nerd/daimon/issues/759)) ([db8d786](https://github.com/Daily-Nerd/daimon/commit/db8d786b58dd9605858fe35f6f55d8d0fed6a682))
+
+
+### Bug Fixes
+
+* **anchor:** refuse to attach to a checkpoint this project does not own ([#790](https://github.com/Daily-Nerd/daimon/issues/790)) ([29cfdc0](https://github.com/Daily-Nerd/daimon/commit/29cfdc05bfe095c0e1f2c474d34480b2dce33628))
+* **brief:** decide the global fallback before the read, not after it ([#788](https://github.com/Daily-Nerd/daimon/issues/788)) ([13b0d02](https://github.com/Daily-Nerd/daimon/commit/13b0d023a9f260c81830413a79231bff0d5869fc))
+* **briefing:** rename the sender-side request panel heading ([#765](https://github.com/Daily-Nerd/daimon/issues/765)) ([c6c9782](https://github.com/Daily-Nerd/daimon/commit/c6c978204fec3deea23aaee93ba2237f1ecd0ab4))
+* **briefing:** stop the session-start injection at the project boundary ([#785](https://github.com/Daily-Nerd/daimon/issues/785)) ([19450c5](https://github.com/Daily-Nerd/daimon/commit/19450c5e58ab8969a65d03de84c1ea1ef8c509dd))
+* **echo:** recognise the module and timeout invocation forms ([#780](https://github.com/Daily-Nerd/daimon/issues/780)) ([42724d4](https://github.com/Daily-Nerd/daimon/commit/42724d41fb2a438ee818814d36dfe531869a47f4))
+* **echo:** stop reading a markdown code span as a command substitution ([#782](https://github.com/Daily-Nerd/daimon/issues/782)) ([bed62c7](https://github.com/Daily-Nerd/daimon/commit/bed62c7d9d969145edcde882179771a6a9bc8702))
+* **receipts:** report only on a checkpoint this project may claim ([#792](https://github.com/Daily-Nerd/daimon/issues/792)) ([7f6daee](https://github.com/Daily-Nerd/daimon/commit/7f6daee0f3bccb1b1dacd310eca3e144a6afaeba))
+* **request:** fold the sender lane in request list, like the panels already do ([#799](https://github.com/Daily-Nerd/daimon/issues/799)) ([e56c7b5](https://github.com/Daily-Nerd/daimon/commit/e56c7b517a77df4d8200c164e28808e21dd5546d))
+* **requests:** a verdict after a revise now gets its own first look ([#804](https://github.com/Daily-Nerd/daimon/issues/804)) ([9c1c564](https://github.com/Daily-Nerd/daimon/commit/9c1c56468c976e1727ea05595e2d433020232e7d))
+* **requests:** the live nudge now names the ask its cap withheld ([#802](https://github.com/Daily-Nerd/daimon/issues/802)) ([edd61a5](https://github.com/Daily-Nerd/daimon/commit/edd61a59d4bcc8f0aca8e4f23d009de53906eea4))
+* **ui:** stop nulling the fields the producer actually writes ([#797](https://github.com/Daily-Nerd/daimon/issues/797)) ([05b9c47](https://github.com/Daily-Nerd/daimon/commit/05b9c47ff403c3049bb12dccc836d96adddbadcf))
+
+
+### Documentation
+
+* **config:** describe the request verbs without the excluded term ([#762](https://github.com/Daily-Nerd/daimon/issues/762)) ([0304bf1](https://github.com/Daily-Nerd/daimon/commit/0304bf1e9942eecbc97e38eb5f082c209c12759d))
+* **echo:** record the multiline prose trade at the pattern ([#786](https://github.com/Daily-Nerd/daimon/issues/786)) ([dc33a1c](https://github.com/Daily-Nerd/daimon/commit/dc33a1c57934621934ae1042e13604a282474516))
+* **reference:** name the request section for what the reader wants to do ([#770](https://github.com/Daily-Nerd/daimon/issues/770)) ([c25e126](https://github.com/Daily-Nerd/daimon/commit/c25e12663ba1d4287c576e6a401350bcbd36e57d))
+* **reference:** restate the request and relation verbs in plain terms ([#763](https://github.com/Daily-Nerd/daimon/issues/763)) ([4d6eba7](https://github.com/Daily-Nerd/daimon/commit/4d6eba71d26d82da8710e406ff53eb4be9a0c0a7))
+
 ## [0.34.0](https://github.com/Daily-Nerd/daimon/compare/v0.33.0...v0.34.0) (2026-08-26)
 
 
