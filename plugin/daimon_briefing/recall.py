@@ -13,8 +13,13 @@ small JSON files; correctness over cleverness (no incremental upserts).
 
 Schema: `items` carries one row per cognitive item (text/trust/kind/author/
 project_slug/session_id/created), plus two Graphiti-inspired interval slots:
-`superseded_by` (populated — see below) and `invalidated_by` (schema slot ONLY,
-no logic yet; future contradiction intervals). A contentless FTS5 table indexes
+`superseded_by` (populated — see below) and `invalidated_by` (#835: populated
+from DERIVED contradiction evidence only — the per-bucket verification
+ledger's worldcheck receipt-contradiction rows fold in at rebuild as
+"<check>:<reason>@<ts>", latest row per item winning. Replaced and disproven
+are independent axes: neither write ever touches the other. Authority
+precedent: model-flagged contradictions never mint the link — derived world
+evidence writes it, or nothing does). A contentless FTS5 table indexes
 text + quote for MATCH; rows join back to `items` by rowid.
 
 Supersession v3 (#234) is ITEM-LEVEL evidence only: `superseded_by` is set by
@@ -308,9 +313,15 @@ def _fingerprint() -> str:
                 # it into superseded_by), so it must be fingerprint INPUT too —
                 # else a resolve/reopen serves stale rows until an unrelated
                 # checkpoint write happens to invalidate the db (#245).
+                # verification.jsonl joined the same club in #835
+                # (_apply_verification_invalidations folds it into
+                # invalidated_by): new contradiction evidence must rebuild,
+                # never serve stale NULLs.
                 paths.extend(p for p in e.iterdir()
-                             if p.is_file() and (p.suffix == ".json"
-                                                 or p.name == "events.jsonl"))
+                             if p.is_file()
+                             and (p.suffix == ".json"
+                                  or p.name in ("events.jsonl",
+                                                "verification.jsonl")))
     except OSError:
         pass
     try:
@@ -572,6 +583,53 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     return reaped
 
 
+# #835: the ledger checks that may write invalidated_by — worldcheck's
+# receipt-validity contradiction evidence (worldcheck._LEDGER_CHECK; pinned
+# equal by test rather than imported, so recall's import graph stays free of
+# worldcheck's probe machinery). Capture-time rejection rows ("quote",
+# "outcome", #376) describe the CAPTURE, not later disproof, and never
+# write; model-flagged contradictions have no path here at all — authority
+# precedent: derived world evidence writes the slot, or nothing does.
+_INVALIDATION_CHECKS = ("receipt",)
+
+
+def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
+    """Fold each project bucket's verification ledger into invalidated_by
+    (#835): a worldcheck receipt-contradiction row marks every indexed row
+    of the referenced item with "<check>:<reason>@<ts>" — a scalar evidence
+    reference, the same convention superseded_by keeps (a bare TEXT value,
+    never a JSON blob). Rows fold in file order, so the LATEST evidence for
+    an item wins: the most recent probe is the current world's answer.
+
+    Independent axis by contract: superseded_by is never read or written
+    here — an item can be both replaced and disproven. Malformed rows
+    (missing ref/reason/ts) are skipped, the same fail-open bias as every
+    ledger fold: a wrong invalidation fabricates distrust, a missed one
+    just stays quiet."""
+    try:
+        buckets = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
+    except OSError:
+        return
+    for bucket in buckets:
+        # The bucket dir NAME routes store.verification_rows exactly like a
+        # project dir — slug munging is idempotent on slugs, the same trick
+        # _apply_event_resolutions leans on.
+        for row in store.verification_rows(project_dir=bucket.name):
+            if row.get("check") not in _INVALIDATION_CHECKS:
+                continue
+            ref = row.get("item_ref")
+            reason = row.get("reason")
+            ts = row.get("ts")
+            if not (isinstance(ref, str) and ref
+                    and isinstance(reason, str) and reason
+                    and isinstance(ts, str) and ts):
+                continue
+            conn.execute(
+                "UPDATE items SET invalidated_by = ?"
+                " WHERE item_id = ? AND project_slug IS ?",
+                (f"{row['check']}:{reason}@{ts}", ref, bucket.name))
+
+
 def rebuild() -> int:
     """Drop + rebuild the whole index by scanning local + team checkpoints.
     Atomic: builds into a sibling temp file, then os.replace — a concurrent
@@ -642,6 +700,7 @@ def rebuild() -> int:
             )
         _apply_typed_supersession(conn, links)
         _apply_event_resolutions(conn)
+        _apply_verification_invalidations(conn)
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
                      (_SCHEMA_VERSION,))
         conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))

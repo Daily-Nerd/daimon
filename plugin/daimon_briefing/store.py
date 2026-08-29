@@ -1895,6 +1895,30 @@ def append_verification(item_ref: str, check: str, reason: str,
         return False
 
 
+def verification_rows(project_dir=None) -> list:
+    """Parsed rejection-ledger rows, oldest first (#835) — the read half of
+    append_verification, for recall's invalidated_by fold. Fails open to []
+    (missing/corrupt ledger, unknown project) and skips torn lines, the same
+    posture as verification_counts: a ledger read must never take an index
+    rebuild down."""
+    path = _ledger_path(project_dir)
+    if path is None:
+        return []
+    rows: list = []
+    try:
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except OSError:
+        return []
+    return rows
+
+
 def verification_counts(project_dir=None) -> dict:
     """{check: count} over the rejection ledger. Answers the question the
     trust classes otherwise cannot: has verification ever caught anything on
