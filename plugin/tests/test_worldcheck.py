@@ -1100,6 +1100,26 @@ def _cp_origins(origins, texts=None):
     return cp
 
 
+def _two_axis_check(proj, monkeypatch, fake_gh, *, gh_state,
+                    vitni_verdict=None, n=1):
+    """Run check() over `n` carried items that each carry BOTH a text claim
+    (PR #6<i> awaiting review — distinct probe targets) and a
+    receipt-validity claim on ONE shared signed origin. The caller's
+    `receipts_on` fixture supplies the vitni side; `gh_state` drives the
+    text-claim probes and `vitni_verdict` (None = valid) the receipt one.
+    Returns (stats, checkpoint). With n >= 6 the probe plan fills at
+    MAX_PROBES before items 5+ plant their text probes — the #833
+    starvation shape."""
+    if vitni_verdict is not None:
+        monkeypatch.setenv("FAKE_VITNI_VERDICT", vitni_verdict)
+    gh, _log = fake_gh(f"echo '{{\"state\":\"{gh_state}\"}}'")
+    _enable_probes(monkeypatch, gh)
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"] * n,
+                     texts=[f"PR #6{i} awaiting review" for i in range(n)])
+    return worldcheck.check(cp, proj), cp
+
+
 def _pubkey_dir(tmp_path, monkeypatch):
     """A keys dir holding only the cached PUBLIC key — worldcheck verifies, it
     never signs, so the seed is deliberately absent."""
@@ -1376,12 +1396,8 @@ def test_receipt_never_overwrites_a_text_class_stamp(receipts_on, proj,
     # is the more actionable one (it names what changed and drives a `daimon
     # resolve --status`), so it WINS — but the receipt outcome still counts and
     # still reaches the rejection ledger.
-    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
-    gh, _log = fake_gh("echo '{\"state\":\"MERGED\"}'")
-    _enable_probes(monkeypatch, gh)
-    _signed_origin("S-origin", proj)
-    cp = _cp_origins(["S-origin"], texts=["PR #60 awaiting review"])
-    stats = worldcheck.check(cp, proj)
+    stats, cp = _two_axis_check(proj, monkeypatch, fake_gh, gh_state="MERGED",
+                                vitni_verdict="signature_invalid")
     item = cp["working_context"]["open_questions"][0]
     assert item["_worldcheck"] == {"note": "#60 merged", "status": "merged"}
     assert stats["pr-state:contradicted"] == 1
@@ -1395,32 +1411,27 @@ def test_two_axis_item_counts_once_in_the_aggregates(receipts_on, proj,
     promise, and what cli's usage counters emit under), so an item carrying
     BOTH a text claim and a receipt-validity claim increments them once —
     while the per-class keys keep the per-claim detail."""
-    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
-    gh, _log = fake_gh("echo '{\"state\":\"MERGED\"}'")
-    _enable_probes(monkeypatch, gh)
-    _signed_origin("S-origin", proj)
-    cp = _cp_origins(["S-origin"], texts=["PR #60 awaiting review"])
-    stats = worldcheck.check(cp, proj)
+    stats, _cp_out = _two_axis_check(proj, monkeypatch, fake_gh,
+                                     gh_state="MERGED",
+                                     vitni_verdict="signature_invalid")
     assert (stats["confirmed"] + stats["contradicted"] + stats["skipped"]) == 1
     assert stats["contradicted"] == 1
     assert stats["pr-state:contradicted"] == 1
     assert stats["receipt-validity:contradicted"] == 1
 
 
-def test_two_axis_rollup_first_outcome_wins(receipts_on, proj, monkeypatch,
-                                            fake_gh):
-    """#830: per-item rollup semantics aligned with the stamp collision rule
-    (text claims are emitted first per item, FIRST wins): a text-confirmed,
-    receipt-contradicted item aggregates as confirmed, while the receipt
-    axis keeps its per-class count, its stamp, and its ledger row."""
-    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
-    gh, _log = fake_gh("echo '{\"state\":\"OPEN\"}'")
-    _enable_probes(monkeypatch, gh)
-    _signed_origin("S-origin", proj)
-    cp = _cp_origins(["S-origin"], texts=["PR #60 awaiting review"])
-    stats = worldcheck.check(cp, proj)
-    assert stats["confirmed"] == 1
-    assert stats["contradicted"] == 0
+def test_two_axis_rollup_contradiction_takes_precedence(receipts_on, proj,
+                                                        monkeypatch, fake_gh):
+    """#833 precedence rollup (supersedes the #832 first-outcome pin): a
+    text-confirmed, receipt-contradicted item aggregates as CONTRADICTED —
+    the aggregate agrees with the surface the item renders with, since a
+    contradiction on any axis outranks the ground marker at render time.
+    Per-claim surfaces are unchanged: per-class keys, both stamps, and the
+    ledger row all stay."""
+    stats, cp = _two_axis_check(proj, monkeypatch, fake_gh, gh_state="OPEN",
+                                vitni_verdict="signature_invalid")
+    assert stats["contradicted"] == 1
+    assert stats["confirmed"] == 0
     assert stats["pr-state:confirmed"] == 1
     assert stats["receipt-validity:contradicted"] == 1
     assert stats[worldcheck.LEDGER_KEY] == [
@@ -1428,6 +1439,40 @@ def test_two_axis_rollup_first_outcome_wins(receipts_on, proj, monkeypatch,
     item = cp["working_context"]["open_questions"][0]
     assert item["_worldcheck_confirmed"] is True
     assert item["_worldcheck"]["status"] == "unverified"
+
+
+def test_starved_text_claim_does_not_swallow_a_receipt_contradiction(
+        receipts_on, proj, monkeypatch, fake_gh):
+    """#833: six items share one origin, so the probe plan fills at
+    MAX_PROBES (items 1-4's text probes + the shared receipt key) and items
+    5-6's text claims starve to "skipped" — while the shared receipt answer
+    still lands and comes back invalid. Those items are stamped, rendered,
+    and ledgered as contradicted; the aggregate must agree, never count
+    them under the starved axis."""
+    stats, _cp_out = _two_axis_check(proj, monkeypatch, fake_gh,
+                                     gh_state="OPEN",
+                                     vitni_verdict="signature_invalid", n=6)
+    assert stats["pr-state:confirmed"] == 4
+    assert stats["pr-state:skipped"] == 2          # the starved text claims
+    assert stats["receipt-validity:contradicted"] == 6
+    assert stats["contradicted"] == 6
+    assert stats["confirmed"] == 0
+    assert stats["skipped"] == 0
+
+
+def test_starved_text_claim_does_not_swallow_a_receipt_confirmation(
+        receipts_on, proj, monkeypatch, fake_gh):
+    """#833 mirror case: text starved to "skipped", receipt confirmed — the
+    item carries the solid-ground stamp, so the aggregate says confirmed,
+    never skipped."""
+    stats, cp = _two_axis_check(proj, monkeypatch, fake_gh, gh_state="OPEN",
+                                n=6)
+    assert stats["pr-state:skipped"] == 2
+    assert stats["receipt-validity:confirmed"] == 6
+    assert stats["confirmed"] == 6
+    assert stats["skipped"] == 0
+    for item in cp["working_context"]["open_questions"]:
+        assert item["_worldcheck_confirmed"] is True
 
 
 def test_single_axis_aggregates_are_unchanged(receipts_on, proj):
