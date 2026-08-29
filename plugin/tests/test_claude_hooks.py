@@ -1415,3 +1415,102 @@ def test_prompt_hook_delivers_once_per_session(tmp_checkpoint_dir, tmp_path):
     assert q_id in first.stdout
     second = _run(PROMPT_HOOK, payload, tmp_path, extra_env=env)
     assert second.returncode == 0 and q_id not in second.stdout
+
+
+# ---- #813: the in-flight guard belongs with the spawn, not in one caller ----
+
+
+def _spy_popen(monkeypatch, calls):
+    """Replace Popen inside the lib so spawn_serialize is exercised for real."""
+    class _P:
+        def __init__(self, argv, **kw):
+            calls.append(argv[-1])
+    monkeypatch.setattr(lib.subprocess, "Popen", _P)
+
+
+def test_spawn_serialize_skips_when_that_transcript_is_already_in_flight(
+    tmp_path, monkeypatch
+):
+    """#813: Stop forks a detached child, SessionEnd fires seconds later, and
+    both serialize the same transcript. #545 built exactly this check
+    (_in_flight_stems) but wired it to sweep_orphans alone, so the two hook
+    spawn paths never consult it. Putting it in spawn_serialize means every
+    caller inherits it instead of each one remembering."""
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcript = tmp_path / "S-live.jsonl"
+    transcript.write_text("{}\n")
+
+    beats = tmp_path / "logs" / "heartbeats"
+    beats.mkdir(parents=True)
+    (beats / "S-live").write_text("some-project-slug")  # fresh: serialize live
+
+    calls = []
+    _spy_popen(monkeypatch, calls)
+    assert lib.spawn_serialize("daimon", str(transcript), {}) is False
+    assert calls == []
+
+
+def test_spawn_serialize_keys_the_guard_on_the_transcript_stem(
+    tmp_path, monkeypatch
+):
+    """The trap this guard dies on if it is written the obvious way.
+
+    `daimon serialize` derives its session id from the TRANSCRIPT FILENAME
+    (`cli/__init__.py:233`, `session_id = path.stem`), and that is the name
+    ledger.touch_heartbeat stamps. A Codex hook's payload `session_id` is a
+    DIFFERENT string: the field trace on #813 logs `spawned serialize for
+    01a04bd2-...` while the checkpoint lands as
+    `rollout-2026-08-28T22-41-50-01a04bd2-....json`.
+
+    Key the check on the payload id and it matches no heartbeat, ever, and the
+    guard is a silent no-op that still looks implemented."""
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcript = tmp_path / "rollout-2026-08-28T22-41-50-01a04bd2.jsonl"
+    transcript.write_text("{}\n")
+
+    beats = tmp_path / "logs" / "heartbeats"
+    beats.mkdir(parents=True)
+    # Stamped under the STEM, which is what the serializer actually writes.
+    (beats / "rollout-2026-08-28T22-41-50-01a04bd2").write_text("slug")
+    # The payload id a Codex hook would have used. Must not be what we consult.
+    (beats / "01a04bd2").write_text("slug")
+
+    calls = []
+    _spy_popen(monkeypatch, calls)
+    assert lib.spawn_serialize("daimon", str(transcript), {}) is False
+    assert calls == []
+
+
+def test_spawn_serialize_still_spawns_when_the_heartbeat_is_stale(
+    tmp_path, monkeypatch
+):
+    """A crashed serialize leaves its stamp behind. Treating a stale stamp as
+    in-flight would make that session permanently un-serializable, which is
+    strictly worse than the double spawn. Same liveness bar #545 set for the
+    sweep."""
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcript = tmp_path / "S-stale.jsonl"
+    transcript.write_text("{}\n")
+
+    beats = tmp_path / "logs" / "heartbeats"
+    beats.mkdir(parents=True)
+    stamp = beats / "S-stale"
+    stamp.write_text("slug")
+    _age(stamp, lib.hung_after_seconds() + 60)
+
+    calls = []
+    _spy_popen(monkeypatch, calls)
+    assert lib.spawn_serialize("daimon", str(transcript), {}) is not False
+    assert calls == [str(transcript)]
+
+
+def test_spawn_serialize_spawns_when_nothing_is_in_flight(tmp_path, monkeypatch):
+    """The liveness control: the guard must not swallow the ordinary case."""
+    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    transcript = tmp_path / "S-quiet.jsonl"
+    transcript.write_text("{}\n")
+
+    calls = []
+    _spy_popen(monkeypatch, calls)
+    assert lib.spawn_serialize("daimon", str(transcript), {}) is not False
+    assert calls == [str(transcript)]

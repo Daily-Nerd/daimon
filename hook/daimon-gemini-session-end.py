@@ -86,7 +86,17 @@ def main() -> int:
     cwd = str(payload.get("cwd") or "").strip()
     child_env = lib.project_env(cwd, "gemini")
     try:
-        lib.spawn_serialize(cli, transcript_path, child_env)
+        if lib.spawn_serialize(cli, transcript_path, child_env) is False:
+        # #813: `is False` (not falsy) on purpose — only an explicit skip
+        # takes this branch, so any caller or fake still returning None
+        # keeps the old spawn-and-log path instead of silently flipping.
+        # The log line has to be honest: the ledger parses "spawned
+        # serialize", and a spawn with no result reads as hung and
+        # invites `heal` to retry work that never started.
+            lib.log(
+                f"gemini-session-end: skipped serialize for {session_id} "
+                f"(already in flight) (transcript: {transcript_path})")
+            return 0
         lib.log(
             f"gemini-session-end: spawned serialize for {session_id} "
             f"(reason: {reason}, project: {cwd or '?'}) "

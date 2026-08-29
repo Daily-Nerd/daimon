@@ -361,8 +361,16 @@ def _spawn_serialize_for(trajectory_id: str, transcript_path, detail: str) -> No
         return
     cwd = _project_cwd()
     try:
-        lib.spawn_serialize(
-            cli, str(transcript_path), lib.project_env(cwd, "windsurf"))
+        if lib.spawn_serialize(
+                cli, str(transcript_path),
+                lib.project_env(cwd, "windsurf")) is False:
+        # #813: `is False` only — a None-returning fake keeps the old path.
+        # The ledger parses "spawned serialize"; a spawn line with no
+        # result reads as hung and invites a heal retry of work that
+        # never started, so the skip must log as a skip.
+            lib.log(f"windsurf-cascade: skipped serialize for {trajectory_id} "
+                    f"(already in flight) ({detail})")
+            return
         _mark_spawned(trajectory_id)
         lib.log(f"windsurf-cascade: spawned serialize for {trajectory_id} "
                 f"(project: {cwd or '?'}) ({detail})")
@@ -456,8 +464,16 @@ def _finalize(trajectory_id: str, transcript_path: str, armed_mtime_ns: str) -> 
         return 0
     cwd = _project_cwd()
     try:
-        lib.spawn_serialize(
-            cli, transcript_path, lib.project_env(cwd, "windsurf"))
+        if lib.spawn_serialize(
+                cli, transcript_path,
+                lib.project_env(cwd, "windsurf")) is False:
+        # #813: `is False` only — a None-returning fake keeps the old path.
+        # The ledger parses "spawned serialize"; a spawn line with no
+        # result reads as hung and invites a heal retry of work that
+        # never started, so the skip must log as a skip.
+            lib.log(f"windsurf-finalizer: skipped serialize for {trajectory_id} "
+                    f"(already in flight) (transcript: {transcript_path})")
+            return 0
         # Logged at FIRE time, not arm time: an arm-time spawn line would sit
         # unresolved for the whole quiet period and read as hung to the ledger.
         lib.log(f"windsurf-finalizer: spawned serialize for {trajectory_id} "
