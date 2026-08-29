@@ -81,8 +81,20 @@ def test_importance_non_int_string_is_none(bucket):
     got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
     assert got["sections"][0]["items"][0]["importance"] is None
 
+def test_importance_producer_range_passes_through(bucket):
+    """The producer scores 1-10 (serializer.py:151, :678). A reader that stops at 5
+    deletes the load-bearing half, and the deleted value is indistinguishable from
+    honest absence, so nothing raises."""
+    cp = make_checkpoint(open_questions=[
+        {"text": "seven", "importance": 7, "external_state": True},
+        {"text": "ten", "importance": 10, "external_state": True},
+    ])
+    _write(bucket, "latest.json", cp)
+    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    assert [i["importance"] for i in got["sections"][0]["items"]] == [7, 10]
+
 def test_importance_out_of_range_is_none(bucket):
-    cp = make_checkpoint(open_questions=[{"text": "t", "importance": 7, "external_state": True}])
+    cp = make_checkpoint(open_questions=[{"text": "t", "importance": 11, "external_state": True}])
     _write(bucket, "latest.json", cp)
     got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
     assert got["sections"][0]["items"][0]["importance"] is None
@@ -123,7 +135,7 @@ def test_norm_item_passes_trust_anatomy_fields():
         "origin_session": "aaaa-1111",
         "source_message_ids": ["m1", "m2"],
         "quote_provenance": {
-            "verifier": "quote-v2", "outcome": "verified",
+            "verifier": {"id": "tier-f", "version": 1}, "outcome": "verified",
             "checked_at": "2026-08-06T10:00:00Z",
             "digest": {"algorithm": "sha256", "value": "ff"},
             "binding": {"message_ids": ["m1"]},
@@ -133,7 +145,7 @@ def test_norm_item_passes_trust_anatomy_fields():
     assert got["origin_session"] == "aaaa-1111"
     assert got["source_message_ids"] == ["m1", "m2"]
     assert got["quote_provenance"] == {
-        "verifier": "quote-v2", "outcome": "verified",
+        "verifier": "tier-f", "verifier_version": 1, "outcome": "verified",
         "checked_at": "2026-08-06T10:00:00Z",
         "digest_algorithm": "sha256", "message_ids": ["m1"],
     }
@@ -164,10 +176,26 @@ def test_norm_provenance_malformed_nested_shapes():
         "digest": "not-a-dict", "binding": {"message_ids": ["ok", 5]},
     }})
     assert got["quote_provenance"] == {
-        "verifier": None, "outcome": None, "checked_at": None,
-        "digest_algorithm": None, "message_ids": ["ok"],
+        "verifier": None, "verifier_version": None, "outcome": None,
+        "checked_at": None, "digest_algorithm": None, "message_ids": ["ok"],
     }
 
 def test_norm_item_source_message_ids_filters_non_strings():
     got = reader._norm_item({"text": "x", "source_message_ids": ["a", 1, "b"]})
     assert got["source_message_ids"] == ["a", "b"]
+
+def test_norm_provenance_accepts_a_legacy_string_verifier():
+    """Older receipts recorded the verifier as a bare string. A tolerant reader keeps
+    reading them; only the version is unavailable."""
+    got = reader._norm_item({"text": "x", "quote_provenance": {
+        "verifier": "quote-v2", "outcome": "verified",
+    }})
+    assert got["quote_provenance"]["verifier"] == "quote-v2"
+    assert got["quote_provenance"]["verifier_version"] is None
+
+def test_norm_provenance_verifier_object_without_version():
+    got = reader._norm_item({"text": "x", "quote_provenance": {
+        "verifier": {"id": "tier-f"}, "outcome": "verified",
+    }})
+    assert got["quote_provenance"]["verifier"] == "tier-f"
+    assert got["quote_provenance"]["verifier_version"] is None

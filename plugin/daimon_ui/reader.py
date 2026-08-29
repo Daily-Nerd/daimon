@@ -178,8 +178,21 @@ def _norm_provenance(raw):
         return None
     digest = raw.get("digest") if isinstance(raw.get("digest"), dict) else {}
     binding = raw.get("binding") if isinstance(raw.get("binding"), dict) else {}
+    # The producer writes verifier as an OBJECT (provenance.py:188, {id, version}).
+    # A string normalizer nulled every one of them, so the field naming WHO checked
+    # the quote rendered as "not recorded" on every provenanced item. Bare strings
+    # stay readable: older receipts recorded the id alone.
+    verifier = raw.get("verifier")
+    if isinstance(verifier, dict):
+        verifier_id = _norm_str(verifier.get("id"))
+        version = verifier.get("version")
+        verifier_version = (version if isinstance(version, int)
+                            and not isinstance(version, bool) else None)
+    else:
+        verifier_id, verifier_version = _norm_str(verifier), None
     return {
-        "verifier": _norm_str(raw.get("verifier")),
+        "verifier": verifier_id,
+        "verifier_version": verifier_version,
         "outcome": _norm_str(raw.get("outcome")),
         "checked_at": _norm_str(raw.get("checked_at")),
         "digest_algorithm": _norm_str(digest.get("algorithm")),
@@ -203,7 +216,11 @@ def _norm_item(raw):
         "because": raw.get("because") or None,
         "id": raw.get("id") or None,
         "external_state": bool(raw.get("external_state")),
-        "importance": imp if isinstance(imp, int) and not isinstance(imp, bool) and 1 <= imp <= 5 else None,
+        # 1-10, matching the producer (serializer.py:151 instructs the range,
+        # :678 clamps to it). A 1-5 bound nulled 89% of rated items, and because
+        # the distribution is right-skewed it deleted precisely the load-bearing
+        # half, inverting every importance-sorted list.
+        "importance": imp if isinstance(imp, int) and not isinstance(imp, bool) and 1 <= imp <= 10 else None,
         "last_verified": _norm_str(raw.get("last_verified")),
         "origin_session": _norm_str(raw.get("origin_session")),
         "source_message_ids": _norm_str_list(raw.get("source_message_ids")),
