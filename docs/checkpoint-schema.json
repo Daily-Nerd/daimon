@@ -1,0 +1,668 @@
+{
+  "document": "daimon-checkpoint-field-table",
+  "document_version": 1,
+  "format_version": "D-018",
+  "dispositions": {
+    "reject": "an out-of-contract value refuses the whole checkpoint",
+    "clamp": "an out-of-range value is pulled into range or truncated",
+    "drop": "an out-of-contract value removes the field, never fails the write",
+    "pass": "stored as written; consumers must tolerate any shape",
+    "strip": "a model-emitted value is discarded at the serialize boundary; the persisted value is always code-derived"
+  },
+  "owners": {
+    "model": "extracted content, policed by the validator and normalizers",
+    "code": "stamped by daimon's own write pipeline"
+  },
+  "columns": {
+    "type": "the JSON type the producer writes when it writes the field",
+    "optional": "whether a stored checkpoint may lack the field",
+    "nullable": "whether an explicit null is tolerated where the field is present; false on a reject row means an explicit null is rejected like any other out-of-contract value",
+    "owner": "see owners",
+    "disposition": "see dispositions",
+    "constraints": "see constraint_semantics; keys not listed there are documentation for consumers, not runtime checks"
+  },
+  "constraint_semantics": {
+    "validate": "the structural check the runtime validator performs on this envelope field: presence, object, item-required, item-list-required (absence rejects), item-list-optional (absence = empty list)",
+    "enum": "closed set of accepted values; anything else rejects with reject_reason",
+    "required_if_eq": "[field, value]: this field must be a non-empty string ONLY when the named sibling field equals the value; otherwise it is unconstrained and any shape passes (so a reject disposition with this key is conditional, not unconditional)",
+    "object_keys": "sub-keys that must each be a non-empty string when the field is present and non-null; a non-object rejects, a missing/empty sub-key rejects with reject_reason_missing",
+    "reject_reason": "the exact reason string the validator returns when this row rejects",
+    "reject_reason_missing": "the reason string when a required sub-key is absent or empty",
+    "min": "inclusive lower clamp bound for in-type integers; non-integers (booleans included) drop the field",
+    "max": "inclusive upper clamp bound for in-type integers",
+    "strip_whitespace": "leading/trailing whitespace is removed before storing",
+    "max_chars": "the stored string is truncated to this many characters",
+    "stripped_at_serialize": "a model-emitted value for this field is discarded at the serialize boundary; the persisted value is always code-derived",
+    "pattern": "regex the code-stamped value matches (documentation, not a runtime check)",
+    "format": "timestamp format of the code-stamped value (documentation)",
+    "element": "shape of array elements (documentation)",
+    "shape": "shape of the object's sub-fields (documentation)",
+    "link_types": "link `type` values the producer emits (documentation)"
+  },
+  "envelope": [
+    {
+      "field": "session_id",
+      "type": "string",
+      "optional": false,
+      "nullable": true,
+      "owner": "code",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "presence",
+        "reject_reason": "missing session_id"
+      },
+      "notes": "Host session id, assigned by the serialize pipeline after stripping model output. Only PRESENCE is validated."
+    },
+    {
+      "field": "working_context",
+      "type": "object",
+      "optional": false,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "object"
+      },
+      "notes": "Section holding active_topic, open_questions, recent_decisions."
+    },
+    {
+      "field": "epistemic_snapshot",
+      "type": "object",
+      "optional": false,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "object"
+      },
+      "notes": "Section holding strong_beliefs, uncertainties, contradictions_flagged."
+    },
+    {
+      "field": "working_context.open_questions",
+      "type": "array",
+      "optional": false,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "item-list-required"
+      },
+      "notes": "List of item objects; a non-list (absence included) rejects."
+    },
+    {
+      "field": "working_context.recent_decisions",
+      "type": "array",
+      "optional": false,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "item-list-required"
+      },
+      "notes": "List of item objects; a non-list (absence included) rejects."
+    },
+    {
+      "field": "working_context.active_topic",
+      "type": "object",
+      "optional": false,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "item-required",
+        "reject_reason": "missing working_context.active_topic"
+      },
+      "notes": "Singleton item; per-session, never carried, never id-stamped. Presence is checked before the working_context lists, its item shape after them; an explicit null rejects (item shape applies). May be deleted by a forget rewrite."
+    },
+    {
+      "field": "epistemic_snapshot.strong_beliefs",
+      "type": "array",
+      "optional": true,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "item-list-optional"
+      },
+      "notes": "List of item objects; absence is tolerated (treated as empty), a present non-list rejects."
+    },
+    {
+      "field": "epistemic_snapshot.uncertainties",
+      "type": "array",
+      "optional": true,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "validate": "item-list-optional"
+      },
+      "notes": "List of item objects; absence is tolerated (treated as empty), a present non-list rejects."
+    },
+    {
+      "field": "epistemic_snapshot.contradictions_flagged",
+      "type": "array",
+      "optional": true,
+      "nullable": true,
+      "owner": "model",
+      "disposition": "pass",
+      "constraints": {
+        "element": [
+          "free-form: bare strings and objects both occur"
+        ]
+      },
+      "notes": "Never validated or normalized; item-shaped entries share the item fields but the shape varies by design (schema.py #146)."
+    },
+    {
+      "field": "worker_queue",
+      "type": "array",
+      "optional": true,
+      "nullable": true,
+      "owner": "model",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "Prompt-schema artifact; the producer emits an empty list. Never read or validated."
+    },
+    {
+      "field": "format_version",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "pattern": "^D-[0-9]+$",
+        "stripped_at_serialize": true
+      },
+      "notes": "Envelope schema version (serializer.PROMPT_VERSION); this document versions with it. Stamped at write when absent; pre-#93 legacy checkpoints may lack it."
+    },
+    {
+      "field": "created",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "format": "ISO-8601 UTC, %Y-%m-%dT%H:%M:%SZ",
+        "stripped_at_serialize": true
+      },
+      "notes": "Session-end stamp (capture path) or write-time fallback. Readers prefer it over file mtime, which pointer rotation rewrites (#93)."
+    },
+    {
+      "field": "author",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Team author (#111), resolved by config at write time."
+    },
+    {
+      "field": "transcript_hash",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "pattern": "^[0-9a-f]{64}$",
+        "stripped_at_serialize": true
+      },
+      "notes": "sha256 of the raw transcript file; absent when no transcript file exists (introspection path)."
+    },
+    {
+      "field": "source_ref",
+      "type": "object",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true,
+        "shape": [
+          "version: integer (1)",
+          "host: enum[claude-code, codex, windsurf, gemini, hermes, manual]",
+          "session_id: string (^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$)",
+          "locator: enum[managed, host-api, unsupported]",
+          "author?: string (non-empty)"
+        ]
+      },
+      "notes": "Capture source descriptor (#594, provenance.capture_source_ref)."
+    },
+    {
+      "field": "project_slug",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Project attribution, stamped only when the project is known (absent = unknown, never empty)."
+    },
+    {
+      "field": "project_name",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "#672 display name (the slug is a lossy flattening). Stamped only when absent and the project is known; a pre-existing value is kept."
+    },
+    {
+      "field": "git_branch",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Branch at capture time (#222); absent when unknown or detached."
+    },
+    {
+      "field": "receipts",
+      "type": "boolean",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "#204 era marker: true when a signed provenance receipt sidecar was planned for this write; absent otherwise."
+    },
+    {
+      "field": "extraction_version",
+      "type": "integer",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "#514 extraction-semantics version, stamped only by paths that ran the extractor; introspection checkpoints stay absent = unknown."
+    },
+    {
+      "field": "llm_backend",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "#230 backend that produced this checkpoint; assignment always overwrites any model-emitted value at serialize."
+    },
+    {
+      "field": "llm_model",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "Requested model alias, stamped only when config knows one; absent otherwise (a bare command backend stays honest-absent)."
+    },
+    {
+      "field": "llm_model_served",
+      "type": "string | array",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {
+        "element": [
+          "string served-model name; array when more than one model served the run (#458)"
+        ]
+      },
+      "notes": "Per-call served-model truth; popped from model output unconditionally before the serialize-path stamp."
+    },
+    {
+      "field": "redactions",
+      "type": "object",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {
+        "shape": [
+          "map of redaction kind -> integer count"
+        ]
+      },
+      "notes": "#104 visible counter, present only when capture-time redaction scrubbed something; merged (never overwritten) across re-writes."
+    },
+    {
+      "field": "source",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "write-checkpoint provenance stamp (default 'introspection'); absent on serialize-path checkpoints."
+    },
+    {
+      "field": "team_project",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "Team-mirror copies only (#111): the shared project path segments."
+    },
+    {
+      "field": "origin_session",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Reserved: stripped from model output and never stamped at the top level — origin binds per item only (#268)."
+    },
+    {
+      "field": "origin_author",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Reserved: stripped from model output and never stamped at the top level — origin binds per item only (#268)."
+    }
+  ],
+  "item": [
+    {
+      "field": "text",
+      "type": "string",
+      "optional": false,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "reject_reason": "text is not a str"
+      },
+      "notes": "The claim. Empty string is valid (active_topic may be empty; briefing skips the empty section). Non-str rejects the checkpoint."
+    },
+    {
+      "field": "trust",
+      "type": "string",
+      "optional": false,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "enum": [
+          "verbatim",
+          "inferred"
+        ],
+        "reject_reason": "trust is not a known trust class"
+      },
+      "notes": "D-006 trust class. verify_quotes and the grounding/foreign gates may downgrade verbatim to inferred after extraction; they never upgrade."
+    },
+    {
+      "field": "quote",
+      "type": "string",
+      "optional": true,
+      "nullable": true,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "required_if_eq": [
+          "trust",
+          "verbatim"
+        ],
+        "reject_reason": "trust=verbatim item has no quote"
+      },
+      "notes": "Exact transcript span. Required non-empty when trust=verbatim (rejects otherwise); unconstrained on inferred items. A quote whose canonical value was forgotten is scrubbed and trust downgraded."
+    },
+    {
+      "field": "because",
+      "type": "string",
+      "optional": true,
+      "nullable": true,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "reject_reason": "because is not a str"
+      },
+      "notes": "D-018 stated-reasoning clause. Explicit null is tolerated; any other non-str rejects the checkpoint."
+    },
+    {
+      "field": "anchored_to",
+      "type": "object",
+      "optional": true,
+      "nullable": true,
+      "owner": "model",
+      "disposition": "reject",
+      "constraints": {
+        "object_keys": [
+          "file",
+          "symbol",
+          "body_hash"
+        ],
+        "reject_reason_missing": "anchored_to is missing file, symbol, or body_hash"
+      },
+      "notes": "Code anchor (daimon anchor --attach): file, symbol, and body_hash must all be non-empty strings. Explicit null is tolerated."
+    },
+    {
+      "field": "importance",
+      "type": "integer",
+      "optional": true,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "clamp",
+      "constraints": {
+        "min": 1,
+        "max": 10
+      },
+      "notes": "Producer scores 1-10 (serializer.py rule 14). Out-of-range ints clamp to the range; bool and every non-int (str, float, null) drop the field. Consumers clamping to any other range delete real data."
+    },
+    {
+      "field": "scene",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "clamp",
+      "constraints": {
+        "strip_whitespace": true,
+        "max_chars": 500
+      },
+      "notes": "#317 episodic scene trace. Stripped and truncated to max_chars; empty/whitespace and every non-str drop the field."
+    },
+    {
+      "field": "external_state",
+      "type": "boolean",
+      "optional": true,
+      "nullable": true,
+      "owner": "model",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "Flags an answer that may have changed outside the session. Never validated or normalized: stored as emitted."
+    },
+    {
+      "field": "links",
+      "type": "array",
+      "optional": true,
+      "nullable": true,
+      "owner": "model",
+      "disposition": "pass",
+      "constraints": {
+        "element": [
+          "object with string fields: type, target"
+        ],
+        "link_types": [
+          "supersedes"
+        ]
+      },
+      "notes": "Supersession links; target names the OLD decision's stored text. Pass-through at admission; an element whose target was forgotten is removed, and the key is dropped when no element remains."
+    },
+    {
+      "field": "source_message_ids",
+      "type": "array",
+      "optional": true,
+      "nullable": false,
+      "owner": "model",
+      "disposition": "drop",
+      "constraints": {
+        "element": [
+          "string host message id"
+        ]
+      },
+      "notes": "#358 quote binding. A bare string coerces to a one-entry list; entries the transcript cannot vouch for are dropped (on inferred or quote-less items only tool-result signal ids survive, #359), and the key is removed when nothing valid remains."
+    },
+    {
+      "field": "id",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "pattern": "^[a-z]-[0-9a-f]{6,40}(-[0-9]+)?$",
+        "stripped_at_serialize": true
+      },
+      "notes": "Stable project-global item id (#102/#487), stamped at admission for non-empty-text list items; active_topic never carries one. Model-emitted values are stripped."
+    },
+    {
+      "field": "first_seen",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "format": "ISO-8601 UTC, %Y-%m-%dT%H:%M:%SZ",
+        "stripped_at_serialize": true
+      },
+      "notes": "Per-item birth stamp (#126), inherited across carries; feeds decay age. Model-emitted values are stripped (#725)."
+    },
+    {
+      "field": "origin_session",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Session that first wrote the item (#268); carried copies keep their binding. Model-emitted values are stripped."
+    },
+    {
+      "field": "origin_author",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Author that first wrote the item (#268). Model-emitted values are stripped."
+    },
+    {
+      "field": "carried_from",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "Session id of the LAST carry hop (#33); absent on native items. Model-emitted values are stripped (#725)."
+    },
+    {
+      "field": "quote_verified",
+      "type": "boolean",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "verify_quotes verdict (#125): true on a byte-verified quote, false only where a verbatim claim was downgraded. Inferred items carry neither this nor last_verified."
+    },
+    {
+      "field": "last_verified",
+      "type": "string",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "format": "ISO-8601 UTC, %Y-%m-%dT%H:%M:%SZ",
+        "stripped_at_serialize": true
+      },
+      "notes": "Stamped with quote_verified=true at serialize; checkpoint-append-only (#215). Model-emitted values are stripped."
+    },
+    {
+      "field": "quote_provenance",
+      "type": "object",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true,
+        "shape": [
+          "version: integer (1)",
+          "source: object {version: 1, host: enum[claude-code, codex, windsurf, gemini, hermes, manual], session_id: string, locator: enum[managed, host-api, unsupported], author?: string}",
+          "digest: object {algorithm: 'sha256', scope: enum[raw-file, rendered-transcript], value: string (64 hex)}",
+          "verifier: OBJECT {id: string ('tier-f'), version: integer} — an object, never a string",
+          "outcome: enum[verified, not-verified]",
+          "checked_at: string (ISO-8601 UTC, %Y-%m-%dT%H:%M:%SZ)",
+          "binding: object {mode: enum[message-ids, transcript-scan], message_ids: array of string}"
+        ]
+      },
+      "notes": "Durable per-item evidence receipt (#594, provenance.quote_receipt). verifier is an OBJECT {id, version}: consumers normalizing it as a string rendered every verified claim's verifier as absent."
+    },
+    {
+      "field": "grounded",
+      "type": "boolean",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "#359 outcome-grounding verdict, re-derived every serialize: any model-emitted value is popped before ground_outcomes re-stamps."
+    },
+    {
+      "field": "pinned",
+      "type": "boolean",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "#369 auto-pin marker on force-pinned hard-imperative constraints; always true when present. Model-emitted values are stripped."
+    },
+    {
+      "field": "quote_echo_only",
+      "type": "boolean",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "pass",
+      "constraints": {},
+      "notes": "#440: quote existed only inside daimon's own injected output; the item is downgraded and this marker set. Model-emitted values are popped before verify_quotes re-derives."
+    }
+  ]
+}
