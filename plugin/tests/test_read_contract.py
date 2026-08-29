@@ -24,10 +24,10 @@ PROJ = "/p/contract"
 OTHER = "someone-elses-project"
 CREATED = "2026-08-29T00:00:00Z"
 
-C1 = (Route.OWN, Admit.ANY)                        # today's fallback=False
+C1 = (Route.OWN, Admit.ANY)                        # the old fallback=False
 C2 = (Route.OWN, Admit.OWN_OR_UNROUTED)            # no caller today
-C3 = (Route.OWN_ELSE_GLOBAL, Admit.ANY)            # today's fallback=True
-C4 = (Route.OWN_ELSE_GLOBAL, Admit.OWN_OR_UNROUTED)  # today's read_latest_reportable
+C3 = (Route.OWN_ELSE_GLOBAL, Admit.ANY)            # the old fallback=True
+C4 = (Route.OWN_ELSE_GLOBAL, Admit.OWN_OR_UNROUTED)  # the old read_latest_reportable
 COMBOS = [C1, C2, C3, C4]
 
 # "Yields nothing" is one state with three faces (#139 torn, #817 non-object).
@@ -213,36 +213,9 @@ def test_slug_string_as_project_dir_reads_the_bucket(tmp_checkpoint_dir):
     assert got.checkpoint == body
 
 
-# ---- the wrappers are projections of the same read path --------------------
-
-
-@pytest.mark.parametrize("own,global_,reader", [
-    (_ck("SELF"), None, PROJ),
-    (_ck(), None, PROJ),
-    (_ck(OTHER), None, PROJ),
-    (None, _ck(OTHER), PROJ),
-    (None, _ck(), PROJ),
-    (None, _ck(OTHER), None),
-    (None, None, PROJ),
-], ids=["own-self", "own-unstamped", "own-other", "global-other", "global-unstamped",
-        "no-slug-global-other", "empty"])
-def test_legacy_readers_are_wrappers(tmp_checkpoint_dir, own, global_, reader):
-    if own is not None and own.get("project_slug") == "SELF":
-        own = _ck(_self_slug())
-    if own is not None:
-        _write_own(tmp_checkpoint_dir, own)
-    elif reader is not None:
-        _write_own(tmp_checkpoint_dir, None)
-    if global_ is not None:
-        _write_global(tmp_checkpoint_dir, global_)
-    assert store.read_latest(project_dir=reader, fallback=False) == \
-        store.read_latest_body(project_dir=reader, route=Route.OWN, admit=Admit.ANY)
-    assert store.read_latest(project_dir=reader, fallback=True) == \
-        store.read_latest_body(project_dir=reader, route=Route.OWN_ELSE_GLOBAL,
-                               admit=Admit.ANY)
-    assert store.read_latest_reportable(project_dir=reader) == \
-        store.read_latest_body(project_dir=reader, route=Route.OWN_ELSE_GLOBAL,
-                               admit=Admit.OWN_OR_UNROUTED)
+# ---- the two entry points are projections of the same read path ------------
+# (The legacy-wrapper equivalence tests lived here through stages 1-3 and
+# were deleted with the wrappers at stage 4.)
 
 
 def test_body_is_the_result_projection(tmp_checkpoint_dir):

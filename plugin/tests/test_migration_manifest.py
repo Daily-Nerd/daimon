@@ -57,11 +57,9 @@ MANIFEST = {
     ("store.py", "write_checkpoint", "read_own_stream_latest", None, None),
 }
 
-# Wrapper-internal calls in store.py: the legacy surface is re-expressed over
-# the scoped read (stage 1) and is not a migration site.
+# Wrapper-internal calls in store.py that are not migration sites. The two
+# legacy wrappers were deleted at stage 4; only the persist-path reader remains.
 WRAPPER_SITES = {
-    ("store.py", "read_latest", "read_latest_body"),
-    ("store.py", "read_latest_reportable", "read_latest_body"),
     ("store.py", "read_own_stream_latest", "read_latest_body"),
 }
 
