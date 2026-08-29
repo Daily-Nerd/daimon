@@ -9548,3 +9548,213 @@ def test_projects_human_render_shows_name_when_present(tmp_checkpoint_dir, capsy
         "project_name": "My Proj", "created": "2026-07-11T00:00:00Z"}))
     assert cli.main(["projects"]) == 0
     assert "My Proj" in capsys.readouterr().out
+
+
+# ---- #811: write-checkpoint rotates the pointer, so it must carry too ----
+
+
+def test_write_checkpoint_carries_prev_open_question(tmp_checkpoint_dir, monkeypatch):
+    """#811: `daimon end` rotates the pointer chain like every other write, so
+    a checkpoint it does not fold forward is one the briefing can never reach
+    again (brief renders `latest` only and never walks prev-N). Parity with
+    test_serialize_carry_folds_prev_open_question, one path over."""
+    from daimon_briefing import store
+
+    project = "/p/intro-carry"
+    _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
+
+    _stdin(monkeypatch, _valid_json("S-intro"))
+    rc = cli.main(["write-checkpoint", "--project", project])
+    assert rc == 0
+
+    written = store.read_latest(project_dir=project)
+    carried = [q for q in written["working_context"]["open_questions"]
+               if q.get("text") == "quorint reconciliation loop unresolved"]
+    assert len(carried) == 1
+    assert carried[0]["carried_from"] == "S-prev"
+
+
+def test_write_checkpoint_carry_survives_a_concurrent_session(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """The field case #811 was filed from: two sessions share one bucket and
+    neither knows the other exists. Session A serializes, then session B runs
+    `daimon end`. B's write must not orphan A's record — after B, the bucket's
+    own pointer still answers for A."""
+    from daimon_briefing import store
+
+    project = "/p/two-sessions"
+    _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
+
+    _stdin(monkeypatch, _valid_json("S-session-B"))
+    assert cli.main(["write-checkpoint", "--project", project]) == 0
+
+    written = store.read_latest(project_dir=project, fallback=False)
+    assert written["session_id"] == "S-session-B"
+    origins = {q.get("origin_session")
+               for q in written["working_context"]["open_questions"]}
+    assert "S-prev" in origins
+
+
+def test_write_checkpoint_carry_ignores_other_projects_checkpoint(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """#94 parity on the introspection path: a project's first write has no own
+    pointer, and the global pointer is somebody else's checkpoint. Carrying
+    from it would write foreign items into this bucket permanently."""
+    from daimon_briefing import store
+
+    _prev_with_open_question("/p/other-project", "2026-06-25T08:00:00Z",
+                             "2026-06-28T00:00:00Z")
+
+    _stdin(monkeypatch, _valid_json("S-intro"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/fresh-intro"])
+    assert rc == 0
+
+    written = store.read_latest(project_dir="/p/fresh-intro", fallback=False)
+    texts = {q.get("text") for q in written["working_context"]["open_questions"]}
+    assert "quorint reconciliation loop unresolved" not in texts
+
+
+def test_write_checkpoint_carry_kill_switch(tmp_checkpoint_dir, monkeypatch):
+    """DAIMON_CARRY=0 turns carry off on this path too, same as serialize."""
+    from daimon_briefing import store
+
+    project = "/p/intro-carry-off"
+    _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
+    monkeypatch.setenv("DAIMON_CARRY", "0")
+
+    _stdin(monkeypatch, _valid_json("S-intro"))
+    assert cli.main(["write-checkpoint", "--project", project]) == 0
+
+    written = store.read_latest(project_dir=project)
+    texts = {q.get("text") for q in written["working_context"]["open_questions"]}
+    assert "quorint reconciliation loop unresolved" not in texts
+
+
+def test_write_checkpoint_carry_failure_still_writes_checkpoint(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """Carry is advisory here exactly as it is in capture: a raise must cost
+    the carried items, never the checkpoint."""
+    from daimon_briefing import carry, store
+
+    project = "/p/intro-carry-broken"
+    _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("carry exploded")
+
+    monkeypatch.setattr(carry, "merge", _boom)
+    _stdin(monkeypatch, _valid_json("S-intro"))
+    assert cli.main(["write-checkpoint", "--project", project]) == 0
+
+    written = store.read_latest(project_dir=project)
+    assert written["session_id"] == "S-intro"
+
+
+def _events(project):
+    """Every event row in a project's bucket, as dicts."""
+    import json
+    from daimon_briefing import store
+
+    path = store._events_path(project)
+    if path is None or not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def test_write_checkpoint_carry_emits_no_corroboration(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """#811 gave the introspection path a carry, and carry's #268 observation
+    sink rides along with it. It must stay empty here, and G3 is the reason:
+    corroboration requires the NATIVE item to be this session's own VERIFIED
+    verbatim, and this path has no transcript, so downgrade_unverifiable_
+    verbatim has already stripped every claim a receipt could have backed.
+
+    Pinned rather than assumed. If the carry call is ever moved above those
+    strips, corroboration starts minting trust boosts out of unverifiable
+    model claims, and this test is what says so."""
+    project = "/p/intro-corroborate"
+    _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
+
+    _stdin(monkeypatch, _valid_json("S-intro"))
+    assert cli.main(["write-checkpoint", "--project", project]) == 0
+
+    statuses = [e.get("status", "") for e in _events(project)]
+    assert not [s for s in statuses if s.startswith("corroborated-by:")]
+
+
+def test_write_checkpoint_carry_can_emit_a_supersede_candidate(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """The other half of the same boundary, and it goes the OTHER way on
+    purpose. `links` is not in _CODE_OWNED_ITEM_KEYS, so a model authoring a
+    checkpoint may claim a supersedes link on this path exactly as the
+    serializer's own model does on the other. The row is a machine SUGGESTION,
+    source "serializer", and #14's gate still refuses to write over a human
+    verdict — so admitting it here is consistent, not a new trust hole.
+
+    The native text here is deliberately unlike the prev item's. See the twin
+    case below for what happens when it is not."""
+    import json
+
+    project = "/p/intro-supersede"
+    _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
+
+    ck = json.loads(_valid_json("S-intro"))
+    ck["working_context"]["open_questions"] = [{
+        "text": "postgres replaces the old lookup store",
+        "trust": "inferred",
+        "importance": 7,
+        "links": [{"type": "supersedes",
+                   "target": "quorint reconciliation loop unresolved"}],
+    }]
+    _stdin(monkeypatch, json.dumps(ck))
+    assert cli.main(["write-checkpoint", "--project", project]) == 0
+
+    statuses = [e.get("status", "") for e in _events(project)]
+    assert [s for s in statuses if s.startswith("supersede-candidate")]
+
+
+def test_write_checkpoint_supersede_of_a_near_identical_item_is_suppressed(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """The introspection path is STRICTER than serialize about supersession,
+    and not by anything #811 added — by #167 meeting a path with no transcript.
+
+    A reversal signature needs BOTH a supersedes link and the item's own
+    VERIFIED quote. This path has no transcript, so downgrade_unverifiable_
+    verbatim guarantees the second leg can never be present. A native item
+    whose text is close enough to twin with its target therefore reads as a
+    re-statement, inherits the prev id in merge, and bind_links' self-guard
+    drops the candidate rather than letting an item supersede itself.
+
+    That is the safe direction (a missed candidate costs a suggestion; a forged
+    one corrupts provenance), but it is a real asymmetry between the two write
+    paths and it should fail loudly if it ever silently changes."""
+    import json
+
+    project = "/p/intro-supersede-twin"
+    _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
+
+    ck = json.loads(_valid_json("S-intro"))
+    ck["working_context"]["open_questions"] = [{
+        "text": "quorint reconciliation loop unresolved on the retry path",
+        "trust": "inferred",
+        "importance": 7,
+        "links": [{"type": "supersedes",
+                   "target": "quorint reconciliation loop unresolved"}],
+    }]
+    _stdin(monkeypatch, json.dumps(ck))
+    assert cli.main(["write-checkpoint", "--project", project]) == 0
+
+    statuses = [e.get("status", "") for e in _events(project)]
+    assert not [s for s in statuses if s.startswith("supersede-candidate")]
