@@ -445,8 +445,8 @@ def _cmd_anchor(args) -> int:
     # matching cognitive item and re-write through the NORMAL store path, so
     # rotation + stamping apply — the attached state becomes latest, the
     # pre-attach state is retained as prev-1.
-    # #789: this caller PERSISTS what it reads, so it takes the fallback=False
-    # branch read_latest documents for exactly that class (#94). With the global
+    # #789: this caller PERSISTS what it reads, so it takes Route.OWN, the
+    # route named for exactly that class (#94). With the global
     # fallback left on, a project with no bucket of its own re-wrote ANOTHER
     # project's checkpoint into its bucket under that project's session_id, and
     # the project that owns the item never received the anchor while the command
@@ -1736,7 +1736,7 @@ def _print_suppressed(project) -> int:
     --suppressed` to list"). Reuses briefing.withhold for the classification
     rather than reimplementing it — the resolved/live split must stay in
     exactly one place. Reads ONLY this project's own latest checkpoint
-    (fallback=False, same rule as carry #94): listing another project's
+    (Route.OWN, same rule as carry #94): listing another project's
     withheld items under this project's status would be worse than listing
     none. Fails open like brief's withhold call — a broken events.jsonl
     must not crash `status`, it should just report nothing suppressed."""

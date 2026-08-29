@@ -1383,7 +1383,15 @@ class Route(enum.Enum):
 class Admit(enum.Enum):
     """Which payloads a latest-read may return as a body (#795). Ownership is
     a PAYLOAD fact decided by the `project_slug` stamp, independent of which
-    pointer produced the value — that split is the whole point (#784/#791)."""
+    pointer produced the value — that split is the whole point (#784/#791).
+
+    #791's taxonomy, which OWN_OR_UNROUTED encodes: the global pointer holds
+    three different things and only one is foreign — the project's own
+    checkpoint (always fine), an UN-ROUTED checkpoint written before a project
+    was known and stamped with nobody (stays readable so pre-routing stores
+    keep working), and another project's checkpoint (the one to refuse).
+    Membership is decided the way team fan-in decides it, by the payload's own
+    stamp, never by which pointer the read came through."""
 
     ANY = "any"
     OWN_OR_UNROUTED = "own_or_unrouted"    # + checkpoints belonging to nobody (#791)
@@ -1491,41 +1499,10 @@ def read_own_stream_latest(project_dir=None) -> dict | None:
     return read_latest_body(project_dir=project_dir, route=route, admit=Admit.ANY)
 
 
-def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
-    """Latest checkpoint, preferring the project's own pointer when known;
-    falls back to the global pointer (pre-routing checkpoints, fresh projects).
-
-    fallback=False reads ONLY the project's own pointer (#94): the global
-    pointer holds the most recent checkpoint of ANY project, so callers that
-    PERSIST what they read (carry) must never see it — display callers (brief)
-    keep the fallback and label it.
-
-    Thin wrapper over the scoped read (#795): fallback=True is
-    (OWN_ELSE_GLOBAL, ANY), fallback=False is (OWN, ANY), byte-for-byte."""
-    route = Route.OWN_ELSE_GLOBAL if fallback else Route.OWN
-    return read_latest_body(project_dir=project_dir, route=route, admit=Admit.ANY)
-
-
-def read_latest_reportable(project_dir=None) -> dict | None:
-    """The latest checkpoint a surface may REPORT ON as this project's, or None.
-
-    #791: a surface scoped to one project must not answer with another project's
-    record, but refusing every fallback is too blunt. `read_latest`'s global
-    pointer holds three different things, and only one of them is foreign:
-
-    - the project's own checkpoint, which is always fine;
-    - an UN-ROUTED checkpoint, written before a project was known and carrying
-      no `project_slug` stamp, which belongs to nobody and stays readable so
-      pre-routing stores keep working;
-    - another project's checkpoint, which is the one to refuse.
-
-    Membership is decided by the payload's own `project_slug`, the same way
-    team fan-in decides it, rather than by which pointer the read came through.
-
-    Thin wrapper over the scoped read (#795): exactly
-    (OWN_ELSE_GLOBAL, OWN_OR_UNROUTED), body projection."""
-    return read_latest_body(project_dir=project_dir, route=Route.OWN_ELSE_GLOBAL,
-                            admit=Admit.OWN_OR_UNROUTED)
+# The legacy surface — read_latest(fallback=) and read_latest_reportable —
+# was deleted at #795 stage 4. fallback named a mechanism while callers
+# reasoned about a policy; four defects shipped from its default (#785 #788
+# #790 #792). Route and Admit above are the replacement, both required.
 
 
 # ---- team memory (#111): opt-in shared mirror, derive-never-write shared state ----

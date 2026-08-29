@@ -17,8 +17,15 @@ evidence:
 expires:
   condition: "no caller reconstructs the route; read_latest_result is the only source of fell_back, and the legacy fallback= surface is deleted (#795 stage 4)"
   review_after: 2027-02-28
-status: active
+status: archived
 ---
+
+> Archived at #795 stage 4 (2026-08-29): the rewritten expiry is met. brief
+> reads `fell_back` off `read_latest_result` (the only source), no caller
+> reconstructs the route, and the legacy `fallback=` surface is deleted. The
+> route-reconstruction hazard for body-only callers is carried forward by the
+> candidate scar `own-else-global-banned-in-own-only-modules` and the frozen
+> migration manifest test.
 
 `store.read_latest()` falls back to the global pointer (the most recent checkpoint
 of ANY project) in TWO different cases, and they do not look alike from outside.
