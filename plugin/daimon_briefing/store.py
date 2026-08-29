@@ -1387,9 +1387,13 @@ def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
         path = d / slug / _LATEST
         if path.exists():
             # A torn project pointer is treated as absent and falls through to the
-            # global fallback below (#139) — not the same as "no data".
+            # global fallback below (#139) — not the same as "no data". Valid JSON
+            # that is not an object gets the same treatment (#817): consumers
+            # assume a dict, and read_latest_reportable already refuses it.
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                got = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(got, dict):
+                    return got
             except (OSError, json.JSONDecodeError):
                 pass
     if not fallback:
@@ -1398,9 +1402,10 @@ def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        got = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    return got if isinstance(got, dict) else None
 
 
 def read_latest_reportable(project_dir=None) -> dict | None:

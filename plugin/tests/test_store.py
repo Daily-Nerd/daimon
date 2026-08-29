@@ -3,6 +3,8 @@ import re
 import time as _time
 from pathlib import Path
 
+import pytest
+
 from daimon_briefing import config, normalize, serializer, store
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -1900,6 +1902,50 @@ def test_read_latest_corrupt_global_pointer_returns_none(tmp_checkpoint_dir):
     tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
     (tmp_checkpoint_dir / "latest.json").write_text("{not json", encoding="utf-8")
     assert store.read_latest() is None  # tolerant, no raise
+
+
+# ---- non-object pointer payloads (#817): valid JSON that is not a dict is absent ----
+
+
+_NON_OBJECT_PAYLOADS = ['["x"]', '"str"', "42"]
+
+
+@pytest.mark.parametrize("payload", _NON_OBJECT_PAYLOADS)
+def test_read_latest_non_object_project_pointer_falls_through_to_global(
+    tmp_checkpoint_dir, sample_checkpoint, payload
+):
+    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"})  # global
+    slug = store.project_slug("/p/nonobj")
+    pdir = tmp_checkpoint_dir / slug
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "latest.json").write_text(payload, encoding="utf-8")
+    got = store.read_latest(project_dir="/p/nonobj", fallback=True)
+    assert got is not None and got["session_id"] == "S-g"  # absent, like torn (#139)
+
+
+@pytest.mark.parametrize("payload", _NON_OBJECT_PAYLOADS)
+def test_read_latest_non_object_project_pointer_no_fallback_returns_none(
+    tmp_checkpoint_dir, payload
+):
+    slug = store.project_slug("/p/nonobj")
+    pdir = tmp_checkpoint_dir / slug
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "latest.json").write_text(payload, encoding="utf-8")
+    assert store.read_latest(project_dir="/p/nonobj", fallback=False) is None
+
+
+@pytest.mark.parametrize("payload", _NON_OBJECT_PAYLOADS)
+def test_read_latest_non_object_global_pointer_returns_none(tmp_checkpoint_dir, payload):
+    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_checkpoint_dir / "latest.json").write_text(payload, encoding="utf-8")
+    assert store.read_latest() is None
+
+
+def test_read_latest_agrees_with_reportable_on_non_object_pointer(tmp_checkpoint_dir):
+    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_checkpoint_dir / "latest.json").write_text('["x"]', encoding="utf-8")
+    assert store.read_latest() is None
+    assert store.read_latest_reportable() is None  # the two readers agree (#817)
 
 
 # ---- transcript_unchanged (#185): identical-bytes guard ----
