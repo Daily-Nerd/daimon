@@ -21,7 +21,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from . import (config, configure, ledger, llm, normalize, provenance, schema)
+from . import (config, configure, field_table, ledger, llm, normalize,
+               provenance, schema)
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -604,39 +605,17 @@ def _item_reason(item) -> str | None:
     Names the predicate only. Never the item's text, quote, or trust value —
     the reason is logged verbatim and the payload is exactly what the boundary
     is refusing to vouch for.
+
+    #827: the predicates (and their exact strings — they ship in
+    SchemaValidationError and the #743 retry note) are generated from
+    field_table.ITEM_RULES, the declarative source of truth this function's
+    hand-written checks moved into. The per-predicate history lives on the
+    table rows: #134 (present-but-null text crashed briefing.render — reject
+    at the boundary; empty str stays valid, active_topic MAY carry empty
+    text), D-006 (a verbatim claim without a real quote is an unpinned
+    claim), F4/#527 (because), and the anchored_to shape.
     """
-    if not isinstance(item, dict):
-        return "not a dict"
-    if "text" not in item or "trust" not in item:
-        return "missing text or trust"
-    # #134: presence != a usable value. A present-but-null (or non-str) text
-    # passed this check, reached disk, then crashed briefing.render on the next
-    # session. Reject at the boundary. Empty str stays valid — active_topic MAY
-    # carry empty text (test_validate_allows_empty_active_topic_text).
-    if not isinstance(item["text"], str):
-        return "text is not a str"
-    if item["trust"] not in _TRUST_CLASSES:
-        return "trust is not a known trust class"
-    if item["trust"] == "verbatim":
-        quote = item.get("quote")
-        # D-006: a verbatim claim without a real quote is an unpinned claim.
-        if not isinstance(quote, str) or not quote.strip():
-            return "trust=verbatim item has no quote"
-    because = item.get("because")
-    if because is not None and not isinstance(because, str):
-        # F4 (#527), same #134 lesson as text: present-but-non-str would
-        # reach disk and crash a later render — reject at the boundary.
-        return "because is not a str"
-    anchor = item.get("anchored_to")
-    if anchor is not None:
-        if not isinstance(anchor, dict):
-            return "anchored_to is not a dict"
-        if not all(
-            isinstance(anchor.get(k), str) and anchor.get(k)
-            for k in ("file", "symbol", "body_hash")
-        ):
-            return "anchored_to is missing file, symbol, or body_hash"
-    return None
+    return field_table.item_reason(item)
 
 
 def _valid_item(item) -> bool:
@@ -669,15 +648,11 @@ def sanitize_importance(checkpoint) -> None:
     else (strings, floats, bools, None) is dropped. Malformed importance must
     NEVER fail a serialize — a new failure class here would recreate the #119
     heal-starvation incident for a purely advisory field."""
+    # #827: the 1..10 clamp and the drop-everything-else disposition are
+    # generated from field_table's `importance` row — the same row the
+    # published schema document renders for consumers.
     for item in iter_items(checkpoint):
-        if "importance" not in item:
-            continue
-        v = item["importance"]
-        # bool is an int subclass — True must not become importance 1.
-        if isinstance(v, int) and not isinstance(v, bool):
-            item["importance"] = min(10, max(1, v))
-        else:
-            del item["importance"]
+        field_table.normalize_field(item, "importance")
 
 
 def sanitize_scene(checkpoint) -> None:
@@ -686,14 +661,10 @@ def sanitize_scene(checkpoint) -> None:
     empty/whitespace) is dropped. Same philosophy as sanitize_importance: a
     malformed advisory field must NEVER fail a serialize — and it runs flag or
     no flag, because a model can hallucinate the key without being asked."""
+    # #827: strip/cap/drop dispositions generated from field_table's `scene`
+    # row (its max_chars is pinned equal to _SCENE_MAX_CHARS by test).
     for item in iter_items(checkpoint):
-        if "scene" not in item:
-            continue
-        v = item["scene"]
-        if isinstance(v, str) and v.strip():
-            item["scene"] = v.strip()[:_SCENE_MAX_CHARS]
-        else:
-            del item["scene"]
+        field_table.normalize_field(item, "scene")
 
 
 def validation_reason(checkpoint) -> str | None:
@@ -711,39 +682,14 @@ def validation_reason(checkpoint) -> str | None:
     caught a genuinely unpinned claim (the machinery working), a non-str text
     means junk arrived from upstream. Predicate order is unchanged, so the
     accept/reject verdict is byte-identical to the bool version.
+
+    #827: generated from field_table.ENVELOPE_RULES — the declarative source
+    of truth the hand-written section walk moved into, and the same rows the
+    published schema document renders. Predicate order and reason strings
+    are pinned byte-identical by tests/test_field_table.py (matrix) and
+    tests/test_field_table_corpus.py (the real on-disk corpus).
     """
-    if not isinstance(checkpoint, dict):
-        return "checkpoint is not a dict"
-    if "session_id" not in checkpoint:
-        return "missing session_id"
-    wc = checkpoint.get("working_context")
-    es = checkpoint.get("epistemic_snapshot")
-    if not isinstance(wc, dict):
-        return "working_context is not a dict"
-    if not isinstance(es, dict):
-        return "epistemic_snapshot is not a dict"
-    if "active_topic" not in wc:
-        return "missing working_context.active_topic"
-    for key in ("open_questions", "recent_decisions"):
-        items = wc.get(key)
-        if not isinstance(items, list):
-            return f"working_context.{key} is not a list"
-        for i, item in enumerate(items):
-            reason = _item_reason(item)
-            if reason is not None:
-                return f"working_context.{key}[{i}]: {reason}"
-    reason = _item_reason(wc["active_topic"])
-    if reason is not None:
-        return f"working_context.active_topic: {reason}"
-    for key in ("strong_beliefs", "uncertainties"):
-        items = es.get(key, [])
-        if not isinstance(items, list):
-            return f"epistemic_snapshot.{key} is not a list"
-        for i, item in enumerate(items):
-            reason = _item_reason(item)
-            if reason is not None:
-                return f"epistemic_snapshot.{key}[{i}]: {reason}"
-    return None
+    return field_table.checkpoint_reason(checkpoint)
 
 
 def validate(checkpoint) -> bool:
