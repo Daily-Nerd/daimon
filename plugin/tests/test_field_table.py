@@ -490,6 +490,56 @@ def test_engine_coverage_guard_names_rows_the_engine_cannot_run():
     assert errors and "blob" in errors[0]
 
 
+def _bad_rule(scope, name, type_, disposition, constraints):
+    return field_table.FieldRule(
+        scope, name, type_, True, False, "model", disposition, constraints, "")
+
+
+@pytest.mark.parametrize("rule,fragment", [
+    # enum/required_if_eq reject row without its reason string
+    (_bad_rule("item", "f1", "string", "reject", (("enum", ("a",)),)),
+     "lacks reject_reason"),
+    (_bad_rule("item", "f2", "string", "reject",
+               (("required_if_eq", ("trust", "verbatim")),)),
+     "lacks reject_reason"),
+    # object_keys row without the missing-sub-key reason string
+    (_bad_rule("item", "f3", "object", "reject", (("object_keys", ("k",)),)),
+     "lacks reject_reason_missing"),
+    # plain string reject row without a reason string
+    (_bad_rule("item", "f4", "string", "reject", ()),
+     "lacks reject_reason"),
+    # clamp rows missing their bounds
+    (_bad_rule("item", "f5", "integer", "clamp", (("min", 1),)),
+     "lacks min/max"),
+    (_bad_rule("item", "f6", "string", "clamp", ()),
+     "lacks max_chars"),
+], ids=["enum-no-reason", "conditional-no-reason", "object-no-missing-reason",
+        "string-no-reason", "clamp-no-bounds", "clamp-no-max-chars"])
+def test_engine_coverage_guard_flags_every_incomplete_item_row(rule, fragment):
+    errors = field_table.engine_coverage_errors(
+        item_rules=(rule,), envelope_rules=())
+    assert errors and fragment in errors[0]
+
+
+@pytest.mark.parametrize("rule,fragment", [
+    # presence/item-required rows must carry the reason string they reject with
+    (_bad_rule("envelope", "e1", "string", "reject",
+               (("validate", "presence"),)),
+     "lacks reject_reason"),
+    (_bad_rule("envelope", "e2", "object", "reject",
+               (("validate", "item-required"),)),
+     "lacks reject_reason"),
+    # a validate= the engine would never walk (non-reject rows are phase-less)
+    (_bad_rule("envelope", "e3", "array", "pass", (("validate", "object"),)),
+     "non-reject row"),
+], ids=["presence-no-reason", "item-required-no-reason", "validate-on-pass"])
+def test_engine_coverage_guard_flags_every_incomplete_envelope_row(
+        rule, fragment):
+    errors = field_table.engine_coverage_errors(
+        item_rules=(), envelope_rules=(rule,))
+    assert errors and fragment in errors[0]
+
+
 # ---- 6. the published document ----
 
 def test_schema_document_is_versioned_with_format_version():
