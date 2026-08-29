@@ -24,6 +24,8 @@ one a live pointer still references. The default is generous on purpose so #33's
 merged checkpoint history keeps a deep well of files to reconstruct from.
 """
 
+import dataclasses
+import enum
 import json
 import logging
 import os
@@ -1373,32 +1375,51 @@ def read_checkpoint(session_id: str) -> dict | None:
         return None
 
 
-def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
-    """Latest checkpoint, preferring the project's own pointer when known;
-    falls back to the global pointer (pre-routing checkpoints, fresh projects).
+class Route(enum.Enum):
+    """Which pointers a latest-read may consult (#795). Deliberately not a
+    str mixin: a bare route="own" must raise, never silently match."""
 
-    fallback=False reads ONLY the project's own pointer (#94): the global
-    pointer holds the most recent checkpoint of ANY project, so callers that
-    PERSIST what they read (carry) must never see it — display callers (brief)
-    keep the fallback and label it."""
-    d = config.checkpoint_dir()
-    slug = project_slug(project_dir)
-    if slug:
-        path = d / slug / _LATEST
-        if path.exists():
-            # A torn project pointer is treated as absent and falls through to the
-            # global fallback below (#139) — not the same as "no data". Valid JSON
-            # that is not an object gets the same treatment (#817): consumers
-            # assume a dict, and read_latest_reportable already refuses it.
-            try:
-                got = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(got, dict):
-                    return got
-            except (OSError, json.JSONDecodeError):
-                pass
-    if not fallback:
-        return None
-    path = d / _LATEST
+    OWN = "own"                            # the project's own bucket pointer only
+    OWN_ELSE_GLOBAL = "own_else_global"    # own first, global if own yields nothing
+
+
+class Admit(enum.Enum):
+    """Which payloads a latest-read may return as a body (#795). Ownership is
+    a PAYLOAD fact decided by the `project_slug` stamp, independent of which
+    pointer produced the value — that split is the whole point (#784/#791)."""
+
+    ANY = "any"
+    OWN_OR_UNROUTED = "own_or_unrouted"    # + checkpoints belonging to nobody (#791)
+
+
+@dataclasses.dataclass(frozen=True)
+class Marker:
+    """What a refused payload leaves behind: the two header fields `brief`
+    already prints, and NOTHING more. Stdout is a write (scar 0055) — a wider
+    marker would copy foreign content into this project's checkpoint."""
+
+    slug: str | None
+    created: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class ReadResult:
+    """One read, both facts. `fell_back` is a pure ROUTE fact: the global
+    pointer yielded an OBJECT (never "parseable", never "produced the value" —
+    a refused payload still sets it). `refused` is the PAYLOAD fact: set iff
+    ADMIT rejected a payload the route found. This type must never reach the
+    17 body-only call sites: it is truthy, not None and not a dict, so a
+    dropped `.checkpoint` there is a clean wrong answer, not an error."""
+
+    checkpoint: dict | None
+    fell_back: bool
+    refused: Marker | None
+
+
+def _read_pointer_object(path) -> dict | None:
+    """The pointer's payload iff it is a JSON object. Absent, torn (#139) and
+    valid-but-non-object (#817) all read as None: "yields nothing" is ONE
+    state with three faces, and the contract table asserts them identical."""
     if not path.exists():
         return None
     try:
@@ -1406,6 +1427,74 @@ def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     return got if isinstance(got, dict) else None
+
+
+def _admit_payload(checkpoint: dict, slug, admit: "Admit", fell_back: bool) -> "ReadResult":
+    if admit is Admit.OWN_OR_UNROUTED:
+        # Verbatim the shipped comparison: None / "" / whitespace / falsy
+        # stamps all read as un-routed, and a non-string stamp is coerced
+        # before comparing. Refuse only when BOTH sides are truthy and
+        # unequal — an identity-less reader (falsy slug) refuses nothing,
+        # because nothing is foreign to a session with no project identity.
+        stamped = str(checkpoint.get("project_slug") or "").strip()
+        if slug and stamped and stamped != slug:
+            created = str(checkpoint.get("created") or "").strip() or None
+            return ReadResult(None, fell_back, Marker(slug=stamped, created=created))
+    return ReadResult(checkpoint, fell_back, None)
+
+
+def _scoped_read(project_dir, route: "Route", admit: "Admit") -> "ReadResult":
+    """THE latest-read (#795): every projection below goes through here, so
+    there is exactly one implementation of route and admit."""
+    if not isinstance(route, Route):
+        raise TypeError(f"route must be a Route, got {route!r}")
+    if not isinstance(admit, Admit):
+        raise TypeError(f"admit must be an Admit, got {admit!r}")
+    d = config.checkpoint_dir()
+    slug = project_slug(project_dir)
+    if slug:
+        got = _read_pointer_object(d / slug / _LATEST)
+        if got is not None:
+            return _admit_payload(got, slug, admit, fell_back=False)
+    if route is Route.OWN:
+        return ReadResult(None, False, None)
+    got = _read_pointer_object(d / _LATEST)
+    if got is None:
+        return ReadResult(None, False, None)
+    return _admit_payload(got, slug, admit, fell_back=True)
+
+
+def read_latest_body(project_dir=None, *, route: "Route", admit: "Admit") -> dict | None:
+    """The latest checkpoint BODY under an explicit route and admit, or None.
+
+    Same return type as `read_latest`, for the call sites that only want the
+    body. Both keywords are required with no default so an omitted argument is
+    a TypeError instead of a silently unsafe answer. Callers that need to know
+    HOW the value arrived use `read_latest_result` instead — the choice is
+    "do I reference `fell_back`?", nothing else."""
+    return _scoped_read(project_dir, route, admit).checkpoint
+
+
+def read_latest_result(project_dir=None, *, route: "Route", admit: "Admit") -> "ReadResult":
+    """`read_latest_body` plus the route fact, as a `ReadResult` — for the one
+    caller (`brief`) that must LABEL a fallback rather than infer it (#787,
+    scar 0058). Everyone else takes the body projection above."""
+    return _scoped_read(project_dir, route, admit)
+
+
+def read_latest(project_dir=None, fallback: bool = True) -> dict | None:
+    """Latest checkpoint, preferring the project's own pointer when known;
+    falls back to the global pointer (pre-routing checkpoints, fresh projects).
+
+    fallback=False reads ONLY the project's own pointer (#94): the global
+    pointer holds the most recent checkpoint of ANY project, so callers that
+    PERSIST what they read (carry) must never see it — display callers (brief)
+    keep the fallback and label it.
+
+    Thin wrapper over the scoped read (#795): fallback=True is
+    (OWN_ELSE_GLOBAL, ANY), fallback=False is (OWN, ANY), byte-for-byte."""
+    route = Route.OWN_ELSE_GLOBAL if fallback else Route.OWN
+    return read_latest_body(project_dir=project_dir, route=route, admit=Admit.ANY)
 
 
 def read_latest_reportable(project_dir=None) -> dict | None:
@@ -1423,15 +1512,11 @@ def read_latest_reportable(project_dir=None) -> dict | None:
 
     Membership is decided by the payload's own `project_slug`, the same way
     team fan-in decides it, rather than by which pointer the read came through.
-    """
-    checkpoint = read_latest(project_dir=project_dir)
-    if not isinstance(checkpoint, dict):
-        return None
-    slug = project_slug(project_dir)
-    stamped = str(checkpoint.get("project_slug") or "").strip()
-    if slug and stamped and stamped != slug:
-        return None
-    return checkpoint
+
+    Thin wrapper over the scoped read (#795): exactly
+    (OWN_ELSE_GLOBAL, OWN_OR_UNROUTED), body projection."""
+    return read_latest_body(project_dir=project_dir, route=Route.OWN_ELSE_GLOBAL,
+                            admit=Admit.OWN_OR_UNROUTED)
 
 
 # ---- team memory (#111): opt-in shared mirror, derive-never-write shared state ----
