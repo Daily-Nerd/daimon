@@ -339,7 +339,22 @@ def build(checkpoint, now=None) -> dict | None:
 _CANDIDATE_ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,40}(-\d+)?")
 
 
-def withhold(checkpoint, resolutions: dict,
+def injection_read_route(project) -> "store.Route":
+    """The ONE display-policy route shared by the two briefing-injection
+    surfaces (#784, #795): fall back to the global pointer only when the
+    project is unknown — nothing is foreign to a session with no project
+    identity — or the operator opted in. The `project is None` term is live
+    on the hook path (resolve_project_root propagates None) and dead on the
+    CLI path (_resolve_project always returns a str); folding them is safe,
+    citing the duplication as a shared cause is not. Display callers only:
+    the persist path (store.write_checkpoint) must never consult this, or an
+    env var could change what carry writes (#126)."""
+    if project is None or config.brief_global_fallback():
+        return store.Route.OWN_ELSE_GLOBAL
+    return store.Route.OWN
+
+
+def withhold(checkpoint: dict, resolutions: dict,
              amendments=None) -> tuple[dict, list, list]:
     """Drop items the world has already resolved, at RENDER time only — the
     checkpoint on disk (and carry's copy of it) is never touched. `resolutions`
@@ -1027,7 +1042,7 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
     return True
 
 
-def render(checkpoint, project_dir=None, worldcheck_project=None) -> str | None:
+def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
     LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
     quote integrity, and falls back to deterministic on any doubt.

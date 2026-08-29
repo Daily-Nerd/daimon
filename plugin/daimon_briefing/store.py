@@ -1192,13 +1192,10 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
         checkpoint.setdefault("git_branch", branch)
     # Birth stamps (#126) need the previous latest BEFORE this write moves it.
     # read_latest never raises (returns None on absent/torn pointers). When the
-    # project is KNOWN, suppress the global fallback (#139): _stamp_first_seen
-    # PERSISTS what it reads, and the global pointer holds the most recent
-    # checkpoint of ANY project — a known project's first write must inherit
-    # nothing (None → all items fresh), never a foreign first_seen. When the
-    # project is UNKNOWN, the global pointer IS this stream's own prior
-    # checkpoint, so the fallback stays on (same-stream carry, #126 legacy).
-    _stamp_first_seen(checkpoint, read_latest(project_dir, fallback=not slug))
+    # _stamp_first_seen PERSISTS what it reads (#139), so this read is the
+    # own-stream one: a known project inherits nothing foreign, an unknown
+    # project keeps the global pointer as its own prior (#126 legacy).
+    _stamp_first_seen(checkpoint, read_own_stream_latest(project_dir))
     # Signed provenance receipt (#204): decide + prep key material BEFORE the blob
     # is serialized, so the `receipts` era marker rides INSIDE the signed bytes
     # (outputs_hash covers the exact blob). plan_mint returns None (and stamps
@@ -1480,6 +1477,18 @@ def read_latest_result(project_dir=None, *, route: "Route", admit: "Admit") -> "
     caller (`brief`) that must LABEL a fallback rather than infer it (#787,
     scar 0058). Everyone else takes the body projection above."""
     return _scoped_read(project_dir, route, admit)
+
+
+def read_own_stream_latest(project_dir=None) -> dict | None:
+    """The previous checkpoint of THIS stream, for the persist path (#126).
+
+    A KNOWN project inherits only its own bucket (a foreign `first_seen` must
+    never be carried); an UNKNOWN project keeps the global fallback because
+    the global pointer IS that stream's own prior checkpoint (pre-routing
+    legacy). Takes NO policy argument on purpose: nothing an env var can
+    reach may change what write_checkpoint persists."""
+    route = Route.OWN if project_slug(project_dir) else Route.OWN_ELSE_GLOBAL
+    return read_latest_body(project_dir=project_dir, route=route, admit=Admit.ANY)
 
 
 def read_latest(project_dir=None, fallback: bool = True) -> dict | None:

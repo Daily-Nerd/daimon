@@ -15,7 +15,7 @@ evidence:
   - note: #787 — brief rendered a foreign body on a torn own pointer
   - note: #784 — the SessionStart injection rendered another project's checkpoint
 expires:
-  condition: "read_latest reports whether it fell back, instead of callers inferring it"
+  condition: "no caller reconstructs the route; read_latest_result is the only source of fell_back, and the legacy fallback= surface is deleted (#795 stage 4)"
   review_after: 2027-02-28
 status: active
 ---
@@ -33,12 +33,19 @@ while the caller is in fact holding another project's data. `daimon brief` shipp
 that detection and its #96 foreign-body suppression therefore did not fire on a
 torn own-pointer (#787); both call sites now decide before the read instead.
 
-Do NOT reintroduce that detection in a new caller. Ask `read_latest` not to fall
-back in the first place, by passing `fallback=` computed from policy (the injection
-hook after #784), or read the own pointer with `fallback=False` first and let its
-absence be the answer (`brief` after #787). Deciding before the read cannot be fooled by
-either case. Note the policy has a second half: when the project is UNKNOWN the
-fallback must stay ON, because there is no per-project pointer to prefer and
-nothing is foreign to a session with no project identity. A fix that suppresses
-the fallback unconditionally passes the leak test and silently removes the
-briefing from every pre-routing host; the full suite caught exactly that.
+Do NOT reintroduce that detection in a new caller. Since #795 stage 2 the route
+fact is RETURNED: `store.read_latest_result(...).fell_back` is the only honest
+source, and `brief` reads it instead of reconstructing it. Every other caller
+holds a body with no route fact ON PURPOSE — a body-only caller that suddenly
+needs to know how its value arrived must switch to `read_latest_result`, never
+reach for `project_latest_path(...).exists()`, which is this scar's violation
+pattern verbatim. Route policy is named per caller (`Route.OWN` /
+`Route.OWN_ELSE_GLOBAL`, or `briefing.injection_read_route` on the injection
+surfaces). The policy's second half still binds: when the project is UNKNOWN
+the fallback must stay ON, because there is no per-project pointer to prefer
+and nothing is foreign to a session with no project identity. A fix that
+suppresses the fallback unconditionally passes the leak test and silently
+removes the briefing from every pre-routing host; the full suite caught
+exactly that. This scar stays ACTIVE until #795 stage 4 deletes the legacy
+`fallback=` surface — the split fix leaves 17 body-only callers for whom the
+path-existence check is the cheapest wrong answer on the shelf.
