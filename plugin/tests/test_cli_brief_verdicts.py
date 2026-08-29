@@ -74,7 +74,7 @@ def test_cli_brief_stamps_verdict_surfaced_after_the_print(
     capsys.readouterr()
     record = requests.sender_join(project_dir=sender)[q_id]
     assert requests.needs_verdict_surfaced_stamp(record) is False
-    assert record["verdict_surfaced_at"]
+    assert record["verdict_surfaced"][record["revision"]]
 
 
 def test_cli_brief_verdict_stamp_is_write_once_across_repeated_briefs(
