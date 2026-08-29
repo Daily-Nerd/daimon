@@ -2111,3 +2111,59 @@ def test_request_inject_needs_no_session_to_stay_quiet(
     capsys.readouterr()
     assert cli.main(["request-inject", "--project", project]) == 0
     assert capsys.readouterr().out == ""
+
+
+# ---- #798: `request list` must fold the sender lane, like the panels do ------
+#
+# A request's rows span two buckets: `opened` in the sender's, the verdict in the
+# recipient's. `inbox` joins across buckets (recipient_join) and the verdict panel
+# joins across buckets (sender_join), but `listing` folded only the local bucket, so
+# every ask a project SENT read `open` forever after it was decided.
+
+
+def _listed(project, q_id):
+    return {r["request_id"]: r for r in requests.listing(project_dir=project)}[q_id]
+
+
+def test_listing_reports_the_recipients_verdict(project):
+    """#798: the surface the verdict panel's overflow line points at
+    ("+N more decided — daimon request list") must be able to show them."""
+    recipient_slug = _seed_bucket("/p/req-list-verdict")
+    q_id = _open(project, to=recipient_slug)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc1234",
+                  project_dir=recipient_slug)
+    assert _listed(project, q_id)["state"] == "done"
+
+
+def test_listing_reports_a_rejection_too(project):
+    recipient_slug = _seed_bucket("/p/req-list-reject")
+    q_id = _open(project, to=recipient_slug)
+    requests.reject(q_id, channel="cli-tty", note="not this quarter",
+                    project_dir=recipient_slug)
+    assert _listed(project, q_id)["state"] == "rejected"
+
+
+def test_listing_does_not_leak_the_recipients_suppression_d5(project):
+    """D5 runs the OTHER way here. Joining the recipient's rows must not teach the
+    sender that its ask was muted from the recipient's panel: it reads undecided and
+    goes stale on the normal schedule. The filter belongs on FOREIGN rows only."""
+    recipient_slug = _seed_bucket("/p/req-list-suppressed")
+    q_id = _open(project, to=recipient_slug)
+    requests.suppress(q_id, channel="cli-tty", project_dir=recipient_slug)
+    listed = _listed(project, q_id)
+    assert listed["suppressed"] is False
+    assert listed["state"] == "open"
+
+
+def test_listing_keeps_the_sent_lane_out_of_the_inbox(project):
+    """The property most likely to regress when the data source moves. `listing` is
+    the SENT lane: an ask addressed TO this project, opened elsewhere, has never
+    appeared here (verified against the pre-change behaviour) and must not start
+    appearing once foreign rows are joined in."""
+    sender_slug = _seed_bucket("/p/req-list-inbound")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK, why=WHY,
+                                 channel="cli-agent", project_dir=sender_slug)
+    requests.suppress(q_id, channel="cli-tty", project_dir=project)
+    assert q_id not in {r["request_id"] for r in requests.listing(project_dir=project)}
+    # ...and it is still reachable where it belongs, the inbox.
+    assert requests.recipient_join(project_dir=project)[q_id]["suppressed"] is True
