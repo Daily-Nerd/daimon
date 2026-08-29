@@ -231,7 +231,8 @@ def _seed_origin(project=PROJECT, session=ORIGIN, text=_TEXT):
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }, project_dir=project)
-    stored = store.read_latest(project_dir=project, fallback=False)
+    stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     return stored["working_context"]["open_questions"][0]["id"]
 
 
@@ -429,7 +430,8 @@ def _corroborated_checkpoint(session="S-old", text=_TEXT, project=PROJECT):
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }, project_dir=project)
-    stored = store.read_latest(project_dir=project, fallback=False)
+    stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     item_id = stored["working_context"]["open_questions"][0]["id"]
     assert store.append_event(store.corroboration_ref(item_id),
                               f"corroborated-by:{OBSERVER}",
@@ -631,7 +633,8 @@ def test_corroboration_survives_carry_and_accumulates_across_sessions(
     assert entry["latest_demotion_ts"] is None
     # The claim is still a live, single item — never resolved by its own
     # corroboration, never duplicated by the rewording.
-    latest = store.read_latest(project_dir=E2E_PROJECT, fallback=False)
+    latest = store.read_latest_body(project_dir=E2E_PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     questions = latest["working_context"]["open_questions"]
     assert len(questions) == 1
     assert questions[0]["id"] == next(iter(fold))
@@ -702,7 +705,8 @@ def test_carry_merge_still_runs_when_corroboration_emission_explodes(
                         fake_chat_factory(_extraction(session, _PREV_TEXT)))
     assert cli.main(["serialize", str(_transcript_for(tmp_path, session))]) == 0
 
-    written = store.read_latest(project_dir=E2E_PROJECT, fallback=False)
+    written = store.read_latest_body(project_dir=E2E_PROJECT, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     assert written["session_id"] == session
     texts = [q["text"] for q in written["working_context"]["open_questions"]]
     assert "an unrelated prior loop about zephyr batching" in texts
@@ -832,7 +836,8 @@ def test_the_stamp_is_transient_and_never_reaches_disk(tmp_checkpoint_dir):
     assert marked["working_context"]["open_questions"][0]["_corroborated"] == 2
     # Pure: the caller's own dict is untouched, and so is the file.
     assert "_corroborated" not in stored["working_context"]["open_questions"][0]
-    fresh = store.read_latest(project_dir=PROJECT, fallback=False)
+    fresh = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
     assert "_corroborated" not in fresh["working_context"]["open_questions"][0]
 
 
@@ -1016,7 +1021,8 @@ def test_an_echoed_briefing_item_never_self_corroborates_end_to_end(
     # refusal and not a capture that never happened. And the reason it refused
     # is on the record: the quote lived only in daimon's own output, so the
     # item is inferred and flagged, never a fresh verbatim.
-    written = store.read_latest(project_dir=_ECHO_PROJECT, fallback=False)
+    written = store.read_latest_body(project_dir=_ECHO_PROJECT, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     item = next(q for q in written["working_context"]["open_questions"]
                 if q["text"] == _PREV_TEXT)
     assert item["trust"] == "inferred"
@@ -1247,7 +1253,8 @@ def test_ledger_rows_on_disk_do_not_reorder_a_briefing(tmp_checkpoint_dir):
             "recent_decisions": []},
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }, project_dir=PROJECT)
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     weak = stored["working_context"]["open_questions"][0]["id"]
 
     def _order():

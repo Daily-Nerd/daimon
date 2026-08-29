@@ -312,7 +312,8 @@ def test_anchor_attach_rewrite_never_echo_drops(tmp_checkpoint_dir, tmp_path,
                    "--attach", "unrelated belief survives",
                    "--project", str(proj)])
     assert rc == 0
-    out = store.read_latest(project_dir=proj)
+    out = store.read_latest_body(project_dir=proj, route=store.Route.OWN_ELSE_GLOBAL,
+                                 admit=store.Admit.ANY)
     beliefs = [i["text"] for i in out["epistemic_snapshot"]["strong_beliefs"]]
     assert VERDICT in beliefs
 
@@ -325,12 +326,15 @@ def test_forget_rewrite_never_echo_drops(tmp_checkpoint_dir, monkeypatch,
     store.write_checkpoint("S-echo", _checkpoint(), project_dir=PROJECT)
     _active_ruling()
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
-    stored = store.read_latest(project_dir=PROJECT)
+    stored = store.read_latest_body(project_dir=PROJECT,
+                                    route=store.Route.OWN_ELSE_GLOBAL,
+                                    admit=store.Admit.ANY)
     doomed = next(i["id"] for i in
                   stored["epistemic_snapshot"]["strong_beliefs"]
                   if i["text"] == "an unrelated belief survives")
     assert cli.main(["forget", doomed]) == 0
-    out = store.read_latest(project_dir=PROJECT)
+    out = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN_ELSE_GLOBAL,
+                                 admit=store.Admit.ANY)
     beliefs = [i["text"] for i in out["epistemic_snapshot"]["strong_beliefs"]]
     assert VERDICT in beliefs  # the ruling echo was NOT the forget target
 
@@ -346,6 +350,7 @@ def test_write_checkpoint_stdin_path_admits(tmp_checkpoint_dir, monkeypatch,
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(cp)))
     rc = cli.main(["write-checkpoint", "--project", PROJECT])
     assert rc == 0
-    out = store.read_latest(project_dir=PROJECT)
+    out = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN_ELSE_GLOBAL,
+                                 admit=store.Admit.ANY)
     beliefs = [i["text"] for i in out["epistemic_snapshot"]["strong_beliefs"]]
     assert VERDICT not in beliefs

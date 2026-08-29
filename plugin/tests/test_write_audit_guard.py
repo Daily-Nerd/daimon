@@ -328,7 +328,8 @@ def _setup_env(tmp_path, monkeypatch):
 
 
 def _ids_by_text(proj):
-    cp = store.read_latest(project_dir=str(proj), fallback=False)
+    cp = store.read_latest_body(project_dir=str(proj), route=store.Route.OWN,
+                                admit=store.Admit.ANY)
     out = {}
     for section, key in store._ITEM_LISTS:
         for item in ((cp or {}).get(section) or {}).get(key) or []:

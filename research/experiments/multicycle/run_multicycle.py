@@ -96,7 +96,9 @@ def run_arm(arm: str, cycles: int, chat, run_dir) -> list[dict]:
                 # Mirror cli.py's serialize wiring: prev read before the write
                 # rotates it; clock = the cycle's simulated stamp (scar:
                 # simulated-clock-must-thread-into-every-now-consumer).
-                prev_latest = store.read_latest(project_dir)
+                prev_latest = store.read_latest_body(project_dir,
+                                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                                     admit=store.Admit.ANY)
                 out = carry.merge(out, prev_latest,
                                   store._created_epoch(out["created"]),
                                   floor=dconfig.carry_floor(),

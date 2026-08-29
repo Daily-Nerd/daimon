@@ -215,7 +215,8 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
             # this checkpoint's deterministic stamp, knobs from config (pinned in
             # _question_env), resolutions folded the same way (empty in the
             # isolated bench store, read anyway for fidelity).
-            prev = store.read_latest(project_dir, fallback=False)
+            prev = store.read_latest_body(project_dir, route=store.Route.OWN,
+                                          admit=store.Admit.ANY)
             now = store._created_epoch(cp["created"]) or 0.0
             events = store.resolutions(project_dir=project_dir)
             resolved = frozenset(ref for ref, evt in events.items()

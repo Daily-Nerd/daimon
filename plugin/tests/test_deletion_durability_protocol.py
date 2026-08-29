@@ -166,7 +166,8 @@ def _resolved():
 
 
 def _carry_decisions(new_created):
-    prev = store.read_latest(project_dir=_P, fallback=False)
+    prev = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                  admit=store.Admit.ANY)
     new_cp = {
         "session_id": "carry-probe",
         "created": new_created,
@@ -238,7 +239,8 @@ def test_deletion_durability_protocol(tmp_checkpoint_dir, monkeypatch,
 
     # --- Step 1: write a distinctive fact through the serializer -----------
     _serialize_and_write("S1", "2026-07-01T00:00:00Z", fake_chat_factory)
-    stored1 = store.read_latest(project_dir=_P, fallback=False)
+    stored1 = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored1["working_context"]["recent_decisions"]
                 if d["text"] == _S)
 
@@ -268,7 +270,8 @@ def test_deletion_durability_protocol(tmp_checkpoint_dir, monkeypatch,
     res = store.resolutions(project_dir=_P)
     assert x_id in res and res[x_id]["status"].startswith("forgotten:")
 
-    stored2 = store.read_latest(project_dir=_P, fallback=False)
+    stored2 = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     assert _S not in _brief_decisions(stored2)          # gone
     assert _T in _brief_decisions(stored2)              # liveness
     c2 = _carry_decisions("2026-07-03T00:00:00Z")
@@ -294,7 +297,8 @@ def test_deletion_durability_protocol(tmp_checkpoint_dir, monkeypatch,
     refed_texts = [d["text"] for d in refed["working_context"]["recent_decisions"]]
     assert _S in refed_texts and _T in refed_texts      # extractor re-produced both
 
-    stored3 = store.read_latest(project_dir=_P, fallback=False)
+    stored3 = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     assert _S not in _latest_raw()                       # dropped at the boundary
     assert _T in _latest_raw()                           # twin persisted to disk
     assert _S not in _brief_decisions(stored3) and _T in _brief_decisions(stored3)
@@ -320,7 +324,8 @@ def test_deletion_durability_protocol(tmp_checkpoint_dir, monkeypatch,
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
 
     # --- Step 7: derived artifact — the rendered brief STRING ------------
-    stored7 = store.read_latest(project_dir=_P, fallback=False)
+    stored7 = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     rendered = briefing.render(stored7)
     assert rendered is not None
     assert _S not in rendered and _T in rendered
@@ -389,7 +394,8 @@ def test_step3_transcript_refeed_never_resurrects(tmp_checkpoint_dir, monkeypatc
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _P)
 
     _serialize_and_write("A1", "2026-07-01T00:00:00Z", fake_chat_factory)
-    stored = store.read_latest(project_dir=_P, fallback=False)
+    stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
                 if d["text"] == _S)
     assert cli.main(["forget", x_id]) == 0
@@ -412,7 +418,8 @@ def test_step9_receipt_binds_post_deletion_bytes(tmp_checkpoint_dir, monkeypatch
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _P)
 
     _serialize_and_write("R1", "2026-07-01T00:00:00Z", fake_chat_factory)
-    stored = store.read_latest(project_dir=_P, fallback=False)
+    stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
                 if d["text"] == _S)
 

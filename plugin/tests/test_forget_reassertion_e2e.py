@@ -84,7 +84,8 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
     # --- Block 1: pre-state positive control (serialize #1) -----------------
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S, _T]),
                            project_dir=_A)
-    stored1 = store.read_latest(project_dir=_A, fallback=False)
+    stored1 = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored1["working_context"]["recent_decisions"]
                 if d["text"] == _S)
 
@@ -103,7 +104,8 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
     # A fresh session re-extracts S and T verbatim into the same field.
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_S, _T]),
                            project_dir=_A)
-    stored2 = store.read_latest(project_dir=_A, fallback=False)
+    stored2 = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
 
     # id stability is the guarantee: the re-extracted S keys to the SAME id.
     probe = _cp("probe", "2026-07-03T00:00:00Z", [_S])
@@ -149,7 +151,8 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
     recall.rebuild()
     store.write_checkpoint("S3", _cp("S3", "2026-07-06T00:00:00Z", [_S, _T]),
                            project_dir=_A)
-    stored3 = store.read_latest(project_dir=_A, fallback=False)
+    stored3 = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     assert _S not in _brief_decisions(stored3) and _T in _brief_decisions(stored3)
     c3 = _carry_decisions("2026-07-07T00:00:00Z", stored3, _A)
     assert _S not in c3 and _T in c3
@@ -171,7 +174,8 @@ def test_forget_dual_write_copy_never_carries_forgotten_value(tmp_checkpoint_dir
 
     store.write_checkpoint("T1", _cp("T1", "2026-07-01T00:00:00Z", [_S, _T]),
                            project_dir=_A)
-    stored = store.read_latest(project_dir=_A, fallback=False)
+    stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
                 if d["text"] == _S)
     assert cli.main(["forget", x_id]) == 0

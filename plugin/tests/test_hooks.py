@@ -92,7 +92,8 @@ def test_on_session_end_writes_checkpoint(tmp_checkpoint_dir, fake_chat_factory,
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
     )
     assert store.read_checkpoint("S-end") is not None
-    assert store.read_latest()["session_id"] == "S-end"
+    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
+                                  admit=store.Admit.ANY)["session_id"] == "S-end"
 
 
 def test_on_session_end_strips_model_supplied_format_version(
@@ -601,7 +602,9 @@ def test_pre_llm_call_withholds_resolved_item(tmp_checkpoint_dir, sample_checkpo
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
     store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
     store.append_event(item_id, "resolved", project_dir="/repo/x")
     out = hooks.pre_llm_call(

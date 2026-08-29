@@ -36,7 +36,8 @@ def rel_proj(tmp_checkpoint_dir, tmp_path, monkeypatch):
     proj = tmp_path / PROJECT_NAME
     proj.mkdir()
     store.write_checkpoint("S1", _cp("S1"), project_dir=proj)
-    stored = store.read_latest(project_dir=proj, fallback=False)
+    stored = store.read_latest_body(project_dir=proj, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     ids = [i["id"] for i in stored["working_context"]["recent_decisions"]]
     confirmed = relations.propose(
         type_="revision-of",

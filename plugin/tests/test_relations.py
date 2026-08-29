@@ -701,7 +701,8 @@ def test_cli_forget_scrubs_relations_and_reports_them(
                 {"text": "adopt sqlite for the relations cache",
                  "trust": "inferred"}]},
     }, project_dir=project)
-    stored = store.read_latest(project_dir=project, fallback=False)
+    stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     item_id = stored["working_context"]["recent_decisions"][0]["id"]
     rel_id = relations.propose(
         type_="revision-of",

@@ -82,14 +82,16 @@ def test_write_checkpoint_drops_reasserted_secret_via_redacted_tombstone(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_SECRET_RAW]),
                            project_dir=_A)
-    stored = store.read_latest(project_dir=_A, fallback=False)
+    stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     item = stored["working_context"]["recent_decisions"][0]
     assert "[redacted:aws-key]" in item["text"]  # the tombstone keys on THIS form
     assert cli.main(["forget", item["id"]]) == 0
 
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_SECRET_RAW, _T]),
                            project_dir=_A)
-    latest = store.read_latest(project_dir=_A, fallback=False)
+    latest = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     assert latest["session_id"] == "S2"
     assert [d["text"] for d in latest["working_context"]["recent_decisions"]] == [_T]
 
@@ -144,7 +146,8 @@ def test_disabled_forget_still_removes_value_and_appends_tombstone(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S, _T]),
                            project_dir=_A)
-    stored = store.read_latest(project_dir=_A, fallback=False)
+    stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
                 if d["text"] == _S)
 
@@ -152,7 +155,8 @@ def test_disabled_forget_still_removes_value_and_appends_tombstone(
     assert cli.main(["forget", x_id]) == 0
 
     # the value left the live checkpoint on disk (latest AND per-session file)
-    latest = store.read_latest(project_dir=_A, fallback=False)
+    latest = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     texts = [d["text"] for d in latest["working_context"]["recent_decisions"]]
     assert _S not in texts and _T in texts
     per_session = store.read_checkpoint("S1")
@@ -460,8 +464,8 @@ def test_write_checkpoint_binds_origin_to_the_writing_session_and_author(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
                            project_dir=_A)
-    item = store.read_latest(project_dir=_A,
-                             fallback=False)["working_context"]["recent_decisions"][0]
+    item = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                  admit=store.Admit.ANY)["working_context"]["recent_decisions"][0]
     assert item["origin_session"] == "S1"
     assert item["origin_author"] == "ada"
 
@@ -481,7 +485,8 @@ def test_origin_survives_two_carry_hops_while_carried_from_only_names_the_last(
 
     def _write_with_carry(sid, created, texts):
         cp = _cp(sid, created, texts)
-        prev = _store.read_latest(project_dir=_A, fallback=False)
+        prev = _store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                       admit=store.Admit.ANY)
         cp = carry.merge(cp, prev, _store._created_epoch(created),
                          floor=config.carry_floor(), cap=config.carry_max(),
                          resolved=frozenset())
@@ -493,7 +498,8 @@ def test_origin_survives_two_carry_hops_while_carried_from_only_names_the_last(
                       ["adopt sqlite for the recall index cache layer"])
     _write_with_carry("S-C", "2026-07-03T00:00:00Z", [_T])
 
-    latest = _store.read_latest(project_dir=_A, fallback=False)
+    latest = _store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     sqlite_item = next(d for d in latest["working_context"]["recent_decisions"]
                        if "sqlite" in d["text"])
     assert sqlite_item.get("carried_from") in ("S-B", "S-C")

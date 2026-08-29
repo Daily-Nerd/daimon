@@ -1435,7 +1435,8 @@ def test_resolve_event_invalidates_index_without_manual_rebuild(tmp_checkpoint_d
     hits = recall.search("walrus", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None  # indexed live
 
-    iid = store.read_latest(project_dir="/repo/x", fallback=False)[
+    iid = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
+                                 admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
     store.append_event(iid, "resolved", project_dir="/repo/x")
 
@@ -1448,7 +1449,8 @@ def test_reopen_event_revives_item_without_manual_rebuild(tmp_checkpoint_dir, mo
     cp = {"working_context": {"open_questions": [
         {"text": "narwhal question pending", "trust": "inferred"}]}}
     store.write_checkpoint("S-fp2", cp, project_dir="/repo/x")
-    iid = store.read_latest(project_dir="/repo/x", fallback=False)[
+    iid = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
+                                 admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
     store.append_event(iid, "resolved", project_dir="/repo/x")
     hits = recall.search("narwhal", project_dir="/repo/x")
@@ -1506,7 +1508,8 @@ def _one_question_bucket(text, sid, project="/repo/x"):
     cp = {"working_context": {"open_questions": [
         {"text": text, "trust": "inferred"}]}}
     store.write_checkpoint(sid, cp, project_dir=project)
-    return store.read_latest(project_dir=project, fallback=False)[
+    return store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                  admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
 
 
@@ -1677,7 +1680,8 @@ def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatc
                               "trust": "inferred"}]),
         project_dir="/repo/x",
     )
-    cp = store.read_latest(project_dir="/repo/x", fallback=False)
+    cp = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
+                                admit=store.Admit.ANY)
     iid = cp["working_context"]["recent_decisions"][0]["id"]
     store.append_event(iid, "forgotten:deadbeef1234", kind="tombstone",
                        project_dir="/repo/x")
@@ -1815,7 +1819,8 @@ def test_rebuild_scrubs_forgotten_value_sibling_id_in_older_session(
         _cp("S2", questions=[{"text": s, "trust": "inferred"}],
             created="2026-07-31T00:00:00Z"),
         project_dir="/repo/x")
-    latest = store.read_latest(project_dir="/repo/x", fallback=False)
+    latest = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     q_id = next(i["id"] for i in latest["working_context"]["open_questions"]
                 if i["text"] == s)
     old_file = config.checkpoint_dir() / "S1.json"

@@ -52,7 +52,9 @@ def _agent_candidate(project, sample_checkpoint, quote,
     first open question — the standard setup every test below shares.
     Returns the target item dict (with its stable id)."""
     store.write_checkpoint(prev_session, sample_checkpoint, project_dir=project)
-    written = store.read_latest(project_dir=project)
+    written = store.read_latest_body(project_dir=project,
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][0]
     rc = cli.main(["resolve", item["id"], "--by", "agent",
                    "--evidence", quote, "--project", project])
