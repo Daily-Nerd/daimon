@@ -248,13 +248,14 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         _c(validate="item-list-required"),
         "List of item objects; a non-list (absence included) rejects."),
     FieldRule(
-        "envelope", "working_context.active_topic", "object", False, True,
+        "envelope", "working_context.active_topic", "object", False, False,
         "model", "reject",
         _c(validate="item-required",
            reject_reason="missing working_context.active_topic"),
         "Singleton item; per-session, never carried, never id-stamped. "
         "Presence is checked before the working_context lists, its item "
-        "shape after them. May be deleted by a forget rewrite."),
+        "shape after them; an explicit null rejects (item shape applies). "
+        "May be deleted by a forget rewrite."),
     FieldRule(
         "envelope", "epistemic_snapshot.strong_beliefs", "array", True, False,
         "model", "reject",
@@ -478,27 +479,116 @@ def checkpoint_reason(checkpoint: object) -> str | None:
 
 
 def normalize_field(item: dict, name: str) -> None:
-    """Apply one clamp/drop row's disposition to `item` in place — the
-    generated per-item body of serializer.sanitize_importance /
-    sanitize_scene. Absent fields stay absent; a malformed advisory field is
-    removed, never fatal (#119 posture)."""
+    """Apply one clamp row's disposition to `item` in place — the generated
+    per-item body of serializer.sanitize_importance / sanitize_scene. Absent
+    fields stay absent; a malformed advisory field is removed, never fatal
+    (#119 posture).
+
+    Only clamp rows are implemented HERE: the `drop` disposition of
+    source_message_ids needs transcript context and lives in
+    sanitize_source_ids, and reject rows belong to the validator. Calling
+    this on any other row RAISES instead of silently no-opping (#828 review:
+    a silent no-op would leave a malformed value in place while reading as
+    normalization at the call site)."""
     r = _ITEM_BY_NAME[name]
-    if r.disposition not in ("clamp", "drop") or name not in item:
-        return
     c = dict(r.constraints)
-    value = item[name]
-    if r.type == "integer":
+    if r.disposition == "clamp" and r.type == "integer":
+        if name not in item:
+            return
+        value = item[name]
         # bool is an int subclass — True must not become importance 1.
         if isinstance(value, int) and not isinstance(value, bool):
             item[name] = min(int(c["max"]), max(int(c["min"]), value))
         else:
             del item[name]
-    elif r.type == "string":
+    elif r.disposition == "clamp" and r.type == "string":
+        if name not in item:
+            return
+        value = item[name]
         if isinstance(value, str) and value.strip():
             out = value.strip() if c.get("strip_whitespace") else value
             item[name] = out[:int(c["max_chars"])]
         else:
             del item[name]
+    else:
+        raise ValueError(
+            f"normalize_field has no branch for {r.type}/{r.disposition} "
+            f"(field {name!r})")
+
+
+_ENGINE_VALIDATES = ("presence", "object", "item-required",
+                     "item-list-required", "item-list-optional")
+
+
+def engine_coverage_errors(
+        item_rules: tuple[FieldRule, ...] = ITEM_RULES,
+        envelope_rules: tuple[FieldRule, ...] = ENVELOPE_RULES) -> list[str]:
+    """Rows the runtime engine has no branch for, as human-readable errors.
+
+    #828 review: the validator dispatches on a row's constraint keys, not its
+    `type` column, so a reject row of a shape the engine never anticipated
+    (say an integer field with only a reject_reason) would fall through to
+    the plain-string branch or KeyError deep inside a serialize. This guard
+    runs at import, so a malformed row fails the first thing that touches
+    the module — never a capture at the write boundary."""
+    errors: list[str] = []
+    for r in item_rules:
+        c = dict(r.constraints)
+        if r.disposition == "reject":
+            if "required_if_eq" in c or "enum" in c:
+                if "reject_reason" not in c:
+                    errors.append(
+                        f"item.{r.name}: reject row lacks reject_reason")
+            elif "object_keys" in c:
+                if "reject_reason_missing" not in c:
+                    errors.append(
+                        f"item.{r.name}: object_keys row lacks "
+                        "reject_reason_missing")
+            elif r.type == "string":
+                if "reject_reason" not in c:
+                    errors.append(
+                        f"item.{r.name}: reject row lacks reject_reason")
+            else:
+                errors.append(
+                    f"item.{r.name}: reject row of type {r.type!r} has no "
+                    "engine branch")
+        elif r.disposition == "clamp":
+            if r.type == "integer":
+                if not {"min", "max"} <= set(c):
+                    errors.append(
+                        f"item.{r.name}: integer clamp row lacks min/max")
+            elif r.type == "string":
+                if "max_chars" not in c:
+                    errors.append(
+                        f"item.{r.name}: string clamp row lacks max_chars")
+            else:
+                errors.append(
+                    f"item.{r.name}: clamp row of type {r.type!r} has no "
+                    "engine branch")
+    for r in envelope_rules:
+        c = dict(r.constraints)
+        validate = c.get("validate")
+        if r.disposition == "reject":
+            if validate not in _ENGINE_VALIDATES:
+                errors.append(
+                    f"envelope.{r.name}: reject row validate={validate!r} "
+                    "has no engine branch")
+            elif (validate in ("presence", "item-required")
+                    and "reject_reason" not in c):
+                errors.append(
+                    f"envelope.{r.name}: validate={validate!r} row lacks "
+                    "reject_reason")
+        elif validate is not None:
+            errors.append(
+                f"envelope.{r.name}: validate={validate!r} on a "
+                f"non-reject row ({r.disposition})")
+    return errors
+
+
+_COVERAGE_ERRORS = engine_coverage_errors()
+if _COVERAGE_ERRORS:  # pragma: no cover — a table bug fails every import
+    raise AssertionError(
+        "field_table engine coverage: " + "; ".join(_COVERAGE_ERRORS))
 
 
 def _row_document(r: FieldRule) -> dict:
@@ -537,6 +627,62 @@ def schema_document(format_version: str) -> dict:
             "model": "extracted content, policed by the validator and "
                      "normalizers",
             "code": "stamped by daimon's own write pipeline",
+        },
+        "columns": {
+            "type": "the JSON type the producer writes when it writes the "
+                    "field",
+            "optional": "whether a stored checkpoint may lack the field",
+            "nullable": "whether an explicit null is tolerated where the "
+                        "field is present; false on a reject row means an "
+                        "explicit null is rejected like any other "
+                        "out-of-contract value",
+            "owner": "see owners",
+            "disposition": "see dispositions",
+            "constraints": "see constraint_semantics; keys not listed there "
+                           "are documentation for consumers, not runtime "
+                           "checks",
+        },
+        "constraint_semantics": {
+            "validate": "the structural check the runtime validator "
+                        "performs on this envelope field: presence, object, "
+                        "item-required, item-list-required (absence "
+                        "rejects), item-list-optional (absence = empty "
+                        "list)",
+            "enum": "closed set of accepted values; anything else rejects "
+                    "with reject_reason",
+            "required_if_eq": "[field, value]: this field must be a "
+                              "non-empty string ONLY when the named sibling "
+                              "field equals the value; otherwise it is "
+                              "unconstrained and any shape passes (so a "
+                              "reject disposition with this key is "
+                              "conditional, not unconditional)",
+            "object_keys": "sub-keys that must each be a non-empty string "
+                           "when the field is present and non-null; a "
+                           "non-object rejects, a missing/empty sub-key "
+                           "rejects with reject_reason_missing",
+            "reject_reason": "the exact reason string the validator returns "
+                             "when this row rejects",
+            "reject_reason_missing": "the reason string when a required "
+                                     "sub-key is absent or empty",
+            "min": "inclusive lower clamp bound for in-type integers; "
+                   "non-integers (booleans included) drop the field",
+            "max": "inclusive upper clamp bound for in-type integers",
+            "strip_whitespace": "leading/trailing whitespace is removed "
+                                "before storing",
+            "max_chars": "the stored string is truncated to this many "
+                         "characters",
+            "stripped_at_serialize": "a model-emitted value for this field "
+                                     "is discarded at the serialize "
+                                     "boundary; the persisted value is "
+                                     "always code-derived",
+            "pattern": "regex the code-stamped value matches "
+                       "(documentation, not a runtime check)",
+            "format": "timestamp format of the code-stamped value "
+                      "(documentation)",
+            "element": "shape of array elements (documentation)",
+            "shape": "shape of the object's sub-fields (documentation)",
+            "link_types": "link `type` values the producer emits "
+                          "(documentation)",
         },
         "envelope": [_row_document(r) for r in ENVELOPE_RULES],
         "item": [_row_document(r) for r in ITEM_RULES],

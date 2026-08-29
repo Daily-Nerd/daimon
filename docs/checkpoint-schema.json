@@ -13,6 +13,32 @@
     "model": "extracted content, policed by the validator and normalizers",
     "code": "stamped by daimon's own write pipeline"
   },
+  "columns": {
+    "type": "the JSON type the producer writes when it writes the field",
+    "optional": "whether a stored checkpoint may lack the field",
+    "nullable": "whether an explicit null is tolerated where the field is present; false on a reject row means an explicit null is rejected like any other out-of-contract value",
+    "owner": "see owners",
+    "disposition": "see dispositions",
+    "constraints": "see constraint_semantics; keys not listed there are documentation for consumers, not runtime checks"
+  },
+  "constraint_semantics": {
+    "validate": "the structural check the runtime validator performs on this envelope field: presence, object, item-required, item-list-required (absence rejects), item-list-optional (absence = empty list)",
+    "enum": "closed set of accepted values; anything else rejects with reject_reason",
+    "required_if_eq": "[field, value]: this field must be a non-empty string ONLY when the named sibling field equals the value; otherwise it is unconstrained and any shape passes (so a reject disposition with this key is conditional, not unconditional)",
+    "object_keys": "sub-keys that must each be a non-empty string when the field is present and non-null; a non-object rejects, a missing/empty sub-key rejects with reject_reason_missing",
+    "reject_reason": "the exact reason string the validator returns when this row rejects",
+    "reject_reason_missing": "the reason string when a required sub-key is absent or empty",
+    "min": "inclusive lower clamp bound for in-type integers; non-integers (booleans included) drop the field",
+    "max": "inclusive upper clamp bound for in-type integers",
+    "strip_whitespace": "leading/trailing whitespace is removed before storing",
+    "max_chars": "the stored string is truncated to this many characters",
+    "stripped_at_serialize": "a model-emitted value for this field is discarded at the serialize boundary; the persisted value is always code-derived",
+    "pattern": "regex the code-stamped value matches (documentation, not a runtime check)",
+    "format": "timestamp format of the code-stamped value (documentation)",
+    "element": "shape of array elements (documentation)",
+    "shape": "shape of the object's sub-fields (documentation)",
+    "link_types": "link `type` values the producer emits (documentation)"
+  },
   "envelope": [
     {
       "field": "session_id",
@@ -79,14 +105,14 @@
       "field": "working_context.active_topic",
       "type": "object",
       "optional": false,
-      "nullable": true,
+      "nullable": false,
       "owner": "model",
       "disposition": "reject",
       "constraints": {
         "validate": "item-required",
         "reject_reason": "missing working_context.active_topic"
       },
-      "notes": "Singleton item; per-session, never carried, never id-stamped. Presence is checked before the working_context lists, its item shape after them. May be deleted by a forget rewrite."
+      "notes": "Singleton item; per-session, never carried, never id-stamped. Presence is checked before the working_context lists, its item shape after them; an explicit null rejects (item shape applies). May be deleted by a forget rewrite."
     },
     {
       "field": "epistemic_snapshot.strong_beliefs",
