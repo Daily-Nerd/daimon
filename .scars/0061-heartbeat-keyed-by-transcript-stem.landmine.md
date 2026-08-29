@@ -1,23 +1,23 @@
 ---
-id: 0
+id: 61
 type: landmine
 title: Serialize heartbeats are keyed by transcript STEM, never a host payload session id
 severity: high
 confidence: 0.9
 created: 2026-08-29
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: hook/_daimon_hook_lib.py
   - path: plugin/daimon_briefing/_hooks/_daimon_hook_lib.py
   - pattern: "_in_flight_stems|touch_heartbeat|heartbeat_age"
 evidence:
-  - commit: 681c234
+  - commit: bb3d2dd
   - pr: 814
-  - note: "#813 field trace: hook logged `spawned serialize for 01a04bd2-...` while the checkpoint landed as `rollout-2026-08-28T22-41-50-01a04bd2-....json`"
+  - note: #813 field trace: hook logged `spawned serialize for 01a04bd2-...` while the checkpoint landed as `rollout-2026-08-28T22-41-50-01a04bd2-....json`
 expires:
   condition: "cli/__init__.py stops deriving session_id from the transcript filename (`session_id = path.stem`), or hooks start passing their session id through to `daimon serialize`"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 `daimon serialize <transcript>` derives its session id from the FILENAME
