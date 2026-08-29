@@ -71,9 +71,14 @@ VERSION = 1
 # direction on an older reader — the row drops, the record reads as
 # undelivered, and the worst case is a repeated nudge rather than a
 # swallowed ask. It is an attention row like `surfaced`, never a state.
+# #801 widens it a third time, on the same terms, with `verdict_delivered`:
+# the live-delivery render stamped this VERDICT into a running SENDER session.
+# Same safe direction on an older reader — the row drops, the record reads as
+# undelivered, and the worst case is a repeated nudge rather than a swallowed
+# verdict. An attention row like `surfaced`, never a state.
 EVENTS = frozenset({
     "opened", "revised",
-    "surfaced", "verdict_surfaced", "delivered",
+    "surfaced", "verdict_surfaced", "delivered", "verdict_delivered",
     "needs_info", "accepted", "rejected", "done",
     "suppressed", "done_verified",
 })
@@ -114,6 +119,7 @@ _EVENT_RANK = {
     "surfaced": 2,
     "verdict_surfaced": 2,
     "delivered": 2,
+    "verdict_delivered": 2,
     "suppressed": 3,
     "done": 4,
     "needs_info": 5,
@@ -375,6 +381,12 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # the ordinary path, and the decay clock kept running from the
                 # needs-info, so the acceptance expired before it was shown.
                 "verdict_surfaced": {},
+                # #801: {revision epoch: {session id: earliest ts}} — the same
+                # shape as `delivered`, one level deeper than `verdict_surfaced`
+                # for the same reason: a brief renders the verdict card once per
+                # epoch, but a live nudge owes it to every session running in
+                # that epoch.
+                "verdict_delivered": {},
                 "revision": 0,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
@@ -408,6 +420,16 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # rows therefore replay into their own epoch with no migration.
             current["verdict_surfaced"].setdefault(current["revision"],
                                                    row.get("ts"))
+            continue
+        if event == "verdict_delivered":
+            # Same posture as `delivered`, sender side. A row that lost its
+            # session id is inert rather than epoch-wide, so one malformed row
+            # cannot starve every live session of a verdict it never reached.
+            current["history_count"] += 1
+            session = str(row.get("session") or "").strip()
+            if session:
+                current["verdict_delivered"].setdefault(current["revision"], {}) \
+                    .setdefault(session, row.get("ts"))
             continue
         if event == "delivered":
             # Same attention-row posture as `surfaced`: counted in history,
@@ -1066,6 +1088,59 @@ def verdict_panel_expired(record: dict, project_dir=None) -> bool:
         return False
     return (store.sessions_since_count(anchor, project_dir)
             >= VERDICT_PANEL_SESSIONS)
+
+
+def needs_verdict_delivered_stamp(record: dict, session: str) -> bool:
+    """#801: whether THIS session has already been nudged with this record's
+    verdict in its CURRENT revision epoch. Write-once per (request id, epoch,
+    session), the recipient path's key exactly — a revise opens a new epoch, so
+    a verdict that lands after one gets its own delivery rather than being
+    swallowed by the stamp of an earlier one (#803's lesson, same shape)."""
+    epoch = (record.get("verdict_delivered") or {}).get(record.get("revision")) or {}
+    return str(session or "").strip() not in epoch
+
+
+def stamp_verdict_delivered(request_id: str, session: str,
+                            project_dir=None) -> bool:
+    """Write a `verdict_delivered` row to THIS project's own bucket (the
+    SENDER's), recording that the live surface nudged this verdict into
+    `session`. Channel `mechanical`, same posture as `stamp_delivered`.
+
+    Deliberately distinct from `verdict_surfaced`: that one records the BRIEF
+    rendering the verdict card, and one surface must never suppress the other
+    or a live nudge would cost the sender its fuller view at next session."""
+    session = str(session or "").strip()
+    if not session:
+        raise RequestError("verdict_delivered stamp requires a session id")
+    row = _stamp("verdict_delivered", request_id, "mechanical")
+    row["session"] = session
+    return append(row, project_dir=project_dir)
+
+
+def verdict_deliverable(session: str, project_dir=None) -> dict:
+    """#801: the verdicts on asks THIS project sent that `session` has not yet
+    been nudged with. `{"rows": [...], "overflow": N}`.
+
+    The sender-side counterpart to `deliverable`, over `sender_join` rather
+    than `recipient_join` — a verdict on an ask this project SENT is
+    structurally unreachable from the recipient path, which is why live
+    delivery was one-directional. Same filters as the sender's panel (verdict
+    states, not expired), the same dedup-before-cap ordering, and the same
+    counted remainder (#800): capping first would let three already-nudged
+    verdicts hide a fourth nobody has seen.
+
+    No session id means no dedup key, so it returns nothing rather than
+    re-nudging every turn forever."""
+    session = str(session or "").strip()
+    if not session:
+        return {"rows": [], "overflow": 0}
+    rows = [r for r in sender_join(project_dir=project_dir).values()
+            if r["state"] in _VERDICT_STATES
+            and not verdict_panel_expired(r, project_dir=project_dir)
+            and needs_verdict_delivered_stamp(r, session)]
+    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+              reverse=True)
+    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
 def verdict_renderable(project_dir=None) -> dict:

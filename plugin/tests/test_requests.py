@@ -908,9 +908,14 @@ def test_the_event_vocabulary_is_frozen():
     row and keeps rendering "done (claimed, unverified)" — the safe
     direction). #756 widens it a second time, on the same terms, with
     `delivered`: an older reader drops the row, reads the record as
-    undelivered, and at worst repeats a nudge."""
+    undelivered, and at worst repeats a nudge. #801 widens it a third time,
+    on identical terms, with `verdict_delivered`: the sender-side counterpart,
+    where an older reader drops the row, reads the verdict as undelivered, and
+    at worst repeats a nudge. Every widening so far fails the same safe way,
+    which is the property this test exists to keep true."""
     assert set(requests.EVENTS) == {
         "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
+        "verdict_delivered",
         "needs_info", "accepted", "rejected", "done", "suppressed",
         "done_verified"}
 
@@ -2305,3 +2310,133 @@ def test_the_same_epoch_is_still_stamped_only_once(project):
     requests.stamp_verdict_surfaced(q_id, project_dir=project)
     record = requests.sender_join(project_dir=project)[q_id]
     assert not requests.needs_verdict_surfaced_stamp(record)
+
+
+# ---- #801: the sender learns a verdict at its next turn boundary ------------
+#
+# Live delivery was one-directional. A recipient learned about a new ask on its
+# next prompt turn; a sender learned the verdict only at its next SessionStart,
+# because `deliverable()` reads recipient_join and a verdict on an ask this
+# project SENT is structurally unreachable from that path.
+
+
+def test_verdict_deliverable_offers_a_verdict_on_an_ask_we_sent(project):
+    recipient = _seed_bucket("/p/verdict-live-a")
+    q_id = _open(project, to=recipient)
+    requests.reject(q_id, channel="cli-tty", note="not this quarter",
+                    project_dir=recipient)
+    entry = requests.verdict_deliverable("S-alpha", project_dir=project)
+    assert [r["request_id"] for r in entry["rows"]] == [q_id]
+    assert entry["rows"][0]["state"] == "rejected"
+
+
+def test_verdict_deliverable_is_write_once_per_session(project):
+    recipient = _seed_bucket("/p/verdict-live-b")
+    q_id = _open(project, to=recipient)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=recipient)
+    assert requests.verdict_deliverable("S-alpha", project_dir=project)["rows"]
+    assert requests.stamp_verdict_delivered(q_id, "S-alpha", project_dir=project)
+    assert requests.verdict_deliverable("S-alpha", project_dir=project)["rows"] == []
+    # …and still owed to a session that never saw it.
+    assert [r["request_id"] for r in
+            requests.verdict_deliverable("S-beta", project_dir=project)["rows"]] == [q_id]
+
+
+def test_verdict_deliverable_re_offers_after_a_revise_opens_a_new_epoch(project):
+    """The #803 key, reused: needs-info delivered, answered, then rejected. The
+    rejection is a new epoch and is owed its own delivery."""
+    recipient = _seed_bucket("/p/verdict-live-c")
+    q_id = _open(project, to=recipient)
+    requests.needs_info(q_id, channel="cli-tty", note="?", project_dir=recipient)
+    requests.stamp_verdict_delivered(q_id, "S-alpha", project_dir=project)
+    assert requests.verdict_deliverable("S-alpha", project_dir=project)["rows"] == []
+    requests.revise(q_id, channel="cli-agent", why="clarified", project_dir=project)
+    requests.reject(q_id, channel="cli-tty", note="no", project_dir=recipient)
+    assert [r["request_id"] for r in
+            requests.verdict_deliverable("S-alpha", project_dir=project)["rows"]] == [q_id]
+
+
+def test_verdict_deliverable_never_offers_an_ask_addressed_to_us(project):
+    """The sender lane is the sender lane: an inbound ask, even once decided
+    here, belongs to the recipient path."""
+    sender = _seed_bucket("/p/verdict-live-d")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK, why=WHY,
+                                 channel="cli-agent", project_dir=sender)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=project)
+    assert requests.verdict_deliverable("S-alpha", project_dir=project)["rows"] == []
+
+
+def test_verdict_deliverable_offers_nothing_while_undecided(project):
+    recipient = _seed_bucket("/p/verdict-live-e")
+    _open(project, to=recipient)
+    assert requests.verdict_deliverable("S-alpha", project_dir=project)["rows"] == []
+
+
+def test_verdict_deliverable_without_a_session_offers_nothing(project):
+    recipient = _seed_bucket("/p/verdict-live-f")
+    q_id = _open(project, to=recipient)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=recipient)
+    assert requests.verdict_deliverable("", project_dir=project)["rows"] == []
+
+
+def test_verdict_deliverable_reports_what_the_cap_withheld(project):
+    recipient = _seed_bucket("/p/verdict-live-g")
+    for i in range(requests.RENDER_CAP + 2):
+        q = requests.open_request(to=recipient, ask=f"ask {i}", why=WHY,
+                                  channel="cli-agent", project_dir=project)
+        requests.accept(q, channel="cli-tty", note="ok", project_dir=recipient)
+    entry = requests.verdict_deliverable("S-alpha", project_dir=project)
+    assert len(entry["rows"]) == requests.RENDER_CAP
+    assert entry["overflow"] == 2
+
+
+def test_the_live_stamp_does_not_suppress_the_brief_stamp(project):
+    """Two surfaces, two stamps. A live nudge must not make the brief think it
+    already rendered the verdict card, or the sender loses the fuller view."""
+    recipient = _seed_bucket("/p/verdict-live-h")
+    q_id = _open(project, to=recipient)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=recipient)
+    requests.stamp_verdict_delivered(q_id, "S-alpha", project_dir=project)
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.needs_verdict_surfaced_stamp(record), \
+        "the brief still owes this verdict its card"
+
+
+def test_inject_delivers_a_verdict_to_the_sender(project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    recipient = _seed_bucket("/p/verdict-live-i")
+    q_id = _open(project, to=recipient)
+    requests.reject(q_id, channel="cli-tty", note="not this quarter",
+                    project_dir=recipient)
+    assert _inject(project) == 0
+    out = capsys.readouterr().out
+    assert q_id in out and "rejected" in out, out
+    # write-once: the same session is not told twice
+    assert _inject(project) == 0
+    assert q_id not in capsys.readouterr().out
+
+
+def test_stamp_verdict_delivered_requires_a_session_id(project):
+    """The session id is half the dedup key. A stamp without one would read as
+    "delivered" to sessions that never saw the verdict, so it refuses rather
+    than writing a row that silences everybody."""
+    recipient = _seed_bucket("/p/verdict-live-j")
+    q_id = _open(project, to=recipient)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=recipient)
+    with pytest.raises(requests.RequestError):
+        requests.stamp_verdict_delivered(q_id, "", project_dir=project)
+    # …and nothing was recorded, so the verdict is still owed.
+    assert [r["request_id"] for r in
+            requests.verdict_deliverable("S-alpha", project_dir=project)["rows"]] == [q_id]
+
+
+def test_inject_names_the_verdict_it_withheld(project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    recipient = _seed_bucket("/p/verdict-live-k")
+    for i in range(requests.RENDER_CAP + 2):
+        q = requests.open_request(to=recipient, ask=f"ask {i}", why=WHY,
+                                  channel="cli-agent", project_dir=project)
+        requests.accept(q, channel="cli-tty", note="ok", project_dir=recipient)
+    assert _inject(project) == 0
+    out = capsys.readouterr().out
+    assert "+2 more decided" in out, out
