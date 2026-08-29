@@ -42,9 +42,12 @@ fair rather than first-come-lucky:
 - EXECUTION runs the on-disk classes BEFORE the `gh` fan-out, so a hanging
   network probe can never starve a probe that costs microseconds.
 
-Counters now also land per class (worldcheck:<class>:<outcome>) while the
-aggregate three keep their slice-1 meaning, so the fires-true rate is
-readable per class before any further expansion. Content-hash — the strongest
+Counters land per class (worldcheck:<class>:<outcome>, counted per CLAIM) so
+the fires-true rate is readable per class before any further expansion, while
+the aggregate three count once per ITEM (#830) under a precedence rollup —
+contradicted > confirmed > skipped (#833): an item is what its strongest
+outcome says it is, so a probe-cap- or deadline-starved claim's "skipped"
+never swallows a real answer on the item's other axis. Content-hash — the strongest
 form — is deliberately NOT here: it would have to capture a hash at serialize
 time, which changes the serializer contract, so it is its own issue.
 
@@ -82,6 +85,12 @@ BUDGET_SECONDS = 0.8
 # across ALL classes: cheap disk probes spend from the same allowance as `gh`,
 # which is why allocation follows checkpoint order rather than class.
 MAX_PROBES = 5
+
+# #833: per-item aggregate rollup precedence — an item is what its strongest
+# outcome says it is, and "skipped" never decides when another outcome
+# exists (a probe-cap- or deadline-starved claim must not swallow a real
+# answer on the item's other axis).
+_OUTCOME_RANK = {"skipped": 0, "confirmed": 1, "contradicted": 2}
 
 # Claim classes, in the fixed priority order claim_for tries them. The order
 # is part of the contract: it keeps an item's reading stable as classes are
@@ -742,16 +751,18 @@ def check(checkpoint, project_dir) -> dict:
     persisted).
 
     Returns {"confirmed": n, "contradicted": n, "skipped": n} counted per
-    ITEM — once per claim-bearing item, the FIRST claim's outcome deciding
-    which aggregate it lands in (#830; text claims are emitted before
-    receipt claims per item, the same ordering that decides the stamp
-    collision below, so a two-axis item rolls up under its text outcome) —
-    plus a "<class>:<outcome>" key for every outcome that actually occurred
-    (#397), counted per CLAIM, so the caller's usage counters measure the
-    fires-true rate per claim class while the aggregate three keep their
-    slice-1 meaning. Zero-claim checkpoints return all-zeros and cost one
-    iteration, no probe of any kind. Confirmed items are untouched: only a
-    contradiction earns any surface at all.
+    ITEM — once per claim-bearing item, under a precedence rollup:
+    contradicted > confirmed > skipped (#830/#833). An item is what its
+    strongest outcome says it is; "skipped" never decides when another
+    outcome exists, so a probe-cap- or deadline-starved claim cannot
+    swallow a real answer on the item's other axis, and the aggregate
+    always agrees with the strongest stamp/ledger surface the item earned.
+    Additionally a "<class>:<outcome>" key for every outcome that actually
+    occurred (#397), counted per CLAIM, so the caller's usage counters
+    measure the fires-true rate per claim class. Zero-claim checkpoints
+    return all-zeros and cost one iteration, no probe of any kind.
+    Confirmed items are untouched: only a contradiction earns any surface
+    at all.
 
     #439 adds ONE non-counter key, `LEDGER_KEY`, present only when a receipt
     verification actually failed: [(item_ref, check, reason)] rows for the
@@ -800,10 +811,13 @@ def check(checkpoint, project_dir) -> dict:
     probes.update(_gh_probes(plan, project_dir))
     results.update(_run_probes(probes, cwd=project_dir, deadline=deadline))
     ledger = []
-    # #830: the aggregate three count once per ITEM (the docstring's promise,
-    # and what cli emits usage events under) — identity-keyed, because two
-    # items may be equal dicts yet distinct claims-bearers.
-    counted: set = set()
+    # #830/#833: the aggregate three count once per ITEM (the docstring's
+    # promise, and what cli emits usage events under), under the precedence
+    # rollup — a starved claim's "skipped" must never swallow a real answer
+    # on the item's other axis (the undercount fired exactly when the probe
+    # cap bound, i.e. on the largest checkpoints). Identity-keyed, because
+    # two items may be equal dicts yet distinct claims-bearers.
+    rollup: dict[int, str] = {}
     for item, cls, claim in claims:
         value = results.get((cls, _target(cls, claim)))
         if value is None:
@@ -830,10 +844,12 @@ def check(checkpoint, project_dir) -> dict:
                 # An id-less item yields no row: a ledger entry nobody can
                 # trace back is noise (serializer.verification_rejections).
                 ledger.append((ref, _LEDGER_CHECK, _LEDGER_REASONS[value]))
-        if id(item) not in counted:
-            counted.add(id(item))
-            stats[outcome] += 1
+        prev = rollup.get(id(item))
+        if prev is None or _OUTCOME_RANK[outcome] > _OUTCOME_RANK[prev]:
+            rollup[id(item)] = outcome
         stats[f"{cls}:{outcome}"] = stats.get(f"{cls}:{outcome}", 0) + 1
+    for outcome in rollup.values():
+        stats[outcome] += 1
     if ledger:
         stats[LEDGER_KEY] = ledger
     return stats
