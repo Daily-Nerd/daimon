@@ -1,11 +1,11 @@
 ---
-id: 0
+id: 63
 type: landmine
 title: Route.OWN_ELSE_GLOBAL in capture/lifecycle/amend/mcp_tools returns another project's dict with no exception
 severity: high
 confidence: 0.9
 created: 2026-08-29
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/capture.py
   - path: plugin/daimon_briefing/cli/lifecycle.py
@@ -13,12 +13,12 @@ anchors:
   - path: plugin/daimon_briefing/mcp_tools.py
   - pattern: "Route\.OWN_ELSE_GLOBAL"
 evidence:
-  - note: "#784 tenant leak; #795 stage 2 migration — every read in these four modules is Route.OWN by decision (persist paths and project-scoped surfaces)"
-  - note: "pinned by tests/test_migration_manifest.py::test_own_else_global_never_appears_in_own_only_modules"
+  - note: #784 tenant leak; #795 stage 2 migration — every read in these four modules is Route.OWN by decision (persist paths and project-scoped surfaces)
+  - note: pinned by tests/test_migration_manifest.py::test_own_else_global_never_appears_in_own_only_modules
 expires:
   condition: "one of these modules legitimately gains a labeled global-fallback display surface, reviewed against scar 0057 (un-routed checkpoints) and 0058 (route reconstruction)"
   review_after: 2027-02-28
-status: candidate
+status: active
 ---
 
 Every `read_latest_body` call in these four modules is `Route.OWN` on purpose:
