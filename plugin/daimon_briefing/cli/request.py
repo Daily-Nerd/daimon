@@ -176,12 +176,20 @@ def _cmd_request_inject(args) -> int:
     _cli._note_usage("request-inject")
     try:
         project = _cli._resolve_project(args.project)
-        rows = requests.deliverable(session, project_dir=project)
+        entry = requests.deliverable(session, project_dir=project)
+        rows = entry["rows"]
         if not rows:
             return 0
         out = []
         for record in rows:
             out.extend(_inject_lines(record))
+        # #800: name what the cap withheld, in the panel's own words. Without
+        # it a fourth addressed ask is dropped and reads as an absence, which
+        # is the one failure this feature cannot have.
+        overflow = entry["overflow"]
+        if overflow:
+            plural = "s" if overflow != 1 else ""
+            out.append(f"(+{overflow} more waiting{plural}, not shown here)")
         # The verbs that decide are human-only (D8); the line names the
         # surface that lists them rather than a verb the agent cannot run.
         out.append("Undecided. Full records: `daimon request inbox`")

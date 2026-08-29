@@ -1950,13 +1950,13 @@ def test_deliverable_is_the_panel_filter_plus_this_session(project):
     q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
                                  why=WHY, channel="cli-agent",
                                  project_dir=sender)
-    rows = requests.deliverable("S-alpha", project_dir=project)
+    rows = requests.deliverable("S-alpha", project_dir=project)["rows"]
     assert [r["request_id"] for r in rows] == [q_id]
     # Delivered once, gone for THIS session, still owed to the next one.
     assert requests.stamp_delivered(q_id, "S-alpha", project_dir=project)
-    assert requests.deliverable("S-alpha", project_dir=project) == []
+    assert requests.deliverable("S-alpha", project_dir=project)["rows"] == []
     assert [r["request_id"] for r in
-            requests.deliverable("S-beta", project_dir=project)] == [q_id]
+            requests.deliverable("S-beta", project_dir=project)["rows"]] == [q_id]
 
 
 def test_deliverable_excludes_decided_suppressed_and_stale(project):
@@ -1977,7 +1977,7 @@ def test_deliverable_excludes_decided_suppressed_and_stale(project):
         _serialize(project, f"S-deliver-stale-{n}", _iso(n + 1))
     live = ask("the live ask, still owed a decision")
     ids = {r["request_id"] for r in
-           requests.deliverable("S-alpha", project_dir=project)}
+           requests.deliverable("S-alpha", project_dir=project)["rows"]}
     assert ids == {live}
 
 
@@ -1987,11 +1987,11 @@ def test_deliverable_re_offers_a_revised_ask_to_a_delivered_session(project):
                                  why=WHY, channel="cli-agent",
                                  project_dir=sender)
     assert requests.stamp_delivered(q_id, "S-alpha", project_dir=project)
-    assert requests.deliverable("S-alpha", project_dir=project) == []
+    assert requests.deliverable("S-alpha", project_dir=project)["rows"] == []
     requests.revise(q_id, channel="cli-agent", ask="the sharpened ask",
                     project_dir=sender)
     assert [r["request_id"] for r in
-            requests.deliverable("S-alpha", project_dir=project)] == [q_id]
+            requests.deliverable("S-alpha", project_dir=project)["rows"]] == [q_id]
 
 
 def test_deliverable_caps_at_the_render_budget(project):
@@ -2000,13 +2000,13 @@ def test_deliverable_caps_at_the_render_budget(project):
         requests.open_request(to=store.project_slug(project),
                               ask=f"ask number {n} about the release",
                               why=WHY, channel="cli-agent", project_dir=sender)
-    assert len(requests.deliverable("S-alpha", project_dir=project)) \
+    assert len(requests.deliverable("S-alpha", project_dir=project)["rows"]) \
         == requests.RENDER_CAP
 
 
 def test_deliverable_never_offers_this_projects_own_outgoing_ask(project):
     _open(project)
-    assert requests.deliverable("S-alpha", project_dir=project) == []
+    assert requests.deliverable("S-alpha", project_dir=project)["rows"] == []
 
 
 def test_deliverable_without_a_session_offers_nothing(project):
@@ -2015,7 +2015,7 @@ def test_deliverable_without_a_session_offers_nothing(project):
     sender = _seed_bucket("/p/deliver-sender-e")
     requests.open_request(to=store.project_slug(project), ask=ASK, why=WHY,
                           channel="cli-agent", project_dir=sender)
-    assert requests.deliverable("", project_dir=project) == []
+    assert requests.deliverable("", project_dir=project)["rows"] == []
 
 
 # ---- the hook backend -----------------------------------------------------
@@ -2167,3 +2167,65 @@ def test_listing_keeps_the_sent_lane_out_of_the_inbox(project):
     assert q_id not in {r["request_id"] for r in requests.listing(project_dir=project)}
     # ...and it is still reachable where it belongs, the inbox.
     assert requests.recipient_join(project_dir=project)[q_id]["suppressed"] is True
+
+
+# ---- #800: the live nudge must report what its cap withheld ----------------
+#
+# `renderable()` returns {"rows", "overflow"} because, in its own words,
+# silently dropping an addressed ask is the one failure this feature cannot
+# have. `deliverable()` inherited that ordering and cap and dropped the
+# overflow signal that made the cap safe.
+
+
+def _addressed(project, sender, n):
+    return [requests.open_request(to=store.project_slug(project), ask=f"ask {i}",
+                                  why=WHY, channel="cli-agent", project_dir=sender)
+            for i in range(n)]
+
+
+def test_deliverable_reports_what_the_cap_withheld(project):
+    sender = _seed_bucket("/p/deliver-overflow-a")
+    _addressed(project, sender, requests.RENDER_CAP + 2)
+    entry = requests.deliverable("S-alpha", project_dir=project)
+    assert len(entry["rows"]) == requests.RENDER_CAP
+    assert entry["overflow"] == 2
+
+
+def test_deliverable_overflow_is_zero_when_nothing_is_withheld(project):
+    sender = _seed_bucket("/p/deliver-overflow-b")
+    _addressed(project, sender, 1)
+    entry = requests.deliverable("S-alpha", project_dir=project)
+    assert len(entry["rows"]) == 1 and entry["overflow"] == 0
+
+
+def test_deliverable_overflow_counts_after_dedup_not_before(project):
+    """The dedup filter runs BEFORE the cap, deliberately, so already-delivered
+    asks cannot hide an unseen one. The count has to be taken after that same
+    filter or it reports asks this session has already been shown."""
+    sender = _seed_bucket("/p/deliver-overflow-c")
+    ids = _addressed(project, sender, requests.RENDER_CAP + 2)
+    # Show this session everything except the two most recent.
+    for q in ids[:requests.RENDER_CAP]:
+        requests.stamp_delivered(q, "S-alpha", project_dir=project)
+    entry = requests.deliverable("S-alpha", project_dir=project)
+    assert len(entry["rows"]) == 2, "only the undelivered ones remain"
+    assert entry["overflow"] == 0, "nothing is withheld once dedup has run"
+
+
+def test_inject_names_the_ask_it_withheld(project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/deliver-overflow-d")
+    _addressed(project, sender, requests.RENDER_CAP + 2)
+    assert _inject(project) == 0
+    out = capsys.readouterr().out
+    assert "+2 more waiting" in out, out
+
+
+def test_inject_adds_no_overflow_line_when_it_withheld_nothing(
+        project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/deliver-overflow-e")
+    _addressed(project, sender, 1)
+    assert _inject(project) == 0
+    out = capsys.readouterr().out
+    assert "more waiting" not in out, out
