@@ -587,7 +587,7 @@ def test_attention_rows_never_move_the_records_age(project):
                         project_dir=project)
     after = requests.get(q_id, project_dir=project)
     assert after["updated_at"] == before
-    assert after["verdict_surfaced_at"]
+    assert after["verdict_surfaced"][after["revision"]]
 
 
 def test_renderable_caps_and_counts_the_overflow(project):
@@ -1587,7 +1587,7 @@ def test_needs_verdict_surfaced_stamp_and_dedup(project):
     assert requests.stamp_verdict_surfaced(q_id, project_dir=project) is True
     record = requests.sender_join(project_dir=project)[q_id]
     assert requests.needs_verdict_surfaced_stamp(record) is False
-    assert record["verdict_surfaced_at"]
+    assert record["verdict_surfaced"][record["revision"]]
 
 
 def test_stamp_verdict_surfaced_is_write_once_earliest_wins(project):
@@ -1600,7 +1600,7 @@ def test_stamp_verdict_surfaced_is_write_once_earliest_wins(project):
             if r.get("event") == "verdict_surfaced"]
     assert len(rows) == 2  # both written…
     record = requests.sender_join(project_dir=project)[q_id]
-    assert record["verdict_surfaced_at"] == rows[0]["ts"]  # …fold takes earliest
+    assert record["verdict_surfaced"][record["revision"]] == rows[0]["ts"]  # …earliest
 
 
 def test_verdict_panel_expired_after_two_sender_sessions(project):
@@ -1623,7 +1623,7 @@ def test_verdict_panel_never_expires_before_the_first_stamp(project):
     q_id = _open(project, to=recipient_slug)
     requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
     record = requests.sender_join(project_dir=project)[q_id]
-    assert record["verdict_surfaced_at"] is None
+    assert record["verdict_surfaced"] == {}
     assert requests.verdict_panel_expired(record, project_dir=project) is False
 
 
@@ -2229,3 +2229,79 @@ def test_inject_adds_no_overflow_line_when_it_withheld_nothing(
     assert _inject(project) == 0
     out = capsys.readouterr().out
     assert "more waiting" not in out, out
+
+
+# ---- #803: a second verdict must get its own first look --------------------
+#
+# The sender stamp was write-once per RECORD, on the premise that "a verdict is
+# terminal once it lands". needs-info is a verdict state and is NOT terminal:
+# answering it with `revise` and receiving a real verdict afterwards is the
+# ordinary negotiation path. The decay clock started on the needs-info and kept
+# running, so the acceptance that followed expired before it was ever shown.
+
+
+def _sender_session(project, sid, created):
+    store.write_checkpoint(sid, {
+        "session_id": sid, "created": created,
+        "working_context": {"recent_decisions": [
+            {"text": "something happened", "trust": "inferred"}]},
+    }, project_dir=project)
+
+
+def _fut(minutes):
+    import datetime
+    return (datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_verdict_after_a_revise_gets_its_own_first_look(project):
+    """#803: needs-info, answered, then accepted. The acceptance must still be
+    renderable after VERDICT_PANEL_SESSIONS later sender sessions, because its
+    own epoch has never been surfaced."""
+    recipient = _seed_bucket("/p/verdict-epoch-a")
+    _sender_session(project, "S-before", _fut(-60))
+    q_id = _open(project, to=recipient)
+
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=recipient)
+    assert requests.stamp_verdict_surfaced(q_id, project_dir=project)
+
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=recipient)
+
+    for n in range(requests.VERDICT_PANEL_SESSIONS + 1):
+        _sender_session(project, f"S-after-{n}", _fut(10 * (n + 1)))
+
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert record["state"] == "accepted"
+    assert not requests.verdict_panel_expired(record, project_dir=project)
+    assert [r["request_id"] for r in
+            requests.verdict_renderable(project_dir=project)["rows"]] == [q_id]
+
+
+def test_the_new_epoch_is_owed_a_stamp_even_though_an_older_one_exists(project):
+    recipient = _seed_bucket("/p/verdict-epoch-b")
+    q_id = _open(project, to=recipient)
+    requests.needs_info(q_id, channel="cli-tty", note="?", project_dir=recipient)
+    requests.stamp_verdict_surfaced(q_id, project_dir=project)
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert not requests.needs_verdict_surfaced_stamp(record), "epoch 0 is stamped"
+
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.reject(q_id, channel="cli-tty", note="no", project_dir=recipient)
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.needs_verdict_surfaced_stamp(record), \
+        "the rejection is a new epoch and is owed its own first look"
+
+
+def test_the_same_epoch_is_still_stamped_only_once(project):
+    """The write-once property that made the original shape correct must
+    survive: within one epoch, a second stamp is not owed."""
+    recipient = _seed_bucket("/p/verdict-epoch-c")
+    q_id = _open(project, to=recipient)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=recipient)
+    requests.stamp_verdict_surfaced(q_id, project_dir=project)
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert not requests.needs_verdict_surfaced_stamp(record)

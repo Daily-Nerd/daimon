@@ -367,7 +367,14 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # every session running in that epoch, so the session id is
                 # part of the write-once key rather than a field beside it.
                 "delivered": {},
-                "verdict_surfaced_at": None,
+                # #803: {revision epoch: earliest verdict_surfaced ts}, the
+                # same shape as `surfaced` above. It was a single timestamp on
+                # the premise that "a verdict is terminal once it lands", but
+                # needs-info is a verdict state and is not terminal: answering
+                # it with a revise and receiving a real verdict afterwards is
+                # the ordinary path, and the decay clock kept running from the
+                # needs-info, so the acceptance expired before it was shown.
+                "verdict_surfaced": {},
                 "revision": 0,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
@@ -396,8 +403,11 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             continue
         if event == "verdict_surfaced":
             current["history_count"] += 1
-            if current["verdict_surfaced_at"] is None:
-                current["verdict_surfaced_at"] = row.get("ts")
+            # Keyed by the epoch the row was written IN: the stream is ordered,
+            # so `current["revision"]` here is the revision at that moment. Old
+            # rows therefore replay into their own epoch with no migration.
+            current["verdict_surfaced"].setdefault(current["revision"],
+                                                   row.get("ts"))
             continue
         if event == "delivered":
             # Same attention-row posture as `surfaced`: counted in history,
@@ -988,7 +998,8 @@ def deliverable(session: str, project_dir=None) -> dict:
 STALE_AFTER_SESSIONS = 3
 # Sender side: a decided record (accepted/rejected/needs-info/done) leaves
 # the sender's verdict PANEL after this many distinct non-introspection
-# SENDER sessions have serialized past `verdict_surfaced_at`. The record
+# SENDER sessions have serialized past THIS EPOCH's `verdict_surfaced`
+# stamp (#803). The record
 # itself never changes — only ambient panel placement.
 VERDICT_PANEL_SESSIONS = 2
 # States the sender-side verdict panel surfaces: everything settled enough
@@ -1022,10 +1033,14 @@ def render_state(record: dict, project_dir=None) -> str:
 
 def needs_verdict_surfaced_stamp(record: dict) -> bool:
     """D1, sender side: whether a `verdict_surfaced` row already exists for
-    this record. Write-once per RECORD, not per revision epoch — unlike the
-    recipient's `surfaced` stamp, a verdict is terminal once it lands, so
-    there is only ever one thing to stamp."""
-    return record.get("verdict_surfaced_at") is None
+    this record's CURRENT revision epoch — the same key the recipient's
+    `surfaced` stamp uses (#803).
+
+    It was write-once per RECORD, on the premise that a verdict is terminal
+    once it lands. `needs-info` is a verdict state and is not terminal, so a
+    record can carry a verdict, a revise, and then a second verdict; keying
+    per record meant the second one was never owed a look."""
+    return record.get("revision") not in (record.get("verdict_surfaced") or {})
 
 
 def stamp_verdict_surfaced(request_id: str, project_dir=None) -> bool:
@@ -1041,9 +1056,12 @@ def stamp_verdict_surfaced(request_id: str, project_dir=None) -> bool:
 def verdict_panel_expired(record: dict, project_dir=None) -> bool:
     """D3 sender side: True once VERDICT_PANEL_SESSIONS distinct non-
     introspection sessions have serialized for `project_dir` (the SENDER's
-    own bucket) past `verdict_surfaced_at`. Never stamped yet -> never
-    expired — the panel still owes the sender its first look."""
-    anchor = record.get("verdict_surfaced_at")
+    own bucket) past this record's CURRENT epoch stamp. This epoch never
+    stamped -> never expired: the panel still owes the sender its first
+    look at THIS verdict, even if an earlier one was seen and decayed."""
+    # The anchor is THIS epoch's stamp: a verdict that arrives after a revise
+    # decays from when IT was seen, never from when an earlier one was (#803).
+    anchor = (record.get("verdict_surfaced") or {}).get(record.get("revision"))
     if not anchor:
         return False
     return (store.sessions_since_count(anchor, project_dir)
