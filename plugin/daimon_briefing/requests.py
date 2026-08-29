@@ -480,9 +480,17 @@ def get(request_id: str, project_dir=None) -> dict | None:
 def listing(project_dir=None) -> list[dict]:
     """Every record in this bucket, undecided first — the `request list`
     order. Suppressed records are HERE by construction (D5): suppression
-    takes away panel placement, never visibility."""
+    takes away panel placement, never visibility.
+
+    #798: read through the sender join, not the bucket-local fold. A request's
+    rows span two buckets — `opened` here, the verdict in the recipient's — so
+    folding only this bucket reported every ask this project SENT as `open`
+    forever after it was decided, while `inbox` and the verdict panel (which do
+    join) reported it correctly. The panel's own overflow line points here.
+    Local suppression survives the join; the recipient's never crosses it."""
+    rows = [row for group in _sender_rows(project_dir).values() for row in group]
     return sorted(
-        records(project_dir=project_dir).values(),
+        fold(rows).values(),
         key=lambda r: (r["state"] not in _SENDER_MOVABLE,
                        r.get("updated_at") or "", r["request_id"]))
 
@@ -797,12 +805,17 @@ def _without_suppression(rows: list[dict]) -> list[dict]:
     return [row for row in rows if row.get("event") != "suppressed"]
 
 
-def sender_join(project_dir=None) -> dict[str, dict]:
-    """Every request this project SENT, joined with whatever its recipient
-    decided (D0) — the per-bucket `records()` above only ever sees this
-    project's OWN rows, and a verdict lives in the recipient's bucket. One
-    recipient bucket is read once per distinct `to` target, not once per
-    record. Suppression is filtered before the fold runs (D5)."""
+def _sender_rows(project_dir) -> dict[str, list]:
+    """This bucket's rows, plus the recipient's rows for every request it SENT,
+    grouped by request id. The traversal both sender-side surfaces share (#798).
+
+    Foreign suppression is dropped HERE, not by the callers: a `suppressed` row
+    in the recipient's bucket is that project's own panel-attention housekeeping
+    and must never cross the join (D5). Local rows are returned untouched, so a
+    record THIS project suppressed keeps its visibility.
+
+    One recipient bucket is read once per distinct `to` target, not once per
+    record."""
     sender_slug = store.project_slug(project_dir)
     if not sender_slug:
         return {}
@@ -819,10 +832,19 @@ def sender_join(project_dir=None) -> dict[str, dict]:
             continue  # already covered by this bucket's own rows above
         if to_slug not in cache:
             cache[to_slug] = events(project_dir=to_slug)
-        by_id[rid] = by_id[rid] + [row for row in cache[to_slug]
-                                   if row.get("request_id") == rid]
+        by_id[rid] = by_id[rid] + _without_suppression(
+            [row for row in cache[to_slug] if row.get("request_id") == rid])
+    return by_id
+
+
+def sender_join(project_dir=None) -> dict[str, dict]:
+    """Every request this project SENT, joined with whatever its recipient
+    decided (D0) — the per-bucket `records()` above only ever sees this
+    project's OWN rows, and a verdict lives in the recipient's bucket.
+    Suppression is filtered before the fold runs (D5), local rows included:
+    this feeds the verdict PANEL, and suppression is exactly panel attention."""
     rows = _without_suppression(
-        [row for group in by_id.values() for row in group])
+        [row for group in _sender_rows(project_dir).values() for row in group])
     return fold(rows)
 
 
