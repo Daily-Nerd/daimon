@@ -2414,3 +2414,29 @@ def test_inject_delivers_a_verdict_to_the_sender(project, capsys, monkeypatch):
     # write-once: the same session is not told twice
     assert _inject(project) == 0
     assert q_id not in capsys.readouterr().out
+
+
+def test_stamp_verdict_delivered_requires_a_session_id(project):
+    """The session id is half the dedup key. A stamp without one would read as
+    "delivered" to sessions that never saw the verdict, so it refuses rather
+    than writing a row that silences everybody."""
+    recipient = _seed_bucket("/p/verdict-live-j")
+    q_id = _open(project, to=recipient)
+    requests.accept(q_id, channel="cli-tty", note="ok", project_dir=recipient)
+    with pytest.raises(requests.RequestError):
+        requests.stamp_verdict_delivered(q_id, "", project_dir=project)
+    # …and nothing was recorded, so the verdict is still owed.
+    assert [r["request_id"] for r in
+            requests.verdict_deliverable("S-alpha", project_dir=project)["rows"]] == [q_id]
+
+
+def test_inject_names_the_verdict_it_withheld(project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    recipient = _seed_bucket("/p/verdict-live-k")
+    for i in range(requests.RENDER_CAP + 2):
+        q = requests.open_request(to=recipient, ask=f"ask {i}", why=WHY,
+                                  channel="cli-agent", project_dir=project)
+        requests.accept(q, channel="cli-tty", note="ok", project_dir=recipient)
+    assert _inject(project) == 0
+    out = capsys.readouterr().out
+    assert "+2 more decided" in out, out
