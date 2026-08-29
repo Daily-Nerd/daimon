@@ -6,7 +6,7 @@ from daimon_ui import server
 def make_checkpoint(created="2026-08-06T08:05:12Z", topic="Scoping the inspector", **over):
     cp = {
         "session_id": over.get("session_id", "aaaa-bbbb"),
-        "format_version": over.get("format_version", "D-018"),
+        "format_version": over.get("format_version", "D-019"),
         "created": created,
         "author": "ada",
         "project_slug": "-tmp-proj",

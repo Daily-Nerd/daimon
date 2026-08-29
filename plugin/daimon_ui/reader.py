@@ -151,7 +151,7 @@ def list_recent(bucket: Path):
         out.append({"ref": ref, "created": created, "active_topic": topic})
     return out
 
-KNOWN_FORMAT = "D-018"
+KNOWN_FORMAT = "D-019"
 
 _SECTIONS = [  # (ui key, label, checkpoint container, checkpoint key)
     ("decisions", "Decisions", "working_context", "recent_decisions"),

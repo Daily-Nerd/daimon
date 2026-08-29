@@ -49,10 +49,17 @@ log = logging.getLogger(__name__)
 # cached extractions, which never tried to keep a date, can never satisfy a
 # post-#416 request — a later re-measurement of the citable-date rate must
 # reflect the new behavior, not stale accidental survival.)
+# D-018 -> D-019 (#829: verified quote receipts additionally record a
+# stitching span verdict — quote_provenance.stitching {cross_message,
+# cross_role}. A persisted checkpoint-format change, the same class D-014
+# (#290) and D-015 (#358) bumped for: the #827 published schema names its
+# shape per format_version, so two different receipt shapes must never
+# share the name D-018. Recording only; EXTRACTION_VERSION stays at 3 —
+# what a chunk pass extracts is unchanged, only what verification records.)
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-018"
+PROMPT_VERSION = "D-019"
 
 # #367: the chunk-cache rotation lever, deliberately SEPARATE from
 # PROMPT_VERSION. Bump ONLY when extraction semantics change — the output

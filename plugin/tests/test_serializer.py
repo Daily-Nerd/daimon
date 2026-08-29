@@ -957,9 +957,14 @@ def test_prompt_version_history_and_current_pin():
     # reasoning — new schema field AND new extraction target, so
     # EXTRACTION_VERSION bumped alongside for the first time since the
     # #514 stamp made a lone bump visible).
+    # D-018 -> D-019 (#829: verified quote receipts record a stitching span
+    # verdict — quote_provenance.stitching {cross_message, cross_role}. A
+    # persisted receipt-surface change, the D-014/D-015 class, so the
+    # format version moves; EXTRACTION_VERSION stays 3 because extraction
+    # semantics are unchanged — only what verification records).
     # Pre-bump checkpoints firing the format_version mismatch warning (#93)
     # is DESIRED behavior.
-    assert serializer.PROMPT_VERSION == "D-018"
+    assert serializer.PROMPT_VERSION == "D-019"
     assert serializer.EXTRACTION_VERSION == 3
 
 

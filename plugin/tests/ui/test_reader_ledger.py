@@ -12,7 +12,7 @@ from daimon_ui import reader
 
 def _cp(sid, created, slug, items, topic="t"):
     return {
-        "session_id": sid, "format_version": "D-018", "created": created,
+        "session_id": sid, "format_version": "D-019", "created": created,
         "author": "ada", "project_slug": slug,
         "working_context": {"active_topic": {"text": topic},
                             "open_questions": items, "recent_decisions": []},
