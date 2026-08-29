@@ -389,6 +389,15 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
         " · checked " + taVal(r.checked_at) + " · digest " + taVal(r.digest_algorithm) +
         " · bound to " + (r.message_ids ? r.message_ids.length + " message" +
           (r.message_ids.length === 1 ? "" : "s") : '<span class="ta-none">not recorded</span>');
+      // D-019 (#829): the stitching span verdict. Only definite booleans
+      // render; absent or unknown-shaped reads as "not recorded".
+      if (r.stitching && r.stitching.cross_message !== null) {
+        var span = r.stitching.cross_message ? "cross-message" : "single-message";
+        if (r.stitching.cross_role === true) span += ", cross-role";
+        receipt += " · span " + escapeHtml(span);
+      } else {
+        receipt += ' · span <span class="ta-none">not recorded</span>';
+      }
     } else {
       receipt = '<span class="ta-none">not recorded</span>';
     }

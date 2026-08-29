@@ -170,8 +170,16 @@ def source_digest(transcript_hash, rendered_transcript: str) -> dict:
 
 
 def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
-                  binding_mode: str, message_ids=()) -> dict | None:
-    """Build a complete item receipt from code-derived inputs."""
+                  binding_mode: str, message_ids=(),
+                  stitching=None) -> dict | None:
+    """Build a complete item receipt from code-derived inputs.
+
+    `stitching` (#829, optional): the serializer's fragment-attribution
+    verdict — {"cross_message": bool, "cross_role": bool} — recorded only
+    for verified quotes where per-message attribution was possible. Absent
+    means unknown (legacy receipts, transcript-less callers), never False.
+    Additive under version 1: the field is optional, so every pre-#829
+    receipt stays valid."""
     if not valid_source_ref(source_ref) or outcome not in _OUTCOMES:
         return None
     if binding_mode not in _BINDING_MODES:
@@ -193,6 +201,13 @@ def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
         "checked_at": checked_at,
         "binding": {"mode": binding_mode, "message_ids": ids},
     }
+    if stitching is not None:
+        # #831 review: reject-not-coerce. The raw value is copied through for
+        # the trailing valid_quote_receipt gate to refuse — never coerced
+        # into a verdict the code did not derive (bool() would launder any
+        # truthy junk into True).
+        receipt["stitching"] = (dict(stitching) if isinstance(stitching, dict)
+                                else stitching)
     return receipt if valid_quote_receipt(receipt) else None
 
 
@@ -235,6 +250,21 @@ def valid_quote_receipt(value) -> bool:
         return False
     if len(ids) != len(set(ids)):
         return False
+    if "stitching" in value:
+        # #829/#831: optional (absent = unknown on every pre-D-019 receipt),
+        # but present means the published contract's exact shape: verified
+        # receipts only (a not-verified check matched no fragments to
+        # attribute), an object — explicit null is NOT "absent" — and
+        # exactly boolean verdicts, so truthy junk can never read as an
+        # attribution the code derived.
+        stitching = value["stitching"]
+        if value.get("outcome") != "verified":
+            return False
+        if not isinstance(stitching, dict):
+            return False
+        for key in ("cross_message", "cross_role"):
+            if not isinstance(stitching.get(key), bool):
+                return False
     return binding["mode"] != "transcript-scan" or not ids
 
 

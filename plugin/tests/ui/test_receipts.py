@@ -26,7 +26,7 @@ def _write_pair(root: Path, sid: str, claims: bool, sidecar: str | None):
     """Write a checkpoint and optionally a sidecar whose outputs_hash covers it.
     Returns the checkpoint path. sidecar: None = no file, "match" = true hash,
     "wrong" = a different hash, "garbage" = unparseable, "nokey" = no outputs_hash."""
-    cp = {"session_id": sid, "format_version": "D-018"}
+    cp = {"session_id": sid, "format_version": "D-019"}
     if claims:
         cp["receipts"] = True
     p = root / f"{sid}.json"
@@ -75,7 +75,7 @@ def test_tampering_one_byte_turns_match_into_mismatch(tmp_path):
     A state machine that reported "match" from the claim alone would stay green."""
     p = _write_pair(tmp_path, "aaaa-bbbb", True, "match")
     assert reader.receipt_state(tmp_path, json.loads(p.read_text()))["state"] == "match"
-    p.write_text(p.read_text().replace("D-018", "D-019"), encoding="utf-8")
+    p.write_text(p.read_text().replace("D-019", "D-020"), encoding="utf-8")
     assert reader.receipt_state(tmp_path, json.loads(p.read_text()))["state"] == "mismatch"
 
 def test_root_session_file_governs_even_when_a_pointer_copy_differs(tmp_path):
@@ -89,7 +89,7 @@ def test_root_session_file_governs_even_when_a_pointer_copy_differs(tmp_path):
     bucket = tmp_path / slug
     bucket.mkdir()
 
-    root_data = {"session_id": sid, "format_version": "D-018", "receipts": True,
+    root_data = {"session_id": sid, "format_version": "D-019", "receipts": True,
                  "working_context": {}, "epistemic_snapshot": {}}
     root = tmp_path / f"{sid}.json"
     root.write_text(json.dumps(root_data), encoding="utf-8")
@@ -134,7 +134,7 @@ def _bucket_with(root: Path, slug: str, claims_by_ref: dict):
     b = root / slug
     b.mkdir(parents=True, exist_ok=True)
     for ref, claims in claims_by_ref.items():
-        cp = {"session_id": f"sid-{ref}", "format_version": "D-018",
+        cp = {"session_id": f"sid-{ref}", "format_version": "D-019",
               "working_context": {}, "epistemic_snapshot": {}}
         if claims:
             cp["receipts"] = True

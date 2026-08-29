@@ -49,10 +49,17 @@ log = logging.getLogger(__name__)
 # cached extractions, which never tried to keep a date, can never satisfy a
 # post-#416 request — a later re-measurement of the citable-date rate must
 # reflect the new behavior, not stale accidental survival.)
+# D-018 -> D-019 (#829: verified quote receipts additionally record a
+# stitching span verdict — quote_provenance.stitching {cross_message,
+# cross_role}. A persisted checkpoint-format change, the same class D-014
+# (#290) and D-015 (#358) bumped for: the #827 published schema names its
+# shape per format_version, so two different receipt shapes must never
+# share the name D-018. Recording only; EXTRACTION_VERSION stays at 3 —
+# what a chunk pass extracts is unchanged, only what verification records.)
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
-PROMPT_VERSION = "D-018"
+PROMPT_VERSION = "D-019"
 
 # #367: the chunk-cache rotation lever, deliberately SEPARATE from
 # PROMPT_VERSION. Bump ONLY when extraction semantics change — the output
@@ -534,26 +541,29 @@ def _message_id(m) -> str | None:
     return None
 
 
+def _render_line(i, m, content) -> str:
+    """One message's transcript line — the per-message unit of every rendered
+    surface (#831: factored out of _render_transcript so the stitching
+    attribution can see EXACTLY the line verification matched against)."""
+    role = m.get("role", "unknown")
+    # #359: a failed tool result renders its error status inline — the
+    # extractor must see WHICH way the signal points, not just that one
+    # exists. Only flagged tool rows (transcript.py's Claude Code branch)
+    # qualify; a markdown "tool:" role row renders exactly as before.
+    if m.get("tool_result") and m.get("tool_error"):
+        role = f"{role} (error)"
+    # #358: a bracketed [mN] marker names an identified message so the
+    # extractor can cite where each verbatim quote came from. Id-less
+    # messages (hosts without stable ids) render byte-identical to the
+    # pre-#358 format — no marker, no behavior change.
+    if _message_id(m) is not None:
+        return f"[m{i + 1}] {role}: {content}"
+    return f"{role}: {content}"
+
+
 def _render_transcript(messages) -> str:
-    lines = []
-    for i, m in enumerate(messages):
-        role = m.get("role", "unknown")
-        # #359: a failed tool result renders its error status inline — the
-        # extractor must see WHICH way the signal points, not just that one
-        # exists. Only flagged tool rows (transcript.py's Claude Code branch)
-        # qualify; a markdown "tool:" role row renders exactly as before.
-        if m.get("tool_result") and m.get("tool_error"):
-            role = f"{role} (error)"
-        content = _message_text(m)
-        # #358: a bracketed [mN] marker names an identified message so the
-        # extractor can cite where each verbatim quote came from. Id-less
-        # messages (hosts without stable ids) render byte-identical to the
-        # pre-#358 format — no marker, no behavior change.
-        if _message_id(m) is not None:
-            lines.append(f"[m{i + 1}] {role}: {content}")
-        else:
-            lines.append(f"{role}: {content}")
-    return "\n\n".join(lines)
+    return "\n\n".join(_render_line(i, m, _message_text(m))
+                       for i, m in enumerate(messages))
 
 
 def message_id_map(messages) -> dict[str, str]:
@@ -779,8 +789,22 @@ def scoped_haystack(item, texts_by_id, exclude=frozenset()) -> str | None:
     ids = [i for i in ids if not (isinstance(i, str) and i in exclude)]
     if not ids:
         return None
+    # #831 finding 8: a duplicated citation must not duplicate its message's
+    # text in the haystack — a quote repeating a sentence could otherwise
+    # verify against the duplication artifact, and the verification view
+    # would disagree with the receipt's deduped message_ids. First
+    # occurrence wins; non-str entries keep their existing behavior (the
+    # text lookup below refuses the whole binding).
+    seen: set = set()
+    deduped = []
+    for i in ids:
+        if isinstance(i, str):
+            if i in seen:
+                continue
+            seen.add(i)
+        deduped.append(i)
     parts = []
-    for mid in ids:
+    for mid in deduped:
         text = texts_by_id.get(mid) if isinstance(mid, str) else None
         if text is None:
             return None
@@ -858,15 +882,30 @@ def quote_matches(quote, haystack) -> bool:
     contract the docstring described was only ever met at the quote's edges."""
     if not isinstance(quote, str) or not isinstance(haystack, str):
         return False
-    hay = _normalize_for_match(haystack)
+    fragments = _quote_fragments(quote)
+    if not fragments:
+        return False
+    return _fragments_in_order(fragments, _normalize_for_match(haystack))
+
+
+def _quote_fragments(quote: str) -> list:
+    """The ordered, normalized, length-filtered fragments quote_matches scans
+    for — split on ellipsis and redaction markers (#505). Factored out (#829)
+    so stitching attribution replays the SAME fragment view the matcher used,
+    never a second parse that could drift."""
     fragments = []
     for raw in _ELLIPSIS_RE.split(quote):
         for piece in _REDACTED_RE.split(raw):
             frag = _normalize_for_match(piece)
             if len(frag) >= _MIN_FRAGMENT:
                 fragments.append(frag)
-    if not fragments:
-        return False
+    return fragments
+
+
+def _fragments_in_order(fragments, hay: str) -> bool:
+    """Every fragment appears in `hay` IN ORDER, each searched from the
+    previous fragment's match end — quote_matches' scan, over an
+    already-normalized haystack."""
     pos = 0
     for frag in fragments:
         idx = hay.find(frag, pos)
@@ -874,6 +913,56 @@ def quote_matches(quote, haystack) -> bool:
             return False
         pos = idx + len(frag)
     return True
+
+
+def _attribution_views(rows) -> tuple:
+    """(per_message, role_joins) attribution haystacks from (role, raw_text)
+    rows in transcript order: each message's raw view normalized alone, and
+    each role's raw views joined with the verification surfaces' own "\\n\\n"
+    and THEN normalized (#831: join-then-normalize, the same convention
+    scoped_haystack and stripped_transcript render with, so seam behavior is
+    exactly what the matcher itself would accept — never a seam the join
+    convention manufactured or destroyed)."""
+    per_message = [(role, _normalize_for_match(text)) for role, text in rows]
+    by_role: dict = {}
+    for role, text in rows:
+        by_role.setdefault(role, []).append(text)
+    role_joins = {role: _normalize_for_match("\n\n".join(texts))
+                  for role, texts in by_role.items()}
+    return per_message, role_joins
+
+
+def _stitching_flags(fragments, per_message, role_joins) -> dict | None:
+    """The #829 stitching record for a VERIFIED quote, or None when
+    attribution is impossible (no usable fragments, or no per-message text
+    survived stripping). `fragments` is the SAME parsed fragment list the
+    match used (#831: passed in, never re-split); `per_message`/`role_joins`
+    come from _attribution_views over the views verification vouched
+    against.
+
+    Necessity semantics, deliberately: a flag is True only when NO single
+    message (cross_message) or no single role's messages, joined in
+    transcript order (cross_role), can account for every matched fragment —
+    never merely because the flat-haystack scan happened to satisfy a
+    fragment across a boundary it did not need to cross. Which occurrence a
+    flat scan matched is ambiguous by construction; whether ONE message
+    could have said the whole quote is not. cross_message=False is NOT
+    short-circuited into cross_role=False: containment of one message's
+    normalized view inside its role's join-then-normalized haystack is
+    near-certain but not provable across every seam normalization, and the
+    joins are cached, so both are computed. Recording only: rule 17
+    (SERIALIZE_SYS) stays doctrine, verification outcomes are untouched, and
+    the follow-up enforcement is gated on the violation rate this measures
+    (#829)."""
+    usable = [norm for _role, norm in per_message if norm]
+    if not fragments or not usable:
+        return None
+    cross_message = not any(
+        _fragments_in_order(fragments, norm) for norm in usable)
+    cross_role = not any(
+        _fragments_in_order(fragments, join)
+        for join in role_joins.values() if join)
+    return {"cross_message": cross_message, "cross_role": cross_role}
 
 
 # ---- #440: daimon's own injected output is not a witness ----
@@ -997,14 +1086,39 @@ def stripped_transcript(messages) -> str:
     through `_render_transcript` before verification runs, and that raises on
     any non-dict row — so a message list that reaches here has already proven
     itself dict-shaped. A guard would only move a crash that already
-    happened."""
-    stripped = []
-    for m in messages or []:
-        copy = dict(m)
-        copy["content"] = ("" if m.get("daimon_output")
-                           else strip_injected(_message_text(m)))
-        stripped.append(copy)
-    return _render_transcript(stripped)
+    happened.
+
+    #831: derived from stripped_message_views — the ONE per-message builder
+    every verification surface (this haystack, the id-scoped map, and the
+    #829 stitching attribution) reads, so the surfaces cannot hand-sync
+    apart."""
+    return "\n\n".join(
+        line for _mid, _role, _text, line in stripped_message_views(messages))
+
+
+def stripped_message_views(messages) -> list:
+    """Per-message stripped views: [(mid, role, text, line)] in transcript
+    order — the ONE builder behind every per-message verification surface
+    (#831 review). `text` is the bare stripped flattened text (what
+    message_texts_by_id + strip_injected produced for the id-scoped checks);
+    `line` is the message's rendered transcript line with the SAME stripping
+    applied (what stripped_transcript joins into the whole-transcript
+    haystack). The #829 stitching attribution reads these same views, so its
+    verdicts are computed against exactly what verification witnessed —
+    never a third hand-synced spelling of the strip.
+
+    `role` is str()-coerced: the render path tolerates any role shape via
+    f-string, and attribution GROUPS by role, so grouping must tolerate it
+    the same way instead of raising on an unhashable value at
+    receipt-stamping time. #512: a daimon-output row is blanked, never
+    dropped. Same no-non-dict-guard contract as stripped_transcript."""
+    views = []
+    for i, m in enumerate(messages or []):
+        text = ("" if m.get("daimon_output")
+                else strip_injected(_message_text(m)))
+        views.append((_message_id(m), str(m.get("role", "unknown")), text,
+                      _render_line(i, m, text)))
+    return views
 
 
 def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
@@ -1047,18 +1161,27 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     (see strip_injected) — a quote copied out of a recall line or a briefing
     block is an echo, not a witness, and must never earn `verbatim`. A miss
     is re-checked against the unstripped text so an echoed quote is ledgered
-    under `echo-only` rather than the generic absent-quote reason."""
+    under `echo-only` rather than the generic absent-quote reason.
+
+    #829: every verified receipt additionally records a `stitching` verdict —
+    whether the matched fragments could have come from one message / one role
+    (_stitching_flags' necessity semantics) — when `messages` provides a
+    per-message view. Recording only, never an outcome change: rule 17's
+    no-stitching doctrine (SERIALIZE_SYS) gains a measurement, not an
+    enforcement; the follow-up enforcement is gated on the measured rate."""
     # #440: the RAW pair survives alongside the stripped haystacks, read on
     # the failure path only — to tell an echoed quote from an absent one.
     # #512: daimon-output tool rows are blanked in the STRIPPED map (their
     # bytes are daimon's own, not a witness) but kept raw, so a quote living
     # only there downgrades under the honest `echo-only` reason code.
+    # #831: both stripped surfaces derive from stripped_message_views — ONE
+    # strip pass, and the same views the stitching attribution reads.
     raw_texts_by_id = message_texts_by_id(messages) if messages else {}
-    daimon_ids = daimon_output_ids(messages) if messages else set()
-    texts_by_id = {mid: "" if mid in daimon_ids else strip_injected(text)
-                   for mid, text in raw_texts_by_id.items()}
-    haystack = (stripped_transcript(messages) if messages
-                else strip_injected(transcript_text))
+    views = stripped_message_views(messages) if messages else []
+    texts_by_id = {mid: text for mid, _role, text, _line in views
+                   if mid is not None}
+    haystack = ("\n\n".join(line for _mid, _role, _text, line in views)
+                if messages else strip_injected(transcript_text))
     # #359: signal pointers (tool-result ids) are outcome evidence, not
     # quote-source claims — they never scope the quote check, and a scoped
     # MISS must not execute them for the quote-id's crime.
@@ -1074,10 +1197,51 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     # stays the fallback for callers with no transcript stamp to thread.
     stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # #829/#831: stitching attribution, derived lazily from the SAME
+    # per-message views the verification haystacks above are built from,
+    # per path: a transcript-scan hit matched the rendered LINES, a scoped
+    # hit matched the bare cited TEXTS. Role haystacks join in TRANSCRIPT
+    # order (never citation order — byte-identical quotes must get
+    # byte-identical verdicts) with the surfaces' own "\n\n" join. A session
+    # with no verbatim hit never pays the normalization pass. Without
+    # `messages` there is no per-message view, so receipts stay
+    # stitching-less — absent = unknown, the project convention.
+    view_at = {mid: idx for idx, (mid, _r, _t, _l) in enumerate(views)
+               if mid is not None}
+    scan_attr: tuple | None = None
+
+    def _scan_attribution():
+        nonlocal scan_attr
+        if scan_attr is None:
+            scan_attr = _attribution_views(
+                [(role, line) for _mid, role, _text, line in views])
+        return scan_attr
+
+    def _scoped_attribution(ids):
+        rows = [views[i] for i in sorted({view_at[mid] for mid in ids
+                                          if mid in view_at})]
+        return _attribution_views(
+            [(role, text) for _mid, role, text, _line in rows])
+
     def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=()):
+        # #831 finding 10: stitching is derived HERE, keyed on the outcome,
+        # fully self-contained — the fragments are re-parsed from the item's
+        # own quote with the same _quote_fragments parse the match used, so
+        # no call site can opt out or silently shrink the measurement
+        # denominator by forgetting an argument. The re-parse is a few regex
+        # splits on one short quote, once per verified receipt; the costly
+        # haystack normalization is what the attribution caches hold.
+        stitching = None
+        if outcome == "verified" and messages:
+            fragments = _quote_fragments(item.get("quote") or "")
+            per_message, role_joins = (
+                _scoped_attribution(message_ids)
+                if binding_mode == "message-ids" else _scan_attribution())
+            stitching = _stitching_flags(fragments, per_message, role_joins)
         receipt = provenance.quote_receipt(
             source_ref, digest, outcome=outcome, checked_at=checked_at,
-            binding_mode=binding_mode, message_ids=message_ids)
+            binding_mode=binding_mode, message_ids=message_ids,
+            stitching=stitching)
         if receipt is not None:
             item["quote_provenance"] = receipt
     # The model never gets a vote on the echo verdict (#292 discipline, same
@@ -1086,22 +1250,41 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     for item in iter_items(checkpoint):
         item.pop(ECHO_ONLY_KEY, None)
         item.pop("quote_provenance", None)
+    # #831: the whole-transcript haystacks are constant across items —
+    # normalize each once, not once per verbatim item inside quote_matches.
+    norm_haystack = _normalize_for_match(haystack)
+    norm_raw = (_normalize_for_match(transcript_text)
+                if isinstance(transcript_text, str) else None)
     for item in iter_items(checkpoint):
         if item.get("trust") != "verbatim":
             continue
         quote = item.get("quote")
         if not isinstance(quote, str) or not quote.strip():
             continue
+        # One fragment parse per item (#831): every match check below and
+        # the stitching attribution share it. `_matches` is quote_matches
+        # with the parse hoisted — verdicts stay byte-identical.
+        fragments = _quote_fragments(quote)
+
+        def _matches(hay, _fragments=fragments) -> bool:
+            return (bool(_fragments) and isinstance(hay, str)
+                    and _fragments_in_order(_fragments,
+                                            _normalize_for_match(hay)))
+
+        # #831 finding 8: dedup the cited ids ONCE, first occurrence wins —
+        # scoped_haystack dedups identically, so the verification view, the
+        # attribution view, and the receipt's message_ids agree on one set.
+        quote_ids = list(dict.fromkeys(
+            i for i in item.get(SOURCE_IDS_KEY) or []
+            if isinstance(i, str) and i not in signals))
         scoped = scoped_haystack(item, texts_by_id, exclude=signals)
-        if scoped is not None and quote_matches(quote, scoped):
+        if scoped is not None and _matches(scoped):
             checked_at = stamp
             item["quote_verified"] = True
             item["last_verified"] = checked_at
-            quote_ids = [i for i in item.get(SOURCE_IDS_KEY) or []
-                         if isinstance(i, str) and i not in signals]
             stamp_receipt(item, "verified", checked_at, "message-ids",
                           quote_ids)
-        elif quote_matches(quote, haystack):
+        elif fragments and _fragments_in_order(fragments, norm_haystack):
             if scoped is not None:
                 # Resolved AND mismatched: the quote is real but not in its
                 # cited message — drop the disproven QUOTE binding (signal
@@ -1126,8 +1309,9 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
             # distinct reason code turns the echo rate into something the
             # rejection ledger can count.
             raw_scoped = scoped_haystack(item, raw_texts_by_id, exclude=signals)
-            if ((raw_scoped is not None and quote_matches(quote, raw_scoped))
-                    or quote_matches(quote, transcript_text)):
+            if ((raw_scoped is not None and _matches(raw_scoped))
+                    or (norm_raw is not None and fragments
+                        and _fragments_in_order(fragments, norm_raw))):
                 item[ECHO_ONLY_KEY] = True
                 echoed += 1
             item["trust"] = "inferred"
