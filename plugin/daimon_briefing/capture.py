@@ -540,11 +540,12 @@ def carry_forward(checkpoint: dict, project) -> dict:
     # itself (a briefing missing carried items is strictly better than
     # no briefing at all; same idiom as `run`'s rejection-ledger swallow).
     try:
-        # fallback=False (#94): on a project's first serialize there is no
+        # Route.OWN (#94): on a project's first serialize there is no
         # per-project pointer, and the global pointer is another project's
         # checkpoint — carrying from it would write foreign items into
         # this project's bucket permanently. No prev -> no carry.
-        prev = store.read_latest(project, fallback=False)
+        prev = store.read_latest_body(project, route=store.Route.OWN,
+                                      admit=store.Admit.ANY)
         now = store._created_epoch(checkpoint.get("created")) or time.time()
         events = store.resolutions(project_dir=project)
         resolved = frozenset(ref for ref, evt in events.items()

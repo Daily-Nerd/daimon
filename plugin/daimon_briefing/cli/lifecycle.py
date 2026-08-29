@@ -72,7 +72,8 @@ def _cmd_resolve(args) -> int:
               "— refused, nothing written")
         return 1
     project = _cli._resolve_project(args.project)
-    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to resolve")
         return 1
@@ -147,7 +148,8 @@ def _cmd_forget(args) -> int:
     recall index deletion all inherit it with no new plumbing. The rewritten
     checkpoint re-mints its receipt, so the post-removal state is signed."""
     project = _cli._resolve_project(args.project)
-    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     # #578: the refutation ledger is a second plaintext store, so a value can
     # live there with no checkpoint at all. Bailing on a missing checkpoint
     # would leave that value permanently unreachable.
@@ -718,7 +720,8 @@ def _cmd_reverify(args) -> int:
     with no evidence — rejecting a suggestion is not vouching for a claim.
     The reopened event is a human verdict, so re-detection stays silent."""
     project = _cli._resolve_project(args.project)
-    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to reverify")
         return 1
@@ -784,7 +787,14 @@ def _cmd_loops(args) -> int:
     (#480 scope guard, mirrors briefing._line's new suffix)."""
     _cli._note_usage("loops")
     project = _cli._resolve_project(args.project)
-    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    # Route.OWN is a DECISION here, not a leftover: a pre-routing store is
+    # read-only for project-scoped commands. If loops listed items off an
+    # un-routed checkpoint, the user would copy an id, run `daimon resolve`,
+    # and be refused — every scoped WRITE is own-only, and a listing that
+    # hands out handles nothing can act on is worse than an honest refusal.
+    # (Making un-routed checkpoints adoptable is a feature, out of #795's scope.)
+    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to list")
         return 0

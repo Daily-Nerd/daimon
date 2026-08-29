@@ -39,7 +39,8 @@ def _cmd_amend_propose(args) -> int:
     # belief would invite exactly the state-rewriting on settled facts that
     # BRIEFABLE_ITEM_KEYS exists to fence off, and `daimon loops` — the
     # discovery surface this command's errors point at — lists only these.
-    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     live = {
         str(item.get("id") or "")
         for section, key in store._ITEM_LISTS
