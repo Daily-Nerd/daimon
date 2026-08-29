@@ -110,4 +110,4 @@ jobs:
       # rot their change did not introduce. Bump this deliberately, in its
       # own PR, where new findings are the subject rather than a surprise.
       - name: scar lint
-        run: uvx --from scar-cli==0.19.0 scar lint
+        run: uvx --from scar-cli==0.21.0 scar lint
