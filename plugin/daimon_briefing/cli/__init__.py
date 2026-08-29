@@ -452,7 +452,8 @@ def _cmd_anchor(args) -> int:
     # the project that owns the item never received the anchor while the command
     # reported success. Refusing is the correct outcome: there is nothing here to
     # attach to, and the message below already says so.
-    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     if checkpoint is None:
         print(f"error: no checkpoint found for {project} — nothing to attach to",
               file=sys.stderr)
@@ -669,7 +670,10 @@ def _cmd_brief(args) -> int:
             print("error: --team routes by project path and cannot combine "
                   "with --slug", file=sys.stderr)
             return 2
-        checkpoint = store.read_latest(project_dir=slug, fallback=False)
+        # `slug` is a bare slug string, not a path — this survives because
+        # project_slug is idempotent on slugs (pinned by its own test).
+        checkpoint = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
+                                            admit=store.Admit.ANY)
         if not isinstance(checkpoint, dict):
             render.render_brief_note([
                 f"no checkpoint bucket for slug {slug} — "
@@ -681,19 +685,20 @@ def _cmd_brief(args) -> int:
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
-    # #787: whether the fallback fired is what read_latest DID, not what the
-    # filesystem shows. It reaches the global pointer by TWO routes: an absent
-    # own pointer, and a TORN one, which falls through while its path still
-    # exists. Comparing project_latest_path() against exists() is blind to the
-    # second, so the #96 suppression did not fire and a foreign body rendered
-    # with no note and no opt-in. Ask for the project's own pointer first and
-    # let its absence BE the answer — that cannot be fooled by either route.
-    own = store.read_latest(project_dir=project, fallback=False)
-    checkpoint = own if own is not None else store.read_latest(project_dir=project)
-    # project_latest_path is None when the project is unknown, and nothing is
-    # foreign to a session with no project identity (#784).
-    fallback_used = (own is None and checkpoint is not None
-                     and store.project_latest_path(project) is not None)
+    # #787/#795: whether the fallback fired is what the read DID, not what the
+    # filesystem shows — and the route fact is now READ off the result, never
+    # reconstructed from a second look (scar 0058's class). Two invariants the
+    # diff does not show: under Admit.ANY nothing is ever refused, so
+    # fell_back=True implies checkpoint is not None (the old second conjunct
+    # is implied, not dropped); and brief cannot be identity-less, because
+    # _resolve_project returns str(Path(...).resolve()) — never empty — and
+    # resolve_project_root ends `return top or raw`, so the no-slug rows of
+    # the read contract are unreachable on this path.
+    got = store.read_latest_result(project_dir=project,
+                                   route=store.Route.OWN_ELSE_GLOBAL,
+                                   admit=store.Admit.ANY)
+    checkpoint = got.checkpoint
+    fallback_used = got.fell_back
     if fallback_used and not (getattr(args, "global_fallback", False)
                               or config.brief_global_fallback()):
         # Header-only fallback (#96): the foreign body is suppressed — one
@@ -1441,9 +1446,10 @@ def _cmd_recall_inject(args) -> int:
         # the operator opted into the foreign body. Excluding the global latest
         # unconditionally suppressed recall of a session that was never briefed.
         exclude = set()
-        briefed = store.read_latest(
+        briefed = store.read_latest_body(
             project_dir=project,
-            fallback=project is None or config.brief_global_fallback())
+            route=briefing.injection_read_route(project),
+            admit=store.Admit.ANY)
         sid = (briefed or {}).get("session_id")
         if sid:
             exclude.add(str(sid))
@@ -1734,7 +1740,13 @@ def _print_suppressed(project) -> int:
     withheld items under this project's status would be worse than listing
     none. Fails open like brief's withhold call — a broken events.jsonl
     must not crash `status`, it should just report nothing suppressed."""
-    checkpoint = store.read_latest(project_dir=project, fallback=False)
+    # Route.OWN is a DECISION here, not a leftover: this is a read-only
+    # reporting surface, and a pre-routing store is read-only for
+    # project-scoped commands — its content comes from briefing.withhold over
+    # store.resolutions(project), whose writers are all own-only, so an
+    # un-routed checkpoint can have nothing suppressed to report anyway.
+    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     withheld = []
     candidates = []
     if checkpoint:
@@ -1786,7 +1798,9 @@ def _cmd_verify_receipt(args) -> int:
         # #791: the docstring above says the default target is THIS project's
         # latest checkpoint, and the fallback let it be another project's. An
         # un-routed checkpoint is still this project's to verify.
-        checkpoint = store.read_latest_reportable(project)
+        checkpoint = store.read_latest_body(project_dir=project,
+                                            route=store.Route.OWN_ELSE_GLOBAL,
+                                            admit=store.Admit.OWN_OR_UNROUTED)
         if not isinstance(checkpoint, dict) or not checkpoint.get("session_id"):
             print("no checkpoint for this project yet — nothing to verify")
             return 2
