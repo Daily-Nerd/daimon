@@ -228,7 +228,8 @@ def test_opt_in_scrubs_local_copies(tmp_checkpoint_dir, monkeypatch):
     residue = [str(p) for p in store.project_surfaces(PROJECT)
                if THEIRS in p.read_text()]
     assert residue == [], f"plaintext survives in {residue}"
-    kept = store.read_latest(project_dir=PROJECT, fallback=False)
+    kept = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                  admit=store.Admit.ANY)
     texts = [i["text"] for i in
              kept["working_context"]["recent_decisions"]]
     assert texts == [MINE], "only the tombstoned value goes"

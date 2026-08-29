@@ -95,7 +95,8 @@ def _arm_adversarial_state():
     value-keyed tombstone against the never-present sibling id. Returns the
     prev item id under which the forgotten value survives on disk."""
     store.write_checkpoint(_PREV_SID, _prev_checkpoint(), project_dir=_P)
-    prev = store.read_latest(project_dir=_P, fallback=False)
+    prev = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                  admit=store.Admit.ANY)
     x_id = next(d["id"] for d in prev["working_context"]["recent_decisions"]
                 if d["text"] == _S)
 
@@ -160,7 +161,8 @@ def _serialize_new_session(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_chat", FakeChat(_extraction_json()))
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
     assert cli.main(["serialize", str(_transcript_file(tmp_path))]) == 0
-    return store.read_latest(project_dir=_P, fallback=False)
+    return store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                  admit=store.Admit.ANY)
 
 
 # ---- read-side probes (mirror #400/#407 helpers, fixed clock) -------------
@@ -200,7 +202,8 @@ def test_ungated_prev_cannot_resurrect_forgotten_value_through_carry(
     # the forgotten value in memory — its id-keyed suppression cannot see a
     # value-keyed tombstone recorded under a sibling id. Only the write
     # boundary stands between this merged dict and disk.
-    prev = store.read_latest(project_dir=_P, fallback=False)
+    prev = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                  admit=store.Admit.ANY)
     resolved = frozenset(ref for ref, evt in
                          store.resolutions(project_dir=_P).items()
                          if store.is_resolved(evt))

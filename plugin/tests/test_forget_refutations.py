@@ -93,7 +93,8 @@ def _fuzzy_arm(project, with_refutations):
             _refute(subject=subject, scope=f"scope-{index}",
                     project_dir=project)
     rc = cli.main(["forget", _FUZZY_QUERY, "--project", project])
-    stored = store.read_latest(project_dir=project, fallback=False) or {}
+    stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY) or {}
     survivors = [i.get("text") for i in
                  stored.get("working_context", {}).get("recent_decisions", [])]
     return rc, survivors
@@ -143,13 +144,15 @@ def test_a_contaminating_ledger_still_leaves_exact_id_forget_working(
                 project_dir=project)
     for index, subject in enumerate(_NOISE):
         _refute(subject=subject, scope=f"scope-{index}", project_dir=project)
-    stored = store.read_latest(project_dir=project, fallback=False)
+    stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     item_id = stored["working_context"]["recent_decisions"][0]["id"]
 
     assert cli.main(["forget", item_id, "--project", project]) == 0
 
     left = [i.get("text") for i in
-            (store.read_latest(project_dir=project, fallback=False) or {})
+            (store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY) or {})
             .get("working_context", {}).get("recent_decisions", [])]
     assert _FUZZY_TARGET not in left
 
@@ -216,7 +219,8 @@ def test_forget_takes_the_checkpoint_item_and_the_matching_refutation_together(
 
     assert cli.main(["forget", SUBJECT, "--project", PROJECT]) == 0
 
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     assert not stored["working_context"]["recent_decisions"]
     assert SUBJECT not in _ledger_text()
     assert refutations.get(ref_id, project_dir=PROJECT) is None
@@ -229,7 +233,8 @@ def test_forget_refuses_when_an_id_matches_a_decision_and_a_refutation(
     # picking either surface silently would delete the wrong thing.
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _checkpoint("an unrelated decision about logging")
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     decision_id = stored["working_context"]["recent_decisions"][0]["id"]
     assert decision_id.startswith("r-")
 
@@ -257,7 +262,8 @@ def test_forget_refuses_when_an_id_matches_a_decision_and_a_refutation(
     # Nothing was removed from either surface.
     assert refutations.get(collided, project_dir=PROJECT) is not None
     assert refutations.get(ref_id, project_dir=PROJECT) is not None
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     assert stored["working_context"]["recent_decisions"]
 
 
@@ -686,7 +692,8 @@ def test_dry_run_names_amendments_keyed_to_the_doomed_item(
     from daimon_briefing import amendments
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _checkpoint("we ship the queue rewrite before the freeze")
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     item_id = stored["working_context"]["recent_decisions"][0]["id"]
     a_id = amendments.propose(
         item_id=item_id, change="progressed",
@@ -714,7 +721,8 @@ def test_dry_run_names_spliced_checkpoint_siblings(
             "recent_decisions": [{"text": shared, "trust": "inferred"}],
             "open_questions": [{"text": shared, "trust": "inferred"}]},
     }, project_dir=PROJECT)
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     ids = {stored["working_context"]["recent_decisions"][0]["id"],
            stored["working_context"]["open_questions"][0]["id"]}
 
@@ -735,7 +743,8 @@ def test_dry_run_previews_amendments_of_a_superseded_item(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     doomed_text = "we ship the queue rewrite before the freeze"
     _checkpoint(doomed_text)
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     item_id = stored["working_context"]["recent_decisions"][0]["id"]
     a_id = amendments.propose(
         item_id=item_id, change="progressed",

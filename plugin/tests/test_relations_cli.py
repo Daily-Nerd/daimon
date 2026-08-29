@@ -26,7 +26,8 @@ def seeded(tmp_checkpoint_dir, monkeypatch):
                 {"text": "adjudicate candidates through the tty path",
                  "trust": "inferred"}]},
     }, project_dir=PROJECT)
-    stored = store.read_latest(project_dir=PROJECT, fallback=False)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     ids = [i["id"] for i in stored["working_context"]["recent_decisions"]]
     rel_id = relations.propose(
         type_="revision-of",

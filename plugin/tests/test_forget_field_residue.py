@@ -48,7 +48,8 @@ def _forget_canary():
 
 
 def _live_decisions():
-    cp = store.read_latest(project_dir=PROJECT, fallback=False)
+    cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                admit=store.Admit.ANY)
     return (cp.get("working_context") or {}).get("recent_decisions") or []
 
 
@@ -159,7 +160,8 @@ def test_forget_drops_active_topic_carrying_the_value(tmp_checkpoint_dir):
                                  {"text": KEEPER, "trust": "inferred"}]},
     }, project_dir=PROJECT)
     _forget_canary()
-    cp = store.read_latest(project_dir=PROJECT, fallback=False)
+    cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                admit=store.Admit.ANY)
     assert "active_topic" not in (cp.get("working_context") or {})
     residue = [str(p) for p in store.project_surfaces(PROJECT)
                if CANARY in p.read_text()]
@@ -175,7 +177,8 @@ def test_forget_scrubs_active_topic_quote(tmp_checkpoint_dir):
             "recent_decisions": [{"text": CANARY, "trust": "inferred"}]},
     }, project_dir=PROJECT)
     _forget_canary()
-    cp = store.read_latest(project_dir=PROJECT, fallback=False)
+    cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                admit=store.Admit.ANY)
     topic = (cp.get("working_context") or {}).get("active_topic")
     assert topic and topic["text"] == KEEPER
     assert "quote" not in topic

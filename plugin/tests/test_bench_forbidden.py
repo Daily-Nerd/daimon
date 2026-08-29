@@ -101,7 +101,8 @@ def test_case_c_trust_downgraded_item_is_withheld_from_the_brief(tmp_path):
             "c1", _cp("deployment notes overview", decisions=[stale]),
             project_dir=proj)
         # recover the stamped item id, then downgrade its standing (superseded)
-        cp = store.read_latest(proj)
+        cp = store.read_latest_body(proj, route=store.Route.OWN_ELSE_GLOBAL,
+                                    admit=store.Admit.ANY)
         item_id = cp["working_context"]["recent_decisions"][0]["id"]
         store.append_event(item_id, "superseded-by:d-newid1", project_dir=proj)
         results = recall.search(query, project_dir=proj, limit=50)

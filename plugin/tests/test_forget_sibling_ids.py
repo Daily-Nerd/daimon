@@ -43,7 +43,8 @@ def _latest_raw(project_dir):
 
 
 def _build_blob(project_dir):
-    cp = store.read_latest(project_dir=project_dir, fallback=False)
+    cp = store.read_latest_body(project_dir=project_dir, route=store.Route.OWN,
+                                admit=store.Admit.ANY)
     return json.dumps(briefing.build(cp, now=_NOW))
 
 
@@ -76,7 +77,8 @@ def test_forget_scrubs_same_value_sibling_in_another_section(tmp_checkpoint_dir,
             "open_questions": [_item(_S)],
         },
     }, project_dir=_P)
-    stored = store.read_latest(project_dir=_P, fallback=False)
+    stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     d_id = next(i["id"] for i in stored["working_context"]["recent_decisions"]
                 if i["text"] == _S)
     q_id = next(i["id"] for i in stored["working_context"]["open_questions"]
@@ -100,7 +102,8 @@ def test_forget_scrubs_widened_hash_sibling_within_one_section(tmp_checkpoint_di
             "recent_decisions": [_item(_S), _item(_S), _item(_T)],
         },
     }, project_dir=_P)
-    stored = store.read_latest(project_dir=_P, fallback=False)
+    stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     ids = [i["id"] for i in stored["working_context"]["recent_decisions"]
            if i["text"] == _S]
     assert len(ids) == 2 and ids[0] != ids[1]   # widened-hash siblings
@@ -124,7 +127,8 @@ def test_forget_sibling_path_keeps_tombstone_and_normal_output(tmp_checkpoint_di
             "open_questions": [_item(_S)],
         },
     }, project_dir=_P)
-    stored = store.read_latest(project_dir=_P, fallback=False)
+    stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     d_id = next(i["id"] for i in stored["working_context"]["recent_decisions"]
                 if i["text"] == _S)
 

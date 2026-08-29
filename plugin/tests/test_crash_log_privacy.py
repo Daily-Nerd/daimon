@@ -359,7 +359,8 @@ def test_forget_survives_a_purge_that_raises(tmp_checkpoint_dir, monkeypatch,
     assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
     out = capsys.readouterr().out
     assert "purge exploded" in out, "a swallowed failure is an invisible leak"
-    latest = store.read_latest(project_dir=PROJECT, fallback=False)
+    latest = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     texts = [i["text"] for i
              in latest["working_context"]["recent_decisions"]]
     assert texts == [KEEPER], "the checkpoint scrub must survive the blowup"

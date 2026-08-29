@@ -65,7 +65,8 @@ def test_cli_serialize_writes_checkpoint(tmp_checkpoint_dir, fake_chat_factory, 
     # checkpoint file exists, keyed by the transcript stem
     ckpt = store.read_checkpoint("sample_transcript")
     assert ckpt is not None
-    assert store.read_latest()["session_id"] == "sample_transcript"
+    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
+                                  admit=store.Admit.ANY)["session_id"] == "sample_transcript"
 
 
 def test_cli_brief_prints_briefing(tmp_checkpoint_dir, sample_checkpoint, capsys,
@@ -1910,7 +1911,8 @@ def test_cli_write_checkpoint_routes_and_stamps_source(tmp_checkpoint_dir, monke
     _stdin(monkeypatch, _valid_json("S-intro"))
     rc = cli.main(["write-checkpoint", "--project", "/p/A"])
     assert rc == 0
-    ck = store.read_latest(project_dir="/p/A")
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
     assert ck["session_id"] == "S-intro"
     assert ck["source"] == "introspection"  # default provenance stamp
     assert (tmp_checkpoint_dir / "-p-A" / "latest.json").exists()
@@ -1922,7 +1924,8 @@ def test_cli_write_checkpoint_source_override(tmp_checkpoint_dir, monkeypatch):
     _stdin(monkeypatch, _valid_json("S-x"))
     rc = cli.main(["write-checkpoint", "--project", "/p/A", "--source", "reconstruction"])
     assert rc == 0
-    assert store.read_latest(project_dir="/p/A")["source"] == "reconstruction"
+    assert store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                  admit=store.Admit.ANY)["source"] == "reconstruction"
 
 
 def test_cli_write_checkpoint_invalid_json(tmp_checkpoint_dir, monkeypatch, capsys):
@@ -1968,7 +1971,8 @@ def test_cli_write_checkpoint_strips_model_supplied_code_owned_keys(
     _stdin(monkeypatch, json.dumps(spoofed))
     rc = cli.main(["write-checkpoint", "--project", "/p/A"])
     assert rc == 0
-    ck = store.read_latest(project_dir="/p/A")
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
     assert ck["format_version"] == serializer.PROMPT_VERSION
     assert ck["author"] != "not-the-real-author"
     assert ck["created"] != "1999-01-01T00:00:00Z"
@@ -1989,7 +1993,8 @@ def test_cli_write_checkpoint_drops_model_claimed_source_ids(
     _stdin(monkeypatch, json.dumps(cp))
     rc = cli.main(["write-checkpoint", "--project", "/p/A"])
     assert rc == 0
-    ck = store.read_latest(project_dir="/p/A")
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
     dec = ck["working_context"]["recent_decisions"][0]
     assert "source_message_ids" not in dec
 
@@ -2008,7 +2013,8 @@ def test_cli_write_checkpoint_strips_model_claimed_grounded(
     _stdin(monkeypatch, json.dumps(cp))
     rc = cli.main(["write-checkpoint", "--project", "/p/A"])
     assert rc == 0
-    ck = store.read_latest(project_dir="/p/A")
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
     dec = ck["working_context"]["recent_decisions"][0]
     assert "grounded" not in dec
 
@@ -2029,7 +2035,8 @@ def test_cli_write_checkpoint_strips_model_claimed_pinned(
     _stdin(monkeypatch, json.dumps(cp))
     rc = cli.main(["write-checkpoint", "--project", "/p/A"])
     assert rc == 0
-    ck = store.read_latest(project_dir="/p/A")
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
     belief = ck["epistemic_snapshot"]["strong_beliefs"][0]
     assert "pinned" not in belief
 
@@ -2066,7 +2073,8 @@ def test_cli_write_checkpoint_downgrades_unverifiable_verbatim(
     _stdin(monkeypatch, json.dumps(cp))
     rc = cli.main(["write-checkpoint", "--project", "/p/A"])
     assert rc == 0
-    ck = store.read_latest(project_dir="/p/A")
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
     dec = ck["working_context"]["recent_decisions"][0]
     assert dec["trust"] == "inferred"
     assert "quote_verified" not in dec
@@ -2090,7 +2098,8 @@ def test_cli_write_checkpoint_does_not_stamp_extraction_version(
     _stdin(monkeypatch, json.dumps(cp))
     rc = cli.main(["write-checkpoint", "--project", "/p/A"])
     assert rc == 0
-    ck = store.read_latest(project_dir="/p/A")
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
     assert "extraction_version" not in ck
 
 
@@ -2402,7 +2411,8 @@ def test_cli_anchor_attach_single_match_persists(
     assert "pkg/m.py::foo" in out
 
     # The attach persisted through the normal store path: read_latest sees it.
-    latest = store.read_latest(project_dir=proj)
+    latest = store.read_latest_body(project_dir=proj, route=store.Route.OWN_ELSE_GLOBAL,
+                                    admit=store.Admit.ANY)
     belief = latest["epistemic_snapshot"]["strong_beliefs"][0]
     anchored = belief["anchored_to"]
     assert anchored["file"] == "pkg/m.py" and anchored["symbol"] == "foo"
@@ -2429,7 +2439,8 @@ def test_cli_anchor_attach_zero_matches_exits_nonzero(
     err = capsys.readouterr().err.lower()
     assert "no cognitive item" in err and "no-such-text" in err
     # Nothing was re-written: latest is untouched.
-    latest = store.read_latest(project_dir=proj)
+    latest = store.read_latest_body(project_dir=proj, route=store.Route.OWN_ELSE_GLOBAL,
+                                    admit=store.Admit.ANY)
     assert "anchored_to" not in latest["epistemic_snapshot"]["strong_beliefs"][0]
 
 
@@ -2447,7 +2458,8 @@ def test_cli_anchor_attach_multiple_matches_lists_candidates(
     err = capsys.readouterr().err
     assert "Chunk threshold for the serializer" in err
     assert "Adopt the D-007 prompt for the serializer" in err
-    latest = store.read_latest(project_dir=proj)
+    latest = store.read_latest_body(project_dir=proj, route=store.Route.OWN_ELSE_GLOBAL,
+                                    admit=store.Admit.ANY)
     for item in latest["working_context"]["open_questions"]:
         assert "anchored_to" not in item
 
@@ -2485,7 +2497,8 @@ def test_cli_anchor_attach_refuses_another_projects_checkpoint(
     # No bucket minted for proj out of another project's content.
     assert not (tmp_checkpoint_dir / store.project_slug(proj) / "latest.json").exists()
     # And the owning project's checkpoint is untouched.
-    owner = store.read_latest(project_dir=other, fallback=False)
+    owner = store.read_latest_body(project_dir=other, route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
     assert "anchored_to" not in owner["epistemic_snapshot"]["strong_beliefs"][0]
 
 
@@ -2526,7 +2539,8 @@ def test_cli_anchor_attach_preserves_existing_code_owned_stamps(
                    "--project", str(proj)])
     assert rc == 0
 
-    latest = store.read_latest(project_dir=proj)
+    latest = store.read_latest_body(project_dir=proj, route=store.Route.OWN_ELSE_GLOBAL,
+                                    admit=store.Admit.ANY)
     assert latest["format_version"] == "D-000"
     assert latest["format_version"] != serializer.PROMPT_VERSION
     assert latest["created"] == "2020-01-01T00:00:00Z"
@@ -3723,7 +3737,8 @@ def test_cli_heal_of_old_session_does_not_steal_latest(
     ])
     assert cli.main(["serialize", str(older)]) == 0
 
-    assert store.read_latest()["session_id"] == "S-newer"
+    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
+                                  admit=store.Admit.ANY)["session_id"] == "S-newer"
     assert store.read_checkpoint("S-older") is not None
 
 
@@ -4425,7 +4440,9 @@ def test_serialize_carry_folds_prev_open_question(
     rc = cli.main(["serialize", str(p)])
     assert rc == 0
 
-    written = store.read_latest(project_dir=project)
+    written = store.read_latest_body(project_dir=project,
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     carried = [q for q in written["working_context"]["open_questions"]
                if q.get("text") == "quorint reconciliation loop unresolved"]
     assert len(carried) == 1
@@ -4452,7 +4469,9 @@ def test_serialize_carry_kill_switch(
     rc = cli.main(["serialize", str(p)])
     assert rc == 0
 
-    written = store.read_latest(project_dir=project)
+    written = store.read_latest_body(project_dir=project,
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     texts = {q.get("text") for q in written["working_context"]["open_questions"]}
     assert "quorint reconciliation loop unresolved" not in texts
 
@@ -4481,7 +4500,9 @@ def test_serialize_carry_ignores_other_projects_checkpoint(
     rc = cli.main(["serialize", str(p)])
     assert rc == 0
 
-    written = store.read_latest(project_dir="/p/fresh-project")
+    written = store.read_latest_body(project_dir="/p/fresh-project",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     texts = {q.get("text") for q in written["working_context"]["open_questions"]}
     assert "quorint reconciliation loop unresolved" not in texts
 
@@ -4512,7 +4533,9 @@ def test_serialize_carry_failure_still_writes_checkpoint(
     rc = cli.main(["serialize", str(p)])
     assert rc == 0
 
-    written = store.read_latest(project_dir=project)
+    written = store.read_latest_body(project_dir=project,
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     assert written["session_id"] == "S-new"
 
 
@@ -4716,7 +4739,8 @@ def test_serialize_supersede_candidate_never_leaks_forgotten_text(
                                "contradictions_flagged": []},
     }
     store.write_checkpoint("S-prev", prev, project_dir=project)
-    stored = store.read_latest(project_dir=project, fallback=False)
+    stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     forgotten_id = next(
         d["id"] for d in stored["working_context"]["recent_decisions"]
         if d["text"] == _FORGOTTEN_TEXT)
@@ -4954,7 +4978,9 @@ def test_brief_withholds_resolved_item_and_notes_suppression(
     # real checkpoint's items are id-bearing by the time brief reads them —
     # resolve that exact id (the id-less fuzzy path is for legacy checkpoints
     # predating id-stamping, covered by the pure-function tests).
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
     store.append_event(item_id, "resolved", project_dir="/repo/x")
     rc = cli.main(["brief", "--project", "/repo/x"])
@@ -5047,7 +5073,9 @@ def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkp
     # rather than reimplementing the classification.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][1]
     item_id = item["id"]
     store.append_event(item_id, "resolved", project_dir="/repo/x")
@@ -5068,7 +5096,9 @@ def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, samp
     # resolved strong_beliefs id never suppressed. Cover the gap end-to-end.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item = written["epistemic_snapshot"]["strong_beliefs"][0]
     item_id = item["id"]
     store.append_event(item_id, "resolved", project_dir="/repo/x")
@@ -5100,7 +5130,9 @@ def test_brief_shows_annotation_and_status_lists_subsection(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item = written["working_context"]["recent_decisions"][0]
     item_id = item["id"]
     # new-id must be serializer-shaped (kind initial + hex slice) — withhold's
@@ -5131,7 +5163,9 @@ def test_transient_field_never_persisted(tmp_checkpoint_dir, sample_checkpoint, 
     # re-read the checkpoint straight off disk and confirm it never appears.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item_id = written["working_context"]["recent_decisions"][0]["id"]
     store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x")
 
@@ -6757,7 +6791,9 @@ def test_stats_resolutions_counts_all_four_states(
         {"text": "agent claims and it stays pending"},
     ]}}
     store.write_checkpoint("S1", cp, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     human_item, verified_item, pending_item = written["working_context"]["open_questions"]
 
     assert cli.main(["resolve", human_item["id"], "--project", "/repo/x"]) == 0
@@ -6813,7 +6849,9 @@ def test_reverify_records_a_usage_tag(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/rv")
     cp = {"working_context": {"open_questions": [{"text": "close then reopen"}]}}
     store.write_checkpoint("S1", cp, project_dir="/repo/rv")
-    item = store.read_latest(project_dir="/repo/rv")[
+    item = store.read_latest_body(project_dir="/repo/rv",
+                                  route=store.Route.OWN_ELSE_GLOBAL,
+                                  admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]
     assert cli.main(["resolve", item["id"], "--project", "/repo/rv"]) == 0
     assert cli.main(["reverify", item["id"], "--evidence", "checked the release page",
@@ -7930,7 +7968,8 @@ def test_loops_skips_idless_and_empty_text_items(tmp_checkpoint_dir, capsys, mon
     store.write_checkpoint("S1", cp, project_dir="/p/A")
     # Strip the id write_checkpoint stamped on the first item, blank the text
     # path via a raw edit of the stored checkpoint.
-    stored = store.read_latest(project_dir="/p/A", fallback=False)
+    stored = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     items = stored["working_context"]["open_questions"]
     items[0].pop("id", None)
     items[1]["text"] = "   "
@@ -8044,7 +8083,9 @@ def test_resolve_by_agent_candidate_never_withholds_human_resolve_still_does(
     # of item withholds exactly as it always has.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     agent_item = written["working_context"]["open_questions"][0]
     human_item = written["working_context"]["open_questions"][1]
 
@@ -8156,7 +8197,9 @@ def test_brief_shows_agent_claim_annotation_unverified(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][0]
     quote = "the user merged PR #6 from the GitHub UI"
     rc = cli.main(["resolve", item["id"], "--by", "agent",
@@ -8176,7 +8219,9 @@ def test_brief_ordinary_item_unaffected_by_agent_claim_render(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     claimed = written["working_context"]["open_questions"][0]
     untouched = written["working_context"]["open_questions"][1]
     rc = cli.main(["resolve", claimed["id"], "--by", "agent",
@@ -8199,7 +8244,9 @@ def test_brief_agent_verified_item_shows_no_claim_annotation(
     # not even the item's own text.
     from daimon_briefing import capture, store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][0]
     quote = "the user merged PR #6 from the GitHub UI"
     rc = cli.main(["resolve", item["id"], "--by", "agent",
@@ -8221,7 +8268,9 @@ def test_agent_claim_stamp_never_persisted(tmp_checkpoint_dir, sample_checkpoint
     # test): the `_agent_claim` stamp lives ONLY on withhold's returned copy.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    written = store.read_latest(project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][0]["id"]
     rc = cli.main(["resolve", item_id, "--by", "agent",
                    "--evidence", "the deploy finished clean",
@@ -8555,7 +8604,8 @@ def test_cli_brief_slug_withholds_resolved_items(tmp_checkpoint_dir, sample_chec
     cp = json.loads(json.dumps(sample_checkpoint))
     cp["session_id"] = "S-b"
     store.write_checkpoint("S-b", cp, project_dir="/p/B")
-    written = store.read_latest(project_dir="/p/B", fallback=False)
+    written = store.read_latest_body(project_dir="/p/B", route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     iid = written["working_context"]["open_questions"][0]["id"]
     q_text = written["working_context"]["open_questions"][0]["text"]
     store.append_event(iid, "resolved", project_dir="/p/B")
@@ -8730,7 +8780,8 @@ def test_forget_removes_item_from_live_checkpoint(tmp_checkpoint_dir, capsys, mo
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
     assert cli.main(["forget", iid, "--reason", "user request"]) == 0
-    after = store.read_latest(project_dir="/p/A", fallback=False)
+    after = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
     ids = [i.get("id") for i in after["working_context"]["open_questions"]]
     assert iid not in ids
 
@@ -8757,7 +8808,8 @@ def test_forget_ambiguous_refuses_without_write(tmp_checkpoint_dir, capsys, monk
     _write_cp_with_ids(store)
     assert cli.main(["forget", "the"]) == 1
     assert store.resolutions(project_dir="/p/A") == {}
-    before = store.read_latest(project_dir="/p/A", fallback=False)
+    before = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     assert len(before["working_context"]["open_questions"]) >= 1
 
 
@@ -8766,11 +8818,13 @@ def test_forget_dry_run_writes_nothing(tmp_checkpoint_dir, capsys, monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    n_before = len(store.read_latest(project_dir="/p/A", fallback=False)
+    n_before = len(store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
+                                          admit=store.Admit.ANY)
                    ["working_context"]["open_questions"])
     assert cli.main(["forget", iid, "--dry-run"]) == 0
     assert store.resolutions(project_dir="/p/A") == {}
-    after = store.read_latest(project_dir="/p/A", fallback=False)
+    after = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
     assert len(after["working_context"]["open_questions"]) == n_before
 
 
@@ -8824,7 +8878,8 @@ def test_forget_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):
     iid = cp["working_context"]["open_questions"][0]["id"]
     assert cli.main(["forget", "release pipeline manual approval",
                      "--reason", "example"]) == 0
-    after = store.read_latest(project_dir="/p/A", fallback=False)
+    after = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
     ids = [i.get("id") for i in after["working_context"]["open_questions"]]
     assert iid not in ids
     assert store.resolutions(project_dir="/p/A")[iid]["status"].startswith("forgotten:")
@@ -8867,7 +8922,8 @@ def test_forget_cache_purge_failure_warns_but_still_succeeds(
 
     monkeypatch.setattr(cli.serializer, "purge_chunk_cache", boom)
     assert cli.main(["forget", iid]) == 0  # forget itself still succeeds
-    after = store.read_latest(project_dir="/p/A", fallback=False)
+    after = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
     assert iid not in [i.get("id")
                        for i in after["working_context"]["open_questions"]]
     out = capsys.readouterr().out
@@ -9567,7 +9623,9 @@ def test_write_checkpoint_carries_prev_open_question(tmp_checkpoint_dir, monkeyp
     rc = cli.main(["write-checkpoint", "--project", project])
     assert rc == 0
 
-    written = store.read_latest(project_dir=project)
+    written = store.read_latest_body(project_dir=project,
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     carried = [q for q in written["working_context"]["open_questions"]
                if q.get("text") == "quorint reconciliation loop unresolved"]
     assert len(carried) == 1
@@ -9589,7 +9647,8 @@ def test_write_checkpoint_carry_survives_a_concurrent_session(
     _stdin(monkeypatch, _valid_json("S-session-B"))
     assert cli.main(["write-checkpoint", "--project", project]) == 0
 
-    written = store.read_latest(project_dir=project, fallback=False)
+    written = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
     assert written["session_id"] == "S-session-B"
     origins = {q.get("origin_session")
                for q in written["working_context"]["open_questions"]}
@@ -9611,7 +9670,8 @@ def test_write_checkpoint_carry_ignores_other_projects_checkpoint(
     rc = cli.main(["write-checkpoint", "--project", "/p/fresh-intro"])
     assert rc == 0
 
-    written = store.read_latest(project_dir="/p/fresh-intro", fallback=False)
+    written = store.read_latest_body(project_dir="/p/fresh-intro",
+                                     route=store.Route.OWN, admit=store.Admit.ANY)
     texts = {q.get("text") for q in written["working_context"]["open_questions"]}
     assert "quorint reconciliation loop unresolved" not in texts
 
@@ -9627,7 +9687,9 @@ def test_write_checkpoint_carry_kill_switch(tmp_checkpoint_dir, monkeypatch):
     _stdin(monkeypatch, _valid_json("S-intro"))
     assert cli.main(["write-checkpoint", "--project", project]) == 0
 
-    written = store.read_latest(project_dir=project)
+    written = store.read_latest_body(project_dir=project,
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     texts = {q.get("text") for q in written["working_context"]["open_questions"]}
     assert "quorint reconciliation loop unresolved" not in texts
 
@@ -9649,7 +9711,9 @@ def test_write_checkpoint_carry_failure_still_writes_checkpoint(
     _stdin(monkeypatch, _valid_json("S-intro"))
     assert cli.main(["write-checkpoint", "--project", project]) == 0
 
-    written = store.read_latest(project_dir=project)
+    written = store.read_latest_body(project_dir=project,
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
     assert written["session_id"] == "S-intro"
 
 

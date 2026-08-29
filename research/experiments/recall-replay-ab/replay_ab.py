@@ -316,8 +316,11 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
                 # Briefing-session exclusion, from the SNAPSHOT's synthesized
                 # pointers — what read_latest would have returned at prompt ts.
                 exclude = set()
-                for cp in (store.read_latest(row["project"]),
-                           store.read_latest()):
+                for cp in (store.read_latest_body(row["project"],
+                                                  route=store.Route.OWN_ELSE_GLOBAL,
+                                                  admit=store.Admit.ANY),
+                           store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
+                                                  admit=store.Admit.ANY)):
                     sid = (cp or {}).get("session_id")
                     if sid:
                         exclude.add(str(sid))

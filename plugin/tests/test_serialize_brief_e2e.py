@@ -55,7 +55,9 @@ def test_every_schema_field_survives_serialize_to_brief(tmp_checkpoint_dir):
     serializer.sanitize_importance(cp)
     store.write_checkpoint("S-e2e", cp, project_dir=_PROJECT)
 
-    stored = store.read_latest(project_dir=_PROJECT)
+    stored = store.read_latest_body(project_dir=_PROJECT,
+                                    route=store.Route.OWN_ELSE_GLOBAL,
+                                    admit=store.Admit.ANY)
     assert stored is not None
 
     for f in schema.ITEM_FIELDS:

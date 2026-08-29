@@ -36,7 +36,8 @@ def _forget_S(monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S, _T]),
                            project_dir=_A)
-    stored = store.read_latest(project_dir=_A, fallback=False)
+    stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
                 if d["text"] == _S)
     assert cli.main(["forget", x_id]) == 0
@@ -170,7 +171,8 @@ def test_forgotten_key_lifted_by_reopen(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
                            project_dir=_A)
-    stored = store.read_latest(project_dir=_A, fallback=False)
+    stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
     x_id = stored["working_context"]["recent_decisions"][0]["id"]
     assert cli.main(["forget", x_id]) == 0
     key = normalize.content_key(_S)
