@@ -173,17 +173,120 @@ def test_stitched_receipt_round_trips_the_validator():
     assert provenance.valid_quote_receipt(item["quote_provenance"])
 
 
+# ---- attribution must mirror what verification witnessed (#831 review) ----
+
+def test_quote_containing_rendered_scaffolding_is_not_flagged_as_stitched():
+    """The transcript-scan haystack is the RENDERED transcript — [mN]
+    markers, role prefixes, joins — so a quote that verified because it
+    matched rendered scaffolding must be attributed against the same
+    rendered per-message lines, or one-message quotes record false
+    cross_message/cross_role verdicts and poison the enforcement
+    measurement."""
+    messages = [
+        {"role": "user", "content": "did the deployment finish", "id": "u-1"},
+        {"role": "assistant", "content": "the fix landed cleanly", "id": "a-2"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "assistant: the fix landed"}
+    _verify(item, messages)
+
+    assert item["quote_verified"] is True
+    assert item["quote_provenance"]["stitching"] == {
+        "cross_message": False, "cross_role": False}
+
+
+def test_scoped_attribution_is_citation_order_invariant():
+    """Pinned semantics say roles join in TRANSCRIPT order — byte-identical
+    quotes must get byte-identical verdicts regardless of citation order."""
+    def _receipt_for(ids):
+        messages = [
+            {"role": "user", "content": "the alpha premise stands firm",
+             "id": "u-1"},
+            {"role": "user", "content": "the omega conclusion follows cleanly",
+             "id": "u-2"},
+        ]
+        item = {"text": "claim", "trust": "verbatim",
+                "quote": "alpha premise stands ... omega conclusion follows",
+                "source_message_ids": list(ids)}
+        _verify(item, messages)
+        return item["quote_provenance"]
+
+    forward = _receipt_for(["u-1", "u-2"])
+    reverse = _receipt_for(["u-2", "u-1"])
+    assert forward["stitching"] == reverse["stitching"]
+    assert forward["stitching"] == {"cross_message": True, "cross_role": False}
+
+
+def test_duplicate_cited_ids_are_deduped_before_the_verification_view():
+    """A duplicated citation must not duplicate its message's text in the
+    scoped haystack: a quote repeating a sentence could otherwise verify
+    against the duplication artifact, and the verdict, the attribution view
+    and the receipt's message_ids would disagree."""
+    messages = [
+        {"role": "user", "content": "the durable sentence we agreed on",
+         "id": "u-1"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "the durable sentence we agreed on",
+            "source_message_ids": ["u-1", "u-1"]}
+    _verify(item, messages)
+    receipt = item["quote_provenance"]
+    assert receipt["binding"]["message_ids"] == ["u-1"]
+    assert receipt["stitching"] == {"cross_message": False, "cross_role": False}
+
+    # The duplication artifact itself must not verify: a quote needing the
+    # sentence TWICE has no witness in a store that said it once.
+    messages = [
+        {"role": "user", "content": "the durable sentence we agreed on",
+         "id": "u-1"},
+    ]
+    twice = {"text": "claim", "trust": "verbatim",
+             "quote": ("the durable sentence we agreed on ... "
+                       "the durable sentence we agreed on"),
+             "source_message_ids": ["u-1", "u-1"]}
+    _verify(twice, messages)
+    assert twice["quote_verified"] is False
+
+
+def test_unhashable_role_never_crashes_the_capture_path():
+    """Pre-#829 rendering tolerated any role shape via f-string; attribution
+    grouping must tolerate it the same way, never raise at stamping time."""
+    messages = [
+        {"role": ["user"], "content": "the durable sentence we agreed on",
+         "id": "u-1"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "the durable sentence we agreed on"}
+    _verify(item, messages)
+    assert item["quote_verified"] is True
+    assert item["quote_provenance"]["stitching"] == {
+        "cross_message": False, "cross_role": False}
+
+
+def test_verbatim_item_with_unusable_quote_is_left_untouched():
+    """The loop's guard, unchanged from pre-#829: a verbatim item whose quote
+    is not a usable string gets no verdict, no stamp, and no receipt."""
+    messages = [
+        {"role": "user", "content": "anything at all here", "id": "u-1"},
+    ]
+    item = {"text": "claim", "trust": "verbatim", "quote": "   "}
+    _verify(item, messages)
+    assert "quote_verified" not in item
+    assert "quote_provenance" not in item
+
+
 # ---- attribution is impossible: the helper answers None, never a guess ----
 
 def test_stitching_flags_are_none_when_attribution_is_impossible():
-    candidates = [("user", "the alpha premise stands firm")]
-    # No usable fragment (below _MIN_FRAGMENT after normalization).
-    assert serializer._stitching_flags("short", candidates) is None
-    # Non-str quote fails closed the same way quote_matches does.
-    assert serializer._stitching_flags(None, candidates) is None
+    per_message = [("user", "the alpha premise stands firm")]
+    role_joins = {"user": "the alpha premise stands firm"}
+    # No usable fragment survives (below _MIN_FRAGMENT after normalization).
+    assert serializer._stitching_flags(
+        serializer._quote_fragments("short"), per_message, role_joins) is None
     # No candidate carries any text (all blanked/stripped).
     assert serializer._stitching_flags(
-        "a proper long fragment", [("user", ""), ("assistant", "")]) is None
+        serializer._quote_fragments("a proper long fragment"),
+        [("user", ""), ("assistant", "")], {"user": "", "assistant": ""}) is None
 
 
 # ---- validator shape rules for the new optional member ----
@@ -217,6 +320,42 @@ def test_valid_quote_receipt_rejects_malformed_stitching():
         receipt = _receipt()
         receipt["stitching"] = bad
         assert not provenance.valid_quote_receipt(receipt), bad
+
+
+def test_valid_quote_receipt_holds_the_published_invariants():
+    """#831 review: the D-019 contract says verified receipts only, and
+    `stitching?: object` — an explicit null is not "absent", and a
+    not-verified receipt carrying the member is out of contract."""
+    explicit_null = _receipt()
+    explicit_null["stitching"] = None
+    assert not provenance.valid_quote_receipt(explicit_null)
+
+    not_verified = provenance.quote_receipt(
+        _source(), {"algorithm": "sha256", "scope": "raw-file", "value": _HASH},
+        outcome="not-verified", checked_at="2026-08-29T10:00:00Z",
+        binding_mode="transcript-scan")
+    not_verified["stitching"] = {"cross_message": False, "cross_role": False}
+    assert not provenance.valid_quote_receipt(not_verified)
+
+
+def test_quote_receipt_rejects_malformed_stitching_instead_of_coercing():
+    """#831 review: reject-not-coerce. A junk stitching input must refuse the
+    whole receipt, never launder truthy junk into a verdict the code did not
+    derive."""
+    for junk in ("junk", 7, ["x"],
+                 {"cross_message": "yes", "cross_role": False},
+                 {"cross_message": True},
+                 {"cross_message": None, "cross_role": None}):
+        assert _receipt(stitching=junk) is None, junk
+
+
+def test_quote_receipt_rejects_stitching_on_a_not_verified_outcome():
+    receipt = provenance.quote_receipt(
+        _source(), {"algorithm": "sha256", "scope": "raw-file", "value": _HASH},
+        outcome="not-verified", checked_at="2026-08-29T10:00:00Z",
+        binding_mode="transcript-scan",
+        stitching={"cross_message": False, "cross_role": False})
+    assert receipt is None
 
 
 def test_receipt_without_stitching_is_still_valid_for_legacy_checkpoints():

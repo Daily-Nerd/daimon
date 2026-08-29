@@ -148,6 +148,7 @@ def test_norm_item_passes_trust_anatomy_fields():
         "verifier": "tier-f", "verifier_version": 1, "outcome": "verified",
         "checked_at": "2026-08-06T10:00:00Z",
         "digest_algorithm": "sha256", "message_ids": ["m1"],
+        "stitching": None,
     }
 
 def test_norm_item_trust_anatomy_fields_default_none():
@@ -178,7 +179,35 @@ def test_norm_provenance_malformed_nested_shapes():
     assert got["quote_provenance"] == {
         "verifier": None, "verifier_version": None, "outcome": None,
         "checked_at": None, "digest_algorithm": None, "message_ids": ["ok"],
+        "stitching": None,
     }
+
+
+def test_norm_provenance_preserves_the_stitching_verdict():
+    """D-019 (#829/#831): the span verdict is the field that defines the
+    format bump — the inspector must surface it, never null it."""
+    got = reader._norm_item({"text": "x", "quote_provenance": {
+        "outcome": "verified",
+        "stitching": {"cross_message": True, "cross_role": False},
+    }})
+    assert got["quote_provenance"]["stitching"] == {
+        "cross_message": True, "cross_role": False}
+
+
+def test_norm_provenance_stitching_absent_or_junk_reads_as_unknown():
+    absent = reader._norm_item({"text": "x", "quote_provenance": {
+        "outcome": "verified"}})
+    assert absent["quote_provenance"]["stitching"] is None
+
+    junk = reader._norm_item({"text": "x", "quote_provenance": {
+        "outcome": "verified", "stitching": "yes"}})
+    assert junk["quote_provenance"]["stitching"] is None
+
+    partial = reader._norm_item({"text": "x", "quote_provenance": {
+        "outcome": "verified",
+        "stitching": {"cross_message": "junk", "cross_role": True}}})
+    assert partial["quote_provenance"]["stitching"] == {
+        "cross_message": None, "cross_role": True}
 
 def test_norm_item_source_message_ids_filters_non_strings():
     got = reader._norm_item({"text": "x", "source_message_ids": ["a", 1, "b"]})

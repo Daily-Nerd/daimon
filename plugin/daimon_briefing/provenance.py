@@ -201,11 +201,13 @@ def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
         "checked_at": checked_at,
         "binding": {"mode": binding_mode, "message_ids": ids},
     }
-    if isinstance(stitching, dict):
-        receipt["stitching"] = {
-            "cross_message": bool(stitching.get("cross_message")),
-            "cross_role": bool(stitching.get("cross_role")),
-        }
+    if stitching is not None:
+        # #831 review: reject-not-coerce. The raw value is copied through for
+        # the trailing valid_quote_receipt gate to refuse — never coerced
+        # into a verdict the code did not derive (bool() would launder any
+        # truthy junk into True).
+        receipt["stitching"] = (dict(stitching) if isinstance(stitching, dict)
+                                else stitching)
     return receipt if valid_quote_receipt(receipt) else None
 
 
@@ -248,11 +250,16 @@ def valid_quote_receipt(value) -> bool:
         return False
     if len(ids) != len(set(ids)):
         return False
-    stitching = value.get("stitching")
-    if stitching is not None:
-        # #829: optional (absent = unknown on every pre-#829 receipt); when
-        # present, exactly the two boolean verdicts — a non-bool would let a
-        # truthy junk value read as an attribution the code never derived.
+    if "stitching" in value:
+        # #829/#831: optional (absent = unknown on every pre-D-019 receipt),
+        # but present means the published contract's exact shape: verified
+        # receipts only (a not-verified check matched no fragments to
+        # attribute), an object — explicit null is NOT "absent" — and
+        # exactly boolean verdicts, so truthy junk can never read as an
+        # attribution the code derived.
+        stitching = value["stitching"]
+        if value.get("outcome") != "verified":
+            return False
         if not isinstance(stitching, dict):
             return False
         for key in ("cross_message", "cross_role"):

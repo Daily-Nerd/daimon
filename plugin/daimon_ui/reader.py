@@ -190,6 +190,19 @@ def _norm_provenance(raw):
                             and not isinstance(version, bool) else None)
     else:
         verifier_id, verifier_version = _norm_str(verifier), None
+    # D-019 (#829): the stitching span verdict — the field that defines the
+    # format bump — passes through per-key, unknown-shaped values reading as
+    # None rather than a guessed verdict.
+    stitching = raw.get("stitching")
+    if isinstance(stitching, dict):
+        cm = stitching.get("cross_message")
+        cr = stitching.get("cross_role")
+        stitching_norm = {
+            "cross_message": cm if isinstance(cm, bool) else None,
+            "cross_role": cr if isinstance(cr, bool) else None,
+        }
+    else:
+        stitching_norm = None
     return {
         "verifier": verifier_id,
         "verifier_version": verifier_version,
@@ -197,6 +210,7 @@ def _norm_provenance(raw):
         "checked_at": _norm_str(raw.get("checked_at")),
         "digest_algorithm": _norm_str(digest.get("algorithm")),
         "message_ids": _norm_str_list(binding.get("message_ids")),
+        "stitching": stitching_norm,
     }
 
 def _norm_item(raw):
