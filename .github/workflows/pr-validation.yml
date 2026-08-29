@@ -20,26 +20,60 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
+      # Issue-free documentation is deliberately narrower than "any Markdown":
+      # SKILL.md and other agent instructions are executable behavior, not docs.
+      DOCS_ONLY_PATH_RE: '^(README\.md|(plugin|hook|benchmark)/README\.md|research/(.*/)?README\.md|docs/.*\.(md|png|gif|jpe?g|webp|ico)|website/(docs|blog)/.*\.md|website/static/img/.*\.(png|gif|jpe?g|webp|ico))$'
+      # CI changes can alter credentials, releases, and publishing. They bypass
+      # an issue only with explicit PR approval; this allowlist merely defines
+      # what may ASK for that bypass. Exact policy-test path is included so the
+      # gate and its regression contract can change together.
+      CI_ONLY_PATH_RE: '^(\.github/(workflows/[^/]+\.ya?ml|actions/.+|dependabot\.ya?ml|PULL_REQUEST_TEMPLATE\.md)|\.pre-commit-config\.yaml|codecov\.ya?ml|release-please-config\.json|\.release-please-manifest\.json|plugin/tests/test_pr_template_matches_gates\.py)$'
     steps:
-      # scar promotions move a reviewed candidate into .scars/ — the human
-      # sign-off already happened at `scar promote` (reviewer recorded in the
-      # scar's authors). The issue-first gate governs code contributions, so
-      # scars-only PRs skip the two issue steps; label/title/branch still apply.
-      - name: Detect scars-only change
-        id: scars_only
+      # Three narrowly-defined paths may skip a separate issue:
+      #   scars: human sign-off already happened at `scar promote`;
+      #   docs: prose-only changes carrying type:docs;
+      #   CI: allowlisted governance changes carrying BOTH type:ci and the
+      #       explicit status:approved PR label.
+      # Everything else remains issue-first. A mixed PR is always "other".
+      - name: Classify issue policy
+        id: issue_policy
         run: |
-          files="$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path')"
+          # REST + --paginate is deliberate: a GraphQL files connection may
+          # expose only its first page. One omitted code path could otherwise
+          # misclassify a large mixed PR as docs-only or CI-only.
+          files="$(gh api "repos/$REPO/pulls/$PR/files?per_page=100" \
+                    --paginate --jq '.[].filename')"
+          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
+
+          kind=other
           if [ -n "$files" ] && ! grep -qvE '^\.scars/' <<<"$files"; then
-            echo "scars_only=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "scars_only=false" >> "$GITHUB_OUTPUT"
+            kind=scars
+          elif [ -n "$files" ] && ! grep -qvE "$DOCS_ONLY_PATH_RE" <<<"$files"; then
+            kind=docs
+          elif [ -n "$files" ] && ! grep -qvE "$CI_ONLY_PATH_RE" <<<"$files"; then
+            kind=ci
           fi
+
+          exempt=false
+          if [ "$kind" = scars ]; then
+            exempt=true
+          elif [ "$kind" = docs ] && grep -qx 'type:docs' <<<"$labels"; then
+            exempt=true
+          elif [ "$kind" = ci ] \
+               && grep -qx 'type:ci' <<<"$labels" \
+               && grep -qx 'status:approved' <<<"$labels"; then
+            exempt=true
+          fi
+
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "exempt=$exempt" >> "$GITHUB_OUTPUT"
+          echo "Issue policy: kind=$kind exempt=$exempt"
 
       # `refs` links a staged issue (one issue, several sequential PRs) without
       # GitHub's auto-close-on-merge; `closes`/`fixes`/`resolves` stay the verbs
       # for a PR that finishes its issue.
       - name: Check Issue Reference
-        if: steps.scars_only.outputs.scars_only != 'true'
+        if: steps.issue_policy.outputs.exempt != 'true'
         run: |
           body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
           if ! grep -qiE '(closes|fixes|resolves|refs) #[0-9]+' <<<"$body"; then
@@ -48,7 +82,7 @@ jobs:
           fi
 
       - name: Check Issue Has status:approved
-        if: steps.scars_only.outputs.scars_only != 'true'
+        if: steps.issue_policy.outputs.exempt != 'true'
         run: |
           body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
           issue="$(grep -oiE '(closes|fixes|resolves|refs) #[0-9]+' <<<"$body" | head -1 | grep -oE '[0-9]+')"
