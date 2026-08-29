@@ -84,19 +84,19 @@ jobs:
       - name: ruff check
         run: uv run --extra dev ruff check daimon_briefing tests ../scripts
 
-      # Non-blocking: mypy currently reports pre-existing errors that are a
-      # deliberate follow-up. continue-on-error keeps them visible in the log
-      # without blocking merges; tightened to blocking in a later slice.
+      # BLOCKING (#823): pre-enforcement debt lives in pyproject's
+      # tool.mypy.overrides ratchet list, which only shrinks. Every module
+      # outside that list, and every new module, is enforced here.
       - name: mypy
-        continue-on-error: true
         run: uv run --extra dev mypy daimon_briefing
 
       # #795: a ReadResult reaching a body-only call site is a SILENT wrong
-      # answer (a frozen dataclass is truthy, not None and not a dict), so
-      # this step is blocking while mypy above stays advisory: any mypy
-      # finding that mentions ReadResult outside store.py fails the build.
-      # Scoped by symbol, not path, so it needs no baseline and survives
-      # until the #795 stage 4 cleanup.
+      # answer (a frozen dataclass is truthy, not None and not a dict): any
+      # mypy finding that mentions ReadResult outside store.py fails the
+      # build. Scoped by symbol, not path. NOTE (#823): the ratchet's
+      # ignore_errors silences findings INSIDE listed debt modules, so this
+      # guard covers a debt module only once it leaves the list; the
+      # migration manifest test and scar 0063 hold that line meanwhile.
       - name: mypy ReadResult containment
         run: |
           uv run --extra dev mypy daimon_briefing > mypy-out.txt || true

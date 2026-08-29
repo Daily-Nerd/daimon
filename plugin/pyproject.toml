@@ -85,11 +85,52 @@ line-length = 88
 select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
-# Non-blocking in CI (continue-on-error). ignore_missing_imports absorbs the
-# optional rich / host-provided imports; strict mode and the remaining errors
-# are a deliberate follow-up, not this slice.
+# BLOCKING in CI (#823). ignore_missing_imports absorbs the optional rich /
+# host-provided imports. Modules that predate enforcement carry their debt in
+# the overrides list below.
 python_version = "3.10"
 ignore_missing_imports = true
+
+# #823 ratchet: the modules with type errors on the day mypy became blocking.
+# THE LIST ONLY SHRINKS — clean a module, remove its entry in the same PR;
+# nothing is ever added. Every module absent from this list (and every future
+# module) is enforced from its first commit. Note ignore_errors also silences
+# the CI ReadResult-containment grep INSIDE these modules; that guard returns
+# per module as the list shrinks (the migration manifest test and scar 0063
+# hold the line in the interim).
+[[tool.mypy.overrides]]
+module = [
+    "daimon_briefing.amendments",
+    "daimon_briefing.briefing",
+    "daimon_briefing.carry",
+    "daimon_briefing.cli",
+    "daimon_briefing.cli.amend",
+    "daimon_briefing.cli.hooks",
+    "daimon_briefing.cli.lifecycle",
+    "daimon_briefing.cli.refute",
+    "daimon_briefing.cli.request",
+    "daimon_briefing.cli.ruling",
+    "daimon_briefing.cli.skill",
+    "daimon_briefing.inspector",
+    "daimon_briefing.ledger",
+    "daimon_briefing.pending",
+    "daimon_briefing.policy",
+    "daimon_briefing.privacy",
+    "daimon_briefing.provenance",
+    "daimon_briefing.recall",
+    "daimon_briefing.refutations",
+    "daimon_briefing.relations",
+    "daimon_briefing.render",
+    "daimon_briefing.requests",
+    "daimon_briefing.schema",
+    "daimon_briefing.serializer",
+    "daimon_briefing.skill_install",
+    "daimon_briefing.store",
+    "daimon_briefing.teamproject",
+    "daimon_briefing.teamsync",
+    "daimon_briefing.transcript",
+]
+ignore_errors = true
 
 [tool.coverage.run]
 source = ["daimon_briefing", "daimon_ui"]
