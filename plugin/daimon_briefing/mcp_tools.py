@@ -63,7 +63,12 @@ def _brief(arguments: dict) -> str:
     # no-content returns carry them too.
     rulings = briefing.ruling_lines(target)
     ruling_text = ("\n".join(rulings) + "\n\n") if rulings else ""
-    checkpoint = store.read_latest(project_dir=target, fallback=False)
+    # Route.OWN is a DECISION here, not a leftover: an agent tool result
+    # carrying another project's briefing is contamination, and a pre-routing
+    # store stays read-only for project-scoped surfaces — an un-routed body
+    # would hand the agent handles no scoped write could act on.
+    checkpoint = store.read_latest_body(project_dir=target, route=store.Route.OWN,
+                                        admit=store.Admit.ANY)
     if checkpoint is None:
         # Orientation without content: name the explicit path, leak nothing
         # (#96, machine edition — an agent tool result carrying another

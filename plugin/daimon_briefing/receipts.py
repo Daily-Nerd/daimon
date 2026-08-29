@@ -530,7 +530,9 @@ def status_line(project_dir=None) -> str | None:
     # #791: this line names the session it reports on, so it must not answer
     # with another project's record. An un-routed checkpoint still counts as
     # reportable, which keeps pre-routing stores working.
-    checkpoint = store.read_latest_reportable(project_dir)
+    checkpoint = store.read_latest_body(project_dir=project_dir,
+                                        route=store.Route.OWN_ELSE_GLOBAL,
+                                        admit=store.Admit.OWN_OR_UNROUTED)
     if not isinstance(checkpoint, dict) or not checkpoint.get("session_id"):
         return "receipts: on — no checkpoint to sign yet"
     sid = str(checkpoint["session_id"])
