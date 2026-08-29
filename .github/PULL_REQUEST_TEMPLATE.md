@@ -4,7 +4,11 @@ Closes #
 CI gates on this PR (pr-validation.yml):
 - body links an issue labeled status:approved (Closes/Fixes/Resolves #N;
   use "Refs #N" for a stage of a multi-PR issue so merging doesn't close it —
-  the final stage uses Closes)
+  the final stage uses Closes), except:
+  - allowlisted documentation-only PRs labeled type:docs
+  - allowlisted CI-only PRs labeled type:ci AND status:approved on the PR
+  - scars-only PRs, whose human sign-off happened at promotion
+  Mixed changes never receive an issue bypass.
 - exactly one type:* label on the PR
 - conventional title — squash-merge makes it the commit subject on main
 - branch named type/description (lowercase), where type is one of:

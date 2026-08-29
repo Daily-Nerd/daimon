@@ -27,6 +27,14 @@ def _gate_types():
     return m.group(1).split("|")
 
 
+def _policy_regex(name):
+    """Compile one single-quoted path policy from the workflow env."""
+    body = WORKFLOW.read_text(encoding="utf-8")
+    m = re.search(rf"^\s+{re.escape(name)}: '([^']+)'$", body, re.MULTILINE)
+    assert m, f"{name} not found; the policy test is measuring nothing"
+    return re.compile(m.group(1))
+
+
 def test_the_regex_is_still_shaped_the_way_this_test_assumes():
     # Guard against the test silently passing if the workflow is restructured.
     types = _gate_types()
@@ -52,3 +60,71 @@ def test_the_template_does_not_invent_types_the_gate_rejects():
     assert set(documented) <= set(_gate_types()), (
         f"template documents types the gate rejects: "
         f"{sorted(set(documented) - set(_gate_types()))}")
+
+
+@pytest.mark.parametrize("path", [
+    "README.md",
+    "plugin/README.md",
+    "research/experiments/README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/demo/daimon-demo.gif",
+    "website/docs/concepts/architecture.md",
+    "website/blog/2026-08-29-architecture.md",
+    "website/static/img/architecture.png",
+])
+def test_docs_issue_bypass_accepts_only_declared_public_docs(path):
+    assert _policy_regex("DOCS_ONLY_PATH_RE").fullmatch(path)
+
+
+@pytest.mark.parametrize("path", [
+    "skills/daimon-briefing/SKILL.md",
+    "docs/demo/daimon-demo.tape",
+    "website/docs/concepts/interactive.mdx",
+    "website/static/img/active-content.svg",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "website/docusaurus.config.ts",
+    "website/package.json",
+    "plugin/daimon_briefing/briefing.py",
+])
+def test_docs_issue_bypass_rejects_executable_or_governance_surfaces(path):
+    assert not _policy_regex("DOCS_ONLY_PATH_RE").fullmatch(path)
+
+
+@pytest.mark.parametrize("path", [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yaml",
+    ".github/actions/setup/action.yml",
+    ".github/dependabot.yml",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".pre-commit-config.yaml",
+    "release-please-config.json",
+    ".release-please-manifest.json",
+    "plugin/tests/test_pr_template_matches_gates.py",
+])
+def test_ci_issue_bypass_accepts_only_declared_governance_files(path):
+    assert _policy_regex("CI_ONLY_PATH_RE").fullmatch(path)
+
+
+@pytest.mark.parametrize("path", [
+    ".github/ISSUE_TEMPLATE/feature_request.yml",
+    "scripts/sync_hooks.py",
+    "plugin/uv.lock",
+    "website/package-lock.json",
+    "plugin/daimon_briefing/store.py",
+])
+def test_ci_issue_bypass_rejects_code_dependencies_and_issue_forms(path):
+    assert not _policy_regex("CI_ONLY_PATH_RE").fullmatch(path)
+
+
+def test_issue_bypasses_keep_their_required_labels_and_mixed_pr_guard():
+    body = WORKFLOW.read_text(encoding="utf-8")
+    assert "[ \"$kind\" = docs ] && grep -qx 'type:docs'" in body
+    assert "grep -qx 'type:ci'" in body
+    assert "grep -qx 'status:approved'" in body
+    assert 'kind=other' in body
+    assert "--paginate --jq '.[].filename'" in body
+
+    template = TEMPLATE.read_text(encoding="utf-8")
+    assert "documentation-only PRs labeled type:docs" in template
+    assert "CI-only PRs labeled type:ci AND status:approved" in template
+    assert "Mixed changes never receive an issue bypass" in template
