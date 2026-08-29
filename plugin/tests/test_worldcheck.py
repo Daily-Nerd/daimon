@@ -1389,6 +1389,58 @@ def test_receipt_never_overwrites_a_text_class_stamp(receipts_on, proj,
     assert stats[worldcheck.LEDGER_KEY] == [("o-000001", "receipt", "receipt-invalid")]
 
 
+def test_two_axis_item_counts_once_in_the_aggregates(receipts_on, proj,
+                                                     monkeypatch, fake_gh):
+    """#830: the three aggregates are counted per ITEM (the docstring's
+    promise, and what cli's usage counters emit under), so an item carrying
+    BOTH a text claim and a receipt-validity claim increments them once —
+    while the per-class keys keep the per-claim detail."""
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    gh, _log = fake_gh("echo '{\"state\":\"MERGED\"}'")
+    _enable_probes(monkeypatch, gh)
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"], texts=["PR #60 awaiting review"])
+    stats = worldcheck.check(cp, proj)
+    assert (stats["confirmed"] + stats["contradicted"] + stats["skipped"]) == 1
+    assert stats["contradicted"] == 1
+    assert stats["pr-state:contradicted"] == 1
+    assert stats["receipt-validity:contradicted"] == 1
+
+
+def test_two_axis_rollup_first_outcome_wins(receipts_on, proj, monkeypatch,
+                                            fake_gh):
+    """#830: per-item rollup semantics aligned with the stamp collision rule
+    (text claims are emitted first per item, FIRST wins): a text-confirmed,
+    receipt-contradicted item aggregates as confirmed, while the receipt
+    axis keeps its per-class count, its stamp, and its ledger row."""
+    monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
+    gh, _log = fake_gh("echo '{\"state\":\"OPEN\"}'")
+    _enable_probes(monkeypatch, gh)
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"], texts=["PR #60 awaiting review"])
+    stats = worldcheck.check(cp, proj)
+    assert stats["confirmed"] == 1
+    assert stats["contradicted"] == 0
+    assert stats["pr-state:confirmed"] == 1
+    assert stats["receipt-validity:contradicted"] == 1
+    assert stats[worldcheck.LEDGER_KEY] == [
+        ("o-000001", "receipt", "receipt-invalid")]
+    item = cp["working_context"]["open_questions"][0]
+    assert item["_worldcheck_confirmed"] is True
+    assert item["_worldcheck"]["status"] == "unverified"
+
+
+def test_single_axis_aggregates_are_unchanged(receipts_on, proj):
+    """#830 regression guard: items with ONE claim keep counting exactly as
+    before the per-item rollup."""
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin", "S-origin"])
+    stats = worldcheck.check(cp, proj)
+    assert (stats["confirmed"], stats["contradicted"], stats["skipped"]) \
+        == (2, 0, 0)
+    assert stats["receipt-validity:confirmed"] == 2
+
+
 def test_receipt_claims_are_carried_only(receipts_on, proj):
     _signed_origin("S-origin", proj)
     cp = _cp_origins(["S-origin"])
