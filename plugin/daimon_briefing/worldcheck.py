@@ -742,12 +742,16 @@ def check(checkpoint, project_dir) -> dict:
     persisted).
 
     Returns {"confirmed": n, "contradicted": n, "skipped": n} counted per
-    ITEM, plus a "<class>:<outcome>" key for every outcome that actually
-    occurred (#397) — so the caller's usage counters measure the fires-true
-    rate per claim class while the aggregate three keep their slice-1
-    meaning. Zero-claim checkpoints return all-zeros and cost one iteration,
-    no probe of any kind. Confirmed items are untouched: only a contradiction
-    earns any surface at all.
+    ITEM — once per claim-bearing item, the FIRST claim's outcome deciding
+    which aggregate it lands in (#830; text claims are emitted before
+    receipt claims per item, the same ordering that decides the stamp
+    collision below, so a two-axis item rolls up under its text outcome) —
+    plus a "<class>:<outcome>" key for every outcome that actually occurred
+    (#397), counted per CLAIM, so the caller's usage counters measure the
+    fires-true rate per claim class while the aggregate three keep their
+    slice-1 meaning. Zero-claim checkpoints return all-zeros and cost one
+    iteration, no probe of any kind. Confirmed items are untouched: only a
+    contradiction earns any surface at all.
 
     #439 adds ONE non-counter key, `LEDGER_KEY`, present only when a receipt
     verification actually failed: [(item_ref, check, reason)] rows for the
@@ -796,6 +800,10 @@ def check(checkpoint, project_dir) -> dict:
     probes.update(_gh_probes(plan, project_dir))
     results.update(_run_probes(probes, cwd=project_dir, deadline=deadline))
     ledger = []
+    # #830: the aggregate three count once per ITEM (the docstring's promise,
+    # and what cli emits usage events under) — identity-keyed, because two
+    # items may be equal dicts yet distinct claims-bearers.
+    counted: set = set()
     for item, cls, claim in claims:
         value = results.get((cls, _target(cls, claim)))
         if value is None:
@@ -822,7 +830,9 @@ def check(checkpoint, project_dir) -> dict:
                 # An id-less item yields no row: a ledger entry nobody can
                 # trace back is noise (serializer.verification_rejections).
                 ledger.append((ref, _LEDGER_CHECK, _LEDGER_REASONS[value]))
-        stats[outcome] += 1
+        if id(item) not in counted:
+            counted.add(id(item))
+            stats[outcome] += 1
         stats[f"{cls}:{outcome}"] = stats.get(f"{cls}:{outcome}", 0) + 1
     if ledger:
         stats[LEDGER_KEY] = ledger
