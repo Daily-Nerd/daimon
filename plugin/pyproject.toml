@@ -103,7 +103,6 @@ module = [
     "daimon_briefing.amendments",
     "daimon_briefing.carry",
     "daimon_briefing.cli",
-    "daimon_briefing.cli.hooks",
     "daimon_briefing.cli.lifecycle",
     "daimon_briefing.cli.refute",
     "daimon_briefing.cli.request",

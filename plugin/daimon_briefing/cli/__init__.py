@@ -30,6 +30,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TypedDict
 
 from .. import amendments, anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 from .. import __version__
@@ -2743,7 +2744,22 @@ def _cmd_stats(args) -> int:
 # copies live in daimon_briefing/_hooks/ and are drift-guarded against the
 # repo's hook/ dir by tests/test_hooks_install.py. Claude Code is absent on
 # purpose: the plugin marketplace owns that path.
-_HOOK_HOSTS = {
+class _HookHostSpec(TypedDict, total=False):
+    """Per-key types for the hook host table (#842).
+
+    A plain dict literal types this as a mapping to "tuple or str", so
+    `spec["files"]` came out as a union and `pkg / name` read as dividing a
+    Path by a sequence. The keys genuinely differ in type and genuinely differ
+    in presence (codex carries `register` and no `entry`), which is what a
+    TypedDict says and a value-type union cannot."""
+
+    files: tuple[str, ...]
+    entry: str
+    events: tuple[str, ...]
+    register: str
+
+
+_HOOK_HOSTS: dict[str, _HookHostSpec] = {
     "windsurf": {
         # redact.py ships alongside the scripts so the standalone hooks can
         # scrub secrets at their write sites (#109) without importing the
