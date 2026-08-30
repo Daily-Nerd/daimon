@@ -22,8 +22,12 @@ value is EVIDENCE, not a verdict: "was contradicted by <evidence> at <ts>"
 currently false". Replacement and contradiction are independent axes:
 neither write ever touches the other. Authority precedent: model-flagged
 contradictions never mint the link — derived world evidence writes it, or
-nothing does). A contentless FTS5 table indexes text + quote for MATCH;
-rows join back to `items` by rowid.
+nothing does. #837 made the read surfaces honor it: search sorts a
+contradicted row below a merely-replaced one, suggest demotes it harder than
+supersession does, and both CLI renderers mark it. None of them filters —
+the evidence is machine-local and cure-less, so burial stays visible and
+reversible rather than silent). A contentless FTS5 table indexes text +
+quote for MATCH; rows join back to `items` by rowid.
 
 Supersession v3 (#234) is ITEM-LEVEL evidence only: `superseded_by` is set by
 typed `supersedes` links (#14) — id-bound directly, free-text via never-guess
@@ -680,6 +684,32 @@ def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
                  ref, bucket.name, author))
 
 
+def describe_invalidation(value) -> str | None:
+    """Render one stored `invalidated_by` value as a marker phrase, or None.
+
+    The ONE parse of the encoding the fold above writes, deliberately living
+    beside that write (#837): a renderer that re-split the value on its own
+    would be free to drift into describing a different view than the one the
+    verifier recorded. Every read surface calls this.
+
+    Wording is bound by the field's semantics, not by convenience: the slot
+    holds the latest contradiction EVIDENCE, so the phrase names the evidence
+    and its timestamp and stops there. It never says "false" and never says
+    "invalid" — no confirmation row and no cure path exist yet, so a
+    present-tense verdict would claim more than the record can carry. Tense
+    belongs to the caller's sentence, not to this fragment.
+
+    Tolerant by construction: a value this module could not have written
+    (hand-edited db, a future encoding) still renders as evidence rather than
+    raising on a user's read path — a marker is never worth a traceback."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    evidence, sep, ts = value.rpartition("@")
+    if not (sep and evidence and ts):
+        return f"contradicted by {value}"
+    return f"contradicted by {evidence} at {ts}"
+
+
 def rebuild() -> int:
     """Drop + rebuild the whole index by scanning local + team checkpoints.
     Atomic: builds into a sibling temp file, then os.replace — a concurrent
@@ -898,7 +928,14 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         sql += " AND i.project_slug = ?"
     # frontier is a TIEBREAK after relevance (#234): equally-relevant rows
     # from the newest checkpoint edge out older ones — silently, no label.
-    sql += (" ORDER BY (i.superseded_by IS NOT NULL) ASC, rank ASC,"
+    # Contradiction leads the demotion keys (#837): "at least as strongly as
+    # superseded" is the issue's floor, and evidence that a probe contradicted
+    # a claim is the stronger fact of the two, so a contradicted row sorts
+    # below a merely-replaced one. Both stay ABOVE nothing — demoted, never
+    # filtered out: the evidence is machine-local and has no cure path, so
+    # burial must remain visible and reversible rather than silent.
+    sql += (" ORDER BY (i.invalidated_by IS NOT NULL) ASC,"
+            " (i.superseded_by IS NOT NULL) ASC, rank ASC,"
             " i.frontier DESC, i.created DESC LIMIT ?")
 
     want_n = max(1, int(limit))
@@ -1205,6 +1242,39 @@ def is_machine_prompt(prompt: str) -> bool:
     return any(line.startswith(_MACHINE_MARKERS) for line in head.split("\n"))
 
 
+# Interval-slot demotions for the auto-inject path. Multiplicative and
+# INDEPENDENT, because the two facts are (#836): "replaced by later work" and
+# "a probe contradicted this" can hold together, separately, or not at all, so
+# an item carrying both is demoted by both. Contradiction is the heavier of
+# the two — a replaced decision was still the right call at the time, whereas
+# contradiction evidence says a check disagreed with the claim itself.
+#
+# Neither is a filter. #112's rule holds for both: an overturned item is still
+# evidence, and this evidence is machine-local with no cure path yet, so it
+# ranks down and renders flagged rather than disappearing.
+_SUPERSEDED_WEIGHT = 0.7
+_INVALIDATED_WEIGHT = 0.4
+
+
+def _suggest_weight(row, item_type: str, now: float) -> float:
+    """One row's suggest() rank weight: #78 effective_weight, then the
+    interval-slot demotions. Extracted so the penalties are testable at the
+    weight level rather than only through a rigged end-to-end fixture."""
+    weight = scoring.effective_weight(
+        {"importance": row.get("importance"),
+         "first_seen": row.get("first_seen"),
+         # trust is part of the record's authority (#408): drop it here and
+         # the trust ceiling never applies to recall ranking, letting an
+         # inferred item ride relevance x recency to a verbatim item's band.
+         "trust": row.get("trust")},
+        item_type, now)
+    if row.get("superseded_by"):
+        weight *= _SUPERSEDED_WEIGHT
+    if row.get("invalidated_by"):
+        weight *= _INVALIDATED_WEIGHT
+    return weight
+
+
 def suggest(prompt: str, project_dir=None, current_session=None,
             exclude_sessions=(), limit: int = 2, now=None) -> list[dict]:
     """Proactive matches for a user prompt, or [] — silence is the default and
@@ -1226,6 +1296,13 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     flag means item-level evidence (a typed supersedes link or a logged
     resolution, #234), so it is rare and load-bearing; it still never hides
     a result (an overturned decision is still evidence, #112).
+
+    Items carrying contradiction evidence (#837) are included on the same
+    terms and demoted harder, the two penalties stacking because the axes
+    are independent. This is the path that mattered most: everything here
+    lands in the user's next prompt unasked, so an unconsumed invalidated_by
+    meant re-asserting a claim this install's own ledger contradicted, at
+    full weight, on the one surface nobody chose to read.
 
     Each returned row also carries `term_hits` (its own distinct-term match
     count) and `pinned` (the #369 standing-rule flag) — inputs to the cli
@@ -1255,6 +1332,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
         " i.session_id, i.created, i.importance, i.first_seen, i.superseded_by,"
+        # #837: the column MUST be selected here, not just written — this is
+        # the auto-inject path, so a missing select re-asserts a claim this
+        # install's own ledger contradicted, on the highest-leverage surface.
+        " i.invalidated_by,"
         # pinned rides out for the #452 age gate (standing rules are
         # age-independent); it is NOT a rank input here.
         " i.pinned,"
@@ -1309,15 +1390,8 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         # the existing len(hit) tiebreak below.
         r["term_hits"] = len(hit)
         relevance = max(0.0, -float(r["rank"]))  # FTS5 bm25(): smaller = better
-        weight = scoring.effective_weight(
-            {"importance": r["importance"], "first_seen": r["first_seen"],
-             # trust is part of the record's authority (#408): drop it here and
-             # the trust ceiling never applies to recall ranking, letting an
-             # inferred item ride relevance x recency to a verbatim item's band.
-             "trust": r["trust"]},
-            _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
-        if r["superseded_by"]:
-            weight *= 0.7  # flagged and ranked down, never hidden (#112)
+        weight = _suggest_weight(
+            r, _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
         scored.append((relevance * weight, len(hit), r))
 
     scored.sort(key=lambda s: (-s[0], -s[1]))

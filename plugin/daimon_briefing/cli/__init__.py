@@ -827,10 +827,17 @@ def _cmd_recall(args) -> int:
         superseded = ("" if not sup
                       else " [resolved]" if sup == "resolved"
                       else f" [superseded by {sup}]")
+        # #837: an independent axis gets an independent marker — a row can
+        # carry both, and collapsing them would hide one fact behind the
+        # other. recall owns the phrasing so this marker can never describe a
+        # different view than the fold recorded.
+        inv = recall.describe_invalidation(r.get("invalidated_by"))
+        contradicted = f" [{inv}]" if inv else ""
         trust = r.get("trust") or "untagged"
         item_id = f" [{r['item_id']}]" if r.get("item_id") else ""
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}]{item_id} {r['text']} "
-                     f"({r['session_id']}, {age} ago){superseded}")
+                     f"({r['session_id']}, {age} ago){superseded}"
+                     f"{contradicted}")
     render.render_recall_lines(lines)
     return 0
 
@@ -1411,9 +1418,17 @@ def _suggest_line(r: dict, terms, now: float) -> str:
     superseded = ("" if not sup
                   else " (resolved)" if sup == "resolved"
                   else " (superseded by later work)")
+    # #837: suggest() ranks a contradicted item DOWN, and a demotion alone is
+    # silent burial — one that still clears the gate has to arrive flagged.
+    # The evidence is named in full here, unlike the supersession marker's
+    # vaguer wording, because there is no `daimon why` follow-up that would
+    # surface it and no cure path that would retract it.
+    inv = recall.describe_invalidation(r.get("invalidated_by"))
+    contradicted = f" ({inv})" if inv else ""
     more = " ".join(terms[:3])
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "
-            f"({age} ago): \"{text}\" [{trust}]{superseded}. "
+            f"({age} ago): \"{text}\" [{trust}]{superseded}"
+            f"{contradicted}. "
             f"More: daimon recall \"{more}\"")
 
 
