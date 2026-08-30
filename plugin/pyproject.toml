@@ -113,7 +113,6 @@ module = [
     "daimon_briefing.ledger",
     "daimon_briefing.pending",
     "daimon_briefing.privacy",
-    "daimon_briefing.provenance",
     "daimon_briefing.recall",
     "daimon_briefing.refutations",
     "daimon_briefing.relations",

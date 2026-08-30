@@ -312,7 +312,7 @@ class SourceResolver:
                 return list(self._indexes[host].get(sid, ()))
             if host == "codex":
                 if host not in self._indexes:
-                    paths = []
+                    paths: list[Path] = []
                     for root in self._roots(host) or ():
                         if root.exists():
                             paths.extend(root.rglob("*.jsonl"))
