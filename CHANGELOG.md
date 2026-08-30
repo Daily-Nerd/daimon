@@ -5,6 +5,19 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.37.0](https://github.com/Daily-Nerd/daimon/compare/v0.36.0...v0.37.0) (2026-08-30)
+
+
+### Features
+
+* **recall:** let a later confirmation clear invalidated_by ([#845](https://github.com/Daily-Nerd/daimon/issues/845)) ([e22bfb9](https://github.com/Daily-Nerd/daimon/commit/e22bfb93c6e424d19ed5100aca0db430669341e8))
+* **scoring:** publish the effective_weight computation on daimon why ([#844](https://github.com/Daily-Nerd/daimon/issues/844)) ([01e6ed7](https://github.com/Daily-Nerd/daimon/commit/01e6ed71fb4a3dbb32598b46792727956e05b72d))
+
+
+### Bug Fixes
+
+* **status:** warn about the global fallback only when the opt-in is active ([#841](https://github.com/Daily-Nerd/daimon/issues/841)) ([be3f9ff](https://github.com/Daily-Nerd/daimon/commit/be3f9ffd1d0efacb1bee33634f1ac9aa94ca44a4))
+
 ## [0.36.0](https://github.com/Daily-Nerd/daimon/compare/v0.35.0...v0.36.0) (2026-08-30)
 
 
