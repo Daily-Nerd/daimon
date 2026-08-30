@@ -118,7 +118,6 @@ module = [
     "daimon_briefing.relations",
     "daimon_briefing.render",
     "daimon_briefing.requests",
-    "daimon_briefing.skill_install",
     "daimon_briefing.teamsync",
     "daimon_briefing.transcript",
 ]
