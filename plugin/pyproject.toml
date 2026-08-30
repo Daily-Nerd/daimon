@@ -105,7 +105,6 @@ module = [
     "daimon_briefing.cli",
     "daimon_briefing.cli.lifecycle",
     "daimon_briefing.cli.refute",
-    "daimon_briefing.cli.request",
     "daimon_briefing.cli.ruling",
     "daimon_briefing.cli.skill",
     "daimon_briefing.ledger",

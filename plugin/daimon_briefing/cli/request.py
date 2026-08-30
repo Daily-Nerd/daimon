@@ -304,7 +304,21 @@ def _cmd_request_revise(args) -> int:
         print(f"request not revised: {exc}")
         return 1
     _cli._note_usage("request:revise")
+    # #857: `revise()` above read the record through _require, and this is a
+    # SECOND read. A writer between the two makes it None, and rendering a
+    # card from None dies inside render_state rather than saying anything.
+    # Both sibling paths already handle this; only revise did not.
+    #
+    # The revision itself landed before the record went, so the line reports
+    # that. Saying nothing, or failing, would describe the wrong half of what
+    # happened.
     record = requests.get(args.request_id, project_dir=project)
+    if record is None:
+        render.render_ledger_lines(
+            [f"{args.request_id}: revision recorded in this project's ledger",
+             "  the record is not readable from this bucket right now — the "
+             "revision is on the ledger and renders with the request"])
+        return 0
     render.render_ledger_lines(_request_lines(record, project_dir=project))
     return 0
 
