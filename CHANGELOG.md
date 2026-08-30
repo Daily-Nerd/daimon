@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **request:** revise survives its record vanishing between two reads ([#858](https://github.com/Daily-Nerd/daimon/issues/858)) ([6c8074e](https://github.com/Daily-Nerd/daimon/commit/6c8074eab10257253926f27a5ef4748aaed22b0b))
 * **status:** warn about the global fallback only when the opt-in is active ([#841](https://github.com/Daily-Nerd/daimon/issues/841)) ([be3f9ff](https://github.com/Daily-Nerd/daimon/commit/be3f9ffd1d0efacb1bee33634f1ac9aa94ca44a4))
 
 ## [0.36.0](https://github.com/Daily-Nerd/daimon/compare/v0.35.0...v0.36.0) (2026-08-30)
