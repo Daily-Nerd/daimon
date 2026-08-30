@@ -5,6 +5,30 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.0](https://github.com/Daily-Nerd/daimon/compare/v0.35.0...v0.36.0) (2026-08-30)
+
+
+### Features
+
+* **recall:** honor invalidated_by in suggest, search ranking and the CLI markers ([#838](https://github.com/Daily-Nerd/daimon/issues/838)) ([2abf0c4](https://github.com/Daily-Nerd/daimon/commit/2abf0c472434a55c814a690fdd23127b4e432e3f))
+* **recall:** populate items.invalidated_by from worldcheck contradiction evidence ([#836](https://github.com/Daily-Nerd/daimon/issues/836)) ([0fc657c](https://github.com/Daily-Nerd/daimon/commit/0fc657c41fa8c50399bf4ae427b59ae201f6244a))
+* **schema:** published machine-readable checkpoint schema from one declarative field table ([#828](https://github.com/Daily-Nerd/daimon/issues/828)) ([8a16b27](https://github.com/Daily-Nerd/daimon/commit/8a16b272b7977684d7f0eb51949ef4e2c5bc80b9))
+* **serializer:** record cross-message and cross-role quote stitching on the verification receipt ([#831](https://github.com/Daily-Nerd/daimon/issues/831)) ([cb5c184](https://github.com/Daily-Nerd/daimon/commit/cb5c184c621c7ec5784bb9081806d4c0a3ca074e))
+
+
+### Bug Fixes
+
+* **cli:** carry the previous checkpoint forward on the write-checkpoint path ([#812](https://github.com/Daily-Nerd/daimon/issues/812)) ([84093b6](https://github.com/Daily-Nerd/daimon/commit/84093b6f3a478e0f8e733038e67edc46532dfe4a))
+* **hooks:** skip a serialize spawn when one is already in flight for that transcript ([#814](https://github.com/Daily-Nerd/daimon/issues/814)) ([bb3d2dd](https://github.com/Daily-Nerd/daimon/commit/bb3d2dd02c22e1653bc384bbd216abe723c28812))
+* **store:** treat a pointer holding valid non-object JSON as absent ([#818](https://github.com/Daily-Nerd/daimon/issues/818)) ([6eedfe6](https://github.com/Daily-Nerd/daimon/commit/6eedfe69f80fde18c7dc6bf1df66c3b81f6d1c16))
+* **worldcheck:** count the aggregate stats once per item, not per claim ([#832](https://github.com/Daily-Nerd/daimon/issues/832)) ([16b9876](https://github.com/Daily-Nerd/daimon/commit/16b98765548ff4806eacbbf2a690a396ba606a39))
+* **worldcheck:** roll up per-item aggregates by outcome precedence ([#834](https://github.com/Daily-Nerd/daimon/issues/834)) ([8e383de](https://github.com/Daily-Nerd/daimon/commit/8e383deba5439d9be1fcade5375bc623865c4d6d))
+
+
+### Documentation
+
+* **architecture:** document the current runtime ([#809](https://github.com/Daily-Nerd/daimon/issues/809)) ([8489aa7](https://github.com/Daily-Nerd/daimon/commit/8489aa780d0b444f9131562196e178c7a77da373))
+
 ## [0.35.0](https://github.com/Daily-Nerd/daimon/compare/v0.34.0...v0.35.0) (2026-08-29)
 
 
