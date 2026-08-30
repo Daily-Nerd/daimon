@@ -114,7 +114,12 @@ def corroboration_badge(item) -> str:
 _AGENT_CLAIM_EVIDENCE_CHARS = 120
 
 
-def _truncate_agent_claim(evidence: str) -> str:
+def _truncate_agent_claim(evidence: str | None) -> str:
+    # The annotation was the lie, not the callers (#842). Every call site
+    # feeds this a `.get()` result, and the body has always coped with a
+    # missing one through `or ""` — an absent claim renders as empty, which is
+    # the behavior three render paths depend on. Declaring `str` described a
+    # contract the function never enforced and no caller ever kept.
     text = str(evidence or "").strip()
     if len(text) <= _AGENT_CLAIM_EVIDENCE_CHARS:
         return text
