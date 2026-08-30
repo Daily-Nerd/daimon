@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TypeGuard
 
 
 SOURCE_REF_VERSION = 1
@@ -42,8 +43,14 @@ class SourceResolution:
     path: Path | None = None
 
 
-def valid_session_id(value) -> bool:
-    """Bounded, glob/path-safe host session identifier."""
+def valid_session_id(value) -> TypeGuard[str]:
+    """Bounded, glob/path-safe host session identifier.
+
+    A TypeGuard rather than a plain bool (#842): the body already establishes
+    `isinstance(value, str)`, and every caller reads a session id out of an
+    untyped checkpoint dict and passes it straight into something that wants
+    a str. Returning bool made each of those call sites re-prove, or skip
+    proving, what this function had just checked."""
     return isinstance(value, str) and _SESSION_RE.fullmatch(value) is not None
 
 
