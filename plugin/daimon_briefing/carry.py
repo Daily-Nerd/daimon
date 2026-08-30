@@ -350,7 +350,7 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
         generic = _generic_terms(
             [str(i.get("text") or "") for i in native if isinstance(i, dict)]
             + [str(i.get("text") or "") for i in prev_items if isinstance(i, dict)])
-        carried = []
+        carried: list[dict] = []
         for item in prev_items:
             if not isinstance(item, dict) or not str(item.get("text") or "").strip():
                 continue
