@@ -1579,11 +1579,16 @@ def _checkpoint_info(path, now) -> dict:
 
 
 def _status_health(proj, glob, outstanding, siblings, *, now,
-                   disabled: bool = False) -> dict:
+                   disabled: bool = False,
+                   global_fallback: bool = False) -> dict:
     """Objective health verdict for `status`. Pure — `now` is injected. Warns only
     on data-driven signals: a NEWER phantom-child bucket (the #74 split), a missing
     project checkpoint, outstanding serialize failures, or the kill switch being
-    set. No age thresholds."""
+    set. No age thresholds.
+
+    `global_fallback` is the opt-in's state (#793), injected for the same
+    reason `now` and `disabled` are: it is environment, and a verdict that
+    reads its own environment cannot be tested at the verdict level."""
     warnings: list[str] = []
 
     # #28: a stuck DAIMON_DISABLE=1 silently stops all capture — the single
@@ -1608,9 +1613,24 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
         )
 
     if not proj.get("exists"):
+        # #793: this said the briefing falls back to the global pointer,
+        # possibly another project's. That behavior is gone by default —
+        # `brief` has suppressed the foreign body since #96 and SessionStart
+        # injection stopped falling back for a known project in #785, both
+        # now behind an explicit opt-in. status is the surface an operator
+        # reads to learn what the system WILL do, so a warning naming a risk
+        # the system no longer takes costs twice: it sends someone hunting a
+        # closed leak, and it teaches them to discount the warnings beside it,
+        # which are load bearing. The old sentence is kept for the case where
+        # it is true, which is the case an operator most needs to hear.
         warnings.append(
             "no checkpoint for this project — briefing falls back to the "
-            "global pointer (possibly another project) or nothing"
+            "global pointer (possibly another project), because "
+            "DAIMON_BRIEF_GLOBAL_FALLBACK is set"
+            if global_fallback else
+            "no checkpoint for this project — its briefing will be empty "
+            "(the global pointer is not used unless "
+            "DAIMON_BRIEF_GLOBAL_FALLBACK=full is set)"
         )
 
     # Format drift on the checkpoint that would back a briefing (proj, else the
@@ -1919,7 +1939,8 @@ def _status_world(project_arg=None) -> dict:
     # it means there.
     rescue_window_errors = _stats_capture()["window"]["errors"]
     health = _status_health(proj, glob, outstanding, siblings, now=now,
-                            disabled=disabled)
+                            disabled=disabled,
+                            global_fallback=config.brief_global_fallback())
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()
