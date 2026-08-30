@@ -1811,6 +1811,16 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 f"model output on {what} is not a JSON object after {attempt} attempts"
             )
         return parsed
+    # Unreachable while attempts >= 1, which holds for every caller: all four
+    # call sites take the default parse_retries=1, and each `continue` above
+    # is guarded by _can_retry(), which is false on the final attempt so that
+    # attempt raises instead of looping. Stated rather than left implicit
+    # (#842): the annotation promises a dict, and a function that can fall off
+    # its own loop and hand back None promises something it does not keep.
+    # A negative parse_retries is the only way here, and it is a caller bug,
+    # so it fails loudly rather than returning None into a dict-shaped hole.
+    raise LLMCallError(
+        f"LLM call on {what} ran no attempts (parse_retries={parse_retries})")
 
 
 def _plan_waves(n_chunks: int, workers: int, k: int) -> int:

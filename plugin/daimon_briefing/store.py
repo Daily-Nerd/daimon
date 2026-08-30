@@ -35,6 +35,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 
 from . import config, normalize, policy, receipts, redact, schema, serializer, teamproject
 
@@ -90,6 +91,11 @@ _LOCK_NAME = ".pointer.lock"   # dotfile: invisible to _session_files (.json
 _LOCK_TRIES = 50               # x 20ms = ~1s bounded wait, then fail open
 _LOCK_INTERVAL = 0.02
 
+# Annotated before the import (#842): the try branch alone infers a Module, so
+# the except branch's None reads as a type error rather than as the degrade it
+# is. The annotation states the actual contract, which every use site already
+# honors with an `if _fcntl` guard.
+_fcntl: ModuleType | None
 try:
     import fcntl as _fcntl
 except ImportError:            # non-POSIX: lock degrades to a no-op

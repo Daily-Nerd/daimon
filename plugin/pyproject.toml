@@ -101,10 +101,8 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "daimon_briefing.amendments",
-    "daimon_briefing.briefing",
     "daimon_briefing.carry",
     "daimon_briefing.cli",
-    "daimon_briefing.cli.amend",
     "daimon_briefing.cli.hooks",
     "daimon_briefing.cli.lifecycle",
     "daimon_briefing.cli.refute",
@@ -114,17 +112,13 @@ module = [
     "daimon_briefing.inspector",
     "daimon_briefing.ledger",
     "daimon_briefing.pending",
-    "daimon_briefing.policy",
     "daimon_briefing.privacy",
-    "daimon_briefing.provenance",
     "daimon_briefing.recall",
     "daimon_briefing.refutations",
     "daimon_briefing.relations",
     "daimon_briefing.render",
     "daimon_briefing.requests",
-    "daimon_briefing.serializer",
     "daimon_briefing.skill_install",
-    "daimon_briefing.store",
     "daimon_briefing.teamsync",
     "daimon_briefing.transcript",
 ]

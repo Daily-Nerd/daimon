@@ -1192,3 +1192,21 @@ def test_render_never_prints_scene():
     }
     out = briefing.render(cp)
     assert "SCENE-MARKER-NEVER-RENDERED" not in out
+
+
+def test_truncate_agent_claim_renders_an_absent_claim_as_empty():
+    # #842: the annotation said `str` while every call site fed it a `.get()`
+    # result. Widening it to `str | None` makes the signature honest, and this
+    # pins the behavior that makes the widening safe: an absent claim renders
+    # as empty rather than as the string "None", which is what three render
+    # paths have always relied on.
+    assert briefing._truncate_agent_claim(None) == ""
+    assert briefing._truncate_agent_claim("") == ""
+    assert briefing._truncate_agent_claim("  spaced  ") == "spaced"
+
+
+def test_truncate_agent_claim_caps_a_long_claim_with_an_ellipsis():
+    long_claim = "x" * (briefing._AGENT_CLAIM_EVIDENCE_CHARS + 50)
+    out = briefing._truncate_agent_claim(long_claim)
+    assert len(out) == briefing._AGENT_CLAIM_EVIDENCE_CHARS + 1
+    assert out.endswith("…")
