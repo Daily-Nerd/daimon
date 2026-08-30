@@ -59,8 +59,17 @@ KIND_SOURCES: tuple[tuple[str, str, str], ...] = tuple(
     (f.section, f.key, f.kind) for f in ITEM_FIELDS)
 
 # (section, key, scoring TYPE_RULES type) — carry's view: carried fields only.
+#
+# Filters on scoring_type as well as carries (#842). Every carried field has
+# one today and the field table is the single source that decides, but the
+# filter previously trusted an invariant nothing enforced: a carried field
+# added without a scoring type would have put None into a tuple typed str,
+# and carry would have used it as a TYPE_RULES key and silently fallen back
+# to the default rules. The invariant is now pinned by test, so this filter
+# can never quietly DROP a field either.
 CARRIED_KINDS: tuple[tuple[str, str, str], ...] = tuple(
-    (f.section, f.key, f.scoring_type) for f in ITEM_FIELDS if f.carries)
+    (f.section, f.key, f.scoring_type) for f in ITEM_FIELDS
+    if f.carries and f.scoring_type)
 
 # recall index kind -> scoring.TYPE_RULES key (#78 composition). Kinds without
 # dedicated rules (contradiction) are absent; lookups .get their own default.
