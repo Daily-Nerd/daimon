@@ -950,7 +950,13 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         rows = _run(expr)
         if not rows:
             or_expr = _match_expr(query, " OR ")
-            if or_expr != expr:  # differs only when there are >=2 tokens
+            # Truthiness, not just inequality (#842): _match_expr answers None
+            # when nothing searchable remains, and `or_expr != expr` is true
+            # for None as well, so the old guard would have handed None to the
+            # query. Unreachable, because emptiness depends on the tokens
+            # rather than the join and the AND form above already answered
+            # non-None for this same query, but the guard never said so.
+            if or_expr and or_expr != expr:  # differs only when >=2 tokens
                 rows = _run(or_expr)
         return _dedupe_rows(rows, want_n)
 
