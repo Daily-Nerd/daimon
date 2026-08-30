@@ -543,6 +543,34 @@ def test_cli_status_global_fallback_labeled(
     assert "fallback" in out.lower()
     assert "S-global" in out
 
+    # #793 guard: the labeled "global checkpoint (fallback)" PAIRING above is
+    # deliberate transparency (#785, #788, #790, #792) and is NOT what that
+    # issue changed. What changed is the health WARNING, which must not claim
+    # the briefing will use that pointer when the opt-in is off.
+    assert "briefing falls back to the global pointer" not in out
+
+
+def test_cli_status_warning_tracks_the_global_fallback_opt_in(
+    tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch
+):
+    # End to end over the wiring the unit tests cannot see: status must read
+    # the opt-in and hand it to the verdict, or the corrected wording is right
+    # in _status_health and still wrong on the surface an operator reads.
+    from daimon_briefing import store
+
+    store.write_checkpoint("S-global", _with_session(sample_checkpoint, "S-global"))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/never-seen")
+
+    monkeypatch.delenv("DAIMON_BRIEF_GLOBAL_FALLBACK", raising=False)
+    assert cli.main(["status"]) == 0
+    off = capsys.readouterr().out
+    assert "its briefing will be empty" in off
+
+    monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
+    assert cli.main(["status"]) == 0
+    on = capsys.readouterr().out
+    assert "possibly another project" in on
+
 
 def test_cli_status_same_session_dedup_noted(
     tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch
@@ -2783,6 +2811,46 @@ def test_status_health_fresh():
     h = cli._status_health(_proj(), {"exists": True, "session_id": "P", "same_session_as_project": True},
                            [], [], now=1000.0)
     assert h["ok"] is True and h["verdict"].startswith("✓")
+
+
+def test_status_health_missing_checkpoint_states_the_default_not_the_opt_in(
+        monkeypatch):
+    # #793: the warning described a fallback the code stopped doing. `brief`
+    # has suppressed the foreign body since #96 and SessionStart injection
+    # stopped falling back for a known project in #785, so by DEFAULT an
+    # unbriefed project gets nothing, not a stranger's checkpoint. status is
+    # where an operator goes to learn what the system will do, so a warning
+    # naming a risk the system no longer takes trains readers to discount the
+    # warnings around it, which are load bearing.
+    h = cli._status_health(_proj(exists=False), {"exists": True}, [], [],
+                           now=1000.0, global_fallback=False)
+    warn = [w for w in h["warnings"] if "no checkpoint for this project" in w]
+    assert len(warn) == 1
+    assert "falls back to the global pointer" not in warn[0]
+    assert "DAIMON_BRIEF_GLOBAL_FALLBACK" in warn[0]  # names the opt-in
+
+
+def test_status_health_missing_checkpoint_warns_when_the_opt_in_is_active():
+    # The interesting case for an operator is the one where the opt-in IS on,
+    # because then a foreign checkpoint really can appear. That is when the
+    # original wording becomes true, so that is when it is said.
+    h = cli._status_health(_proj(exists=False), {"exists": True}, [], [],
+                           now=1000.0, global_fallback=True)
+    warn = [w for w in h["warnings"] if "no checkpoint for this project" in w]
+    assert len(warn) == 1
+    assert "global pointer" in warn[0]
+    assert "possibly another project" in warn[0]
+
+
+def test_status_health_fallback_flag_is_injected_not_read():
+    # _status_health is pure by contract (`now` injected, no I/O), and the
+    # opt-in is environment state. Reading config here would make the verdict
+    # untestable in the same way an un-injected clock does, so it arrives as
+    # a kwarg like `disabled` does.
+    import inspect as _inspect
+
+    sig = _inspect.signature(cli._status_health)
+    assert sig.parameters["global_fallback"].default is False
 
 
 def test_status_health_flags_newer_sibling():
