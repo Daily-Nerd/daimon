@@ -114,7 +114,6 @@ module = [
     "daimon_briefing.inspector",
     "daimon_briefing.ledger",
     "daimon_briefing.pending",
-    "daimon_briefing.policy",
     "daimon_briefing.privacy",
     "daimon_briefing.provenance",
     "daimon_briefing.recall",

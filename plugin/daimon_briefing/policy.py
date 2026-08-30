@@ -140,15 +140,21 @@ def scrub_forgotten_payload(checkpoint: dict,
         if len(kept) != len(lst):
             block[key] = kept
             changed = True
+    # The dict guard leads (#842). It was expressed on `topic`, which implies
+    # the same thing to a reader (topic is non-None only when wc is a dict)
+    # but not to a checker, so the `del wc[...]` below read as a delete on a
+    # possible None. Guarding the container the delete actually touches is
+    # both provable and the narrower claim.
     wc = checkpoint.get("working_context")
-    topic = wc.get("active_topic") if isinstance(wc, dict) else None
-    if isinstance(topic, dict):
-        if normalize.content_key(topic.get("text") or "") in forgotten_keys:
-            del wc["active_topic"]
-            dropped.append(topic)
-            changed = True
-        elif scrub_forgotten_fields(topic, forgotten_keys):
-            changed = True
+    if isinstance(wc, dict):
+        topic = wc.get("active_topic")
+        if isinstance(topic, dict):
+            if normalize.content_key(topic.get("text") or "") in forgotten_keys:
+                del wc["active_topic"]
+                dropped.append(topic)
+                changed = True
+            elif scrub_forgotten_fields(topic, forgotten_keys):
+                changed = True
     return dropped, changed
 
 
