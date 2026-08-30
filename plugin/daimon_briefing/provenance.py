@@ -151,7 +151,10 @@ def capture_source_ref(session_id: str, transcript_path=None, *, author=None,
     return source
 
 
-def valid_source_ref(value) -> bool:
+def valid_source_ref(value) -> TypeGuard[dict]:
+    """A TypeGuard for the same reason valid_session_id is one (#842): the
+    body opens with isinstance(value, dict), and every caller reads a source
+    ref out of an untyped checkpoint and then subscripts it."""
     if not isinstance(value, dict) or value.get("version") != SOURCE_REF_VERSION:
         return False
     if value.get("host") not in _HOSTS or value.get("locator") not in _LOCATORS:
@@ -218,7 +221,11 @@ def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
     return receipt if valid_quote_receipt(receipt) else None
 
 
-def valid_quote_receipt(value) -> bool:
+def valid_quote_receipt(value) -> TypeGuard[dict]:
+    """A TypeGuard, matching the two validators above (#842). carry's
+    _capture_verified is the case that shows why: it calls this and then
+    immediately reads receipt["outcome"], which only holds because this
+    function proved the dict and then discarded the proof at its return."""
     if not isinstance(value, dict) or value.get("version") != QUOTE_PROVENANCE_VERSION:
         return False
     if not valid_source_ref(value.get("source")):
