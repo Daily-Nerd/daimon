@@ -30,7 +30,12 @@ _BLOCK_RE = re.compile(
 # host -> writer spec. "owned" writes a daimon-owned file; "block" edits a
 # marker region inside a shared file. Paths are relative to home (global)
 # or cwd (project); None = unsupported scope.
-HOSTS = {
+# Per-host install scopes. ONE value shape per entry (#842): a read cap used
+# to live in here beside the scopes, which made the mapping's value type a
+# union of "a scope" and "a number", and `spec["project"]` therefore something
+# no caller could index without first ruling out the cap. Caps live in
+# CHAR_CAPS below, keyed by host, so this table answers exactly one question.
+HOSTS: dict[str, dict[str, tuple[str, str, str] | None]] = {
     "claude": {
         "global": (".claude/skills/daimon/SKILL.md", "owned", "full"),
         "project": (".claude/skills/daimon/SKILL.md", "owned", "full"),
@@ -38,7 +43,6 @@ HOSTS = {
     "codex": {
         "global": (".codex/AGENTS.md", "block", "compact"),
         "project": ("AGENTS.md", "block", "compact"),
-        "char_cap": 32768,  # Codex project_doc_max_bytes default — stops reading past it
     },
     "windsurf": {
         # Global skills live at ~/.codeium/windsurf/skills/<name>/SKILL.md
@@ -59,6 +63,12 @@ HOSTS = {
         "project": ("GEMINI.md", "block", "compact"),
     },
 }
+
+# Per-host read caps, in BYTES. Codex documents project_doc_max_bytes and
+# stops reading past it, so a file over the cap is silently half-applied.
+# Absent host means no known cap, which is why the warning below tests the
+# value rather than the membership.
+CHAR_CAPS: dict[str, int] = {"codex": 32768}
 
 _OWNED_WRAPPERS = {
     # per (host, variant): callable(body) -> file text
@@ -158,7 +168,7 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
         old = dest.read_text(encoding="utf-8") if dest.exists() else ""
         new = _replace_block(old, _block(variant))
         dest.write_text(new, encoding="utf-8")
-        cap = spec.get("char_cap")
+        cap = CHAR_CAPS.get(host)
         # Codex's documented cap is bytes (project_doc_max_bytes). Byte length
         # is also the conservative comparison if a chars-capped host ever
         # returns here — bytes >= chars for any non-ASCII text, so a byte
