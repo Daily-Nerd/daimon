@@ -295,3 +295,162 @@ def test_invalidation_check_names_match_worldchecks_ledger():
     check name are pinned equal rather than imported (recall's import graph
     stays free of worldcheck's probe machinery)."""
     assert recall._INVALIDATION_CHECKS == (worldcheck._LEDGER_CHECK,)
+
+
+# --- #837: the READ surfaces ------------------------------------------------
+#
+# #835 populated the slot and #836 shipped it; nothing consumed it, so the
+# record existed and changed nothing a user saw. suggest() did not even select
+# the column, which is the sharp edge: the auto-inject path re-asserted a claim
+# this install's own verification ledger contradicted, at FULL weight, while a
+# merely-superseded item was downweighted. These tests pin the invariant the
+# issue names: a contradicted item never outranks and never out-renders its
+# clean equivalent, on any surface.
+#
+# The semantics ride along unchanged. The slot holds contradiction EVIDENCE,
+# so every surface says "contradicted by <evidence> at <ts>" and no surface
+# says "false" — there is no confirmation row and no cure path yet, so a
+# present-tense verdict would overclaim what the field can know.
+
+
+def _decision(text, ref, **extra):
+    return {"text": text, "trust": "inferred", "id": ref, **extra}
+
+
+def test_suggest_ranks_a_contradicted_item_below_its_clean_equivalent(
+        tmp_checkpoint_dir, monkeypatch):
+    # The fixture is rigged AGAINST the penalty: the contradicted item is the
+    # more important one (9 vs 5), so without a demotion it wins outright.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    common = {"first_seen": "2026-08-01T00:00:00Z"}
+    store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
+        _decision("the axolotl exporter caches every regenerated limb",
+                  "o-bad111", importance=9, **common)],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-clean", _cp("S-clean", decisions=[
+        _decision("the axolotl exporter caches every regenerated limb",
+                  "o-clean1", importance=5, **common)],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
+
+    out = recall.suggest("what did the axolotl exporter do with limb caches",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5, now=1756468800.0)
+    sids = [r["session_id"] for r in out]
+    assert "S-bad" in sids and "S-clean" in sids
+    assert sids.index("S-clean") < sids.index("S-bad")
+
+
+def test_suggest_carries_the_evidence_out_so_the_line_can_render_it(
+        tmp_checkpoint_dir, monkeypatch):
+    # Demoting silently is not enough: burial stays VISIBLE, so the row must
+    # carry the evidence to the emitter.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
+        _decision("the axolotl exporter caches every regenerated limb",
+                  "o-bad111")], created="2026-08-01T00:00:00Z"),
+        project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
+
+    out = recall.suggest("what did the axolotl exporter do with limb caches",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out
+    assert out[0]["invalidated_by"] == \
+        "receipt:receipt-invalid@2026-08-29T10:00:00Z"
+
+
+def test_suggest_penalties_stack_because_the_axes_are_independent(
+        tmp_checkpoint_dir, monkeypatch):
+    # superseded_by and invalidated_by are independent facts (#836), so an
+    # item carrying BOTH is demoted below one carrying either alone.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    now = 1756468800.0
+    row = {"importance": 5, "first_seen": "2026-08-01T00:00:00Z",
+           "trust": "inferred"}
+    both = recall._suggest_weight(
+        {**row, "superseded_by": "S-newer",
+         "invalidated_by": "receipt:receipt-invalid@2026-08-29T10:00:00Z"},
+        "recent_decision", now)
+    superseded_only = recall._suggest_weight(
+        {**row, "superseded_by": "S-newer", "invalidated_by": None},
+        "recent_decision", now)
+    contradicted_only = recall._suggest_weight(
+        {**row, "superseded_by": None,
+         "invalidated_by": "receipt:receipt-invalid@2026-08-29T10:00:00Z"},
+        "recent_decision", now)
+    clean = recall._suggest_weight(
+        {**row, "superseded_by": None, "invalidated_by": None},
+        "recent_decision", now)
+    assert both < contradicted_only < superseded_only < clean
+
+
+def test_search_ranks_a_contradicted_item_below_its_clean_equivalent(
+        tmp_checkpoint_dir, monkeypatch):
+    # Rigged against the fix again: the contradicted row is the SHORTER
+    # document, so bm25 alone puts it first.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
+        _decision("axolotl exporter", "o-bad111")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-clean", _cp("S-clean", decisions=[
+        _decision("axolotl exporter for the regenerated limb cache pipeline",
+                  "o-clean1")], created="2026-08-01T00:00:00Z"),
+        project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
+
+    hits = recall.search("axolotl exporter", project_dir="/repo/x")
+    sids = [h["session_id"] for h in hits]
+    assert "S-bad" in sids and "S-clean" in sids
+    assert sids.index("S-clean") < sids.index("S-bad")
+
+
+def test_search_demotes_contradiction_at_least_as_hard_as_supersession(
+        tmp_checkpoint_dir, monkeypatch):
+    # #837's wording: "at least as strongly as superseded ones". Contradiction
+    # evidence is the stronger claim of the two, so it sorts last.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    # Distinct texts on purpose: _dedupe_rows keys on (kind, author, text),
+    # so two items worded identically collapse into one result and the
+    # comparison this test exists to make disappears.
+    store.write_checkpoint("S-old", _cp("S-old", decisions=[
+        _decision("axolotl exporter limb cache rollout", "o-old111")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-newer", _cp("S-newer", decisions=[
+        {"text": "axolotl exporter limb cache rewritten", "trust": "inferred",
+         "links": [{"type": "supersedes",
+                    "target": "axolotl exporter limb cache rollout"}]}],
+        created="2026-08-02T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
+        _decision("axolotl exporter limb cache probe", "o-bad111")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
+
+    hits = recall.search("axolotl exporter limb cache", project_dir="/repo/x")
+    sids = [h["session_id"] for h in hits]
+    assert "S-bad" in sids and "S-old" in sids
+    assert sids.index("S-old") < sids.index("S-bad")
+
+
+def test_describe_invalidation_reads_the_stored_encoding():
+    # One parse, shared by every renderer, so a marker can never describe a
+    # different view than the one the fold wrote.
+    assert recall.describe_invalidation(
+        "receipt:receipt-invalid@2026-08-29T10:00:00Z") == \
+        "contradicted by receipt:receipt-invalid at 2026-08-29T10:00:00Z"
+
+
+def test_describe_invalidation_never_says_false():
+    # The slot is EVIDENCE, not a verdict: no cure path exists, so a
+    # present-tense claim would overclaim what the field can know.
+    phrase = recall.describe_invalidation(
+        "receipt:receipt-invalid@2026-08-29T10:00:00Z")
+    assert "false" not in phrase.lower()
+    assert "was contradicted" not in phrase  # tense belongs to the caller
+
+
+def test_describe_invalidation_tolerates_a_malformed_value():
+    # A value the fold could not have written still renders as evidence
+    # rather than raising on a user's read path.
+    assert recall.describe_invalidation("garbage") == "contradicted by garbage"
+    assert recall.describe_invalidation(None) is None
+    assert recall.describe_invalidation("") is None

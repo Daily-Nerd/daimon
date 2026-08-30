@@ -3584,6 +3584,51 @@ def test_cli_recall_flags_typed_supersession_only(
     assert "superseded by S-new" in lines[1]  # link evidence renders
 
 
+def _write_verification_ledger(slug, rows):
+    from daimon_briefing import config
+    path = config.checkpoint_dir() / slug / "verification.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows),
+                    encoding="utf-8")
+
+
+def test_cli_recall_marks_contradiction_evidence(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # #837: invalidated_by had no renderer, so a contradicted item printed
+    # identically to a live trusted one. The marker mirrors the supersession
+    # one and stays faithful to the field: EVIDENCE, never a verdict.
+    from daimon_briefing import store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    cp = _recall_checkpoint("S-bad", "meerkat burrow mapping plan colony")
+    cp["working_context"]["recent_decisions"][0]["id"] = "o-bad111"
+    store.write_checkpoint("S-bad", cp, project_dir=proj)
+    _write_verification_ledger(store.project_slug(proj), [
+        {"ts": "2026-08-29T10:00:00Z", "check": "receipt",
+         "item_ref": "o-bad111", "reason": "receipt-invalid"}])
+
+    rc = cli.main(["recall", "meerkat", "--project", proj])
+    assert rc == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if "meerkat" in ln][0]
+    assert ("[contradicted by receipt:receipt-invalid "
+            "at 2026-08-29T10:00:00Z]") in line
+    assert "false" not in line.lower()
+
+
+def test_suggest_line_marks_contradiction_evidence():
+    # The auto-inject line is the highest-leverage surface: a demoted item
+    # still reaching the prompt must arrive flagged, not silently ranked down.
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "the exporter caches limbs",
+         "invalidated_by": "receipt:receipt-invalid@2026-08-29T10:00:00Z"}
+    line = cli._suggest_line(r, ["exporter"], 2000.0)
+    assert ("(contradicted by receipt:receipt-invalid "
+            "at 2026-08-29T10:00:00Z)") in line
+    assert "false" not in line.lower()
+
+
 def test_cli_recall_json(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
     from daimon_briefing import store
 
