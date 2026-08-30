@@ -138,6 +138,15 @@ _TAMPERED = "TAMPERED"      # bytes no longer match the signed outputs_hash
 LEDGER_KEY = "_ledger"
 _LEDGER_CHECK = "receipt"
 _LEDGER_REASONS = {_TAMPERED: "receipt-tampered", _INVALID: "receipt-invalid"}
+# #839: the cure row. A SEPARATE check name, not the same check with a
+# passing reason, because verification_counts sums every check into a "has
+# verification ever caught anything here" total and a cure is not a catch.
+# Emitted unconditionally here, exactly like a contradiction row; whether it
+# is worth WRITING is decided at the write boundary (store.append_receipt_cure),
+# because that is where the current ledger state is already in hand and where
+# worldcheck's write-nothing-to-disk contract stays intact.
+LEDGER_CONFIRM_CHECK = "receipt-ok"
+_LEDGER_CONFIRM_REASON = "receipt-valid"
 
 # A probe: how to spawn it, what to feed its stdin, and how to read its answer.
 # The parser rides PER PROBE because the classes speak different dialects
@@ -829,6 +838,12 @@ def check(checkpoint, project_dir) -> dict:
             # solid ground with it; a contradiction on ANY axis outranks it
             # at render time, so stamping here stays unconditional.
             item.setdefault("_worldcheck_confirmed", True)
+            ref = item.get("id")
+            if cls == RECEIPT_VALIDITY and isinstance(ref, str) and ref:
+                # #839: the same id-less rule the contradiction row keeps — a
+                # cure nobody can trace back to an item cures nothing.
+                ledger.append((ref, LEDGER_CONFIRM_CHECK,
+                               _LEDGER_CONFIRM_REASON))
         else:
             outcome = "contradicted"
             note, status = _flag(cls, claim, value)

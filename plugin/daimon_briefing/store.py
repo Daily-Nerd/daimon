@@ -1937,6 +1937,90 @@ def verification_rows(project_dir=None, *, bucket=None) -> list:
     return rows
 
 
+# #835/#839: the receipt-validity ledger vocabulary. Two check names rather
+# than one row type with an outcome field, because verification_counts is a
+# shipped surface documented as "how often the checkers actually CAUGHT
+# something here" and its total sums every check. Folding cures into the
+# rejection check would silently turn a problems-found counter into a
+# work-done counter, which is the #832 defect wearing different clothes.
+# Pinned equal to worldcheck's names by test rather than imported.
+RECEIPT_CHECK = "receipt"        # a contradiction: this receipt did not hold
+RECEIPT_CURE_CHECK = "receipt-ok"  # the same probe, later, saying it does
+
+
+def latest_receipt_verdicts(*, bucket=None, project_dir=None) -> dict:
+    """{item_ref: row} for the LATEST receipt-class verdict per item (#839).
+
+    The single resolution of "where does this item currently stand", shared by
+    the recall fold that writes invalidated_by and by the cure gate that
+    decides whether a confirmation is worth recording. Two copies of
+    latest-by-ts would drift, and a recorder deriving from a different view
+    than the verifier is the failure this codebase keeps paying for.
+
+    Latest by TS, NEVER line order (store.resolutions' contract, mirrored):
+    the ledger interleaves concurrent writers and clock-skewed appends, so an
+    unstamped row never displaces a stamped one and equal stamps fall to
+    canonical-JSON order, deterministic under any line order.
+
+    Rows whose check is neither name are skipped entirely rather than treated
+    as either verdict. A wrong invalidation fabricates distrust and a wrong
+    cure fabricates trust, so a row this module could not have written decides
+    neither. Each returned row carries a `verdict` of "contradicted" or
+    "confirmed"; callers never re-derive it from the check name."""
+    latest: dict = {}
+    for row in verification_rows(bucket=bucket, project_dir=project_dir):
+        check = row.get("check")
+        if check == RECEIPT_CHECK:
+            verdict = "contradicted"
+        elif check == RECEIPT_CURE_CHECK:
+            verdict = "confirmed"
+        else:
+            continue
+        ref, reason, ts = (row.get("item_ref"), row.get("reason"),
+                           row.get("ts"))
+        if not (isinstance(ref, str) and ref
+                and isinstance(reason, str) and reason
+                and isinstance(ts, str) and ts):
+            continue
+        cur = latest.get(ref)
+        if cur is None:
+            latest[ref] = {**row, "verdict": verdict}
+            continue
+        new_e = _created_epoch(ts)
+        if new_e is None:
+            continue  # an unstamped row never displaces a stamped one
+        cur_e = _created_epoch(cur.get("ts"))
+        if (cur_e is None or new_e > cur_e
+                or (new_e == cur_e
+                    and json.dumps(row, sort_keys=True, ensure_ascii=False)
+                    > json.dumps({k: v for k, v in cur.items()
+                                  if k != "verdict"},
+                                 sort_keys=True, ensure_ascii=False))):
+            latest[ref] = {**row, "verdict": verdict}
+    return latest
+
+
+def append_receipt_cure(item_ref: str, project_dir=None) -> bool:
+    """Record that a receipt-validity probe now PASSES for an item that
+    currently stands contradicted (#839). Returns whether a row was written.
+
+    Conditional on purpose, and the condition is the whole design. The
+    rejection ledger has always recorded problems found: measured on this
+    project it holds one row per rejection and stays sparse over a project's
+    whole life. Appending a row on every passing check would make it grow with
+    work done instead, which is both a different artifact and a much larger
+    one, for a cure nobody needed. So a confirmation is written only when it
+    changes something: when the item's latest verdict is a contradiction.
+
+    A duplicate cure is harmless if two writers race (the fold takes the
+    latest and both say the same thing), so the gate needs no lock."""
+    if latest_receipt_verdicts(project_dir=project_dir).get(
+            item_ref, {}).get("verdict") != "contradicted":
+        return False
+    return append_verification(item_ref, RECEIPT_CURE_CHECK, "receipt-valid",
+                               project_dir=project_dir)
+
+
 def verification_counts(project_dir=None) -> dict:
     """{check: count} over the rejection ledger. Answers the question the
     trust classes otherwise cannot: has verification ever caught anything on
@@ -1945,7 +2029,10 @@ def verification_counts(project_dir=None) -> dict:
     out: dict = {}
     for row in verification_rows(project_dir):
         check = str(row.get("check") or "")
-        if check:
+        # #839: a cure is not a catch. This counter and the `total` the CLI
+        # sums from it answer "has verification ever caught anything here",
+        # so a row recording that a check PASSED must not inflate it.
+        if check and check != RECEIPT_CURE_CHECK:
             out[check] = out.get(check, 0) + 1
     return out
 

@@ -1177,6 +1177,10 @@ def test_receipt_valid_confirms_and_leaves_item_untouched(receipts_on, proj):
     _signed_origin("S-origin", proj)
     cp = _cp_origins(["S-origin"])
     stats = worldcheck.check(cp, proj)
+    # #839: a confirmed receipt now also emits a cure CANDIDATE under the
+    # reserved key. Popped here exactly as the CLI pops it, so this stays an
+    # assertion about the counters.
+    stats.pop(worldcheck.LEDGER_KEY, None)
     assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0,
                      "receipt-validity:confirmed": 1}
     assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
@@ -1354,6 +1358,7 @@ def test_receipt_probes_one_origin_per_day_by_rotation(receipts_on, proj,
     stats = worldcheck.check(_cp_origins(["S-a", "S-b"]), proj)
     assert len(_vitni_calls(receipts_on)) == 2
     # One probe per brief either way: the other origin makes no claim at all.
+    stats.pop(worldcheck.LEDGER_KEY, None)  # #839 cure candidate
     assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0,
                      "receipt-validity:confirmed": 1}
 
@@ -1496,12 +1501,23 @@ def test_receipt_claims_are_carried_only(receipts_on, proj):
     assert _vitni_calls(receipts_on) == []
 
 
-def test_receipt_ledger_key_absent_when_nothing_failed(receipts_on, proj):
-    # The reserved key only appears when there is something to write — the
-    # counter dict the CLI iterates stays all-ints on the happy path.
+def test_receipt_happy_path_emits_a_cure_candidate_and_all_int_counters(
+        receipts_on, proj):
+    # This asserted that the reserved key was ABSENT on the happy path, which
+    # was a proxy for the property that actually matters: the counter dict the
+    # CLI iterates stays all-ints. #839 made a confirmed receipt emit a cure
+    # candidate, so the proxy no longer holds while the property still does
+    # (the CLI pops the key before the counter loop, as this does).
+    #
+    # Emitting unconditionally is deliberate. worldcheck writes nothing to
+    # disk by contract, so it reports what it found and the write boundary
+    # decides whether a cure changes anything worth recording.
     _signed_origin("S-origin", proj)
     stats = worldcheck.check(_cp_origins(["S-origin"]), proj)
-    assert worldcheck.LEDGER_KEY not in stats
+    rows = stats.pop(worldcheck.LEDGER_KEY, ())
+    assert [(check, reason) for _ref, check, reason in rows] == [
+        (worldcheck.LEDGER_CONFIRM_CHECK, "receipt-valid")]
+    assert all(isinstance(v, int) for v in stats.values())
 
 
 def test_receipt_idless_item_yields_no_ledger_row(receipts_on, proj, monkeypatch):

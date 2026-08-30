@@ -454,3 +454,163 @@ def test_describe_invalidation_tolerates_a_malformed_value():
     assert recall.describe_invalidation("garbage") == "contradicted by garbage"
     assert recall.describe_invalidation(None) is None
     assert recall.describe_invalidation("") is None
+
+
+# --- #839 Half 1: derived evidence can cure derived evidence -----------------
+#
+# invalidated_by was a one-way ratchet. worldcheck appended contradiction rows
+# only, so "the latest evidence for this item" could never become a
+# confirmation and the fold had no input that would clear the slot. A probe
+# that contradicted an item once buried it on every read surface forever, with
+# a receipt that was invalid because of a since-fixed bug indistinguishable
+# from a standing contradiction.
+#
+# Half 2 (a human ruling channel) is deliberately NOT here: it widens the
+# authority model #836 narrowed to "derived world evidence writes the slot, or
+# nothing does", and that is a ruling rather than an implementation detail.
+# This half stays entirely inside the ratified authority.
+
+
+def _cure_row(ref, *, ts="2026-08-29T12:00:00Z"):
+    return {"ts": ts, "check": "receipt-ok", "item_ref": ref,
+            "reason": "receipt-valid"}
+
+
+def test_a_later_confirmation_clears_the_contradiction(tmp_checkpoint_dir,
+                                                       monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [
+        _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
+        _cure_row("o-111aaa", ts="2026-08-29T12:00:00Z"),
+    ])
+
+    hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
+    assert hits
+    assert hits[0]["invalidated_by"] is None
+
+
+def test_an_earlier_confirmation_does_not_clear_a_later_contradiction(
+        tmp_checkpoint_dir, monkeypatch):
+    # Latest by TS, never line order, and never "a confirmation wins": a cure
+    # that predates the contradiction cures nothing.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [
+        _cure_row("o-111aaa", ts="2026-08-29T08:00:00Z"),
+        _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
+    ])
+
+    hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
+    assert hits
+    assert hits[0]["invalidated_by"] == \
+        "receipt:receipt-invalid@2026-08-29T10:00:00Z"
+
+
+def test_the_cure_is_visible_on_the_read_surfaces_it_unburies(
+        tmp_checkpoint_dir, monkeypatch):
+    # The point of the cure is that #838's demotions stop applying. A cure
+    # that cleared the column but left the item ranked last would be a
+    # different kind of permanent burial.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
+        _decision("axolotl exporter", "o-bad111")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint("S-clean", _cp("S-clean", decisions=[
+        _decision("axolotl exporter for the regenerated limb cache pipeline",
+                  "o-clean1")], created="2026-08-01T00:00:00Z"),
+        project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [
+        _receipt_row("o-bad111", ts="2026-08-29T10:00:00Z"),
+        _cure_row("o-bad111", ts="2026-08-29T12:00:00Z"),
+    ])
+
+    hits = recall.search("axolotl exporter", project_dir="/repo/x")
+    sids = [h["session_id"] for h in hits]
+    # bm25 favours the shorter document, and with the mark gone nothing
+    # demotes it any more.
+    assert sids.index("S-bad") < sids.index("S-clean")
+
+
+def test_latest_receipt_verdicts_is_one_resolution_both_sides_share():
+    # The cure gate and the fold must agree about what "currently
+    # contradicted" means. Two implementations of latest-by-ts would drift,
+    # and a recorder that derives from a different view than the verifier is
+    # the defect this codebase keeps paying for.
+    assert callable(store.latest_receipt_verdicts)
+
+
+def test_an_unknown_check_neither_marks_nor_cures(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    # A wrong invalidation fabricates distrust and a wrong cure fabricates
+    # trust, so a row this module could not have written decides neither.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [
+        _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
+        {"ts": "2026-08-29T23:00:00Z", "check": "receipt-someday",
+         "item_ref": "o-111aaa", "reason": "who-knows"},
+    ])
+
+    hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
+    assert hits[0]["invalidated_by"] == \
+        "receipt:receipt-invalid@2026-08-29T10:00:00Z"
+
+
+def test_the_cure_check_names_match_worldchecks(monkeypatch):
+    """Divergence guard, mirroring the contradiction one: the three modules
+    pin equal names rather than importing each other."""
+    assert recall._CONFIRMATION_CHECKS == (worldcheck.LEDGER_CONFIRM_CHECK,)
+    assert store.RECEIPT_CURE_CHECK == worldcheck.LEDGER_CONFIRM_CHECK
+
+
+def test_a_cure_is_written_only_when_it_changes_something(tmp_checkpoint_dir,
+                                                          monkeypatch):
+    # The rejection ledger records problems FOUND. Measured on this project it
+    # holds roughly one row per rejection and stays sparse over the project's
+    # whole life. Writing a row on every passing check would make it grow with
+    # work DONE instead, which is a different artifact and a far larger one.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+
+    # Nothing stands contradicted: no row.
+    assert store.append_receipt_cure("o-111aaa", project_dir="/repo/x") is False
+    assert store.verification_rows(project_dir="/repo/x") == []
+
+    _write_ledger(store.project_slug("/repo/x"),
+                  [_receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z")])
+    assert store.append_receipt_cure("o-111aaa", project_dir="/repo/x") is True
+    rows = store.verification_rows(project_dir="/repo/x")
+    assert [r["check"] for r in rows] == ["receipt", "receipt-ok"]
+
+    # Already cured: the next passing check writes nothing.
+    assert store.append_receipt_cure("o-111aaa", project_dir="/repo/x") is False
+    assert len(store.verification_rows(project_dir="/repo/x")) == 2
+
+
+def test_a_cure_is_not_a_catch_in_the_rejection_counters(tmp_checkpoint_dir,
+                                                         monkeypatch):
+    # verification_counts and the `total` the CLI sums from it answer "has
+    # verification ever caught anything on this install". A row saying a check
+    # PASSED must not inflate that, or a problems-found counter quietly
+    # becomes a work-done counter.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [
+        _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
+        _cure_row("o-111aaa", ts="2026-08-29T12:00:00Z"),
+    ])
+
+    counts = store.verification_counts(project_dir="/repo/x")
+    assert counts == {"receipt": 1}
+    assert sum(counts.values()) == 1
