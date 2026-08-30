@@ -16,11 +16,14 @@ project_slug/session_id/created), plus two Graphiti-inspired interval slots:
 `superseded_by` (populated — see below) and `invalidated_by` (#835: populated
 from DERIVED contradiction evidence only — the per-bucket verification
 ledger's worldcheck receipt-contradiction rows fold in at rebuild as
-"<check>:<reason>@<ts>", latest row per item winning. Replaced and disproven
-are independent axes: neither write ever touches the other. Authority
-precedent: model-flagged contradictions never mint the link — derived world
-evidence writes it, or nothing does). A contentless FTS5 table indexes
-text + quote for MATCH; rows join back to `items` by rowid.
+"<check>:<reason>@<ts>", latest by ts, author-scoped to this install. The
+value is EVIDENCE, not a verdict: "was contradicted by <evidence> at <ts>"
+— no confirmation rows or cure path exist yet, so it never means "is
+currently false". Replacement and contradiction are independent axes:
+neither write ever touches the other. Authority precedent: model-flagged
+contradictions never mint the link — derived world evidence writes it, or
+nothing does). A contentless FTS5 table indexes text + quote for MATCH;
+rows join back to `items` by rowid.
 
 Supersession v3 (#234) is ITEM-LEVEL evidence only: `superseded_by` is set by
 typed `supersedes` links (#14) — id-bound directly, free-text via never-guess
@@ -83,7 +86,11 @@ def _note_error(where: str, exc: BaseException) -> None:
 # v5 (#452): items grew pinned — the cli age gate exempts pinned standing
 # rules, so suggest()'s SELECT names the column and a v4 db would
 # OperationalError on it; the bump funnels that into the rebuild too.
-_SCHEMA_VERSION = "5"
+# v6 (#836): items grew the (item_id, project_slug) identity index the
+# ledger folds bind through — purely a performance object, but the bump
+# rolls every existing db onto it deterministically instead of waiting for
+# an unrelated fingerprint change.
+_SCHEMA_VERSION = "6"
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -316,12 +323,13 @@ def _fingerprint() -> str:
                 # verification.jsonl joined the same club in #835
                 # (_apply_verification_invalidations folds it into
                 # invalidated_by): new contradiction evidence must rebuild,
-                # never serve stale NULLs.
+                # never serve stale NULLs. The name set is store's contract
+                # (INDEX_CONTENT_LEDGERS), so a third fold-able ledger
+                # cannot dodge this walk unnoticed.
                 paths.extend(p for p in e.iterdir()
                              if p.is_file()
                              and (p.suffix == ".json"
-                                  or p.name in ("events.jsonl",
-                                                "verification.jsonl")))
+                                  or p.name in store.INDEX_CONTENT_LEDGERS))
     except OSError:
         pass
     try:
@@ -377,6 +385,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 pinned INTEGER NOT NULL DEFAULT 0,
                 frontier INTEGER NOT NULL DEFAULT 0
             );
+            CREATE INDEX idx_items_identity ON items(item_id, project_slug);
             CREATE VIRTUAL TABLE items_fts USING fts5(text, quote, scene, content='');
             """
         )
@@ -595,26 +604,50 @@ _INVALIDATION_CHECKS = ("receipt",)
 
 def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
     """Fold each project bucket's verification ledger into invalidated_by
-    (#835): a worldcheck receipt-contradiction row marks every indexed row
-    of the referenced item with "<check>:<reason>@<ts>" — a scalar evidence
+    (#835): the LATEST worldcheck receipt-contradiction row per item marks
+    that item's rows with "<check>:<reason>@<ts>" — a scalar evidence
     reference, the same convention superseded_by keeps (a bare TEXT value,
-    never a JSON blob). Rows fold in file order, so the LATEST evidence for
-    an item wins: the most recent probe is the current world's answer.
+    never a JSON blob).
 
-    Independent axis by contract: superseded_by is never read or written
-    here — an item can be both replaced and disproven. Malformed rows
-    (missing ref/reason/ts) are skipped, the same fail-open bias as every
-    ledger fold: a wrong invalidation fabricates distrust, a missed one
-    just stays quiet."""
+    SEMANTICS (#836 review): the field records the latest contradiction
+    EVIDENCE — "was contradicted by <evidence> at <ts>" — never a
+    present-tense verdict. worldcheck appends no confirmation rows and no
+    cure path exists yet (human resolve / confirmation rows are the named
+    follow-up), so a populated value means "a probe once contradicted
+    this", not "this is currently false".
+
+    Latest by TS, NEVER line order — store.resolutions' documented contract,
+    mirrored: the ledger interleaves concurrent writers and clock-skewed
+    appends (the cli re-appends rows every briefing), so rows validate,
+    dedup to one per item_ref by parsed-ts maximum (an unstamped row never
+    displaces a stamped one; equal stamps fall to canonical-JSON order,
+    deterministic under any line order), then ONE UPDATE per item through
+    the (item_id, project_slug) identity index.
+
+    Binding, each choice deliberate (#836 review):
+    - the SAME bucket directory is read and bound (bucket=): bucket names
+      are not slug-idempotent (dots munge to '-'), so re-slugging the name
+      could read a sibling bucket's ledger;
+    - author-scoped to this install's author: receipt evidence is machine-
+      local (vitni verified THIS install's origin checkpoint bytes), so it
+      must never brand a teammate's mirrored copy of the same item id —
+      the same direct-id author binding _apply_typed_supersession uses;
+    - superseded_by is an independent axis, never read or written here.
+
+    Known limitations, accepted and documented: rows under a NULL slug
+    (unattributed sessions have no bucket), rows a project left behind
+    under a moved/renamed slug (the ledger lives with the old bucket), and
+    rows captured under a different local author name (an install whose
+    author changed) all stay unmarked. Malformed rows are skipped — a
+    wrong invalidation fabricates distrust, a missed one stays quiet."""
+    author = config.author()
     try:
         buckets = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
     except OSError:
         return
     for bucket in buckets:
-        # The bucket dir NAME routes store.verification_rows exactly like a
-        # project dir — slug munging is idempotent on slugs, the same trick
-        # _apply_event_resolutions leans on.
-        for row in store.verification_rows(project_dir=bucket.name):
+        latest: dict[str, dict] = {}
+        for row in store.verification_rows(bucket=bucket):
             if row.get("check") not in _INVALIDATION_CHECKS:
                 continue
             ref = row.get("item_ref")
@@ -624,10 +657,27 @@ def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
                     and isinstance(reason, str) and reason
                     and isinstance(ts, str) and ts):
                 continue
+            cur = latest.get(ref)
+            if cur is None:
+                latest[ref] = row
+                continue
+            new_e = store._created_epoch(ts)
+            if new_e is None:
+                continue  # an unstamped row never displaces a stamped one
+            cur_e = store._created_epoch(cur.get("ts"))
+            if (cur_e is None or new_e > cur_e
+                    or (new_e == cur_e
+                        and json.dumps(row, sort_keys=True,
+                                       ensure_ascii=False)
+                        > json.dumps(cur, sort_keys=True,
+                                     ensure_ascii=False))):
+                latest[ref] = row
+        for ref, row in latest.items():
             conn.execute(
                 "UPDATE items SET invalidated_by = ?"
-                " WHERE item_id = ? AND project_slug IS ?",
-                (f"{row['check']}:{reason}@{ts}", ref, bucket.name))
+                " WHERE item_id = ? AND project_slug IS ? AND author IS ?",
+                (f"{row['check']}:{row['reason']}@{row['ts']}",
+                 ref, bucket.name, author))
 
 
 def rebuild() -> int:
