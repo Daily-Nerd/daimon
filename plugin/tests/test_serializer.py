@@ -691,6 +691,24 @@ def test_serialize_parse_retry_skipped_when_deadline_exhausted():
 # --- #225: command-backend empty output retries like an empty 200 body ------
 
 
+def test_call_and_parse_never_returns_none_from_a_zero_attempt_loop(
+        fake_chat_factory):
+    # #842: the function is annotated to return a dict and its only `return`
+    # sits INSIDE the retry loop, so a loop that runs zero times fell off the
+    # end and handed None to a caller expecting a dict.
+    #
+    # Unreachable for every real caller: all four take the default
+    # parse_retries=1, and each `continue` is guarded by _can_retry(), which
+    # is false on the final attempt so that attempt raises. A negative
+    # parse_retries is the only route, and it is a caller bug, so it fails
+    # loudly rather than returning None into a dict-shaped hole.
+    chat = fake_chat_factory(['{"ok": 1}'])
+    with pytest.raises(serializer.LLMCallError):
+        serializer._call_and_parse(chat, "sys", "user", None, "a-thing",
+                                   parse_retries=-1)
+    assert chat.calls == []  # no attempt was ever made, which is the point
+
+
 def test_call_and_parse_retries_empty_output_error_once(fake_chat_factory, caplog):
     # rc=0 + empty stdout raises llm.EmptyOutputError instead of parsing to
     # nothing — it must get the SAME cache-buster retry treatment as an
