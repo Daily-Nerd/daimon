@@ -3,6 +3,8 @@ escalation. Pure + deterministic — `now` injected everywhere."""
 
 import time as _time
 
+import pytest
+
 from daimon_briefing import scoring
 
 _NOW = 1_800_000_000.0  # fixed epoch; all ages derived from here
@@ -243,3 +245,108 @@ def test_soft_clip_at_a_zero_ceiling_silences_without_a_special_case():
     # statement about the formula rather than about production behavior.
     assert all(v > 0 for v in scoring.TRUST_CEILING.values())
     assert scoring._DEFAULT_CEILING > 0
+
+
+# ---- #840 / q-6cd17264d205: the ranking must be interrogable ----------------
+#
+# effective_weight decides ordering on three read paths and was never exposed,
+# so a consumer wanting to answer "why is this ranked here" had to reimplement
+# scoring.py and drift from it. daimon-ui cannot import daimon, so
+# reimplementation was its only option.
+#
+# Persistence was rejected in the acceptance: the weight decays, so a value
+# stored at write time is stale by the time anything reads it, and a stale
+# ranking number is worse than none because it looks authoritative. The shape
+# is recompute at read time and publish the result WITH the inputs, because a
+# number a reader cannot recompute is still a ranking they have to trust blind.
+
+
+def test_explain_publishes_inputs_that_reproduce_the_weight():
+    # Frozen reference, computed by hand rather than from the code under test:
+    # importance 8 -> base 0.8; 10 days old -> recency tier 0.7; recent_decision
+    # decay 0.02/day -> 1 - 10*0.02 = 0.8; no escalation for that type; verbatim
+    # ceiling 3.0 leaves the knee at 2.7, so nothing clips. 0.8*0.7*0.8 = 0.448.
+    item = {"importance": 8, "first_seen": _iso(10), "trust": "verbatim"}
+    got = scoring.explain(item, "recent_decision", _NOW)
+
+    assert got["effective_weight"] == pytest.approx(0.448)
+    assert got["computed_at"] == _NOW
+    assert got["inputs"] == {
+        "importance": 8,
+        "importance_source": "item",
+        "trust": "verbatim",
+        "trust_ceiling": 3.0,
+        "first_seen": _iso(10),
+        "age_days": pytest.approx(10.0),
+    }
+    assert got["factors"]["base"] == pytest.approx(0.8)
+    assert got["factors"]["recency"] == pytest.approx(0.7)
+    assert got["factors"]["type_decay"] == pytest.approx(0.8)
+    assert got["factors"]["overdue_boost"] == 1.0
+    assert got["factors"]["raw"] == pytest.approx(0.448)
+
+
+def test_explain_factors_multiply_to_the_weight_it_publishes():
+    # The one invariant that keeps the explanation honest: raw is the product
+    # of the published factors, and the published weight is that product under
+    # the trust lid. Asserted across shapes that exercise every branch,
+    # including the clipped one where raw and weight legitimately differ.
+    #
+    # This is deliberately NOT `explain(...)["effective_weight"] ==
+    # effective_weight(...)`. explain delegates the authoritative number to
+    # effective_weight, so that comparison is a tautology that would keep
+    # passing if the factors drifted away from the math entirely.
+    cases = [
+        ({"importance": 8, "first_seen": _iso(10), "trust": "verbatim"}, "recent_decision"),
+        ({"importance": 10, "first_seen": _iso(0), "trust": "inferred"}, "open_question"),
+        ({"importance": 9, "first_seen": _iso(200), "trust": "verbatim"}, "open_question"),
+        ({"importance": 3, "first_seen": _iso(45), "trust": None}, "strong_belief"),
+        ({"trust": "inferred"}, "active_topic"),
+    ]
+    for item, item_type in cases:
+        got = scoring.explain(item, item_type, _NOW)
+        f = got["factors"]
+        product = f["base"] * f["recency"] * f["type_decay"] * f["overdue_boost"]
+        assert f["raw"] == pytest.approx(product), (item, item_type)
+        assert got["effective_weight"] == pytest.approx(
+            scoring._soft_clip(f["raw"], got["inputs"]["trust_ceiling"])), (item, item_type)
+
+
+def test_explain_names_a_substituted_importance_as_a_default():
+    # An unscored item is not an importance-5 item, and a consumer recomputing
+    # from a published 5 without knowing it was substituted would report a
+    # score the record never carried.
+    got = scoring.explain({"first_seen": _iso(1)}, "recent_decision", _NOW)
+    assert got["inputs"]["importance"] == scoring._DEFAULT_IMPORTANCE
+    assert got["inputs"]["importance_source"] == "default"
+
+
+def test_explain_reports_an_unstamped_item_as_neutral_rather_than_fresh():
+    # No first_seen means neutral recency, not maximum. The published age is
+    # null rather than 0, because "unknown age" and "brand new" are different
+    # facts and collapsing them is how a consumer reinvents the bug.
+    got = scoring.explain({"importance": 6, "trust": "inferred"}, "recent_decision", _NOW)
+    assert got["inputs"]["age_days"] is None
+    assert got["inputs"]["first_seen"] is None
+    assert got["factors"]["recency"] == pytest.approx(scoring._NEUTRAL_RECENCY)
+    assert got["factors"]["type_decay"] == 1.0
+    assert got["factors"]["overdue_boost"] == 1.0
+
+
+def test_explain_reports_the_rules_actually_applied_for_an_unknown_type():
+    # effective_weight falls back to _DEFAULT_RULES for a type it does not
+    # know. Publishing the requested type alone would describe a computation
+    # that did not happen.
+    got = scoring.explain({"importance": 5}, "not-a-real-type", _NOW)
+    assert got["item_type"] == "not-a-real-type"
+    assert got["rules"] == "recent_decision"
+
+
+def test_explain_shows_the_overdue_boost_that_escalation_applied():
+    # open_question is the one auto-escalating type; an item past its expected
+    # lifespan gets a boost, and a consumer cannot reproduce the number
+    # without it.
+    got = scoring.explain(
+        {"importance": 5, "first_seen": _iso(60), "trust": "verbatim"},
+        "open_question", _NOW)
+    assert got["factors"]["overdue_boost"] > 1.0

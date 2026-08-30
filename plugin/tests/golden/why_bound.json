@@ -25,6 +25,27 @@
     "count": 0,
     "references": []
   },
+  "ranking": {
+    "effective_weight": 0.010000000000000002,
+    "computed_at": 1800000000.0,
+    "item_type": "recent_decision",
+    "rules": "recent_decision",
+    "inputs": {
+      "importance": 5,
+      "importance_source": "default",
+      "trust": "verbatim",
+      "trust_ceiling": 3.0,
+      "first_seen": "2026-08-05T10:00:00Z",
+      "age_days": 162.91666666666666
+    },
+    "factors": {
+      "base": 0.5,
+      "recency": 0.2,
+      "type_decay": 0.1,
+      "overdue_boost": 1.0,
+      "raw": 0.010000000000000002
+    }
+  },
   "receipt": {
     "version": 1,
     "source": {

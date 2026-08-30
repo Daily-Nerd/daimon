@@ -12,10 +12,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 
-from . import (config, provenance, recall, redact, schema, serializer, store,
-               transcript)
+from . import (config, provenance, recall, redact, schema, scoring,
+               serializer, store, transcript)
 
 
 SCHEMA_VERSION = 1
@@ -265,8 +266,14 @@ def _index_only_reason(row: dict) -> str:
 
 
 def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
-                 resolver=None) -> dict | None:
-    """Inspect one exact item inside one explicit project scope."""
+                 resolver=None, now: float | None = None) -> dict | None:
+    """Inspect one exact item inside one explicit project scope.
+
+    `now` is injected (#840) because the ranking block below decays with age:
+    a payload whose number depends on an un-injected clock cannot be pinned by
+    a test, and this one is published for consumers to recompute."""
+    if now is None:
+        now = time.time()
     occurrences = _item_occurrences(project_dir, item_id)
     resolutions = store.resolutions(project_dir=project_dir)
     event = resolutions.get(item_id)
@@ -357,6 +364,21 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
             "count": len(references),
             "references": references,
         },
+        # #840 (request q-6cd17264d205): the ordering key, published with the
+        # inputs that produced it. `why` is the surface that exists to answer
+        # "why is this item where it is", and ranking was the one axis it
+        # could not answer, so a consumer had to reimplement scoring.py and
+        # drift from it. Recomputed here rather than stored: the weight decays,
+        # so a value written at capture time is stale by the time it is read.
+        #
+        # The kind picks the rules — decay rate, and whether overdue
+        # escalation applies at all — so a fixed type would publish a number
+        # no read path actually ranks on. On the #674 index-only path the
+        # index row carries no importance or first_seen, and the block says so
+        # in its own inputs (`importance_source: default`, `age_days: null`)
+        # rather than presenting substituted values as recorded ones.
+        "ranking": scoring.explain(
+            item, schema.KIND_TO_TYPE.get(kind, "recent_decision"), now),
         "receipt": receipt if bound else None,
         "source": source,
         "lifecycle_event": ({
@@ -377,6 +399,26 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
         result["source_excerpt"] = _bounded_source(
             item, receipt, resolution, messages)
     return result
+
+
+def _ranking_line(ranking: dict) -> str:
+    """One line for the same numbers the JSON publishes (#840). The human
+    receipt must not be strictly less informative than its own machine
+    payload, and the inputs ride along because a bare weight is exactly the
+    ranking-you-must-trust-blind the request objected to.
+
+    `rules` rather than `item_type`: it names the rules the computation
+    actually applied, which differ whenever the kind maps to no known type."""
+    inputs = ranking["inputs"]
+    age = inputs["age_days"]
+    age_text = "age unknown" if age is None else f"{age:.1f}d old"
+    importance = (f"importance {inputs['importance']}"
+                  if inputs["importance_source"] == "item"
+                  else f"importance {inputs['importance']} (default, unscored)")
+    return (f"Ranking: weight {ranking['effective_weight']:.3f} "
+            f"as {ranking['rules']} ({importance}, {age_text}, "
+            f"{inputs['trust'] or 'untagged'} ceiling "
+            f"{inputs['trust_ceiling']:.2f})")
 
 
 def human_lines(result: dict) -> list[str]:
@@ -405,6 +447,7 @@ def human_lines(result: dict) -> list[str]:
         f"Current support: {axes['current_support']}",
         f"Verifier: {axes['verifier_comparison']}",
         f"Lifecycle: {axes['lifecycle']}",
+        _ranking_line(result["ranking"]),
     ]
     index_only = result.get("index_only")
     if isinstance(index_only, dict):
