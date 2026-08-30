@@ -2440,3 +2440,43 @@ def test_inject_names_the_verdict_it_withheld(project, capsys, monkeypatch):
     assert _inject(project) == 0
     out = capsys.readouterr().out
     assert "+2 more decided" in out, out
+
+
+def test_cli_revise_survives_the_record_vanishing_between_its_two_reads(
+        project, recipient, monkeypatch, capsys):
+    """#857: revise re-reads the record it just revised and rendered it
+    without the None check both sibling paths already have.
+
+    `revise()` reads once through `_require`, the CLI reads again to render
+    the card, and `requests.get` answers `dict | None`. A concurrent writer
+    between those two reads made the second answer None, and `_request_lines`
+    calls `.get()` on its first line, so the command died with an
+    AttributeError instead of saying the revision landed.
+
+    The revision itself SUCCEEDED in that window, so the command must report
+    that rather than implying it failed. `request open` and the verdict verbs
+    both already do exactly this; only revise omitted it.
+    """
+    from daimon_briefing import cli
+
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+
+    real_get = requests.get
+    reads = {"n": 0}
+
+    def vanishes_after_the_first_read(*args, **kwargs):
+        # Call 1 is revise's own _require; call 2 is the CLI's re-read.
+        reads["n"] += 1
+        return real_get(*args, **kwargs) if reads["n"] == 1 else None
+
+    monkeypatch.setattr(requests, "get", vanishes_after_the_first_read)
+
+    rc = cli.main(["request", "revise", q_id, "--ask", "sharpened ask text",
+                   "--by", "agent", "--project", project])
+
+    assert reads["n"] >= 2, "the CLI must re-read, or this test proves nothing"
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert q_id in out
+    assert "Traceback" not in out
