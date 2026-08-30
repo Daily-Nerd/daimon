@@ -2069,6 +2069,30 @@ def test_cli_write_checkpoint_strips_model_claimed_pinned(
     assert "pinned" not in belief
 
 
+def test_worldcheck_ledger_rows_route_cures_through_the_gate(
+        tmp_checkpoint_dir, monkeypatch):
+    # #839: worldcheck emits contradiction and cure rows the same way, because
+    # it writes nothing to disk by contract. The write boundary is where the
+    # current ledger state is in hand, so it is where a cure that would change
+    # nothing gets dropped.
+    from daimon_briefing import store
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    proj = "/p/wc"
+
+    # A cure for an item nothing contradicted is not worth a row.
+    cli._write_worldcheck_ledger(
+        [("o-clean", "receipt-ok", "receipt-valid")], proj)
+    assert store.verification_rows(project_dir=proj) == []
+
+    cli._write_worldcheck_ledger(
+        [("o-bad", "receipt", "receipt-invalid")], proj)
+    cli._write_worldcheck_ledger(
+        [("o-bad", "receipt-ok", "receipt-valid")], proj)
+    assert [r["check"] for r in store.verification_rows(project_dir=proj)] \
+        == ["receipt", "receipt-ok"]
+
+
 def test_suggest_line_collapses_multiline_item_text():
     # #512: the injection line's echo strip is line-scoped (`[^\n]*`), so item
     # text carrying a newline would leave its tail in the verification

@@ -604,6 +604,11 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
 # write; model-flagged contradictions have no path here at all — authority
 # precedent: derived world evidence writes the slot, or nothing does.
 _INVALIDATION_CHECKS = ("receipt",)
+# #839: the cure half. Derived evidence clears derived evidence, which needs
+# no widening of #836's authority model: the same probe that contradicted the
+# claim is the one now saying it holds. A HUMAN ruling channel is the other
+# half and stays deliberately unbuilt, because that WOULD widen the model.
+_CONFIRMATION_CHECKS = ("receipt-ok",)
 
 
 def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
@@ -650,38 +655,21 @@ def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
     except OSError:
         return
     for bucket in buckets:
-        latest: dict[str, dict] = {}
-        for row in store.verification_rows(bucket=bucket):
-            if row.get("check") not in _INVALIDATION_CHECKS:
-                continue
-            ref = row.get("item_ref")
-            reason = row.get("reason")
-            ts = row.get("ts")
-            if not (isinstance(ref, str) and ref
-                    and isinstance(reason, str) and reason
-                    and isinstance(ts, str) and ts):
-                continue
-            cur = latest.get(ref)
-            if cur is None:
-                latest[ref] = row
-                continue
-            new_e = store._created_epoch(ts)
-            if new_e is None:
-                continue  # an unstamped row never displaces a stamped one
-            cur_e = store._created_epoch(cur.get("ts"))
-            if (cur_e is None or new_e > cur_e
-                    or (new_e == cur_e
-                        and json.dumps(row, sort_keys=True,
-                                       ensure_ascii=False)
-                        > json.dumps(cur, sort_keys=True,
-                                     ensure_ascii=False))):
-                latest[ref] = row
-        for ref, row in latest.items():
+        # ONE resolution of latest-by-ts, shared with the cure gate that
+        # decides whether a confirmation is worth writing (#839). Two copies
+        # would drift, and the write side deciding "currently contradicted"
+        # differently from the read side is the recorder-and-verifier
+        # mismatch this codebase keeps paying for.
+        for ref, row in store.latest_receipt_verdicts(bucket=bucket).items():
+            # A confirmation CLEARS rather than stamping: the slot holds the
+            # latest contradiction evidence, and once the latest evidence is
+            # a confirmation there is no contradiction evidence to hold.
+            value = (f"{row['check']}:{row['reason']}@{row['ts']}"
+                     if row["verdict"] == "contradicted" else None)
             conn.execute(
                 "UPDATE items SET invalidated_by = ?"
                 " WHERE item_id = ? AND project_slug IS ? AND author IS ?",
-                (f"{row['check']}:{row['reason']}@{row['ts']}",
-                 ref, bucket.name, author))
+                (value, ref, bucket.name, author))
 
 
 def describe_invalidation(value) -> str | None:

@@ -583,9 +583,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
             # A POINTER and a REASON CODE, never the item's text (#376) — the
             # same second stream capture writes, for the same reason: folded
             # into events.jsonl a rejection would HIDE the item it describes.
-            for item_ref, check, reason in ledger_rows:
-                store.append_verification(item_ref, check, reason,
-                                          project_dir=route)
+            _write_worldcheck_ledger(ledger_rows, route)
         except Exception:
             pass
     # NOTE: drift is checked against the resolved project root. If read_latest fell
@@ -1576,6 +1574,23 @@ def _checkpoint_info(path, now) -> dict:
         "age": _format_age(age),
         "path": str(path),
     }
+
+
+def _write_worldcheck_ledger(rows, route) -> None:
+    """Append worldcheck's reserved ledger rows at the write boundary (#439,
+    #839). A POINTER and a REASON CODE, never the item's text (#376).
+
+    Cure rows take the gated path. worldcheck emits them the same way it emits
+    contradictions, because it writes nothing to disk by contract, so this is
+    the first place that knows where the item currently stands. A cure for an
+    item nothing contradicted changes nothing, and writing it anyway would
+    turn a ledger of problems found into a ledger of work done."""
+    for item_ref, check, reason in rows:
+        if check == worldcheck.LEDGER_CONFIRM_CHECK:
+            store.append_receipt_cure(item_ref, project_dir=route)
+        else:
+            store.append_verification(item_ref, check, reason,
+                                      project_dir=route)
 
 
 def _status_health(proj, glob, outstanding, siblings, *, now,
