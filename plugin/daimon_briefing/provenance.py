@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TypeGuard
 
 
 SOURCE_REF_VERSION = 1
@@ -42,8 +43,14 @@ class SourceResolution:
     path: Path | None = None
 
 
-def valid_session_id(value) -> bool:
-    """Bounded, glob/path-safe host session identifier."""
+def valid_session_id(value) -> TypeGuard[str]:
+    """Bounded, glob/path-safe host session identifier.
+
+    A TypeGuard rather than a plain bool (#842): the body already establishes
+    `isinstance(value, str)`, and every caller reads a session id out of an
+    untyped checkpoint dict and passes it straight into something that wants
+    a str. Returning bool made each of those call sites re-prove, or skip
+    proving, what this function had just checked."""
     return isinstance(value, str) and _SESSION_RE.fullmatch(value) is not None
 
 
@@ -144,7 +151,10 @@ def capture_source_ref(session_id: str, transcript_path=None, *, author=None,
     return source
 
 
-def valid_source_ref(value) -> bool:
+def valid_source_ref(value) -> TypeGuard[dict]:
+    """A TypeGuard for the same reason valid_session_id is one (#842): the
+    body opens with isinstance(value, dict), and every caller reads a source
+    ref out of an untyped checkpoint and then subscripts it."""
     if not isinstance(value, dict) or value.get("version") != SOURCE_REF_VERSION:
         return False
     if value.get("host") not in _HOSTS or value.get("locator") not in _LOCATORS:
@@ -211,7 +221,11 @@ def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
     return receipt if valid_quote_receipt(receipt) else None
 
 
-def valid_quote_receipt(value) -> bool:
+def valid_quote_receipt(value) -> TypeGuard[dict]:
+    """A TypeGuard, matching the two validators above (#842). carry's
+    _capture_verified is the case that shows why: it calls this and then
+    immediately reads receipt["outcome"], which only holds because this
+    function proved the dict and then discarded the proof at its return."""
     if not isinstance(value, dict) or value.get("version") != QUOTE_PROVENANCE_VERSION:
         return False
     if not valid_source_ref(value.get("source")):
@@ -312,7 +326,7 @@ class SourceResolver:
                 return list(self._indexes[host].get(sid, ()))
             if host == "codex":
                 if host not in self._indexes:
-                    paths = []
+                    paths: list[Path] = []
                     for root in self._roots(host) or ():
                         if root.exists():
                             paths.extend(root.rglob("*.jsonl"))

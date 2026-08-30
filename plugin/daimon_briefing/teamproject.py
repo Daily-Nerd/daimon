@@ -215,8 +215,20 @@ def _candidates(project_dir) -> list[tuple[str, ...]]:
             if derived:
                 out.append(derived)
     # Tier 4: nothing resolved → [] → flat era. Dedupe preserves tier order.
+    #
+    # Spelled as a loop rather than the `not (s in seen or seen.add(s))`
+    # comprehension idiom (#842). The idiom is correct — set.add returns None,
+    # which is falsy, so the filter keeps first occurrences — but it works by
+    # relying on the return value of a call that is documented to have none,
+    # which is exactly what mypy objects to. The loop says the same thing
+    # without asking a reader to verify a falsy-None trick.
     seen: set[tuple[str, ...]] = set()
-    return [s for s in out if not (s in seen or seen.add(s))]
+    unique: list[tuple[str, ...]] = []
+    for segments in out:
+        if segments not in seen:
+            seen.add(segments)
+            unique.append(segments)
+    return unique
 
 
 # ---- #279: per-remote scope — default-closed membership for synced remotes ----
