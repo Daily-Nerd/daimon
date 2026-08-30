@@ -585,3 +585,19 @@ def test_published_artifact_matches_the_table():
         "`uv run python -m daimon_briefing.field_table` from plugin/")
     expected = field_table.render_document(serializer.PROMPT_VERSION)
     assert _ARTIFACT.read_text(encoding="utf-8") == expected
+
+
+def test_every_carried_field_declares_a_scoring_type():
+    """#842: carry keys its TYPE_RULES lookup off CARRIED_KINDS, so a carried
+    field with no scoring type would silently score under the default rules
+    rather than its own. The old comprehension trusted that invariant without
+    enforcing it and would have shipped a None inside a tuple typed str; the
+    new one filters on scoring_type, which makes the same field vanish from
+    carry instead. Both failure modes are silent, so the invariant is pinned
+    here rather than left to whichever of them happens to bite first."""
+    missing = [f.key for f in schema.ITEM_FIELDS if f.carries and not f.scoring_type]
+    assert missing == [], (
+        f"carried field(s) {missing} declare no scoring_type; either give them "
+        f"one in the field table or stop carrying them")
+    # and the derived view agrees, so the filter cannot be silently dropping one
+    assert len(schema.CARRIED_KINDS) == sum(1 for f in schema.ITEM_FIELDS if f.carries)
