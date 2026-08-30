@@ -1895,26 +1895,55 @@ def append_verification(item_ref: str, check: str, reason: str,
         return False
 
 
+# Ledgers recall's rebuild folds into index COLUMNS: events.jsonl ->
+# superseded_by (the resolutions fold, #234), verification.jsonl ->
+# invalidated_by (#835). Every name here must be fingerprint INPUT in
+# recall._fingerprint (#245's lesson) — a fold-able ledger missing from that
+# walk serves stale rows until an unrelated checkpoint write happens to
+# invalidate the db. recall references this tuple, so adding a third
+# fold-able ledger without wiring the fingerprint fails loudly in its tests
+# instead of dodging the walk.
+INDEX_CONTENT_LEDGERS = ("events.jsonl", "verification.jsonl")
+
+
+def verification_rows(project_dir=None, *, bucket=None) -> list:
+    """Parsed rejection-ledger rows, oldest first (#835) — the read half of
+    append_verification, for recall's invalidated_by fold (and the parse
+    loop verification_counts folds over — one loop, one failure posture,
+    #836 review). `bucket` (a bucket DIRECTORY under the checkpoint dir)
+    bypasses slug re-derivation entirely: recall's fold reads and binds THE
+    SAME bucket, so a bucket whose name is not slug-idempotent (dots munge
+    to '-') can never read a sibling bucket's ledger. Fails open to []
+    (missing/corrupt/non-UTF-8 ledger, unknown project) and skips torn
+    lines: a ledger read must never take an index rebuild down."""
+    if bucket is not None:
+        path = Path(bucket) / "verification.jsonl"
+    else:
+        path = _ledger_path(project_dir)
+        if path is None:
+            return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    rows: list = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
 def verification_counts(project_dir=None) -> dict:
     """{check: count} over the rejection ledger. Answers the question the
     trust classes otherwise cannot: has verification ever caught anything on
     THIS install. Fails open to {} (missing/corrupt log, unknown project) —
     same posture as the resolutions fold."""
     out: dict = {}
-    path = _ledger_path(project_dir)
-    if path is None:
-        return out
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return out
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in verification_rows(project_dir):
         check = str(row.get("check") or "")
         if check:
             out[check] = out.get(check, 0) + 1
