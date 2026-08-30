@@ -851,3 +851,86 @@ def test_dry_run_warns_about_active_rulings(tmp_checkpoint_dir, _tty,
     assert rc == 0
     assert "removes ACTIVE ruling" in capsys.readouterr().out
     assert refutations.get(ruling_id, project_dir=PROJECT) is not None
+
+
+# --- #860: the post-write re-read ------------------------------------------
+#
+# Every ruling verb that WRITES then re-reads the record to render it. The
+# lookup verbs (show, and the pre-write guards) already check for absence,
+# because a user-supplied id may name nothing. The write verbs did not, and
+# the reason is a reasonable one: the record was written a moment earlier, so
+# it must be there.
+#
+# It must be there unless a competing writer removes it in between, which is
+# the window #857 confirmed reachable in the request ledger. In that window
+# the write SUCCEEDED and only the render could not resolve, so the command
+# has to report that rather than dying on a None.
+
+
+def _vanishes_after_the_write(monkeypatch, write_name):
+    """Model a competing writer between a verb's write and its own re-read.
+
+    Sharper than a call counter: it is pinned to the write actually
+    completing, so it stays faithful no matter how many reads a given verb
+    makes on its way there.
+    """
+    real_write = getattr(refutations, write_name)
+    real_get = refutations.get
+    state = {"written": False}
+
+    def wrapped_write(*args, **kwargs):
+        out = real_write(*args, **kwargs)
+        state["written"] = True
+        return out
+
+    def wrapped_get(*args, **kwargs):
+        return None if state["written"] else real_get(*args, **kwargs)
+
+    monkeypatch.setattr(refutations, write_name, wrapped_write)
+    monkeypatch.setattr(refutations, "get", wrapped_get)
+    return state
+
+
+_RULING_WRITE_VERBS = [
+    ("propose", "assert_ruling", [
+        "ruling", "propose", "--subject", "public posts",
+        "--verdict", "internal numbers never appear in public posts",
+        "--scope", "publishing", "--evidence", "issue:693", "--by", "agent"]),
+    ("ratify", "ratify", ["ruling", "ratify", "RULING_ID"]),
+    ("revise", "revise", [
+        "ruling", "revise", "RULING_ID",
+        "--verdict", "internal numbers never ship in public posts",
+        "--evidence", "issue:693"]),
+    ("retire", "retire", ["ruling", "retire", "RULING_ID"]),
+]
+
+
+@pytest.mark.parametrize("verb,write_name,argv", _RULING_WRITE_VERBS,
+                         ids=[v[0] for v in _RULING_WRITE_VERBS])
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_cli_ruling_write_verbs_survive_the_record_vanishing(
+        verb, write_name, argv, as_json, tmp_checkpoint_dir, _tty,
+        monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    # `propose` CREATES; pre-seeding the same subject/scope would collide and
+    # the verb would refuse before writing anything, which the `written`
+    # assertion below catches rather than letting the test pass vacuously.
+    ruling_id = ("" if verb == "propose"
+                 else _rule(ratified=(verb in {"revise", "retire"}),
+                            channel=("cli-tty" if verb in {"revise", "retire"}
+                                     else "cli-agent")))
+    capsys.readouterr()
+
+    state = _vanishes_after_the_write(monkeypatch, write_name)
+    args = [ruling_id if a == "RULING_ID" else a for a in argv]
+    args += ["--project", PROJECT]
+    if as_json:
+        args.append("--json")
+
+    rc = cli.main(args)
+
+    assert state["written"], "the write never ran, so this proves nothing"
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Traceback" not in out
+    assert out.strip(), "a vanished record must still report what happened"

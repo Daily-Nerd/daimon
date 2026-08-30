@@ -15,6 +15,7 @@ from .. import config, normalize, refutations, render
 from ._ledger import (
     _print_ruling,
     _refutation_json,
+    _report_vanished_write,
     _refute_channel,
     _ruling_lines,
 )
@@ -34,6 +35,9 @@ def _cmd_ruling_propose(args) -> int:
         return 1
     record = refutations.get(ruling_id, project_dir=project)
     _cli._note_usage("ruling:propose")
+    if record is None:
+        _report_vanished_write(ruling_id, "propose", as_json=args.json)
+        return 0
     if args.json:
         print(_refutation_json(record))
     else:
@@ -95,6 +99,9 @@ def _cmd_ruling_ratify(args) -> int:
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:ratify")
+    if record is None:
+        _report_vanished_write(args.ruling_id, "ratify", as_json=args.json)
+        return 0
     if record["state"] != "active":
         print("not activated: the text changed during confirmation; "
               "re-run to review the current text")
@@ -156,6 +163,9 @@ def _cmd_ruling_revise(args) -> int:
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:revise")
+    if record is None:
+        _report_vanished_write(args.ruling_id, "revise", as_json=args.json)
+        return 0
     if args.json:
         print(_refutation_json(record))
     else:
@@ -183,6 +193,9 @@ def _cmd_ruling_retire(args) -> int:
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:retire")
+    if record is None:
+        _report_vanished_write(args.ruling_id, "retire", as_json=args.json)
+        return 0
     if args.json:
         print(_refutation_json(record))
     else:

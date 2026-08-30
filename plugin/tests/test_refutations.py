@@ -878,3 +878,94 @@ def test_a_torn_trailing_line_never_swallows_the_next_event(tmp_checkpoint_dir):
     record = refutations.get(ref_id, project_dir=PROJECT)
     assert record is not None, "the torn line swallowed the overturn"
     assert record["state"] == "overturned"
+
+
+# --- #860: the post-write re-read ------------------------------------------
+#
+# Twin of the ruling-side coverage in test_rulings.py. Every refute verb that
+# WRITES then re-reads the record to render it. The lookup verbs already check
+# for absence, because a user-supplied id may name nothing; the write verbs
+# rested on the record having been written a moment earlier.
+#
+# That holds unless a competing writer removes it in between, which is the
+# window #857 confirmed reachable in the request ledger. The write SUCCEEDED
+# in that window, so the command reports it instead of dying on a None.
+
+
+def _vanishes_after_the_write(monkeypatch, write_name):
+    """Model a competing writer between a verb's write and its own re-read.
+
+    Pinned to the write actually completing rather than to a call count, so
+    it stays faithful however many reads a verb makes on the way there.
+    """
+    real_write = getattr(refutations, write_name)
+    real_get = refutations.get
+    state = {"written": False}
+
+    def wrapped_write(*args, **kwargs):
+        out = real_write(*args, **kwargs)
+        state["written"] = True
+        return out
+
+    def wrapped_get(*args, **kwargs):
+        return None if state["written"] else real_get(*args, **kwargs)
+
+    monkeypatch.setattr(refutations, write_name, wrapped_write)
+    monkeypatch.setattr(refutations, "get", wrapped_get)
+    return state
+
+
+_REFUTE_WRITE_VERBS = [
+    ("add", "assert_refutation", [
+        "refute", "add", "--subject", "content hashes",
+        "--verdict", "whole-file hashes do not prove span claims",
+        "--scope", "verification", "--anchor", "issue:502",
+        "--evidence", "measurement:566/623 origin misses", "--by", "agent"]),
+    ("ratify", "ratify", ["refute", "ratify", "REF_ID"]),
+    ("revise", "revise", [
+        "refute", "revise", "REF_ID",
+        "--verdict", "file hashes still do not prove individual claims",
+        "--evidence", "measurement:second corpus", "--ratify"]),
+    ("overturn", "overturn", [
+        "refute", "overturn", "REF_ID",
+        "--evidence", "measurement:contrary replay", "--by", "agent"]),
+]
+
+
+@pytest.mark.parametrize("verb,write_name,argv", _REFUTE_WRITE_VERBS,
+                         ids=[v[0] for v in _REFUTE_WRITE_VERBS])
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_cli_refute_write_verbs_survive_the_record_vanishing(
+        verb, write_name, argv, as_json, tmp_checkpoint_dir, monkeypatch,
+        capsys):
+    # `add` CREATES; pre-seeding the same subject/scope would collide and the
+    # verb would refuse before writing, which the `written` assertion catches
+    # rather than letting the test pass vacuously.
+    ref_id = ""
+    if verb != "add":
+        ref_id = refutations.assert_refutation(
+            subject="content hashes",
+            verdict="whole-file hashes do not prove span claims",
+            scope="verification",
+            evidence=["measurement:566/623 origin misses"],
+            channel="cli-agent", project_dir=PROJECT)
+        if verb in {"revise", "overturn"}:
+            # cli-tty is the human channel; ratification is deliberately
+            # not self-declarable by an agent channel (CHANNEL_AUTHORITY).
+            refutations.ratify(ref_id, channel="cli-tty",
+                               project_dir=PROJECT)
+    capsys.readouterr()
+
+    state = _vanishes_after_the_write(monkeypatch, write_name)
+    args = [ref_id if a == "REF_ID" else a for a in argv]
+    args += ["--project", PROJECT]
+    if as_json:
+        args.append("--json")
+
+    rc = cli.main(args)
+
+    assert state["written"], "the write never ran, so this proves nothing"
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Traceback" not in out
+    assert out.strip(), "a vanished record must still report what happened"
