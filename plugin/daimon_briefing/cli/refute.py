@@ -13,6 +13,7 @@ from .. import refutations, render
 from ._ledger import (
     _print_refutation,
     _refutation_json,
+    _report_vanished_write,
     _refutation_lines,
     _refuse_ruling_id,
     _refute_channel,
@@ -34,6 +35,9 @@ def _cmd_refute_add(args) -> int:
         return 1
     record = refutations.get(ref_id, project_dir=project)
     _cli._note_usage("refute:add")
+    if record is None:
+        _report_vanished_write(ref_id, "add", as_json=args.json)
+        return 0
     if args.json:
         print(_refutation_json(record))
     else:
@@ -65,6 +69,9 @@ def _cmd_refute_ratify(args) -> int:
         return 1
     record = refutations.get(args.refutation_id, project_dir=project)
     _cli._note_usage("refute:ratify")
+    if record is None:
+        _report_vanished_write(args.refutation_id, "ratify", as_json=args.json)
+        return 0
     if args.json:
         print(_refutation_json(record))
     else:
@@ -89,6 +96,9 @@ def _cmd_refute_revise(args) -> int:
         return 1
     record = refutations.get(args.refutation_id, project_dir=project)
     _cli._note_usage("refute:revise")
+    if record is None:
+        _report_vanished_write(args.refutation_id, "revise", as_json=args.json)
+        return 0
     if args.json:
         print(_refutation_json(record))
     else:
@@ -114,6 +124,9 @@ def _cmd_refute_overturn(args) -> int:
         return 1
     record = refutations.get(args.refutation_id, project_dir=project)
     _cli._note_usage("refute:overturn")
+    if record is None:
+        _report_vanished_write(args.refutation_id, "overturn", as_json=args.json)
+        return 0
     if args.json:
         print(_refutation_json(record))
     else:

@@ -12,6 +12,46 @@ import sys
 from .. import refutations, render
 
 
+def _report_vanished_write(record_id: str, verb: str, *,
+                           as_json: bool) -> None:
+    """Report a write whose record did not survive to the render, or False.
+
+    Every write verb in both families appends and then re-reads the record to
+    show it. The lookup verbs already check the read, because a user-supplied
+    id may name nothing; the write verbs rested on having just written it,
+    which holds right up until a competing writer removes it in the gap. That
+    window is the one #857 confirmed reachable in the request ledger, and both
+    render branches died on the None: the text path on `record["state"]`, the
+    JSON path on `{**record}` inside the stamper.
+
+    The wording reports the half that actually happened. The append landed and
+    is on the ledger; only the render could not resolve it. Saying the verb
+    failed would be false, and saying nothing would leave a user who just
+    changed a ruling with no confirmation that it took.
+
+    The caller owns the `is None` test rather than this helper returning a
+    flag: the guard then reads the same way the lookup verbs' guards already
+    do, and a checker can narrow the record on the line after it.
+
+    The JSON branch answers with a document rather than the text sentence,
+    because a consumer parsing `--json` needs something it can parse. It is
+    deliberately not shaped like a record: `record` is null and `outcome`
+    names the write, so nothing can mistake it for the thing that vanished.
+    """
+    if as_json:
+        print(json.dumps({"id": record_id, "outcome": f"{verb}-recorded",
+                          "record": None,
+                          "note": "the write is on the ledger; the record was "
+                                  "not readable from this project at render "
+                                  "time"},
+                         ensure_ascii=False, sort_keys=True))
+    else:
+        render.render_ledger_lines(
+            [f"{record_id}: {verb} recorded in this project's ledger",
+             "  the record was not readable here at render time — the write "
+             "landed and renders with the record"])
+
+
 def _refutation_json(record) -> str:
     """JSON for one folded record or a list of them.
 
