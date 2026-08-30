@@ -122,7 +122,6 @@ module = [
     "daimon_briefing.render",
     "daimon_briefing.requests",
     "daimon_briefing.schema",
-    "daimon_briefing.serializer",
     "daimon_briefing.skill_install",
     "daimon_briefing.store",
     "daimon_briefing.teamsync",
