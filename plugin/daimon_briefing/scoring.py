@@ -144,6 +144,86 @@ def _soft_clip(weight: float, ceiling: float) -> float:
     return ceiling - (gap * gap) / (weight - 2.0 * knee + ceiling)
 
 
+def explain(item, item_type: str, now: float) -> dict:
+    """The same ordering key effective_weight returns, published WITH the
+    inputs and factors that produced it (#840, request q-6cd17264d205).
+
+    Why a read API and not a stored column: the weight decays, so a value
+    written at capture time is stale by the time anything reads it, and a
+    stale ranking number is worse than none because it still looks
+    authoritative. This recomputes at read time and stamps `computed_at`,
+    without which the number cannot be interpreted at all.
+
+    The bar this has to clear is not "report a number". A consumer must be
+    able to take `inputs` and `factors`, redo the arithmetic, and land on the
+    published `effective_weight`. Anything less leaves them with a ranking
+    they can read and still cannot check, which is the complaint that opened
+    the request.
+
+    Two deliberate honesty rules in the payload:
+      - a substituted importance is labelled `default`, because an unscored
+        item is not an importance-5 item and a consumer recomputing from a
+        bare 5 would report a score the record never carried;
+      - an unstamped item publishes `age_days: None`, never 0.0 — "unknown
+        age" and "brand new" are different facts, and collapsing them is how
+        a reimplementation reinvents the bug this API exists to prevent.
+
+    `effective_weight` stays the authoritative number and is called for it
+    rather than recomputed here, so the two can never disagree. The factors
+    are derived independently and pinned to their own product by test, since
+    a delegating wrapper makes the obvious equality assertion a tautology."""
+    rules_name = item_type if item_type in TYPE_RULES else "recent_decision"
+    rules = TYPE_RULES[rules_name]
+
+    imp = item.get("importance")
+    scored = isinstance(imp, int) and not isinstance(imp, bool) and 1 <= imp <= 10
+    importance = imp if scored else _DEFAULT_IMPORTANCE
+
+    trust = item.get("trust")
+    ceiling = trust_ceiling(trust)
+    age = _age_days(item, now)
+
+    if age is None:
+        # Mirrors effective_weight's unstamped branch: neutral recency, and
+        # neither decay nor escalation apply without an age to apply them to.
+        recency, decay, boost = _NEUTRAL_RECENCY, 1.0, 1.0
+    else:
+        recency = recency_weight(age)
+        decay = _type_decay(age, rules)
+        boost = (_overdue_boost(age - rules["expected_lifespan"])
+                 if rules["auto_escalation"] and age > rules["expected_lifespan"]
+                 else 1.0)
+
+    base = importance / 10.0
+    return {
+        "effective_weight": effective_weight(item, item_type, now),
+        "computed_at": now,
+        "item_type": item_type,
+        # What the computation actually used, which differs from item_type
+        # whenever the caller passes a type the table does not know.
+        "rules": rules_name,
+        "inputs": {
+            "importance": importance,
+            "importance_source": "item" if scored else "default",
+            "trust": trust,
+            "trust_ceiling": ceiling,
+            "first_seen": item.get("first_seen"),
+            "age_days": age,
+        },
+        "factors": {
+            "base": base,
+            "recency": recency,
+            "type_decay": decay,
+            "overdue_boost": boost,
+            # Pre-lid product. Published separately from effective_weight
+            # because _soft_clip is order-preserving rather than a min(), so
+            # "what this item accumulated" and "what its trust class allows
+            # it to spend" are two readable facts, not one.
+            "raw": base * recency * decay * boost,
+        },
+    }
+
+
 def effective_weight(item, item_type: str, now: float) -> float:
     """Ordering key for one checkpoint item. Tolerant of everything a legacy or
     torn checkpoint can throw: missing/malformed first_seen -> neutral recency,

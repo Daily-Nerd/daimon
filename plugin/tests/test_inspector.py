@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import (cli, config, inspector, provenance, recall,
-                              redact, store, transcript)
+                              redact, schema, scoring, store, transcript)
 
 
 _PROJECT = "/p/A"
@@ -551,12 +551,92 @@ def test_source_helpers_ignore_malformed_messages_and_cap_plain_text():
     assert capped == "x" * (inspector._SOURCE_CHAR_LIMIT - 1) + "…"
 
 
+def test_why_publishes_a_recomputable_ranking_block(tmp_checkpoint_dir,
+                                                    monkeypatch):
+    # #840 / q-6cd17264d205: effective_weight decided ordering on three read
+    # paths and was never exposed, so a consumer had to reimplement scoring.py
+    # to answer "why is this ranked here". `why` is the surface that exists to
+    # answer exactly that question about one item.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-bound", [
+        _item(importance=8, first_seen="2026-08-01T00:00:00Z"),
+    ])
+    now = 1_800_000_000.0
+
+    got = inspector.inspect_item(_PROJECT, _ITEM_ID, now=now)
+
+    ranking = got["ranking"]
+    assert ranking["computed_at"] == now
+    assert ranking["inputs"]["importance"] == 8
+    assert ranking["inputs"]["importance_source"] == "item"
+    # The published number IS the one the read paths rank on, not a
+    # display-only recomputation that could drift from it.
+    assert ranking["effective_weight"] == pytest.approx(
+        scoring.effective_weight(
+            {"importance": 8, "first_seen": "2026-08-01T00:00:00Z",
+             "trust": got["item"]["trust"]},
+            schema.KIND_TO_TYPE.get(got["item"]["kind"], "recent_decision"),
+            now))
+
+
+def test_why_ranking_uses_the_item_kind_not_a_fixed_type(tmp_checkpoint_dir,
+                                                         monkeypatch):
+    # The type selects the decay rate and whether overdue escalation applies,
+    # so publishing a weight computed under the wrong rules would be a number
+    # no read path actually uses. An open question is the one auto-escalating
+    # type, which makes it the case that cannot pass by accident.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    checkpoint = _checkpoint("S-q", [])
+    checkpoint["working_context"]["open_questions"] = [
+        _item(item_id="q-abcdef", text="still open", quote=None,
+              importance=5, first_seen="2026-06-01T00:00:00Z"),
+    ]
+    assert store.write_checkpoint("S-q", checkpoint, project_dir=_PROJECT)
+
+    got = inspector.inspect_item(_PROJECT, "q-abcdef", now=1_800_000_000.0)
+    assert got["ranking"]["rules"] == "open_question"
+
+
+def test_why_human_render_carries_the_ranking_it_publishes(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-h", [_item()])
+    # The human receipt must not be strictly less informative than its own
+    # machine payload, and a bare weight would be the "trust it blind"
+    # ranking the request objected to, so the inputs ride the line too.
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, now=1_800_000_000.0)
+    line = [ln for ln in inspector.human_lines(result)
+            if ln.startswith("Ranking:")]
+    assert len(line) == 1
+    assert f"{result['ranking']['effective_weight']:.3f}" in line[0]
+    assert result["ranking"]["rules"] in line[0]
+    assert "importance" in line[0]
+
+
+def test_why_human_render_names_a_substituted_importance(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-h", [_item()])
+    # Same honesty rule the JSON keeps: an unscored item is not an
+    # importance-5 item, so the line must not read as if 5 were recorded.
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, now=1_800_000_000.0)
+    line = [ln for ln in inspector.human_lines(result)
+            if ln.startswith("Ranking:")][0]
+    if result["ranking"]["inputs"]["importance_source"] == "default":
+        assert "default, unscored" in line
+
+
 def test_why_json_matches_golden_and_command_is_read_only_except_usage(
     tmp_checkpoint_dir, tmp_path, monkeypatch, capsys
 ):
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
     monkeypatch.setenv(
         "DAIMON_CLAUDE_PROJECTS_DIR", str(tmp_path / "no-transcripts"))
+    # #840: the ranking block decays with wall-clock age, so the golden can
+    # only stay a golden with the clock pinned. Freezing it here keeps the
+    # WHOLE document under the golden rather than carving out an exempt
+    # subtree, which is how a golden quietly stops covering its own payload.
+    monkeypatch.setattr(inspector.time, "time", lambda: 1_800_000_000.0)
     _write_checkpoint("S-bound", [
         _item(receipt=_receipt(_source(), "a" * 64)),
     ])

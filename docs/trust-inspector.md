@@ -54,8 +54,59 @@ daimon why o-3f8a2c --json
 ```
 
 The V1 document has `schema_version`, stable values under `axes`, item metadata,
-corroboration references, the durable receipt when one exists, and no derived
-`summary` field. Scripts should inspect the axes they actually care about.
+corroboration references, the durable receipt when one exists, a `ranking`
+block, and no derived `summary` field. Scripts should inspect the axes they
+actually care about.
+
+### Ranking
+
+`ranking` publishes the ordering key Daimon itself uses, together with the
+inputs that produced it:
+
+```json
+{
+  "effective_weight": 0.448,
+  "computed_at": 1800000000.0,
+  "item_type": "recent_decision",
+  "rules": "recent_decision",
+  "inputs": {
+    "importance": 8,
+    "importance_source": "item",
+    "trust": "verbatim",
+    "trust_ceiling": 3.0,
+    "first_seen": "2026-08-01T00:00:00Z",
+    "age_days": 10.0
+  },
+  "factors": {
+    "base": 0.8,
+    "recency": 0.7,
+    "type_decay": 0.8,
+    "overdue_boost": 1.0,
+    "raw": 0.448
+  }
+}
+```
+
+The weight is recomputed on every read and is never stored, because it decays
+with age: a value written at capture time would be stale by the time anything
+read it. `computed_at` is the epoch it was computed against, and the number
+cannot be interpreted without it.
+
+The point of publishing the inputs is that a consumer can redo the arithmetic
+and land on the same number. `raw` is the product of the four factors, and
+`effective_weight` is that product under the trust ceiling. The ceiling
+saturates rather than truncating, so `raw` above the ceiling is normal and
+still ordered.
+
+Two values are deliberately not what they look like:
+
+- `importance_source: "default"` means the item carried no importance and 5
+  was substituted. An unscored item is not an importance-5 item.
+- `age_days: null` means no usable `first_seen`, which is not the same as a
+  brand new item. Recency falls back to neutral rather than maximum.
+
+`rules` names the type rules the computation actually applied, which differs
+from `item_type` whenever the item's kind maps to no known type.
 
 Exit codes describe command execution, not epistemic state:
 
