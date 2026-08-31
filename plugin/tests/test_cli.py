@@ -3757,6 +3757,41 @@ def test_cli_recall_marks_contradiction_evidence(
     assert "false" not in line.lower()
 
 
+def test_cli_recall_marks_a_cleared_contradiction(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # #866: a cured item rendered exactly like one nothing ever questioned.
+    from daimon_briefing import store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    cp = _recall_checkpoint("S-cured", "meerkat burrow mapping plan colony")
+    cp["working_context"]["recent_decisions"][0]["id"] = "o-mee111"
+    store.write_checkpoint("S-cured", cp, project_dir=proj)
+    _write_verification_ledger(store.project_slug(proj), [
+        {"ts": "2026-08-29T10:00:00Z", "check": "receipt",
+         "item_ref": "o-mee111", "reason": "receipt-invalid"},
+        {"ts": "2026-08-29T12:00:00Z", "check": "receipt-ok",
+         "item_ref": "o-mee111", "reason": "receipt-valid"}])
+
+    assert cli.main(["recall", "meerkat", "--project", proj]) == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if "meerkat" in ln][0]
+    assert "contradiction cleared by receipt-ok:receipt-valid" in line
+    assert "contradicted by" not in line  # the ratchet released
+    assert "false" not in line.lower()
+    assert "true" not in line.lower()   # cleared is not proven
+
+
+def test_suggest_line_marks_a_cleared_contradiction():
+    # The auto-inject line carries it too: an item that survived a challenge
+    # arrives with that fact, not as though nothing had happened.
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "the exporter caches limbs",
+         "cured_by": "receipt-ok:receipt-valid@2026-08-29T12:00:00Z"}
+    line = cli._suggest_line(r, ["exporter"], 2000.0)
+    assert "contradiction cleared by receipt-ok:receipt-valid" in line
+
+
 def test_suggest_line_marks_contradiction_evidence():
     # The auto-inject line is the highest-leverage surface: a demoted item
     # still reaching the prompt must arrive flagged, not silently ranked down.

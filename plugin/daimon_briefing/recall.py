@@ -25,8 +25,11 @@ contradictions never mint the link — derived world evidence writes it, or
 nothing does. #837 made the read surfaces honor it: search sorts a
 contradicted row below a merely-replaced one, suggest demotes it harder than
 supersession does, and both CLI renderers mark it. None of them filters —
-the evidence is machine-local and cure-less, so burial stays visible and
-reversible rather than silent). A contentless FTS5 table indexes text +
+the evidence is machine-local, so burial stays visible and reversible
+rather than silent. #839 gave it a cure: a later confirmation clears the
+slot. #866 gave the cure a record of its own in `cured_by`, because
+clearing the mark had made "challenged and survived" indistinguishable
+from "never questioned", which is the same collapse inverted). A contentless FTS5 table indexes text +
 quote for MATCH; rows join back to `items` by rowid.
 
 Supersession v3 (#234) is ITEM-LEVEL evidence only: `superseded_by` is set by
@@ -94,7 +97,7 @@ def _note_error(where: str, exc: BaseException) -> None:
 # ledger folds bind through — purely a performance object, but the bump
 # rolls every existing db onto it deterministically instead of waiting for
 # an unrelated fingerprint change.
-_SCHEMA_VERSION = "7"   # #865 added items.superseded_source
+_SCHEMA_VERSION = "8"   # #866 added items.cured_by
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -395,6 +398,19 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 -- the checkable fact a reader needs to derive a grade.
                 superseded_source TEXT,
                 invalidated_by TEXT,
+                -- #866: the latest CONFIRMATION that cleared a prior
+                -- contradiction. #845 released the ratchet by writing NULL,
+                -- which is also what an item nothing ever questioned carries,
+                -- so "challenged and survived" and "never questioned" became
+                -- one state on every read surface. They are different facts
+                -- and the first is arguably the stronger one.
+                --
+                -- Depends on store.append_receipt_cure staying CONDITIONAL:
+                -- the fold sees only the latest verdict per item, so it can
+                -- read a confirmation as a cure only because a cure row is
+                -- never written unless the item currently stands
+                -- contradicted. Pinned by test, not just by this comment.
+                cured_by TEXT,
                 importance INTEGER,
                 first_seen TEXT,
                 item_id TEXT,
@@ -684,12 +700,17 @@ def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
             # A confirmation CLEARS rather than stamping: the slot holds the
             # latest contradiction evidence, and once the latest evidence is
             # a confirmation there is no contradiction evidence to hold.
-            value = (f"{row['check']}:{row['reason']}@{row['ts']}"
-                     if row["verdict"] == "contradicted" else None)
+            evidence = f"{row['check']}:{row['reason']}@{row['ts']}"
+            contradicted = row["verdict"] == "contradicted"
+            # The ratchet still releases: a cure clears invalidated_by. What
+            # it no longer does is erase the fact that there was something to
+            # clear (#866).
             conn.execute(
-                "UPDATE items SET invalidated_by = ?"
+                "UPDATE items SET invalidated_by = ?, cured_by = ?"
                 " WHERE item_id = ? AND project_slug IS ? AND author IS ?",
-                (value, ref, bucket.name, author))
+                (evidence if contradicted else None,
+                 None if contradicted else evidence,
+                 ref, bucket.name, author))
 
 
 def describe_invalidation(value) -> str | None:
@@ -716,6 +737,25 @@ def describe_invalidation(value) -> str | None:
     if not (sep and evidence and ts):
         return f"contradicted by {value}"
     return f"contradicted by {evidence} at {ts}"
+
+
+def describe_cure(value) -> str | None:
+    """Render one stored `cured_by` value as a marker phrase, or None (#866).
+
+    Twin of describe_invalidation, and the one parse of the same encoding, for
+    the same reason: a renderer that re-split the value could drift into
+    describing a different view than the fold recorded.
+
+    The wording says the contradiction was CLEARED, never that the claim is
+    true. The evidence semantics are unchanged: a confirmation is the latest
+    evidence, not a verdict, and an item that survived a challenge is not
+    thereby proven."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    evidence, sep, ts = value.rpartition("@")
+    if not (sep and evidence and ts):
+        return f"contradiction cleared by {value}"
+    return f"contradiction cleared by {evidence} at {ts}"
 
 
 def rebuild() -> int:
@@ -927,7 +967,7 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
         " i.session_id, i.created, i.superseded_by, i.superseded_source,"
-        " i.invalidated_by,"
+        " i.invalidated_by, i.cured_by,"
         " i.importance, i.first_seen, i.item_id, i.frontier,"
         " bm25(items_fts) AS rank"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
@@ -1350,7 +1390,7 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         # #837: the column MUST be selected here, not just written — this is
         # the auto-inject path, so a missing select re-asserts a claim this
         # install's own ledger contradicted, on the highest-leverage surface.
-        " i.invalidated_by,"
+        " i.invalidated_by, i.cured_by,"
         # pinned rides out for the #452 age gate (standing rules are
         # age-independent); it is NOT a rank input here.
         " i.pinned,"

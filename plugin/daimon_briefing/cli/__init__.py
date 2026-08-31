@@ -838,6 +838,11 @@ def _cmd_recall(args) -> int:
         # different view than the fold recorded.
         inv = recall.describe_invalidation(r.get("invalidated_by"))
         contradicted = f" [{inv}]" if inv else ""
+        # #866: the release from burial is a fact too. A cured item read
+        # exactly like one nothing ever questioned, which is the same
+        # collapse the contradiction marker exists to prevent, inverted.
+        cured = recall.describe_cure(r.get("cured_by"))
+        contradicted += f" [{cured}]" if cured else ""
         trust = r.get("trust") or "untagged"
         item_id = f" [{r['item_id']}]" if r.get("item_id") else ""
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}]{item_id} {r['text']} "
@@ -1448,6 +1453,10 @@ def _suggest_line(r: dict, terms, now: float) -> str:
     # surface it and no cure path that would retract it.
     inv = recall.describe_invalidation(r.get("invalidated_by"))
     contradicted = f" ({inv})" if inv else ""
+    # #866: an item that survived a challenge arrives saying so, rather than
+    # as though nothing had happened.
+    cured = recall.describe_cure(r.get("cured_by"))
+    contradicted += f" ({cured})" if cured else ""
     more = " ".join(terms[:3])
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "
             f"({age} ago): \"{text}\" [{trust}]{superseded}"
