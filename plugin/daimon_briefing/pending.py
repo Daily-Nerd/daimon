@@ -254,7 +254,7 @@ def _strip_plaintext(row: dict) -> dict:
     return out
 
 
-def _foreign_request_counts(slug: str) -> dict[str, int]:
+def _foreign_request_counts(slug: str | None) -> dict[str, int]:
     """Every foreign project's waiting request count, in ONE fleet-wide pass.
 
     A request's rows can span two buckets — the `opened` row in the
@@ -314,7 +314,7 @@ def _ledger_bucket_slugs() -> list[str]:
         return []
 
 
-def _foreign_ledger_counts(slug: str) -> dict[str, int]:
+def _foreign_ledger_counts(slug: str | None) -> dict[str, int]:
     """Candidate rulings/refutations and verified amendments in every OTHER
     bucket, read directly (single-bucket lanes) — fail-open per bucket, per
     lane, matching `queue`'s own degradation posture. Only `state` survives

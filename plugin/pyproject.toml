@@ -104,7 +104,6 @@ module = [
     "daimon_briefing.cli",
     "daimon_briefing.cli.lifecycle",
     "daimon_briefing.ledger",
-    "daimon_briefing.pending",
     "daimon_briefing.privacy",
     "daimon_briefing.refutations",
     "daimon_briefing.relations",
