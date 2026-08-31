@@ -5,6 +5,15 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.37.1](https://github.com/Daily-Nerd/daimon/compare/v0.37.0...v0.37.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **cli:** report a ruling or refutation whose record vanishes before its render ([#863](https://github.com/Daily-Nerd/daimon/issues/863)) ([137975c](https://github.com/Daily-Nerd/daimon/commit/137975ca42f82e8d1cbd4d06277f649b88ed2a1f))
+* **recall:** a cured item now says it survived a contradiction ([#868](https://github.com/Daily-Nerd/daimon/issues/868)) ([c2a3a29](https://github.com/Daily-Nerd/daimon/commit/c2a3a29044c2ae1dc72c8133205b14c30792af7e))
+* **recall:** record which writer produced superseded_by ([#867](https://github.com/Daily-Nerd/daimon/issues/867)) ([8f27b9a](https://github.com/Daily-Nerd/daimon/commit/8f27b9a145217db3db4e56dc3fa1b7ce7a6d56e6))
+
 ## [0.37.0](https://github.com/Daily-Nerd/daimon/compare/v0.36.0...v0.37.0) (2026-08-30)
 
 
