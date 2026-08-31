@@ -457,7 +457,7 @@ def _cmd_forget(args) -> int:
     # audit-trail record. allow_disabled (#421): forget is the ratified
     # deletion exemption to the kill switch — the tombstone (and the rewrite
     # below, which #418 chains to it) must land even while daimon is disabled.
-    ok = store.append_event(target["id"], f"forgotten:{content_hash}",
+    ok = store.append_event(str(target["id"]), f"forgotten:{content_hash}",
                             note=args.reason or "", kind="tombstone",
                             project_dir=project, allow_disabled=True)
     if not ok:
@@ -527,7 +527,7 @@ def _cmd_forget(args) -> int:
     # the tombstone above landed on this exact id — and the audit's
     # relations-ledger scan is what proves it reached the edges.
     forgotten_relations = relations.forget_item_id(
-        target["id"], project_dir=project)
+        str(target["id"]), project_dir=project)
     # #691: same value, another plaintext store — and unlike relations, amend
     # rows DO carry prose, so records targeting a forgotten item (or any of
     # its spliced siblings) go with it — their evidence may paraphrase the

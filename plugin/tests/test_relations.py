@@ -185,6 +185,19 @@ def test_rows_without_usable_order_are_dropped_by_reader(bucket):
     assert len(relations.events(project_dir=bucket)) == 1
 
 
+def test_rows_with_no_order_key_are_dropped_by_reader(bucket):
+    # Sibling of the "garbage" case above, and the one a `.get("order", 0)`
+    # would silently admit ordered zero instead of dropping.
+    _propose(bucket)
+    path = relations._path(bucket)
+    row = json.loads(path.read_text().splitlines()[0])
+    row.pop("order")
+    row["event_id"] = "e" * 32
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row) + "\n")
+    assert len(relations.events(project_dir=bucket)) == 1
+
+
 def test_inverse_confirmed_revisions_are_flagged_never_resolved(bucket):
     x, y = _endpoint("S1", item="r-abc123456789"), _endpoint("S2", item="r-def123456789")
     a = _propose(bucket, frm=x, to=y)
