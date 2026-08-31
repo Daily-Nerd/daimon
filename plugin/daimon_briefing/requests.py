@@ -326,7 +326,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     for row in ordered:
         q_id = row["request_id"]
         event = row["event"]
-        authority = CHANNEL_AUTHORITY.get(row.get("channel"))
+        authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
         current = out.get(q_id)
         if event == "opened":
             if current is not None:
@@ -494,7 +494,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             current["done_evidence"] = str(row.get("evidence") or "")
         else:
             current["verdict_by"] = authority
-            current["verdict_label"] = CHANNEL_LABEL.get(row.get("channel"))
+            current["verdict_label"] = CHANNEL_LABEL.get(
+                str(row.get("channel") or ""))
             current["verdict_at"] = row.get("ts")
             if "note" in row:
                 current["note"] = str(row.get("note") or "")

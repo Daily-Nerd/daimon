@@ -298,8 +298,11 @@ def events(project_dir=None) -> list[dict]:
                 or row.get("event") not in EVENTS
                 or not _REL_ID_RE.fullmatch(str(row.get("relation_id") or ""))):
             continue
+        raw_order = row.get("order")
+        if raw_order is None:
+            continue
         try:
-            row_order = int(row.get("order"))
+            row_order = int(raw_order)
         except (TypeError, ValueError):
             continue
         copy = dict(row)
@@ -325,7 +328,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     for row in ordered:
         rel_id = row["relation_id"]
         event = row["event"]
-        authority = CHANNEL_AUTHORITY.get(row.get("channel"))
+        authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
         current = out.get(rel_id)
         if event == "proposed":
             proposal = {
