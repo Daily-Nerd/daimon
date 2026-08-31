@@ -614,3 +614,91 @@ def test_a_cure_is_not_a_catch_in_the_rejection_counters(tmp_checkpoint_dir,
     counts = store.verification_counts(project_dir="/repo/x")
     assert counts == {"receipt": 1}
     assert sum(counts.values()) == 1
+
+
+# --- #866: a cured item is not a pristine one -------------------------------
+#
+# #845 cleared the slot on a confirmation, which released the ratchet but wrote
+# NULL, and NULL is also what an item that was never contradicted carries. On
+# every read surface "challenged and survived" and "never questioned" became
+# one state.
+#
+# That contradicts the rule #838 shipped in this same module: burial must stay
+# visible, not silent. It was enforced for the burial and dropped for the
+# release from it. An item that survived a contradiction has a different
+# standing from one nothing ever questioned, arguably a stronger one.
+
+
+def test_a_cured_item_records_what_cleared_it(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"), [
+        _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
+        _cure_row("o-111aaa", ts="2026-08-29T12:00:00Z"),
+    ])
+
+    hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
+    assert hits
+    assert hits[0]["invalidated_by"] is None  # the ratchet still releases
+    assert hits[0]["cured_by"] == "receipt-ok:receipt-valid@2026-08-29T12:00:00Z"
+
+
+def test_an_unchallenged_item_is_not_marked_cured(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    # The whole point: absence of a contradiction is not the same fact as
+    # having survived one, so a pristine item must carry neither mark.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+
+    hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
+    assert hits
+    assert hits[0]["invalidated_by"] is None
+    assert hits[0]["cured_by"] is None
+
+
+def test_a_standing_contradiction_is_not_also_cured(tmp_checkpoint_dir,
+                                                    monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-1", _cp("S-1", questions=[
+        _item("the axolotl exporter claim was verified", "o-111aaa")],
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+    _write_ledger(store.project_slug("/repo/x"),
+                  [_receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z")])
+
+    hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
+    assert hits[0]["invalidated_by"] == \
+        "receipt:receipt-invalid@2026-08-29T10:00:00Z"
+    assert hits[0]["cured_by"] is None
+
+
+def test_the_cure_mark_depends_on_the_write_gate_staying_conditional():
+    """LANDMINE, pinned rather than left implicit.
+
+    `cured_by` means "was contradicted, and the latest evidence confirms". The
+    fold cannot see the earlier contradiction, because only the latest verdict
+    per item survives the dedup. It reads a confirmation as a CURE purely
+    because `store.append_receipt_cure` refuses to write one unless the item
+    currently stands contradicted.
+
+    Make that gate unconditional and `cured_by` silently starts appearing on
+    items nothing ever challenged, which is the exact confusion this column
+    was added to remove. The coupling lives in two modules, so it is pinned
+    here instead of in a comment nobody has to read.
+    """
+    import inspect as _inspect
+
+    body = _inspect.getsource(store.append_receipt_cure)
+    assert 'get("verdict") != "contradicted"' in body
+    assert "return False" in body
+
+
+def test_describe_cure_reads_the_stored_encoding():
+    assert recall.describe_cure(
+        "receipt-ok:receipt-valid@2026-08-29T12:00:00Z") == \
+        "contradiction cleared by receipt-ok:receipt-valid at 2026-08-29T12:00:00Z"
+    assert recall.describe_cure(None) is None
+    assert recall.describe_cure("garbage") == "contradiction cleared by garbage"
