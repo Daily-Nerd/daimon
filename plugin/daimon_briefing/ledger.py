@@ -535,13 +535,21 @@ def _stats_capture(now=None) -> dict:
     This is NOT the last-of-kind collapse scar #9 forbids: it never reaches
     across sessions, so a failure buried under a later session's success still
     counts."""
-    win = {"days": _CAPTURE_WINDOW_DAYS, "success": 0, "skipped": 0,
-           "errors": 0, "fallback_attempts": 0, "fallback_serializes": 0,
-           "starved": 0, "error_rate_pct": None}
-    out = {"success": 0, "skipped": 0, "errors": 0, "fallback_serializes": 0,
-           "fallback_attempts": 0, "starved": 0,
-           "hosts": {}, "max_serialize_seconds": 0, "total_serialize_seconds": 0,
-           "window": win}
+    # Both literals are heterogeneous on purpose: `win` carries counters
+    # alongside an `error_rate_pct` that stays None until there is something
+    # to divide by, and `out` carries counters alongside a host map and the
+    # nested window. Without the annotation the inferred value types are
+    # `int | None` and `object`, and every counter increment below fails.
+    win: dict = {"days": _CAPTURE_WINDOW_DAYS, "success": 0, "skipped": 0,
+                 "errors": 0, "fallback_attempts": 0,
+                 "fallback_serializes": 0,
+                 "starved": 0, "error_rate_pct": None}
+    out: dict = {"success": 0, "skipped": 0, "errors": 0,
+                 "fallback_serializes": 0,
+                 "fallback_attempts": 0, "starved": 0,
+                 "hosts": {}, "max_serialize_seconds": 0,
+                 "total_serialize_seconds": 0,
+                 "window": win}
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
