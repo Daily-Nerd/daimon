@@ -101,7 +101,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "daimon_briefing.cli",
-    "daimon_briefing.ledger",
     "daimon_briefing.privacy",
 ]
 ignore_errors = true
