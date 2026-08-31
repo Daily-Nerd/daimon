@@ -1990,3 +1990,100 @@ def test_suggest_still_credits_a_compound_identifier(tmp_checkpoint_dir,
                          project_dir="/repo/x", current_session="S-now")
     assert out and out[0]["session_id"] == "S-comp"
     assert out[0]["term_hits"] >= 2
+
+
+# --- #865: superseded_by must say which writer produced it ------------------
+#
+# Two folds write the same column and mean different things. A typed
+# `supersedes` link is a claim the MODEL made (serializer.py instructs it to
+# attach one when it detects "we changed from X to Y"). An events.jsonl
+# resolution is a HUMAN action (`daimon resolve`). Both can write a bare id,
+# so a reader seeing one could not tell which produced it.
+#
+# The column is a rank input and a rendered marker, so the ambiguity was being
+# acted on, not merely displayed. These pin the mechanism that produced the
+# value, not an evidential grade: naming the grade is a vocabulary change that
+# routes through the language contract first, and the mechanism is the
+# checkable fact a reader needs to derive a grade for themselves.
+
+
+def test_a_model_authored_link_records_its_mechanism(tmp_checkpoint_dir,
+                                                     monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the litellm gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pin litellm gateway cache bad responses"}],
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+
+    hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
+    old = [h for h in hits if h["session_id"] == "S-old"]
+    assert old and old[0]["superseded_by"] == "S-newer"
+    assert old[0]["superseded_source"] == "link"
+
+
+def test_a_human_resolution_records_its_mechanism(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it", "id": "o-pin111",
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+    store.append_event("o-pin111", "superseded-by:o-new222", source="cli",
+                       project_dir="/repo/x")
+
+    hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
+    assert hits and hits[0]["superseded_by"] == "o-new222"
+    assert hits[0]["superseded_source"] == "resolution"
+
+
+def test_a_human_resolution_outranks_a_model_link_and_says_so(
+        tmp_checkpoint_dir, monkeypatch):
+    # The event fold already runs after the link fold and overwrites it, so a
+    # human action already wins. That precedence was invisible; a reader could
+    # not tell the surviving value came from the person rather than the model.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it", "id": "o-pin111",
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the litellm gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pin litellm gateway cache bad responses"}],
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+    store.append_event("o-pin111", "superseded-by:o-human333", source="cli",
+                       project_dir="/repo/x")
+
+    hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
+    old = [h for h in hits if h["session_id"] == "S-old"]
+    assert old and old[0]["superseded_by"] == "o-human333"
+    assert old[0]["superseded_source"] == "resolution"
+
+
+def test_an_unsuperseded_item_has_no_mechanism(tmp_checkpoint_dir,
+                                               monkeypatch):
+    # Absence stays absence: a live item must not read as superseded by an
+    # unnamed mechanism.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-live", _cp125("S-live", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+
+    hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
+    assert hits
+    assert hits[0]["superseded_by"] is None
+    assert hits[0]["superseded_source"] is None

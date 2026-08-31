@@ -94,7 +94,7 @@ def _note_error(where: str, exc: BaseException) -> None:
 # ledger folds bind through — purely a performance object, but the bump
 # rolls every existing db onto it deterministically instead of waiting for
 # an unrelated fingerprint change.
-_SCHEMA_VERSION = "6"
+_SCHEMA_VERSION = "7"   # #865 added items.superseded_source
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -382,6 +382,18 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 session_id TEXT,
                 created REAL,
                 superseded_by TEXT,
+                -- #865: WHICH writer produced superseded_by. Two folds write
+                -- that column and mean different things: "link" is a claim the
+                -- MODEL made (serializer instructs it to attach a supersedes
+                -- link on "we changed from X to Y"), "resolution" is a HUMAN
+                -- action recorded in events.jsonl. Both can write a bare id,
+                -- so the value alone could not tell them apart, and the column
+                -- is a rank input, so the ambiguity was acted on rather than
+                -- merely displayed. Mechanism, deliberately, not an evidential
+                -- grade: naming the grade is a vocabulary change that routes
+                -- through the language contract first, and the mechanism is
+                -- the checkable fact a reader needs to derive a grade.
+                superseded_source TEXT,
                 invalidated_by TEXT,
                 importance INTEGER,
                 first_seen TEXT,
@@ -425,7 +437,7 @@ def _apply_typed_supersession(conn: sqlite3.Connection, links: list) -> None:
          owner_item_id, owner_text, target) in links:
         if _ID_SHAPE.fullmatch(target):
             conn.execute(
-                "UPDATE items SET superseded_by = ?"
+                "UPDATE items SET superseded_by = ?, superseded_source = 'link'"
                 " WHERE item_id = ? AND author = ? AND project_slug IS ?"
                 " AND session_id != ?",
                 (owner_sid, target, author, slug, owner_sid),
@@ -453,7 +465,10 @@ def _apply_typed_supersession(conn: sqlite3.Connection, links: list) -> None:
             continue  # unbound or ambiguous — never guess
         (rowids,) = by_text.values()
         conn.executemany(
-            "UPDATE items SET superseded_by = ? WHERE id = ?",
+            # Free-text branch of the SAME model-authored link, so it
+            # records the same mechanism as the id-shape branch above (#865).
+            "UPDATE items SET superseded_by = ?, superseded_source = 'link'"
+            " WHERE id = ?",
             [(owner_sid, rid) for rid in rowids],
         )
 
@@ -493,8 +508,13 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             value = "resolved"
             if status.lower().startswith("superseded-by:"):
                 value = status.split(":", 1)[1].strip() or "resolved"
+            # Runs AFTER the link fold and overwrites it, which is the
+            # right precedence: a person's recorded action outranks a
+            # model's claim. #865 makes the surviving writer visible, so a
+            # reader can tell the value came from the person.
             conn.execute(
-                "UPDATE items SET superseded_by = ?"
+                "UPDATE items SET superseded_by = ?,"
+                " superseded_source = 'resolution'"
                 " WHERE item_id = ? AND project_slug IS ?",
                 (value, ref, bucket.name),
             )
@@ -906,7 +926,8 @@ def search(query: str, project_dir=None, all_projects: bool = False,
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
-        " i.session_id, i.created, i.superseded_by, i.invalidated_by,"
+        " i.session_id, i.created, i.superseded_by, i.superseded_source,"
+        " i.invalidated_by,"
         " i.importance, i.first_seen, i.item_id, i.frontier,"
         " bm25(items_fts) AS rank"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
