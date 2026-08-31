@@ -86,23 +86,14 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
 # BLOCKING in CI (#823). ignore_missing_imports absorbs the optional rich /
-# host-provided imports. Modules that predate enforcement carry their debt in
-# the overrides list below.
+# host-provided imports. Every module is enforced: the per-module debt list
+# that shipped with #823 was burned down to nothing in #842.
 python_version = "3.10"
 ignore_missing_imports = true
 
-# #823 ratchet: the modules with type errors on the day mypy became blocking.
-# THE LIST ONLY SHRINKS — clean a module, remove its entry in the same PR;
-# nothing is ever added. Every module absent from this list (and every future
-# module) is enforced from its first commit. Note ignore_errors also silences
-# the CI ReadResult-containment grep INSIDE these modules; that guard returns
-# per module as the list shrinks (the migration manifest test and scar 0063
-# hold the line in the interim).
-[[tool.mypy.overrides]]
-module = [
-    "daimon_briefing.privacy",
-]
-ignore_errors = true
+# The #823 ratchet is EMPTY as of #842: every module is enforced, and there
+# is no longer an overrides block to add one back to. Nothing is ever added
+# here again. A module with type errors does not ship, it gets fixed.
 
 [tool.coverage.run]
 source = ["daimon_briefing", "daimon_ui"]

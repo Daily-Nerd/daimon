@@ -316,9 +316,13 @@ def _scan_team_dir(slug: str, keys: set[str], project_dir,
 def audit_project(project_dir=None) -> dict:
     slug = store.project_slug(project_dir)
     keys = store.forgotten_content_keys(project_dir=project_dir)
-    result = {"slug": slug, "findings": [], "informational": [],
-              "unscannable": [], "surfaces_scanned": 0,
-              "zero_surfaces": False}
+    # Heterogeneous by design: the slug, two finding lists, a scan counter,
+    # a flag, and a per-surface stats dict added for every surface below.
+    # Unannotated it infers `int | list | str | None`, which every
+    # `.append` and every stats assignment then contradicts.
+    result: dict = {"slug": slug, "findings": [], "informational": [],
+                    "unscannable": [], "surfaces_scanned": 0,
+                    "zero_surfaces": False}
     if not slug:
         result["zero_surfaces"] = True
         result["cache"] = {"entries": 0, "oldest_days": None}

@@ -423,7 +423,7 @@ def claude_projects_dir() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
-# `None` is returned for exactly one input — `None` itself. Every str, `""`
+# `None` is returned for exactly one input, `None` itself. Every str, `""`
 # included, comes back as a str (the git failure path returns `raw` unchanged),
 # so a caller passing a definite str never has to narrow the result.
 @overload
