@@ -108,7 +108,6 @@ module = [
     "daimon_briefing.privacy",
     "daimon_briefing.refutations",
     "daimon_briefing.relations",
-    "daimon_briefing.render",
     "daimon_briefing.requests",
     "daimon_briefing.teamsync",
     "daimon_briefing.transcript",

@@ -375,9 +375,9 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                               if amend.get("by") == "agent" else "")
                         flag = (f'    ↷ amended — {change} '
                                 f'({amend.get("label")}{by}): "{aq}"\n')
-                        note = str(amend.get("note") or "").strip()
-                        if note:
-                            nq = briefing._truncate_agent_claim(note)
+                        amend_note = str(amend.get("note") or "").strip()
+                        if amend_note:
+                            nq = briefing._truncate_agent_claim(amend_note)
                             flag += f"    note: {nq}\n"
                         body.append(flag, style="cyan")
                     else:
