@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 from pathlib import Path
+from typing import overload
 
 log = logging.getLogger(__name__)
 
@@ -422,6 +423,13 @@ def claude_projects_dir() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
+# `None` is returned for exactly one input — `None` itself. Every str, `""`
+# included, comes back as a str (the git failure path returns `raw` unchanged),
+# so a caller passing a definite str never has to narrow the result.
+@overload
+def resolve_project_root(raw: str) -> str: ...
+@overload
+def resolve_project_root(raw: None) -> None: ...
 def resolve_project_root(raw: str | None) -> str | None:
     """Normalize a project dir to its git toplevel so a subdir session maps to the
     ONE repo bucket (#74).
