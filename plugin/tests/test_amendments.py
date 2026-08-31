@@ -153,6 +153,22 @@ def test_reject_then_repropose_reopens_as_candidate(project):
     assert record["history_count"] == 3
 
 
+def test_reopened_proposal_keeps_its_original_created_at(project, monkeypatch):
+    # `ts` is second-resolution, so a same-second reject/repropose cannot
+    # tell a preserved stamp from a reset one and the assertion would pass
+    # either way. Pin three distinct seconds so it actually bites.
+    ticks = iter([1_700_000_000_000_000_000,
+                  1_700_000_060_000_000_000,
+                  1_700_000_120_000_000_000])
+    monkeypatch.setattr(amendments.time, "time_ns", lambda: next(ticks))
+    a_id = _propose(project)
+    amendments.reject(a_id, channel="cli-tty", project_dir=project)
+    assert _propose(project) == a_id
+    record = amendments.get(a_id, project_dir=project)
+    assert record["created_at"] == "2023-11-14T22:13:20Z"
+    assert record["updated_at"] == "2023-11-14T22:15:20Z"
+
+
 def test_ratify_after_reject_still_refused(project):
     a_id = _propose(project)
     amendments.reject(a_id, channel="cli-tty", project_dir=project)
