@@ -50,10 +50,35 @@ _POINTER_RE = re.compile(r"^(?:latest|prev-\d+)\.json$")
 def project_slug(project_dir) -> str | None:
     """Filesystem-safe slug for a project working directory, or None if unknown.
 
-    Same munging scheme Claude Code uses for its project dirs: every char that
-    is not a word char or '-' becomes '-' (slashes, dots, spaces). Unicode word
-    chars survive. The result can never contain a path separator, so it cannot
-    escape the checkpoint dir.
+    THE RULE, stated exactly: every char that is not a Python `\\w` char or '-'
+    becomes '-'. Python's `\\w` is Unicode-aware, so underscores, accented
+    letters and non-Latin scripts all survive; slashes, dots and spaces fold.
+    The result can never contain a path separator, so it cannot escape the
+    checkpoint dir.
+
+    This is NOT the same scheme the Claude CLI uses for `~/.claude/projects`,
+    which the docstring claimed until #884. The two agree on slashes, dots and
+    spaces and disagree on underscores: daimon keeps `_`, the CLI folds it.
+    Measured, not inferred: 0 of 711 directories under `~/.claude/projects` on
+    the machine this was written on contain an underscore, and 19 of them carry
+    a doubled hyphen of the form `...-daimon-cli--2y36i7g`. `mkdtemp` draws its
+    suffix from `[a-z0-9_]` and can never emit '-', so a `--` there can only be
+    a folded `_`. Unicode is a second, untested divergence in the same
+    direction: `-a-café` and `-a-日本` survive here whatever the CLI does.
+
+    DO NOT "fix" the divergence by folding '_' to match. This function names
+    checkpoint BUCKET directories, so re-slugging any project path containing
+    an underscore orphans that bucket: no error, no migration, the prior
+    history simply stops being found. Two slugs is the correct end state, not
+    one. The CLI's locates a transcript directory, this one locates a
+    checkpoint bucket, and they are different functions that happen to agree
+    on most inputs.
+
+    Nothing here joins on the CLI's slug. `provenance.py` takes
+    `transcript_path` from the host and tests containment, or globs
+    `*/*.jsonl`; it never computes a CLI slug and compares. The divergence is
+    therefore a documentation defect rather than a live one, which is why #884
+    changed only this text.
     """
     if not project_dir:
         return None
