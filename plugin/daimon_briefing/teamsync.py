@@ -468,8 +468,8 @@ def sync_remote(sidecar: Path) -> dict:
     (fetch+merge only on HEAD-hash mismatch) -> push, with a bounded
     reject->integrate->push retry loop (rejects are benign: another author won
     the race)."""
-    report = {"slug": sidecar.name, "committed": 0, "pushed": False,
-              "fetched": False, "warnings": [], "notes": []}
+    report: dict = {"slug": sidecar.name, "committed": 0, "pushed": False,
+                    "fetched": False, "warnings": [], "notes": []}
     if not _recover_wedge(sidecar, report):
         return report
     _commit_own(sidecar, report)
