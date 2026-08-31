@@ -103,7 +103,6 @@ module = [
     "daimon_briefing.amendments",
     "daimon_briefing.cli",
     "daimon_briefing.cli.lifecycle",
-    "daimon_briefing.cli.skill",
     "daimon_briefing.ledger",
     "daimon_briefing.pending",
     "daimon_briefing.privacy",
