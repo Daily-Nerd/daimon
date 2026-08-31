@@ -126,6 +126,43 @@ jobs:
             exit 1
           fi
 
+      # #880: squash composes main's commit from the PR title and body, so the
+      # body IS what release-please parses. A body it cannot parse is dropped
+      # from the changelog AND from the version bump while the Release workflow
+      # exits zero (scar 0065). Running the real parser instead of matching
+      # known-bad shapes is deliberate: two prose rules were derived for this
+      # failure and both turned out to be wrong.
+      - name: Check Release-Please Can Parse
+        run: |
+          d="$RUNNER_TEMP/rp"; mkdir -p "$d"
+          {
+            printf '%s (#%s)\n\n' \
+              "$(gh pr view "$PR" --repo "$REPO" --json title -q .title)" "$PR"
+            gh pr view "$PR" --repo "$REPO" --json body -q .body | tr -d '\r'
+          } > "$d/msg.txt"
+          # Pinned to release-please 17.x's own dependency so this gate cannot
+          # test a different grammar than the release does.
+          npm install --prefix "$d" --no-save --no-audit --no-fund --silent \
+            '@conventional-commits/parser@0.4.1'
+          cd "$d" && node --input-type=module -e '
+            import {parser} from "@conventional-commits/parser";
+            import {readFileSync} from "fs";
+            try {
+              parser(readFileSync("msg.txt", "utf8"));
+            } catch (e) {
+              console.log("::error::release-please cannot parse the commit this "
+                + "PR will squash into: " + e.message
+                + ". Such a commit is dropped from the changelog and from the "
+                + "version bump while the Release workflow still reports success. "
+                + "Usual cause: a body line whose first token is immediately "
+                + "followed by an open paren containing another open paren, for "
+                + "example a line starting with foo(bar(x)). Indent that line two "
+                + "spaces, or put a word before it. Fences and backticks do not "
+                + "help. See scar 0065.");
+              process.exit(1);
+            }
+          '
+
       - name: Check Branch Name
         run: |
           branch="${{ github.head_ref }}"
