@@ -2707,3 +2707,20 @@ def test_request_inject_owed_overflow_is_counted(project, capsys, monkeypatch):
     capsys.readouterr()
     assert _inject(project, session="S-owed-overflow") == 0
     assert "+1 more owed" in capsys.readouterr().out
+
+
+def test_request_inject_owed_carries_the_acceptance_note(
+        project, capsys, monkeypatch):
+    """A verdict note is the recipient's own record of WHY it took the work
+    on, so the owed nudge carries it. Without this the agent sees the ask it
+    agreed to but not the terms it agreed to."""
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/req-owed-inject-e")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender)
+    requests.accept(q_id, channel="cli-tty", note="only the read half",
+                    project_dir=project)
+    capsys.readouterr()
+    assert _inject(project, session="S-owed-note") == 0
+    assert "Accepted with: only the read half" in capsys.readouterr().out

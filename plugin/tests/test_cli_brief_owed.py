@@ -127,3 +127,20 @@ def test_owed_overflow_line_does_not_pluralise_owed(
     out = capsys.readouterr().out
     assert "(+2 more owed —" in out
     assert "oweds" not in out
+
+
+def test_cli_rich_brief_carries_the_owed_panel(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """The rich path renders its own Panel per skeleton section, so the plain
+    path passing proves nothing about it. Same coverage posture as the three
+    sibling panels."""
+    from daimon_briefing import render
+    recipient = "/p/cbo-recipient-rich"
+    _owed_ask(recipient, ask="rich brief carries this",
+              sender_dir="/p/cbo-sender-rich")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", recipient)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    assert cli.main(["brief"]) == 0
+    out = capsys.readouterr().out
+    assert "rich brief carries this" in out
+    assert "Requests you accepted" in out
