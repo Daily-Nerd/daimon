@@ -79,6 +79,7 @@ VERSION = 1
 EVENTS = frozenset({
     "opened", "revised",
     "surfaced", "verdict_surfaced", "delivered", "verdict_delivered",
+    "owed_delivered",
     "needs_info", "accepted", "rejected", "done",
     "suppressed", "done_verified",
 })
@@ -101,6 +102,16 @@ _HUMAN_ONLY = frozenset({"needs_info", "accepted", "rejected", "suppressed"})
 # human verdict or by a completion claim, and re-opening it from the sender
 # side would be exactly the assertion the wedge principle forbids.
 _SENDER_MOVABLE = frozenset({"open", "needs-info"})
+# #885. States in which the RECIPIENT owes work. Deliberately NOT folded into
+# `_SENDER_MOVABLE`: widening that set would let a sender-side `revised` event
+# reopen an accepted record, which is exactly the assertion the wedge
+# principle forbids and which the frozenset above exists to prevent. The two
+# sets answer different questions and diverge at exactly one state — for the
+# SENDER `accepted` settles the ask, for the RECIPIENT it is where the work
+# starts and `done` is the close. Sharing one frozenset made `accept`
+# indistinguishable from `suppress` from the recipient's side while meaning
+# the opposite thing.
+_RECIPIENT_OWED = frozenset({"accepted"})
 # Per-brief render budget (D2). Over-cap renders a loud "+N more waiting"
 # line in PR 2; silent truncation of addressed asks is the one forbidden
 # failure, so the cap lives beside the overflow count it produces.
@@ -120,6 +131,7 @@ _EVENT_RANK = {
     "verdict_surfaced": 2,
     "delivered": 2,
     "verdict_delivered": 2,
+    "owed_delivered": 2,
     "suppressed": 3,
     "done": 4,
     "needs_info": 5,
@@ -387,6 +399,15 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # epoch, but a live nudge owes it to every session running in
                 # that epoch.
                 "verdict_delivered": {},
+                # #885: {revision epoch: {session id: earliest ts}} — the
+                # recipient's OWED lane, the same shape as `delivered` and
+                # distinct from it for the same reason `verdict_delivered` is
+                # distinct from `verdict_surfaced`. Accepting never bumps the
+                # revision (only `revise` does, and it refuses a decided
+                # state), so an ask already delivered while `open` carries a
+                # `delivered` stamp for this very epoch. Reusing that key
+                # would drop the accepted card with no error and no log line.
+                "owed_delivered": {},
                 "revision": 0,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
@@ -429,6 +450,16 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             session = str(row.get("session") or "").strip()
             if session:
                 current["verdict_delivered"].setdefault(current["revision"], {}) \
+                    .setdefault(session, row.get("ts"))
+            continue
+        if event == "owed_delivered":
+            # #885, same posture as `delivered` and `verdict_delivered`: an
+            # attention row, counted in history, never moving `updated_at`,
+            # and inert rather than epoch-wide when it lost its session id.
+            current["history_count"] += 1
+            session = str(row.get("session") or "").strip()
+            if session:
+                current["owed_delivered"].setdefault(current["revision"], {}) \
                     .setdefault(session, row.get("ts"))
             continue
         if event == "delivered":
@@ -966,6 +997,80 @@ def _deserves_attention(record: dict, project_dir=None) -> bool:
     about an ask the other already decided was not worth attention."""
     return (record["state"] in _SENDER_MOVABLE and not record["suppressed"]
             and not is_stale(record, project_dir=project_dir))
+
+
+def _is_owed(record: dict, project_dir=None) -> bool:
+    """#885: whether an addressed ask is work this project has AGREED to and
+    not yet closed. The recipient-side twin of `_deserves_attention`, and the
+    reason the two are separate functions rather than one widened frozenset.
+
+    Suppression still reaches here — it is the human's one lever over ambient
+    placement, and an accepted ask ignoring it would make `suppress` the only
+    verb the owed lane refuses. Staleness deliberately does NOT: `is_stale`
+    measures an ask AWAITING a decision decaying out of attention, and an
+    accepted one is not waiting on anybody, it is owed. Work does not expire
+    by being ignored. `is_stale` already returns False for every state
+    outside `_SENDER_MOVABLE`; not calling it says so at this level too."""
+    return record["state"] in _RECIPIENT_OWED and not record["suppressed"]
+
+
+def owed_renderable(project_dir=None) -> dict:
+    """#885: the recipient-side OWED panel data: {"rows": [...],
+    "overflow": N} — asks this project accepted and has not closed with
+    `done`, newest first, capped at RENDER_CAP with the remainder COUNTED.
+
+    Deliberately a second panel rather than more rows in `inbox_renderable`:
+    these are not a decision the human owes, they are work the project owes,
+    and the verb differs. An undecided ask offers accept and reject; an
+    accepted one offers `done`. Mixing them would ask the reader to sort out
+    which is which from the state glyph alone."""
+    rows = [r for r in recipient_join(project_dir=project_dir).values()
+            if _is_owed(r, project_dir=project_dir)]
+    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+              reverse=True)
+    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+
+
+def needs_owed_delivered_stamp(record: dict, session: str) -> bool:
+    """#885: whether THIS session has already been nudged about this OWED
+    ask this revision epoch. Its own namespace, never `delivered`: see the
+    fold's `owed_delivered` comment for why sharing that key silently
+    swallows every ask the session saw before it was accepted."""
+    epoch = (record.get("owed_delivered") or {}).get(record.get("revision")) or {}
+    return str(session or "").strip() not in epoch
+
+
+def stamp_owed_delivered(request_id: str, session: str,
+                         project_dir=None) -> bool:
+    """Write an `owed_delivered` row to THIS project's own bucket (the
+    RECIPIENT's), recording that the live surface nudged this owed ask into
+    `session`. Channel `mechanical`, same posture as `stamp_delivered`: the
+    render pipeline stamped what it did, nobody asserted anything."""
+    session = str(session or "").strip()
+    if not session:
+        raise RequestError("owed_delivered stamp requires a session id")
+    row = _stamp("owed_delivered", request_id, "mechanical")
+    row["session"] = session
+    return append(row, project_dir=project_dir)
+
+
+def owed_deliverable(session: str, project_dir=None) -> dict:
+    """#885: the asks this project has ACCEPTED and not closed that `session`
+    has not yet been nudged with. `{"rows": [...], "overflow": N}`.
+
+    Ordering, cap, dedup-before-cap and the counted remainder all follow
+    `deliverable` deliberately, so a live nudge and the next brief agree
+    about which owed work matters. No session id means no dedup key, and
+    re-nudging every turn forever is worse than not nudging."""
+    session = str(session or "").strip()
+    if not session:
+        return {"rows": [], "overflow": 0}
+    rows = [r for r in recipient_join(project_dir=project_dir).values()
+            if _is_owed(r, project_dir=project_dir)
+            and needs_owed_delivered_stamp(r, session)]
+    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+              reverse=True)
+    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
 def inbox_renderable(project_dir=None) -> dict:

@@ -911,11 +911,16 @@ def test_the_event_vocabulary_is_frozen():
     undelivered, and at worst repeats a nudge. #801 widens it a third time,
     on identical terms, with `verdict_delivered`: the sender-side counterpart,
     where an older reader drops the row, reads the verdict as undelivered, and
-    at worst repeats a nudge. Every widening so far fails the same safe way,
-    which is the property this test exists to keep true."""
+    at worst repeats a nudge. #885 widens it a fourth time, on identical terms,
+    with `owed_delivered`: the recipient's owed lane needs its own delivery
+    window because accepting never bumps the revision, so the `delivered` key
+    for this epoch is already spent; an older reader drops the row, reads the
+    owed ask as undelivered, and at worst repeats a nudge. Every widening so
+    far fails the same safe way, which is the property this test exists to
+    keep true."""
     assert set(requests.EVENTS) == {
         "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
-        "verdict_delivered",
+        "verdict_delivered", "owed_delivered",
         "needs_info", "accepted", "rejected", "done", "suppressed",
         "done_verified"}
 
@@ -2480,3 +2485,225 @@ def test_cli_revise_survives_the_record_vanishing_between_its_two_reads(
     out = capsys.readouterr().out
     assert q_id in out
     assert "Traceback" not in out
+
+
+# ---- #885: the recipient's owed lane ---------------------------------------
+# `_deserves_attention` used a SENDER-side frozenset as the RECIPIENT's
+# attention filter. The two questions diverge at exactly one state: for the
+# sender `accepted` settles the ask, for the recipient it is where the work
+# STARTS and `done` is the close. Both the brief panel and live delivery
+# closed at acceptance, so the asks that had already cleared the human gate
+# were the ones that stopped being surfaced.
+
+
+def _owed_ask(project, sender_dir="/p/req-owed-sender", ask=ASK):
+    """A foreign ask addressed to `project` and ACCEPTED by it — the state
+    the recipient owes work in."""
+    sender_slug = _seed_bucket(sender_dir)
+    q_id = requests.open_request(to=store.project_slug(project), ask=ask,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    return q_id
+
+
+def test_owed_renderable_surfaces_an_accepted_ask(project):
+    """The whole bug in one assertion: acceptance is where the recipient's
+    obligation begins, so the panel must show it."""
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-a")
+    rows = requests.owed_renderable(project_dir=project)["rows"]
+    assert [r["request_id"] for r in rows] == [q_id]
+    assert rows[0]["state"] == "accepted"
+
+
+def test_owed_renderable_drops_it_once_done(project):
+    """`done` is the recipient's close, and the only one."""
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-b")
+    requests.done(q_id, channel="cli-tty", evidence="shipped it",
+                  project_dir=project)
+    assert requests.owed_renderable(project_dir=project)["rows"] == []
+
+
+def test_owed_renderable_excludes_undecided_and_rejected(project):
+    """The two lanes do not overlap: an undecided ask is a decision the
+    human owes and belongs in the inbox panel, a rejected one is closed."""
+    sender_slug = _seed_bucket("/p/req-owed-c")
+    open_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                    why=WHY, channel="cli-agent",
+                                    project_dir=sender_slug)
+    rejected = requests.open_request(to=store.project_slug(project),
+                                     ask="a second ask", why=WHY,
+                                     channel="cli-agent",
+                                     project_dir=sender_slug)
+    requests.reject(rejected, channel="cli-tty", project_dir=project)
+    owed = [r["request_id"]
+            for r in requests.owed_renderable(project_dir=project)["rows"]]
+    assert owed == []
+    inbox = [r["request_id"]
+             for r in requests.inbox_renderable(project_dir=project)["rows"]]
+    assert inbox == [open_id]
+
+
+def test_inbox_renderable_still_excludes_the_accepted_one(project):
+    """The sender lane is untouched: widening `_SENDER_MOVABLE` would have
+    let a sender-side event reopen an accepted record, which is exactly the
+    assertion the wedge principle forbids."""
+    _owed_ask(project, sender_dir="/p/req-owed-d")
+    assert requests.inbox_renderable(project_dir=project)["rows"] == []
+    assert requests._SENDER_MOVABLE == frozenset({"open", "needs-info"})
+
+
+def test_owed_renderable_honours_suppress(project):
+    """Suppression is the human's one lever over ambient placement, and it
+    must reach this panel too — otherwise `suppress` would be the only verb
+    an accepted ask ignores."""
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-e")
+    requests.suppress(q_id, channel="cli-tty", project_dir=project)
+    assert requests.owed_renderable(project_dir=project)["rows"] == []
+
+
+def test_an_owed_ask_never_goes_stale(project):
+    """Staleness is consumption-based decay on an ask AWAITING a decision.
+    An accepted one is not waiting on anybody's attention, it is owed work,
+    and work does not expire by being ignored."""
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-f")
+    for n in range(requests.STALE_AFTER_SESSIONS + 2):
+        _serialize(project, f"S-owed-stale-{n}", _iso(n))
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.is_stale(record, project_dir=project) is False
+    assert [r["request_id"] for r in
+            requests.owed_renderable(project_dir=project)["rows"]] == [q_id]
+
+
+def test_owed_renderable_caps_and_counts_the_remainder(project):
+    """Same posture as every other panel: silently dropping an addressed ask
+    is the one failure this feature cannot have."""
+    sender_slug = _seed_bucket("/p/req-owed-g")
+    for n in range(requests.RENDER_CAP + 2):
+        q_id = requests.open_request(to=store.project_slug(project),
+                                     ask=f"owed ask number {n}", why=WHY,
+                                     channel="cli-agent",
+                                     project_dir=sender_slug)
+        requests.accept(q_id, channel="cli-tty", project_dir=project)
+    entry = requests.owed_renderable(project_dir=project)
+    assert len(entry["rows"]) == requests.RENDER_CAP
+    assert entry["overflow"] == 2
+
+
+# ---- #885: live delivery of the owed lane ----------------------------------
+# The trap the predicate split alone does NOT fix. `needs_delivered_stamp`
+# dedups on (request id, revision epoch, session), and accepting does not
+# bump the revision — only `revise` does, and `revise` refuses a decided
+# state. So an ask already delivered to a live session while `open` is
+# stamped for that epoch, and re-entering the filter after acceptance is
+# dropped by the stamp with no error and no log line. The owed lane gets its
+# own stamp namespace, the same shape and for the same reason as
+# `verdict_delivered` (#801) beside `delivered`.
+
+
+def test_owed_deliverable_reaches_a_session_that_already_saw_it_open(project):
+    """The regression this whole namespace exists to prevent."""
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-h")
+    session = "S-owed-live"
+    record = requests.recipient_join(project_dir=project)[q_id]
+    requests.stamp_delivered(q_id, session, project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_delivered_stamp(record, session) is False
+    rows = requests.owed_deliverable(session, project_dir=project)["rows"]
+    assert [r["request_id"] for r in rows] == [q_id]
+
+
+def test_owed_deliverable_is_write_once_per_session(project):
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-i")
+    session = "S-owed-once"
+    assert requests.owed_deliverable(session, project_dir=project)["rows"]
+    requests.stamp_owed_delivered(q_id, session, project_dir=project)
+    assert requests.owed_deliverable(session, project_dir=project)["rows"] == []
+
+
+def test_owed_deliverable_still_reaches_a_second_session(project):
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-j")
+    requests.stamp_owed_delivered(q_id, "S-owed-first", project_dir=project)
+    rows = requests.owed_deliverable("S-owed-second", project_dir=project)["rows"]
+    assert [r["request_id"] for r in rows] == [q_id]
+
+
+def test_owed_deliverable_without_a_session_delivers_nothing(project):
+    """Same posture as `deliverable`: no session id means no dedup key, and
+    re-nudging every turn forever is worse than not nudging."""
+    _owed_ask(project, sender_dir="/p/req-owed-k")
+    assert requests.owed_deliverable("", project_dir=project)["rows"] == []
+
+
+def test_stamp_owed_delivered_requires_a_session_id(project):
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-l")
+    with pytest.raises(requests.RequestError):
+        requests.stamp_owed_delivered(q_id, "", project_dir=project)
+
+
+def test_owed_delivered_is_a_registered_event(project):
+    assert "owed_delivered" in requests.EVENTS
+
+
+# ---- #885: live delivery of the owed lane, end to end ----------------------
+
+
+def test_request_inject_delivers_an_owed_ask(project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-inject-a")
+    capsys.readouterr()
+    assert _inject(project, session="S-owed-inject") == 0
+    out = capsys.readouterr().out
+    assert q_id in out
+    assert ASK in out
+    assert "daimon request done" in out
+
+
+def test_request_inject_stamps_the_owed_lane_after_the_print(
+        project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    q_id = _owed_ask(project, sender_dir="/p/req-owed-inject-b")
+    capsys.readouterr()
+    assert _inject(project, session="S-owed-stamp") == 0
+    capsys.readouterr()
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert requests.needs_owed_delivered_stamp(record, "S-owed-stamp") is False
+    # Write-once: a second turn in the same session says nothing.
+    assert _inject(project, session="S-owed-stamp") == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_request_inject_reaches_a_session_that_saw_the_ask_before_accept(
+        project, capsys, monkeypatch):
+    """The end-to-end form of the trap. The session was nudged while the ask
+    was still `open`, so the `delivered` stamp for this epoch is already
+    written. Accepting does not bump the revision, so a shared stamp would
+    swallow the owed nudge with no error and no log line."""
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/req-owed-inject-c")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender)
+    session = "S-owed-before-accept"
+    assert _inject(project, session=session) == 0
+    capsys.readouterr()
+    # Same session, same epoch: the undecided lane is now silent.
+    assert _inject(project, session=session) == 0
+    assert capsys.readouterr().out == ""
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    assert _inject(project, session=session) == 0
+    out = capsys.readouterr().out
+    assert q_id in out, "the owed nudge was swallowed by the delivered stamp"
+
+
+def test_request_inject_owed_overflow_is_counted(project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    sender = _seed_bucket("/p/req-owed-inject-d")
+    for n in range(requests.RENDER_CAP + 1):
+        q_id = requests.open_request(to=store.project_slug(project),
+                                     ask=f"owed ask number {n}", why=WHY,
+                                     channel="cli-agent", project_dir=sender)
+        requests.accept(q_id, channel="cli-tty", project_dir=project)
+    capsys.readouterr()
+    assert _inject(project, session="S-owed-overflow") == 0
+    assert "+1 more owed" in capsys.readouterr().out

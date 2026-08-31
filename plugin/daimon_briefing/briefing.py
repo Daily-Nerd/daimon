@@ -864,6 +864,47 @@ def request_panel_lines(project_dir=None) -> list[str]:
     return lines
 
 
+# ---- #885: the recipient-side owed panel ------------------------------------
+
+# Registered and frozen the same way the two headings above are (§3 amendment
+# 2026-08-27). The wording says OWE deliberately: an item here is not a
+# decision waiting on the human, it is work this project already agreed to.
+_OWED_PANEL_HEADER = "Requests you accepted and still owe:"
+
+
+def owed_panel_lines(project_dir=None) -> list[str]:
+    """#885: the recipient's OWED panel ([] when this project owes nothing,
+    or `project_dir` is None). Same posture as the two panels around it:
+    fail-open, skeleton furniture, never silently truncated over RENDER_CAP.
+
+    A third panel rather than more rows in `request_panel_lines`, because the
+    verb differs and the reader must not have to infer which from a glyph: an
+    undecided ask offers accept and reject, an owed one offers `done`. The
+    closing line names that verb for the same reason the inbox panel names
+    its own surface."""
+    if project_dir is None:
+        return []
+    try:
+        entry = requests.owed_renderable(project_dir=project_dir)
+    except Exception:
+        return []
+    rows = entry.get("rows") or []
+    if not rows:
+        return []
+    lines = [_OWED_PANEL_HEADER]
+    for row in rows:
+        marker = "  [blocking]" if row.get("blocking") else ""
+        lines.append(f"✓ {row['request_id']}  "
+                     f"{_truncate_request_ask(row.get('ask', ''))}{marker}")
+        lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
+    overflow = entry.get("overflow") or 0
+    if overflow:
+        lines.append(f"  (+{overflow} more owed — "
+                     "daimon request inbox)")
+    lines.append("  Close one with: daimon request done <id> --evidence …")
+    return lines
+
+
 # ---- #694 PR 3: the sender-side verdict panel -------------------------------
 
 _VERDICT_PANEL_HEADER = "Decisions on requests you sent:"
@@ -912,14 +953,15 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
 
 
 def render_plain(b: dict, degraded: bool = False, rulings=(),
-                 request_lines=(), verdict_lines=()) -> str:
+                 request_lines=(), verdict_lines=(), owed_lines=()) -> str:
     """The deterministic briefing text. Under the #79 budget this is
     BYTE-IDENTICAL to the legacy render(); over it, long items truncate
     (sections preserved) and then whole items drop, lowest value first,
     each cut announced with a trim note. `degraded` (#204) downgrades every
     verbatim label and adds one header note when the receipt is unverifiable."""
     budget = config.brief_max_tokens()
-    text = _render_parts(b, {}, degraded, rulings, request_lines, verdict_lines)
+    text = _render_parts(b, {}, degraded, rulings, request_lines,
+                         verdict_lines, owed_lines)
     if not budget or estimate_tokens(text) <= budget:
         return text
 
@@ -938,7 +980,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
         ]
     trimmed = {key: 0 for key, _ in _DROP_ORDER}
     text = _render_parts(b, trimmed, degraded, rulings, request_lines,
-                         verdict_lines)
+                         verdict_lines, owed_lines)
 
     # Stage 2: drop whole items, least valuable first, until the budget holds
     # or only the skeleton remains.
@@ -948,15 +990,16 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
             items.pop(-1 if end == "tail" else 0)
             b[key] = items
             trimmed[key] += 1
-            text = _render_parts(b, trimmed, degraded, rulings, request_lines,
-                                 verdict_lines)
+            text = _render_parts(b, trimmed, degraded, rulings,
+                                 request_lines, verdict_lines, owed_lines)
         if estimate_tokens(text) <= budget:
             break
     return text
 
 
 def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
-                  rulings=(), request_lines=(), verdict_lines=()) -> str:
+                  rulings=(), request_lines=(), verdict_lines=(),
+                  owed_lines=()) -> str:
     parts = ["While you were away — here's where we left off."]
     if degraded:
         # One header note (#204), embedded in the text so the hook-injected
@@ -979,6 +1022,12 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
         # #694 PR 3: same posture — skeleton furniture, outside _DROP_ORDER.
         parts.append("")
         parts.extend(verdict_lines)
+    if owed_lines:
+        # #885: same posture — skeleton furniture, outside _DROP_ORDER. Last
+        # of the four so the reader meets decisions owed TO them before work
+        # owed BY them.
+        parts.append("")
+        parts.extend(owed_lines)
 
     def _section(header: str, key: str) -> None:
         items = b.get(key) or []
@@ -1069,8 +1118,10 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str |
                      if worldcheck_project is not None else [])
     verdict_lines = (verdict_panel_lines(worldcheck_project)
                      if worldcheck_project is not None else [])
-    skeleton_blocks = [blk for blk in (rulings, request_lines, verdict_lines)
-                       if blk]
+    owed_lines = (owed_panel_lines(worldcheck_project)
+                  if worldcheck_project is not None else [])
+    skeleton_blocks = [blk for blk in (rulings, request_lines, verdict_lines,
+                                       owed_lines) if blk]
     if b is None:
         # #693/#694: a ruling ratified, a request addressed, or a verdict
         # decided before the first real checkpoint (a day-one action) must
@@ -1097,7 +1148,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str |
                 return "\n\n".join(parts)
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
-    return render_plain(b, degraded, rulings, request_lines, verdict_lines)
+    return render_plain(b, degraded, rulings, request_lines, verdict_lines,
+                        owed_lines)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a
