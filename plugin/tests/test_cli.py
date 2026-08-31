@@ -3684,6 +3684,54 @@ def _write_verification_ledger(slug, rows):
                     encoding="utf-8")
 
 
+def test_cli_recall_says_which_writer_superseded_an_item(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # #865: a model-authored supersedes link and a human `daimon resolve`
+    # both land in superseded_by and both can write a bare id. The marker
+    # rendered them identically, so a reader could not tell whether a person
+    # decided this or a model claimed it.
+    from daimon_briefing import store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    cp = _recall_checkpoint("S-linked", "meerkat burrow mapping plan colony")
+    store.write_checkpoint("S-linked", cp, project_dir=proj)
+    newer = _recall_checkpoint(
+        "S-new", "abandoned meerkat burrow mapping plan colony too unstable",
+        "2025-06-01T00:00:00Z")
+    newer["working_context"]["recent_decisions"][0]["links"] = [
+        {"type": "supersedes", "target": "meerkat burrow mapping plan colony"}]
+    store.write_checkpoint("S-new", newer, project_dir=proj)
+
+    assert cli.main(["recall", "meerkat", "--project", proj]) == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if "meerkat burrow mapping plan colony" in ln
+            and "abandoned" not in ln][0]
+    assert "superseded by S-new" in line
+    assert "model-authored link" in line
+
+
+def test_cli_recall_marks_a_human_resolution_as_recorded(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # The other writer, and the one that must not read as a model's claim.
+    from daimon_briefing import store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    cp = _recall_checkpoint("S-res", "meerkat burrow mapping plan colony")
+    cp["working_context"]["recent_decisions"][0]["id"] = "o-mee111"
+    store.write_checkpoint("S-res", cp, project_dir=proj)
+    store.append_event("o-mee111", "superseded-by:o-later22", source="cli",
+                       project_dir=proj)
+
+    assert cli.main(["recall", "meerkat", "--project", proj]) == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if "meerkat" in ln][0]
+    assert "superseded by o-later22" in line
+    assert "recorded resolution" in line
+    assert "model-authored" not in line
+
+
 def test_cli_recall_marks_contradiction_evidence(
         tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
     # #837: invalidated_by had no renderer, so a contradicted item printed
