@@ -257,7 +257,7 @@ def _from_jsonl(text: str) -> list[dict]:
             continue
         payload_type = payload.get("type")
         role = {"user_message": "user", "agent_message": "assistant"}.get(
-            payload_type
+            str(payload_type or "")
         )
         content = payload.get("message")
         if role and isinstance(content, str) and content.strip():
@@ -275,7 +275,7 @@ def _from_jsonl(text: str) -> list[dict]:
         if not isinstance(item, dict):
             continue
         role = {"UserMessage": "user", "AgentMessage": "assistant"}.get(
-            item.get("type")
+            str(item.get("type") or "")
         )
         if role is None:
             continue
@@ -288,9 +288,9 @@ def _from_jsonl(text: str) -> list[dict]:
                 continue
             if str(block.get("type") or "").lower() != "text":
                 continue
-            text = block.get("text")
-            if isinstance(text, str) and text.strip():
-                parts.append(text.strip())
+            block_text = block.get("text")
+            if isinstance(block_text, str) and block_text.strip():
+                parts.append(block_text.strip())
         joined = "\n".join(parts)
         if joined:
             codex_messages.append({"role": role, "content": joined})
@@ -321,9 +321,10 @@ def _from_jsonl(text: str) -> list[dict]:
         if not isinstance(payload, dict):
             continue
         text_key = "user_response" if obj_type == "user_input" else "response"
-        text = payload.get(text_key)
-        if isinstance(text, str) and text.strip():
-            windsurf_messages.append({"role": role, "content": text.strip()})
+        payload_text = payload.get(text_key)
+        if isinstance(payload_text, str) and payload_text.strip():
+            windsurf_messages.append(
+                {"role": role, "content": payload_text.strip()})
     if windsurf_messages:
         return windsurf_messages
 
@@ -362,9 +363,9 @@ def _from_jsonl(text: str) -> list[dict]:
         if mid is not None:
             tool = _tool_result_of(obj)
             if tool is not None:
-                text, is_error, use_ids = tool
-                tool_msg: dict = {"role": "tool", "content": text, "id": mid,
-                                  "tool_result": True}
+                tool_text, is_error, use_ids = tool
+                tool_msg: dict = {"role": "tool", "content": tool_text,
+                                  "id": mid, "tool_result": True}
                 if is_error:
                     tool_msg["tool_error"] = True
                 # #512: provenance flag, resolved via the tool_use pairing.

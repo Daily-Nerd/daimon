@@ -105,7 +105,6 @@ module = [
     "daimon_briefing.ledger",
     "daimon_briefing.privacy",
     "daimon_briefing.refutations",
-    "daimon_briefing.transcript",
 ]
 ignore_errors = true
 
