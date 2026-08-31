@@ -16,6 +16,12 @@ CI gates on this PR (pr-validation.yml):
   NOT the content area: `research/foo` fails. A PR's head branch cannot be
   retargeted, so a wrong name means closing and reopening the PR, not renaming
   it. Pick the name from the KIND of change before the first push.
+- the body must PARSE as a conventional commit. Squash makes title+body the
+  commit release-please reads, and one it cannot parse is dropped from the
+  changelog and from the version bump while the release still succeeds. The
+  usual cause is a body line whose first token is immediately followed by an
+  open paren containing another open paren; indent that line two spaces or put
+  a word before it. Fences and backticks do not help (scar 0065).
 - breaking change? put the `!` in the TITLE (`feat!:` / `fix(scope)!:`).
   Local commit footers do NOT survive the squash; a body that says
   "breaking change" without a title `!` or a `BREAKING CHANGE:` body
