@@ -103,7 +103,6 @@ module = [
     "daimon_briefing.cli",
     "daimon_briefing.ledger",
     "daimon_briefing.privacy",
-    "daimon_briefing.refutations",
 ]
 ignore_errors = true
 

@@ -81,6 +81,20 @@ CHANNEL_LABEL = {
     "signed": "ratified (signed)",
     "mechanical": "mechanically-activated",
 }
+
+
+def _channel_of(row: dict) -> str:
+    """A row's channel as a lookup key for CHANNEL_AUTHORITY / CHANNEL_LABEL.
+
+    Rows are read off disk, so the field can be absent or non-str. Neither map
+    carries an empty-string key, so an unusable channel misses on "" exactly
+    as a None missed before, and the lookup still yields None. Deriving the
+    key here keeps that reasoning in one place rather than at twelve call
+    sites.
+    """
+    return str(row.get("channel") or "")
+
+
 _EVENT_RANK = {
     # Same-order ambiguity fails toward less authority: ratification before a
     # revision leaves the revision candidate; overturn remains last.
@@ -529,7 +543,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 continue  # duplicate logical assertion, first writer wins
             state = (
                 "active" if row.get("ratified") is True
-                and CHANNEL_AUTHORITY.get(row.get("channel")) == "human" else "candidate")
+                and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
             out[ref_id] = {
                 "refutation_id": ref_id,
                 # #693: polarity is DERIVED from the founding event name at
@@ -548,8 +562,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # so human-ratified agent prose renders as exactly that.
                 # DERIVED from the channel, never read from the row's own
                 # authority claim: this is a rendered authority label.
-                "text_authored_by": CHANNEL_AUTHORITY.get(row.get("channel")),
-                "activation": (CHANNEL_LABEL.get(row.get("channel"))
+                "text_authored_by": CHANNEL_AUTHORITY.get(_channel_of(row)),
+                "activation": (CHANNEL_LABEL.get(_channel_of(row))
                                if state == "active" else None),
                 "activation_channel": (row.get("channel")
                                        if state == "active" else None),
@@ -571,7 +585,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         # resurrected by revise; both stay visible in the raw audit.
         if is_ruling and event == "revised" and (
                 (current["state"] == "active"
-                 and CHANNEL_AUTHORITY.get(row.get("channel")) != "human")
+                 and CHANNEL_AUTHORITY.get(_channel_of(row)) != "human")
                 or current["state"] == "overturned"):
             continue
         # #693: a content-bound ratify whose displayed text no longer matches
@@ -594,9 +608,9 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # carrying a verdict_key activates only the text it displayed; a
             # row with NO key is unbound and activates normally (every
             # pre-existing ledger row is absent-key).
-            if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
+            if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
                 current["state"] = "active"
-                current["activation"] = CHANNEL_LABEL.get(row.get("channel"))
+                current["activation"] = CHANNEL_LABEL.get(_channel_of(row))
                 current["activation_channel"] = row.get("channel")
                 current["activation_author"] = row.get("author")
                 current["activated_at"] = row.get("ts")
@@ -605,7 +619,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # a mechanical row on a ruling stays in the raw audit, inert.
             if (current["state"] != "overturned"
                     and current.get("polarity") != "ruling"
-                    and CHANNEL_AUTHORITY.get(row.get("channel")) == "mechanical"):
+                    and CHANNEL_AUTHORITY.get(_channel_of(row)) == "mechanical"):
                 current["state"] = "active"
                 current["activation"] = "mechanically-activated"
                 current["activation_channel"] = "mechanical"
@@ -633,13 +647,13 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # only scope must not relabel agent-authored text as human.
             if "verdict" in row or "subject" in row:
                 current["text_authored_by"] = CHANNEL_AUTHORITY.get(
-                    row.get("channel"))
+                    _channel_of(row))
             was_active = current["state"] == "active"
             current["state"] = (
                 "active" if row.get("ratified") is True
-                and CHANNEL_AUTHORITY.get(row.get("channel")) == "human" else "candidate")
+                and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
             current["activation"] = (
-                CHANNEL_LABEL.get(row.get("channel"))
+                CHANNEL_LABEL.get(_channel_of(row))
                 if current["state"] == "active" else None)
             current["activation_channel"] = (
                 row.get("channel") if current["state"] == "active" else None)
@@ -670,7 +684,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                     "note": str(row.get("note") or ""),
                 }
         elif event == "overturned":
-            if CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
+            if CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
                 current["state"] = "overturned"
                 current["activation"] = None
                 current["activation_channel"] = None
@@ -777,7 +791,7 @@ def _guard_open_proposals(refutation_id: str, event: str,
     if record is not None:
         current_key = normalize.content_key(record.get("verdict") or "")
     verdicts = [r for r in rows
-                if CHANNEL_AUTHORITY.get(r.get("channel")) == "human"
+                if CHANNEL_AUTHORITY.get(_channel_of(r)) == "human"
                 and r.get("event") in ("ratified", "overturned", "revised")
                 and not (r.get("event") == "ratified"
                          and str(r.get("verdict_key") or "")
