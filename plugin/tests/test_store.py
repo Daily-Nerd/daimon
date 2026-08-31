@@ -132,7 +132,14 @@ def test_read_escaping_path_returns_none(tmp_checkpoint_dir, monkeypatch):
 # ---- per-project routing: cwd-slugged latest with global fallback ----
 
 
-def test_project_slug_matches_claude_code_scheme():
+def test_project_slug_folds_every_non_word_char_to_a_hyphen():
+    """#884: renamed from test_project_slug_matches_claude_code_scheme.
+
+    The old name asserted a parity with the Claude CLI that does not hold,
+    and its body could never have caught that: `/Users/x/proj` contains no
+    character the two schemes disagree about, so the test proved the claim
+    its name made in exactly zero cases. The docstring carried the same false
+    sentence, and a downstream consumer implemented against it."""
     assert store.project_slug("/Users/x/proj") == "-Users-x-proj"
 
 
@@ -140,8 +147,41 @@ def test_project_slug_spaces_and_dots():
     assert store.project_slug("/Users/x/My Proj.app") == "-Users-x-My-Proj-app"
 
 
+def test_project_slug_keeps_underscores_unlike_the_claude_cli():
+    """#884, the divergence the old name hid. The regex is `[^\\w-]` and
+    Python's `\\w` includes `_`, so daimon KEEPS underscores where the CLI
+    folds them.
+
+    Measured, not inferred: 0 of 711 directories under `~/.claude/projects`
+    on the machine this was written on contain an underscore, and 19 carry a
+    doubled hyphen of the form `...-daimon-cli--2y36i7g`. `mkdtemp` draws its
+    suffix from `[a-z0-9_]` and can never emit '-', so that `--` can only be
+    a collapsed `_`."""
+    assert store.project_slug("/a/b_c") == "-a-b_c"
+
+
+def test_project_slug_never_folds_underscores_to_match_the_cli():
+    """The guard a docstring warning cannot enforce on its own.
+
+    This is the dangerous reading of #884 and the reason that issue rejected
+    it explicitly. `project_slug` names checkpoint BUCKET directories, so
+    folding '_' re-slugs every project path containing one and orphans its
+    bucket: no error, no migration, the prior history simply stops being
+    found. Safe today only because no current bucket contains an underscore,
+    which is luck about one machine rather than a property of the code.
+
+    A future reader who takes the CLI-parity idea seriously and "corrects"
+    the regex to `[^A-Za-z0-9-]` fails HERE, loudly, instead of silently
+    orphaning history in the field."""
+    assert store.project_slug("/home/user/my_project") == "-home-user-my_project"
+
+
 def test_project_slug_unicode_preserved():
+    """#884 widened this: `\\w` is Unicode-aware, so the surviving class is
+    every Unicode word char, not only accented Latin. Whether the CLI agrees
+    is untested, which is why the docstring no longer claims it does."""
     assert store.project_slug("/Users/x/café") == "-Users-x-café"
+    assert store.project_slug("/Users/x/日本") == "-Users-x-日本"
 
 
 def test_project_slug_empty_is_none():
@@ -2339,3 +2379,4 @@ def test_read_latest_reportable_allows_an_unrouted_checkpoint(tmp_checkpoint_dir
     got = store.read_latest_body(str(mine), route=store.Route.OWN_ELSE_GLOBAL,
                                  admit=store.Admit.OWN_OR_UNROUTED)
     assert (got or {}).get("session_id") == "S-unrouted"
+
