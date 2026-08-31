@@ -713,6 +713,39 @@ def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
                  ref, bucket.name, author))
 
 
+def describe_scope(row, own_slug) -> str | None:
+    """#889: name the project a row came from when it is not the reader's own,
+    else None.
+
+    Lives here for the same reason `describe_invalidation` below does: every
+    read surface calls one function, so two surfaces can never describe a
+    different origin for the same row. `search` has always SELECTed
+    `i.project_slug`; only `--json` ever showed it, so a foreign row and a
+    local row rendered identically everywhere a human actually reads.
+
+    `author` is not a substitute and looks like one. `config.author()` resolves
+    an env var, then git's user name, then the OS user, all process-level, so
+    on one workstation every row in every project carries the same string.
+
+    Silent in three cases, each deliberate:
+
+      - same slug: the common case pays no noise, and a label that never
+        varies is read as furniture and stops being seen, which would
+        reintroduce this defect wearing a fix;
+      - the reader has no slug: an unknown project cannot say what is foreign
+        to it, and guessing would label every row of an all-projects search;
+      - the row has no slug: rotated-out pre-stamp checkpoints index NULL-slug
+        on purpose, and a row that never claimed a project must not be
+        described as coming from somewhere else.
+    """
+    if not own_slug:
+        return None
+    slug = (row or {}).get("project_slug")
+    if not slug or slug == own_slug:
+        return None
+    return f"from {slug}"
+
+
 def describe_invalidation(value) -> str | None:
     """Render one stored `invalidated_by` value as a marker phrase, or None.
 

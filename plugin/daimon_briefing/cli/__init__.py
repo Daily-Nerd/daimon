@@ -850,8 +850,14 @@ def _cmd_recall(args) -> int:
         contradicted += f" [{cured}]" if cured else ""
         trust = r.get("trust") or "untagged"
         item_id = f" [{r['item_id']}]" if r.get("item_id") else ""
+        # #889: [author] reads like attribution and is not — config.author()
+        # is a machine identity, one constant across every project here. The
+        # row has always known its origin project; only --json ever showed it,
+        # so a foreign hit and a local one rendered identically.
+        scope = recall.describe_scope(r, store.project_slug(project))
+        scope_mark = f" ({scope})" if scope else ""
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}]{item_id} {r['text']} "
-                     f"({r['session_id']}, {age} ago){superseded}"
+                     f"({r['session_id']}, {age} ago){scope_mark}{superseded}"
                      f"{contradicted}")
     render.render_recall_lines(lines)
     return 0
@@ -1434,7 +1440,7 @@ def age_gate_blocks(m, now: float, age_days=_UNSET) -> bool:
     return isinstance(hits, int) and hits < _STALE_MIN_HITS
 
 
-def _suggest_line(r: dict, terms, now: float) -> str:
+def _suggest_line(r: dict, terms, now: float, own_slug=None) -> str:
     """One compact, attributed, trust-preserving injection line (#125).
 
     ONE line is a contract, not a hope (#512): the echo strip that removes
@@ -1462,9 +1468,14 @@ def _suggest_line(r: dict, terms, now: float) -> str:
     # as though nothing had happened.
     cured = recall.describe_cure(r.get("cured_by"))
     contradicted += f" ({cured})" if cured else ""
+    # #889: name the origin project when it is not this reader's own. Same
+    # phrasing function as the recall surface, so a live nudge and a hand-run
+    # search can never describe a different origin for one row.
+    scope = recall.describe_scope(r, own_slug)
+    scope_mark = f" ({scope})" if scope else ""
     more = " ".join(terms[:3])
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "
-            f"({age} ago): \"{text}\" [{trust}]{superseded}"
+            f"({age} ago): \"{text}\" [{trust}]{scope_mark}{superseded}"
             f"{contradicted}. "
             f"More: daimon recall \"{more}\"")
 
@@ -1567,7 +1578,8 @@ def _cmd_recall_inject(args) -> int:
             return 0
         terms = recall.salient_terms(prompt)
         for m in chosen:
-            print(_suggest_line(m, terms, now))
+            print(_suggest_line(m, terms, now,
+                                own_slug=store.project_slug(project)))
         if seen_file:
             # #500: count what each origin supplied instead of retiring it
             # outright, so a later, stronger row from the same session stays
