@@ -180,6 +180,23 @@ def _verdict_inject_lines(record: dict) -> list[str]:
     return lines
 
 
+def _owed_inject_lines(record: dict) -> list[str]:
+    """#885: one delivered OWED ask — work this project accepted and has not
+    closed. Same thinness as `_inject_lines`, different verb: the undecided
+    lane points at `daimon request inbox` because the verbs that decide are
+    human-only (D8), but `done` is the one either-channel move, so an agent
+    reading this can actually close it."""
+    lines = [f"daimon owed: {record['request_id']} to "
+             f"{record.get('from_label') or '?'}"
+             + (" [blocking: the sender is waiting]"
+                if record.get("blocking") else "")]
+    lines.append(f"  Ask: {record.get('ask', '')}")
+    note = str(record.get("note") or "").strip()
+    if note:
+        lines.append(f"  Accepted with: {note}")
+    return lines
+
+
 def _cmd_request_inject(args) -> int:
     """Print the undecided asks this session has not been shown, or nothing.
 
@@ -201,8 +218,9 @@ def _cmd_request_inject(args) -> int:
         project = _cli._resolve_project(args.project)
         entry = requests.deliverable(session, project_dir=project)
         verdicts = requests.verdict_deliverable(session, project_dir=project)
+        owed = requests.owed_deliverable(session, project_dir=project)
         rows = entry["rows"]
-        if not rows and not verdicts["rows"]:
+        if not rows and not verdicts["rows"] and not owed["rows"]:
             return 0
         out = []
         for record in verdicts["rows"]:
@@ -226,6 +244,15 @@ def _cmd_request_inject(args) -> int:
         # verdicts has nothing awaiting a decision to point at.
         if rows:
             out.append("Undecided. Full records: `daimon request inbox`")
+        for record in owed["rows"]:
+            out.extend(_owed_inject_lines(record))
+        if owed["overflow"]:
+            out.append(f"(+{owed['overflow']} more owed, not shown here)")
+        # `done` is the one either-channel state move (D8), so unlike the
+        # undecided lane above this names a verb the agent can actually run.
+        if owed["rows"]:
+            out.append("Accepted and owed. Close one with: "
+                       "`daimon request done <id> --evidence …`")
         print("\n".join(out))
         for record in verdicts["rows"]:
             requests.stamp_verdict_delivered(record["request_id"], session,
@@ -233,6 +260,9 @@ def _cmd_request_inject(args) -> int:
         for record in rows:
             requests.stamp_delivered(record["request_id"], session,
                                      project_dir=project)
+        for record in owed["rows"]:
+            requests.stamp_owed_delivered(record["request_id"], session,
+                                          project_dir=project)
     except Exception:  # noqa: BLE001 — per-prompt path: never block a prompt
         return 0
     return 0

@@ -182,7 +182,10 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                          if worldcheck_project is not None else [])
         verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
                          if worldcheck_project is not None else [])
-        blocks = [blk for blk in (rulings, request_lines, verdict_lines) if blk]
+        owed_lines = (briefing.owed_panel_lines(worldcheck_project)
+                      if worldcheck_project is not None else [])
+        blocks = [blk for blk in (rulings, request_lines, verdict_lines,
+                                  owed_lines) if blk]
         if blocks:
             # #693/#694: standing rulings, addressed requests, and decided
             # verdicts exist before the first checkpoint does — a day-one
@@ -218,14 +221,17 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                      if worldcheck_project is not None else [])
     verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
                      if worldcheck_project is not None else [])
+    owed_lines = (briefing.owed_panel_lines(worldcheck_project)
+                  if worldcheck_project is not None else [])
     # #204: degrade verbatim labels when the receipt can't be locally confirmed.
     # Cheap check (sidecar + byte match), computed once for both render paths.
     degraded = briefing.receipt_degraded(checkpoint)
     if not supports_rich():
         print(briefing.render_plain(b, degraded, rulings, request_lines,
-                                    verdict_lines))
+                                    verdict_lines, owed_lines))
     else:
-        _rich_brief(b, degraded, rulings, request_lines, verdict_lines)
+        _rich_brief(b, degraded, rulings, request_lines, verdict_lines,
+                    owed_lines)
     _print_drift(drift)
     _print_teammates(teammates)
 
@@ -259,7 +265,7 @@ def _print_drift(drift) -> None:
 
 
 def _rich_brief(b: dict, degraded: bool = False, rulings=(),
-                request_lines=(), verdict_lines=()) -> None:
+                request_lines=(), verdict_lines=(), owed_lines=()) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -293,6 +299,15 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
             body.append(f"{line}\n", style="bold")
         console.print(Panel(body, title=verdict_lines[0],
                             border_style="green", title_align="left"))
+    if owed_lines:
+        # #885: the fourth skeleton section, its own border color for the
+        # same reason the three above have theirs — each must read as
+        # distinct at a glance.
+        body = Text()
+        for line in owed_lines[1:]:
+            body.append(f"{line}\n", style="bold")
+        console.print(Panel(body, title=owed_lines[0],
+                            border_style="magenta", title_align="left"))
     for key, title, style in _SECTIONS:
         items = b.get(key) or []
         if not items:
