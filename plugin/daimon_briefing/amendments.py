@@ -235,9 +235,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 continue  # duplicate logical proposal, first writer wins
             state = (
                 "ratified" if row.get("ratified") is True
-                and CHANNEL_AUTHORITY.get(row.get("channel")) == "human"
+                and CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human"
                 else "candidate")
-            reopened = current is not None
             out[a_id] = {
                 "amendment_id": a_id,
                 "state": state,
@@ -249,13 +248,17 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "proposed_by": row.get("authority"),
                 "proposed_channel": row.get("channel"),
                 "proposed_author": row.get("author"),
-                "verdict_label": (CHANNEL_LABEL.get(row.get("channel"))
+                "verdict_label": (CHANNEL_LABEL.get(str(row.get("channel") or ""))
                                   if state == "ratified" else None),
-                "created_at": (current["created_at"] if reopened
+                # Reopening a rejected proposal keeps the original creation
+                # stamp and extends its history rather than starting a second
+                # chain. Narrowed on `current` itself: a boolean copy of the
+                # same test reads the same but carries no narrowing.
+                "created_at": (current["created_at"] if current is not None
                                else row.get("ts")),
                 "updated_at": row.get("ts"),
-                "history_count": (current["history_count"] + 1 if reopened
-                                  else 1),
+                "history_count": (current["history_count"] + 1
+                                  if current is not None else 1),
             }
             continue
         if current is None:
@@ -267,18 +270,18 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # the quote in the transcript. It never overrides a verdict, and
             # it never yields a settled render — see RENDER_STATES.
             if (current["state"] == "candidate"
-                    and CHANNEL_AUTHORITY.get(row.get("channel")) == "mechanical"):
+                    and CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "mechanical"):
                 current["state"] = "verified"
                 current["evidence_role"] = str(
                     row.get("evidence_role") or "")[:_ROLE_MAX]
                 current["verdict_label"] = "quote-verified"
         elif event == "ratified":
             if (current["state"] in ("candidate", "verified")
-                    and CHANNEL_AUTHORITY.get(row.get("channel")) == "human"):
+                    and CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human"):
                 current["state"] = "ratified"
-                current["verdict_label"] = CHANNEL_LABEL.get(row.get("channel"))
+                current["verdict_label"] = CHANNEL_LABEL.get(str(row.get("channel") or ""))
         elif event == "rejected":
-            if CHANNEL_AUTHORITY.get(row.get("channel")) == "human":
+            if CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human":
                 current["state"] = "rejected"
                 current["verdict_label"] = None
                 current["note"] = str(row.get("note") or current["note"])
