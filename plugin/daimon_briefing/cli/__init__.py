@@ -198,7 +198,9 @@ def _attach_serialize_log_handler() -> None:
     fmt.converter = time.gmtime  # ledger stamps are UTC "Z"; match them
     handler.setFormatter(fmt)
     handler.setLevel(logging.INFO)
-    handler._daimon_serialize_log = str(target)
+    # Marker attribute, deliberately hung on the handler so a later lookup
+    # can recognise OUR file handler among any the host installed.
+    handler._daimon_serialize_log = str(target)  # type: ignore[attr-defined]
     pkg_log.addHandler(handler)
     # INFO must pass the logger-level gate too (default effective WARNING) —
     # the chunked-serialize heartbeat is the reason this log exists at all.
@@ -525,8 +527,8 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     same reason drift skips: --slug and global-fallback briefs render ANOTHER
     project's checkpoint, and `gh` probes resolve against THIS cwd's repo —
     the wrong repo context for those claims."""
-    withheld = []
-    events = {}
+    withheld: list = []
+    events: dict = {}
     if checkpoint:
         # Withhold (#103): render-time derivation, fail-open — a briefing
         # must never die over suppression machinery. #14: candidates ride
@@ -704,8 +706,11 @@ def _cmd_brief(args) -> int:
         # warning line above a hundred foreign lines does not read as a
         # warning. Orient (where the activity actually is) and exit clean;
         # `daimon status` still shows the full pointer table.
-        slug = str(checkpoint.get("project_slug") or "").strip() or "another project"
-        epoch = store._created_epoch(checkpoint.get("created"))
+        # `checkpoint` is not None here: see the Admit.ANY reasoning on the
+        # read above. mypy cannot carry that across the ReadResult, and the
+        # conjunct that would re-narrow it was removed there as implied.
+        slug = str(checkpoint.get("project_slug") or "").strip() or "another project"  # type: ignore[union-attr]
+        epoch = store._created_epoch(checkpoint.get("created"))  # type: ignore[union-attr]
         age = f"{_format_age(time.time() - epoch)} ago" if epoch else "age unknown"
         # #740: a baton left for a checkpoint-less project is the only
         # orientation it has — status says "waiting baton"; brief must not
@@ -1831,8 +1836,8 @@ def _print_suppressed(project) -> int:
     # un-routed checkpoint can have nothing suppressed to report anyway.
     checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                         admit=store.Admit.ANY)
-    withheld = []
-    candidates = []
+    withheld: list = []
+    candidates: list = []
     if checkpoint:
         try:
             events = store.resolutions(project_dir=project)
@@ -2239,7 +2244,7 @@ def _configure_flag_updates(args) -> dict:
             updates["DAIMON_LLM_MODEL"] = args.model
         if args.base_url:
             updates["DAIMON_LLM_BASE_URL"] = args.base_url
-        applies = litellm_flags
+        applies: tuple[str, ...] = litellm_flags
     elif args.backend == "command":
         if args.command:
             updates["DAIMON_LLM_COMMAND"] = args.command
@@ -2466,9 +2471,10 @@ def _stats_usage() -> dict:
 def _stats_store() -> dict:
     """Checkpoint store -> counts by kind and trust class + carried items.
     Reuses recall's section map so a new cognitive kind shows up here for free."""
-    out = {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
-           "items_verbatim": 0, "items_inferred": 0, "items_untagged": 0,
-           "items_carried": 0, "format_versions": {}, "extraction_versions": {}}
+    out: dict = {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
+                 "items_verbatim": 0, "items_inferred": 0,
+                 "items_untagged": 0, "items_carried": 0,
+                 "format_versions": {}, "extraction_versions": {}}
     d = config.checkpoint_dir()
     try:
         out["project_buckets"] = sum(1 for p in d.iterdir() if p.is_dir())
@@ -2546,14 +2552,15 @@ def _stats_retention(now=None) -> dict:
     --auto."""
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=_RETENTION_WINDOW_DAYS)
-    out = {"window_days": _RETENTION_WINDOW_DAYS, "hook_briefs": 0,
-           "skill_briefs": 0, "ambiguous_briefs": 0, "briefings_total": 0,
-           "delivery_mode": "none",
+    out: dict = {"window_days": _RETENTION_WINDOW_DAYS, "hook_briefs": 0,
+                 "skill_briefs": 0, "ambiguous_briefs": 0,
+                 "briefings_total": 0,
+                 "delivery_mode": "none",
            # status is ops polling (serializer health, pending counts), not a
            # memory read (#232): counted apart, never in the total or ratio.
-           "rereads": {"brief": 0, "recall": 0}, "status_checks": 0,
-           "rereads_total": 0, "rereads_per_briefing": None,
-           "untagged_briefs": 0, "stale_hook_warning": False}
+                 "rereads": {"brief": 0, "recall": 0}, "status_checks": 0,
+                 "rereads_total": 0, "rereads_per_briefing": None,
+                 "untagged_briefs": 0, "stale_hook_warning": False}
     # Host population is read from the SAME window as the counters, so a stale
     # spawn from a host retired months ago cannot reclassify this fortnight.
     auto_spawns = _spawns_in_window_count(cutoff, hosts=AUTO_BRIEF_HOSTS)
@@ -2889,8 +2896,9 @@ def _host_status_entry(host: str, spec, pkg, home: Path) -> dict:
         # Codex counts as installed if its hooks dir OR any of our registration
         # entries exist — either alone is a setup we must audit, not ignore.
         installed = installed or install_dir.exists() or reg != "UNREGISTERED"
-    entry = {"host": host, "dir": str(install_dir), "installed": installed,
-             "registration": reg, "files": [], "drift": False}
+    entry: dict = {"host": host, "dir": str(install_dir),
+                   "installed": installed, "registration": reg,
+                   "files": [], "drift": False}
     if not installed:
         return entry
     entry["files"] = [{"name": n, "status": _hook_file_status(pkg, install_dir, n)}
@@ -3050,7 +3058,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
     sub = parser.add_subparsers(dest="cmd", required=True, metavar="<command>")
-    sub.add_parser = functools.partial(sub.add_parser, formatter_class=fmt)
+    # Rebinding the bound method is the point: every subparser below then
+    # gets `fmt` without repeating it at ~90 call sites.
+    sub.add_parser = functools.partial(  # type: ignore[method-assign]
+        sub.add_parser, formatter_class=fmt)
 
     p_ser = sub.add_parser("serialize", help="serialize a transcript file into a checkpoint")
     p_ser.add_argument("transcript", help="path to a text/markdown transcript")
@@ -3235,7 +3246,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     relations_sub = p_relations.add_subparsers(dest="relations_cmd",
                                                required=True)
-    relations_sub.add_parser = functools.partial(
+    relations_sub.add_parser = functools.partial(  # type: ignore[method-assign]
         relations_sub.add_parser, formatter_class=fmt)
 
     prl_list = relations_sub.add_parser(
@@ -3426,7 +3437,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="opt-in read-only MCP server (#261): recall/brief/projects/"
              "status as a self-describing tool surface for MCP-capable hosts")
     mcp_sub = p_mcp.add_subparsers(dest="mcp_cmd", required=True)
-    mcp_sub.add_parser = functools.partial(mcp_sub.add_parser, formatter_class=fmt)
+    mcp_sub.add_parser = functools.partial(  # type: ignore[method-assign]
+        mcp_sub.add_parser, formatter_class=fmt)
     pm_serve = mcp_sub.add_parser(
         "serve",
         help="serve MCP over stdio until EOF — reads only, never writes; "
