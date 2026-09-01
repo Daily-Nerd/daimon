@@ -97,7 +97,7 @@ def _note_error(where: str, exc: BaseException) -> None:
 # ledger folds bind through — purely a performance object, but the bump
 # rolls every existing db onto it deterministically instead of waiting for
 # an unrelated fingerprint change.
-_SCHEMA_VERSION = "8"   # #866 added items.cured_by
+_SCHEMA_VERSION = "9"   # #890 added items.stated_by
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -169,9 +169,14 @@ def _items(cp: dict):
                             and isinstance(link.get("target"), str)
                             and link["target"].strip()):
                         targets.append(link["target"].strip())
+            # #890: absent stays None, never the checkpoint's author — a
+            # default would make every legacy item a first-person claim,
+            # which is the collapse the field exists to prevent.
+            stated = str(item.get("stated_by") or "").strip() or None
             yield (kind, text, str(item.get("trust") or ""),
                    str(item.get("quote") or ""), str(item.get("scene") or ""),
-                   imp, fs, item_id, 1 if item.get("pinned") else 0, targets)
+                   imp, fs, item_id, 1 if item.get("pinned") else 0, targets,
+                   stated)
 
 
 def _bucket_slugs(d: Path) -> dict[str, str]:
@@ -381,6 +386,14 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                 trust TEXT,
                 kind TEXT,
                 author TEXT,
+                -- #890: WHOSE STATEMENT this item records, distinct from
+                -- `author` (the machine identity that wrote the checkpoint).
+                -- A long-lived host observing several people has one author
+                -- and many staters. Rendered only: never a dedup key, never a
+                -- directory name, never an admission input, which is what
+                -- keeps it from accumulating the load `author` carries.
+                -- NULL means UNKNOWN, never the reader.
+                stated_by TEXT,
                 project_slug TEXT,
                 session_id TEXT,
                 created REAL,
@@ -828,14 +841,16 @@ def rebuild() -> int:
                 if key not in newest or (stamped, recency, sid) > newest[key]:
                     newest[key] = (stamped, recency, sid)
             for (kind, text, trust, quote, scene, importance, first_seen,
-                 item_id, pinned, targets) in _items(cp):
+                 item_id, pinned, targets, stated_by) in _items(cp):
                 cur = conn.execute(
                     "INSERT INTO items"
-                    " (text, quote, scene, trust, kind, author, project_slug,"
+                    " (text, quote, scene, trust, kind, author, stated_by,"
+                    "  project_slug,"
                     "  session_id, created, importance, first_seen, item_id,"
                     "  pinned)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (text, quote, scene, trust, kind, author, slug, sid, recency,
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (text, quote, scene, trust, kind, author, stated_by, slug,
+                     sid, recency,
                      importance, first_seen, item_id, pinned),
                 )
                 conn.execute(
@@ -998,7 +1013,8 @@ def search(query: str, project_dir=None, all_projects: bool = False,
                               else store.project_slug(project_dir))
 
     sql = (
-        "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
+        "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
+        " i.project_slug,"
         " i.session_id, i.created, i.superseded_by, i.superseded_source,"
         " i.invalidated_by, i.cured_by,"
         " i.importance, i.first_seen, i.item_id, i.frontier,"
@@ -1418,7 +1434,8 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     except (OSError, sqlite3.Error) as exc:
         _note_error("suggest.refresh", exc)
     sql = (
-        "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.project_slug,"
+        "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
+        " i.project_slug,"
         " i.session_id, i.created, i.importance, i.first_seen, i.superseded_by,"
         # #837: the column MUST be selected here, not just written — this is
         # the auto-inject path, so a missing select re-asserts a claim this

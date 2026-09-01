@@ -856,9 +856,14 @@ def _cmd_recall(args) -> int:
         # so a foreign hit and a local one rendered identically.
         scope = recall.describe_scope(r, store.project_slug(project))
         scope_mark = f" ({scope})" if scope else ""
+        # #890: whose STATEMENT this is, when the record names one. Absent
+        # means unknown and renders as nothing — never a guess and never a
+        # placeholder, because a default would read as the reader's own claim.
+        stated = str(r.get("stated_by") or "").strip()
+        stated_mark = f" (stated by {stated})" if stated else ""
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}]{item_id} {r['text']} "
-                     f"({r['session_id']}, {age} ago){scope_mark}{superseded}"
-                     f"{contradicted}")
+                     f"({r['session_id']}, {age} ago){stated_mark}{scope_mark}"
+                     f"{superseded}{contradicted}")
     render.render_recall_lines(lines)
     return 0
 
@@ -1473,9 +1478,13 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None) -> str:
     # search can never describe a different origin for one row.
     scope = recall.describe_scope(r, own_slug)
     scope_mark = f" ({scope})" if scope else ""
+    # #890: same posture as the recall surface, same phrasing.
+    stated = str(r.get("stated_by") or "").strip()
+    stated_mark = f" (stated by {stated})" if stated else ""
     more = " ".join(terms[:3])
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "
-            f"({age} ago): \"{text}\" [{trust}]{scope_mark}{superseded}"
+            f"({age} ago): \"{text}\" [{trust}]{stated_mark}{scope_mark}"
+            f"{superseded}"
             f"{contradicted}. "
             f"More: daimon recall \"{more}\"")
 

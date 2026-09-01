@@ -167,6 +167,20 @@ ITEM_RULES: tuple[FieldRule, ...] = (
         "Author that first wrote the item (#268). Model-emitted values are "
         "stripped."),
     FieldRule(
+        "item", "stated_by", "string", True, False, "code", "strip",
+        _c(stripped_at_serialize=True),
+        "#890. WHOSE STATEMENT this item records, as distinct from `author`, "
+        "which is the machine identity that wrote the checkpoint. A "
+        "long-lived host observing several people has one author and many "
+        "staters, and without this every item inherits the one author, so a "
+        "foreign claim reads as the reader's own memory. Rendered only: never "
+        "a dedup key, never a directory name, never an admission input, which "
+        "is what keeps it from accumulating the load `author` carries. "
+        "ABSENT MEANS UNKNOWN, never the reader — defaulting to the author "
+        "would make every legacy item a first-person claim. Code-owned and "
+        "stripped from model output like `author`: a model naming who said "
+        "something is an agent asserting an identity it cannot verify."),
+    FieldRule(
         "item", "carried_from", "string", True, False, "code", "strip",
         _c(stripped_at_serialize=True),
         "Session id of the LAST carry hop (#33); absent on native items. "

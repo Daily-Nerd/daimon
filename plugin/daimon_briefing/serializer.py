@@ -2163,7 +2163,13 @@ _CODE_OWNED_KEYS = (
 _CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
                          "quote_verified", "last_verified",
                          "quote_provenance", "pinned", "id",
-                         "carried_from", "first_seen")
+                         "carried_from", "first_seen",
+                         # #890: a model naming who said something is an agent
+                         # asserting an identity it cannot verify, and the
+                         # field would carry more authority than any other
+                         # while being the least checkable. The host sets it
+                         # after the model is done, the way `author` is set.
+                         "stated_by")
 
 
 def strip_code_owned_keys(checkpoint: dict) -> None:
