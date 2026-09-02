@@ -541,6 +541,21 @@ def _message_id(m) -> str | None:
     return None
 
 
+def _message_said_by(m) -> str | None:
+    """WHO said this message, as the host recorded it (#893), or None.
+
+    Distinct from `role`, which is the transcript position (user/assistant).
+    A long-lived host observing several people sets this per message; a host
+    that has no such concept sets nothing and every item stays unattributed.
+    """
+    if not isinstance(m, dict):
+        return None
+    who = m.get("said_by")
+    if isinstance(who, str) and who.strip():
+        return who.strip()
+    return None
+
+
 def _render_line(i, m, content) -> str:
     """One message's transcript line — the per-message unit of every rendered
     surface (#831: factored out of _render_transcript so the stitching
@@ -588,6 +603,23 @@ def message_texts_by_id(messages) -> dict[str, str]:
         mid = _message_id(m)
         if mid is not None:
             out[mid] = _message_text(m)
+    return out
+
+
+def message_speakers_by_id(messages) -> dict[str, str]:
+    """Host message id -> speaker, for messages the host attributed (#893).
+
+    The host half of the `stated_by` join. It states a fact about an artifact
+    it received ("message u1 came from ana"), never a claim about an item's
+    content, which is what keeps this an observation rather than an assertion.
+    Empty for hosts that record no speaker, the same degradation
+    signal_message_ids has for hosts that surface no tool rows."""
+    out: dict[str, str] = {}
+    for m in messages or []:
+        mid = _message_id(m)
+        who = _message_said_by(m)
+        if mid is not None and who is not None:
+            out[mid] = who
     return out
 
 
@@ -718,6 +750,39 @@ def validate(checkpoint) -> bool:
 # receipt-machinery change.
 
 SOURCE_IDS_KEY = "source_message_ids"
+
+
+def derive_stated_by(checkpoint, speakers) -> None:
+    """Fill each item's `stated_by` from its validated bindings (#893).
+
+    Runs AFTER sanitize_source_ids (so every id is one the transcript vouched
+    for) and AFTER strip_code_owned_keys (so a model-supplied value is already
+    gone and cannot survive by being right). daimon owns this join: the host
+    supplies message-to-speaker, the code supplies item-to-message, and neither
+    side ever asserts the other's half.
+
+    ABSENT MEANS UNKNOWN, and ambiguity counts as absent. An item whose
+    bindings name two different speakers, or name one speaker and one unknown
+    message, gets nothing: picking a winner would manufacture exactly the
+    misattribution the field exists to prevent. Only unanimous, fully-known
+    attribution is recorded.
+
+    Never fatal, same philosophy as sanitize_source_ids: an advisory field must
+    never fail a serialize."""
+    if not isinstance(speakers, dict) or not speakers:
+        return
+    for item in iter_items(checkpoint):
+        ids = item.get(SOURCE_IDS_KEY)
+        if not isinstance(ids, list) or not ids:
+            continue
+        named = {speakers.get(i) for i in ids if isinstance(i, str)}
+        # A single non-None speaker across every binding, or nothing. `None` in
+        # the set means one cited message had no recorded speaker, which makes
+        # the whole attribution partial and therefore unknown.
+        if len(named) == 1:
+            who = named.pop()
+            if isinstance(who, str) and who:
+                item["stated_by"] = who
 
 
 def sanitize_source_ids(checkpoint, id_map, signal_ids=frozenset()) -> None:
@@ -2558,6 +2623,11 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # tool-result messages) survive on any item, evidence for outcome claims.
     sig_ids = signal_message_ids(messages)
     sanitize_source_ids(checkpoint, message_id_map(messages), sig_ids)
+    # #893: fill `stated_by` from the host's per-message speaker, joined
+    # through the bindings sanitize_source_ids just validated. Must run HERE:
+    # after that call (so every id is one the transcript vouched for) and after
+    # strip_code_owned_keys ran on the fresh parse (so a model value is gone).
+    derive_stated_by(checkpoint, message_speakers_by_id(messages))
     # #369: deterministic backstop for constraint pinning — hard-imperative
     # user sentences the model paraphrased away are force-pinned as verbatim
     # items here, AFTER id sanitization (host ids go in directly) and BEFORE
