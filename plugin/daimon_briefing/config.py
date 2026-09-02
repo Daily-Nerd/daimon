@@ -384,6 +384,52 @@ def session_speaker() -> str | None:
     return (_get("DAIMON_SESSION_SPEAKER") or "").strip() or None
 
 
+# ---- tenant scope (#899): the host, never the caller, chooses a read scope --
+
+
+def tenant_scoped() -> bool:
+    """When set, every caller-chosen cross-project address is refused: `--slug`
+    and `--all-projects` on the CLI, `slug` and `all_projects` on the MCP
+    tools, and `daimon projects` lists only the caller's own bucket.
+
+    For a host running one daimon home with one project directory per person,
+    those surfaces are cross-tenant read and enumerate primitives, one prompt
+    injection away from every tenant's memory. A single person's machine
+    never needs this. Read at process start through the same accessor as
+    every other flag: process env or env file, never prompt content."""
+    return _flag("DAIMON_TENANT_SCOPED")
+
+
+# One refusal, both surfaces (CLI and MCP): a caller who asked for a scope and
+# silently got their own instead would read the answer as complete.
+TENANT_SCOPE_REFUSAL = (
+    "this daimon home is tenant-scoped (DAIMON_TENANT_SCOPED): a caller may "
+    "not choose a scope (slug, all_projects); reads stay in this project's "
+    "own scope plus any host-declared DAIMON_EXTRA_READ_SLUGS")
+
+
+def extra_read_slugs() -> tuple[str, ...]:
+    """Slugs the host lets this session read AMBIENTLY, beside its own
+    (DAIMON_EXTRA_READ_SLUGS, comma separated), for a shared scope whose
+    contents were already visible to everyone in it. Read only: no write path
+    takes a slug, and a session never writes to a listed scope.
+
+    The dangerous half of cross-project reads was never that two scopes are
+    readable; it was that the CALLER picked the slug. This is the host
+    picking, out of band, in the trust class of DAIMON_AUTHOR. Stripped,
+    de-duplicated, order kept; an entry that is not slug-shaped is dropped
+    rather than widened into a path or a glob."""
+    out: list[str] = []
+    for raw in (_get("DAIMON_EXTRA_READ_SLUGS") or "").split(","):
+        tok = raw.strip()
+        if not tok or tok in out:
+            continue
+        if not all(ch.isalnum() or ch in "_-" for ch in tok):
+            continue
+        out.append(tok)
+    return tuple(out)
+
+
 # ---- signed provenance receipts (#204): opt-in vitni local-binding receipts ----
 
 

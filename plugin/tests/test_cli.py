@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 import os
@@ -10042,3 +10043,90 @@ def test_write_checkpoint_supersede_of_a_near_identical_item_is_suppressed(
 
     statuses = [e.get("status", "") for e in _events(project)]
     assert not [s for s in statuses if s.startswith("supersede-candidate")]
+
+
+# ---- #899: tenant scope refuses caller-chosen addressing at the CLI ------
+
+
+def _two_recall_buckets(monkeypatch, tmp_path):
+    from daimon_briefing import store
+    proj_a = str((tmp_path / "proj-a").resolve())
+    proj_b = str((tmp_path / "proj-b").resolve())
+    store.write_checkpoint("S-a", _recall_checkpoint("S-a", "marmot work in a"),
+                           project_dir=proj_a)
+    store.write_checkpoint("S-b", _recall_checkpoint("S-b", "marmot work in b"),
+                           project_dir=proj_b)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", proj_a)
+    return proj_a, proj_b
+
+
+@pytest.mark.parametrize("argv", [
+    ["recall", "marmot", "--all-projects"],
+    ["recall", "marmot", "--slug", "-p-b"],
+    ["brief", "--slug", "-p-b"],
+    ["why", "o-3f8a2c", "--slug", "-p-b"],
+])
+def test_tenant_scope_refuses_caller_chosen_scope(tmp_checkpoint_dir, capsys,
+                                                  monkeypatch, tmp_path, argv):
+    """A plain refusal, never a silent narrowing: a caller who asked for a
+    scope and got their own instead would read the answer as complete."""
+    _two_recall_buckets(monkeypatch, tmp_path)
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    rc = cli.main(argv)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "tenant-scoped" in err
+    assert "DAIMON_TENANT_SCOPED" in err
+
+
+def test_tenant_scope_leaves_the_scoped_read_alone(tmp_checkpoint_dir, capsys,
+                                                   monkeypatch, tmp_path):
+    _two_recall_buckets(monkeypatch, tmp_path)
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    assert cli.main(["recall", "marmot"]) == 0
+    out = capsys.readouterr().out
+    assert "marmot work in a" in out
+    assert "marmot work in b" not in out
+
+
+def test_tenant_scope_zero_match_never_teases_other_projects(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    """#259's signpost counts matches per foreign slug. Counts are
+    enumeration, and the remedy it names is the refused flag."""
+    _, proj_b = _two_recall_buckets(monkeypatch, tmp_path)
+    from daimon_briefing import store
+    store.write_checkpoint("S-c", _recall_checkpoint("S-c", "narwhal only in b"),
+                           project_dir=proj_b)
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    assert cli.main(["recall", "narwhal"]) == 0
+    out = capsys.readouterr().out
+    assert "no matches" in out
+    assert "elsewhere" not in out
+    assert "--all-projects" not in out
+
+
+def test_tenant_scope_projects_lists_only_the_callers_own(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    from daimon_briefing import store
+    proj_a, _ = _two_recall_buckets(monkeypatch, tmp_path)
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    assert cli.main(["projects", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["slug"] for r in rows] == [store.project_slug(proj_a)]
+    assert rows[0]["current"] is True
+
+
+def test_only_the_three_read_verbs_take_a_slug():
+    """No write path accepts a slug. Pinned structurally: walk the parser
+    and name every subcommand carrying --slug, so a future verb cannot grow
+    caller-chosen addressing without this list changing on purpose."""
+    import argparse
+    from daimon_briefing import store
+    parser = cli.build_parser()
+    subs = next(a for a in parser._actions
+                if isinstance(a, argparse._SubParsersAction))
+    with_slug = sorted(
+        name for name, sp in subs.choices.items()
+        if any("--slug" in a.option_strings for a in sp._actions))
+    assert with_slug == ["brief", "recall", "why"]
+    assert "slug" not in inspect.signature(store.write_checkpoint).parameters

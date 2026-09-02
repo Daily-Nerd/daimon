@@ -986,6 +986,29 @@ def _dedupe_rows(rows: list[dict], want_n: int) -> list[dict]:
     return out[:want_n]
 
 
+def _ambient_scopes(project_dir) -> list[str] | None:
+    """The slugs an UNADDRESSED read may see (#899): this project's own plus
+    whatever the host declared in DAIMON_EXTRA_READ_SLUGS, own first. None
+    when the project is unknown, so each caller keeps its own "unknown"
+    rule (search: no filter; lookup_item: None; suggest: silence) and the
+    allowlist can never turn an unscoped read into a read of the listed
+    buckets. Explicit addressing (`slug`, `all_projects`) never comes here:
+    an explicit slug IS the scope (#243) and all_projects is already
+    everything."""
+    own = store.project_slug(project_dir)
+    if own is None:
+        return None
+    scopes = [own]
+    for extra in config.extra_read_slugs():
+        if extra not in scopes:
+            scopes.append(extra)
+    return scopes
+
+
+def _scope_clause(scopes: list[str], column: str = "i.project_slug") -> str:
+    return f" AND {column} IN ({', '.join('?' for _ in scopes)})"
+
+
 def search(query: str, project_dir=None, all_projects: bool = False,
            limit: int = 20, slug: str | None = None) -> list[dict]:
     """FTS5 MATCH over the (auto-refreshed) index. Live items first, then by
@@ -1009,8 +1032,10 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         _ensure_fresh()
     except (OSError, sqlite3.Error) as exc:
         _note_error("search.refresh", exc)  # then try the query on what exists
-    want = slug if slug else (None if all_projects
-                              else store.project_slug(project_dir))
+    # #899: an unaddressed read fans across own + host-allowlisted scopes;
+    # an explicit slug or all_projects is exactly what it says.
+    scopes = ([slug] if slug else
+              None if all_projects else _ambient_scopes(project_dir))
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
@@ -1022,8 +1047,8 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"
     )
-    if want is not None:
-        sql += " AND i.project_slug = ?"
+    if scopes is not None:
+        sql += _scope_clause(scopes)
     # frontier is a TIEBREAK after relevance (#234): equally-relevant rows
     # from the newest checkpoint edge out older ones — silently, no label.
     # Contradiction leads the demotion keys (#837): "at least as strongly as
@@ -1040,8 +1065,8 @@ def search(query: str, project_dir=None, all_projects: bool = False,
 
     def _run(match_expr: str) -> list[dict]:
         params: list = [match_expr]
-        if want is not None:
-            params.append(want)
+        if scopes is not None:
+            params.extend(scopes)
         # #288 overfetch: a carried item occupies one row PER checkpoint that
         # carries it, and dedupe below collapses those — fetch headroom so the
         # deduped list can still fill the caller's limit. 4x covers typical
@@ -1109,8 +1134,8 @@ def lookup_item(item_id: str, project_dir=None, slug: str | None = None) -> dict
     surfaces — this only ever feeds a DISPLAY fallback.
 
     Returns the newest matching row (ties broken by `created`), or None."""
-    want = slug if slug else store.project_slug(project_dir)
-    if want is None:
+    scopes = [slug] if slug else _ambient_scopes(project_dir)
+    if scopes is None:
         return None
     try:
         _ensure_fresh()
@@ -1122,9 +1147,10 @@ def lookup_item(item_id: str, project_dir=None, slug: str | None = None) -> dict
             cur = conn.execute(
                 "SELECT text, quote, trust, kind, author, project_slug,"
                 " session_id, created, superseded_by, item_id, frontier"
-                " FROM items WHERE item_id = ? AND project_slug = ?"
-                " ORDER BY created DESC LIMIT 1",
-                (item_id, want),
+                " FROM items WHERE item_id = ?"
+                + _scope_clause(scopes, "project_slug")
+                + " ORDER BY created DESC LIMIT 1",
+                (item_id, *scopes),
             )
             cols = [c[0] for c in cur.description]
             row = cur.fetchone()
@@ -1412,8 +1438,11 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     count) and `pinned` (the #369 standing-rule flag) — inputs to the cli
     age gate (#452), not rank inputs here.
     """
-    slug = store.project_slug(project_dir)
-    if slug is None:
+    # #899: the auto-inject path fans across own + host-allowlisted scopes
+    # too; a shared scope reached by `recall` but not here would exist when
+    # asked for and vanish when it would have helped.
+    scopes = _ambient_scopes(project_dir)
+    if scopes is None:
         return []
     terms = salient_terms(prompt)
     if not terms:
@@ -1449,13 +1478,13 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         # Best-ranked candidates first (#31 item 4): without ORDER BY the LIMIT
         # window is arbitrary — on a busy project (>N matching rows) the
         # strongest rows could be truncated away, silencing prior work.
-        " WHERE items_fts MATCH ? AND i.project_slug = ?"
+        " WHERE items_fts MATCH ?" + _scope_clause(scopes) +
         " ORDER BY rank ASC LIMIT 256"
     )
     try:
         conn = sqlite3.connect(str(config.recall_db()))
         try:
-            cur = conn.execute(sql, (expr, slug))
+            cur = conn.execute(sql, (expr, *scopes))
             cols = [c[0] for c in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
         finally:

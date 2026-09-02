@@ -657,6 +657,8 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
 def _cmd_brief(args) -> int:
     _note_usage("brief:auto" if getattr(args, "auto", False) else "brief")
     slug = getattr(args, "slug", None)
+    if _refuses_caller_scope(slug):
+        return 2
     if slug:
         # Deliberate cross-project read (#243). Explicit-never-automatic is
         # the #94/#95 lesson, so: no global-pointer fallback (the target was
@@ -764,6 +766,16 @@ def _cmd_brief(args) -> int:
 # ---- recall: FTS search over local + team checkpoint history (#112) ----
 
 
+def _refuses_caller_scope(slug=None, all_projects: bool = False) -> bool:
+    """#899: on a tenant-scoped home a caller-chosen scope is refused out
+    loud, rc 2, never narrowed in silence. One check for `recall`, `brief`
+    and `why`, the three read verbs that take an address."""
+    if config.tenant_scoped() and (slug or all_projects):
+        print(f"error: {config.TENANT_SCOPE_REFUSAL}", file=sys.stderr)
+        return True
+    return False
+
+
 def _cmd_recall(args) -> int:
     """Lexical search over the derived recall index. The index is disposable —
     recall.search auto-(re)builds it — so the only hard failure surfaced here is
@@ -781,6 +793,8 @@ def _cmd_recall(args) -> int:
     if slug and args.all_projects:
         print("error: --slug scopes to one project; drop it or drop "
               "--all-projects", file=sys.stderr)
+        return 2
+    if _refuses_caller_scope(slug, args.all_projects):
         return 2
     project = _resolve_project(args.project)
     try:
@@ -800,8 +814,10 @@ def _cmd_recall(args) -> int:
         # crossing would pay. Explicit scopes (--all-projects already
         # searched everything; --slug named its target) get no second-guess.
         # Same doctrine as the AND->OR retry (#25): a narrower scope must
-        # never mean a silent dead end.
-        if not args.all_projects and not slug:
+        # never mean a silent dead end. #899: except on a tenant-scoped
+        # home, where per-slug counts are enumeration and the remedy the
+        # signpost names is the refused flag.
+        if not args.all_projects and not slug and not config.tenant_scoped():
             try:
                 wide = recall.search(query, all_projects=True, limit=50)
             except recall.RecallError:
@@ -897,6 +913,8 @@ def _cmd_why(args) -> int:
         print("error: invalid item id — expected "
               "[a-z]-[0-9a-f]{6,40}(-N)?", file=sys.stderr)
         return 2
+    if _refuses_caller_scope(args.slug):
+        return 2
     project = args.slug or _resolve_project(args.project)
     result = inspector.inspect_item(
         project, args.item_id, include_source=args.source)
@@ -942,6 +960,10 @@ def projects_rows(project_arg=None) -> list:
     cur_slug = store.project_slug(_resolve_project(project_arg))
     rows = []
     for b in store.list_buckets():
+        # #899: enumeration is the other half of the exfiltration primitive;
+        # a tenant-scoped home lists the caller's own bucket and no other.
+        if config.tenant_scoped() and b["slug"] != cur_slug:
+            continue
         cp = b["checkpoint"] or {}
         created = cp.get("created")
         topic = ((cp.get("working_context") or {}).get("active_topic") or {})

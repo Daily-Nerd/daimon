@@ -388,3 +388,50 @@ def test_serve_disabled_exits_clean_without_reading(monkeypatch):
     rc = mcp_server.serve(in_stream=fake_in, out_stream=fake_out)
     assert rc == 0
     assert fake_out.getvalue() == ""
+
+
+# ---- #899: tenant scope refuses caller-chosen addressing over MCP --------
+
+
+def _tenant_two_buckets(sample_checkpoint, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("daimon_recall", {"query": "x", "slug": "-p-B"}),
+    ("daimon_recall", {"query": "x", "all_projects": True}),
+    ("daimon_brief", {"slug": "-p-B"}),
+])
+def test_tenant_scope_refuses_caller_chosen_scope_over_mcp(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch, tool, args):
+    _tenant_two_buckets(sample_checkpoint, monkeypatch)
+    _, out = rpc(_init(), _call(tool, args))
+    text, is_err = _result(out)
+    assert is_err is True
+    assert "tenant-scoped" in text
+
+
+def test_tenant_scope_projects_tool_lists_only_the_callers_own(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    from daimon_briefing import store
+    _tenant_two_buckets(sample_checkpoint, monkeypatch)
+    _, out = rpc(_init(), _call("daimon_projects", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert [r["slug"] for r in json.loads(text)] == [store.project_slug("/p/A")]
+
+
+def test_tenant_scope_leaves_own_scope_reads_working_over_mcp(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    _tenant_two_buckets(sample_checkpoint, monkeypatch)
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "merge"}))
+    _, is_err = _result(out)
+    assert is_err is False
+    _, out = rpc(_init(), _call("daimon_brief", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert "daimon_projects" not in text  # no enumeration hint either
