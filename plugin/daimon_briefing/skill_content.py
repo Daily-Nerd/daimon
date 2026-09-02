@@ -196,6 +196,12 @@ that is world-check territory, not a resolve claim: run
 `daimon reverify <id> --evidence "<what you checked>"` to assert a carried
 item is still true and reset its staleness clock. `forget` stays human-only.
 
+Work also moves stores `resolve` cannot close, and an unclosed store rides
+into the next briefing as work. An item that advanced but did not close
+takes `daimon amend` (next section); an accepted request another project
+sent, satisfied here, takes `daimon request done <id> --evidence "<quote>"
+--by agent`, and `daimon request inbox` lists the ones still owed.
+
 ## Amending loops
 
 Advanced-but-open loops take `daimon amend`:

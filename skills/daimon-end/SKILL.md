@@ -17,18 +17,31 @@ a `prev` pointer. So it does not need to be perfect to be useful.
 
 ## What to do when invoked
 
-1. **Resolve closed loops FIRST.** If any briefed loop was closed this session,
-   record it before writing the checkpoint:
+1. **Close what this session moved, FIRST.** Every store daimon reads back
+   has its own close verb, and a store you moved but never closed rides into
+   the next briefing as work. Walk `daimon loops` and `daimon request inbox`
+   and record each close before writing the checkpoint:
 
    ```bash
+   # a briefed loop this session closed
    daimon resolve <id> --by agent --evidence "<exact contiguous transcript quote>"
+   # a briefed item that moved but did not close
+   daimon amend <id> --change progressed|blocked|changed --evidence "<quote>" --by agent
+   # an accepted inbound request this session satisfied (a shipped fix, a merged PR)
+   daimon request done <id> --evidence "<quote>" --by agent
+   # a carried item this session re-checked against the world and found still true
+   daimon reverify <id> --evidence "<what you checked>"
    ```
 
    (See the daimon-briefing skill's "Closing loops" section for the full
    quote-discipline rule.) The CLI answers `claim recorded ... pending
    verification at session end` — that is the expected output, not a failure:
-   the resolution is a provisional claim, byte-checked against the transcript
-   when the session ends.
+   each claim is provisional, byte-checked against the transcript when the
+   session ends. A `request done` on an ask another project sent prints
+   `no matching request in this bucket`; that is the read-time join, not a
+   miss. Skipping this step never errors: the checkpoint validates, the
+   briefing renders, and the satisfied request stays `[✓ accepted]` until
+   someone notices.
 
 2. **Decide whether to hand off.** The baton is a different instrument from the
    checkpoint: the checkpoint captures full state, the baton is the ONE
@@ -105,6 +118,7 @@ never reads it, so a fact placed there is lost to every other host.
 | Facts, decisions, beliefs, open loops from THIS session | the checkpoint, step 3 above (`daimon write-checkpoint`) | the next briefing, `daimon recall`, carry |
 | The ONE thing the next session should do first | `daimon handoff "<do X first, beware Y>"` (2000 chars max) | the top of the next briefing |
 | A briefed loop this session closed | `daimon resolve <id> --by agent --evidence "<quote>"` | the briefing withholds it once byte-checked |
+| An accepted inbound request this session satisfied | `daimon request done <id> --evidence "<quote>" --by agent` | the sender's brief and `daimon request inbox`, as a claim until byte-checked |
 | A rule that must never decay (a threshold, a boundary, a standing constraint) | `daimon ruling propose --subject ... --verdict ... --scope ... --evidence ... --by agent` | every briefing, once a human ratifies; 7 active per project by default |
 | An approach that was tried and failed | `daimon refute add ... --by agent` | `daimon refute guard` before anyone revives it |
 | A briefed item that moved but did not close | `daimon amend <id> --change progressed|blocked|changed --evidence "<quote>" --by agent` | the briefing, as an unconfirmed claim until a human settles it |
