@@ -350,6 +350,13 @@ def _from_jsonl(text: str) -> list[dict]:
             msg = {"role": role, "content": content}
             if mid is not None:
                 msg["id"] = mid
+            # #893: carry the host's per-message speaker through when the row
+            # names one. A discriminating FIELD, not a row shape (deadend #20):
+            # rows without a usable string keep their exact existing shape, so
+            # hosts that record no speaker stay byte-identical.
+            said = obj.get("said_by")
+            if isinstance(said, str) and said.strip():
+                msg["said_by"] = said.strip()
             messages.append(msg)
             continue
         # #359: a row whose ONLY payload is tool_result blocks used to be
