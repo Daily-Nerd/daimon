@@ -362,6 +362,28 @@ def author() -> str:
     return name or "unknown"
 
 
+def session_speaker() -> str | None:
+    """WHO is talking to this session, as the host declares it out of band
+    (DAIMON_SESSION_SPEAKER). None when unset or blank. Never raises.
+
+    Same trust class as `author`'s DAIMON_AUTHOR — a host stating a fact about
+    the session it is running, not a model asserting an identity — but a pure
+    LABEL, and that difference is the whole reason this variable exists rather
+    than reusing DAIMON_AUTHOR. `author` is a KEY with five load-bearing uses
+    (the admit_foreign trust clamp, the recall index dedup key, the team
+    sidecar directory name), so setting it per person would re-key the store
+    and split one machine's memory across directories. `stated_by` is rendered
+    and nothing else.
+
+    THE HOST'S OBLIGATION: set this only where one session is one person for
+    its whole life. A host serving several people through a single session must
+    NOT set it — it has no single answer, and the honest answer is absence.
+    Where the host can attribute per message it should set `said_by` on the
+    message instead (#893); that path is precise and always wins over this one.
+    """
+    return (_get("DAIMON_SESSION_SPEAKER") or "").strip() or None
+
+
 # ---- signed provenance receipts (#204): opt-in vitni local-binding receipts ----
 
 

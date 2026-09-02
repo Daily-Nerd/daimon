@@ -32,6 +32,9 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(home / "windsurf"))
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
     monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
+    # #896: and the host-declared per-session speaker — a developer who exports
+    # it in their own shell must not silently attribute every derived item.
+    monkeypatch.delenv("DAIMON_SESSION_SPEAKER", raising=False)
     # #200: a host DAIMON_TEAM_PROJECT would nest every team write; and the
     # resolver caches per (project_dir, team_dir, env) — clear it so no test
     # can see another test's resolution.

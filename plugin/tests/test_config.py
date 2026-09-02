@@ -510,6 +510,35 @@ def test_author_never_raises_returns_unknown(monkeypatch):
     assert config.author() == "unknown"
 
 
+# ---- session speaker (#896): host-declared, one session one person ---------
+
+
+def test_session_speaker_is_absent_by_default(monkeypatch):
+    """Unset means UNKNOWN, never the author. A host that declares nothing
+    leaves every item unattributed, which is #892's rule unchanged."""
+    monkeypatch.delenv("DAIMON_SESSION_SPEAKER", raising=False)
+    assert config.session_speaker() is None
+
+
+def test_session_speaker_from_env(monkeypatch):
+    monkeypatch.setenv("DAIMON_SESSION_SPEAKER", "ana")
+    assert config.session_speaker() == "ana"
+
+
+def test_session_speaker_is_stripped(monkeypatch):
+    monkeypatch.setenv("DAIMON_SESSION_SPEAKER", "  ana  ")
+    assert config.session_speaker() == "ana"
+
+
+def test_a_blank_session_speaker_is_absent(monkeypatch):
+    """Blank is a declaration of nothing, not a speaker named "". The empty
+    string must not reach the derivation, where it would fail the truthiness
+    check anyway but only by luck."""
+    for blank in ("", "   ", "\t"):
+        monkeypatch.setenv("DAIMON_SESSION_SPEAKER", blank)
+        assert config.session_speaker() is None
+
+
 def test_carry_enabled_default_and_kill_switch(monkeypatch):
     monkeypatch.delenv("DAIMON_CARRY", raising=False)
     assert config.carry_enabled() is True
