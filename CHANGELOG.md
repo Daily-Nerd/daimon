@@ -5,6 +5,30 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.0](https://github.com/Daily-Nerd/daimon/compare/v0.37.1...v0.38.0) (2026-09-02)
+
+
+### Features
+
+* **config:** tenant-scoped mode refuses caller-chosen scope and takes a host allowlist ([#900](https://github.com/Daily-Nerd/daimon/issues/900)) ([7719912](https://github.com/Daily-Nerd/daimon/commit/7719912abc44908fbc08a68505f2f5622ce8f91a))
+* **decide:** list every project's queue behind a flag, with routed commands ([#901](https://github.com/Daily-Nerd/daimon/issues/901)) ([1c68bfc](https://github.com/Daily-Nerd/daimon/commit/1c68bfcd6fe0a4134ed11472eb700e89bc8e61a8))
+* **serializer:** fill stated_by from a host-declared session speaker ([#897](https://github.com/Daily-Nerd/daimon/issues/897)) ([b0ad12e](https://github.com/Daily-Nerd/daimon/commit/b0ad12e5ca6d87ce5d67afd724fc5841a281b4f3))
+
+
+### Bug Fixes
+
+* **cli:** the handoff refusal names where the content belongs ([#903](https://github.com/Daily-Nerd/daimon/issues/903)) ([6c748e3](https://github.com/Daily-Nerd/daimon/commit/6c748e35d15133ada7609698edd2ca01af6d60f1))
+* **recall:** let an item name whose statement it records ([#892](https://github.com/Daily-Nerd/daimon/issues/892)) ([b512e7e](https://github.com/Daily-Nerd/daimon/commit/b512e7edfd07e2f7f626261220d5061e572d00ac))
+* **recall:** name the origin project on a cross-scope hit ([#891](https://github.com/Daily-Nerd/daimon/issues/891)) ([a242614](https://github.com/Daily-Nerd/daimon/commit/a242614c255a42dd97c01bda928c1a6f19d0a023))
+* **requests:** give the recipient its own attention filter ([#886](https://github.com/Daily-Nerd/daimon/issues/886)) ([e2c1e4d](https://github.com/Daily-Nerd/daimon/commit/e2c1e4ddd284971bfa2be702f9452c5da23b96cf))
+* **requests:** join a verdict recorded from a third project directory ([#898](https://github.com/Daily-Nerd/daimon/issues/898)) ([4a46505](https://github.com/Daily-Nerd/daimon/commit/4a465053013121fb2db785042931b1e615db0171))
+* **serializer:** derive stated_by from the transcript's per-message speaker ([#894](https://github.com/Daily-Nerd/daimon/issues/894)) ([bde49b7](https://github.com/Daily-Nerd/daimon/commit/bde49b7a0f0e5d783878fc7f49c8adce300b7eda))
+
+
+### Documentation
+
+* **store:** state project_slug's real rule and drop the parity claim ([#888](https://github.com/Daily-Nerd/daimon/issues/888)) ([7480b82](https://github.com/Daily-Nerd/daimon/commit/7480b820866a22e2f9db873ef4ab3aaada679f79))
+
 ## [0.37.1](https://github.com/Daily-Nerd/daimon/compare/v0.37.0...v0.37.1) (2026-08-31)
 
 
