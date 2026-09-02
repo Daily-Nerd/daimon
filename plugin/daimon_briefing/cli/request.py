@@ -35,13 +35,21 @@ _MARKS = {"open": "→", "needs-info": "?", "accepted": "✓",
 _SUGGESTIONS = 3
 
 
-def _request_channel(args) -> str:
+def _request_channel(args, *, human_only: bool = False) -> str:
     """The channel this invocation actually arrived through — the
     `_refute_channel` contract restated for the request ledger (same
-    doctrine, its own error type so refusals stay per-surface)."""
+    doctrine, its own error type so refusals stay per-surface).
+
+    #895: a verdict verb refuses `--by agent` by design, so its refusal must
+    not name that flag as the remedy; the only path that can succeed there
+    is a terminal."""
     if getattr(args, "by", None) == "agent":
         return "cli-agent"
     if not sys.stdin.isatty():
+        if human_only:
+            raise requests.RequestError(
+                "this verb is human-only and there is no interactive "
+                "terminal; run it from a terminal")
         raise requests.RequestError(
             "this is the human path and there is no interactive terminal; "
             "pass --by agent to record it as an agent, or run it from a "
@@ -357,7 +365,7 @@ def _cmd_request_verdict(args) -> int:
     project = _cli._resolve_project(args.project)
     verb = args.request_cmd
     try:
-        channel = _request_channel(args)
+        channel = _request_channel(args, human_only=True)
         getattr(requests, _VERDICT_CALLS[verb])(
             args.request_id, channel=channel, note=args.note or "",
             project_dir=project)
