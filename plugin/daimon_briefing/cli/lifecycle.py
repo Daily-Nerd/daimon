@@ -878,42 +878,9 @@ def _foreign_footer_lines(counts: dict) -> list:
     return lines
 
 
-def _cmd_decide(args) -> int:
-    """`decide` — everything waiting on a HUMAN, with the command that closes it.
-
-    The mirror of `loops`: that lists what the agent still owes, this lists what
-    you still owe. A pure reader — it stamps nothing, so opening your own queue
-    can never age an ask out of the agent's panel (`is_stale` measures against
-    the `surfaced` anchor, and this never writes one).
-
-    Scoped to this project — except the request lane, which is an inbox: an
-    ask addressed here has its `opened` row in the SENDER's bucket, so it is
-    read cross-bucket via `requests.recipient_join` (rendering your own mail,
-    not scar 0055's violation). Other projects' OWN record text still arrives
-    as counts (slice 3's footer, `pending.foreign_counts`), then as text
-    behind an explicit flag in a future slice, because printing another
-    bucket's record text would copy it into THIS project's checkpoint where
-    its owner's `forget` cannot reach it (scar 0055).
-    """
-    _cli._note_usage("decide")
-    project = _cli._resolve_project(args.project)
-    result = pending.queue(project_dir=project)
-    rows = result.get("rows") or []
-    suppressed = (result.get("excluded") or {}).get("suppressed") or 0
-    foreign = pending.foreign_counts(project_dir=project)
-    if not rows:
-        # "nothing waiting" would be a false claim while records sit
-        # suppressed: the human set those aside, they did not go away.
-        lines = (["nothing waiting on you in this project"] if not suppressed
-                  else [f"nothing listed for you in this project "
-                        f"({suppressed} suppressed — daimon request inbox)"])
-        # Same false-claim risk one level up: an empty LOCAL queue must not
-        # read as an empty queue everywhere.
-        lines += _foreign_footer_lines(foreign)
-        render.render_ledger_lines(lines)
-        return 0
-
-    render.render_ledger_lines([_DECIDE_HEADER])
+def _decide_cards(rows: list) -> list:
+    """One card per queue row: header line with the kind, age and id, an
+    optional context line, then the closing commands."""
     cards = []
     for row in rows:
         age = _decide_age(row.get("waiting_since") or "")
@@ -928,17 +895,77 @@ def _cmd_decide(args) -> int:
         card += [f"    {label}: {command}"
                  for label, command in row.get("commands") or []]
         cards.append(card)
-    render.render_ledger_records(cards)
+    return cards
 
-    if suppressed:
-        # Counted, never listed: `suppress` is human-only, so this is the
-        # owner's own "not now" — but a queue that hid the fact would be
-        # claiming a completeness it does not have.
-        render.render_ledger_lines(
-            [f"  ({suppressed} suppressed — daimon request inbox)"])
-    footer = _foreign_footer_lines(foreign)
-    if footer:
-        render.render_ledger_lines(footer)
+
+def _cmd_decide(args) -> int:
+    """`decide` — everything waiting on a HUMAN, with the command that closes it.
+
+    The mirror of `loops`: that lists what the agent still owes, this lists what
+    you still owe. A pure reader — it stamps nothing, so opening your own queue
+    can never age an ask out of the agent's panel (`is_stale` measures against
+    the `surfaced` anchor, and this never writes one).
+
+    Scoped to this project — except the request lane, which is an inbox: an
+    ask addressed here has its `opened` row in the SENDER's bucket, so it is
+    read cross-bucket via `requests.recipient_join` (rendering your own mail,
+    not scar 0055's violation). Other projects' OWN record text arrives as
+    counts by default (slice 3's footer, `pending.foreign_counts`), because
+    printing another bucket's record text would copy it into THIS project's
+    checkpoint where its owner's `forget` cannot reach it (scar 0055).
+
+    `--all-projects` (slice 4) is the person asking for that text: each
+    foreign bucket is composed by its own `pending.queue` and rendered under
+    its own heading, every command routed with `--slug=<slug>`. Refused on a
+    tenant-scoped home (#899), where a caller choosing a bucket is the
+    primitive that mode removes.
+    """
+    _cli._note_usage("decide")
+    everywhere = bool(getattr(args, "all_projects", False))
+    if everywhere and _cli._refuses_caller_scope(all_projects=True):
+        return 2
+    project = _cli._resolve_project(args.project)
+    result = pending.queue(project_dir=project)
+    rows = result.get("rows") or []
+    suppressed = (result.get("excluded") or {}).get("suppressed") or 0
+    # With the text itself on screen the counts footer is redundant.
+    foreign = {} if everywhere else pending.foreign_counts(project_dir=project)
+    abroad = pending.foreign_queues(project_dir=project) if everywhere else []
+    if not rows:
+        if everywhere and not abroad and not suppressed:
+            render.render_ledger_lines(["nothing waiting on you in any project"])
+            return 0
+        # "nothing waiting" would be a false claim while records sit
+        # suppressed: the human set those aside, they did not go away.
+        lines = (["nothing waiting on you in this project"] if not suppressed
+                  else [f"nothing listed for you in this project "
+                        f"({suppressed} suppressed — daimon request inbox)"])
+        # Same false-claim risk one level up: an empty LOCAL queue must not
+        # read as an empty queue everywhere.
+        lines += _foreign_footer_lines(foreign)
+        render.render_ledger_lines(lines)
+    else:
+        render.render_ledger_lines([_DECIDE_HEADER])
+        render.render_ledger_records(_decide_cards(rows))
+        if suppressed:
+            # Counted, never listed: `suppress` is human-only, so this is the
+            # owner's own "not now" — but a queue that hid the fact would be
+            # claiming a completeness it does not have.
+            render.render_ledger_lines(
+                [f"  ({suppressed} suppressed — daimon request inbox)"])
+        footer = _foreign_footer_lines(foreign)
+        if footer:
+            render.render_ledger_lines(footer)
+    for bucket, bucket_result in abroad:
+        render.render_ledger_lines([f"Decisions waiting on you in {bucket}:"])
+        bucket_rows = bucket_result.get("rows") or []
+        if bucket_rows:
+            render.render_ledger_records(_decide_cards(bucket_rows))
+        bucket_suppressed = (bucket_result.get("excluded") or {}).get(
+            "suppressed") or 0
+        if bucket_suppressed:
+            render.render_ledger_lines(
+                [f"  ({bucket_suppressed} suppressed there)"])
     return 0
 
 
@@ -1011,4 +1038,9 @@ def register(sub, fmt) -> None:
         epilog="Examples:\n  daimon decide\n  daimon decide --project .\n",
     )
     p_decide.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_decide.add_argument(
+        "--all-projects", action="store_true",
+        help="also list every other project's queue as text, composed per "
+             "project, each command routed with --slug=<slug> so it runs from "
+             "here; refused on a tenant-scoped home (#766, #899)")
     p_decide.set_defaults(func=_cli._cmd_decide)

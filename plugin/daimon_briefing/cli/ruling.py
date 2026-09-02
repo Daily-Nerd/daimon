@@ -55,7 +55,9 @@ def _cmd_ruling_propose(args) -> int:
 
 
 def _cmd_ruling_ratify(args) -> int:
-    project = _cli._resolve_project(args.project)
+    project, rc = _cli._slug_route(args)
+    if rc:
+        return rc
     try:
         channel = _refute_channel(args)
     except refutations.RefutationError as exc:
@@ -182,7 +184,9 @@ def _cmd_ruling_revise(args) -> int:
 
 
 def _cmd_ruling_retire(args) -> int:
-    project = _cli._resolve_project(args.project)
+    project, rc = _cli._slug_route(args)
+    if rc:
+        return rc
     try:
         event = refutations.retire(
             args.ruling_id, channel=_refute_channel(args),
@@ -303,6 +307,7 @@ def register(sub, fmt) -> None:
                                 "then refuses")
     rl_ratify.add_argument("--note", help="optional ratification rationale")
     rl_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    rl_ratify.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
     rl_ratify.add_argument("--json", action="store_true", help="machine-readable output")
     rl_ratify.set_defaults(func=_cli._cmd_ruling_ratify)
 
@@ -345,6 +350,7 @@ def register(sub, fmt) -> None:
         help="declare yourself an agent; the call then records a retirement "
              "proposal and the ruling stands until a human verdict")
     rl_retire.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    rl_retire.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
     rl_retire.add_argument("--json", action="store_true", help="machine-readable output")
     rl_retire.set_defaults(func=_cli._cmd_ruling_retire)
 

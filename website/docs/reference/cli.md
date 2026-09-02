@@ -107,7 +107,7 @@ request write verb is reachable over MCP.
 | `daimon stats` | Local usage and capture aggregates — nothing is transmitted; sharing the output is a deliberate paste. `--json` for machines. |
 | `daimon log --text "…"` | Append a freeform timeline event to the project's event log — zero-LLM, audit-trail only. |
 | `daimon loops` | List open, addressable loop items with their ids — the read counterpart to `resolve`'s write path. |
-| `daimon decide` | List what is waiting on YOU, each with the one command that closes it — the human-side mirror of `loops`. Reads records that already exist and writes nothing at all, so opening it never changes what the agent is shown. Scoped to this project. |
+| `daimon decide` | List what is waiting on YOU, each with the one command that closes it — the human-side mirror of `loops`. Reads records that already exist and writes nothing at all, so opening it never changes what the agent is shown. Scoped to this project; other projects arrive as counts. `--all-projects` adds every other project's queue as text, composed per project, each command routed with `--slug=<slug>` so it runs from here. The ten human-only verbs (`request accept`, `reject`, `needs-info`, `suppress`; `amend ratify`, `reject`; `ruling ratify`, `retire`; `refute ratify`, `overturn`) take that flag as routing only. Both are refused while `DAIMON_TENANT_SCOPED` is set. |
 | `daimon projects` | List every project daimon holds a checkpoint for, with topic teasers. |
 | `daimon team init\|sync\|status` | Shared team memory via a sidecar repo — default-closed routing, shape-redacted before anything syncs. |
 
