@@ -1241,9 +1241,17 @@ def _cmd_handoff(args) -> int:
               file=sys.stderr)
         return 1
     if len(text) > _HANDOFF_MAX_CHARS:
+        # #902: a refusal that names no destination sends the trimmed content
+        # to whatever store is nearest, which for an agent is the harness's
+        # own memory file, where daimon never sees it. Name the daimon-side
+        # homes. NOT `daimon log`: nothing reads a ref-less note back, so it
+        # would be a void with a command name.
         print(f"error: baton exceeds {_HANDOFF_MAX_CHARS} chars "
               f"({len(text)}) — a handoff is \"do X first, beware Y\", not a "
-              "second checkpoint; trim it", file=sys.stderr)
+              "second checkpoint; trim it. The trimmed facts belong in a "
+              "checkpoint (the /daimon-end skill, `daimon write-checkpoint`), "
+              "and a rule that must never decay in "
+              "`daimon ruling propose --by agent`", file=sys.stderr)
         return 1
     # #571: latest-wins stays the contract, but replacing a baton no session
     # has consumed yet must not be silent — the superseded text never

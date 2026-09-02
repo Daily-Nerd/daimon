@@ -93,6 +93,27 @@ a `prev` pointer. So it does not need to be perfect to be useful.
 
 6. **Confirm** to the user with the printed checkpoint path.
 
+## Where things go
+
+Seven stores, each read by a different surface. Route by what the next
+session must see, and never by which command is nearest. The harness's own
+memory file (MEMORY.md, AGENTS.md, GEMINI.md) is not one of these: daimon
+never reads it, so a fact placed there is lost to every other host.
+
+| What you hold | Where it goes | Who reads it back |
+| --- | --- | --- |
+| Facts, decisions, beliefs, open loops from THIS session | the checkpoint, step 3 above (`daimon write-checkpoint`) | the next briefing, `daimon recall`, carry |
+| The ONE thing the next session should do first | `daimon handoff "<do X first, beware Y>"` (2000 chars max) | the top of the next briefing |
+| A briefed loop this session closed | `daimon resolve <id> --by agent --evidence "<quote>"` | the briefing withholds it once byte-checked |
+| A rule that must never decay (a threshold, a boundary, a standing constraint) | `daimon ruling propose --subject ... --verdict ... --scope ... --evidence ... --by agent` | every briefing, once a human ratifies; 7 active per project by default |
+| An approach that was tried and failed | `daimon refute add ... --by agent` | `daimon refute guard` before anyone revives it |
+| A briefed item that moved but did not close | `daimon amend <id> --change progressed|blocked|changed --evidence "<quote>" --by agent` | the briefing, as an unconfirmed claim until a human settles it |
+| A timeline fact worth an audit line and nothing more | `daimon log --text "..."` | nothing reads it back into a briefing or recall; it is an audit trail only |
+
+If `daimon handoff` refuses a baton as too long, the trimmed content is not
+homeless: facts go in the checkpoint, rules go to `ruling propose`. Do not
+move it to the harness memory file.
+
 ## Rules
 
 - **Write-only.** Do NOT exit/quit the session — that is the user's action.

@@ -60,3 +60,22 @@ def test_every_shipped_skill_declares_a_name_and_description():
         front = text.split("---\n")[1]
         assert "name:" in front, f"{skill.name}: no name"
         assert "description:" in front, f"{skill.name}: no description"
+
+
+def test_the_end_skill_names_every_store_and_says_which_surface():
+    """#902: an agent uses what its loaded skill names and reads the skill
+    as complete. The session-end skill taught three of seven stores, so
+    durable facts went to the harness's own memory file instead. It must
+    now name all seven, and be honest that a `daimon log` note is an audit
+    trail nothing reads back, so the agent never routes a durable fact
+    there on the strength of the name."""
+    text = (_REPO_ROOT / "skills" / "daimon-end" / "SKILL.md").read_text(
+        encoding="utf-8")
+    for store in ("write-checkpoint", "daimon handoff", "daimon resolve",
+                  "daimon log", "daimon ruling propose", "daimon amend",
+                  "daimon refute"):
+        assert store in text, f"daimon-end skill never names {store}"
+    section = text.split("## Where things go")[1].split("\n## ")[0]
+    assert "daimon log" in section
+    assert "nothing reads" in section.lower()
+    assert "never decay" in section.lower() or "never decays" in section.lower()
