@@ -10148,3 +10148,24 @@ def test_exactly_the_read_verbs_and_the_human_only_verbs_take_a_slug():
         "refute ratify", "refute overturn",
     ])
     assert "slug" not in inspect.signature(store.write_checkpoint).parameters
+
+# ---- #902: a refusal routes, it does not just reject ---------------------
+
+
+def test_cli_handoff_refusal_names_where_the_content_belongs(
+        tmp_checkpoint_dir, capsys):
+    """A gate that rejects without naming a destination sends the content
+    to whatever store is nearest, and for an agent that is the harness's
+    own memory file, which daimon never reads. The refusal must name the
+    daimon-side homes: the checkpoint for durable facts (the only store the
+    briefing and recall read back) and a ruling proposal for a rule that
+    must never decay. `daimon log` is deliberately NOT named: nothing reads
+    a ref-less note event back, so it would be a void with a command name."""
+    rc = cli.main(["handoff", "x" * 2001, "--project", "/p/A"])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "trim it" in err
+    assert "daimon-end" in err
+    assert "write-checkpoint" in err
+    assert "daimon ruling propose --by agent" in err
+    assert "daimon log" not in err
