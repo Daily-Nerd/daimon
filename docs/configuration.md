@@ -69,6 +69,15 @@ Deterministic cross-session carry-over of unresolved items.
 | `DAIMON_RECALL_DB` | `~/.daimon/recall.db` | Location of the derived recall index (SQLite FTS). Never a source of truth — safe to delete at any time; recall rebuilds it by scanning the checkpoint and team dirs. |
 | `DAIMON_RECALL_SEEN_DIR` | `~/.daimon/recall_seen` | Per-session suggestion-cooldown state so a repeated topic never re-injects. Disposable — deleting it only resets cooldowns. |
 
+## Tenant scope
+
+For a host that runs one daimon home with one project directory per person. A single person's machine never needs either variable. Both are read at process start, from the process env or the env file, never from prompt content, so a model cannot set them.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DAIMON_TENANT_SCOPED` | off | When truthy, a caller may not choose a scope. `--slug` and `--all-projects` on `recall`, `brief` and `why` are refused with a plain error, the MCP `daimon_recall` and `daimon_brief` tools refuse `slug` and `all_projects` the same way, and `daimon projects` lists only the caller's own bucket. Refused, never silently narrowed: a caller who asked for a scope and got their own instead would read the answer as complete. |
+| `DAIMON_EXTRA_READ_SLUGS` | unset | Comma-separated slugs this session may read beside its own, ambiently, with no caller argument involved. Reaches `recall`, `why` and the proactive suggestion path alike. Read only: no write path takes a slug and a session never writes to a listed scope. A hit from a listed scope names its origin project. Meant for a shared scope whose contents were already visible to everyone in it; set it only where one session is one person. |
+
 ## Team memory
 
 Opt-in shared-memory mirror. See [docs/team.md](./team.md) for the full workflow.

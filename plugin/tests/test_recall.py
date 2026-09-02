@@ -2087,3 +2087,76 @@ def test_an_unsuperseded_item_has_no_mechanism(tmp_checkpoint_dir,
     assert hits
     assert hits[0]["superseded_by"] is None
     assert hits[0]["superseded_source"] is None
+
+
+# ---- #899: host allowlist fans every single-scope read, and only those ----
+#
+# The caller never names a scope here. The host declares extra READ slugs out
+# of band and each of the three single-scope filters (search, lookup_item,
+# suggest) fans across own + listed. One filter reached and one missed gives
+# a shared memory that exists when asked for and vanishes when it would have
+# helped, so there is one test per filter and each must fail alone.
+
+
+def _two_buckets():
+    _write_team_file("grace", "S-x", _cp("S-x", decisions=[
+        {"id": "d-aaaaaa111111", "text": "toucan decision in x",
+         "trust": "inferred"}]), project_dir="/repo/x")
+    _write_team_file("grace", "S-y", _cp("S-y", decisions=[
+        {"id": "d-bbbbbb222222", "text": "toucan decision in y",
+         "trust": "inferred"}]), project_dir="/repo/y")
+
+
+def test_extra_read_slugs_reach_search(tmp_checkpoint_dir, monkeypatch):
+    _two_buckets()
+    assert [h["text"] for h in recall.search("toucan", project_dir="/repo/x")] \
+        == ["toucan decision in x"]
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/y"))
+    hits = recall.search("toucan", project_dir="/repo/x")
+    assert sorted(h["text"] for h in hits) == ["toucan decision in x",
+                                               "toucan decision in y"]
+    # attribution survives: the foreign row still names its origin
+    by_text = {h["text"]: h["project_slug"] for h in hits}
+    assert by_text["toucan decision in y"] == store.project_slug("/repo/y")
+
+
+def test_extra_read_slugs_reach_lookup_item(tmp_checkpoint_dir, monkeypatch):
+    _two_buckets()
+    assert recall.lookup_item("d-bbbbbb222222", project_dir="/repo/x") is None
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/y"))
+    row = recall.lookup_item("d-bbbbbb222222", project_dir="/repo/x")
+    assert row is not None and row["text"] == "toucan decision in y"
+    assert row["project_slug"] == store.project_slug("/repo/y")
+
+
+def test_extra_read_slugs_reach_suggest(tmp_checkpoint_dir, monkeypatch):
+    _seed_history(project="/repo/x")
+    prompt = "debugging the litellm gateway cache pinning again"
+    assert recall.suggest(prompt, project_dir="/repo/z",
+                          current_session="S-now") == []
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/x"))
+    out = recall.suggest(prompt, project_dir="/repo/z", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-old"
+    assert out[0]["project_slug"] == store.project_slug("/repo/x")
+
+
+def test_extra_read_slugs_never_widen_an_explicit_scope(tmp_checkpoint_dir,
+                                                        monkeypatch):
+    """An explicit slug IS the scope (#243) and all_projects is already
+    everything; the allowlist is the AMBIENT read set and touches neither."""
+    _two_buckets()
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/y"))
+    hits = recall.search("toucan", slug=store.project_slug("/repo/x"))
+    assert [h["text"] for h in hits] == ["toucan decision in x"]
+    assert recall.lookup_item("d-bbbbbb222222",
+                              slug=store.project_slug("/repo/x")) is None
+
+
+def test_extra_read_slugs_with_an_unknown_project_stay_silent(
+        tmp_checkpoint_dir, monkeypatch):
+    """suggest's first gate is 'unknown project -> []' and the allowlist must
+    not turn an unscoped prompt into a read of the listed buckets."""
+    _seed_history(project="/repo/x")
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/x"))
+    assert recall.suggest("debugging the litellm gateway cache pinning again",
+                          project_dir=None, current_session="S-now") == []

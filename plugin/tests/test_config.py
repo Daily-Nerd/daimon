@@ -680,3 +680,39 @@ def test_live_delivery_defaults_off(monkeypatch):
 def test_live_delivery_flag_reads_the_env(monkeypatch):
     monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
     assert config.live_delivery_enabled() is True
+
+
+# ---- tenant scope (#899): host-declared, never caller-chosen ---------------
+
+
+def test_tenant_scoped_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("DAIMON_TENANT_SCOPED", raising=False)
+    assert config.tenant_scoped() is False
+
+
+def test_tenant_scoped_reads_the_flag(monkeypatch):
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    assert config.tenant_scoped() is True
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "0")
+    assert config.tenant_scoped() is False
+
+
+def test_extra_read_slugs_is_empty_by_default(monkeypatch):
+    monkeypatch.delenv("DAIMON_EXTRA_READ_SLUGS", raising=False)
+    assert config.extra_read_slugs() == ()
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", "  , ,")
+    assert config.extra_read_slugs() == ()
+
+
+def test_extra_read_slugs_parses_stripped_deduped_in_order(monkeypatch):
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", " -p-shared , -p-other,,-p-shared ")
+    assert config.extra_read_slugs() == ("-p-shared", "-p-other")
+
+
+def test_extra_read_slugs_drops_entries_that_are_not_slugs(monkeypatch):
+    """A slug is one path segment's worth of [\\w-]. Anything else (a path, a
+    glob, whitespace inside) is not an address daimon ever minted, and a
+    lenient parse here would be the one place a malformed host value could
+    widen a read."""
+    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", "-p-ok, /etc/x, a b, *, -p-also")
+    assert config.extra_read_slugs() == ("-p-ok", "-p-also")

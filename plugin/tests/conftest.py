@@ -35,6 +35,9 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     # #896: and the host-declared per-session speaker — a developer who exports
     # it in their own shell must not silently attribute every derived item.
     monkeypatch.delenv("DAIMON_SESSION_SPEAKER", raising=False)
+    # #899: a developer's own tenant flags must not narrow or widen the suite.
+    monkeypatch.delenv("DAIMON_TENANT_SCOPED", raising=False)
+    monkeypatch.delenv("DAIMON_EXTRA_READ_SLUGS", raising=False)
     # #200: a host DAIMON_TEAM_PROJECT would nest every team write; and the
     # resolver caches per (project_dir, team_dir, env) — clear it so no test
     # can see another test's resolution.

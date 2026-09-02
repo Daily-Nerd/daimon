@@ -12,7 +12,7 @@ distinguishably or the gate they measure goes blind.
 """
 import json
 
-from . import amendments, briefing, recall, requests, store
+from . import amendments, briefing, config, recall, requests, store
 
 
 class ToolError(Exception):
@@ -35,6 +35,9 @@ def _recall(arguments: dict) -> str:
         # Same guard as the CLI: slug scopes to ONE project.
         raise ToolError("slug scopes to one project; drop it or drop "
                         "all_projects")
+    if config.tenant_scoped() and (slug or all_projects):
+        # #899: refused out loud, never narrowed in silence.
+        raise ToolError(config.TENANT_SCOPE_REFUSAL)
     limit = arguments.get("limit")
     limit = 20 if not isinstance(limit, int) or limit < 1 else limit
     from . import cli
@@ -54,6 +57,8 @@ def _brief(arguments: dict) -> str:
     if slug and project_arg:
         raise ToolError('slug and project are two answers to "which bucket" '
                         "— pass one")
+    if config.tenant_scoped() and slug:
+        raise ToolError(config.TENANT_SCOPE_REFUSAL)
     from . import cli
     # Strictly scoped read (#94): never the global pointer. A named slug is
     # passed straight through; otherwise the resolved project's own bucket.
@@ -73,7 +78,9 @@ def _brief(arguments: dict) -> str:
         # Orientation without content: name the explicit path, leak nothing
         # (#96, machine edition — an agent tool result carrying another
         # project's briefing is contamination, not convenience).
-        others = len(store.list_buckets())
+        # #899: on a tenant-scoped home even the count is enumeration, and
+        # the remedy the hint names is the refused argument.
+        others = 0 if config.tenant_scoped() else len(store.list_buckets())
         hint = (f"daimon knows {others} project(s) — call daimon_projects "
                 "and pass a slug to read one explicitly."
                 if others else
