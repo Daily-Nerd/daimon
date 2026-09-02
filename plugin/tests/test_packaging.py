@@ -79,3 +79,32 @@ def test_the_end_skill_names_every_store_and_says_which_surface():
     assert "daimon log" in section
     assert "nothing reads" in section.lower()
     assert "never decay" in section.lower() or "never decays" in section.lower()
+
+
+def test_the_end_skill_teaches_a_close_for_every_store_it_opens():
+    """#904: step 1 taught `daimon resolve` alone, so a session that shipped
+    a fix satisfying an accepted inbound request wrote its checkpoint,
+    handed off, resolved its loops and left the request owed. Three such
+    requests sat accepted for days after #836/#838 landed. The close step
+    must be a checklist naming every close verb, and the routing table must
+    carry the request row it lacked."""
+    text = (_REPO_ROOT / "skills" / "daimon-end" / "SKILL.md").read_text(
+        encoding="utf-8")
+    step_one = text.split("## What to do when invoked")[1].split("\n2. ")[0]
+    for verb in ("daimon resolve", "daimon amend", "daimon request done",
+                 "daimon reverify"):
+        assert verb in step_one, f"daimon-end step 1 never names {verb}"
+    assert "daimon request inbox" in step_one
+    table = text.split("## Where things go")[1].split("\n## ")[0]
+    assert "daimon request done" in table
+
+
+def test_the_briefing_skill_closing_loops_names_the_request_close():
+    """#904: the plugin briefing skill's "Closing loops" section covered
+    `resolve` and `reverify` and never said `request`, so the two shipped
+    skills disagreed on what closing means."""
+    text = (_REPO_ROOT / "skills" / "daimon-briefing" / "SKILL.md").read_text(
+        encoding="utf-8")
+    closing = text.split("## Closing loops")[1].split("\n## ")[0]
+    assert "daimon request done" in closing
+    assert "daimon request inbox" in closing

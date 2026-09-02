@@ -84,8 +84,16 @@ def test_full_fits_size_budget():
     # deliberate-review size is 10,951 (2026-08-16); 11,400 keeps the same
     # ~4% slack. Nothing was added to the compact body (already at its
     # 2,000-char hard cap since #579).
+    #
+    # RAISED 11,400 -> 11,900 on 2026-09-02 (#904). The addition is ~330
+    # chars in "Closing loops": `resolve` closes one store, and a session
+    # that shipped a fix satisfying an accepted inbound request left the
+    # request owed for days because the section never named `request done`.
+    # Trimmed once before raising (the first draft was ~470 chars). New
+    # deliberate-review size is 11,463 (2026-09-02); 11,900 keeps the same
+    # ~4% slack. Nothing was added to the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 11400, f"full body is {len(full)} chars (cap 11400)"
+    assert len(full) <= 11900, f"full body is {len(full)} chars (cap 11900)"
 
 
 def test_full_has_trigger_only_frontmatter():
@@ -473,3 +481,14 @@ def test_skill_points_the_handed_over_command_at_decide():
     section = section.split("\n## ")[0]
     assert "human-only: print the command, never run it" in section
     assert "daimon decide" in section
+
+
+# ---- #904: closing loops names every close verb, not only resolve ----
+
+
+def test_full_closing_loops_names_the_request_close():
+    full = skill_content.render_full()
+    closing = full.split("## Closing loops")[1].split("\n## ")[0]
+    assert "daimon request done" in closing
+    assert "daimon request inbox" in closing
+    assert "daimon amend" in closing

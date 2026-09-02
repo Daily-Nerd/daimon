@@ -52,6 +52,15 @@ is still pending that check.
 Do not resolve what you merely believe is stale — that is `reverify`/
 worldcheck territory, not a resolve claim. `forget` stays human-only.
 
+`resolve` closes one store. Work in a session moves others, and each has its
+own close verb; a store moved and never closed rides into the next briefing
+as work. A briefed item that advanced but did not close takes `daimon amend
+<id> --change progressed|blocked|changed --evidence "<quote>" --by agent`.
+An accepted request another project sent, satisfied by this session's work
+(a shipped fix, a merged PR), takes `daimon request done <id> --evidence
+"<quote>" --by agent`; `daimon request inbox` lists every one still owed.
+Same quote discipline, same byte-check at session end.
+
 ## Automatic behavior
 
 You do not need to invoke anything. The plugin wires the host's native session
