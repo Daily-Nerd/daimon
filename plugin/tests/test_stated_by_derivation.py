@@ -164,7 +164,7 @@ def test_the_pipeline_actually_calls_the_derivation():
     src = inspect.getsource(serializer)
     body = src[src.index("sanitize_source_ids(checkpoint, message_id_map"):]
     head = body[:900]
-    assert "derive_stated_by(checkpoint, message_speakers_by_id(messages))" in head, (
+    assert "derive_stated_by(checkpoint, message_speakers_by_id(" in head, (
         "derive_stated_by is not called right after sanitize_source_ids in the "
         "serialize pipeline; the field would ship unfillable again")
 
@@ -184,3 +184,192 @@ def test_transcript_carries_a_host_speaker_through_normalization():
     ]
     msgs = transcript._from_jsonl("\n".join(json.dumps(r) for r in rows))
     assert serializer.message_speakers_by_id(msgs) == {"u1": "ana"}
+
+
+# ---- #896: per-session fallback --------------------------------------------
+#
+# #894 needs the host to author the transcript, and a host that shells out to
+# `claude -p` never does: no row carries `said_by`, the map is empty, and the
+# derivation is inert. #896 lets such a host declare ONE speaker for the whole
+# session, out of band, used only where the precise per-message path has
+# nothing. The role gate lives in what the map CONTAINS: a session default
+# applied blindly would put the human's name on the assistant's sentences,
+# which is the misattribution the field exists to prevent.
+
+
+def _mixed_rows():
+    return [
+        {"id": "u1", "role": "user", "content": "a"},
+        {"id": "a2", "role": "assistant", "content": "b"},
+    ]
+
+
+def test_the_session_speaker_fills_user_rows_with_no_said_by():
+    assert serializer.message_speakers_by_id(
+        [{"id": "u1", "role": "user", "content": "a"}],
+        session_speaker="ana") == {"u1": "ana"}
+
+
+def test_a_per_message_said_by_wins_over_the_session_speaker():
+    """The precise signal beats the coarse one on the same row. A host that
+    knows WHO sent this message has said something the session default cannot
+    contradict."""
+    assert serializer.message_speakers_by_id(
+        [{"id": "u1", "role": "user", "said_by": "ben", "content": "a"}],
+        session_speaker="ana") == {"u1": "ben"}
+
+
+def test_non_user_rows_are_omitted_even_with_a_session_speaker():
+    """Assistant rows, tool rows, and rows with no role at all stay OUT of the
+    map. An item's binding usually points at an assistant message (a verbatim
+    quote is normally the assistant's words), so a blind session default would
+    attribute the assistant's sentences to the human."""
+    messages = [
+        {"id": "a1", "role": "assistant", "content": "a"},
+        {"id": "t2", "role": "tool", "content": "b"},
+        {"id": "x3", "content": "no role at all"},
+        {"id": "u4", "role": "user", "content": "d"},
+    ]
+    assert serializer.message_speakers_by_id(
+        messages, session_speaker="ana") == {"u4": "ana"}
+
+
+def test_a_non_user_row_with_its_own_said_by_still_maps():
+    """The omission is the FALLBACK's rule, not the map's. A host that names
+    the speaker of an assistant row has stated a fact about its own artifact,
+    and #894's path is unchanged."""
+    messages = [{"id": "a1", "role": "assistant", "said_by": "bot",
+                 "content": "a"}]
+    assert serializer.message_speakers_by_id(
+        messages, session_speaker="ana") == {"a1": "bot"}
+
+
+def test_no_session_speaker_is_byte_identical_to_today():
+    """The default path must not move. None, empty, and whitespace all mean
+    the host declared nothing."""
+    messages = _mixed_rows() + [
+        {"id": "u3", "role": "user", "said_by": "ben", "content": "c"}]
+    baseline = serializer.message_speakers_by_id(messages)
+    assert baseline == {"u3": "ben"}
+    for blank in (None, "", "   ", "\t\n"):
+        assert serializer.message_speakers_by_id(
+            messages, session_speaker=blank) == baseline
+
+
+def test_a_non_string_session_speaker_is_ignored():
+    """Never fatal, same philosophy as the rest of this module."""
+    assert serializer.message_speakers_by_id(
+        _mixed_rows(), session_speaker=7) == {}
+
+
+def test_the_session_speaker_is_stripped():
+    assert serializer.message_speakers_by_id(
+        [{"id": "u1", "role": "user", "content": "a"}],
+        session_speaker="  ana  ") == {"u1": "ana"}
+
+
+# ---- #896 through the join: the four rows that matter ----------------------
+
+
+def _fallback_map(messages):
+    return serializer.message_speakers_by_id(messages, session_speaker="ana")
+
+
+def _bound(*ids):
+    return _cp_one_decision({"text": "d", "trust": "verbatim", "quote": "q",
+                             "source_message_ids": list(ids)})
+
+
+def test_an_item_bound_to_one_user_message_is_attributed():
+    cp = _bound("u1")
+    serializer.derive_stated_by(cp, _fallback_map(_mixed_rows()))
+    assert _item(cp)["stated_by"] == "ana"
+
+
+def test_an_item_bound_to_two_user_messages_is_attributed():
+    """Unanimity holds trivially: one session, one declared speaker."""
+    messages = [{"id": "u1", "role": "user", "content": "a"},
+                {"id": "u2", "role": "user", "content": "b"}]
+    cp = _bound("u1", "u2")
+    serializer.derive_stated_by(cp, _fallback_map(messages))
+    assert _item(cp)["stated_by"] == "ana"
+
+
+def test_an_item_bound_to_a_user_and_an_assistant_message_gets_nothing():
+    """THE POINT OF THE ROLE GATE. The assistant id is absent from the map, so
+    the set is {"ana", None} and derive_stated_by's existing unanimity rule
+    refuses the item for free. No new gate was needed."""
+    cp = _bound("u1", "a2")
+    serializer.derive_stated_by(cp, _fallback_map(_mixed_rows()))
+    assert "stated_by" not in _item(cp)
+
+
+def test_an_item_bound_only_to_an_assistant_message_gets_nothing():
+    cp = _bound("a2")
+    serializer.derive_stated_by(cp, _fallback_map(_mixed_rows()))
+    assert "stated_by" not in _item(cp)
+
+
+# ---- #896 end to end -------------------------------------------------------
+
+
+def _messages_with_ids(n=20):
+    """make_messages, plus the host ids the binding path needs. Message i is
+    marker m{i+1}; even indices are user rows, odd ones assistant."""
+    out = []
+    for i in range(n):
+        role = "user" if i % 2 == 0 else "assistant"
+        out.append({"id": f"{role[0]}{i + 1}", "role": role,
+                    "content": f"line {i} from {role}"})
+    return out
+
+
+def _two_bound_decisions():
+    import json
+    return json.dumps({
+        "session_id": "S1",
+        "working_context": {
+            "active_topic": {"text": "topic", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [
+                {"text": "from the human", "trust": "verbatim",
+                 "quote": "line 0 from user", "source_message_ids": ["m1"]},
+                {"text": "from the model", "trust": "verbatim",
+                 "quote": "line 1 from assistant",
+                 "source_message_ids": ["m2"]},
+            ],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [], "uncertainties": [],
+            "contradictions_flagged": [],
+        },
+        "worker_queue": [],
+    })
+
+
+def test_the_pipeline_applies_the_declared_session_speaker(
+        fake_chat_factory, monkeypatch):
+    """The wiring assertion above only proves a call site exists. This proves
+    the env var actually reaches the map through a real serialize, on a
+    transcript with NO said_by anywhere — the claude -p shape #896 exists for.
+    """
+    monkeypatch.setenv("DAIMON_SESSION_SPEAKER", "ana")
+    chat = fake_chat_factory(_two_bound_decisions())
+    cp = serializer.serialize_strict("S1", _messages_with_ids(), chat=chat)
+    items = cp["working_context"]["recent_decisions"]
+    assert items[0]["stated_by"] == "ana"
+    assert "stated_by" not in items[1], (
+        "the assistant-bound item was attributed to the human; the role gate "
+        "is not holding through the pipeline")
+
+
+def test_the_pipeline_derives_nothing_without_the_env_var(
+        fake_chat_factory, monkeypatch):
+    """The guard on the test above: same transcript, same checkpoint, no
+    declaration. A fallback that leaked in unasked would attribute items on
+    every host in the world."""
+    monkeypatch.delenv("DAIMON_SESSION_SPEAKER", raising=False)
+    chat = fake_chat_factory(_two_bound_decisions())
+    cp = serializer.serialize_strict("S1", _messages_with_ids(), chat=chat)
+    for item in cp["working_context"]["recent_decisions"]:
+        assert "stated_by" not in item

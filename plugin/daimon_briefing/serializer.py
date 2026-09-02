@@ -606,19 +606,37 @@ def message_texts_by_id(messages) -> dict[str, str]:
     return out
 
 
-def message_speakers_by_id(messages) -> dict[str, str]:
+def message_speakers_by_id(messages, session_speaker=None) -> dict[str, str]:
     """Host message id -> speaker, for messages the host attributed (#893).
 
     The host half of the `stated_by` join. It states a fact about an artifact
     it received ("message u1 came from ana"), never a claim about an item's
     content, which is what keeps this an observation rather than an assertion.
     Empty for hosts that record no speaker, the same degradation
-    signal_message_ids has for hosts that surface no tool rows."""
+    signal_message_ids has for hosts that surface no tool rows.
+
+    #896: `session_speaker` is the host's out-of-band declaration that ONE
+    person owns this whole session (config.session_speaker). Per message,
+    precise first: a row's own `said_by` always wins; a USER row with none
+    takes the session speaker; a non-user row with none is OMITTED. The role
+    gate lives in what the map contains, on purpose. An item's bindings
+    usually point at assistant messages (a verbatim quote is normally the
+    assistant's words), so a session default applied blindly would put the
+    human's name on the assistant's sentences, which is the misattribution
+    the field exists to prevent. Leaving those ids out makes derive_stated_by's
+    unanimity rule refuse any item that cites one, with no new branch there."""
+    fallback = None
+    if isinstance(session_speaker, str) and session_speaker.strip():
+        fallback = session_speaker.strip()
     out: dict[str, str] = {}
     for m in messages or []:
         mid = _message_id(m)
+        if mid is None:
+            continue
         who = _message_said_by(m)
-        if mid is not None and who is not None:
+        if who is None and fallback is not None and m.get("role") == "user":
+            who = fallback
+        if who is not None:
             out[mid] = who
     return out
 
@@ -2627,7 +2645,10 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # through the bindings sanitize_source_ids just validated. Must run HERE:
     # after that call (so every id is one the transcript vouched for) and after
     # strip_code_owned_keys ran on the fresh parse (so a model value is gone).
-    derive_stated_by(checkpoint, message_speakers_by_id(messages))
+    # #896: a host that never authors its transcript (claude -p) has no
+    # said_by anywhere; its out-of-band session speaker fills user rows only.
+    derive_stated_by(checkpoint, message_speakers_by_id(
+        messages, session_speaker=config.session_speaker()))
     # #369: deterministic backstop for constraint pinning — hard-imperative
     # user sentences the model paraphrased away are force-pinned as verbatim
     # items here, AFTER id sanitization (host ids go in directly) and BEFORE
