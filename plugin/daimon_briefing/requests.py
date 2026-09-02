@@ -684,9 +684,11 @@ def _require(request_id: str, project_dir) -> dict:
 def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
              project_dir=None) -> None:
     if CHANNEL_AUTHORITY.get(channel) != "human":
+        state = _STATE_BY_EVENT.get(event, event)
+        article = "an" if state[:1] in "aeiou" else "a"
         raise RequestError(
-            f"a {_STATE_BY_EVENT.get(event, event)} verdict requires a human "
-            f"channel; this call arrived through {channel!r}")
+            f"{article} {state} verdict requires a human channel; this call "
+            f"arrived through {channel!r}")
     current = _answering(request_id, project_dir)
     if current is not None and current["state"] == "rejected":
         raise RequestError(
@@ -878,26 +880,33 @@ def _sender_rows(project_dir) -> dict[str, list]:
     and must never cross the join (D5). Local rows are returned untouched, so a
     record THIS project suppressed keeps its visibility.
 
-    One recipient bucket is read once per distinct `to` target, not once per
-    record."""
+    #895: the verdict is not necessarily in the recipient's bucket. A human
+    decides from whatever directory they are standing in, and the row lands
+    THERE, so every bucket with a ledger is read once and its rows for the
+    ids this project sent abroad are joined. A project with nothing sent
+    abroad (only self-addressed asks, or only answers to foreign asks) reads
+    its own bucket and nothing else."""
     sender_slug = store.project_slug(project_dir)
     if not sender_slug:
         return {}
     by_id: dict[str, list] = {}
-    to_by_id: dict[str, str] = {}
+    abroad: set[str] = set()
     for row in events(project_dir=sender_slug):
         rid = str(row.get("request_id") or "")
         by_id.setdefault(rid, []).append(row)
         if row.get("event") == "opened":
-            to_by_id[rid] = str(row.get("to") or "")
-    cache: dict[str, list] = {}
-    for rid, to_slug in to_by_id.items():
-        if not to_slug or to_slug == sender_slug:
+            to_slug = str(row.get("to") or "")
+            if to_slug and to_slug != sender_slug:
+                abroad.add(rid)
+    if not abroad:
+        return by_id
+    for slug in _bucket_slugs():
+        if slug == sender_slug:
             continue  # already covered by this bucket's own rows above
-        if to_slug not in cache:
-            cache[to_slug] = events(project_dir=to_slug)
-        by_id[rid] = by_id[rid] + _without_suppression(
-            [row for row in cache[to_slug] if row.get("request_id") == rid])
+        foreign = [row for row in events(project_dir=slug)
+                   if str(row.get("request_id") or "") in abroad]
+        for row in _without_suppression(foreign):
+            by_id[str(row.get("request_id") or "")].append(row)
     return by_id
 
 
@@ -944,7 +953,16 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
 
     Every folded record carries a transient `from_slug` — the bucket whose
     `opened` row founded it — so a supersedes reference can be resolved back
-    to its origin (`supersedes_label`) without a second scan."""
+    to its origin (`supersedes_label`) without a second scan.
+
+    #895: a verdict does not necessarily live in this bucket either. A human
+    decides from whatever directory they are standing in, so the row can sit
+    in a THIRD bucket that holds no `opened` for the id: an orphan in that
+    bucket's own fold. The scan already reads every bucket; it now keeps such
+    orphan groups when the id is one addressed here. A bucket's rows for an
+    id this project is not party to are still discarded, and a row claiming
+    an agent channel is still refused by the fold's authority re-check, so
+    widening the read adds no write reach anywhere."""
     my_slug = store.project_slug(project_dir)
     if not my_slug:
         return {}
@@ -958,6 +976,7 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
             continue  # this project's own OUTGOING ask — never its own inbox
         by_id[rid] = rows
     origin_of: dict[str, str] = {}
+    orphans: list[tuple[str, list]] = []
     for slug in _bucket_slugs():
         if slug == my_slug:
             continue
@@ -967,9 +986,14 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
         for rid, rows in grouped.items():
             opened = next((r for r in rows if r.get("event") == "opened"),
                          None)
-            if opened is not None and str(opened.get("to") or "") == my_slug:
+            if opened is None:
+                orphans.append((rid, rows))  # decided elsewhere, maybe ours
+            elif str(opened.get("to") or "") == my_slug:
                 by_id.setdefault(rid, []).extend(rows)
                 origin_of[rid] = slug
+    for rid, rows in orphans:
+        if rid in origin_of:
+            by_id[rid].extend(rows)
     all_rows = [row for group in by_id.values() for row in group]
     out = fold(all_rows)
     for rid, record in out.items():

@@ -2724,3 +2724,127 @@ def test_request_inject_owed_carries_the_acceptance_note(
     capsys.readouterr()
     assert _inject(project, session="S-owed-note") == 0
     assert "Accepted with: only the read half" in capsys.readouterr().out
+
+
+# ---- #895: a verdict recorded from a THIRD bucket -------------------------
+#
+# A human decides from whatever directory they are standing in. Their verdict
+# row lands in THAT bucket, which holds no `opened` row for the id: an orphan
+# in its own fold, and before #895 reachable by neither side of the join. The
+# fix widens both joins to collect rows for ids the project is party to from
+# EVERY bucket, keeping the header invariant: nobody writes a foreign ledger.
+
+
+def test_recipient_join_sees_a_verdict_recorded_from_a_third_bucket(project):
+    sender_slug = _seed_bucket("/p/req-sender-third")
+    elsewhere = _seed_bucket("/p/req-elsewhere")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.accept(q_id, channel="cli-tty", note="go ahead",
+                    project_dir=elsewhere)
+    joined = requests.recipient_join(project_dir=project)
+    assert joined[q_id]["state"] == "accepted"
+    assert joined[q_id]["note"] == "go ahead"
+    assert joined[q_id]["from_slug"] == sender_slug
+    # ...and it lands in the OWED lane #885 added, which is the point: the
+    # addressee begins work on acceptance, wherever the human was standing.
+    owed = requests.owed_renderable(project_dir=project)["rows"]
+    assert [r["request_id"] for r in owed] == [q_id]
+
+
+def test_sender_join_sees_a_verdict_recorded_from_a_third_bucket(project):
+    recipient_slug = _seed_bucket("/p/req-recipient-third")
+    elsewhere = _seed_bucket("/p/req-elsewhere-b")
+    q_id = _open(project, to=recipient_slug)
+    requests.reject(q_id, channel="cli-tty", project_dir=elsewhere)
+    joined = requests.sender_join(project_dir=project)
+    assert joined[q_id]["state"] == "rejected"
+
+
+def test_a_third_bucket_suppression_never_reaches_the_sender(project):
+    """D5 holds across the widened join: suppression is panel attention,
+    and the sender must not learn its ask was muted, whichever bucket the
+    human muted it from."""
+    recipient_slug = _seed_bucket("/p/req-recipient-third-b")
+    elsewhere = _seed_bucket("/p/req-elsewhere-c")
+    q_id = _open(project, to=recipient_slug)
+    requests.suppress(q_id, channel="cli-tty", project_dir=elsewhere)
+    joined = requests.sender_join(project_dir=project)
+    assert joined[q_id]["state"] == "open"
+    assert joined[q_id]["suppressed"] is False
+
+
+def test_third_bucket_rows_for_ids_this_project_is_not_party_to_stay_out(
+        project):
+    """Widening collects rows for ids this project SENT or was ADDRESSED; a
+    stranger's verdict on a stranger's ask must not appear on either side."""
+    sender_slug = _seed_bucket("/p/req-sender-third-c")
+    elsewhere = _seed_bucket("/p/req-elsewhere-d")
+    other_id = requests.open_request(to="-p-someone-else", ask=ASK, why=WHY,
+                                     channel="cli-agent",
+                                     project_dir=sender_slug)
+    requests.accept(other_id, channel="cli-tty", project_dir=elsewhere)
+    requests.accept("q-0123456789ab", channel="cli-tty",
+                    project_dir=elsewhere)
+    assert requests.recipient_join(project_dir=project) == {}
+    assert requests.sender_join(project_dir=project) == {}
+
+
+def test_a_third_bucket_verdict_on_an_agent_channel_stays_inert(project):
+    """The fold's authority re-check is the guard that matters here: a row
+    appended off-path in some bucket claiming an agent channel is a verdict
+    nobody can mint, and the widened join must not give it a path in."""
+    sender_slug = _seed_bucket("/p/req-sender-third-d")
+    elsewhere = _seed_bucket("/p/req-elsewhere-e")
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=sender_slug)
+    requests.append(requests._stamp("accepted", q_id, "cli-agent"),
+                    project_dir=elsewhere)
+    assert requests.recipient_join(project_dir=project)[q_id]["state"] == "open"
+
+
+def test_sender_join_reads_no_other_bucket_when_nothing_was_sent_abroad(
+        project, monkeypatch):
+    """The widened sender scan is paid only by a project with an outgoing
+    ask: a bucket with only its own answers to foreign asks stays at one
+    read, the same budget the self-addressed test above pins."""
+    _seed_bucket("/p/req-elsewhere-f")
+    requests.accept("q-0123456789ab", channel="cli-tty", project_dir=project)
+    real_events = requests.events
+    calls = []
+
+    def _tracking(*a, **k):
+        calls.append((a, k))
+        return real_events(*a, **k)
+
+    monkeypatch.setattr(requests, "events", _tracking)
+    assert requests.sender_join(project_dir=project) == {}
+    assert len(calls) == 1
+
+
+def test_an_agent_channel_verdict_refusal_reads_as_english(project):
+    with pytest.raises(requests.RequestError,
+                       match="an accepted verdict requires a human channel"):
+        requests.accept("q-0123456789ab", channel="cli-agent",
+                        project_dir=project)
+
+
+@pytest.mark.parametrize("verb", ["accept", "reject", "needs-info",
+                                  "suppress"])
+def test_cli_verdict_refusal_without_a_terminal_names_no_dead_end(
+        project, recipient, verb, monkeypatch, capsys):
+    """The non-interactive refusal used to send the caller to `--by agent`,
+    which these verbs refuse by design. The remedy it names must be one that
+    can succeed."""
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    rc = cli.main(["request", verb, q_id, "--project", project])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "--by agent" not in out
+    assert "terminal" in out
+    assert requests.get(q_id, project_dir=project)["state"] == "open"
