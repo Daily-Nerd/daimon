@@ -504,3 +504,64 @@ def test_a_failing_ledger_lane_still_yields_the_request_counts(project,
 
     assert pending.foreign_counts(project_dir="/p/C") == {
         store.project_slug("/p/B"): 1}
+
+
+# ---- slice 4: foreign_queues, composed per bucket, fail-open per bucket ----
+
+
+def test_foreign_queues_route_every_command_with_the_bucket_slug(project):
+    b = store.project_slug("/p/B")
+    q = requests.open_request(to=b, ask="review B", why="w",
+                              channel="cli-agent", project_dir="/p/C")
+    queues = dict(pending.foreign_queues(project_dir=project))
+    assert list(queues) == [b]
+    row = queues[b]["rows"][0]
+    assert row["id"] == q
+    assert all(command.endswith(f" --slug={b}")
+               for _label, command in row["commands"])
+
+
+def test_foreign_queues_skip_a_bucket_whose_ledger_cannot_be_read(project,
+                                                                  monkeypatch):
+    """Candidate discovery reads every request ledger for `opened.to`; one
+    that raises costs that bucket's discoveries alone, never the pass."""
+    b = store.project_slug("/p/B")
+    refutations.assert_ruling(
+        subject="release of B", verdict="a ruling in B", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir="/p/B")
+    requests.open_request(to=b, ask="review B", why="w",
+                          channel="cli-agent", project_dir="/p/C")
+    real_events = pending.requests.events
+    bad = store.project_slug("/p/C")
+
+    def selective(*args, **kwargs):
+        if kwargs.get("project_dir") == bad:
+            raise OSError("bucket unreadable")
+        return real_events(*args, **kwargs)
+
+    monkeypatch.setattr(pending.requests, "events", selective)
+    queues = dict(pending.foreign_queues(project_dir=project))
+    # B is still found through its own ledger directory, with its ruling
+    assert b in queues
+    assert [r["kind"] for r in queues[b]["rows"]] == ["ruling"]
+
+
+def test_foreign_queues_skip_a_bucket_whose_queue_raises(project, monkeypatch):
+    b = store.project_slug("/p/B")
+    c = store.project_slug("/p/C")
+    requests.open_request(to=b, ask="review B", why="w",
+                          channel="cli-agent", project_dir="/p/C")
+    refutations.assert_ruling(
+        subject="release of C", verdict="a ruling in C", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir="/p/C")
+    real_queue = pending.queue
+
+    def selective(*, project_dir=None):
+        if project_dir == b:
+            raise RuntimeError("bucket exploded")
+        return real_queue(project_dir=project_dir)
+
+    monkeypatch.setattr(pending, "queue", selective)
+    queues = dict(pending.foreign_queues(project_dir=project))
+    assert b not in queues
+    assert c in queues

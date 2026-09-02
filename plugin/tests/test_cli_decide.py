@@ -351,3 +351,22 @@ def test_all_projects_writes_nothing(project, capsys, tmp_checkpoint_dir):
 
     after = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     assert after == before
+
+
+def test_all_projects_counts_a_foreign_suppression_never_lists_it(
+        project, capsys, monkeypatch):
+    """The owner's own "not now" in another bucket stays theirs: counted
+    under that bucket's heading, the record itself never printed."""
+    b = store.project_slug("/p/B")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    requests.open_request(to=b, ask="UNIQUE-SUPPRESSED-ASK-7731", why="w",
+                          channel="cli-agent", project_dir="/p/C")
+    q = next(iter(requests.recipient_join(project_dir="/p/B")))
+    requests.suppress(q, channel="cli-tty", project_dir="/p/B")
+
+    assert cli.main(["decide", "--all-projects"]) == 0
+    out = capsys.readouterr().out
+
+    assert f"waiting on you in {b}" in out
+    assert "1 suppressed there" in out
+    assert "UNIQUE-SUPPRESSED-ASK-7731" not in out
