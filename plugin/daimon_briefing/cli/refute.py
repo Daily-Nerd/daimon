@@ -57,7 +57,9 @@ def _cmd_refute_add(args) -> int:
 
 
 def _cmd_refute_ratify(args) -> int:
-    project = _cli._resolve_project(args.project)
+    project, rc = _cli._slug_route(args)
+    if rc:
+        return rc
     if _refuse_ruling_id(refutations.get(args.refutation_id,
                                          project_dir=project), "ratify"):
         return 1
@@ -110,7 +112,9 @@ def _cmd_refute_revise(args) -> int:
 
 
 def _cmd_refute_overturn(args) -> int:
-    project = _cli._resolve_project(args.project)
+    project, rc = _cli._slug_route(args)
+    if rc:
+        return rc
     if _refuse_ruling_id(refutations.get(args.refutation_id,
                                          project_dir=project), "retire"):
         return 1
@@ -281,6 +285,7 @@ def register(sub, fmt) -> None:
              "activation requires a human channel")
     pr_ratify.add_argument("--note", help="optional ratification rationale")
     pr_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_ratify.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
     pr_ratify.add_argument("--json", action="store_true", help="machine-readable output")
     pr_ratify.set_defaults(func=_cli._cmd_refute_ratify)
 
@@ -317,6 +322,7 @@ def register(sub, fmt) -> None:
     pr_overturn.add_argument("--note", help="optional explanation")
     pr_overturn.add_argument("--by", choices=["agent"], default=None)
     pr_overturn.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pr_overturn.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
     pr_overturn.add_argument("--json", action="store_true", help="machine-readable output")
     pr_overturn.set_defaults(func=_cli._cmd_refute_overturn)
 

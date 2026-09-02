@@ -254,3 +254,119 @@ def test_foreign_counts_returns_integers_only(project):
 
     assert result
     assert all(isinstance(v, int) for v in result.values())
+
+
+# ---- slice 4: text behind an explicit flag, composed per bucket -----------
+#
+# Scar 0055 governs the default: a foreign bucket's own prose never crosses
+# into this project's stdout unasked. `--all-projects` is the person asking,
+# the same user-invoked crossing `recall --all-projects` already is. Each
+# foreign bucket is composed by ITS OWN `pending.queue` (its own inbox join,
+# its own staleness anchor, its own suppression), never one global fold, and
+# every printed command carries `--slug=<slug>` so it runs from here.
+
+
+def _sentinel_ruling_in_b():
+    # A ruling id hashes subject and scope, so B's subject differs from the
+    # local `_ruling` helper's on purpose: two buckets, two ids.
+    return refutations.assert_ruling(
+        subject="release of B", verdict="UNIQUE-FOREIGN-RULING-SENTINEL-4471",
+        scope="repo", evidence=["issue:766"], channel="cli-agent",
+        project_dir="/p/B")
+
+
+def test_all_projects_shows_foreign_text_with_a_routed_command(project,
+                                                               capsys):
+    rid = _sentinel_ruling_in_b()
+    b = store.project_slug("/p/B")
+
+    assert cli.main(["decide", "--all-projects"]) == 0
+    out = capsys.readouterr().out
+
+    assert "UNIQUE-FOREIGN-RULING-SENTINEL-4471" in out
+    assert f"daimon ruling ratify {rid} --slug={b}" in out
+    assert f"waiting on you in {b}" in out
+    # the counts footer is redundant once the text itself is on screen
+    assert "more waiting in other projects" not in out
+
+
+def test_without_the_flag_the_default_stays_counts_only(project, capsys):
+    _sentinel_ruling_in_b()
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+    assert "UNIQUE-FOREIGN-RULING-SENTINEL-4471" not in out
+    assert "1 more waiting in other projects" in out
+
+
+def test_all_projects_composes_each_foreign_inbox_by_its_own_join(project,
+                                                                  capsys):
+    """An ask from C to B is B's mail. Under one global fold it would be an
+    orphan with no owner; composed per bucket it lands under B, routed."""
+    b = store.project_slug("/p/B")
+    q = requests.open_request(to=b, ask="review the thing for B", why="w",
+                              channel="cli-agent", project_dir="/p/C")
+
+    assert cli.main(["decide", "--all-projects"]) == 0
+    out = capsys.readouterr().out
+
+    assert "review the thing for B" in out
+    assert f"daimon request accept {q} --slug={b}" in out
+
+
+def test_all_projects_local_commands_carry_no_slug(project, capsys):
+    r_local = _ruling(project)
+    _sentinel_ruling_in_b()
+
+    assert cli.main(["decide", "--all-projects"]) == 0
+    out = capsys.readouterr().out
+
+    assert f"daimon ruling ratify {r_local}\n" in out
+    assert f"daimon ruling ratify {r_local} --slug" not in out
+
+
+def test_all_projects_with_nothing_anywhere_says_so(project, capsys):
+    assert cli.main(["decide", "--all-projects"]) == 0
+    assert "nothing waiting on you in any project" in capsys.readouterr().out
+
+
+def test_all_projects_is_refused_on_a_tenant_scoped_home(project, capsys,
+                                                         monkeypatch):
+    _sentinel_ruling_in_b()
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    assert cli.main(["decide", "--all-projects"]) == 2
+    captured = capsys.readouterr()
+    assert "tenant-scoped" in captured.err
+    assert "UNIQUE-FOREIGN-RULING-SENTINEL-4471" not in captured.out
+
+
+def test_all_projects_writes_nothing(project, capsys, tmp_checkpoint_dir):
+    _sentinel_ruling_in_b()
+    requests.open_request(to=store.project_slug("/p/B"), ask="a", why="w",
+                          channel="cli-agent", project_dir="/p/C")
+    root = tmp_checkpoint_dir
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+    assert cli.main(["decide", "--all-projects"]) == 0
+    capsys.readouterr()
+
+    after = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_all_projects_counts_a_foreign_suppression_never_lists_it(
+        project, capsys, monkeypatch):
+    """The owner's own "not now" in another bucket stays theirs: counted
+    under that bucket's heading, the record itself never printed."""
+    b = store.project_slug("/p/B")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    requests.open_request(to=b, ask="UNIQUE-SUPPRESSED-ASK-7731", why="w",
+                          channel="cli-agent", project_dir="/p/C")
+    q = next(iter(requests.recipient_join(project_dir="/p/B")))
+    requests.suppress(q, channel="cli-tty", project_dir="/p/B")
+
+    assert cli.main(["decide", "--all-projects"]) == 0
+    out = capsys.readouterr().out
+
+    assert f"waiting on you in {b}" in out
+    assert "1 suppressed there" in out
+    assert "UNIQUE-SUPPRESSED-ASK-7731" not in out

@@ -340,6 +340,57 @@ def _foreign_ledger_counts(slug: str | None) -> dict[str, int]:
     return counts
 
 
+def foreign_queues(*, project_dir=None) -> list[tuple[str, dict]]:
+    """Slice 4: every OTHER bucket's own queue, as TEXT, behind the explicit
+    `--all-projects` the caller typed. [(slug, queue-result), ...], buckets
+    with nothing waiting and nothing suppressed omitted.
+
+    Composed PER BUCKET, never as one global fold, and that is the whole
+    design: each bucket's request lane runs its own `recipient_join` (its
+    own orphan gate, its own suppression semantics) and its ledger lanes
+    read its own files, exactly as `queue` does for the local project. A
+    single fold across buckets would lose the recipient the staleness anchor
+    belongs to and delete the join that stops an agent from marking a foreign
+    ask done. Every printed command carries `--slug=<slug>` (the `=` form,
+    since a slug starts with '-'), so it runs from wherever the person is
+    standing. Fail-open per bucket, matching `foreign_counts`.
+
+    Scar 0055 still governs the DEFAULT surface: nothing here is reached
+    without the flag, and the caller typing it is the user-invoked crossing
+    `recall --all-projects` already is."""
+    own = store.project_slug(project_dir)
+    # A project can be waited on before it has ever written a bucket of its
+    # own: its mail sits in the SENDER's ledger, addressed by slug. So the
+    # candidates are every bucket directory plus every `to` an opened row
+    # names, ids only, no text read here.
+    candidates = {b for b in _ledger_bucket_slugs() if not b.startswith(".")}
+    for bucket in requests._bucket_slugs():
+        try:
+            rows = requests.events(project_dir=bucket)
+        except Exception:
+            continue
+        for row in rows:
+            if row.get("event") == "opened" and str(row.get("to") or ""):
+                candidates.add(str(row.get("to")))
+    out: list[tuple[str, dict]] = []
+    for bucket in sorted(candidates):
+        if bucket == own:
+            continue
+        try:
+            result = queue(project_dir=bucket)
+        except Exception:
+            continue
+        rows = result.get("rows") or []
+        suppressed = (result.get("excluded") or {}).get("suppressed") or 0
+        if not rows and not suppressed:
+            continue
+        for row in rows:
+            row["commands"] = [(label, f"{command} --slug={bucket}")
+                               for label, command in row.get("commands") or []]
+        out.append((bucket, result))
+    return out
+
+
 def foreign_counts(*, project_dir=None) -> dict[str, int]:
     """{"slug": waiting_count} for every OTHER project's decide queue —
     integers only, never records, ids, or text. This project's own slug is

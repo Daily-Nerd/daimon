@@ -776,6 +776,33 @@ def _refuses_caller_scope(slug=None, all_projects: bool = False) -> bool:
     return False
 
 
+SLUG_ROUTE_HELP = ("route to another project's bucket by its slug, written "
+                   "--slug=<slug> (a slug starts with '-'); routing only, "
+                   "the channel gate is unchanged (#766)")
+
+
+def _slug_route(args) -> tuple:
+    """(project, rc) for the ten human-only decision verbs (#766 slice 4).
+
+    `--slug` is a ROUTING flag: `decide --all-projects` prints a command per
+    foreign entry, and `--project` cannot carry it (it resolves a path, and
+    the slug flattening is not invertible). The slug passes straight through
+    as the project, which works because `store.project_slug` is idempotent on
+    slugs, the same mechanism `brief --slug` relies on. It mints nothing and
+    leaves every channel gate where it was; on a tenant-scoped home (#899)
+    it is refused, since a caller choosing a bucket is the primitive that
+    mode removes. rc is 0 on success, else the exit code to return."""
+    slug = getattr(args, "slug", None)
+    project_arg = getattr(args, "project", None)
+    if slug and project_arg:
+        print("error: --slug and --project are two answers to \"which bucket\" "
+              "— pass one", file=sys.stderr)
+        return None, 2
+    if _refuses_caller_scope(slug):
+        return None, 2
+    return (slug or _resolve_project(project_arg)), 0
+
+
 def _cmd_recall(args) -> int:
     """Lexical search over the derived recall index. The index is disposable —
     recall.search auto-(re)builds it — so the only hard failure surfaced here is

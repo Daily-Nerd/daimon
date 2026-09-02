@@ -10116,17 +10116,35 @@ def test_tenant_scope_projects_lists_only_the_callers_own(
     assert rows[0]["current"] is True
 
 
-def test_only_the_three_read_verbs_take_a_slug():
-    """No write path accepts a slug. Pinned structurally: walk the parser
-    and name every subcommand carrying --slug, so a future verb cannot grow
-    caller-chosen addressing without this list changing on purpose."""
+def test_exactly_the_read_verbs_and_the_human_only_verbs_take_a_slug():
+    """No write path an AGENT can complete accepts a slug. Pinned
+    structurally: walk the parser, nested families included, and name every
+    subcommand carrying --slug. The three read verbs take it as an address
+    (#243). The ten human-only decision verbs take it as a ROUTING flag
+    (#766 slice 4) so a command printed by `decide --all-projects` runs from
+    wherever the person stands; their channel gate refuses an agent with or
+    without it, and #899's tenant mode refuses the flag itself. `request
+    done`, the one either-channel state move, is deliberately absent."""
     import argparse
     from daimon_briefing import store
-    parser = cli.build_parser()
-    subs = next(a for a in parser._actions
-                if isinstance(a, argparse._SubParsersAction))
-    with_slug = sorted(
-        name for name, sp in subs.choices.items()
-        if any("--slug" in a.option_strings for a in sp._actions))
-    assert with_slug == ["brief", "recall", "why"]
+
+    def _walk(parser, prefix=""):
+        found = []
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for name, sub in action.choices.items():
+                    full = f"{prefix}{name}"
+                    if any("--slug" in a.option_strings for a in sub._actions):
+                        found.append(full)
+                    found += _walk(sub, full + " ")
+        return found
+
+    assert sorted(_walk(cli.build_parser())) == sorted([
+        "brief", "recall", "why",
+        "request accept", "request reject", "request needs-info",
+        "request suppress",
+        "amend ratify", "amend reject",
+        "ruling ratify", "ruling retire",
+        "refute ratify", "refute overturn",
+    ])
     assert "slug" not in inspect.signature(store.write_checkpoint).parameters

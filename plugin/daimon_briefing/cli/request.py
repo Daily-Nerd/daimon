@@ -362,7 +362,9 @@ def _cmd_request_revise(args) -> int:
 
 
 def _cmd_request_verdict(args) -> int:
-    project = _cli._resolve_project(args.project)
+    project, rc = _cli._slug_route(args)
+    if rc:
+        return rc
     verb = args.request_cmd
     try:
         channel = _request_channel(args, human_only=True)
@@ -507,6 +509,7 @@ def register(sub, fmt) -> None:
             help="declare yourself an agent; the call then refuses, because "
                  "this verb requires a human channel")
         _common(parser)
+        parser.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
         parser.set_defaults(func=_cli._cmd_request_verdict)
 
     rq_done = request_sub.add_parser(

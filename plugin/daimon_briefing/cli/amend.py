@@ -86,7 +86,9 @@ def _cmd_amend_propose(args) -> int:
 
 
 def _cmd_amend_verdict(args) -> int:
-    project = _cli._resolve_project(args.project)
+    project, rc = _cli._slug_route(args)
+    if rc:
+        return rc
     verb = args.amend_cmd
     try:
         channel = _amend_channel(args)
@@ -172,6 +174,7 @@ def register(sub, fmt) -> None:
                            help="declare yourself an agent; ratification then "
                                 "refuses, because it requires a human channel")
     pa_ratify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_ratify.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
     pa_ratify.set_defaults(func=_cli._cmd_amend_verdict)
 
     pa_reject = amend_sub.add_parser(
@@ -182,6 +185,7 @@ def register(sub, fmt) -> None:
                            help="declare yourself an agent; rejection then "
                                 "refuses, because it requires a human channel")
     pa_reject.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pa_reject.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
     pa_reject.set_defaults(func=_cli._cmd_amend_verdict)
 
     pa_list = amend_sub.add_parser("list", help="list project amendments, candidates first")
