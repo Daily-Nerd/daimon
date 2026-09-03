@@ -51,7 +51,10 @@ registers them:
   stdin and shells out to the installed `daimon brief` CLI (single source of
   truth for rendering); prints the briefing to stdout, which Claude Code
   injects as session context. **Per-project routing:** the payload `cwd` is
-  slugged (Claude Code style: `/Users/x/proj` -> `-Users-x-proj`) and this
+  slugged with daimon's own rule (`/Users/x/proj` -> `-Users-x-proj`; run
+  [`daimon slug <path>`](../reference/cli#status) to print it for any path).
+  This is not the scheme Claude Code itself uses for `~/.claude/projects`,
+  which folds `_` where daimon keeps it. This
   project's `<checkpoint-dir>/<slug>/latest.json` is preferred; if the
   project has no checkpoint of its own, the global `latest.json` is used and
   the briefing header is labeled `(global fallback — checkpoint may be from

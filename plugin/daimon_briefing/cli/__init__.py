@@ -1015,6 +1015,20 @@ def projects_rows(project_arg=None) -> list:
     return rows
 
 
+def _cmd_slug(args) -> int:
+    """Print the checkpoint bucket name daimon derives from a project path
+    (#913). No store, config, or ledger access — deliberately: a host that
+    wants this name before the first write (to lay out a fresh volume, or
+    start a watcher on a directory daimon has not touched yet) has no bucket
+    to list, so this must answer without one, unlike `projects` below."""
+    slug = store.project_slug(args.path)
+    if not slug:
+        print("error: path must not be empty or whitespace-only", file=sys.stderr)
+        return 2
+    print(slug)
+    return 0
+
+
 def _cmd_projects(args) -> int:
     """Read-only orientation for context switching — the crossing itself
     stays explicit (`brief --slug` / `recall --slug`), the #94/#95 lesson."""
@@ -3303,6 +3317,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="machine-readable output"
     )
     p_projects.set_defaults(func=_cmd_projects)
+
+    p_slug = sub.add_parser(
+        "slug",
+        help="print the checkpoint directory name daimon derives from a project path",
+        description="Print the checkpoint directory name daimon derives from "
+                     "a project path. Read-only: no store, config, or ledger "
+                     "access.",
+        epilog="Examples:\n"
+               "  daimon slug /Users/x/my.proj\n"
+               "  daimon slug -- -Users-x        # '--' escapes a path starting with '-'\n",
+    )
+    p_slug.add_argument("path", help="project directory path to slug")
+    p_slug.set_defaults(func=_cmd_slug)
 
     lifecycle.register(sub, fmt)
 

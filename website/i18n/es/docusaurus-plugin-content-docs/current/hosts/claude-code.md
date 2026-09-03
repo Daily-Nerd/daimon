@@ -53,8 +53,11 @@ instalación que los registre:
   y delega en el CLI `daimon brief` instalado (única fuente de verdad para el
   renderizado); imprime el briefing a stdout, que Claude Code inyecta como
   contexto de sesión. **Enrutamiento por proyecto:** el `cwd` del payload se
-  convierte en slug (estilo Claude Code: `/Users/x/proj` -> `-Users-x-proj`) y
-  se prefiere el `<checkpoint-dir>/<slug>/latest.json` de este proyecto; si el
+  convierte en slug con la regla propia de daimon (`/Users/x/proj` ->
+  `-Users-x-proj`; corré [`daimon slug <path>`](../reference/cli#estado) para
+  imprimirlo para cualquier ruta). Este no es el esquema que usa Claude Code
+  para `~/.claude/projects`, que pliega `_` donde daimon lo conserva. Se
+  prefiere el `<checkpoint-dir>/<slug>/latest.json` de este proyecto; si el
   proyecto no tiene checkpoint propio, se usa el `latest.json` global y el
   encabezado del briefing se etiqueta `(global fallback — checkpoint may be
   from another project)`. El cwd se reenvía al CLI vía `DAIMON_PROJECT_DIR`

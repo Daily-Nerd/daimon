@@ -8735,6 +8735,121 @@ def test_projects_empty_store_says_so(tmp_checkpoint_dir, capsys, monkeypatch):
     assert "no project" in capsys.readouterr().out.lower()
 
 
+# ---- daimon slug <path>: the checkpoint-bucket-name rule, standalone (#913) ----
+
+
+def test_cli_slug_prints_project_slug_for_a_normal_path(capsys):
+    from daimon_briefing import store
+
+    path = "/tmp/a b.c_d"
+    assert cli.main(["slug", path]) == 0
+    out = capsys.readouterr().out
+    assert out == store.project_slug(path) + "\n"
+
+
+def test_cli_slug_keeps_underscore(capsys):
+    assert cli.main(["slug", "/tmp/a_b"]) == 0
+    assert capsys.readouterr().out == "-tmp-a_b\n"
+
+
+def test_cli_slug_matches_the_documented_example(capsys):
+    # #913: the worked example in website/docs/reference/cli.md and its
+    # Spanish mirror, pinned literally so drift there fails a test instead
+    # of only failing store.project_slug's own oracle.
+    assert cli.main(["slug", "/Users/x/my.proj"]) == 0
+    assert capsys.readouterr().out == "-Users-x-my-proj\n"
+
+
+def test_cli_slug_preserves_unicode(capsys):
+    from daimon_briefing import store
+
+    path = "/home/dev/ünïcode-プロジェクト"
+    assert cli.main(["slug", path]) == 0
+    out = capsys.readouterr().out
+    assert out == store.project_slug(path) + "\n"
+
+
+def test_cli_slug_empty_path_exits_2_with_no_stdout(capsys):
+    rc = cli.main(["slug", ""])
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() != ""
+
+
+def test_cli_slug_whitespace_only_path_exits_2_with_no_stdout(capsys):
+    rc = cli.main(["slug", "   "])
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() != ""
+
+
+def test_cli_slug_is_idempotent(capsys):
+    from daimon_briefing import store
+
+    path = "/Users/x/my.proj"
+    once = store.project_slug(path)
+    # a slug of an absolute path starts with '-' — needs '--' same as any
+    # other leading-dash positional (see test_cli_slug_leading_dash_path_...)
+    assert cli.main(["slug", "--", once]) == 0
+    twice = capsys.readouterr().out.strip()
+    assert twice == store.project_slug(once)
+    assert twice == once  # a slug re-slugged is unchanged: it's already \w or -
+
+
+def test_cli_slug_matches_store_project_slug_across_samples(capsys):
+    from daimon_briefing import store
+
+    samples = (
+        "/Users/dev/proj", "/tmp/a b/c.d", "/home/dev/ünïcode-プロジェクト",
+        "rel/path", "----", "...",
+    )
+    for sample in samples:
+        assert cli.main(["slug", "--", sample]) == 0
+        out = capsys.readouterr().out
+        assert out == store.project_slug(sample) + "\n", sample
+
+
+def test_cli_slug_leading_dash_path_needs_double_dash(capsys):
+    # argparse reads a bare leading-dash token as an unknown option; `--`
+    # is the documented escape (main()'s pre-parse fusion only rewrites
+    # `--slug`, not this command's positional).
+    rc = cli.main(["slug", "--", "-Users-x"])
+    assert rc == 0
+    assert capsys.readouterr().out == "-Users-x\n"
+
+
+def test_cli_slug_takes_no_slug_flag():
+    # #913: adding --slug here would break
+    # test_exactly_the_read_verbs_and_the_human_only_verbs_take_a_slug.
+    import argparse
+
+    parser = cli.build_parser()
+
+    def _find(parser, name):
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                if name in action.choices:
+                    return action.choices[name]
+        return None
+
+    p_slug = _find(parser, "slug")
+    assert p_slug is not None
+    assert not any("--slug" in a.option_strings for a in p_slug._actions)
+    assert not any("--project" in a.option_strings for a in p_slug._actions)
+
+
+def test_cli_slug_does_not_touch_config_or_ledger(capsys, monkeypatch, tmp_path):
+    # spec: read-only, no store read, no config read, no ledger touch — a
+    # checkpoint dir daimon never created must stay absent after this
+    # command (config.checkpoint_dir() reads DAIMON_CHECKPOINT_DIR).
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
+    assert cli.main(["slug", "/tmp/x"]) == 0
+    capsys.readouterr()
+    assert not (tmp_path / "checkpoints").exists()
+
+
 # ---- recall --slug: bucket-identity scoping (#243) ----
 
 

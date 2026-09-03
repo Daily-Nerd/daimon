@@ -114,7 +114,21 @@ alcanzable por MCP.
 | `daimon loops` | Lista los loops abiertos direccionables con sus ids — la contraparte de lectura del camino de escritura de `resolve`. |
 | `daimon decide` | Lista lo que está esperando por VOS, cada cosa con el único comando que la cierra — el espejo del lado humano de `loops`. Lee registros que ya existen y no escribe nada, así que abrirlo nunca cambia lo que el agente ve. Acotado a este proyecto; los demás proyectos llegan como conteos. `--all-projects` agrega la cola de cada otro proyecto como texto, compuesta por proyecto, con cada comando enrutado con `--slug=<slug>` para que corra desde acá. Los diez verbos solo para humanos (`request accept`, `reject`, `needs-info`, `suppress`; `amend ratify`, `reject`; `ruling ratify`, `retire`; `refute ratify`, `overturn`) toman esa bandera solo como ruteo. Ambos se rechazan mientras `DAIMON_TENANT_SCOPED` esté activo. |
 | `daimon projects` | Lista cada proyecto con checkpoint, con un adelanto del tema. |
+| `daimon slug <path>` | Imprime el nombre de directorio de checkpoint que daimon deriva de una ruta de proyecto. Sin acceso a store, config ni ledger, así que responde incluso para una ruta a la que daimon nunca escribió. |
 | `daimon team init\|sync\|status` | Memoria de equipo compartida vía repo sidecar — ruteo cerrado por defecto, redacción por forma antes de sincronizar nada. |
+
+La regla del slug, dicha con precisión: primero se recorta el espacio en
+blanco al principio y al final, y después cada carácter que no sea un
+carácter de palabra Unicode ni `-` se convierte en `-`. Los guiones bajos, las
+letras acentuadas y las escrituras no latinas sobreviven al pliegue; una
+entrada vacía o de solo espacios no tiene slug. Ejemplo: `/Users/x/my.proj` se
+convierte en `-Users-x-my-proj`. Este no es el esquema que usa Claude Code
+para `~/.claude/projects`. Los dos coinciden en barras, puntos y espacios, y
+difieren en `_` (daimon lo conserva, Claude Code lo pliega a `-`). Un host que
+prefiera reimplementar la regla puede chequear su copia contra `daimon slug`
+directamente. Una ruta que empieza con `-` necesita `--` antes (`daimon slug
+-- -Users-x`), el mismo escape que necesita cualquier argumento posicional con
+guion inicial.
 
 ## Internos (los invocan los hooks; documentados por completitud)
 

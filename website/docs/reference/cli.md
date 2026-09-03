@@ -109,7 +109,19 @@ request write verb is reachable over MCP.
 | `daimon loops` | List open, addressable loop items with their ids — the read counterpart to `resolve`'s write path. |
 | `daimon decide` | List what is waiting on YOU, each with the one command that closes it — the human-side mirror of `loops`. Reads records that already exist and writes nothing at all, so opening it never changes what the agent is shown. Scoped to this project; other projects arrive as counts. `--all-projects` adds every other project's queue as text, composed per project, each command routed with `--slug=<slug>` so it runs from here. The ten human-only verbs (`request accept`, `reject`, `needs-info`, `suppress`; `amend ratify`, `reject`; `ruling ratify`, `retire`; `refute ratify`, `overturn`) take that flag as routing only. Both are refused while `DAIMON_TENANT_SCOPED` is set. |
 | `daimon projects` | List every project daimon holds a checkpoint for, with topic teasers. |
+| `daimon slug <path>` | Print the checkpoint directory name daimon derives from a project path. No store, config, or ledger access, so it answers even for a path daimon has never written to. |
 | `daimon team init\|sync\|status` | Shared team memory via a sidecar repo — default-closed routing, shape-redacted before anything syncs. |
+
+The slug rule, stated exactly: leading and trailing whitespace is stripped
+first, then every character that is not a Unicode word character or `-`
+becomes `-`. Underscores, accented letters, and non-Latin scripts survive the
+fold; an empty or whitespace-only input has no slug. Example: `/Users/x/my.proj`
+becomes `-Users-x-my-proj`. This is not the scheme Claude Code uses for
+`~/.claude/projects`. The two agree on slashes, dots, and spaces, and
+disagree on `_` (daimon keeps it, Claude Code folds it to `-`). A host that
+reimplements the rule can check its copy against `daimon slug` directly. A
+path that starts with `-` needs `--` before it (`daimon slug -- -Users-x`),
+the same escape any positional argument needs for a leading dash.
 
 ## Internals (invoked by hooks, documented for completeness)
 

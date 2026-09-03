@@ -83,7 +83,16 @@ def resolve_data_dir(env=None):
     return Path.home() / ".daimon" / "checkpoints"
 
 def project_slug(project_dir):
-    return re.sub(r"[^\w-]", "-", str(project_dir).strip())
+    """Behaviorally locked to daimon_briefing.store.project_slug by
+    test_reader_project_slug_stays_in_sync_with_store (#913) — no import
+    here on purpose, this module carries no daimon import (see file
+    docstring). Empty/None input returns None, matching store, not ''."""
+    if not project_dir:
+        return None
+    s = str(project_dir).strip()
+    if not s:
+        return None
+    return re.sub(r"[^\w-]", "-", s) or None
 
 def _pointer_files(bucket: Path):
     if not bucket.is_dir():
