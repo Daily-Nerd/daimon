@@ -296,6 +296,48 @@ def test_cli_propose_records_a_candidate_without_escalation_hint(
     assert "ruling ratify" not in out
 
 
+def test_cli_propose_refusal_over_cap_scope_names_the_artifact_destination(
+        tmp_checkpoint_dir, capsys):
+    """#920: an over-cap `scope` on `ruling propose` names an artifact
+    pointer and the checkpoint, the same shape #916 gave `request open` —
+    but never `daimon log` (nothing reads a ref-less note back).
+
+    `scope` is the field to exercise here, not `subject`/`verdict`: a
+    ruling's subject and verdict are ALSO bound by `_guard_ruling_text`'s
+    280-char `_MAX_RULING_TEXT` (#693, "a standing rule that long is a
+    document, not a ruling"), which is stricter than and fires before the
+    general 2000-char `_text` cap this fix targets — so the over-cap
+    `RefutationTooLong` branch is unreachable for those two fields on a
+    RULING specifically (it is still reachable for a plain refutation via
+    `refute add`, which has no such guard; see test_refutations.py)."""
+    long_scope = "x" * (refutations._MAX_TEXT + 1)
+    rc = cli.main([
+        "ruling", "propose", "--subject", "public posts",
+        "--verdict", "internal numbers never appear in public posts",
+        "--scope", long_scope,
+        "--evidence", "issue:693", "--by", "agent", "--project", PROJECT])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" in out
+    assert "write-checkpoint" in out
+    assert "daimon-end" in out
+    assert "daimon log" not in out
+
+
+def test_cli_propose_normal_length_records_with_no_destination_text(
+        tmp_checkpoint_dir, capsys):
+    rc = cli.main([
+        "ruling", "propose", "--subject", "public posts",
+        "--verdict", "internal numbers never appear in public posts",
+        "--scope", "publishing", "--evidence", "issue:693",
+        "--by", "agent", "--project", PROJECT])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "pointer" not in out
+    assert "write-checkpoint" not in out
+
+
 def test_cli_ratify_prints_text_discloses_render_and_confirms(
         tmp_checkpoint_dir, _tty, monkeypatch, capsys):
     ruling_id = _rule()

@@ -10,6 +10,39 @@ import json
 import sys
 
 from .. import refutations, render
+from . import _cap_refusal
+
+# #920: over-cap `subject`/`verdict`/`scope`/`evidence` name where the
+# overflow belongs, mirroring #916's request-ledger refusal. `anchor`,
+# `revisit_when` and `note` are absent on purpose: an anchor is an
+# identifier, not authored prose, and `revisit_when`/`note` are short
+# secondary annotations rather than the text a ruling or refutation
+# governs — naming a destination for them would be advice for a case that
+# does not meaningfully arise (the #916 reasoning for `request`'s `note`,
+# restated for this ledger).
+_ARTIFACT_DESTINATION = (
+    " — the long form belongs in the artifact it governs (the issue, the "
+    "design record, the file); the record carries the one-paragraph rule "
+    "and a pointer."
+)
+_DESTINATION_BY_FIELD = {
+    "subject": _ARTIFACT_DESTINATION,
+    "verdict": _ARTIFACT_DESTINATION,
+    "scope": _ARTIFACT_DESTINATION,
+    "evidence": (
+        " — evidence is a pointer to the proof (a commit, a PR, a path, a "
+        "verbatim line), not the proof itself."
+    ),
+}
+
+
+def _refusal_message(prefix: str, exc: refutations.RefutationError) -> str:
+    """`prefix: str(exc)`, plus a destination sentence when `exc` is the
+    over-cap subclass on a field that has one. Shared by both `cli.refute`
+    and `cli.ruling`, since both catch `refutations.RefutationError` off the
+    same ledger and the same `_text` cap."""
+    return _cap_refusal.format_cap_refusal(
+        prefix, exc, refutations.RefutationTooLong, _DESTINATION_BY_FIELD)
 
 
 def _report_vanished_write(record_id: str, verb: str, *,

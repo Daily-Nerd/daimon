@@ -93,6 +93,20 @@ class AmendmentError(ValueError):
     """A requested ledger transition is invalid or cannot be persisted."""
 
 
+class AmendmentTooLong(AmendmentError):
+    """The over-cap branch of `_text`, and ONLY that branch — a required-but-
+    empty field stays a plain `AmendmentError`. Carries `field` and `limit`
+    so the CLI boundary can name a field-appropriate destination (#920,
+    mirrors the #916 request-ledger fix) without re-parsing the message
+    string. A caller matching on `AmendmentError` still catches this by
+    construction."""
+
+    def __init__(self, message: str, *, field: str, limit: int):
+        super().__init__(message)
+        self.field = field
+        self.limit = limit
+
+
 def _path(project_dir=None):
     slug = store.project_slug(project_dir)
     if not slug:
@@ -105,8 +119,9 @@ def _text(name: str, value, *, required: bool = True) -> str:
     if required and not out:
         raise AmendmentError(f"{name} is required")
     if len(out) > _MAX_TEXT:
-        raise AmendmentError(
-            f"{name} is too long ({len(out)} > {_MAX_TEXT} characters)")
+        raise AmendmentTooLong(
+            f"{name} is too long ({len(out)} > {_MAX_TEXT} characters)",
+            field=name, limit=_MAX_TEXT)
     return out
 
 
