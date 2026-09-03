@@ -45,6 +45,14 @@ never wear the verbatim badge. With [receipts](concepts/receipts.md) enabled,
 the checkpoint's exact bytes are signed — everything above is checkable
 offline, without trusting daimon, the model, or this page.
 
+## An independent reading
+
+[Agent Memory Atlas](https://neoneye.github.io/agent-memory-atlas/systems/daimon/), a commit-pinned survey of agent memory systems, has read this codebase several times since July 2026. From its latest executive summary:
+
+> This is one of the very few that treats the model's own trust label as a claim to be falsified before it is stored.
+
+It is not praise alone. The same summary names the weak half: "The retrieval half is much less proven." Both halves are checkable against the card's file and line citations, and every reading is recorded with the commit it was pinned to.
+
 ## The loop
 
 1. **A session ends** — a host hook serializes the transcript into a
