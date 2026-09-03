@@ -61,6 +61,10 @@ An accepted request another project sent, satisfied by this session's work
 "<quote>" --by agent`; `daimon request inbox` lists every one still owed.
 Same quote discipline, same byte-check at session end.
 
+Request text fields (`ask`, `why`, `evidence`) cap at 2000 characters. Long
+content belongs in an artifact the request points at (a file, an issue, a
+PR), with the request itself carrying the pointer, not the full text.
+
 ## Automatic behavior
 
 You do not need to invoke anything. The plugin wires the host's native session

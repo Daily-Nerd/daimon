@@ -170,6 +170,19 @@ class RequestError(ValueError):
     """A requested ledger transition is invalid or cannot be persisted."""
 
 
+class RequestTooLong(RequestError):
+    """The over-cap branch of `_text`, and ONLY that branch — a required-but-
+    empty field stays a plain `RequestError`. Carries `field` and `limit` so
+    the CLI boundary can name a field-appropriate destination (#916, mirrors
+    the #902 handoff refusal) without re-parsing the message string. A
+    caller matching on `RequestError` still catches this by construction."""
+
+    def __init__(self, message: str, *, field: str, limit: int):
+        super().__init__(message)
+        self.field = field
+        self.limit = limit
+
+
 def _path(project_dir=None):
     slug = store.project_slug(project_dir)
     if not slug:
@@ -183,8 +196,9 @@ def _text(name: str, value, *, required: bool = True,
     if required and not out:
         raise RequestError(f"{name} is required")
     if len(out) > limit:
-        raise RequestError(
-            f"{name} is too long ({len(out)} > {limit} characters)")
+        raise RequestTooLong(
+            f"{name} is too long ({len(out)} > {limit} characters)",
+            field=name, limit=limit)
     return out
 
 

@@ -33,6 +33,46 @@ _MARKS = {"open": "→", "needs-info": "?", "accepted": "✓",
 # Near-match budget for an unknown `--to`: enough to catch a typo, few
 # enough that the refusal stays a refusal rather than a project directory.
 _SUGGESTIONS = 3
+# #916: over-cap `ask`/`why`/`evidence` name where the overflow belongs, in
+# the voice of the #902 handoff refusal. Fields not listed here (`note`,
+# `from_label`, the verify_done `role`) get no destination sentence — they
+# are a verdict comment or an internal label, not authored request prose,
+# so naming a destination for them would be advice for a case that never
+# meaningfully arises. Deliberately never `daimon log`: nothing reads a
+# ref-less note back (scar carried from #902).
+_DESTINATION_BY_FIELD = {
+    "ask": (
+        " — the long form belongs in an artifact the recipient can open "
+        "(a file in the repo, an issue, a document); the request carries "
+        "the pointer and the one-paragraph version."
+    ),
+    "why": (
+        " — the long form belongs in an artifact the recipient can open "
+        "(a file in the repo, an issue, a document); the request carries "
+        "the pointer and the one-paragraph version."
+    ),
+    "evidence": (
+        " — evidence is a pointer to the proof (a commit, a PR, a path, a "
+        "verbatim line), not the proof itself."
+    ),
+}
+_CHECKPOINT_HINT = (
+    " Durable facts learned while composing this belong in a checkpoint "
+    "(the daimon-end skill, `daimon write-checkpoint`), not in the request."
+)
+
+
+def _refusal_message(prefix: str, exc: requests.RequestError) -> str:
+    """`prefix: str(exc)`, plus a destination sentence when `exc` is the
+    over-cap subclass on a field that has one. Every other RequestError
+    (required-but-empty, state, revision cap, unknown recipient shape...)
+    keeps exactly its old plain message."""
+    dest = ""
+    if isinstance(exc, requests.RequestTooLong):
+        dest = _DESTINATION_BY_FIELD.get(exc.field, "")
+        if dest:
+            dest += _CHECKPOINT_HINT
+    return f"{prefix}: {exc}{dest}"
 
 
 def _request_channel(args, *, human_only: bool = False) -> str:
@@ -314,7 +354,7 @@ def _cmd_request_open(args) -> int:
             project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:open:refused")
-        print(f"request not recorded: {exc}")
+        print(_refusal_message("request not recorded", exc))
         return 1
     _cli._note_usage("request:open:agent"
                      if getattr(args, "by", None) == "agent"
@@ -339,7 +379,7 @@ def _cmd_request_revise(args) -> int:
                         project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:revise:refused")
-        print(f"request not revised: {exc}")
+        print(_refusal_message("request not revised", exc))
         return 1
     _cli._note_usage("request:revise")
     # #857: `revise()` above read the record through _require, and this is a
@@ -373,7 +413,7 @@ def _cmd_request_verdict(args) -> int:
             project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage(f"request:{verb}:refused")
-        print(f"request {verb} refused: {exc}")
+        print(_refusal_message(f"request {verb} refused", exc))
         return 1
     _cli._note_usage(f"request:{verb}")
     _report(args.request_id, project, verb)
@@ -403,7 +443,7 @@ def _cmd_request_done(args) -> int:
                       evidence=args.evidence, project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:done:refused")
-        print(f"request done refused: {exc}")
+        print(_refusal_message("request done refused", exc))
         return 1
     _cli._note_usage("request:done")
     _report(args.request_id, project, "done")

@@ -124,6 +124,25 @@ def test_ask_and_why_are_required_and_capped(project):
         _open(project, ask="x" * (requests._MAX_TEXT + 1))
 
 
+def test_over_cap_raises_the_subclass_with_field_and_limit(project):
+    """#916: the CLI names a destination by inspecting which field tripped
+    the cap, so the exception must carry that field rather than the caller
+    re-parsing the message string."""
+    with pytest.raises(requests.RequestTooLong) as exc_info:
+        _open(project, ask="x" * (requests._MAX_TEXT + 1))
+    assert exc_info.value.field == "ask"
+    assert exc_info.value.limit == requests._MAX_TEXT
+
+
+def test_non_length_failures_still_raise_plain_request_error(project):
+    """A required-but-empty field is a different failure than over-cap —
+    it must not carry a `field`/`limit` pair or trip the CLI's destination
+    text, which is over-cap-only."""
+    with pytest.raises(requests.RequestError) as exc_info:
+        _open(project, ask="")
+    assert not isinstance(exc_info.value, requests.RequestTooLong)
+
+
 def test_unresolvable_project_writes_nothing(project):
     assert requests._path(None) is None
     assert requests.append({"event": "opened"}, project_dir=None) is False
@@ -801,6 +820,106 @@ def test_cli_revise_refuses_past_the_cap(project, recipient, capsys):
     assert "--supersedes" in out
     assert requests.get(q_id, project_dir=project)["revision"] == \
         requests.MAX_REVISIONS
+
+
+def test_cli_open_refusal_over_cap_names_the_ask_destination(project,
+                                                              recipient,
+                                                              capsys):
+    """#916: an over-cap `ask` on `request open` names an artifact pointer
+    and the checkpoint, mirroring the #902 handoff refusal — but never
+    `daimon log` (nothing reads a ref-less note back)."""
+    from daimon_briefing import cli
+    long_ask = "x" * (requests._MAX_TEXT + 1)
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", long_ask,
+                   "--why", WHY, "--by", "agent", "--project", project])
+    assert rc == 1
+    assert not requests.records(project_dir=project)
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" in out
+    assert "write-checkpoint" in out
+    assert "daimon-end" in out
+    assert "daimon log" not in out
+
+
+def test_cli_open_refusal_over_cap_evidence_names_the_proof_destination(
+        project, recipient, capsys):
+    from daimon_briefing import cli
+    long_evidence = "x" * (requests._MAX_TEXT + 1)
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                   "--why", WHY, "--evidence", long_evidence, "--by", "agent",
+                   "--project", project])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" in out
+    assert "write-checkpoint" in out
+    assert "daimon log" not in out
+
+
+def test_cli_revise_refusal_over_cap_names_the_why_destination(project,
+                                                                recipient,
+                                                                capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    long_why = "x" * (requests._MAX_TEXT + 1)
+    rc = cli.main(["request", "revise", q_id, "--why", long_why, "--by",
+                   "agent", "--project", project])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" in out
+    assert "write-checkpoint" in out
+    assert "daimon log" not in out
+
+
+def test_cli_done_refusal_over_cap_names_the_proof_destination(project,
+                                                                recipient,
+                                                                capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    long_evidence = "x" * (requests._MAX_TEXT + 1)
+    rc = cli.main(["request", "done", q_id, "--evidence", long_evidence,
+                   "--by", "agent", "--project", project])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" in out
+    assert "write-checkpoint" in out
+    assert "daimon-end" in out
+    assert "daimon log" not in out
+
+
+def test_cli_open_normal_length_records_with_no_destination_text(project,
+                                                                  recipient,
+                                                                  capsys):
+    """The negative case: a normal-length request still records cleanly,
+    with no destination text on stdout — the sentence is over-cap-only."""
+    assert _cli_open(project, recipient) == 0
+    out = capsys.readouterr().out
+    assert "write-checkpoint" not in out
+    assert "pointer" not in out
+
+
+def test_cli_verdict_over_cap_note_names_no_destination(project, recipient,
+                                                         monkeypatch, capsys):
+    """`note` is a verdict comment, not authored request prose — it shares
+    `_text`'s cap but is deliberately absent from `_DESTINATION_BY_FIELD`,
+    so its over-cap refusal stays exactly its old plain message."""
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    long_note = "x" * (requests._MAX_TEXT + 1)
+    rc = cli.main(["request", "needs-info", q_id, "--note", long_note,
+                   "--project", project])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" not in out
+    assert "write-checkpoint" not in out
 
 
 def test_cli_list_renders_records_and_json(project, recipient, monkeypatch,

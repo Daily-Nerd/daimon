@@ -256,6 +256,9 @@ unverified claim until the quote is byte-checked. `accept`, `reject`,
 `needs-info`, `suppress` are human-only: print the command, never run it.
 `daimon decide` lists every such command still waiting on a person, across
 this project's ledgers, so say it lands there and stop repeating the ask.
+`ask`, `why` and `evidence` cap at 2000 characters: long content belongs in
+an artifact the request points at (a file, an issue, a PR), with the
+request carrying the pointer, not the full text.
 
 Requests OTHER projects addressed to this one surface automatically at the
 top of `daimon brief` (capped at 3, with an overflow count). `daimon request
