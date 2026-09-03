@@ -2089,6 +2089,133 @@ def test_an_unsuperseded_item_has_no_mechanism(tmp_checkpoint_dir,
     assert hits[0]["superseded_source"] is None
 
 
+# --- #907: the read side spends superseded_source, not only the display ---
+#
+# #865 recorded the mechanism and the write side already ranks it (the
+# resolution fold overwrites the link fold: "a person's recorded action
+# outranks a model's claim"). Both spenders of superseded_by then ignored
+# the source: one multiplier, one sort predicate. A model's guess that B
+# replaced A and a person's recorded decision that it did demoted A at one
+# rate. These pin the read side to the mechanism the row already carries.
+# No vocabulary moves: link/resolution stay machine keys.
+
+
+def test_suggest_demotes_a_human_resolution_harder_than_a_model_link():
+    now = 1756468800.0
+    row = {"importance": 5, "first_seen": "2026-08-01T00:00:00Z",
+           "trust": "inferred", "invalidated_by": None}
+    clean = recall._suggest_weight(
+        {**row, "superseded_by": None, "superseded_source": None},
+        "recent_decision", now)
+    linked = recall._suggest_weight(
+        {**row, "superseded_by": "S-newer", "superseded_source": "link"},
+        "recent_decision", now)
+    resolved = recall._suggest_weight(
+        {**row, "superseded_by": "o-new222",
+         "superseded_source": "resolution"},
+        "recent_decision", now)
+    contradicted = recall._suggest_weight(
+        {**row, "superseded_by": None, "superseded_source": None,
+         "invalidated_by": "receipt:receipt-invalid@2026-08-29T10:00:00Z"},
+        "recent_decision", now)
+    # A person's recorded act sits between a model claim and world evidence
+    # that the claim is false: stronger than a guess, weaker than a probe.
+    assert contradicted < resolved < linked < clean
+
+
+def test_suggest_treats_an_unattributed_superseded_row_as_a_model_link():
+    # A legacy row (indexed before #865) or one whose writer the fold could
+    # not attribute carries superseded_by with no source. Absence is not a
+    # person: it ranks as the weaker claim, never as the stronger one.
+    now = 1756468800.0
+    row = {"importance": 5, "first_seen": "2026-08-01T00:00:00Z",
+           "trust": "inferred", "invalidated_by": None}
+    unattributed = recall._suggest_weight(
+        {**row, "superseded_by": "S-newer", "superseded_source": None},
+        "recent_decision", now)
+    linked = recall._suggest_weight(
+        {**row, "superseded_by": "S-newer", "superseded_source": "link"},
+        "recent_decision", now)
+    assert unattributed == linked
+
+
+def test_suggest_ranks_a_resolved_item_below_a_linked_one_end_to_end(
+        tmp_checkpoint_dir, monkeypatch):
+    # The weight function is only as good as the row it is handed. suggest
+    # runs its own SELECT (the auto-inject path), so the column has to be
+    # selected there too or every human resolution ranks as a model link and
+    # the weight-level test above passes on a dict the wire never carries.
+    # Same #837 lesson, same surface. suggest scores relevance x weight, so
+    # the two rows share text length, query terms, importance and birth
+    # stamp: the only thing that differs is who recorded the supersession.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-linked", _cp125("S-linked", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses "
+                    "until the retry path is measured",
+            "trust": "verbatim", "quote": "pin it", "id": "o-55ee66ff",
+            "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-resolved", _cp125("S-resolved", decisions=[{
+            "text": "pin the litellm gateway cache for bad answers "
+                    "until the retry path is measured",
+            "trust": "verbatim", "quote": "pin it", "id": "o-77aa88bb",
+            "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-21T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes", "target": "o-55ee66ff"}],
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+    store.append_event("o-77aa88bb", "superseded-by:o-h999", source="cli",
+                       project_dir="/repo/x")
+
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5)
+    by_sid = {r["session_id"]: r for r in out}
+    assert by_sid["S-resolved"]["superseded_source"] == "resolution"
+    assert by_sid["S-linked"]["superseded_source"] == "link"
+    sids = [r["session_id"] for r in out]
+    assert sids.index("S-linked") < sids.index("S-resolved")
+
+
+def test_search_sorts_a_resolved_item_below_a_linked_one(tmp_checkpoint_dir,
+                                                         monkeypatch):
+    # Rigged against the fix: the human-resolved row is the SHORTER document,
+    # so bm25 alone puts it first. The link-superseded row must still lead,
+    # because a person recorded that the other one is replaced.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-linked", _cp125("S-linked", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses "
+                    "until the retry path is measured",
+            "trust": "verbatim", "quote": "pin it", "id": "o-11aa22bb",
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-resolved", _cp125("S-resolved", decisions=[{
+            "text": "litellm gateway cache pinned",
+            "trust": "verbatim", "quote": "pinned", "id": "o-33cc44dd",
+        }], created="2026-06-21T00:00:00Z"), project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes", "target": "o-11aa22bb"}],
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+    store.append_event("o-33cc44dd", "superseded-by:o-h333", source="cli",
+                       project_dir="/repo/x")
+
+    hits = recall.search("litellm gateway cache", project_dir="/repo/x")
+    order = [h["session_id"] for h in hits if h["superseded_by"]]
+    assert order[:2] == ["S-linked", "S-resolved"]
+    by_sid = {h["session_id"]: h for h in hits}
+    assert by_sid["S-linked"]["superseded_source"] == "link"
+    assert by_sid["S-resolved"]["superseded_source"] == "resolution"
+
+
 # ---- #899: host allowlist fans every single-scope read, and only those ----
 #
 # The caller never names a scope here. The host declares extra READ slugs out

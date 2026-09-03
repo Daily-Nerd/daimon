@@ -1056,9 +1056,14 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     # a claim is the stronger fact of the two, so a contradicted row sorts
     # below a merely-replaced one. Both stay ABOVE nothing — demoted, never
     # filtered out: the evidence is machine-local and has no cure path, so
-    # burial must remain visible and reversible rather than silent.
+    # burial must remain visible and reversible rather than silent. Within
+    # replaced rows (#907) a person's recorded resolution sorts below a
+    # model-authored link, the same order the write side already keeps; an
+    # unattributed row sorts with the links.
     sql += (" ORDER BY (i.invalidated_by IS NOT NULL) ASC,"
-            " (i.superseded_by IS NOT NULL) ASC, rank ASC,"
+            " CASE WHEN i.superseded_by IS NULL THEN 0"
+            " WHEN i.superseded_source = 'resolution' THEN 2"
+            " ELSE 1 END ASC, rank ASC,"
             " i.frontier DESC, i.created DESC LIMIT ?")
 
     want_n = max(1, int(limit))
@@ -1382,7 +1387,8 @@ def is_machine_prompt(prompt: str) -> bool:
 # Neither is a filter. #112's rule holds for both: an overturned item is still
 # evidence, and this evidence is machine-local with no cure path yet, so it
 # ranks down and renders flagged rather than disappearing.
-_SUPERSEDED_WEIGHT = 0.7
+_SUPERSEDED_WEIGHT = 0.7   # superseded_source 'link': a claim the model made
+_RESOLVED_WEIGHT = 0.5     # superseded_source 'resolution': a person's recorded act
 _INVALIDATED_WEIGHT = 0.4
 
 
@@ -1399,7 +1405,14 @@ def _suggest_weight(row, item_type: str, now: float) -> float:
          "trust": row.get("trust")},
         item_type, now)
     if row.get("superseded_by"):
-        weight *= _SUPERSEDED_WEIGHT
+        # #907: spend the mechanism #865 recorded. The write side already
+        # ranks a person's recorded action above a model's claim (the
+        # resolution fold overwrites the link fold); the read side demotes
+        # in the same order. An unattributed row (legacy, or a writer the
+        # fold could not name) is the weaker claim, never the person.
+        weight *= (_RESOLVED_WEIGHT
+                   if row.get("superseded_source") == "resolution"
+                   else _SUPERSEDED_WEIGHT)
     if row.get("invalidated_by"):
         weight *= _INVALIDATED_WEIGHT
     return weight
@@ -1466,6 +1479,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
         " i.project_slug,"
         " i.session_id, i.created, i.importance, i.first_seen, i.superseded_by,"
+        # #907: same rule for the writer column — without it every human
+        # resolution reaches _suggest_weight as an unattributed row and
+        # demotes at the model-link rate, on this same surface.
+        " i.superseded_source,"
         # #837: the column MUST be selected here, not just written — this is
         # the auto-inject path, so a missing select re-asserts a claim this
         # install's own ledger contradicted, on the highest-leverage surface.
