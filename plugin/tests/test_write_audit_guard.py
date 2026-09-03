@@ -407,6 +407,11 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_projects():
         run(["projects"], 0)
 
+    def r_slug():
+        # #913: drives the command so the audit proves it makes no
+        # ungoverned write, same as every other recipe here.
+        run(["slug", str(proj)], 0)
+
     def r_refute_add():
         subject = "The original receipt design"
         scope = "carried-item receipt tiers"
@@ -721,6 +726,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("recall",): r_recall,
         ("why",): r_why,
         ("projects",): r_projects,
+        ("slug",): r_slug,
         ("refute", "add"): r_refute_add,
         ("refute", "ratify"): r_refute_ratify,
         ("refute", "revise"): r_refute_revise,

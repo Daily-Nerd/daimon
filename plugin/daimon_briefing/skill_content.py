@@ -44,6 +44,13 @@ NOT_AGENT_FACING = {
     "recall-inject": "internal: the per-prompt recall hook",
     "request-inject": ("internal: the per-prompt live-delivery hook (#756); "
                        "agents receive its output, never run it"),
+    "slug": (
+        "internal: a host-integration primitive (#913) that names a "
+        "checkpoint bucket before any checkpoint exists — a HOST process "
+        "shells out to it once to lay out a volume or start a watcher; an "
+        "agent inside a session has no bucket-naming task and reads its own "
+        "project through brief/recall/why, never by slug arithmetic"
+    ),
     # -- deliberate product boundaries --
     "forget": (
         "human-only by design: deletion is the user's call, and the full body "
