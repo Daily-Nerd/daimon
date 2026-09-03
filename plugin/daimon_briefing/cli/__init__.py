@@ -130,6 +130,48 @@ def _note_usage(command: str) -> None:
         pass
 
 
+# #919: usage.log key prefix for the per-project receipt-probe counters
+# `daimon stats` renders. usage.log is otherwise a per-MACHINE log (#54's own
+# design, and #477's own lesson about conflating populations) — every other
+# worldcheck counter here rides it unscoped. These four fold the project
+# slug into the command name itself so `_stats_receipts` can filter to just
+# THIS project, the one place worldcheck's stats need to be per-project
+# rather than per-machine (the issue this constant answers: a receipt probe
+# fires and leaves zero trace ANYWHERE, #919's diagnosis).
+_RECEIPT_PROBE_USAGE_PREFIX = "worldcheck:receipt-probe:"
+
+
+def _note_receipt_probe_usage(project_dir, wc_stats: dict) -> None:
+    """Fold this run's receipt-probe telemetry into usage.log, project-scoped
+    (#919). `attempted`/`eligible` come from `worldcheck.last_receipt_probe()`
+    — a module-level record, NOT a key in `wc_stats`, because that dict is
+    asserted by exact equality across dozens of worldcheck tests and this is
+    a run-level population fact, not a per-item outcome. `confirmed`/
+    `contradicted`/`skipped` are read straight off `wc_stats`'s existing
+    receipt-validity:<outcome> keys (already correct, just unscoped by
+    project). `skipped` matters as much as the other two: it is the SILENT
+    case #919 exists to expose — a probe that fired and answered nothing (no
+    CLI, no pubkey, a killed deadline, garbage output), which used to read
+    identically to "0 confirmed, 0 contradicted" and therefore identically to
+    "did nothing". A count of zero writes nothing — `_note_usage` in a
+    zero-length range is simply never called, so a disabled or silent run
+    leaves the log untouched, same as every other counter here."""
+    slug = store.project_slug(project_dir)
+    if not slug:
+        return
+    probe = worldcheck.last_receipt_probe()
+    counts = {
+        "attempted": probe["attempted"],
+        "eligible": probe["eligible"],
+        "confirmed": wc_stats.get(f"{worldcheck.RECEIPT_VALIDITY}:confirmed", 0),
+        "contradicted": wc_stats.get(f"{worldcheck.RECEIPT_VALIDITY}:contradicted", 0),
+        "skipped": wc_stats.get(f"{worldcheck.RECEIPT_VALIDITY}:skipped", 0),
+    }
+    for label, count in counts.items():
+        for _ in range(int(count)):
+            _note_usage(f"{_RECEIPT_PROBE_USAGE_PREFIX}{label}:{slug}")
+
+
 def _preflight_error(path: Path) -> str | None:
     """Credential pre-flight, mirroring llm.chat's routing (#52): an API key
     and model are required only when the resolved transport is llm-bound.
@@ -583,6 +625,10 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
             for counter, count in sorted(wc_stats.items()):
                 for _ in range(int(count)):
                     _note_usage(f"worldcheck:{counter}")
+            # #919: the receipt-probe axis, project-scoped (see the helper's
+            # own docstring for why this one axis needs project scope where
+            # the loop above deliberately stays machine-wide).
+            _note_receipt_probe_usage(worldcheck_project, wc_stats)
             # A POINTER and a REASON CODE, never the item's text (#376) — the
             # same second stream capture writes, for the same reason: folded
             # into events.jsonl a rejection would HIDE the item it describes.
@@ -2757,6 +2803,43 @@ def _earlier(current: str | None, ts: str) -> str | None:
     return ts if current is None or ts < current else current
 
 
+def _stats_receipts(project_dir, usage: dict) -> dict:
+    """Receipt-probe telemetry (this project, #919). `attempted`/`eligible`/
+    `confirmed`/`contradicted`/`skipped` are lifetime usage.log counts scoped
+    to this project's slug via `_RECEIPT_PROBE_USAGE_PREFIX` — the population
+    size the confirmed/contradicted/skipped rates are measured against is
+    `eligible`, not the checkpoint's whole item count, since only carried
+    items with an `origin_session` naming an in-project origin ever enter the
+    pool. `skipped` is the silent case #919 exists to expose: a probe that
+    fired and answered nothing (no CLI, no cached pubkey, a killed deadline,
+    garbage output) used to read identically to "0 confirmed, 0
+    contradicted" — indistinguishable from a probe that never ran at all.
+
+    `cured` is NOT a usage.log counter: it is read live off the rejection
+    ledger's latest-verdict fold (`store.latest_receipt_verdicts`), because a
+    cure changes an EXISTING item's standing rather than adding a new
+    occurrence — `store.append_receipt_cure`'s own docstring is why a
+    lifetime tally would double- or under-count depending on how many times
+    a cured item happened to get re-probed.
+
+    `enabled` is CURRENT config, not history: an install can flip
+    DAIMON_RECEIPTS off after accumulating counts, and the render needs to
+    tell "no receipts configured" apart from "configured, nothing has fired
+    yet" — the exact ambiguity #919 diagnosed in the first place."""
+    slug = store.project_slug(project_dir)
+    attempted = usage.get(f"{_RECEIPT_PROBE_USAGE_PREFIX}attempted:{slug}", 0) if slug else 0
+    eligible = usage.get(f"{_RECEIPT_PROBE_USAGE_PREFIX}eligible:{slug}", 0) if slug else 0
+    confirmed = usage.get(f"{_RECEIPT_PROBE_USAGE_PREFIX}confirmed:{slug}", 0) if slug else 0
+    contradicted = usage.get(
+        f"{_RECEIPT_PROBE_USAGE_PREFIX}contradicted:{slug}", 0) if slug else 0
+    skipped = usage.get(f"{_RECEIPT_PROBE_USAGE_PREFIX}skipped:{slug}", 0) if slug else 0
+    cured = sum(1 for row in store.latest_receipt_verdicts(project_dir=project_dir).values()
+               if row.get("verdict") == "confirmed")
+    return {"enabled": config.receipts_enabled(), "attempted": attempted,
+            "eligible": eligible, "confirmed": confirmed,
+            "contradicted": contradicted, "skipped": skipped, "cured": cured}
+
+
 def _stats_resolutions(project_dir, usage: dict) -> dict:
     """Resolution credit, by source (#480 slice 5) — who is closing loops,
     and whether their receipts hold. Two populations, kept honestly apart
@@ -2860,6 +2943,7 @@ def _cmd_stats(args) -> int:
             "events": _stats_events(project),
             "verification": _stats_verification(project),
             "resolutions": _stats_resolutions(project, usage),
+            "receipts": _stats_receipts(project, usage),
             # #475 part 2: current-configuration posture, rendered next to
             # (never merged into) the historical fallback counts above.
             "rescue_posture": llm.rescue_posture()}

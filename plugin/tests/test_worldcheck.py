@@ -1545,6 +1545,54 @@ def test_receipt_check_writes_nothing_to_disk(receipts_on, proj, monkeypatch):
     assert stats["receipt-validity:contradicted"] == 1
 
 
+# ---- #919: last-run receipt-probe telemetry ----------------------------------
+#
+# check()'s own return dict is asserted by exact equality all over this file,
+# so the population facts #919 needs (how many origins were eligible, how many
+# were actually sampled) ride a SEPARATE module-level record instead, read by
+# the CLI right after check() returns. These tests pin that record directly.
+
+
+def test_last_receipt_probe_counts_eligible_before_sampling_caps_it(
+        receipts_on, proj, monkeypatch):
+    # Two eligible origins, MAX_RECEIPT_PROBES caps the sample at one: the
+    # whole point of exposing `eligible` separately from `attempted`.
+    _signed_origin("S-a", proj)
+    _signed_origin("S-b", proj)
+    monkeypatch.setattr(worldcheck, "_day_bucket", lambda: 0)
+    worldcheck.check(_cp_origins(["S-a", "S-b"]), proj)
+    assert worldcheck.last_receipt_probe() == {"attempted": 1, "eligible": 2}
+
+
+def test_last_receipt_probe_zero_when_nothing_eligible(receipts_on, proj):
+    # No signed origin on disk at all -> nothing eligible, nothing attempted.
+    stats = worldcheck.check(_cp_origins(["S-ghost"]), proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert worldcheck.last_receipt_probe() == {"attempted": 0, "eligible": 0}
+
+
+def test_last_receipt_probe_resets_on_a_checkpoint_with_nothing_carried(
+        receipts_on, proj):
+    # A prior brief left a nonzero reading; a later checkpoint with nothing
+    # carried at all (e.g. a different, quieter project in the same process)
+    # must never inherit it.
+    _signed_origin("S-origin", proj)
+    worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert worldcheck.last_receipt_probe()["attempted"] == 1
+    empty_cp = {"session_id": "S-now", "working_context": {}, "epistemic_snapshot": {}}
+    stats = worldcheck.check(empty_cp, proj)
+    assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    assert worldcheck.last_receipt_probe() == {"attempted": 0, "eligible": 0}
+
+
+def test_last_receipt_probe_zero_when_receipts_disabled(
+        receipts_on, proj, monkeypatch):
+    monkeypatch.delenv("DAIMON_RECEIPTS", raising=False)
+    _signed_origin("S-origin", proj)
+    worldcheck.check(_cp_origins(["S-origin"]), proj)
+    assert worldcheck.last_receipt_probe() == {"attempted": 0, "eligible": 0}
+
+
 # ---- #439 fail-open branches ------------------------------------------------
 #
 # Every branch below is a SILENT SKIP by contract, which is exactly why each
