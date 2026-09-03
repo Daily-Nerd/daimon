@@ -79,6 +79,25 @@ def test_untyped_evidence_is_refused(tmp_checkpoint_dir):
     assert refutations.records(project_dir=PROJECT) == {}
 
 
+def test_over_cap_raises_the_subclass_with_field_and_limit(tmp_checkpoint_dir):
+    """#920: the CLI names a destination by inspecting which field tripped
+    the cap, so the exception must carry that field rather than the caller
+    re-parsing the message string — the same shape #916 gave `requests`."""
+    with pytest.raises(refutations.RefutationTooLong) as exc_info:
+        _assert(verdict="x" * (refutations._MAX_TEXT + 1))
+    assert exc_info.value.field == "verdict"
+    assert exc_info.value.limit == refutations._MAX_TEXT
+
+
+def test_non_length_failures_still_raise_plain_refutation_error(tmp_checkpoint_dir):
+    """A required-but-empty field is a different failure than over-cap — it
+    must not carry a `field`/`limit` pair or trip the CLI's destination
+    text, which is over-cap-only."""
+    with pytest.raises(refutations.RefutationError) as exc_info:
+        _assert(verdict="")
+    assert not isinstance(exc_info.value, refutations.RefutationTooLong)
+
+
 def test_revision_resets_active_record_until_reratified(tmp_checkpoint_dir):
     ref_id = _assert(channel="cli-tty", ratified=True)
     refutations.revise(
@@ -269,6 +288,79 @@ def test_cli_refute_rejects_agent_self_ratification(
     ])
     assert rc == 1
     assert "requires a human channel" in capsys.readouterr().out
+
+
+def test_cli_refute_add_refusal_over_cap_verdict_names_the_artifact_destination(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """#920: an over-cap `verdict` on `refute add` names an artifact pointer
+    and the checkpoint, mirroring the #916 request-ledger refusal — but
+    never `daimon log` (nothing reads a ref-less note back)."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    long_verdict = "x" * (refutations._MAX_TEXT + 1)
+    rc = cli.main([
+        "refute", "add", "--subject", "bad gate", "--verdict", long_verdict,
+        "--scope", "current replay", "--evidence", "measurement:run-1",
+        "--by", "agent",
+    ])
+    assert rc == 1
+    assert refutations.records(project_dir=PROJECT) == {}
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" in out
+    assert "write-checkpoint" in out
+    assert "daimon-end" in out
+    assert "daimon log" not in out
+
+
+def test_cli_refute_add_refusal_over_cap_evidence_names_the_proof_destination(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    long_evidence = "measurement:" + "x" * refutations._MAX_TEXT
+    rc = cli.main([
+        "refute", "add", "--subject", "bad gate", "--verdict", "does not work",
+        "--scope", "current replay", "--evidence", long_evidence,
+        "--by", "agent",
+    ])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" in out
+    assert "write-checkpoint" in out
+    assert "daimon log" not in out
+
+
+def test_cli_refute_add_refusal_over_cap_anchor_names_no_destination(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """`anchor` is an identifier, not authored prose — its over-cap refusal
+    stays exactly the plain #916-shaped message, with no destination."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    long_anchor = "x" * (refutations._MAX_TEXT + 1)
+    rc = cli.main([
+        "refute", "add", "--subject", "bad gate", "--verdict", "does not work",
+        "--scope", "current replay", "--evidence", "measurement:run-1",
+        "--anchor", long_anchor, "--by", "agent",
+    ])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "pointer" not in out
+    assert "write-checkpoint" not in out
+
+
+def test_cli_refute_add_normal_length_records_with_no_destination_text(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """The negative case: a normal-length refutation still records cleanly,
+    with no destination text on stdout — the sentence is over-cap-only."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    rc = cli.main([
+        "refute", "add", "--subject", "bad gate", "--verdict", "does not work",
+        "--scope", "current replay", "--evidence", "measurement:run-1",
+        "--by", "agent",
+    ])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "pointer" not in out
+    assert "write-checkpoint" not in out
 
 
 def test_disabled_refutation_write_fails_visibly(

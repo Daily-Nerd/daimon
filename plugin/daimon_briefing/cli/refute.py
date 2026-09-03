@@ -12,6 +12,7 @@ import daimon_briefing.cli as _cli
 from .. import refutations, render
 from ._ledger import (
     _print_refutation,
+    _refusal_message,
     _refutation_json,
     _report_vanished_write,
     _refutation_lines,
@@ -31,7 +32,7 @@ def _cmd_refute_add(args) -> int:
             revisit_when=args.revisit_when or "", ratified=args.ratify,
             project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"refutation not recorded: {exc}")
+        print(_refusal_message("refutation not recorded", exc))
         return 1
     record = refutations.get(ref_id, project_dir=project)
     _cli._note_usage("refute:add")
@@ -67,7 +68,7 @@ def _cmd_refute_ratify(args) -> int:
         refutations.ratify(args.refutation_id, channel=_refute_channel(args),
                            note=args.note or "", project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"refutation not ratified: {exc}")
+        print(_refusal_message("refutation not ratified", exc))
         return 1
     record = refutations.get(args.refutation_id, project_dir=project)
     _cli._note_usage("refute:ratify")
@@ -94,7 +95,7 @@ def _cmd_refute_revise(args) -> int:
             anchors=anchors, revisit_when=args.revisit_when,
             ratified=args.ratify, project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"refutation not revised: {exc}")
+        print(_refusal_message("refutation not revised", exc))
         return 1
     record = refutations.get(args.refutation_id, project_dir=project)
     _cli._note_usage("refute:revise")
@@ -124,7 +125,7 @@ def _cmd_refute_overturn(args) -> int:
             evidence=args.evidence,
             note=args.note or "", project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"refutation not overturned: {exc}")
+        print(_refusal_message("refutation not overturned", exc))
         return 1
     record = refutations.get(args.refutation_id, project_dir=project)
     _cli._note_usage("refute:overturn")
@@ -178,7 +179,7 @@ def _cmd_refute_search(args) -> int:
             " ".join(args.query), project_dir=project,
             states=set(args.state or refutations.STATES))
     except refutations.RefutationError as exc:
-        print(f"refutation search refused: {exc}")
+        print(_refusal_message("refutation search refused", exc))
         return 1
     _cli._note_usage("refute:search")
     if args.json:
@@ -206,7 +207,7 @@ def _cmd_refute_guard(args) -> int:
             " ".join(args.query), anchors=args.anchor,
             project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"refutation guard refused: {exc}")
+        print(_refusal_message("refutation guard refused", exc))
         return 1
     # #581: split by outcome and rail, the way `resolve` splits its tags. One
     # aggregate count cannot separate a hit from a miss, so the false-veto rate

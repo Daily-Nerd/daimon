@@ -13,6 +13,28 @@ import sys
 import daimon_briefing.cli as _cli
 
 from .. import amendments, briefing, render, store
+from . import _cap_refusal
+
+# #920: over-cap `evidence` gets its OWN destination, distinct from the
+# request and refutation ledgers' "put it in an artifact" wording. `evidence`
+# here is the verbatim transcript quote itself — the thing being byte-checked
+# at session end, not a pointer to it — so redirecting it to a file would
+# make the byte-check meaningless. The fix over cap is a shorter quote, not
+# a different home. `note` is absent on purpose: it is a short human-channel
+# rationale, not the ledger's own content (same reasoning as `request`'s
+# `note` in #916).
+_DESTINATION_BY_FIELD = {
+    "evidence": (
+        " — evidence is one contiguous verbatim span from the transcript, "
+        "not a summary; the amendment can only carry the span that proves "
+        "the change, never more of the surrounding context."
+    ),
+}
+
+
+def _refusal_message(prefix: str, exc: amendments.AmendmentError) -> str:
+    return _cap_refusal.format_cap_refusal(
+        prefix, exc, amendments.AmendmentTooLong, _DESTINATION_BY_FIELD)
 
 
 def _amend_channel(args) -> str:
@@ -66,7 +88,7 @@ def _cmd_amend_propose(args) -> int:
             project_dir=project)
     except amendments.AmendmentError as exc:
         _cli._note_usage("amend:refused")
-        print(f"amendment not recorded: {exc}")
+        print(_refusal_message("amendment not recorded", exc))
         return 1
     record = amendments.get(a_id, project_dir=project)
     state = record["state"] if record else "candidate"
@@ -101,7 +123,7 @@ def _cmd_amend_verdict(args) -> int:
                               project_dir=project)
     except amendments.AmendmentError as exc:
         _cli._note_usage(f"amend:{verb}:refused")
-        print(f"amendment {verb} refused: {exc}")
+        print(_refusal_message(f"amendment {verb} refused", exc))
         return 1
     _cli._note_usage(f"amend:{verb}")
     record = amendments.get(args.amendment_id, project_dir=project)

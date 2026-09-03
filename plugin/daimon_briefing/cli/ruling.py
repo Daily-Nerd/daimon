@@ -14,6 +14,7 @@ import daimon_briefing.cli as _cli
 from .. import config, normalize, refutations, render
 from ._ledger import (
     _print_ruling,
+    _refusal_message,
     _refutation_json,
     _report_vanished_write,
     _refute_channel,
@@ -31,7 +32,7 @@ def _cmd_ruling_propose(args) -> int:
             revisit_when=args.revisit_when or "", ratified=args.ratify,
             project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"ruling not recorded: {exc}")
+        print(_refusal_message("ruling not recorded", exc))
         return 1
     record = refutations.get(ruling_id, project_dir=project)
     _cli._note_usage("ruling:propose")
@@ -61,7 +62,7 @@ def _cmd_ruling_ratify(args) -> int:
     try:
         channel = _refute_channel(args)
     except refutations.RefutationError as exc:
-        print(f"ruling not ratified: {exc}")
+        print(_refusal_message("ruling not ratified", exc))
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     if record is None:
@@ -97,7 +98,7 @@ def _cmd_ruling_ratify(args) -> int:
                            note=args.note or "", verdict_key=displayed_key,
                            project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"ruling not ratified: {exc}")
+        print(_refusal_message("ruling not ratified", exc))
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:ratify")
@@ -134,7 +135,7 @@ def _cmd_ruling_revise(args) -> int:
     try:
         channel = _refute_channel(args)
     except refutations.RefutationError as exc:
-        print(f"ruling not revised: {exc}")
+        print(_refusal_message("ruling not revised", exc))
         return 1
     if (record["state"] == "active" and channel == "cli-tty"
             and (args.verdict is not None or args.subject is not None)):
@@ -161,7 +162,7 @@ def _cmd_ruling_revise(args) -> int:
             anchors=anchors, revisit_when=args.revisit_when,
             ratified=False, project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"ruling not revised: {exc}")
+        print(_refusal_message("ruling not revised", exc))
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:revise")
@@ -193,7 +194,7 @@ def _cmd_ruling_retire(args) -> int:
             evidence=args.evidence or (),
             note=args.note or "", project_dir=project)
     except refutations.RefutationError as exc:
-        print(f"ruling not retired: {exc}")
+        print(_refusal_message("ruling not retired", exc))
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:retire")

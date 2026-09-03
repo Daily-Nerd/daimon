@@ -97,6 +97,25 @@ def test_evidence_required_and_capped(project):
         _propose(project, evidence="x" * 2001)
 
 
+def test_over_cap_evidence_raises_the_subclass_with_field_and_limit(project):
+    """#920: the CLI names a destination by inspecting which field tripped
+    the cap, so the exception must carry that field rather than the caller
+    re-parsing the message string — the same shape #916 gave `requests`."""
+    with pytest.raises(amendments.AmendmentTooLong) as exc_info:
+        _propose(project, evidence="x" * 2001)
+    assert exc_info.value.field == "evidence"
+    assert exc_info.value.limit == amendments._MAX_TEXT
+
+
+def test_required_but_empty_evidence_stays_the_plain_error(project):
+    """A required-but-empty field is a different failure than over-cap — it
+    must not carry a `field`/`limit` pair or trip the CLI's destination
+    text, which is over-cap-only."""
+    with pytest.raises(amendments.AmendmentError) as exc_info:
+        _propose(project, evidence="")
+    assert not isinstance(exc_info.value, amendments.AmendmentTooLong)
+
+
 def test_note_refused_on_agent_channel(project):
     # Free-form agent prose never enters the ledger: `note` is a human-channel
     # field, the render side's only unbounded text besides the quote itself.
@@ -409,6 +428,42 @@ def test_cli_amend_agent_propose_records_candidate(project, capsys):
     assert records[0]["state"] == "candidate"
     out = capsys.readouterr().out
     assert "candidate" in out
+
+
+def test_cli_amend_refusal_over_cap_evidence_names_the_quote_destination(
+        project, capsys):
+    """#920: an over-cap `evidence` on `amend propose` names the verbatim-span
+    destination — never an artifact pointer, since the amendment's evidence
+    IS the byte-checked quote, not a pointer to it — plus the checkpoint
+    hint, and never `daimon log`."""
+    from daimon_briefing import cli, store
+    store.write_checkpoint("S-1", _checkpoint_with_item(), project_dir=project)
+    long_evidence = "x" * (amendments._MAX_TEXT + 1)
+    rc = cli.main(["amend", ITEM, "--change", "progressed",
+                   "--evidence", long_evidence, "--by", "agent",
+                   "--project", project])
+    assert rc == 1
+    assert not amendments.records(project_dir=project)
+    out = capsys.readouterr().out
+    assert "is too long" in out
+    assert "contiguous" in out
+    assert "write-checkpoint" in out
+    assert "daimon log" not in out
+
+
+def test_cli_amend_normal_length_records_with_no_destination_text(
+        project, capsys):
+    """The negative case: a normal-length amendment still records cleanly,
+    with no destination text on stdout — the sentence is over-cap-only."""
+    from daimon_briefing import cli, store
+    store.write_checkpoint("S-1", _checkpoint_with_item(), project_dir=project)
+    rc = cli.main(["amend", ITEM, "--change", "progressed",
+                   "--evidence", "the PR merged", "--by", "agent",
+                   "--project", project])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "contiguous" not in out
+    assert "write-checkpoint" not in out
 
 
 def test_cli_amend_unknown_item_refused(project, capsys):
