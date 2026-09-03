@@ -1481,6 +1481,21 @@ def _generation_lines(s: dict) -> list[str]:
     return lines
 
 
+def _receipts_line(r: dict) -> str:
+    """#919: the one receipt-probe status line, shared by the plain and rich
+    renderers, in the three wording states the issue's diagnosis needed told
+    apart — disabled, enabled-but-nothing-fired, and enabled-with-counts.
+    Plain wording only, no court vocabulary."""
+    if not r.get("enabled"):
+        return "receipt probes: off (DAIMON_RECEIPTS unset)"
+    if not r.get("attempted"):
+        return "receipt probes: on, none attempted yet"
+    return (f"receipt probes (lifetime): {r['attempted']} attempted "
+            f"of {r['eligible']} eligible, {r['confirmed']} confirmed, "
+            f"{r['contradicted']} contradicted, {r['skipped']} skipped, "
+            f"{r['cured']} cured")
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -1548,6 +1563,12 @@ def _plain_stats(data: dict) -> None:
         print("verification (this project):")
         print(f"  rejections: {v['total']}  " + ", ".join(
             f"{k} {n}" for k, n in sorted(v["by_check"].items())))
+    rcpt = data.get("receipts")
+    if rcpt:
+        # #919: always shown, like resolutions below — "off" and "on, none
+        # attempted yet" are themselves the answer, not noise to gate on.
+        print("receipts (this project):")
+        print(f"  {_receipts_line(rcpt)}")
     res = data.get("resolutions")
     if res:
         # #480 slice 5: the credit block — who is closing loops. Always shown
@@ -1695,6 +1716,17 @@ def _rich_stats(data: dict) -> None:
             ver_table.add_row(check, str(n))
         ver_table.add_row("total", str(v["total"]))
         console.print(ver_table)
+
+    rcpt = data.get("receipts")
+    if rcpt:
+        # #919: mirrors the plain renderer — always shown (off / silent /
+        # counts are each an answer, not noise to gate on).
+        rcpt_table = Table(title="receipts (this project)", title_justify="left",
+                           show_header=True, header_style="bold")
+        rcpt_table.add_column("metric")
+        rcpt_table.add_column("value")
+        rcpt_table.add_row("status", _receipts_line(rcpt))
+        console.print(rcpt_table)
 
     res = data.get("resolutions")
     if res:

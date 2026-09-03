@@ -2094,6 +2094,232 @@ def test_worldcheck_ledger_rows_route_cures_through_the_gate(
         == ["receipt", "receipt-ok"]
 
 
+def test_note_receipt_probe_usage_writes_nothing_without_a_project(monkeypatch):
+    # #919: the counters are scoped by project slug, so a missing project has
+    # nowhere to fold into; the helper returns before touching the log.
+    calls = []
+    monkeypatch.setattr(cli, "_note_usage", lambda name: calls.append(name))
+    monkeypatch.setattr(cli.worldcheck, "last_receipt_probe",
+                        lambda: {"attempted": 3, "eligible": 3})
+    assert cli._note_receipt_probe_usage(None, {"receipt-validity:confirmed": 3}) is None
+    assert calls == []
+
+
+# #919: reuses test_worldcheck's receipt-validity fixtures (a signed origin on
+# disk, a cached pubkey dir) — these tests drive one real `daimon brief` end
+# to end, never worldcheck.check() directly, so the CLI's usage.log +
+# rendering wiring is what's under test.
+from tests.test_worldcheck import _signed_origin, _pubkey_dir  # noqa: E402
+
+
+@pytest.fixture
+def receipt_proj(tmp_path):
+    """A real, existing directory — the receipt-validity probe's vitni
+    subprocess runs with `cwd=project_dir` (Popen(cwd=...) needs it to
+    exist), same shape as test_worldcheck.py's own `proj` fixture. Given its
+    own name rather than reusing that one: `proj` is this file's own common
+    local variable name in dozens of unrelated tests, and importing it as a
+    module-level fixture collides with every one of them (ruff F811)."""
+    d = tmp_path / "receipt-projroot"
+    d.mkdir()
+    return str(d)
+
+
+def _one_receipt_item_checkpoint():
+    return {"session_id": "S-mine", "working_context": {"open_questions": [
+        {"text": "note", "trust": "inferred", "carried_from": "S-prev",
+         "origin_session": "S-origin"},
+    ]}, "epistemic_snapshot": {}}
+
+
+def test_stats_receipt_probe_confirms_without_a_ledger_row(
+        tmp_checkpoint_dir, tmp_log_dir, tmp_path, fake_cli, receipt_proj,
+        monkeypatch, capsys):
+    from daimon_briefing import store, worldcheck
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", receipt_proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _pubkey_dir(tmp_path, monkeypatch)
+    _signed_origin("S-origin", receipt_proj)
+    store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
+                           project_dir=receipt_proj)
+
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert store.verification_rows(project_dir=receipt_proj) == []
+
+    assert cli.main(["stats", "--json"]) == 0
+    r = json.loads(capsys.readouterr().out)["receipts"]
+    assert r == {"enabled": True, "attempted": 1, "eligible": 1,
+                 "confirmed": 1, "contradicted": 0, "skipped": 0, "cured": 0}
+
+
+def test_stats_receipt_probe_tampered_then_repaired_cures(
+        tmp_checkpoint_dir, tmp_log_dir, tmp_path, fake_cli, receipt_proj,
+        monkeypatch, capsys):
+    from daimon_briefing import store, worldcheck
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", receipt_proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _pubkey_dir(tmp_path, monkeypatch)
+    _signed_origin("S-origin", receipt_proj, tamper=True)
+    store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
+                           project_dir=receipt_proj)
+
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert [row["check"] for row in
+            store.verification_rows(project_dir=receipt_proj)] == ["receipt"]
+    assert cli.main(["stats", "--json"]) == 0
+    r = json.loads(capsys.readouterr().out)["receipts"]
+    assert r["attempted"] == 1
+    assert r["contradicted"] == 1
+    assert r["skipped"] == 0
+    assert r["cured"] == 0
+
+    # Repair: re-sign over the real (untampered) bytes and re-brief.
+    _signed_origin("S-origin", receipt_proj, tamper=False)
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert [row["check"] for row in
+            store.verification_rows(project_dir=receipt_proj)] == \
+        ["receipt", "receipt-ok"]
+    assert cli.main(["stats", "--json"]) == 0
+    r2 = json.loads(capsys.readouterr().out)["receipts"]
+    assert r2["attempted"] == 2       # two briefs, one probe each
+    assert r2["confirmed"] == 1       # the repaired brief
+    assert r2["contradicted"] == 1    # the tampered brief, still counted
+    assert r2["skipped"] == 0
+    assert r2["cured"] == 1           # read live off the latest verdict fold
+
+
+def test_stats_receipt_probe_skipped_when_origin_predates_receipts(
+        tmp_checkpoint_dir, tmp_log_dir, tmp_path, fake_cli, receipt_proj,
+        monkeypatch, capsys):
+    """#919: a probe that fires and finds nothing to verify — an origin
+    written before receipts existed — is the SILENT case this counter exists
+    to expose. It must count as `skipped`, never read as "0 confirmed, 0
+    contradicted" (indistinguishable from a probe that never ran at all)."""
+    from daimon_briefing import store, worldcheck
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", receipt_proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _pubkey_dir(tmp_path, monkeypatch)
+    _signed_origin("S-origin", receipt_proj, sidecar=False, receipts_era=False)
+    store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
+                           project_dir=receipt_proj)
+
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert store.verification_rows(project_dir=receipt_proj) == []
+
+    assert cli.main(["stats", "--json"]) == 0
+    r = json.loads(capsys.readouterr().out)["receipts"]
+    assert r == {"enabled": True, "attempted": 1, "eligible": 1,
+                 "confirmed": 0, "contradicted": 0, "skipped": 1, "cured": 0}
+
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert ("receipt probes (lifetime): 1 attempted of 1 eligible, "
+            "0 confirmed, 0 contradicted, 1 skipped, 0 cured") in out
+
+
+def test_stats_receipts_line_disabled_says_off(tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.delenv("DAIMON_RECEIPTS", raising=False)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x919disabled")
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "receipt probes: off (DAIMON_RECEIPTS unset)" in out
+
+
+def test_stats_receipts_line_enabled_none_attempted_yet(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x919silent")
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "receipt probes: on, none attempted yet" in out
+
+
+def test_stats_receipts_line_renders_full_counts(
+        tmp_checkpoint_dir, tmp_log_dir, tmp_path, fake_cli, receipt_proj,
+        monkeypatch, capsys):
+    from daimon_briefing import store, worldcheck
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", receipt_proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _pubkey_dir(tmp_path, monkeypatch)
+    _signed_origin("S-origin", receipt_proj)
+    store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
+                           project_dir=receipt_proj)
+
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert ("receipt probes (lifetime): 1 attempted of 1 eligible, "
+            "1 confirmed, 0 contradicted, 0 skipped, 0 cured") in out
+
+
+def test_stats_rich_renders_receipts_section(
+        tmp_checkpoint_dir, tmp_log_dir, tmp_path, fake_cli, receipt_proj,
+        monkeypatch, capsys):
+    from daimon_briefing import store, worldcheck
+
+    monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", receipt_proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _pubkey_dir(tmp_path, monkeypatch)
+    _signed_origin("S-origin", receipt_proj)
+    store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
+                           project_dir=receipt_proj)
+
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "receipts (this project)" in out
+    assert "1 attempted" in out
+    assert "1 confirmed" in out
+    assert "0 skipped" in out
+
+
+def test_stats_receipts_disabled_counters_untouched_and_line_says_off(
+        tmp_checkpoint_dir, tmp_log_dir, tmp_path, fake_cli, receipt_proj,
+        monkeypatch, capsys):
+    from daimon_briefing import store, worldcheck
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", receipt_proj)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.delenv("DAIMON_RECEIPTS", raising=False)
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _pubkey_dir(tmp_path, monkeypatch)
+    _signed_origin("S-origin", receipt_proj)  # present on disk, receipts OFF
+    store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
+                           project_dir=receipt_proj)
+
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    r = json.loads(capsys.readouterr().out)["receipts"]
+    assert r == {"enabled": False, "attempted": 0, "eligible": 0,
+                 "confirmed": 0, "contradicted": 0, "skipped": 0, "cured": 0}
+
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "receipt probes: off (DAIMON_RECEIPTS unset)" in out
+
+
 def test_suggest_line_collapses_multiline_item_text():
     # #512: the injection line's echo strip is line-scoped (`[^\n]*`), so item
     # text carrying a newline would leave its tail in the verification

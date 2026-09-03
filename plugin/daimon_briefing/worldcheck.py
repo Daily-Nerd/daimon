@@ -350,8 +350,12 @@ def _day_bucket() -> int:
     return int(time.time() // 86400)
 
 
-def _receipt_targets(carried, project, deadline) -> set:
-    """The origin session(s) whose signed receipt THIS brief verifies (#439).
+def _receipt_eligible(carried, project, deadline) -> list:
+    """The origin sessions eligible for a receipt probe THIS brief, in
+    checkpoint order, BEFORE the day-bucket rotation samples from them (#919).
+    Kept separate from `_sample_receipt_targets` so a caller can learn the
+    population size the sampler drew from — the sampled `set` holds at most
+    MAX_RECEIPT_PROBES targets, which already collapses that fact away.
 
     Eligibility mirrors `capture._origin_on_disk`: an origin whose checkpoint
     is absent, unreadable, GC'd or belongs to another project is not a witness
@@ -360,21 +364,14 @@ def _receipt_targets(carried, project, deadline) -> set:
     store keeps a BOUNDED number of per-session files, so an old origin being
     gone says nothing about the claim it once carried.
 
-    Sampling is a day-bucket ROTATION over the eligible list, not a
-    hash-modulo gate. A `sha1(origin) % N` scheme is stable, which is exactly
-    what makes it wrong here: the origins it excludes are excluded FOREVER —
-    permanent blind spots, and a tampered checkpoint sitting in one would
-    never be probed on any day. Rotation reaches every origin over
-    consecutive days instead, at the same one-probe-per-brief cost.
-
     Reads one small checkpoint per DISTINCT origin, which is why it takes the
     shared deadline: collection work the budget does not cover is work the
     briefing can still be blocked by."""
     if not config.receipts_enabled():
-        return set()
+        return []
     slug = store.project_slug(project)
     if not slug:
-        return set()
+        return []
     eligible, seen = [], set()
     for item in carried:
         origin = item.get("origin_session")
@@ -386,11 +383,44 @@ def _receipt_targets(carried, project, deadline) -> set:
         cp = store.read_checkpoint(origin)  # total — swallows torn/bad paths
         if isinstance(cp, dict) and cp.get("project_slug") == slug:
             eligible.append(origin)
+    return eligible
+
+
+def _sample_receipt_targets(eligible: list) -> set:
+    """Day-bucket ROTATION over an already-computed eligible list (#439),
+    picking at most MAX_RECEIPT_PROBES of them. Not a hash-modulo gate: a
+    `sha1(origin) % N` scheme is stable, which is exactly what makes it wrong
+    here — the origins it excludes are excluded FOREVER, permanent blind
+    spots, and a tampered checkpoint sitting in one would never be probed on
+    any day. Rotation reaches every origin over consecutive days instead, at
+    the same one-probe-per-brief cost."""
     if not eligible:
         return set()
     start = _day_bucket() % len(eligible)
     return {eligible[(start + i) % len(eligible)]
             for i in range(min(MAX_RECEIPT_PROBES, len(eligible)))}
+
+
+
+# #919: last-run receipt-probe POPULATION, read by the CLI right after
+# check() returns and folded into usage.log there (the same per-project
+# counter convention the outcome counters below already use). Deliberately
+# NOT a key in check()'s own return dict: that dict is asserted by exact
+# equality across dozens of existing tests in this module, and "how many
+# origins were eligible/attempted this run" is a run-level population fact,
+# not a per-item outcome the {class}:{outcome} rollup was built to carry.
+# Reset unconditionally at the top of every check() call (even the early-
+# return paths) so a checkpoint with nothing carried never inherits a stale
+# nonzero reading left behind by a different project's brief earlier in the
+# same process.
+_last_receipt_probe = {"attempted": 0, "eligible": 0}
+
+
+def last_receipt_probe() -> dict:
+    """{"attempted": n, "eligible": m} from the most recent check() call in
+    this process — n the origins `_sample_receipt_targets` picked (probes
+    fired), m the origins `_receipt_eligible` found before that sampling."""
+    return dict(_last_receipt_probe)
 
 
 def _gh_path():
@@ -780,6 +810,12 @@ def check(checkpoint, project_dir) -> dict:
     their own. A caller that iterates the dict blindly must pop it first."""
     # dict, not dict[str, int]: LEDGER_KEY carries list rows (#439).
     stats: dict = {"confirmed": 0, "contradicted": 0, "skipped": 0}
+    # #919: reset the last-run receipt-probe telemetry FIRST, before either
+    # early return below — a checkpoint with nothing carried (or no project)
+    # must read as "0 attempted, 0 eligible" this run, never as whatever a
+    # different project's brief left behind earlier in this same process.
+    _last_receipt_probe["attempted"] = 0
+    _last_receipt_probe["eligible"] = 0
     if not isinstance(checkpoint, dict) or not project_dir:
         return stats
     # Native items were just re-extracted — not in question, for any class.
@@ -794,7 +830,10 @@ def check(checkpoint, project_dir) -> dict:
     # reads origin checkpoints off disk, and collection work the budget does
     # not cover is work the briefing can still be blocked by.
     deadline = time.monotonic() + BUDGET_SECONDS
-    origins = _receipt_targets(carried, project_dir, deadline)
+    eligible = _receipt_eligible(carried, project_dir, deadline)
+    origins = _sample_receipt_targets(eligible)
+    _last_receipt_probe["attempted"] = len(origins)
+    _last_receipt_probe["eligible"] = len(eligible)
     claims = []
     for item in carried:
         found = claim_for(item.get("text"))
