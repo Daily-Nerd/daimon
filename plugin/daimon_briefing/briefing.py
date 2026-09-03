@@ -20,8 +20,8 @@ import time
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
 # module-level import (contrast carry.py's own local-import notes, which
 # don't apply here).
-from . import (capture, carry, config, llm, receipts, refutations, requests,
-               schema, scoring, serializer, store)
+from . import (capture, carry, config, llm, pending, receipts, refutations,
+               requests, schema, scoring, serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
 # name inside that function.
@@ -810,6 +810,65 @@ def ruling_lines(project_dir=None) -> list[str]:
     return lines
 
 
+# ---- #766 slice 5: the one-line decision count ------------------------------
+#
+# Registered as its own governed public string family — not a heading, not a
+# panel: "N decisions waiting on you here (M elsewhere) - daimon decide".
+# `here` is exactly what bare `daimon decide` lists (`pending.queue`);
+# `elsewhere` is the sum of `pending.foreign_counts` — an INTEGER fold, never
+# `foreign_queues` (the text path scar 0055 forbids on this surface). Frozen
+# tokens: "decisions waiting on you", "here", "elsewhere", "- daimon decide".
+
+_DECISION_COUNT_LINE_PLURAL = \
+    "{n} decisions waiting on you here{elsewhere} - daimon decide"
+_DECISION_COUNT_LINE_SINGULAR = \
+    "1 decision waiting on you here{elsewhere} - daimon decide"
+
+
+def decision_count_line(project_dir=None) -> str | None:
+    """The #766 slice 5 count line, or None when there is nothing to say.
+
+    `here` reads `pending.queue` (this project's own backlog); `elsewhere`
+    reads `pending.foreign_counts`, SKIPPED ENTIRELY under
+    `config.tenant_scoped()`: a tenant-scoped host must not learn that other
+    buckets exist, so the call itself never happens, not merely its
+    rendering. Zero-both is silence: both counts zero renders no line; a
+    zero `here` with a nonzero `elsewhere` still renders. Fail-open like the
+    panels around it, each half INDEPENDENTLY: a broken `here` read yields
+    None (the line has nothing honest to say without it), but a broken
+    `elsewhere` read degrades to 0 rather than discarding a perfectly good
+    `here` count — one lane's failure must not blank the whole line.
+
+    `project_dir` here follows `request_panel_lines`'s own gate, not the
+    rulings section's: callers pass the CLI's `worldcheck_project`, so this
+    line is absent on `--slug` and the global-pointer-fallback body — same
+    posture as every panel in this family (this is content ABOUT another
+    bucket's existence, just as a count, not a record read directly off it).
+
+    The line's exact wording and scope are frozen; a change to either routes
+    through the project's public-vocabulary process, not a local edit here.
+    """
+    if project_dir is None:
+        return None
+    try:
+        here = len(pending.queue(project_dir=project_dir)["rows"])
+    except Exception:
+        return None
+    elsewhere = 0
+    if not config.tenant_scoped():
+        try:
+            elsewhere = sum(pending.foreign_counts(project_dir=project_dir)
+                            .values())
+        except Exception:
+            elsewhere = 0
+    if here == 0 and elsewhere == 0:
+        return None
+    suffix = f" ({elsewhere} elsewhere)" if elsewhere else ""
+    template = (_DECISION_COUNT_LINE_SINGULAR if here == 1
+                else _DECISION_COUNT_LINE_PLURAL)
+    return template.format(n=here, elsewhere=suffix)
+
+
 # ---- #694 PR 2: the recipient-side request panel ---------------------------
 
 # Ruling-shaped (D2): always-present, skeleton furniture, capped and loud on
@@ -953,15 +1012,18 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
 
 
 def render_plain(b: dict, degraded: bool = False, rulings=(),
-                 request_lines=(), verdict_lines=(), owed_lines=()) -> str:
+                 request_lines=(), verdict_lines=(), owed_lines=(),
+                 decision_count: str | None = None) -> str:
     """The deterministic briefing text. Under the #79 budget this is
     BYTE-IDENTICAL to the legacy render(); over it, long items truncate
     (sections preserved) and then whole items drop, lowest value first,
     each cut announced with a trim note. `degraded` (#204) downgrades every
-    verbatim label and adds one header note when the receipt is unverifiable."""
+    verbatim label and adds one header note when the receipt is unverifiable.
+    `decision_count` (#766 slice 5) is the single count line or None —
+    outside `_DROP_ORDER` like every skeleton block, never trimmed."""
     budget = config.brief_max_tokens()
     text = _render_parts(b, {}, degraded, rulings, request_lines,
-                         verdict_lines, owed_lines)
+                         verdict_lines, owed_lines, decision_count)
     if not budget or estimate_tokens(text) <= budget:
         return text
 
@@ -980,7 +1042,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
         ]
     trimmed = {key: 0 for key, _ in _DROP_ORDER}
     text = _render_parts(b, trimmed, degraded, rulings, request_lines,
-                         verdict_lines, owed_lines)
+                         verdict_lines, owed_lines, decision_count)
 
     # Stage 2: drop whole items, least valuable first, until the budget holds
     # or only the skeleton remains.
@@ -991,7 +1053,8 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
             b[key] = items
             trimmed[key] += 1
             text = _render_parts(b, trimmed, degraded, rulings,
-                                 request_lines, verdict_lines, owed_lines)
+                                 request_lines, verdict_lines, owed_lines,
+                                 decision_count)
         if estimate_tokens(text) <= budget:
             break
     return text
@@ -999,7 +1062,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
 
 def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
                   rulings=(), request_lines=(), verdict_lines=(),
-                  owed_lines=()) -> str:
+                  owed_lines=(), decision_count: str | None = None) -> str:
     parts = ["While you were away — here's where we left off."]
     if degraded:
         # One header note (#204), embedded in the text so the hook-injected
@@ -1012,6 +1075,12 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
         # sections below.
         parts.append("")
         parts.extend(rulings)
+    if decision_count:
+        # #766 slice 5: sits directly above the request panel when it
+        # renders, and in its position when it does not — so it is placed
+        # here, between the rulings block and the request panel.
+        parts.append("")
+        parts.append(decision_count)
     if request_lines:
         # #694 PR 2: same posture as rulings above — skeleton furniture, the
         # budget loops re-render with the same lines and can only trim the
@@ -1114,19 +1183,27 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str |
     own `worldcheck_project`, D2)."""
     b = build(checkpoint)
     rulings = ruling_lines(project_dir) if project_dir is not None else []
+    # #766 slice 5: same gate as the request panel below, not the rulings
+    # section above — this line is content ABOUT another bucket's existence
+    # (a count), so it follows request_panel_lines's posture: absent on
+    # --slug and the global-pointer-fallback body.
+    decision_count = (decision_count_line(worldcheck_project)
+                      if worldcheck_project is not None else None)
+    decision_count_block = [decision_count] if decision_count else []
     request_lines = (request_panel_lines(worldcheck_project)
                      if worldcheck_project is not None else [])
     verdict_lines = (verdict_panel_lines(worldcheck_project)
                      if worldcheck_project is not None else [])
     owed_lines = (owed_panel_lines(worldcheck_project)
                   if worldcheck_project is not None else [])
-    skeleton_blocks = [blk for blk in (rulings, request_lines, verdict_lines,
+    skeleton_blocks = [blk for blk in (rulings, decision_count_block,
+                                       request_lines, verdict_lines,
                                        owed_lines) if blk]
     if b is None:
-        # #693/#694: a ruling ratified, a request addressed, or a verdict
-        # decided before the first real checkpoint (a day-one action) must
-        # still reach context — "nothing worth surfacing" is no longer true
-        # when any of the three exist.
+        # #693/#694/#766: a ruling ratified, a request addressed, a verdict
+        # decided, or a decision now waiting — before the first real
+        # checkpoint (a day-one action) — must still reach context;
+        # "nothing worth surfacing" is no longer true when any of these exist.
         if not skeleton_blocks:
             return None
         return "\n\n".join("\n".join(blk) for blk in skeleton_blocks)
@@ -1149,7 +1226,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str |
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
     return render_plain(b, degraded, rulings, request_lines, verdict_lines,
-                        owed_lines)
+                        owed_lines, decision_count)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

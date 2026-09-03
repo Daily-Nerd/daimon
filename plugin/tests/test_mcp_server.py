@@ -217,6 +217,36 @@ def test_brief_tool_never_carries_the_request_panel(tmp_checkpoint_dir,
         next(iter(requests.recipient_join(project_dir="/p/A").values())))
 
 
+def test_brief_tool_never_carries_the_decision_count_line(tmp_checkpoint_dir,
+                                                           sample_checkpoint,
+                                                           monkeypatch):
+    # #766 slice 5: no MCP exposure — the count line joins the same excluded
+    # family as the request/verdict/owed panels above. A decision IS
+    # actually waiting here, so this is a meaningful negative, not a vacuous
+    # one: the line would render on the CLI same-project path.
+    from daimon_briefing import pending, requests, store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-mcp-sender-2", {
+        "session_id": "S-mcp-sender-2", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir="/p/mcp-brief-sender-2")
+    requests.open_request(to=store.project_slug("/p/A"),
+                          ask="publish the schema", why="because",
+                          channel="cli-agent",
+                          project_dir="/p/mcp-brief-sender-2")
+    # Proof the negative below is not vacuous: /p/A's OWN decide queue
+    # genuinely has something waiting, mirroring the request-panel test
+    # neighbor's needs_surfaced_stamp proof above.
+    assert pending.queue(project_dir="/p/A")["rows"]
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _, out = rpc(_init(), _call("daimon_brief", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert "decisions waiting on you" not in text
+    assert "decision waiting on you" not in text
+
+
 def test_brief_tool_slug_and_project_conflict_is_tool_error(tmp_checkpoint_dir):
     _, out = rpc(_init(), _call("daimon_brief",
                                 {"slug": "s", "project": "/p/X"}))

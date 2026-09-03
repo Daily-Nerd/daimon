@@ -10,6 +10,12 @@ a realistic multi-bucket store, and folds in a STAND-IN per-card read of the
 same SHAPE the future stale scan will cost (one `store.list_buckets()` call
 per rendered card, capped at 3), so the budget is not measuring a rosier
 feature than the one that will actually ship once PR 3 lands.
+
+#766 slice 5 folds `pending.queue` and `pending.foreign_counts` into this
+SAME measurement too: `daimon brief` now pays both fleet-wide scans in the
+same cycle as the panel scan above, and each already has its own isolated
+budget test below — this one is what a real brief actually costs when every
+scan it triggers runs together, not the sum of the isolated numbers.
 """
 import time
 
@@ -75,16 +81,24 @@ def test_combined_brief_time_cost_stays_within_budget(tmp_checkpoint_dir,
         if requests.needs_surfaced_stamp(row):
             requests.stamp_surfaced(row["request_id"], project_dir=RECIPIENT)
     _d3_shaped_stub_scan(entry["rows"])
+    # #766 slice 5: the count line's two fleet-wide reads ride in the SAME
+    # brief cycle as the panel scan above — budgeted here together, not only
+    # in each read's own isolated test below.
+    decide_result = pending.queue(project_dir=RECIPIENT)
+    foreign_result = pending.foreign_counts(project_dir=RECIPIENT)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     assert entry["rows"], "measurement is void if nothing was addressed here"
+    assert decide_result["rows"], "measurement is void if decide has nothing"
+    assert foreign_result, "measurement is void if nothing waits elsewhere"
     with capsys.disabled():
         print(f"\n#694 PR 2 combined scan cost: {elapsed_ms:.2f}ms over "
              f"{N_BUCKETS} buckets ({N_ADDRESSED} addressed) — "
              f"budget {_BUDGET_MS}ms")
     assert elapsed_ms <= _BUDGET_MS, (
-        f"combined composer+panel+stamp cost {elapsed_ms:.2f}ms exceeds the "
-        f"{_BUDGET_MS}ms budget over {N_BUCKETS} buckets")
+        f"combined composer+panel+stamp+decide+foreign-counts cost "
+        f"{elapsed_ms:.2f}ms exceeds the {_BUDGET_MS}ms budget over "
+        f"{N_BUCKETS} buckets")
 
 
 # The fix for the polarity bug: `daimon decide`'s request lane now sources
