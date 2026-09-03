@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 66
 type: deadend
 title: top-level docs/ is not a mirror of website/docs/ — it has no reference/ section, so relative .md links assuming parity point at nothing
 severity: low
 confidence: 0.8
 created: 2026-09-02
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
+promoted_by: Kibukx
+promoted_by_source: git-config
 anchors:
   - path: docs/
   - path: website/docs/
 evidence:
-  - note: "#913: docs/hosts/claude-code.md and website/docs/hosts/claude-code.md carry the SAME stale 'Claude Code style' slug claim and were fixed in the same PR, which reads as if the two trees mirror each other page-for-page. They do not: website/docs/reference/cli.md exists, docs/reference/ does not exist at all (docs/ only has ARCHITECTURE.md, PITCH.md, hosts/, team.md, trust-inspector.md, etc. — internal working notes and validation records, confirmed by test_reader_facing_vocabulary.py's own comment: 'docs/ is deliberately absent — it holds working notes and validation records, not published prose'). A first attempt linked docs/hosts/claude-code.md to ../reference/cli.md#status, which resolves to nothing on GitHub."
+  - note: #913: docs/hosts/claude-code.md and website/docs/hosts/claude-code.md carry the SAME stale 'Claude Code style' slug claim and were fixed in the same PR, which reads as if the two trees mirror each other page-for-page. They do not: website/docs/reference/cli.md exists, docs/reference/ does not exist at all (docs/ only has ARCHITECTURE.md, PITCH.md, hosts/, team.md, trust-inspector.md, etc. — internal working notes and validation records, confirmed by test_reader_facing_vocabulary.py's own comment: 'docs/ is deliberately absent — it holds working notes and validation records, not published prose'). A first attempt linked docs/hosts/claude-code.md to ../reference/cli.md#status, which resolves to nothing on GitHub.
 expires:
   condition: "docs/ grows a reference/ section, or the two trees are formally declared independent (e.g. a README note) so no editor assumes parity again"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 `docs/` and `website/docs/` both describe hosts and both got edited in #913 for

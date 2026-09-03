@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 67
 type: landmine
 title: A column _suggest_weight reads must also be SELECTed in suggest() itself; search() selecting it proves nothing
 severity: high
 confidence: 0.9
 created: 2026-09-02
-authors: ["claude-code"]
+authors: ["claude-code", "Kibukx"]
+promoted_by: Kibukx
+promoted_by_source: git-config
 anchors:
   - pattern: "_suggest_weight"
 evidence:
-  - note: "#837 (2abf0c4): invalidated_by was written and selected in search() but not in suggest()'s own SELECT; the auto-inject path re-asserted contradicted claims. The fix left the comment 'the column MUST be selected here, not just written' at recall.py suggest()"
-  - note: "#907 (2026-09-02): superseded_source, selected in search() since #867, was absent from suggest()'s SELECT. A weight-level test on a dict passed; the end-to-end suggest test was red with KeyError: 'superseded_source'. Every human resolution would have demoted at the model-link rate"
+  - note: #837 (2abf0c4): invalidated_by was written and selected in search() but not in suggest()'s own SELECT; the auto-inject path re-asserted contradicted claims. The fix left the comment 'the column MUST be selected here, not just written' at recall.py suggest()
+  - note: #907 (2026-09-02): superseded_source, selected in search() since #867, was absent from suggest()'s SELECT. A weight-level test on a dict passed; the end-to-end suggest test was red with KeyError: 'superseded_source'. Every human resolution would have demoted at the model-link rate
 expires:
   condition: "search() and suggest() share one column list (a single SELECT builder), so a column cannot be present in one and absent from the other"
   review_after: 2027-03-02
-status: candidate
+status: active
 ---
 
 `recall.search()` and `recall.suggest()` build SEPARATE SELECT statements over the
