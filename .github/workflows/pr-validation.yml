@@ -22,7 +22,7 @@ jobs:
       PR: ${{ github.event.pull_request.number }}
       # Issue-free documentation is deliberately narrower than "any Markdown":
       # SKILL.md and other agent instructions are executable behavior, not docs.
-      DOCS_ONLY_PATH_RE: '^(README\.md|(plugin|hook|benchmark)/README\.md|research/(.*/)?README\.md|docs/.*\.(md|png|gif|jpe?g|webp|ico)|website/(docs|blog)/.*\.md|website/static/img/.*\.(png|gif|jpe?g|webp|ico))$'
+      DOCS_ONLY_PATH_RE: '^(README\.md|(plugin|hook|benchmark)/README\.md|research/(.*/)?README\.md|docs/.*\.(md|png|gif|jpe?g|webp|ico)|website/(docs|blog)/.*\.md|website/i18n/.*\.md|website/static/img/.*\.(png|gif|jpe?g|webp|ico))$'
       # CI changes can alter credentials, releases, and publishing. They bypass
       # an issue only with explicit PR approval; this allowlist merely defines
       # what may ASK for that bypass. Exact policy-test path is included so the

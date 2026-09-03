@@ -71,6 +71,11 @@ def test_the_template_does_not_invent_types_the_gate_rejects():
     "website/docs/concepts/architecture.md",
     "website/blog/2026-08-29-architecture.md",
     "website/static/img/architecture.png",
+    # The Spanish mirror ships in the same PR as the page it mirrors; a
+    # docs PR carrying it must stay docs-only or the mirror rule and the
+    # bypass contradict each other on every mirrored change.
+    "website/i18n/es/docusaurus-plugin-content-docs/current/index.md",
+    "website/i18n/es/docusaurus-plugin-content-blog/2026-08-29-architecture.md",
 ])
 def test_docs_issue_bypass_accepts_only_declared_public_docs(path):
     assert _policy_regex("DOCS_ONLY_PATH_RE").fullmatch(path)
@@ -84,6 +89,9 @@ def test_docs_issue_bypass_accepts_only_declared_public_docs(path):
     ".github/PULL_REQUEST_TEMPLATE.md",
     "website/docusaurus.config.ts",
     "website/package.json",
+    # Translation JSON under i18n/ configures the site; prose only bypasses.
+    "website/i18n/es/code.json",
+    "website/i18n/es/docusaurus-theme-classic/navbar.json",
     "plugin/daimon_briefing/briefing.py",
 ])
 def test_docs_issue_bypass_rejects_executable_or_governance_surfaces(path):
