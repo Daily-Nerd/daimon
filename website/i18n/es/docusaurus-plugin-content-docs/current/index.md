@@ -47,6 +47,14 @@ acto, así que una cita alucinada nunca puede llevar la insignia verbatim. Con
 se firman — todo lo de arriba es verificable offline, sin confiar en daimon,
 en el modelo, ni en esta página.
 
+## Una lectura independiente
+
+[Agent Memory Atlas](https://neoneye.github.io/agent-memory-atlas/systems/daimon/), un catálogo de sistemas de memoria para agentes fijado a commits, ha leído esta base de código varias veces desde julio de 2026. De su último resumen ejecutivo, citado en inglés:
+
+> This is one of the very few that treats the model's own trust label as a claim to be falsified before it is stored.
+
+No es solo elogio. El mismo resumen nombra la mitad débil: "The retrieval half is much less proven." Las dos mitades se pueden contrastar con las citas de archivo y línea de la ficha, y cada lectura queda registrada con el commit al que se fijó.
+
 ## El ciclo
 
 1. **Una sesión termina** — un hook del host serializa la transcripción a un

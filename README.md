@@ -95,6 +95,14 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 - **The briefing UX** — memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
 - **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06); other hosts are reachable via the same thin adapter shape.
 
+## An independent reading
+
+[Agent Memory Atlas](https://neoneye.github.io/agent-memory-atlas/systems/daimon/), a commit-pinned survey of agent memory systems, has read this codebase several times since July 2026. From its latest executive summary:
+
+> This is one of the very few that treats the model's own trust label as a claim to be falsified before it is stored.
+
+It is not praise alone. The same summary names the weak half: "The retrieval half is much less proven." Both halves are checkable against the card's file and line citations, and every reading is recorded with the commit it was pinned to.
+
 ## Status
 
 | Surface | State |
