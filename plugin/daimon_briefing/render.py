@@ -178,13 +178,19 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     if b is None:
         rulings = (briefing.ruling_lines(project_dir)
                    if project_dir is not None else [])
+        # #766 slice 5: same gate as the request panel, not rulings —
+        # absent on --slug and the global-pointer-fallback body.
+        decision_count = (briefing.decision_count_line(worldcheck_project)
+                          if worldcheck_project is not None else None)
+        decision_count_block = [decision_count] if decision_count else []
         request_lines = (briefing.request_panel_lines(worldcheck_project)
                          if worldcheck_project is not None else [])
         verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
                          if worldcheck_project is not None else [])
         owed_lines = (briefing.owed_panel_lines(worldcheck_project)
                       if worldcheck_project is not None else [])
-        blocks = [blk for blk in (rulings, request_lines, verdict_lines,
+        blocks = [blk for blk in (rulings, decision_count_block,
+                                  request_lines, verdict_lines,
                                   owed_lines) if blk]
         if blocks:
             # #693/#694: standing rulings, addressed requests, and decided
@@ -217,6 +223,9 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         return
     rulings = (briefing.ruling_lines(project_dir)
                if project_dir is not None else [])
+    # #766 slice 5: same gate as the request panel, not rulings.
+    decision_count = (briefing.decision_count_line(worldcheck_project)
+                      if worldcheck_project is not None else None)
     request_lines = (briefing.request_panel_lines(worldcheck_project)
                      if worldcheck_project is not None else [])
     verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
@@ -228,10 +237,10 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     degraded = briefing.receipt_degraded(checkpoint)
     if not supports_rich():
         print(briefing.render_plain(b, degraded, rulings, request_lines,
-                                    verdict_lines, owed_lines))
+                                    verdict_lines, owed_lines, decision_count))
     else:
         _rich_brief(b, degraded, rulings, request_lines, verdict_lines,
-                    owed_lines)
+                    owed_lines, decision_count)
     _print_drift(drift)
     _print_teammates(teammates)
 
@@ -265,7 +274,8 @@ def _print_drift(drift) -> None:
 
 
 def _rich_brief(b: dict, degraded: bool = False, rulings=(),
-                request_lines=(), verdict_lines=(), owed_lines=()) -> None:
+                request_lines=(), verdict_lines=(), owed_lines=(),
+                decision_count: str | None = None) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -283,6 +293,11 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
             body.append(f"{line}\n", style="bold")
         console.print(Panel(body, title=rulings[0], border_style="cyan",
                             title_align="left"))
+    if decision_count:
+        # #766 slice 5: a count line, not a heading or a card — a
+        # one-line block has no body, so it renders as plain Text (the same
+        # degrade-note idiom above), never a Panel.
+        console.print(Text(decision_count, style="bold"))
     if request_lines:
         # #694 PR 2: same shape as the rulings panel above, its own border
         # color so the two skeleton sections read as distinct at a glance.
