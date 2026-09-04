@@ -45,6 +45,62 @@ def _fallback_log(line: str) -> None:
         pass
 
 
+# #923: a Claude Code session that is continued into a NEW session id (a
+# background continuation from a slash command, a bridge pickup) leaves the
+# host's pointer near the tail of the PARENT transcript, and SessionEnd then
+# reports the parent, not the child where the work happened. Bounded tail read:
+# transcripts run to tens of MB, the pointer sits in the last few lines.
+_CONTINUED_TAIL_BYTES = 64 * 1024
+_CONTINUED_MAX_HOPS = 8
+
+
+def _continued_into(transcript: Path) -> Path | None:
+    """The transcript a `continued-in` pointer in `transcript`'s tail names, or
+    None when there is no pointer in the tail window. Never raises."""
+    try:
+        size = transcript.stat().st_size
+        with transcript.open("rb") as fh:
+            fh.seek(max(0, size - _CONTINUED_TAIL_BYTES))
+            tail = fh.read().decode("utf-8", errors="replace")
+        for line in reversed(tail.splitlines()):
+            if '"continued-in"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("type") != "continued-in":
+                continue
+            target = str(entry.get("continuedInSessionId") or "").strip()
+            if target and Path(target).name == target:
+                return transcript.parent / f"{target}.jsonl"
+            return None
+    except OSError:
+        return None
+    return None
+
+
+def _follow_continuation(transcript_path: str) -> tuple[str, list[str]]:
+    """Walk `continued-in` pointers from the reported transcript to the last
+    transcript that exists on disk. Returns (path to serialize, hop log lines).
+    A pointer to a missing file, a cycle, or the hop cap ends the walk at the
+    last transcript that resolved."""
+    current = Path(transcript_path)
+    seen = {current.resolve()}
+    hops: list[str] = []
+    for _ in range(_CONTINUED_MAX_HOPS):
+        nxt = _continued_into(current)
+        if nxt is None or not nxt.exists():
+            break
+        key = nxt.resolve()
+        if key in seen:
+            break
+        hops.append(f"session-end: continued-in {current.stem} -> {nxt.stem}")
+        seen.add(key)
+        current = nxt
+    return str(current), hops
+
+
 def main() -> int:
     if lib is None:
         _fallback_log("session-end: hook library missing (_daimon_hook_lib.py) — skipped")
@@ -70,6 +126,14 @@ def main() -> int:
 
     reason = payload.get("reason", "?")
     session_id = payload.get("session_id", "?")
+    # #923: serialize the transcript the work is in, not the parent stub the
+    # host named. The spawn line below then carries the child's stem and path,
+    # which is what the ledger pairs a result line with (#28).
+    transcript_path, hops = _follow_continuation(transcript_path)
+    if hops:
+        for hop in hops:
+            lib.log(hop)
+        session_id = Path(transcript_path).stem
     # Per-project routing: hand the session's working directory to the child so
     # the serializer writes this project's latest pointer (plus the global one).
     # No cwd in the payload -> child env untouched -> pre-routing behavior.
