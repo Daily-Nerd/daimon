@@ -641,6 +641,14 @@ def message_speakers_by_id(messages, session_speaker=None) -> dict[str, str]:
     return out
 
 
+def speaker_line_count(messages) -> int:
+    """User rows whose speaker came from the host's declared line (#925), the
+    loader's `speaker_line` flag. Logged once per capture so a host whose line
+    shape changes sees the count drop instead of a silent return to absent."""
+    return sum(1 for m in messages or []
+               if isinstance(m, dict) and m.get("speaker_line") is True)
+
+
 def signal_message_ids(messages) -> set[str]:
     """Host ids of signal-bearing messages: tool results (#359).
 
@@ -2649,6 +2657,9 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # said_by anywhere; its out-of-band session speaker fills user rows only.
     derive_stated_by(checkpoint, message_speakers_by_id(
         messages, session_speaker=config.session_speaker()))
+    if config.speaker_line_delimiter() is not None:
+        log.info("speaker line: %d user row(s) attributed by the host's "
+                 "declared line", speaker_line_count(messages))
     # #369: deterministic backstop for constraint pinning — hard-imperative
     # user sentences the model paraphrased away are force-pinned as verbatim
     # items here, AFTER id sanitization (host ids go in directly) and BEFORE

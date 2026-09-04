@@ -28,6 +28,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import config
+
 
 def _load_session_db():
     """Return a SessionDB instance, or None if hermes is not importable.
@@ -222,7 +224,53 @@ def _tool_result_of(obj: dict) -> tuple[str, bool, set[str]] | None:
     return (text or "(no output)", is_error, use_ids)
 
 
-def _from_jsonl(text: str) -> list[dict]:
+# #925: a host that serves several people through one session but does not
+# author the transcript (the CLI writes the rows and drops unknown keys) has
+# exactly one channel left for the sender: a line of its own at the head of
+# the user message, delimited by a character it strips from user text first.
+# Recognized ONLY when the host declared the delimiter out of band
+# (DAIMON_SPEAKER_LINE), only at position zero, only on user rows, and cut
+# from content before anything downstream sees it, so it can never be quoted
+# as the person's words. `speaker_line` is a discriminating FIELD, set only
+# where the cut happened (deadend #20), so undeclared hosts stay byte-identical.
+_SPEAKER_KV_RE = re.compile(r'(\w+)=("([^"]*)"|\S+)')
+
+
+def _split_speaker_line(content: str, delim: str) -> tuple[str | None, str, bool]:
+    """(said_by, remaining content, cut?) for a user row's flattened text.
+
+    The line is `<delim>k=v k="v v"...<delim>` followed by a newline (or end).
+    `from=` gives the id, `name=` the label; said_by renders as `name (id)`,
+    or the bare id, or nothing when the line names no sender. Any other key is
+    the host's business and is dropped. A delimiter anywhere but position
+    zero is inert."""
+    if not delim or not content.startswith(delim):
+        return None, content, False
+    end = content.find(delim, len(delim))
+    if end < 0:
+        return None, content, False
+    line = content[len(delim):end]
+    if "\n" in line:
+        return None, content, False
+    rest = content[end + len(delim):]
+    if rest.startswith("\n"):
+        rest = rest[1:]
+    fields: dict[str, str] = {}
+    for m in _SPEAKER_KV_RE.finditer(line):
+        fields[m.group(1).lower()] = (m.group(3) if m.group(3) is not None
+                                      else m.group(2)).strip()
+    sender = fields.get("from", "")
+    name = fields.get("name", "")
+    if sender and name:
+        who: str | None = f"{name} ({sender})"
+    elif sender:
+        who = sender
+    else:
+        who = None
+    return who, rest, True
+
+
+def _from_jsonl(text: str, speaker_line: str | None = None) -> list[dict]:
     """Parse a JSONL agent transcript into conversation messages.
 
     Claude Code exposes stable-enough user/assistant rows today. Codex also
@@ -330,6 +378,8 @@ def _from_jsonl(text: str) -> list[dict]:
 
     messages: list[dict] = []
     daimon_uses = _daimon_tool_use_ids(objects)  # #512 provenance prepass
+    delim = (speaker_line if speaker_line is not None
+             else config.speaker_line_delimiter())
     for obj in objects:
         if obj.get("isSidechain") or obj.get("isMeta"):
             continue
@@ -346,10 +396,18 @@ def _from_jsonl(text: str) -> list[dict]:
         mid = (raw_uuid.strip()
                if isinstance(raw_uuid, str) and raw_uuid.strip() else None)
         content = _content_of(obj)
+        line_speaker = None
+        cut = False
+        if content and role == "user" and delim:
+            line_speaker, content, cut = _split_speaker_line(content, delim)
         if content:
-            msg = {"role": role, "content": content}
+            msg: dict = {"role": role, "content": content}
             if mid is not None:
                 msg["id"] = mid
+            if cut:
+                msg["speaker_line"] = True
+                if line_speaker:
+                    msg["said_by"] = line_speaker
             # #893: carry the host's per-message speaker through when the row
             # names one. A discriminating FIELD, not a row shape (deadend #20):
             # rows without a usable string keep their exact existing shape, so

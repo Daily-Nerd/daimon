@@ -1396,6 +1396,17 @@ def render_ledger_lines(lines) -> None:
 # ---- stats: `daimon stats` (#68) --------------------------------------------
 
 
+def _speaker_lines_line(c: dict) -> str | None:
+    """#925: one line, only when a host-declared speaker line ever attributed
+    a user row on this install. Silent otherwise: installs that never set the
+    delimiter should not learn the feature exists from their stats."""
+    n = c.get("speaker_lines") or 0
+    if not n:
+        return None
+    return (f"speaker lines (lifetime): {n} user rows attributed by a "
+            "host-declared line")
+
+
 def render_stats(data: dict) -> None:
     if supports_rich():
         _rich_stats(data)
@@ -1541,6 +1552,9 @@ def _plain_stats(data: dict) -> None:
     if c["success"]:
         print(f"  serialize seconds: max {c['max_serialize_seconds']}, "
               f"avg {c['total_serialize_seconds'] // c['success']}")
+    speaker_line = _speaker_lines_line(c)
+    if speaker_line:
+        print(f"  {speaker_line}")
     print("store:")
     print(f"  checkpoints: {s['checkpoints']}  project buckets: {s['project_buckets']}")
     for line in _generation_lines(s):
@@ -1670,6 +1684,10 @@ def _rich_stats(data: dict) -> None:
             f"max {c['max_serialize_seconds']}, "
             f"avg {c['total_serialize_seconds'] // c['success']}",
         )
+    speaker_line = _speaker_lines_line(c)
+    if speaker_line:
+        label, _, values = speaker_line.partition(": ")
+        capture_table.add_row(label, values)
     console.print(capture_table)
     for warning in window_lines[1:]:  # the #364 gate warning, when tripped
         console.print(f"[yellow]{warning}[/yellow]")

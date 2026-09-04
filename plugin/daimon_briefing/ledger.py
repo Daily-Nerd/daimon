@@ -143,6 +143,9 @@ _HEAL_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)(?: after \d+s|$)")
 # the checkpoint path: `wrote checkpoint: <dir>/<session>.json (took Ns)`.
 _LEDGER_OK_RE = re.compile(r"^wrote checkpoint: (.+?) \(took \d+s\)")
 _LEDGER_SKIP_RE = re.compile(r"^skipped serialize for (\S+):")
+# #925: the serializer's per-capture count of user rows attributed by a
+# host-declared speaker line; summed lifetime by _stats_capture.
+_SPEAKER_LINE_RE = re.compile(r"speaker line: (\d+) user row\(s\) attributed")
 _LEDGER_PROJECT_RE = re.compile(r"project: (.*?)\)")
 # #28: hooks stamp the transcript path on the spawn line as a TRAILING group —
 # `... (reason: r, project: p) (transcript: <path>)` — so a child that crashes
@@ -549,6 +552,7 @@ def _stats_capture(now=None) -> dict:
                  "fallback_attempts": 0, "starved": 0,
                  "hosts": {}, "max_serialize_seconds": 0,
                  "total_serialize_seconds": 0,
+                 "speaker_lines": 0,
                  "window": win}
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
@@ -571,6 +575,9 @@ def _stats_capture(now=None) -> dict:
         # #341: fallback_serializes counts successes only; the chat() entry
         # warning is the attempt marker. Without it, a fallback that runs and
         # dies is indistinguishable from one that never ran.
+        sl = _SPEAKER_LINE_RE.search(line)
+        if sl:
+            out["speaker_lines"] += int(sl.group(1))  # #925, lifetime only
         if "llm.fallback backend=command" in line:
             out["fallback_attempts"] += 1
             if in_window:
