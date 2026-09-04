@@ -439,6 +439,92 @@ def test_session_end_no_cwd_keeps_project_unset_but_passes_host(
     assert "DAIMON_CAPTURE_HOST=claude-code" in captured
 
 
+# ---- daimon-session-end.py: continued-in redirect (#923) ----
+
+
+def _continued(parent: Path, child: Path) -> None:
+    """Write a parent transcript whose LAST line is the host's continuation
+    pointer, the shape Claude Code leaves when a session is continued into a
+    new session id (the parent keeps the bridge, the child does the work)."""
+    parent.write_text(
+        '{"type":"user","message":{"role":"user","content":"hi"}}\n'
+        '{"type":"cost-state","totalCostUSD":1.0}\n'
+        f'{{"type":"continued-in","sessionId":"{parent.stem}",'
+        f'"continuedInSessionId":"{child.stem}"}}\n'
+    )
+
+
+def _end_payload(transcript: Path) -> dict:
+    return {
+        "session_id": transcript.stem,
+        "transcript_path": str(transcript),
+        "cwd": "/Users/x/projA",
+        "reason": "other",
+    }
+
+
+def test_session_end_follows_continued_in_to_the_child(tmp_path, tmp_checkpoint_dir):
+    # #923: the host reports the PARENT at SessionEnd; the work is in the child.
+    fake_bin, capture = _fake_cli(tmp_path)
+    parent = tmp_path / "P-parent.jsonl"
+    child = tmp_path / "C-child.jsonl"
+    child.write_text('{"type":"user","message":{"role":"user","content":"work"}}\n')
+    _continued(parent, child)
+    proc = _run(END_HOOK, _end_payload(parent), tmp_path, extra_env={"PATH": str(fake_bin)})
+    assert proc.returncode == 0
+    captured = _wait_for(capture)
+    assert str(child) in captured
+    assert str(parent) not in captured
+    log = (tmp_path / ".daimon" / "logs" / "serialize.log").read_text()
+    # Ledger-shaped spawn line names the CHILD, so status/heal pair its result.
+    assert "session-end: spawned serialize for C-child" in log
+    assert f"(transcript: {child})" in log
+    # And a breadcrumb explains why the payload's session is not the one spawned.
+    assert "session-end: continued-in P-parent -> C-child" in log
+
+
+def test_session_end_keeps_the_parent_when_the_child_is_missing(tmp_path, tmp_checkpoint_dir):
+    fake_bin, capture = _fake_cli(tmp_path)
+    parent = tmp_path / "P-parent.jsonl"
+    child = tmp_path / "C-gone.jsonl"  # never written
+    _continued(parent, child)
+    proc = _run(END_HOOK, _end_payload(parent), tmp_path, extra_env={"PATH": str(fake_bin)})
+    assert proc.returncode == 0
+    captured = _wait_for(capture)
+    assert str(parent) in captured
+    log = (tmp_path / ".daimon" / "logs" / "serialize.log").read_text()
+    assert "session-end: spawned serialize for P-parent" in log
+
+
+def test_session_end_follows_a_continuation_chain_to_its_end(tmp_path, tmp_checkpoint_dir):
+    fake_bin, capture = _fake_cli(tmp_path)
+    parent = tmp_path / "P-parent.jsonl"
+    middle = tmp_path / "M-middle.jsonl"
+    leaf = tmp_path / "L-leaf.jsonl"
+    leaf.write_text('{"type":"user","message":{"role":"user","content":"work"}}\n')
+    _continued(middle, leaf)
+    _continued(parent, middle)
+    proc = _run(END_HOOK, _end_payload(parent), tmp_path, extra_env={"PATH": str(fake_bin)})
+    assert proc.returncode == 0
+    captured = _wait_for(capture)
+    assert str(leaf) in captured
+    assert str(middle) not in captured
+
+
+def test_session_end_stops_on_a_continuation_cycle(tmp_path, tmp_checkpoint_dir):
+    fake_bin, capture = _fake_cli(tmp_path)
+    parent = tmp_path / "P-parent.jsonl"
+    child = tmp_path / "C-child.jsonl"
+    _continued(parent, child)
+    _continued(child, parent)  # child points back at the parent
+    proc = _run(END_HOOK, _end_payload(parent), tmp_path, extra_env={"PATH": str(fake_bin)})
+    assert proc.returncode == 0
+    captured = _wait_for(capture)
+    # Followed once, then the already-seen parent ends the walk: the child spawns.
+    assert str(child) in captured
+    assert str(parent) not in captured
+
+
 # ---- sweep_orphans (#185): session-start catch-up sweep, unit-level ----
 
 
