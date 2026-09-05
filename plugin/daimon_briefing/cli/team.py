@@ -11,7 +11,7 @@ from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import config, recall, render, store, teamsync
+from .. import config, recall, render, store, surfaces, teamsync
 
 
 def _cmd_team_init(args) -> int:
@@ -56,8 +56,21 @@ def _cmd_team_sync(args) -> int:
                   " opt-in, and there is no undo", file=sys.stderr)
         else:
             applied = store.apply_foreign_tombstones(all_projects=True)
+            # #620: this walk reaches the *.json checkpoint shapes and no
+            # others, so an unqualified success line claims a sweep it did
+            # not perform. The operation is irreversible and machine-wide:
+            # the user spends a one-way consent, and being told it worked
+            # when the value survives elsewhere is worse than a refusal.
+            # The gap is derived from the surface registry, so a plaintext
+            # class added later is reported as unreached rather than
+            # silently absorbed into the count.
+            gap = surfaces.foreign_apply_gap()
             print(f"applied teammates' forget tombstones to {len(applied)} "
                   "local surface(s) across all projects")
+            print(f"  not reached ({len(gap)} plaintext surface class(es)): "
+                  + ", ".join(gap))
+            print("  the value may survive there; full coverage lands with"
+                  " the read-through model (#752)")
     # #246: fetched teammate files are fingerprint input — freshen here (the
     # SessionStart hook spawns sync detached, off the prompt path) so the
     # first recall after a fetch doesn't pay the rebuild. Unconditional on

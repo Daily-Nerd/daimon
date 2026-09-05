@@ -334,6 +334,40 @@ def _parts_match(shape_parts: tuple, parts: tuple) -> bool:
         and _parts_match(rest, parts[1:])
 
 
+# #620: what a FOREIGN tombstone apply actually reaches.
+#
+# store.apply_foreign_tombstones calls scrub_content_key and nothing else,
+# and that walk is *.json under the checkpoint dir. These two shapes are the
+# whole of its coverage. A local `daimon forget` reaches far more.
+#
+# Declared here rather than inferred from the walk, deliberately. Inferring
+# it would make the covered set and the walk the same statement, and a test
+# over it could not fail for a class the walk misses -- the tautology already
+# recorded on #620 and generalised as #944. Adding a plaintext surface to
+# SURFACES therefore widens the reported GAP on its own, which is the safe
+# direction: a new class is assumed unreached until someone says otherwise.
+FOREIGN_APPLY_SHAPES: frozenset = frozenset({
+    "checkpoints/{slug}/*.json",
+    "checkpoints/*.json",
+})
+
+
+def foreign_apply_gap() -> tuple[str, ...]:
+    """Plaintext surface shapes a foreign tombstone apply does NOT reach.
+
+    The caller prints these instead of an unqualified success line. An
+    irreversible, machine-wide operation that reports a clean sweep it did
+    not perform is worse than one that refuses: the user spends a one-way,
+    no-undo consent and is told it worked.
+
+    Never empty in practice, and the test says so: an empty return would
+    assert full coverage, which is the claim this exists to prevent anyone
+    making by accident."""
+    return tuple(sorted(
+        s.shape for s in SURFACES
+        if s.plaintext and s.shape not in FOREIGN_APPLY_SHAPES))
+
+
 def match(pattern: str) -> Surface | None:
     """Classify a path (or a write-audit-normalized pattern) against the
     registry. First declaration wins; None means UNDECLARED — the caller's
