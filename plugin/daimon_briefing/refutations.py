@@ -652,6 +652,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "revision": 1,
                 "history_count": 1,
             }
+            if isinstance(row.get("check"), dict):  # #943
+                out[ref_id]["check"] = dict(row["check"])
             continue
         if current is None:
             continue  # orphan lifecycle event: visible in raw audit, inert here
@@ -719,6 +721,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # revisions walked straight through the per-row _MAX_EVIDENCE
                 # cap (74 sources against a limit of 24).
                 current["evidence"] = list(row.get("evidence") or [])
+            if isinstance(row.get("check"), dict):  # #943
+                current["check"] = dict(row["check"])
             # #693: re-stamped ONLY when the row carries a text key — the
             # replace-by-key-presence contract above means a human revising
             # only scope must not relabel agent-authored text as human.
@@ -753,6 +757,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                     "subject": str(row.get("subject") or ""),
                     "verdict": str(row.get("verdict") or ""),
                 }
+                if isinstance(row.get("check"), dict):  # #943
+                    current["revision_proposed"]["check"] = dict(row["check"])
         elif event == "overturn-proposed":
             if current["state"] == "active":
                 current["overturn_proposed"] = {
@@ -771,6 +777,16 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 current["overturn_evidence"] = list(row.get("evidence") or [])
                 current["overturn_note"] = str(row.get("note") or "")
                 current.pop("overturn_proposed", None)
+    # #943: lifecycle is DERIVED from state, never stored. `proposed` is not
+    # a mode: a candidate's check never reaches a host.
+    for current in out.values():
+        if "check" not in current:
+            continue
+        current["check_lifecycle"] = {
+            "candidate": "proposed",
+            "active": "armed",
+            "overturned": "disarmed",
+        }.get(current["state"], "proposed")
     return out
 
 
@@ -898,7 +914,7 @@ def _guard_ruling_text(subject, verdict) -> None:
 
 def assert_ruling(*, subject: str, verdict: str, scope: str,
                   evidence, channel: str, anchors=(), revisit_when: str = "",
-                  ratified: bool = False, project_dir=None) -> str:
+                  ratified: bool = False, check=None, project_dir=None) -> str:
     """#693: found a positive-polarity record. Same row schema, same id
     space, same identity-collision refusal as a refutation — the polarity is
     the founding event name (`ruled`), derived at fold time."""
@@ -909,6 +925,7 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
     revisit_when = _text("revisit_when", revisit_when, required=False)
     evidence = _evidence(evidence)
     anchors = _anchors(anchors)
+    check = _check(check)  # #943
     subject, _ = redact.redact_text(subject)
     verdict, _ = redact.redact_text(verdict)
     scope, _ = redact.redact_text(scope)
@@ -935,6 +952,8 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
         "revisit_when": revisit_when,
         "evidence": evidence,
     })
+    if check is not None:  # #943
+        row["check"] = check
     if ratified:
         row["ratified"] = True
     if not append(row, project_dir=project_dir):
@@ -1002,7 +1021,8 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
 
 def revise(refutation_id: str, *, channel: str, evidence,
            subject=None, verdict=None, scope=None, anchors=None,
-           revisit_when=None, ratified: bool = False, project_dir=None) -> None:
+           revisit_when=None, ratified: bool = False, check=None,
+           project_dir=None) -> None:
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")
@@ -1055,8 +1075,12 @@ def revise(refutation_id: str, *, channel: str, evidence,
     if revisit_when is not None:
         row["revisit_when"] = _text(
             "revisit_when", revisit_when, required=False)
+    if check is not None:  # #943
+        if current.get("polarity") != "ruling":
+            raise RefutationError("only a ruling carries a check")
+        row["check"] = _check(check)
     if not any(key in row for key in (
-            "subject", "verdict", "scope", "anchors", "revisit_when")):
+            "subject", "verdict", "scope", "anchors", "revisit_when", "check")):
         raise RefutationError(
             "revision changes nothing; provide a new subject, verdict, scope, "
             "anchor set, or revisit condition")

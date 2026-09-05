@@ -1139,3 +1139,75 @@ def test_check_requires_both_match_and_body():
         refutations._check({"body": "exit 0\n"})
     with pytest.raises(refutations.RefutationError, match="body"):
         refutations._check({"match": "gh"})
+
+
+def test_candidate_check_lifecycle_is_proposed(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check"]["match"] == _check()["match"]
+    assert record["check"]["sha256"]
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_ruling_without_check_has_no_lifecycle_key(tmp_checkpoint_dir):
+    ruling_id = _rule()
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert "check" not in record
+    assert "check_lifecycle" not in record
+
+
+def test_human_founding_with_ratify_arms_the_check(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_agent_revise_of_a_candidate_replaces_the_check(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check"]["body"] == "exit 0\n"
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_agent_revise_of_an_active_ruling_leaves_the_armed_check(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    armed_sha = refutations.get(ruling_id, project_dir=PROJECT)["check"]["sha256"]
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check"]["sha256"] == armed_sha
+    assert record["check_lifecycle"] == "armed"
+    assert record["revision_proposed"]["check"]["body"] == "exit 0\n"
+
+
+def test_human_revise_of_an_active_ruling_replaces_and_stays_armed(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    refutations.revise(
+        ruling_id, channel="cli-tty", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check"]["body"] == "exit 0\n"
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_retired_ruling_check_is_disarmed(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check_lifecycle"] == "disarmed"
+
+
+def test_revise_with_only_a_check_is_a_change(tmp_checkpoint_dir):
+    ruling_id = _rule()
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(), project_dir=PROJECT)
+    assert refutations.get(ruling_id, project_dir=PROJECT)["check_lifecycle"] == "proposed"
