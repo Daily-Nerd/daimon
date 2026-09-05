@@ -209,6 +209,11 @@ def _session_ledger(text: str, now: float) -> dict:
         if m:
             e = _entry(m.group(2))
             e["spawned"] = True
+            # #936: a spawn line after a result opens a NEW attempt. The
+            # previous result belongs to the previous attempt; keeping it
+            # made a running heal retry inherit the failure it was fixing.
+            e["result_kind"] = None
+            e["result_line"] = None
             try:
                 ts = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ")
                 e["spawn_ts"] = ts.replace(tzinfo=timezone.utc).timestamp()
@@ -280,6 +285,18 @@ def checkpoint_covers(sid: str, transcript_path) -> bool:
     return created >= last
 
 
+def _repair_in_flight(age, ceiling, heartbeat_age, sid) -> bool:
+    """A retry attempt counts as running while its heartbeat is fresh, or
+    while it is younger than the hung ceiling and has not stamped a heartbeat
+    yet (the child stamps after its own preflight). Past the ceiling with a
+    stale or absent heartbeat, the hung rule below decides as before."""
+    if heartbeat_age is not None:
+        hb = heartbeat_age(sid)
+        if hb is not None:
+            return hb <= ceiling
+    return age is not None and age <= ceiling
+
+
 def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists,
                           force=False, heartbeat_age=None,
                           checkpoint_covers=None) -> list:
@@ -318,6 +335,16 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                         "age_str": _format_age(age) if age is not None else "unknown",
                         "transcript": e["transcript"], "project": e["project"],
                         "spawned": e["spawned"], "line": e["result_line"]})
+        elif (e["result_kind"] is None and e["spawned"] and e["retried"]
+              and _repair_in_flight(age, ceiling, heartbeat_age, sid)):
+            # #936: a heal retry that is still running. Visible, not
+            # outstanding-as-failure: status renders it, heal refuses to
+            # start a second one, and the failures warning does not count it.
+            hb = heartbeat_age(sid) if heartbeat_age is not None else None
+            out.append({"sid": sid, "kind": "in-flight", "class": "repairing",
+                        "age": age, "age_str": _format_age(age) if age is not None else "unknown",
+                        "heartbeat_age": hb, "transcript": e["transcript"],
+                        "project": e["project"], "spawned": True, "line": None})
         elif e["result_kind"] is None and e["spawned"] and age is not None and age > ceiling:
             # #342: liveness beats wall-clock. A heartbeat fresher than the
             # ceiling means the serialize is ALIVE — not outstanding, so
@@ -393,6 +420,10 @@ def _heal_plan(text, now, force=False) -> dict:
             continue
         if f["class"] == "healable":
             reason = "newer failure took this run — re-run 'daimon heal' to reach it"
+        elif f["class"] == "repairing":
+            hb = f.get("heartbeat_age")
+            reason = ("repair already running "
+                      + (f"(heartbeat {int(hb)}s ago)" if hb is not None else "(starting)"))
         else:
             reason = _HEAL_SKIP_REASON.get(f["class"], "not auto-repairable")
         skipped.append({"sid": f["sid"], "age_str": f["age_str"], "reason": reason})

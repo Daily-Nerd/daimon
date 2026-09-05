@@ -1858,12 +1858,15 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
                 f"schema changed; briefing may render partially (re-serialize to refresh)"
             )
 
-    if outstanding:
-        n = len(outstanding)
+    # #936: a repair in flight is listed in the outstanding block but is not
+    # a failure; counting it would warn about the thing heal is fixing.
+    failed = [f for f in outstanding if f.get("kind") != "in-flight"]
+    if failed:
+        n = len(failed)
         msg = f"{n} session{'s' if n != 1 else ''} failed to serialize"
         # Only point at heal when it can actually repair something (#29) —
         # "run 'daimon heal'" followed by "nothing to heal" is a contradiction.
-        if any(f.get("class") == "healable" for f in outstanding):
+        if any(f.get("class") == "healable" for f in failed):
             msg += " — run 'daimon heal'"
         else:
             msg += " (not auto-repairable)"
