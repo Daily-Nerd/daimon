@@ -91,6 +91,17 @@ def _cmd_ruling_ratify(args) -> int:
         print(f"  {record.get('verdict', '')}", file=ceremony)
     print("  This text will render into every future session for this "
           "project.", file=ceremony)
+    check = record.get("check") if isinstance(record.get("check"), dict) else None
+    displayed_check_sha = ""
+    if check:
+        displayed_check_sha = str(check.get("sha256") or "")
+        body_lines = str(check.get("body") or "").count("\n")
+        print(f"  Check: {check.get('intent')} · match /{check.get('match')}/ "
+              f"· {body_lines} lines · sha {displayed_check_sha[:12]}",
+              file=ceremony)
+        print("  This check will run before matching actions on every host "
+              "that supports it. Ratifying arms an executable.",
+              file=ceremony)
     displayed_key = normalize.content_key(record.get("verdict") or "")
     answer = input("Ratify? [y/N]: ").strip().casefold()
     if answer not in ("y", "yes"):
@@ -99,6 +110,7 @@ def _cmd_ruling_ratify(args) -> int:
     try:
         refutations.ratify(args.ruling_id, channel=channel,
                            note=args.note or "", verdict_key=displayed_key,
+                           check_sha256=displayed_check_sha,
                            project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not ratified", exc))
