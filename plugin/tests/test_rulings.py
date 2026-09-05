@@ -1223,3 +1223,32 @@ def test_revise_refuses_a_check_on_a_refutation(tmp_checkpoint_dir):
     after = refutations.get(ref_id, project_dir=PROJECT)
     assert after["revision"] == before["revision"]
     assert "check" not in after
+
+
+def test_ratify_pinned_to_the_current_check_hash_activates(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["check"]["sha256"]
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256=sha,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_ratify_pinned_to_a_stale_check_hash_is_inert(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    stale = refutations.get(ruling_id, project_dir=PROJECT)["check"]["sha256"]
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(body="rm -rf / # never\n"), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256=stale,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_ratify_without_a_check_pin_stays_unbound(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"

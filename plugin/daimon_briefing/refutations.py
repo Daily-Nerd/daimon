@@ -675,6 +675,14 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 and str(row.get("verdict_key"))
                 != normalize.content_key(current.get("verdict") or "")):
             continue
+        # #943: check binding: a ratify row carrying check_sha256 activates
+        # only the body it displayed; a mismatch is inert, the same rule
+        # verdict_key already applies to the rule text.
+        if (event == "ratified"
+                and str(row.get("check_sha256") or "")
+                and str(row.get("check_sha256"))
+                != str((current.get("check") or {}).get("sha256") or "")):
+            continue
         current["history_count"] += 1
         # #693: an agent proposal must not move a ruling's rendered age or
         # its list/search order. Ruling polarity only — changing the shipped
@@ -990,7 +998,8 @@ def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
 
 
 def ratify(refutation_id: str, *, channel: str, note: str = "",
-           verdict_key: str = "", project_dir=None) -> None:
+           verdict_key: str = "", check_sha256: str = "",
+           project_dir=None) -> None:
     # Ratification is the transition that makes a record load-bearing, so it
     # is the one that must not be self-declarable.  The caller names the
     # channel it OBSERVED; authority is derived from that, so an agent cannot
@@ -1015,6 +1024,10 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     # A hash, never plaintext, and absent means unbound.
     if verdict_key:
         row["verdict_key"] = str(verdict_key)
+    # #943: the check is an executable, so the ceremony pins the body the
+    # human SAW. A hash, never the body; absent means unbound.
+    if check_sha256:
+        row["check_sha256"] = str(check_sha256)
     if not append(row, project_dir=project_dir):
         raise RefutationError("ratification not written")
 
