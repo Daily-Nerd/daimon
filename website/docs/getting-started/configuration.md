@@ -134,6 +134,7 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_LOG_DIR` | `~/.daimon/logs` | Log directory. `serialize-crash.log` honors this on both sides — the hooks that spawn the serialize child read it (process env and this file) exactly as the CLI does, because `daimon forget` deletes that file and writer and deleter must agree on where it is. `serialize.log` is the exception: the hooks still write it to `~/.daimon/logs` unconditionally, and this override only moves where the CLI (and tests) look for it. |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where host transcripts live (`<slug>/<session>.jsonl`). Read-only — the quote-reverification audit reads them to re-check stored quotes against their source. |
 | `DAIMON_SCAR_HARVEST` | off | When truthy, draft scar (negative-knowledge) candidates from the transcript at session-end. |
+| `DAIMON_LOG_STDOUT` | off | When truthy, serialize result lines also reach stdout, the stream a container runtime collects. The session-end hook lets the detached serialize child inherit stdout instead of discarding it, and the CLI mirrors its `error:` lines there too, so success, skip and error all land on one surface. Intended for container hosts, where a line written only to `serialize.log` on a volume is invisible to the platform. Off by default: on a terminal host these lines arrive in your shell minutes after the session ended. It does not touch stderr, which stays reserved for `serialize-crash.log`. |
 
 ## LLM backend
 
