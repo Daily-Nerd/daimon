@@ -8,6 +8,7 @@ they cannot live inside either family module without a cross-family import.
 
 import hashlib
 import json
+import os
 import sys
 
 from .. import refutations, render
@@ -184,6 +185,14 @@ def _check_args(args) -> dict | None:
             "a check needs both --check-body-file and --check-match "
             "(--check-intent is optional, default warn)")
     try:
+        # The cap is a property of the FILE before it is a property of a
+        # string: `_check` would refuse the same body, but only after the
+        # whole thing has been decoded into memory. One stat is enough.
+        size = os.stat(body_file).st_size
+        if size > refutations._MAX_CHECK_BODY:
+            raise refutations.RefutationError(
+                f"check body is too long ({size} > "
+                f"{refutations._MAX_CHECK_BODY} bytes)")
         with open(body_file, encoding="utf-8") as handle:
             body = handle.read()
     except (OSError, UnicodeDecodeError) as exc:
@@ -250,8 +259,14 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
                      f"match /{check.get('match')}/")
     proposal = record.get("revision_proposed")
     if proposal:
-        lines.append(f"  Pending revision proposal ({proposal.get('by', '?')}): "
-                     f"{proposal.get('verdict') or proposal.get('subject') or ''}")
+        line = (f"  Pending revision proposal ({proposal.get('by', '?')}): "
+                f"{proposal.get('verdict') or proposal.get('subject') or ''}")
+        # #943: a proposal to swap the EXECUTABLE is a different ask from one
+        # that rewords the rule, and a check-only proposal has no text to
+        # show — it would otherwise render as a bare colon.
+        if isinstance(proposal.get("check"), dict):
+            line += " (carries a check)"
+        lines.append(line)
     retirement = record.get("overturn_proposed")
     if retirement:
         lines.append(f"  Pending retirement proposal ({retirement.get('by', '?')})")

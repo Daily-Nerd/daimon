@@ -70,6 +70,29 @@ def test_propose_unreadable_check_file_refuses(tmp_checkpoint_dir, capsys):
     assert refutations.listing(polarity="ruling", project_dir=PROJECT) == []
 
 
+def test_oversized_check_body_file_is_refused_without_reading_it(
+        tmp_checkpoint_dir, tmp_path, monkeypatch, capsys):
+    """#943: the cap is enforced on the file's SIZE, so an oversized script is
+    refused by one stat instead of being pulled into memory to be measured."""
+    big = tmp_path / "huge.sh"
+    big.write_text("#!/bin/sh\n" + "e" * refutations._MAX_CHECK_BODY,
+                   encoding="utf-8")
+    real_open = open
+    opened = []
+
+    def _tracking_open(file, *args, **kwargs):
+        opened.append(str(file))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", _tracking_open)
+    assert _propose(str(big)) == 1
+    out = capsys.readouterr().out
+    assert "ruling not recorded" in out
+    assert str(refutations._MAX_CHECK_BODY) in out
+    assert str(big) not in opened
+    assert refutations.listing(polarity="ruling", project_dir=PROJECT) == []
+
+
 def test_propose_without_check_flags_records_no_check(
         tmp_checkpoint_dir, capsys):
     assert _propose() == 0
@@ -262,6 +285,37 @@ def test_list_marks_rows_that_carry_a_check(
     capsys.readouterr()
     assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
     assert "[check: proposed]" in capsys.readouterr().out
+
+
+def test_show_says_when_a_pending_proposal_carries_a_check(
+        tmp_checkpoint_dir, body_file, _tty, monkeypatch, tmp_path, capsys):
+    """#943: a proposal that would swap the executable is not the same ask as
+    one that rewords the rule, and the human reading `show` decides which."""
+    ruling_id = _armed_check(body_file, monkeypatch, capsys)
+    new = tmp_path / "gate2.sh"
+    new.write_text("exit 0\n", encoding="utf-8")
+    assert cli.main(["ruling", "revise", ruling_id, "--evidence", "issue:943",
+                     "--by", "agent", "--project", PROJECT,
+                     "--check-body-file", str(new),
+                     "--check-match", "gh pr create"]) == 0
+    capsys.readouterr()
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "Pending revision proposal" in out
+    assert "(carries a check)" in out
+
+
+def test_show_stays_silent_when_a_pending_proposal_carries_no_check(
+        tmp_checkpoint_dir, body_file, _tty, monkeypatch, capsys):
+    ruling_id = _armed_check(body_file, monkeypatch, capsys)
+    assert cli.main(["ruling", "revise", ruling_id, "--evidence", "issue:943",
+                     "--by", "agent", "--project", PROJECT,
+                     "--verdict", "no internal numbers in public posts"]) == 0
+    capsys.readouterr()
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "Pending revision proposal" in out
+    assert "(carries a check)" not in out
 
 
 def test_show_without_a_check_has_no_check_line(tmp_checkpoint_dir, capsys):

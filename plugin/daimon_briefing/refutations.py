@@ -139,7 +139,7 @@ _MAX_OPEN_PROPOSALS = 3
 # invisible to every other host the same human uses. The hash is computed
 # by the writer over the stored bytes and never accepted from a caller:
 # ratify pins it the way `verdict_key` pins the rule text.
-_CHECK_INTENTS = frozenset({"enforce", "warn", "record-only"})
+CHECK_INTENTS = frozenset({"enforce", "warn", "record-only"})
 _MAX_CHECK_BODY = 8192
 _MAX_CHECK_MATCH = 200
 _CHECK_PATH_RE = re.compile(r"\s*(?:~|/|\./)[^\s]*\s*")
@@ -303,9 +303,9 @@ def _check(value) -> dict | None:
         re.compile(match)
     except re.error as exc:
         raise RefutationError(f"check match is not a valid regex: {exc}")
-    if intent not in _CHECK_INTENTS:
+    if intent not in CHECK_INTENTS:
         raise RefutationError(
-            f"check intent must be one of: {', '.join(sorted(_CHECK_INTENTS))}")
+            f"check intent must be one of: {', '.join(sorted(CHECK_INTENTS))}")
     if "\n" not in body.strip() and _CHECK_PATH_RE.fullmatch(body):
         raise RefutationError(
             "check body must be the script itself, not a path to one: a "
@@ -934,7 +934,8 @@ def _guard_open_proposals(refutation_id: str, event: str,
     record = get(refutation_id, project_dir=project_dir)
     if record is not None:
         current_key = normalize.content_key(record.get("verdict") or "")
-        current_check_sha = str(((record or {}).get("check") or {}).get("sha256") or "")
+        current_check_sha = str(
+            (record.get("check") or {}).get("sha256") or "")
     verdicts = [r for r in rows
                 if CHANNEL_AUTHORITY.get(_channel_of(r)) == "human"
                 and r.get("event") in ("ratified", "overturned", "revised")

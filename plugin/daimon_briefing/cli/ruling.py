@@ -325,7 +325,7 @@ def register(sub, fmt) -> None:
         help="regex on the command string that selects the actions the "
              "check runs before")
     rl_propose.add_argument(
-        "--check-intent", choices=sorted(refutations._CHECK_INTENTS),
+        "--check-intent", choices=sorted(refutations.CHECK_INTENTS),
         default=None,
         help="what the check asks each host for; the host delivers the "
              "strongest it supports (default warn)")
@@ -377,7 +377,7 @@ def register(sub, fmt) -> None:
         help="regex on the command string that selects the actions the "
              "check runs before")
     rl_revise.add_argument(
-        "--check-intent", choices=sorted(refutations._CHECK_INTENTS),
+        "--check-intent", choices=sorted(refutations.CHECK_INTENTS),
         default=None,
         help="what the check asks each host for; the host delivers the "
              "strongest it supports (default warn)")
