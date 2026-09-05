@@ -764,3 +764,19 @@ def test_dry_run_previews_amendments_of_a_superseded_item(
     assert a_id in out
     assert any(str(r.get("amendment_id")) == a_id
                for r in amendments.events(project_dir=PROJECT))
+
+
+def test_forget_reaches_a_check_body_and_match(tmp_checkpoint_dir):
+    body = "#!/bin/sh\nrg -q secret-phrase \"$DAIMON_CHECK_SUBJECT\" && exit 1\nexit 0\n"
+    ruling_id = refutations.assert_ruling(
+        subject="public posts", verdict="no internal numbers in posts",
+        scope="publishing", evidence=["issue:943"], channel="cli-agent",
+        check={"match": "gh pr create", "body": body}, project_dir=PROJECT)
+    keys = refutations.row_content_keys(
+        refutations.events(project_dir=PROJECT)[0])
+    assert normalize.content_key(body) in keys
+    assert normalize.content_key("gh pr create") in keys
+    removed = refutations.forget_content_key(
+        normalize.content_key(body), project_dir=PROJECT)
+    assert removed == [ruling_id]
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None

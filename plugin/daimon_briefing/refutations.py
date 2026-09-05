@@ -159,6 +159,11 @@ _CHECK_PATH_RE = re.compile(r"\s*(?:~|/|\./)[^\s]*\s*")
 _PLAINTEXT_FIELDS = ("subject", "verdict", "scope", "revisit_when", "note")
 _PLAINTEXT_LISTS = ("anchors", "evidence")
 
+# #943: the check's body and match are script text an author wrote, so they
+# are plaintext for the same two consumers. Nested because the check is one
+# object on the row; declared here so the deleter and the auditor agree.
+_PLAINTEXT_NESTED = (("check", "match"), ("check", "body"))
+
 
 class RefutationError(ValueError):
     """A requested ledger transition is invalid or cannot be persisted."""
@@ -470,6 +475,12 @@ def row_content_keys(row: dict) -> set[str]:
             for value in values:
                 if isinstance(value, str) and value.strip():
                     out.add(normalize.content_key(value))
+    for parent, field in _PLAINTEXT_NESTED:
+        holder = row.get(parent)
+        if isinstance(holder, dict):
+            value = holder.get(field)
+            if isinstance(value, str) and value.strip():
+                out.add(normalize.content_key(value))
     return out
 
 
