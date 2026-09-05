@@ -7,9 +7,9 @@ confidence: 0.95
 created: 2026-07-02
 authors: [claude, Kibukx]
 anchors:
-  - path: plugin/
   - path: README.md
   - path: docs/
+  - command: "uv run daimon"
 violation: "uv run daimon"
 evidence:
   - note: "2026-07-02: live verification of D-011 importance emission ran a 320s chunked serialize that silently produced a D-010 checkpoint — `uv run daimon serialize` from repo root had executed ~/.local/share/uv/tools/daimon-briefing (last `uv tool install` snapshot), not the branch code"
