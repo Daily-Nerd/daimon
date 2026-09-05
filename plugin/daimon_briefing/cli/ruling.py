@@ -7,7 +7,6 @@ the `cli.<name>` seam tests and hosts patch keeps working on moved code.
 """
 
 import argparse
-import hashlib
 import sys
 
 import daimon_briefing.cli as _cli
@@ -15,6 +14,7 @@ import daimon_briefing.cli as _cli
 from .. import config, normalize, refutations, render
 from ._ledger import (
     _check_args,
+    _check_ceremony_lines,
     _print_ruling,
     _refusal_message,
     _refutation_json,
@@ -95,13 +95,9 @@ def _cmd_ruling_ratify(args) -> int:
     displayed_check_sha = ""
     if check:
         displayed_check_sha = str(check.get("sha256") or "")
-        body_lines = str(check.get("body") or "").count("\n")
-        print(f"  Check: {check.get('intent')} · match /{check.get('match')}/ "
-              f"· {body_lines} lines · sha {displayed_check_sha[:12]}",
-              file=ceremony)
-        print("  This check will run before matching actions on every host "
-              "that supports it. Ratifying arms an executable.",
-              file=ceremony)
+        for line in _check_ceremony_lines(check, label="Check",
+                                          verb="Ratifying"):
+            print(line, file=ceremony)
     displayed_key = normalize.content_key(record.get("verdict") or "")
     answer = input("Ratify? [y/N]: ").strip().casefold()
     if answer not in ("y", "yes"):
@@ -169,12 +165,9 @@ def _cmd_ruling_revise(args) -> int:
         if args.subject is not None:
             print(f"  New governs: {args.subject}")
         if check is not None:
-            sha = hashlib.sha256(check["body"].encode("utf-8")).hexdigest()
-            body_lines = check["body"].count("\n")
-            print(f"  New check: {check['intent']} · match "
-                  f"/{check['match']}/ · {body_lines} lines · sha {sha[:12]}")
-            print("  This check will run before matching actions on every "
-                  "host that supports it. Applying arms an executable.")
+            for line in _check_ceremony_lines(check, label="New check",
+                                              verb="Applying"):
+                print(line)
         print("  This text will render into every future session for this "
               "project.")
         answer = input("Apply? [y/N]: ").strip().casefold()

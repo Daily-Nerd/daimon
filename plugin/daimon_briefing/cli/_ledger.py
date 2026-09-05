@@ -6,6 +6,7 @@ printers, the channel resolver, and the polarity gate. Both `cli.refute` and
 they cannot live inside either family module without a cross-family import.
 """
 
+import hashlib
 import json
 import sys
 
@@ -189,6 +190,21 @@ def _check_args(args) -> dict | None:
         raise refutations.RefutationError(
             f"check body file could not be read: {exc}")
     return {"match": match, "body": body, "intent": intent or "warn"}
+
+
+def _check_ceremony_lines(check: dict, *, label: str, verb: str) -> list[str]:
+    """#943: the two disclosure lines a ceremony prints before a human arms
+    a check. One home for the wording, shared by ratify and revise, so the
+    two ceremonies cannot drift apart about what they tell the human."""
+    body = str(check.get("body") or "")
+    sha = str(check.get("sha256") or "") or hashlib.sha256(
+        body.encode("utf-8")).hexdigest()
+    return [
+        f"  {label}: {check.get('intent')} · match /{check.get('match')}/ "
+        f"· {body.count(chr(10))} lines · sha {sha[:12]}",
+        "  This check will run before matching actions on every host that "
+        f"supports it. {verb} arms an executable.",
+    ]
 
 
 def _ruling_lines(record: dict, *, detailed: bool = False,

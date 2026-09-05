@@ -1,10 +1,12 @@
 """#943: the check flags on `daimon ruling propose|revise`, the ratify
 ceremony's check line, and the render of proposed / armed."""
+import hashlib
 import json
 
 import pytest
 
 from daimon_briefing import cli, refutations
+from daimon_briefing.cli import _ledger
 
 
 PROJECT = "/p/ruling-checks"
@@ -195,3 +197,16 @@ def test_ratify_without_a_check_has_no_check_line(
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     assert cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT]) == 0
     assert "Check:" not in capsys.readouterr().out
+
+
+def test_check_ceremony_lines_helper():
+    """#943: one home for the check ceremony wording."""
+    lines = _ledger._check_ceremony_lines(
+        {"match": "gh", "intent": "warn", "body": "a\nb\n"},
+        label="Check", verb="Ratifying")
+    assert len(lines) == 2
+    assert "Check: warn" in lines[0]
+    assert "· 2 lines ·" in lines[0]
+    expected_sha = hashlib.sha256(b"a\nb\n").hexdigest()[:12]
+    assert expected_sha in lines[0]
+    assert lines[1].endswith("Ratifying arms an executable.")
