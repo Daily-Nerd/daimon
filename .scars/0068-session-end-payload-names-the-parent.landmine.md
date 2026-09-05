@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 68
 type: landmine
 title: A Claude Code SessionEnd payload can name the PARENT of a continued session; serialize what the transcript tail points to, not what the host says
 severity: high
 confidence: 0.85
 created: 2026-09-03
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: hook/daimon-session-end.py
 evidence:
-  - note: #923 (2026-09-03): a session continued into a new id via a background continuation ran 21h and 4900 lines; at exit the host fired SessionEnd with the parent id and the parent transcript path (358 lines). The hook re-serialized the stub for 223s and wrote nothing for the child. heal saw no failure because every spawn had succeeded. Only the #185 session-start sweep could recover it, one candidate per start, after the next briefing had already rendered without that day
+  - note: #923 (2026-09-03): a session continued into a new id via a background continuation ran 21h and 4900 lines; at exit the host fired SessionEnd with the parent id and the parent transcript path (358 lines). The hook re-serialized the stub for 223s and wrote nothing for the child. heal saw no failure because every spawn had succeeded. Only the
 expires:
   condition: "the host reports the child session id and transcript path at SessionEnd for a continued session, or the serializer follows continuations itself"
   review_after: 2027-03-03
-status: candidate
+status: active
 ---
 
 The SessionEnd payload's `session_id` and `transcript_path` are not the session
