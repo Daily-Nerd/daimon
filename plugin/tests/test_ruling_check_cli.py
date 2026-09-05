@@ -333,3 +333,19 @@ def test_show_head_line_carries_no_check_suffix(
     out = capsys.readouterr().out
     assert "[check:" not in out
     assert "Check: proposed, not armed" in out
+
+
+def test_revise_check_flags_must_come_together(
+        tmp_checkpoint_dir, body_file, capsys):
+    assert _propose(body_file) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    rc = cli.main(["ruling", "revise", ruling_id, "--evidence", "issue:943",
+                   "--by", "agent", "--project", PROJECT,
+                   "--check-match", "gh pr create"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "ruling not revised" in out
+    assert "--check-body-file" in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["revision"] == 1
+    assert record["check"]["body"] == BODY

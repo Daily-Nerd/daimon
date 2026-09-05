@@ -1379,3 +1379,8 @@ def test_stale_check_pin_ratify_does_not_reset_the_proposal_cap(tmp_checkpoint_d
         refutations.revise(
             ruling_id, channel="cli-agent", evidence=["issue:943"],
             check=_check(body="exit 0 # 4\n"), project_dir=PROJECT)
+
+
+def test_check_validator_refuses_a_non_object():
+    with pytest.raises(refutations.RefutationError, match="must be an object"):
+        refutations._check("exit 0")
