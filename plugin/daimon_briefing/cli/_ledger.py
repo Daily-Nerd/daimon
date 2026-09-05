@@ -224,6 +224,9 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     word = "ruling " if tag else ""
     lines = [f"[{word}{mark} {shown_state} · {activation}] "
              f"{record['refutation_id']}  {record.get('verdict', '')}"]
+    lifecycle = record.get("check_lifecycle")
+    if lifecycle:
+        lines[0] += f" [check: {lifecycle}]"
     if not detailed:
         return lines
     lines.append(f"  Governs: {record.get('subject', '')}")
@@ -236,6 +239,11 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
         lines.append(f"  Revisit when: {revisit}")
     for item in record.get("evidence") or []:
         lines.append(f"  Evidence: {item}")
+    check = record.get("check")
+    if lifecycle and isinstance(check, dict):
+        shown = "proposed, not armed" if lifecycle == "proposed" else lifecycle
+        lines.append(f"  Check: {shown} · intent {check.get('intent')} · "
+                     f"match /{check.get('match')}/")
     proposal = record.get("revision_proposed")
     if proposal:
         lines.append(f"  Pending revision proposal ({proposal.get('by', '?')}): "

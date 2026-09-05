@@ -210,3 +210,39 @@ def test_check_ceremony_lines_helper():
     expected_sha = hashlib.sha256(b"a\nb\n").hexdigest()[:12]
     assert expected_sha in lines[0]
     assert lines[1].endswith("Ratifying arms an executable.")
+
+
+def test_show_renders_a_candidate_check_as_proposed_not_armed(
+        tmp_checkpoint_dir, body_file, capsys):
+    assert _propose(body_file) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "Check: proposed, not armed" in out
+    assert "match /gh pr create/" in out
+
+
+def test_show_renders_an_active_check_as_armed(
+        tmp_checkpoint_dir, body_file, _tty, monkeypatch, capsys):
+    assert _propose(body_file) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT]) == 0
+    capsys.readouterr()
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    assert "Check: armed" in capsys.readouterr().out
+
+
+def test_list_marks_rows_that_carry_a_check(
+        tmp_checkpoint_dir, body_file, capsys):
+    assert _propose(body_file) == 0
+    capsys.readouterr()
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    assert "[check: proposed]" in capsys.readouterr().out
+
+
+def test_show_without_a_check_has_no_check_line(tmp_checkpoint_dir, capsys):
+    assert _propose() == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    assert "Check:" not in capsys.readouterr().out
