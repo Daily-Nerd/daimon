@@ -694,6 +694,15 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 and str(row.get("check_sha256"))
                 != str((current.get("check") or {}).get("sha256") or "")):
             continue
+        # #943: the other half of that binding. A check is an executable, and
+        # an UNBOUND ratify may not arm one: the human who confirmed a row
+        # carrying no pin was shown no check, so a check that arrived during
+        # the confirm window would be armed unseen. No pre-#943 row can carry
+        # a check, so every old unbound ratify still activates.
+        if (event == "ratified"
+                and not str(row.get("check_sha256") or "")
+                and isinstance(current.get("check"), dict)):
+            continue
         current["history_count"] += 1
         # #693: an agent proposal must not move a ruling's rendered age or
         # its list/search order. Ruling polarity only — changing the shipped

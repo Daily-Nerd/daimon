@@ -190,6 +190,29 @@ def test_ratify_is_loud_when_the_check_changed_mid_confirmation(
     assert record["check_lifecycle"] == "proposed"
 
 
+def test_ratify_is_loud_when_a_check_appeared_during_confirmation(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    """#943: the human confirmed a ruling that showed NO check, so the ratify
+    row carries no pin. A check that arrives during the confirm window must
+    not ride that unbound row into an armed state."""
+    assert _propose() == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+
+    def _add_check(prompt=""):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check={"match": "gh", "body": "exit 1\n"}, project_dir=PROJECT)
+        return "y"
+
+    monkeypatch.setattr("builtins.input", _add_check)
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 1
+    assert "changed during confirmation" in capsys.readouterr().out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+    assert record["check_lifecycle"] == "proposed"
+
+
 def test_ratify_without_a_check_has_no_check_line(
         tmp_checkpoint_dir, _tty, monkeypatch, capsys):
     assert _propose() == 0

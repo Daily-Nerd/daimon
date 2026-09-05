@@ -1248,8 +1248,18 @@ def test_ratify_pinned_to_a_stale_check_hash_is_inert(tmp_checkpoint_dir):
     assert record["check_lifecycle"] == "proposed"
 
 
-def test_ratify_without_a_check_pin_stays_unbound(tmp_checkpoint_dir):
+def test_ratify_without_a_pin_is_inert_when_the_record_carries_a_check(
+        tmp_checkpoint_dir):
     ruling_id = _rule(check=_check())
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_ratify_without_a_pin_still_activates_a_ruling_with_no_check(
+        tmp_checkpoint_dir):
+    ruling_id = _rule()
     refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
     assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"
 
