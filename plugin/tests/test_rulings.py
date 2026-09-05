@@ -1021,3 +1021,57 @@ def test_active_rulings_carries_the_anchors_a_host_matches_on(tmp_checkpoint_dir
     assert row["refutation_id"] == rid
     assert row["anchors"] == ["chat:user:123", "chat:channel:9"]
     assert row["verdict"] == "internal numbers never appear in public posts"
+
+
+# ---- #940: what a host may rely on, and where a change becomes visible ----
+
+# The keys the CLI reference promises a host process can read. The doc says
+# them in PROSE, because the reader-facing vocabulary gate is line-level and
+# rejects one of these names outright (scar 0069). So this list is the
+# machine-checkable half of that promise: rename or drop a key here and the
+# published contract is broken, whatever the page still says.
+DOCUMENTED_HOST_KEYS = frozenset({
+    "refutation_id", "state", "subject", "scope", "anchors",
+    "activation", "activation_channel", "evidence", "verdict",
+})
+
+
+def test_listing_carries_every_key_the_reference_promises(tmp_checkpoint_dir):
+    rid = _rule(anchors=["chat:user:123"])
+    refutations.ratify(rid, channel="signed", project_dir=PROJECT)
+    (row,) = refutations.listing(states={"active"}, polarity="ruling",
+                                 project_dir=PROJECT)
+    assert DOCUMENTED_HOST_KEYS <= row.keys(), \
+        DOCUMENTED_HOST_KEYS - row.keys()
+
+
+def test_active_rulings_carries_them_too(tmp_checkpoint_dir):
+    """The reference tells a host these two readers agree. If they diverge, a
+    host that switched readers on our advice would silently read fewer fields
+    rather than fail."""
+    from daimon_briefing import briefing
+    rid = _rule()
+    refutations.ratify(rid, channel="signed", project_dir=PROJECT)
+    (row,) = briefing.active_rulings(PROJECT)
+    assert DOCUMENTED_HOST_KEYS <= row.keys(), \
+        DOCUMENTED_HOST_KEYS - row.keys()
+
+
+def test_the_reference_states_where_a_change_to_this_surface_shows_up(
+        tmp_checkpoint_dir):
+    """daimon is pre-1.0 with bump-minor-pre-major, so a break ships as a
+    MINOR release and the version number alone will not warn anyone. The
+    promise we can keep is that the change is VISIBLE, so the page must keep
+    saying where. Both language mirrors, because a host reading the Spanish
+    page is owed the same warning."""
+    from pathlib import Path
+    root = Path(__file__).parent.parent.parent
+    pages = [
+        root / "website/docs/reference/cli.md",
+        root / ("website/i18n/es/docusaurus-plugin-content-docs"
+                "/current/reference/cli.md"),
+    ]
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        assert "CHANGELOG.md" in text, f"{page} stopped naming the changelog"
+        assert "1.0" in text, f"{page} stopped saying daimon is pre-1.0"

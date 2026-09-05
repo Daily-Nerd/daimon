@@ -68,6 +68,18 @@ The CLI mints two channels only: `cli-tty` (an interactive terminal) and `cli-ag
 
 The record renders as `ratified (signed)` or `ratified (ui)`, never as human-ratified without the tier. Nothing local is unforgeable: a caller with machine access can drive a UI or allocate a terminal. What the channel earns is provenance, not proof; forgery costs deliberate impersonation instead of one word, and the channel stays auditable afterwards.
 
+#### What a host can rely on
+
+daimon is pre-1.0. A release that breaks something described here arrives as a **minor** version bump, not a major one, so the version number alone will not warn you. Read that sentence twice if you are used to the usual meaning of a minor release.
+
+Stability is not the promise we can keep at this stage. Visibility is. Any change to the calls above, to the accepted channel names, to the rendered activation strings, or to the row fields listed below ships as a breaking commit, which means it appears under `### ⚠ BREAKING CHANGES` in `CHANGELOG.md` with prose saying what moved and what to do about it.
+
+So: pin an exact version, and read that section of `CHANGELOG.md` before you move to a new one.
+
+The row fields a host reads are the record id, its state, subject, scope, anchors, the rendered activation and the channel it arrived through, the evidence list, and the rule text. Both readers above return the same set.
+
+Deliberately not covered: the order rows come back in, the wording of diagnostics and log lines, the message text of a raised error (match on the exception type instead), and anything not named on this page. Importable is not the same as documented.
+
 ## Forget
 
 | command | what it does |

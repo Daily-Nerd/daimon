@@ -69,6 +69,18 @@ La CLI emite solo dos canales: `cli-tty` (una terminal interactiva) y `cli-agent
 
 El registro se muestra como `ratified (signed)` o `ratified (ui)`, nunca como ratificado por humano sin el nivel. Nada local es infalsificable: quien tiene acceso a la máquina puede manejar una UI o abrir una terminal. Lo que el canal gana es procedencia, no prueba; falsificar cuesta una suplantación deliberada en vez de una palabra, y el canal queda auditable después.
 
+#### Con qué puede contar un host
+
+daimon está antes de la 1.0. Una versión que rompa algo de lo descrito acá llega como un salto de versión **menor**, no mayor, así que el número de versión por sí solo no te va a avisar. Leé esa frase dos veces si estás acostumbrado al significado habitual de una versión menor.
+
+La estabilidad no es la promesa que podemos sostener en esta etapa. La visibilidad sí. Cualquier cambio en las llamadas de arriba, en los nombres de canal aceptados, en los textos de activación que se muestran, o en los campos de fila que se listan abajo, sale como un commit que rompe compatibilidad, y por lo tanto aparece bajo `### ⚠ BREAKING CHANGES` en `CHANGELOG.md`, con prosa que dice qué se movió y qué hacer al respecto.
+
+Entonces: fijá una versión exacta y leé esa sección de `CHANGELOG.md` antes de pasar a otra.
+
+Los campos de fila que lee un host son el id del registro, su estado, asunto, alcance, anclas, la activación que se muestra y el canal por el que llegó, la lista de evidencia, y el texto de la regla. Los dos lectores de arriba devuelven el mismo conjunto.
+
+Deliberadamente fuera de la promesa: el orden en que vuelven las filas, la redacción de diagnósticos y líneas de log, el texto del mensaje de un error lanzado (usá el tipo de excepción en su lugar), y todo lo que no esté nombrado en esta página. Que se pueda importar no es lo mismo que que esté documentado.
+
 ## Olvidar
 
 | comando | qué hace |
