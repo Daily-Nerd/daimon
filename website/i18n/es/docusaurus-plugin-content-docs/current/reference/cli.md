@@ -60,6 +60,15 @@ actuar sobre la respuesta:
 | `daimon refute add\|ratify\|revise\|overturn` | Gestiona conocimiento negativo con alcance en su propio ledger append-only. Las escrituras de agentes quedan como candidatas; solo una ratificación humana explícita activa un guard, y `ratify` exige la vía humana: una terminal interactiva y `--by` omitido. Las revisiones exigen una cita de evidencia tipada nueva, cuya forma se valida pero nunca se resuelve ni se verifica, y devuelven una refutación activa a candidata hasta que se vuelva a ratificar. Los overturns de agentes siguen siendo propuestas. |
 | `daimon ruling propose\|ratify\|revise\|retire` | Gestiona reglas vigentes en el mismo ledger, con un ciclo más estricto: `ratify` muestra el texto completo, avisa que va a renderizarse en cada sesión futura y ata la activación al texto mostrado; un humano que revisa una regla activa confirma el cambio y la regla sigue activa; los revise y retire de agentes registran propuestas mientras el texto queda en pie; la activación se rechaza pasado el tope (`DAIMON_RULING_CAP`, por defecto 7). Retirar no exige cita de evidencia. |
 
+### Reglas desde un proceso anfitrión
+
+La CLI emite solo dos canales: `cli-tty` (una terminal interactiva) y `cli-agent` (`--by agent`). Nunca va a tener una bandera para los otros dos canales humanos, `ui` y `signed`, porque una bandera que un agente pudiera pasar desde un shell sería un canal humano autodeclarado. Esos dos existen para un proceso anfitrión que tiene la autoridad por sí mismo, un operador que verificó por fuera, y se escriben por la librería, en el mismo proceso:
+
+- `daimon_briefing.refutations.ratify(refutation_id, channel="signed", note="...", project_dir=...)` activa una regla propuesta. `channel` es el canal que el anfitrión observó, uno de `ui` o `signed`; cualquier otro nombre se rechaza. Citá la prueba de la acción del operador en la evidencia de la regla (`url:`, o `receipt:` cuando exista la firma).
+- `daimon_briefing.refutations.listing(states={"active"}, polarity="ruling", project_dir=...)` y `daimon_briefing.briefing.active_rulings(project_dir)` leen el conjunto activo, cada fila con `subject`, `verdict`, `scope`, `anchors`, `activation_channel` y `evidence`. Los `anchors` son cadenas libres que se fijan con `ruling propose --anchor`; un anfitrión que aplica reglas por mensaje compara contra ellos y decide por su cuenta qué pasa.
+
+El registro se muestra como `ratified (signed)` o `ratified (ui)`, nunca como ratificado por humano sin el nivel. Nada local es infalsificable: quien tiene acceso a la máquina puede manejar una UI o abrir una terminal. Lo que el canal gana es procedencia, no prueba; falsificar cuesta una suplantación deliberada en vez de una palabra, y el canal queda auditable después.
+
 ## Olvidar
 
 | comando | qué hace |
