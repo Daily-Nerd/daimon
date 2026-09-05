@@ -384,6 +384,24 @@ def session_speaker() -> str | None:
     return (_get("DAIMON_SESSION_SPEAKER") or "").strip() or None
 
 
+def speaker_line_delimiter() -> str | None:
+    """The delimiter a host declares around its own speaker line at the head of
+    a user message (DAIMON_SPEAKER_LINE, #925). None when unset or blank, and
+    then content is never read for attribution. Accepts the literal character(s)
+    or the `U+E000` spelling, because a private-use code point is hard to type
+    into an environment file. Never raises."""
+    raw = (_get("DAIMON_SPEAKER_LINE") or "").strip()
+    if not raw:
+        return None
+    up = raw.upper()
+    if up.startswith("U+") and 4 <= len(up) - 2 <= 6:
+        try:
+            return chr(int(up[2:], 16))
+        except ValueError:
+            return None
+    return raw
+
+
 # ---- tenant scope (#899): the host, never the caller, chooses a read scope --
 
 
