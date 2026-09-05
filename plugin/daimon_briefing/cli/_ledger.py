@@ -225,7 +225,7 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     lines = [f"[{word}{mark} {shown_state} · {activation}] "
              f"{record['refutation_id']}  {record.get('verdict', '')}"]
     lifecycle = record.get("check_lifecycle")
-    if lifecycle:
+    if lifecycle and not detailed:
         lines[0] += f" [check: {lifecycle}]"
     if not detailed:
         return lines

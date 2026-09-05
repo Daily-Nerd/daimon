@@ -246,3 +246,13 @@ def test_show_without_a_check_has_no_check_line(tmp_checkpoint_dir, capsys):
     ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
     assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
     assert "Check:" not in capsys.readouterr().out
+
+
+def test_show_head_line_carries_no_check_suffix(
+        tmp_checkpoint_dir, body_file, capsys):
+    assert _propose(body_file) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "[check:" not in out
+    assert "Check: proposed, not armed" in out
