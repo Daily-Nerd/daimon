@@ -59,6 +59,15 @@ The auditors share one exit contract, so a script can act on the answer:
 | `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires the human path — an interactive terminal with `--by` omitted. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active refutation to candidate until it is ratified again. Agent overturns remain proposals. |
 | `daimon ruling propose\|ratify\|revise\|retire` | Manage standing rulings on the same ledger, with a stricter lifecycle: `ratify` shows the full text, discloses that it will render into every future session, and binds the activation to the text it displayed; a human revising an active ruling confirms the change and the ruling stays active; agent revise and retire calls record proposals while the text stands; activation refuses past the cap (`DAIMON_RULING_CAP`, default 7). Retirement needs no evidence citation. |
 
+### Rulings from a host process
+
+The CLI mints two channels only: `cli-tty` (an interactive terminal) and `cli-agent` (`--by agent`). It never grows a flag for the other two human channels, `ui` and `signed`, because a flag an agent could pass from a shell would be a self-declared human channel. Those two exist for a host process that holds the authority itself, an operator it verified out of band, and they are written through the library, in process:
+
+- `daimon_briefing.refutations.ratify(refutation_id, channel="signed", note="...", project_dir=...)` activates a proposed ruling. `channel` is the channel the host observed, one of `ui` or `signed`; any other name is refused. Cite the proof of the operator's action in the ruling's evidence (`url:`, or `receipt:` once the signature exists).
+- `daimon_briefing.refutations.listing(states={"active"}, polarity="ruling", project_dir=...)` and `daimon_briefing.briefing.active_rulings(project_dir)` read the active set, each row with `subject`, `scope`, `anchors`, `activation_channel`, `evidence`, and the rule text itself. `anchors` are free strings set with `ruling propose --anchor`; a host that enforces per message matches on them and decides what happens itself.
+
+The record renders as `ratified (signed)` or `ratified (ui)`, never as human-ratified without the tier. Nothing local is unforgeable: a caller with machine access can drive a UI or allocate a terminal. What the channel earns is provenance, not proof; forgery costs deliberate impersonation instead of one word, and the channel stays auditable afterwards.
+
 ## Forget
 
 | command | what it does |
