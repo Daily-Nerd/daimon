@@ -463,7 +463,14 @@ def plaintext_values(row: dict) -> list[str]:
     `anchors`/`evidence` are bounded typed tokens shared across records, so
     offering one as a by-value target would show a single record in the
     dry-run while the deleter removes every record carrying the token — the
-    same reasoning that keeps `author` out of the declared set entirely."""
+    same reasoning that keeps `author` out of the declared set entirely.
+
+    A ruling's `check.match` and `check.body` (#943) are held out for both
+    halves of that reasoning: a trigger pattern is shared across records the
+    way a token is, so offering one by value would understate the deleter's
+    reach, and a multi-line script makes poor selector text besides.
+    `row_content_keys` still reaches them, so a deletion aimed at the body's
+    own text lands — only the by-value MENU declines to suggest it."""
     out: list[str] = []
     for field in _PLAINTEXT_FIELDS:
         value = row.get(field)
@@ -967,7 +974,13 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
                   ratified: bool = False, check=None, project_dir=None) -> str:
     """#693: found a positive-polarity record. Same row schema, same id
     space, same identity-collision refusal as a refutation — the polarity is
-    the founding event name (`ruled`), derived at fold time."""
+    the founding event name (`ruled`), derived at fold time.
+
+    `check` (#943) is the raw dict `_check` validates — `{match, body,
+    intent}` — or None. Only a ruling may carry one, which is why this
+    function takes it and `assert_refutation` does not. A check founded on a
+    candidate is `proposed` and reaches no host until the ruling activates.
+    """
     _guard_ruling_text(subject, verdict)
     subject = _text("subject", subject)
     verdict = _text("verdict", verdict)
@@ -1078,6 +1091,17 @@ def revise(refutation_id: str, *, channel: str, evidence,
            subject=None, verdict=None, scope=None, anchors=None,
            revisit_when=None, ratified: bool = False, check=None,
            project_dir=None) -> None:
+    """Replace fields on an existing record; absent kwargs are untouched.
+
+    `check` (#943) is the raw dict `_check` validates — `{match, body,
+    intent}` — or None, and only a ruling may carry one. Where it lands
+    depends on the channel and the state, like every other field here: an
+    agent revising an ACTIVE ruling writes a proposal that leaves the armed
+    body alone, while a human channel replaces it and it arms as given. That
+    last path has no pin because the caller authored the body in the same
+    call; `ratify` pins a hash because there the human is confirming content
+    someone else wrote.
+    """
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")

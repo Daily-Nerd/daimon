@@ -1232,6 +1232,23 @@ def test_human_revise_of_an_active_ruling_replaces_and_stays_armed(
     assert record["check_lifecycle"] == "armed"
 
 
+def test_human_in_process_revise_arms_the_supplied_check_without_a_pin(
+        tmp_checkpoint_dir):
+    """#943: pinning the in-process contract. `ratify` binds a check to the
+    hash the ceremony DISPLAYED because the human is confirming content
+    someone else wrote. An in-process human channel supplied the body in the
+    same call, so there is no display-then-swap window to close and no pin to
+    demand: it arms as given, and the host owns that confirmation."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check"]["body"] == "exit 0\n"
+    assert record["check_lifecycle"] == "armed"
+
+
 def test_retired_ruling_check_is_disarmed(tmp_checkpoint_dir):
     ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
     refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
