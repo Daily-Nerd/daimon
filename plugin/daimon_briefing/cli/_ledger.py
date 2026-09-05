@@ -195,7 +195,11 @@ def _check_args(args) -> dict | None:
 def _check_ceremony_lines(check: dict, *, label: str, verb: str) -> list[str]:
     """#943: the two disclosure lines a ceremony prints before a human arms
     a check. One home for the wording, shared by ratify and revise, so the
-    two ceremonies cannot drift apart about what they tell the human."""
+    two ceremonies cannot drift apart about what they tell the human.
+
+    Hashing the raw body when no `sha256` is present shows the human the same
+    hash the row will carry: `refutations._check` refuses any body it would
+    alter, so the authored bytes and the stored bytes are the same bytes."""
     body = str(check.get("body") or "")
     sha = str(check.get("sha256") or "") or hashlib.sha256(
         body.encode("utf-8")).hexdigest()

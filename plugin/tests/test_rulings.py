@@ -12,7 +12,7 @@ change what renders.
 import hashlib
 import pytest
 
-from daimon_briefing import refutations
+from daimon_briefing import redact, refutations
 
 
 PROJECT = "/p/rulings"
@@ -1117,6 +1117,40 @@ def test_check_body_that_is_a_path_is_refused(body):
 def test_check_body_over_cap_is_refused():
     with pytest.raises(refutations.RefutationError, match="8192"):
         refutations._check(_check(body="x" * (refutations._MAX_CHECK_BODY + 1)))
+
+
+_SECRET_BODY = (
+    "grep -q 'AKIAIOSFODNN7EXAMPLE' \"$DAIMON_CHECK_SUBJECT\" && exit 1\n"
+    "exit 0\n")
+
+
+def test_the_secret_shaped_body_this_module_uses_really_does_redact():
+    """Guards the two refusal tests below: if redact ever stops catching this
+    shape they must fail loudly, not pass because nothing was detected."""
+    scrubbed, counts = redact.redact_text(_SECRET_BODY)
+    assert scrubbed != _SECRET_BODY
+    assert counts
+
+
+def test_check_body_with_a_secret_literal_is_refused():
+    with pytest.raises(refutations.RefutationError, match="secret-shaped"):
+        refutations._check(_check(body=_SECRET_BODY))
+
+
+def test_check_match_with_a_secret_literal_is_refused():
+    with pytest.raises(refutations.RefutationError, match="secret-shaped"):
+        refutations._check(_check(match="AKIAIOSFODNN7EXAMPLE"))
+
+
+def test_check_match_is_stored_stripped():
+    out = refutations._check(_check(match="  gh pr create  "))
+    assert out["match"] == "gh pr create"
+
+
+def test_check_body_is_stored_exactly_as_given():
+    body = "#!/bin/sh\n  echo   spaced\nexit 0\n"
+    out = refutations._check(_check(body=body))
+    assert out["body"] == body
 
 
 def test_check_match_must_compile():

@@ -271,14 +271,24 @@ def _check(value) -> dict | None:
     """Validate and normalize a ruling's `check` (#943), or None.
 
     Returns the dict that is STORED: `match`, `intent`, `body`, and a
-    `sha256` over the stored body. Redaction runs on the body first so the
-    hash is over bytes that can persist, the same reasoning `make_id` gives.
+    `sha256` over the stored body.
+
+    Redaction does NOT run over a check the way it runs over ruling text.
+    Everywhere else a secret-shaped literal is scrubbed and the surrounding
+    prose still means what it meant; here the value IS the program, and
+    replacing it with a placeholder ships an altered script under a hash the
+    author never saw. So a check that redaction would touch is refused
+    instead, and the stored bytes are always the authored bytes: what the
+    ceremony displays, what the pin covers, and what the host would run are
+    one string. `match` is stripped (surrounding whitespace in a regex is a
+    typo, not intent); `body` is stored exactly as given, whitespace and all,
+    because a script's bytes are its meaning.
     """
     if value is None:
         return None
     if not isinstance(value, dict):
         raise RefutationError("check must be an object with match and body")
-    match = str(value.get("match") or "")
+    match = str(value.get("match") or "").strip()
     body = str(value.get("body") or "")
     intent = str(value.get("intent") or "warn")
     if not match.strip():
@@ -300,7 +310,12 @@ def _check(value) -> dict | None:
         raise RefutationError(
             "check body must be the script itself, not a path to one: a "
             "path is invisible to every other host and machine")
-    body, _ = redact.redact_text(body)
+    for field, text in (("match", match), ("body", body)):
+        scrubbed, _ = redact.redact_text(text)
+        if scrubbed != text:
+            raise RefutationError(
+                f"check {field} contains a secret-shaped literal that daimon "
+                "would redact; match a secret by pattern, never by value")
     if len(body.encode("utf-8")) > _MAX_CHECK_BODY:
         raise RefutationError(
             f"check body is too long ({len(body.encode('utf-8'))} > "

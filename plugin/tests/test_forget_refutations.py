@@ -780,3 +780,19 @@ def test_forget_reaches_a_check_body_and_match(tmp_checkpoint_dir):
         normalize.content_key(body), project_dir=PROJECT)
     assert removed == [ruling_id]
     assert refutations.get(ruling_id, project_dir=PROJECT) is None
+
+
+def test_check_that_would_redact_never_reaches_the_ledger(tmp_checkpoint_dir):
+    """The test above forgets by the body's own text, which only works while
+    the stored bytes are the authored bytes. Redaction no longer rewrites a
+    script to keep that true, so the secret-shaped body is refused at the
+    door instead: nothing is written, so there is nothing to reach."""
+    body = ("grep -q 'AKIAIOSFODNN7EXAMPLE' \"$DAIMON_CHECK_SUBJECT\" "
+            "&& exit 1\nexit 0\n")
+    with pytest.raises(refutations.RefutationError, match="secret-shaped"):
+        refutations.assert_ruling(
+            subject="public posts", verdict="no leaked keys in posts",
+            scope="publishing", evidence=["issue:943"], channel="cli-agent",
+            check={"match": "gh pr create", "body": body},
+            project_dir=PROJECT)
+    assert refutations.events(project_dir=PROJECT) == []
