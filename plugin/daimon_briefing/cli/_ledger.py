@@ -168,6 +168,32 @@ def _refute_channel(args) -> str:
     return "cli-tty"
 
 
+_CHECK_FLAGS = ("--check-body-file", "--check-match")
+
+
+def _check_args(args) -> dict | None:
+    """#943: the three `--check-*` flags as the dict `refutations._check`
+    takes, or None when none was given. Half a check is refused here, before
+    any write, and the body FILE is read once at the CLI boundary: the path
+    is never stored, only the bytes."""
+    body_file = getattr(args, "check_body_file", None)
+    match = getattr(args, "check_match", None)
+    intent = getattr(args, "check_intent", None)
+    if body_file is None and match is None and intent is None:
+        return None
+    if body_file is None or match is None:
+        raise refutations.RefutationError(
+            "a check needs both --check-body-file and --check-match "
+            "(--check-intent is optional, default warn)")
+    try:
+        with open(body_file, encoding="utf-8") as handle:
+            body = handle.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise refutations.RefutationError(
+            f"check body file could not be read: {exc}")
+    return {"match": match, "body": body, "intent": intent or "warn"}
+
+
 def _ruling_lines(record: dict, *, detailed: bool = False,
                   tag: bool = False) -> list:
     """#693: a ruling renders its VERDICT (the rule text) and never the

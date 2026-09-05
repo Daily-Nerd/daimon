@@ -13,6 +13,7 @@ import daimon_briefing.cli as _cli
 
 from .. import config, normalize, refutations, render
 from ._ledger import (
+    _check_args,
     _print_ruling,
     _refusal_message,
     _refutation_json,
@@ -25,12 +26,13 @@ from ._ledger import (
 def _cmd_ruling_propose(args) -> int:
     project = _cli._resolve_project(args.project)
     try:
+        check = _check_args(args)
         ruling_id = refutations.assert_ruling(
             subject=args.subject, verdict=args.verdict, scope=args.scope,
             evidence=args.evidence, channel=_refute_channel(args),
             anchors=args.anchor,
             revisit_when=args.revisit_when or "", ratified=args.ratify,
-            project_dir=project)
+            check=check, project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not recorded", exc))
         return 1
@@ -155,12 +157,13 @@ def _cmd_ruling_revise(args) -> int:
             return 1
     anchors = args.anchor if args.anchor is not None else None
     try:
+        check = _check_args(args)
         refutations.revise(
             args.ruling_id, channel=channel,
             evidence=args.evidence, subject=args.subject,
             verdict=args.verdict, scope=args.scope,
             anchors=anchors, revisit_when=args.revisit_when,
-            ratified=False, project_dir=project)
+            ratified=False, check=check, project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not revised", exc))
         return 1
@@ -295,6 +298,19 @@ def register(sub, fmt) -> None:
     rl_propose.add_argument(
         "--ratify", action="store_true",
         help="activate immediately; valid only on the human path")
+    rl_propose.add_argument(
+        "--check-body-file", metavar="PATH",
+        help="file whose contents become the ruling's check script; the "
+             "bytes are stored, the path is not (#943)")
+    rl_propose.add_argument(
+        "--check-match", metavar="REGEX",
+        help="regex on the command string that selects the actions the "
+             "check runs before")
+    rl_propose.add_argument(
+        "--check-intent", choices=sorted(refutations._CHECK_INTENTS),
+        default=None,
+        help="what the check asks each host for; the host delivers the "
+             "strongest it supports (default warn)")
     rl_propose.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_propose.add_argument("--json", action="store_true", help="machine-readable output")
     rl_propose.set_defaults(func=_cli._cmd_ruling_propose)
@@ -334,6 +350,19 @@ def register(sub, fmt) -> None:
         "--ratify", action="store_true",
         help="refused: activation goes through `daimon ruling ratify`, "
              "which shows the text before the write")
+    rl_revise.add_argument(
+        "--check-body-file", metavar="PATH",
+        help="file whose contents become the ruling's check script; the "
+             "bytes are stored, the path is not (#943)")
+    rl_revise.add_argument(
+        "--check-match", metavar="REGEX",
+        help="regex on the command string that selects the actions the "
+             "check runs before")
+    rl_revise.add_argument(
+        "--check-intent", choices=sorted(refutations._CHECK_INTENTS),
+        default=None,
+        help="what the check asks each host for; the host delivers the "
+             "strongest it supports (default warn)")
     rl_revise.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_revise.add_argument("--json", action="store_true", help="machine-readable output")
     rl_revise.set_defaults(func=_cli._cmd_ruling_revise)
