@@ -494,6 +494,13 @@ def _config_get(name: str) -> str:
     return _env_file_values().get(name) or ""
 
 
+def _config_flag(name: str) -> bool:
+    """Mirror of daimon_briefing.config._flag. Same four words, so an operator
+    who learned `DAIMON_DISABLE=true` does not discover that this one alone
+    insists on `1`."""
+    return _config_get(name).strip() in ("1", "true", "yes", "on")
+
+
 def crash_log_path() -> Path:
     """The crash sink, resolved the way the DELETER resolves it.
 
@@ -599,7 +606,18 @@ def spawn_serialize(cli, transcript_path, env):
         subprocess.Popen(
             [cli, "serialize", transcript_path],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            # #939: a container host's only observable surface is the stream
+            # its runtime captures, so a result line in serialize.log alone is
+            # byte-identical to a dead feature. None inherits fd 1, which in a
+            # container belongs to the runtime's log pipe and stays open for
+            # the life of the container, so the DETACHED child still reaches
+            # it. Off by default: on a terminal host this prints capture
+            # results into the user's shell minutes after the session ended.
+            # stdout rather than stderr because #194 made stderr the crash
+            # surface; see the comment below and scar candidate
+            # serialize-outcomes-must-not-mirror-to-stderr.
+            stdout=None if _config_flag("DAIMON_LOG_STDOUT")
+            else subprocess.DEVNULL,
             stderr=crashf,
             start_new_session=True,  # survive the exiting parent
             env=env,

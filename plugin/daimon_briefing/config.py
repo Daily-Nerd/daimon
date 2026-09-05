@@ -64,6 +64,16 @@ def is_disabled() -> bool:
     return _flag("DAIMON_DISABLE")
 
 
+def log_stdout() -> bool:
+    """#939: mirror serialize result lines onto stdout, the stream a container
+    runtime actually collects. Off by default, because on a terminal host an
+    inherited descriptor prints capture results into the user's shell minutes
+    after the session ended. NOT stderr: #194 moved diagnostics off stderr
+    precisely because stderr lands in serialize-crash.log and reads as a crash.
+    """
+    return _flag("DAIMON_LOG_STDOUT")
+
+
 def checkpoint_dir() -> Path:
     raw = _get("DAIMON_CHECKPOINT_DIR")
     if raw:
