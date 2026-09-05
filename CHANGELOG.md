@@ -5,6 +5,29 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.0](https://github.com/Daily-Nerd/daimon/compare/v0.38.1...v0.39.0) (2026-09-05)
+
+
+### Features
+
+* **brief:** one line counts the decisions waiting on you, here and elsewhere ([#917](https://github.com/Daily-Nerd/daimon/issues/917)) ([a772420](https://github.com/Daily-Nerd/daimon/commit/a7724202f069000fe7fd23c41a32e84fc89723a5))
+* **cli:** daimon slug &lt;path&gt; prints the checkpoint directory name ([#914](https://github.com/Daily-Nerd/daimon/issues/914)) ([396299f](https://github.com/Daily-Nerd/daimon/commit/396299f393f1720c4071018c2ad77eb2c92b3eca))
+* **transcript:** a host-declared speaker line in content fills said_by when the delimiter is configured ([#926](https://github.com/Daily-Nerd/daimon/issues/926)) ([b94005a](https://github.com/Daily-Nerd/daimon/commit/b94005acb9f62e54648a9bde5add7781ad6c0421))
+
+
+### Bug Fixes
+
+* **cli:** the refutation and amendment cap refusals name where the overflow belongs ([#921](https://github.com/Daily-Nerd/daimon/issues/921)) ([980fa2e](https://github.com/Daily-Nerd/daimon/commit/980fa2e18ad6c7ff2f0a5e19f93526c330ff10ca))
+* **cli:** the request cap refusal names where the overflow belongs ([#918](https://github.com/Daily-Nerd/daimon/issues/918)) ([d4b2a6a](https://github.com/Daily-Nerd/daimon/commit/d4b2a6af109a6ab8c1a6c895a60c508543efe35c))
+* **hooks:** the session-end hook follows a continued-in pointer to the child transcript ([#924](https://github.com/Daily-Nerd/daimon/issues/924)) ([fcc120b](https://github.com/Daily-Nerd/daimon/commit/fcc120b1bd4f8c62d6c74a4ec49ede64c1db733a))
+* **recall:** a human resolution demotes a superseded item harder than a model link ([#908](https://github.com/Daily-Nerd/daimon/issues/908)) ([54f2d66](https://github.com/Daily-Nerd/daimon/commit/54f2d6661237be880384da3629704613a40a4a0e))
+* **stats:** the receipt probe reports what it did instead of leaving no trace ([#922](https://github.com/Daily-Nerd/daimon/issues/922)) ([5a9a0d8](https://github.com/Daily-Nerd/daimon/commit/5a9a0d8e9bd1339f3ccd324ef4ecc2d98a6ec2de))
+
+
+### Documentation
+
+* cite the Agent Memory Atlas reading, strong half and weak half together ([#910](https://github.com/Daily-Nerd/daimon/issues/910)) ([30a46af](https://github.com/Daily-Nerd/daimon/commit/30a46afdc8cbc6aaa2e08dabad9d6b6335f2260a))
+
 ## [0.38.1](https://github.com/Daily-Nerd/daimon/compare/v0.38.0...v0.38.1) (2026-09-02)
 
 
