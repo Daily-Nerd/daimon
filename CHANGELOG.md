@@ -5,6 +5,19 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.0](https://github.com/Daily-Nerd/daimon/compare/v0.39.0...v0.40.0) (2026-09-05)
+
+
+### Features
+
+* **refutations:** add a receipt evidence kind ([#930](https://github.com/Daily-Nerd/daimon/issues/930)) ([cb0fbd7](https://github.com/Daily-Nerd/daimon/commit/cb0fbd7740e368eb27cdd239e4bdb384377c62fd))
+* **rulings:** pin the in-process ratify and listing functions as a host surface ([#931](https://github.com/Daily-Nerd/daimon/issues/931)) ([a777341](https://github.com/Daily-Nerd/daimon/commit/a777341ef443be05c1d779ab2e91b5f9cf6c4fa2))
+
+
+### Bug Fixes
+
+* **heal:** a session with an older checkpoint whose re-capture failed is visible to heal and status ([#932](https://github.com/Daily-Nerd/daimon/issues/932)) ([ddc4f5c](https://github.com/Daily-Nerd/daimon/commit/ddc4f5cf137be0ddd2c32bfb2db9ebf906385fc0))
+
 ## [0.39.0](https://github.com/Daily-Nerd/daimon/compare/v0.38.1...v0.39.0) (2026-09-05)
 
 
