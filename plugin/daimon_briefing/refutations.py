@@ -133,6 +133,17 @@ _MAX_RULING_TEXT = 280
 # read-side boundedness comes from latest-wins in the fold).
 _MAX_OPEN_PROPOSALS = 3
 
+# #943: a ruling may carry a CHECK, a script the host runs before the action
+# the ruling governs. The body is stored in the row so the check travels with
+# the ruling (constraint 5); a host-local path is refused because a path is
+# invisible to every other host the same human uses. The hash is computed
+# by the writer over the stored bytes and never accepted from a caller:
+# ratify pins it the way `verdict_key` pins the rule text.
+CHECK_INTENTS = frozenset({"enforce", "warn", "record-only"})
+_MAX_CHECK_BODY = 8192
+_MAX_CHECK_MATCH = 200
+_CHECK_PATH_RE = re.compile(r"\s*(?:~|/|\./)[^\s]*\s*")
+
 # Every field of a ledger row that can hold ITEM plaintext, flat then nested
 # (#645). One declaration, two consumers: `forget_content_key` below decides
 # which records a deletion reaches, and `privacy.audit_project` decides which
@@ -147,6 +158,11 @@ _MAX_OPEN_PROPOSALS = 3
 # record a given author ever wrote.
 _PLAINTEXT_FIELDS = ("subject", "verdict", "scope", "revisit_when", "note")
 _PLAINTEXT_LISTS = ("anchors", "evidence")
+
+# #943: the check's body and match are script text an author wrote, so they
+# are plaintext for the same two consumers. Nested because the check is one
+# object on the row; declared here so the deleter and the auditor agree.
+_PLAINTEXT_NESTED = (("check", "match"), ("check", "body"))
 
 
 class RefutationError(ValueError):
@@ -249,6 +265,67 @@ def _evidence(values, *, required: bool = True) -> list[str]:
         raise RefutationError(
             f"too many evidence sources ({len(out)} > {_MAX_EVIDENCE})")
     return out
+
+
+def _check(value) -> dict | None:
+    """Validate and normalize a ruling's `check` (#943), or None.
+
+    Returns the dict that is STORED: `match`, `intent`, `body`, and a
+    `sha256` over the stored body.
+
+    Redaction does NOT run over a check the way it runs over ruling text.
+    Everywhere else a secret-shaped literal is scrubbed and the surrounding
+    prose still means what it meant; here the value IS the program, and
+    replacing it with a placeholder ships an altered script under a hash the
+    author never saw. So a check that redaction would touch is refused
+    instead, and the stored bytes are always the authored bytes: what the
+    ceremony displays, what the pin covers, and what the host would run are
+    one string. `match` is stripped (surrounding whitespace in a regex is a
+    typo, not intent); `body` is stored exactly as given, whitespace and all,
+    because a script's bytes are its meaning.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RefutationError("check must be an object with match and body")
+    match = str(value.get("match") or "").strip()
+    body = str(value.get("body") or "")
+    intent = str(value.get("intent") or "warn")
+    if not match.strip():
+        raise RefutationError("check match is required")
+    if not body.strip():
+        raise RefutationError("check body is required")
+    if len(match.encode("utf-8")) > _MAX_CHECK_MATCH:
+        raise RefutationError(
+            f"check match is too long ({len(match.encode('utf-8'))} > "
+            f"{_MAX_CHECK_MATCH} bytes)")
+    try:
+        re.compile(match)
+    except re.error as exc:
+        raise RefutationError(f"check match is not a valid regex: {exc}")
+    if intent not in CHECK_INTENTS:
+        raise RefutationError(
+            f"check intent must be one of: {', '.join(sorted(CHECK_INTENTS))}")
+    if "\n" not in body.strip() and _CHECK_PATH_RE.fullmatch(body):
+        raise RefutationError(
+            "check body must be the script itself, not a path to one: a "
+            "path is invisible to every other host and machine")
+    for field, text in (("match", match), ("body", body)):
+        scrubbed, _ = redact.redact_text(text)
+        if scrubbed != text:
+            raise RefutationError(
+                f"check {field} contains a secret-shaped literal that daimon "
+                "would redact; match a secret by pattern, never by value")
+    if len(body.encode("utf-8")) > _MAX_CHECK_BODY:
+        raise RefutationError(
+            f"check body is too long ({len(body.encode('utf-8'))} > "
+            f"{_MAX_CHECK_BODY} bytes)")
+    return {
+        "match": match,
+        "intent": intent,
+        "body": body,
+        "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
 
 
 def make_id(subject: str, scope: str) -> str:
@@ -386,7 +463,14 @@ def plaintext_values(row: dict) -> list[str]:
     `anchors`/`evidence` are bounded typed tokens shared across records, so
     offering one as a by-value target would show a single record in the
     dry-run while the deleter removes every record carrying the token — the
-    same reasoning that keeps `author` out of the declared set entirely."""
+    same reasoning that keeps `author` out of the declared set entirely.
+
+    A ruling's `check.match` and `check.body` (#943) are held out for both
+    halves of that reasoning: a trigger pattern is shared across records the
+    way a token is, so offering one by value would understate the deleter's
+    reach, and a multi-line script makes poor selector text besides.
+    `row_content_keys` still reaches them, so a deletion aimed at the body's
+    own text lands — only the by-value MENU declines to suggest it."""
     out: list[str] = []
     for field in _PLAINTEXT_FIELDS:
         value = row.get(field)
@@ -413,6 +497,12 @@ def row_content_keys(row: dict) -> set[str]:
             for value in values:
                 if isinstance(value, str) and value.strip():
                     out.add(normalize.content_key(value))
+    for parent, field in _PLAINTEXT_NESTED:
+        holder = row.get(parent)
+        if isinstance(holder, dict):
+            value = holder.get(field)
+            if isinstance(value, str) and value.strip():
+                out.add(normalize.content_key(value))
     return out
 
 
@@ -595,6 +685,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "revision": 1,
                 "history_count": 1,
             }
+            if isinstance(row.get("check"), dict):  # #943
+                out[ref_id]["check"] = dict(row["check"])
             continue
         if current is None:
             continue  # orphan lifecycle event: visible in raw audit, inert here
@@ -615,6 +707,23 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 and str(row.get("verdict_key") or "")
                 and str(row.get("verdict_key"))
                 != normalize.content_key(current.get("verdict") or "")):
+            continue
+        # #943: check binding: a ratify row carrying check_sha256 activates
+        # only the body it displayed; a mismatch is inert, the same rule
+        # verdict_key already applies to the rule text.
+        if (event == "ratified"
+                and str(row.get("check_sha256") or "")
+                and str(row.get("check_sha256"))
+                != str((current.get("check") or {}).get("sha256") or "")):
+            continue
+        # #943: the other half of that binding. A check is an executable, and
+        # an UNBOUND ratify may not arm one: the human who confirmed a row
+        # carrying no pin was shown no check, so a check that arrived during
+        # the confirm window would be armed unseen. No pre-#943 row can carry
+        # a check, so every old unbound ratify still activates.
+        if (event == "ratified"
+                and not str(row.get("check_sha256") or "")
+                and isinstance(current.get("check"), dict)):
             continue
         current["history_count"] += 1
         # #693: an agent proposal must not move a ruling's rendered age or
@@ -662,6 +771,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # revisions walked straight through the per-row _MAX_EVIDENCE
                 # cap (74 sources against a limit of 24).
                 current["evidence"] = list(row.get("evidence") or [])
+            if isinstance(row.get("check"), dict):  # #943
+                current["check"] = dict(row["check"])
             # #693: re-stamped ONLY when the row carries a text key — the
             # replace-by-key-presence contract above means a human revising
             # only scope must not relabel agent-authored text as human.
@@ -696,6 +807,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                     "subject": str(row.get("subject") or ""),
                     "verdict": str(row.get("verdict") or ""),
                 }
+                if isinstance(row.get("check"), dict):  # #943
+                    current["revision_proposed"]["check"] = dict(row["check"])
         elif event == "overturn-proposed":
             if current["state"] == "active":
                 current["overturn_proposed"] = {
@@ -714,6 +827,16 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 current["overturn_evidence"] = list(row.get("evidence") or [])
                 current["overturn_note"] = str(row.get("note") or "")
                 current.pop("overturn_proposed", None)
+    # #943: lifecycle is DERIVED from state, never stored. `proposed` is not
+    # a mode: a candidate's check never reaches a host.
+    for current in out.values():
+        if "check" not in current:
+            continue
+        current["check_lifecycle"] = {
+            "candidate": "proposed",
+            "active": "armed",
+            "overturned": "disarmed",
+        }.get(current["state"], "proposed")
     return out
 
 
@@ -807,15 +930,31 @@ def _guard_open_proposals(refutation_id: str, event: str,
     # the record's verdict may have moved again since the row, but the
     # reachable lever is the fresh-mismatch case this catches.
     current_key = None
+    current_check_sha = None
     record = get(refutation_id, project_dir=project_dir)
     if record is not None:
         current_key = normalize.content_key(record.get("verdict") or "")
+        current_check_sha = str(
+            (record.get("check") or {}).get("sha256") or "")
     verdicts = [r for r in rows
                 if CHANNEL_AUTHORITY.get(_channel_of(r)) == "human"
                 and r.get("event") in ("ratified", "overturned", "revised")
                 and not (r.get("event") == "ratified"
                          and str(r.get("verdict_key") or "")
-                         and str(r.get("verdict_key")) != current_key)]
+                         and str(r.get("verdict_key")) != current_key)
+                # #943: check binding is inert in the fold when it doesn't
+                # match the current check; it must not reset the proposal cap.
+                and not (r.get("event") == "ratified"
+                         and str(r.get("check_sha256") or "")
+                         and str(r.get("check_sha256")) != current_check_sha)
+                # #943: and the unbound case, for the same reason. A ratify
+                # carrying no pin is inert in the fold once the record has a
+                # check, and the adversary controls when that happens — it
+                # adds the check during the confirm window — so the inert row
+                # must not hand back a proposal slot either.
+                and not (r.get("event") == "ratified"
+                         and not str(r.get("check_sha256") or "")
+                         and current_check_sha)]
     since = max((_order(r) for r in verdicts), default=-1)
     pending = [r for r in rows
                if r.get("event") == event and _order(r) > since]
@@ -841,10 +980,16 @@ def _guard_ruling_text(subject, verdict) -> None:
 
 def assert_ruling(*, subject: str, verdict: str, scope: str,
                   evidence, channel: str, anchors=(), revisit_when: str = "",
-                  ratified: bool = False, project_dir=None) -> str:
+                  ratified: bool = False, check=None, project_dir=None) -> str:
     """#693: found a positive-polarity record. Same row schema, same id
     space, same identity-collision refusal as a refutation — the polarity is
-    the founding event name (`ruled`), derived at fold time."""
+    the founding event name (`ruled`), derived at fold time.
+
+    `check` (#943) is the raw dict `_check` validates — `{match, body,
+    intent}` — or None. Only a ruling may carry one, which is why this
+    function takes it and `assert_refutation` does not. A check founded on a
+    candidate is `proposed` and reaches no host until the ruling activates.
+    """
     _guard_ruling_text(subject, verdict)
     subject = _text("subject", subject)
     verdict = _text("verdict", verdict)
@@ -852,6 +997,7 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
     revisit_when = _text("revisit_when", revisit_when, required=False)
     evidence = _evidence(evidence)
     anchors = _anchors(anchors)
+    check = _check(check)  # #943
     subject, _ = redact.redact_text(subject)
     verdict, _ = redact.redact_text(verdict)
     scope, _ = redact.redact_text(scope)
@@ -878,6 +1024,8 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
         "revisit_when": revisit_when,
         "evidence": evidence,
     })
+    if check is not None:  # #943
+        row["check"] = check
     if ratified:
         row["ratified"] = True
     if not append(row, project_dir=project_dir):
@@ -914,7 +1062,8 @@ def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
 
 
 def ratify(refutation_id: str, *, channel: str, note: str = "",
-           verdict_key: str = "", project_dir=None) -> None:
+           verdict_key: str = "", check_sha256: str = "",
+           project_dir=None) -> None:
     # Ratification is the transition that makes a record load-bearing, so it
     # is the one that must not be self-declarable.  The caller names the
     # channel it OBSERVED; authority is derived from that, so an agent cannot
@@ -939,13 +1088,29 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     # A hash, never plaintext, and absent means unbound.
     if verdict_key:
         row["verdict_key"] = str(verdict_key)
+    # #943: the check is an executable, so the ceremony pins the body the
+    # human SAW. A hash, never the body; absent means unbound.
+    if check_sha256:
+        row["check_sha256"] = str(check_sha256)
     if not append(row, project_dir=project_dir):
         raise RefutationError("ratification not written")
 
 
 def revise(refutation_id: str, *, channel: str, evidence,
            subject=None, verdict=None, scope=None, anchors=None,
-           revisit_when=None, ratified: bool = False, project_dir=None) -> None:
+           revisit_when=None, ratified: bool = False, check=None,
+           project_dir=None) -> None:
+    """Replace fields on an existing record; absent kwargs are untouched.
+
+    `check` (#943) is the raw dict `_check` validates — `{match, body,
+    intent}` — or None, and only a ruling may carry one. Where it lands
+    depends on the channel and the state, like every other field here: an
+    agent revising an ACTIVE ruling writes a proposal that leaves the armed
+    body alone, while a human channel replaces it and it arms as given. That
+    last path has no pin because the caller authored the body in the same
+    call; `ratify` pins a hash because there the human is confirming content
+    someone else wrote.
+    """
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")
@@ -998,8 +1163,12 @@ def revise(refutation_id: str, *, channel: str, evidence,
     if revisit_when is not None:
         row["revisit_when"] = _text(
             "revisit_when", revisit_when, required=False)
+    if check is not None:  # #943
+        if current.get("polarity") != "ruling":
+            raise RefutationError("only a ruling carries a check")
+        row["check"] = _check(check)
     if not any(key in row for key in (
-            "subject", "verdict", "scope", "anchors", "revisit_when")):
+            "subject", "verdict", "scope", "anchors", "revisit_when", "check")):
         raise RefutationError(
             "revision changes nothing; provide a new subject, verdict, scope, "
             "anchor set, or revisit condition")

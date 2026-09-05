@@ -9,9 +9,10 @@ for a ruling the identical mechanic would remove a standing human constraint
 at agent initiative, so agents get proposal events and only human channels
 change what renders.
 """
+import hashlib
 import pytest
 
-from daimon_briefing import refutations
+from daimon_briefing import redact, refutations
 
 
 PROJECT = "/p/rulings"
@@ -1075,3 +1076,311 @@ def test_the_reference_states_where_a_change_to_this_surface_shows_up(
         text = page.read_text(encoding="utf-8")
         assert "CHANGELOG.md" in text, f"{page} stopped naming the changelog"
         assert "1.0" in text, f"{page} stopped saying daimon is pre-1.0"
+
+
+def _check(**overrides):
+    values = {
+        "match": r"\bgh (pr|issue|release) (create|edit|comment)\b",
+        "body": "#!/bin/sh\nrg -q -- '\\u2014' \"$DAIMON_CHECK_SUBJECT\" && exit 1\nexit 0\n",
+    }
+    values.update(overrides)
+    return values
+
+
+def test_check_validator_computes_sha_over_the_stored_body():
+    out = refutations._check(_check())
+    assert out["intent"] == "warn"
+    assert out["sha256"] == hashlib.sha256(
+        out["body"].encode("utf-8")).hexdigest()
+    assert set(out) == {"match", "intent", "body", "sha256"}
+
+
+def test_check_validator_returns_none_for_none():
+    assert refutations._check(None) is None
+
+
+def test_check_validator_ignores_a_caller_supplied_sha():
+    out = refutations._check({**_check(), "sha256": "deadbeef"})
+    assert out["sha256"] != "deadbeef"
+
+
+@pytest.mark.parametrize("body", [
+    "~/.claude/voicegate.sh",
+    "/usr/local/bin/gate",
+    "./scripts/gate.sh",
+])
+def test_check_body_that_is_a_path_is_refused(body):
+    with pytest.raises(refutations.RefutationError, match="must be the script"):
+        refutations._check(_check(body=body))
+
+
+def test_check_body_over_cap_is_refused():
+    with pytest.raises(refutations.RefutationError, match="8192"):
+        refutations._check(_check(body="x" * (refutations._MAX_CHECK_BODY + 1)))
+
+
+_SECRET_BODY = (
+    "grep -q 'AKIAIOSFODNN7EXAMPLE' \"$DAIMON_CHECK_SUBJECT\" && exit 1\n"
+    "exit 0\n")
+
+
+def test_the_secret_shaped_body_this_module_uses_really_does_redact():
+    """Guards the two refusal tests below: if redact ever stops catching this
+    shape they must fail loudly, not pass because nothing was detected."""
+    scrubbed, counts = redact.redact_text(_SECRET_BODY)
+    assert scrubbed != _SECRET_BODY
+    assert counts
+
+
+def test_check_body_with_a_secret_literal_is_refused():
+    with pytest.raises(refutations.RefutationError, match="secret-shaped"):
+        refutations._check(_check(body=_SECRET_BODY))
+
+
+def test_check_match_with_a_secret_literal_is_refused():
+    with pytest.raises(refutations.RefutationError, match="secret-shaped"):
+        refutations._check(_check(match="AKIAIOSFODNN7EXAMPLE"))
+
+
+def test_check_match_is_stored_stripped():
+    out = refutations._check(_check(match="  gh pr create  "))
+    assert out["match"] == "gh pr create"
+
+
+def test_check_body_is_stored_exactly_as_given():
+    body = "#!/bin/sh\n  echo   spaced\nexit 0\n"
+    out = refutations._check(_check(body=body))
+    assert out["body"] == body
+
+
+def test_check_match_must_compile():
+    with pytest.raises(refutations.RefutationError, match="not a valid regex"):
+        refutations._check(_check(match="gh (pr"))
+
+
+def test_check_match_over_cap_is_refused():
+    with pytest.raises(refutations.RefutationError, match="200"):
+        refutations._check(_check(match="a" * (refutations._MAX_CHECK_MATCH + 1)))
+
+
+def test_check_intent_outside_the_set_is_refused():
+    with pytest.raises(refutations.RefutationError, match="intent"):
+        refutations._check(_check(intent="block"))
+
+
+def test_check_requires_both_match_and_body():
+    with pytest.raises(refutations.RefutationError, match="match"):
+        refutations._check({"body": "exit 0\n"})
+    with pytest.raises(refutations.RefutationError, match="body"):
+        refutations._check({"match": "gh"})
+
+
+def test_candidate_check_lifecycle_is_proposed(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check"]["match"] == _check()["match"]
+    assert record["check"]["sha256"]
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_ruling_without_check_has_no_lifecycle_key(tmp_checkpoint_dir):
+    ruling_id = _rule()
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert "check" not in record
+    assert "check_lifecycle" not in record
+
+
+def test_human_founding_with_ratify_arms_the_check(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_agent_revise_of_a_candidate_replaces_the_check(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check"]["body"] == "exit 0\n"
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_agent_revise_of_an_active_ruling_leaves_the_armed_check(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    armed_sha = refutations.get(ruling_id, project_dir=PROJECT)["check"]["sha256"]
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check"]["sha256"] == armed_sha
+    assert record["check_lifecycle"] == "armed"
+    assert record["revision_proposed"]["check"]["body"] == "exit 0\n"
+
+
+def test_human_revise_of_an_active_ruling_replaces_and_stays_armed(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    refutations.revise(
+        ruling_id, channel="cli-tty", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check"]["body"] == "exit 0\n"
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_human_in_process_revise_arms_the_supplied_check_without_a_pin(
+        tmp_checkpoint_dir):
+    """#943: pinning the in-process contract. `ratify` binds a check to the
+    hash the ceremony DISPLAYED because the human is confirming content
+    someone else wrote. An in-process human channel supplied the body in the
+    same call, so there is no display-then-swap window to close and no pin to
+    demand: it arms as given, and the host owns that confirmation."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:943"],
+        check=_check(body="exit 0\n"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check"]["body"] == "exit 0\n"
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_retired_ruling_check_is_disarmed(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check_lifecycle"] == "disarmed"
+
+
+def test_revise_with_only_a_check_is_a_change(tmp_checkpoint_dir):
+    ruling_id = _rule()
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(), project_dir=PROJECT)
+    assert refutations.get(ruling_id, project_dir=PROJECT)["check_lifecycle"] == "proposed"
+
+
+def test_revise_refuses_a_check_on_a_refutation(tmp_checkpoint_dir):
+    ref_id = _refute()
+    before = refutations.get(ref_id, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="only a ruling"):
+        refutations.revise(
+            ref_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(), project_dir=PROJECT)
+    after = refutations.get(ref_id, project_dir=PROJECT)
+    assert after["revision"] == before["revision"]
+    assert "check" not in after
+
+
+def test_ratify_pinned_to_the_current_check_hash_activates(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["check"]["sha256"]
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256=sha,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_ratify_pinned_to_a_stale_check_hash_is_inert(tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    stale = refutations.get(ruling_id, project_dir=PROJECT)["check"]["sha256"]
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        check=_check(body="rm -rf / # never\n"), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256=stale,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_ratify_without_a_pin_is_inert_when_the_record_carries_a_check(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(check=_check())
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+    assert record["check_lifecycle"] == "proposed"
+
+
+def test_ratify_without_a_pin_still_activates_a_ruling_with_no_check(
+        tmp_checkpoint_dir):
+    ruling_id = _rule()
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"
+
+
+def test_unbound_ratify_does_not_reset_the_proposal_cap_on_a_checked_ruling(
+        tmp_checkpoint_dir):
+    """#943: the containment half of the unbound-ratify gate. A ratify row
+    with NO pin is inert on a ruling that carries a check, and an inert row
+    must not hand back a proposal slot — the adversary controls when it
+    happens, by adding the check during the confirm window."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    for i in range(3):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body=f"exit 0 # {i}\n"), project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 3\n"), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 4\n"), project_dir=PROJECT)
+
+
+def test_unbound_ratify_still_resets_the_proposal_cap_with_no_check(
+        tmp_checkpoint_dir):
+    """The silent half: with no check on the record an unbound ratify is a
+    real human verdict, so it still clears the counter."""
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    for i in range(3):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            verdict=f"internal numbers never appear in posts {i}",
+            project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            verdict="internal numbers never appear in posts 3",
+            project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        verdict="internal numbers never appear in posts 4",
+        project_dir=PROJECT)
+
+
+def test_stale_check_pin_ratify_does_not_reset_the_proposal_cap(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    # Create three revision-proposed rows
+    for i in range(3):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body=f"exit 0 # {i}\n"), project_dir=PROJECT)
+    # Fourth revision should fail (cap reached)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 3\n"), project_dir=PROJECT)
+    # Apply a stale check pin (fold-inert because it doesn't match current check)
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256="0" * 64,
+                       project_dir=PROJECT)
+    # Fourth revision should STILL fail (stale pin doesn't reset cap)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 4\n"), project_dir=PROJECT)
+
+
+def test_check_validator_refuses_a_non_object():
+    with pytest.raises(refutations.RefutationError, match="must be an object"):
+        refutations._check("exit 0")

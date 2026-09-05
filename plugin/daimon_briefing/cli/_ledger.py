@@ -6,7 +6,9 @@ printers, the channel resolver, and the polarity gate. Both `cli.refute` and
 they cannot live inside either family module without a cross-family import.
 """
 
+import hashlib
 import json
+import os
 import sys
 
 from .. import refutations, render
@@ -168,6 +170,56 @@ def _refute_channel(args) -> str:
     return "cli-tty"
 
 
+def _check_args(args) -> dict | None:
+    """#943: the three `--check-*` flags as the dict `refutations._check`
+    takes, or None when none was given. Half a check is refused here, before
+    any write, and the body FILE is read once at the CLI boundary: the path
+    is never stored, only the bytes."""
+    body_file = getattr(args, "check_body_file", None)
+    match = getattr(args, "check_match", None)
+    intent = getattr(args, "check_intent", None)
+    if body_file is None and match is None and intent is None:
+        return None
+    if body_file is None or match is None:
+        raise refutations.RefutationError(
+            "a check needs both --check-body-file and --check-match "
+            "(--check-intent is optional, default warn)")
+    try:
+        # The cap is a property of the FILE before it is a property of a
+        # string: `_check` would refuse the same body, but only after the
+        # whole thing has been decoded into memory. One stat is enough.
+        size = os.stat(body_file).st_size
+        if size > refutations._MAX_CHECK_BODY:
+            raise refutations.RefutationError(
+                f"check body is too long ({size} > "
+                f"{refutations._MAX_CHECK_BODY} bytes)")
+        with open(body_file, encoding="utf-8") as handle:
+            body = handle.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise refutations.RefutationError(
+            f"check body file could not be read: {exc}")
+    return {"match": match, "body": body, "intent": intent or "warn"}
+
+
+def _check_ceremony_lines(check: dict, *, label: str, verb: str) -> list[str]:
+    """#943: the two disclosure lines a ceremony prints before a human arms
+    a check. One home for the wording, shared by ratify and revise, so the
+    two ceremonies cannot drift apart about what they tell the human.
+
+    Hashing the raw body when no `sha256` is present shows the human the same
+    hash the row will carry: `refutations._check` refuses any body it would
+    alter, so the authored bytes and the stored bytes are the same bytes."""
+    body = str(check.get("body") or "")
+    sha = str(check.get("sha256") or "") or hashlib.sha256(
+        body.encode("utf-8")).hexdigest()
+    return [
+        f"  {label}: {check.get('intent')} · match /{check.get('match')}/ "
+        f"· {body.count(chr(10))} lines · sha {sha[:12]}",
+        "  This check will run before matching actions on every host that "
+        f"supports it. {verb} arms an executable.",
+    ]
+
+
 def _ruling_lines(record: dict, *, detailed: bool = False,
                   tag: bool = False) -> list:
     """#693: a ruling renders its VERDICT (the rule text) and never the
@@ -185,6 +237,9 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     word = "ruling " if tag else ""
     lines = [f"[{word}{mark} {shown_state} · {activation}] "
              f"{record['refutation_id']}  {record.get('verdict', '')}"]
+    lifecycle = record.get("check_lifecycle")
+    if lifecycle and not detailed:
+        lines[0] += f" [check: {lifecycle}]"
     if not detailed:
         return lines
     lines.append(f"  Governs: {record.get('subject', '')}")
@@ -197,10 +252,21 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
         lines.append(f"  Revisit when: {revisit}")
     for item in record.get("evidence") or []:
         lines.append(f"  Evidence: {item}")
+    check = record.get("check")
+    if lifecycle and isinstance(check, dict):
+        shown = "proposed, not armed" if lifecycle == "proposed" else lifecycle
+        lines.append(f"  Check: {shown} · intent {check.get('intent')} · "
+                     f"match /{check.get('match')}/")
     proposal = record.get("revision_proposed")
     if proposal:
-        lines.append(f"  Pending revision proposal ({proposal.get('by', '?')}): "
-                     f"{proposal.get('verdict') or proposal.get('subject') or ''}")
+        line = (f"  Pending revision proposal ({proposal.get('by', '?')}): "
+                f"{proposal.get('verdict') or proposal.get('subject') or ''}")
+        # #943: a proposal to swap the EXECUTABLE is a different ask from one
+        # that rewords the rule, and a check-only proposal has no text to
+        # show — it would otherwise render as a bare colon.
+        if isinstance(proposal.get("check"), dict):
+            line += " (carries a check)"
+        lines.append(line)
     retirement = record.get("overturn_proposed")
     if retirement:
         lines.append(f"  Pending retirement proposal ({retirement.get('by', '?')})")
