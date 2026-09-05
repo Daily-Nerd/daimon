@@ -249,22 +249,22 @@ def _attach_serialize_log_handler() -> None:
     pkg_log.setLevel(logging.INFO)
 
 
-def _print_result(msg: str, *, error: bool = False) -> None:
-    """Print one serialize result line to its stream, mirroring errors onto
-    stdout when a host opted in (#939).
+def _print_error(msg: str) -> None:
+    """Print one FAILED serialize result line, mirroring it onto stdout when a
+    host opted in (#939).
 
-    Success and skip lines already print to stdout, so only the error lines
-    were missing from the surface a container runtime collects, which made a
-    FAILED capture the one outcome an operator could not see. The mirrored
-    string is the same `msg` that reaches _append_serialize_log, byte for
-    byte, so the raw timestamp-free result regexes keep matching it and the
-    line still counts in `daimon stats` and `daimon status`.
+    Success and skip lines already print to stdout unaided, so the error lines
+    were the only ones missing from the surface a container runtime collects,
+    which made a failed capture the one outcome an operator could not see.
+    There is deliberately no success branch here: a wrapper with a path no
+    caller takes is dead code that reads as covered behavior.
+
+    The mirrored string is the same `msg` that reaches _append_serialize_log,
+    byte for byte, so the raw timestamp-free result regexes keep matching it
+    and the line still counts in `daimon stats` and `daimon status`.
     """
-    if error:
-        print(msg, file=sys.stderr)
-        if config.log_stdout():
-            print(msg)
-    else:
+    print(msg, file=sys.stderr)
+    if config.log_stdout():
         print(msg)
 
 
@@ -313,7 +313,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
         messages = transcript.from_file(path)
     except FileNotFoundError:
         msg = f"error: transcript not found: {path}"
-        _print_result(msg, error=True)
+        _print_error(msg)
         _append_serialize_log(msg)
         return 2
 
@@ -322,7 +322,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
     if _chat is llm.chat:
         preflight = _preflight_error(path)
         if preflight is not None:
-            _print_result(preflight, error=True)
+            _print_error(preflight)
             _append_serialize_log(preflight)
             return 1
 
@@ -362,7 +362,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
     except serializer.SerializeError as exc:
         elapsed = int(time.monotonic() - start)
         msg = f"error: {exc} (transcript: {path}) after {elapsed}s"
-        _print_result(msg, error=True)
+        _print_error(msg)
         _append_serialize_log(msg)
         return 1
     finally:
