@@ -1211,3 +1211,15 @@ def test_revise_with_only_a_check_is_a_change(tmp_checkpoint_dir):
         ruling_id, channel="cli-agent", evidence=["issue:943"],
         check=_check(), project_dir=PROJECT)
     assert refutations.get(ruling_id, project_dir=PROJECT)["check_lifecycle"] == "proposed"
+
+
+def test_revise_refuses_a_check_on_a_refutation(tmp_checkpoint_dir):
+    ref_id = _refute()
+    before = refutations.get(ref_id, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="only a ruling"):
+        refutations.revise(
+            ref_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(), project_dir=PROJECT)
+    after = refutations.get(ref_id, project_dir=PROJECT)
+    assert after["revision"] == before["revision"]
+    assert "check" not in after
