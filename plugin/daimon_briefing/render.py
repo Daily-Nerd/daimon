@@ -714,6 +714,14 @@ def _outstanding_lines(outstanding) -> list:
     lines = []
     for f in outstanding:
         age = f["age_str"]
+        if f["kind"] == "in-flight":
+            # #936: a heal retry still running. Say so, and say what NOT to
+            # do: the old wording pointed at --force while the repair ran.
+            hb = f.get("heartbeat_age")
+            beat = f"heartbeat {int(hb)}s ago" if hb is not None else "starting"
+            lines.append(f"  - {f['sid']}  repairing ({beat}) — heal is running, "
+                         "do not force a second one")
+            continue
         if f["kind"] == "hung":
             # #28: a hung spawn whose transcript survived is healable now.
             if f["class"] == "healable":
