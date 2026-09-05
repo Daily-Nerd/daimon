@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, store
+from . import config, store, transcript
 
 
 def _append_serialize_log(line: str) -> None:
@@ -249,8 +249,40 @@ def _session_ledger(text: str, now: float) -> dict:
     return sessions
 
 
+def checkpoint_covers(sid: str, transcript_path) -> bool:
+    """Does this session's checkpoint reach the end of its transcript? (#929)
+
+    "Lost" used to mean "no checkpoint at all", so a session that was captured
+    once, resumed for hours, and whose re-capture then FAILED read as captured
+    on every surface: `heal` dropped the failure because a checkpoint existed,
+    `status` printed fresh, and the session-start sweep deferred to heal. This
+    is the sweep's own rule applied here: a checkpoint counts only when its
+    `created` stamp is at or after the transcript's last conversation row.
+    Content, never file mtime: hosts append cost rows after the end hook.
+
+    Ambiguous is not lost (#54): no transcript path, an unreadable transcript,
+    a stamp-free transcript, a legacy checkpoint with no `created`, or a
+    checkpoint the bare id cannot address (Codex rollout names, #634) all
+    answer True, so the fold stays exactly as quiet as before for them."""
+    if not transcript_path:
+        return True
+    cp = store.read_checkpoint(sid)
+    if cp is None:
+        return True
+    created = store._created_epoch(cp.get("created"))
+    if created is None:
+        return True
+    # last_timestamp answers None for an unreadable, non-jsonl, or stamp-free
+    # transcript by contract; it never raises, so no guard here.
+    last = store._created_epoch(transcript.last_timestamp(transcript_path))
+    if last is None:
+        return True
+    return created >= last
+
+
 def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists,
-                          force=False, heartbeat_age=None) -> list:
+                          force=False, heartbeat_age=None,
+                          checkpoint_covers=None) -> list:
     """Sessions still LOST — no checkpoint AND latest state != success.
     `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
     stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
@@ -268,7 +300,11 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
     for sid, e in ledger.items():
         if e["result_kind"] in ("success", "skipped"):
             continue
-        if has_checkpoint(sid):
+        # #929: a checkpoint clears the session only when it covers the
+        # transcript; callers that inject no `checkpoint_covers` keep the
+        # pre-#929 "any checkpoint" reading.
+        if has_checkpoint(sid) and (checkpoint_covers is None
+                                    or checkpoint_covers(sid, e["transcript"])):
             continue
         age = e["spawn_age"]
         if e["result_kind"] == "error":
@@ -324,6 +360,7 @@ def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
         # #342: module-level heartbeat_age resolves via the global, not the
         # classifier's same-named parameter.
         heartbeat_age=lambda sid: heartbeat_age(sid, now),
+        checkpoint_covers=checkpoint_covers,
     )
 
 
