@@ -1061,3 +1061,23 @@ def test_cli_refute_write_verbs_survive_the_record_vanishing(
     out = capsys.readouterr().out
     assert "Traceback" not in out
     assert out.strip(), "a vanished record must still report what happened"
+
+
+# ---- #928: a receipt evidence kind ----
+
+
+def test_receipt_evidence_is_accepted_and_stored(tmp_checkpoint_dir):
+    rid = _assert(evidence=["receipt:rcpt-01ABC"])
+    row = refutations.records(project_dir=PROJECT)[rid]
+    assert "receipt:rcpt-01ABC" in row["evidence"]
+
+
+def test_receipt_evidence_with_an_empty_payload_is_refused(tmp_checkpoint_dir):
+    with pytest.raises(refutations.RefutationError, match="typed source"):
+        _assert(evidence=["receipt:"])
+    assert refutations.records(project_dir=PROJECT) == {}
+
+
+def test_evidence_refusal_names_the_receipt_kind(tmp_checkpoint_dir):
+    with pytest.raises(refutations.RefutationError, match="receipt:<id>"):
+        _assert(evidence=["signed by someone"])

@@ -112,8 +112,12 @@ _EVENT_RANK = {
 }
 _REF_ID_RE = re.compile(r"r-[0-9a-f]{12}")
 _ISSUE_RE = re.compile(r"(?:issue:|#)(\d+)\b", re.IGNORECASE)
+# #928: `receipt` is a signed receipt reference (a ratification or an
+# enforcement action signed out of band). Recorded like every other kind:
+# cited, not verified; resolving pointers is #581's territory.
 _EVIDENCE_KINDS = frozenset({
     "message", "transcript", "artifact", "issue", "measurement", "url",
+    "receipt",
 })
 _SPACE_RE = re.compile(r"\s+")
 _MAX_TEXT = 2000
@@ -232,7 +236,8 @@ def _evidence(values, *, required: bool = True) -> list[str]:
             raise RefutationError(
                 f"invalid evidence source {value!r}; use a typed source such as "
                 "message:<id>, transcript:<session>, artifact:<path>, "
-                "issue:<number>, measurement:<receipt>, or url:<source>")
+                "issue:<number>, measurement:<receipt>, receipt:<id>, or "
+                "url:<source>")
         if value not in seen:
             seen.add(value)
             out.append(value)
