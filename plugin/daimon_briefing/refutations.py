@@ -888,15 +888,22 @@ def _guard_open_proposals(refutation_id: str, event: str,
     # the record's verdict may have moved again since the row, but the
     # reachable lever is the fresh-mismatch case this catches.
     current_key = None
+    current_check_sha = None
     record = get(refutation_id, project_dir=project_dir)
     if record is not None:
         current_key = normalize.content_key(record.get("verdict") or "")
+        current_check_sha = str(((record or {}).get("check") or {}).get("sha256") or "")
     verdicts = [r for r in rows
                 if CHANNEL_AUTHORITY.get(_channel_of(r)) == "human"
                 and r.get("event") in ("ratified", "overturned", "revised")
                 and not (r.get("event") == "ratified"
                          and str(r.get("verdict_key") or "")
-                         and str(r.get("verdict_key")) != current_key)]
+                         and str(r.get("verdict_key")) != current_key)
+                # #943: check binding is inert in the fold when it doesn't
+                # match the current check; it must not reset the proposal cap.
+                and not (r.get("event") == "ratified"
+                         and str(r.get("check_sha256") or "")
+                         and str(r.get("check_sha256")) != current_check_sha)]
     since = max((_order(r) for r in verdicts), default=-1)
     pending = [r for r in rows
                if r.get("event") == event and _order(r) > since]

@@ -1252,3 +1252,25 @@ def test_ratify_without_a_check_pin_stays_unbound(tmp_checkpoint_dir):
     ruling_id = _rule(check=_check())
     refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
     assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"
+
+
+def test_stale_check_pin_ratify_does_not_reset_the_proposal_cap(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    # Create three revision-proposed rows
+    for i in range(3):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body=f"exit 0 # {i}\n"), project_dir=PROJECT)
+    # Fourth revision should fail (cap reached)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 3\n"), project_dir=PROJECT)
+    # Apply a stale check pin (fold-inert because it doesn't match current check)
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256="0" * 64,
+                       project_dir=PROJECT)
+    # Fourth revision should STILL fail (stale pin doesn't reset cap)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 4\n"), project_dir=PROJECT)
