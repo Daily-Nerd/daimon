@@ -9,6 +9,7 @@ for a ruling the identical mechanic would remove a standing human constraint
 at agent initiative, so agents get proposal events and only human channels
 change what renders.
 """
+import hashlib
 import pytest
 
 from daimon_briefing import refutations
@@ -1075,3 +1076,66 @@ def test_the_reference_states_where_a_change_to_this_surface_shows_up(
         text = page.read_text(encoding="utf-8")
         assert "CHANGELOG.md" in text, f"{page} stopped naming the changelog"
         assert "1.0" in text, f"{page} stopped saying daimon is pre-1.0"
+
+
+def _check(**overrides):
+    values = {
+        "match": r"\bgh (pr|issue|release) (create|edit|comment)\b",
+        "body": "#!/bin/sh\nrg -q -- '\\u2014' \"$DAIMON_CHECK_SUBJECT\" && exit 1\nexit 0\n",
+    }
+    values.update(overrides)
+    return values
+
+
+def test_check_validator_computes_sha_over_the_stored_body():
+    out = refutations._check(_check())
+    assert out["intent"] == "warn"
+    assert out["sha256"] == hashlib.sha256(
+        out["body"].encode("utf-8")).hexdigest()
+    assert set(out) == {"match", "intent", "body", "sha256"}
+
+
+def test_check_validator_returns_none_for_none():
+    assert refutations._check(None) is None
+
+
+def test_check_validator_ignores_a_caller_supplied_sha():
+    out = refutations._check({**_check(), "sha256": "deadbeef"})
+    assert out["sha256"] != "deadbeef"
+
+
+@pytest.mark.parametrize("body", [
+    "~/.claude/voicegate.sh",
+    "/usr/local/bin/gate",
+    "./scripts/gate.sh",
+])
+def test_check_body_that_is_a_path_is_refused(body):
+    with pytest.raises(refutations.RefutationError, match="must be the script"):
+        refutations._check(_check(body=body))
+
+
+def test_check_body_over_cap_is_refused():
+    with pytest.raises(refutations.RefutationError, match="8192"):
+        refutations._check(_check(body="x" * (refutations._MAX_CHECK_BODY + 1)))
+
+
+def test_check_match_must_compile():
+    with pytest.raises(refutations.RefutationError, match="not a valid regex"):
+        refutations._check(_check(match="gh (pr"))
+
+
+def test_check_match_over_cap_is_refused():
+    with pytest.raises(refutations.RefutationError, match="200"):
+        refutations._check(_check(match="a" * (refutations._MAX_CHECK_MATCH + 1)))
+
+
+def test_check_intent_outside_the_set_is_refused():
+    with pytest.raises(refutations.RefutationError, match="intent"):
+        refutations._check(_check(intent="block"))
+
+
+def test_check_requires_both_match_and_body():
+    with pytest.raises(refutations.RefutationError, match="match"):
+        refutations._check({"body": "exit 0\n"})
+    with pytest.raises(refutations.RefutationError, match="body"):
+        refutations._check({"match": "gh"})

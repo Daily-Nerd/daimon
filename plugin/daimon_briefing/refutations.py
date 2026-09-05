@@ -133,6 +133,17 @@ _MAX_RULING_TEXT = 280
 # read-side boundedness comes from latest-wins in the fold).
 _MAX_OPEN_PROPOSALS = 3
 
+# #943: a ruling may carry a CHECK, a script the host runs before the action
+# the ruling governs. The body is stored in the row so the check travels with
+# the ruling (constraint 5); a host-local path is refused because a path is
+# invisible to every other host the same human uses. The hash is computed
+# by the writer over the stored bytes and never accepted from a caller:
+# ratify pins it the way `verdict_key` pins the rule text.
+_CHECK_INTENTS = frozenset({"enforce", "warn", "record-only"})
+_MAX_CHECK_BODY = 8192
+_MAX_CHECK_MATCH = 200
+_CHECK_PATH_RE = re.compile(r"\s*(?:~|/|\./)[^\s]*\s*")
+
 # Every field of a ledger row that can hold ITEM plaintext, flat then nested
 # (#645). One declaration, two consumers: `forget_content_key` below decides
 # which records a deletion reaches, and `privacy.audit_project` decides which
@@ -249,6 +260,52 @@ def _evidence(values, *, required: bool = True) -> list[str]:
         raise RefutationError(
             f"too many evidence sources ({len(out)} > {_MAX_EVIDENCE})")
     return out
+
+
+def _check(value) -> dict | None:
+    """Validate and normalize a ruling's `check` (#943), or None.
+
+    Returns the dict that is STORED: `match`, `intent`, `body`, and a
+    `sha256` over the stored body. Redaction runs on the body first so the
+    hash is over bytes that can persist, the same reasoning `make_id` gives.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RefutationError("check must be an object with match and body")
+    match = str(value.get("match") or "")
+    body = str(value.get("body") or "")
+    intent = str(value.get("intent") or "warn")
+    if not match.strip():
+        raise RefutationError("check match is required")
+    if not body.strip():
+        raise RefutationError("check body is required")
+    if len(match.encode("utf-8")) > _MAX_CHECK_MATCH:
+        raise RefutationError(
+            f"check match is too long ({len(match.encode('utf-8'))} > "
+            f"{_MAX_CHECK_MATCH} bytes)")
+    try:
+        re.compile(match)
+    except re.error as exc:
+        raise RefutationError(f"check match is not a valid regex: {exc}")
+    if intent not in _CHECK_INTENTS:
+        raise RefutationError(
+            f"check intent must be one of: {', '.join(sorted(_CHECK_INTENTS))}")
+    if "\n" not in body.strip() and _CHECK_PATH_RE.fullmatch(body):
+        raise RefutationError(
+            "check body must be the script itself, not a path to one: a "
+            "path is invisible to every other host and machine")
+    body, _ = redact.redact_text(body)
+    if len(body.encode("utf-8")) > _MAX_CHECK_BODY:
+        raise RefutationError(
+            f"check body is too long ({len(body.encode('utf-8'))} > "
+            f"{_MAX_CHECK_BODY} bytes)")
+    return {
+        "match": match,
+        "intent": intent,
+        "body": body,
+        "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
 
 
 def make_id(subject: str, scope: str) -> str:
