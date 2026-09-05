@@ -7,6 +7,7 @@ the `cli.<name>` seam tests and hosts patch keeps working on moved code.
 """
 
 import argparse
+import hashlib
 import sys
 
 import daimon_briefing.cli as _cli
@@ -139,8 +140,14 @@ def _cmd_ruling_revise(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not revised", exc))
         return 1
+    try:
+        check = _check_args(args)
+    except refutations.RefutationError as exc:
+        print(_refusal_message("ruling not revised", exc))
+        return 1
     if (record["state"] == "active" and channel == "cli-tty"
-            and (args.verdict is not None or args.subject is not None)):
+            and (args.verdict is not None or args.subject is not None
+                 or check is not None)):
         # Rewriting what renders is the same power ratification has, and it
         # earns trust the same way: show the change, disclose, confirm.
         print("About to change the ACTIVE text of this ruling:")
@@ -149,6 +156,13 @@ def _cmd_ruling_revise(args) -> int:
             print(f"  New text: {args.verdict}")
         if args.subject is not None:
             print(f"  New governs: {args.subject}")
+        if check is not None:
+            sha = hashlib.sha256(check["body"].encode("utf-8")).hexdigest()
+            body_lines = check["body"].count("\n")
+            print(f"  New check: {check['intent']} · match "
+                  f"/{check['match']}/ · {body_lines} lines · sha {sha[:12]}")
+            print("  This check will run before matching actions on every "
+                  "host that supports it. Applying arms an executable.")
         print("  This text will render into every future session for this "
               "project.")
         answer = input("Apply? [y/N]: ").strip().casefold()
@@ -157,7 +171,6 @@ def _cmd_ruling_revise(args) -> int:
             return 1
     anchors = args.anchor if args.anchor is not None else None
     try:
-        check = _check_args(args)
         refutations.revise(
             args.ruling_id, channel=channel,
             evidence=args.evidence, subject=args.subject,

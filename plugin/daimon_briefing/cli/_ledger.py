@@ -168,9 +168,6 @@ def _refute_channel(args) -> str:
     return "cli-tty"
 
 
-_CHECK_FLAGS = ("--check-body-file", "--check-match")
-
-
 def _check_args(args) -> dict | None:
     """#943: the three `--check-*` flags as the dict `refutations._check`
     takes, or None when none was given. Half a check is refused here, before
