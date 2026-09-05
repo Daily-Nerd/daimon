@@ -74,10 +74,14 @@ def test_checkpoint_covers_is_true_when_it_cannot_judge(
     assert ledger.checkpoint_covers("S1", None) is True
     t = tmp_path / "S2.jsonl"
     _write_transcript(t, "2026-09-01T06:00:00.000Z")
-    cp = dict(sample_checkpoint)
-    cp["session_id"] = "S2"
-    cp.pop("created", None)
-    store.write_checkpoint("S2", cp)
+    # The store stamps `created` on every write, so a legacy file without one
+    # has to be written directly to reach that branch.
+    from daimon_briefing import config
+    legacy = dict(sample_checkpoint)
+    legacy["session_id"] = "S2"
+    legacy.pop("created", None)
+    (config.checkpoint_dir() / "S2.json").write_text(json.dumps(legacy), encoding="utf-8")
+    assert store.read_checkpoint("S2") is not None
     assert ledger.checkpoint_covers("S2", str(t)) is True
 
 
@@ -92,3 +96,13 @@ def test_compute_outstanding_surfaces_the_stale_failed_session(
             f"command backend timed out (transcript: {t}) after 900s\n")
     out = ledger._compute_outstanding(text, 1_800_000_000.0)
     assert [(f["sid"], f["kind"], f["class"]) for f in out] == [("S1", "error", "healable")]
+
+
+def test_checkpoint_covers_is_true_for_a_checkpoint_the_bare_id_cannot_address(
+        tmp_checkpoint_dir, tmp_path):
+    # Codex-shaped: has_checkpoint found a rollout-named file the bare id
+    # cannot read back (#634). Cannot judge, so covered.
+    t = tmp_path / "S9.jsonl"
+    _write_transcript(t, "2026-09-01T06:00:00.000Z")
+    assert store.read_checkpoint("S9") is None
+    assert ledger.checkpoint_covers("S9", str(t)) is True

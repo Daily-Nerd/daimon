@@ -272,10 +272,9 @@ def checkpoint_covers(sid: str, transcript_path) -> bool:
     created = store._created_epoch(cp.get("created"))
     if created is None:
         return True
-    try:
-        last = store._created_epoch(transcript.last_timestamp(transcript_path))
-    except Exception:  # noqa: BLE001 — a torn transcript must not break status
-        return True
+    # last_timestamp answers None for an unreadable, non-jsonl, or stamp-free
+    # transcript by contract; it never raises, so no guard here.
+    last = store._created_epoch(transcript.last_timestamp(transcript_path))
     if last is None:
         return True
     return created >= last
