@@ -946,7 +946,15 @@ def _guard_open_proposals(refutation_id: str, event: str,
                 # match the current check; it must not reset the proposal cap.
                 and not (r.get("event") == "ratified"
                          and str(r.get("check_sha256") or "")
-                         and str(r.get("check_sha256")) != current_check_sha)]
+                         and str(r.get("check_sha256")) != current_check_sha)
+                # #943: and the unbound case, for the same reason. A ratify
+                # carrying no pin is inert in the fold once the record has a
+                # check, and the adversary controls when that happens — it
+                # adds the check during the confirm window — so the inert row
+                # must not hand back a proposal slot either.
+                and not (r.get("event") == "ratified"
+                         and not str(r.get("check_sha256") or "")
+                         and current_check_sha)]
     since = max((_order(r) for r in verdicts), default=-1)
     pending = [r for r in rows
                if r.get("event") == event and _order(r) > since]

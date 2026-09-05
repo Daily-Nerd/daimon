@@ -1315,6 +1315,50 @@ def test_ratify_without_a_pin_still_activates_a_ruling_with_no_check(
     assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"
 
 
+def test_unbound_ratify_does_not_reset_the_proposal_cap_on_a_checked_ruling(
+        tmp_checkpoint_dir):
+    """#943: the containment half of the unbound-ratify gate. A ratify row
+    with NO pin is inert on a ruling that carries a check, and an inert row
+    must not hand back a proposal slot — the adversary controls when it
+    happens, by adding the check during the confirm window."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
+    for i in range(3):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body=f"exit 0 # {i}\n"), project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 3\n"), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            check=_check(body="exit 0 # 4\n"), project_dir=PROJECT)
+
+
+def test_unbound_ratify_still_resets_the_proposal_cap_with_no_check(
+        tmp_checkpoint_dir):
+    """The silent half: with no check on the record an unbound ratify is a
+    real human verdict, so it still clears the counter."""
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    for i in range(3):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            verdict=f"internal numbers never appear in posts {i}",
+            project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="open"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:943"],
+            verdict="internal numbers never appear in posts 3",
+            project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:943"],
+        verdict="internal numbers never appear in posts 4",
+        project_dir=PROJECT)
+
+
 def test_stale_check_pin_ratify_does_not_reset_the_proposal_cap(tmp_checkpoint_dir):
     ruling_id = _rule(channel="cli-tty", ratified=True, check=_check())
     # Create three revision-proposed rows
