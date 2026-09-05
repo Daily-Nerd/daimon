@@ -5,6 +5,13 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.41.1](https://github.com/Daily-Nerd/daimon/compare/v0.41.0...v0.41.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **team:** a foreign tombstone apply names the surfaces it cannot reach ([#945](https://github.com/Daily-Nerd/daimon/issues/945)) ([0333026](https://github.com/Daily-Nerd/daimon/commit/03330264243fe76eb5d7c69a2392fb5ae7b2adf7))
+
 ## [0.41.0](https://github.com/Daily-Nerd/daimon/compare/v0.40.0...v0.41.0) (2026-09-05)
 
 
