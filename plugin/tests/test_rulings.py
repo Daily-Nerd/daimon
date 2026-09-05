@@ -976,3 +976,48 @@ def test_cli_ruling_write_verbs_survive_the_record_vanishing(
     out = capsys.readouterr().out
     assert "Traceback" not in out
     assert out.strip(), "a vanished record must still report what happened"
+
+
+# ---- #927: the in-process host surface, pinned ----
+
+
+def test_a_library_side_signed_ratification_activates_and_says_so(tmp_checkpoint_dir):
+    """A host that verified an operator out of band writes the record itself
+    through the library, never through a CLI flag. The rendered tier is the
+    honest part: "ratified (signed)", never "human-ratified" unqualified."""
+    rid = _rule(anchors=["chat:user:123"])
+    refutations.ratify(rid, channel="signed", note="operator role verified",
+                       project_dir=PROJECT)
+    (row,) = refutations.listing(states={"active"}, polarity="ruling",
+                                 project_dir=PROJECT)
+    assert row["refutation_id"] == rid
+    assert row["activation_channel"] == "signed"
+    assert row["activation"] == "ratified (signed)"
+    assert "human-ratified" not in row["activation"]
+
+
+def test_a_ui_ratification_is_a_human_channel_too(tmp_checkpoint_dir):
+    rid = _rule()
+    refutations.ratify(rid, channel="ui", project_dir=PROJECT)
+    (row,) = refutations.listing(states={"active"}, polarity="ruling",
+                                 project_dir=PROJECT)
+    assert row["activation"] == "ratified (ui)"
+
+
+def test_an_unmapped_channel_name_is_refused_at_ratify(tmp_checkpoint_dir):
+    """Authority is derived from the channel the caller observed and only the
+    mapped names count; a host cannot invent a human channel by naming one."""
+    rid = _rule()
+    with pytest.raises(refutations.RefutationError, match="requires a human channel"):
+        refutations.ratify(rid, channel="chat-admin", project_dir=PROJECT)
+    assert refutations.get(rid, project_dir=PROJECT)["state"] == "candidate"
+
+
+def test_active_rulings_carries_the_anchors_a_host_matches_on(tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+    rid = _rule(anchors=["chat:user:123", "chat:channel:9"])
+    refutations.ratify(rid, channel="signed", project_dir=PROJECT)
+    (row,) = briefing.active_rulings(PROJECT)
+    assert row["refutation_id"] == rid
+    assert row["anchors"] == ["chat:user:123", "chat:channel:9"]
+    assert row["verdict"] == "internal numbers never appear in public posts"
