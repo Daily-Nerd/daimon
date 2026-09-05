@@ -126,3 +126,47 @@ def test_stats_render_survives_an_old_capture_dict_without_the_key(capsys):
     del data["capture"]["speaker_lines"]
     render.render_stats(data)
     assert "speaker line" not in capsys.readouterr().out
+
+
+def test_speaker_line_delimiter_rejects_a_bad_u_plus_spelling(monkeypatch):
+    monkeypatch.setenv("DAIMON_SPEAKER_LINE", "U+ZZZZ")
+    assert config.speaker_line_delimiter() is None
+
+
+def test_speaker_line_without_a_closing_delimiter_is_prose(monkeypatch):
+    monkeypatch.setenv("DAIMON_SPEAKER_LINE", D)
+    body = f"{D}from=123 name=Ana\nhello"
+    (m,) = transcript._from_jsonl(_row("user", body))
+    assert m["content"] == body and "said_by" not in m
+
+
+def test_speaker_line_spanning_a_newline_is_prose(monkeypatch):
+    monkeypatch.setenv("DAIMON_SPEAKER_LINE", D)
+    body = f"{D}from=123\nname=Ana{D}\nhello"
+    (m,) = transcript._from_jsonl(_row("user", body))
+    assert m["content"] == body and "said_by" not in m
+
+
+def test_note_speaker_lines_is_silent_without_a_delimiter(monkeypatch, caplog):
+    monkeypatch.delenv("DAIMON_SPEAKER_LINE", raising=False)
+    with caplog.at_level("INFO", logger="daimon_briefing.serializer"):
+        assert serializer.note_speaker_lines(
+            [{"role": "user", "content": "a", "speaker_line": True}]) is None
+    assert "speaker line" not in caplog.text
+
+
+def test_note_speaker_lines_logs_the_count_with_a_delimiter(monkeypatch, caplog):
+    monkeypatch.setenv("DAIMON_SPEAKER_LINE", D)
+    with caplog.at_level("INFO", logger="daimon_briefing.serializer"):
+        assert serializer.note_speaker_lines(
+            [{"role": "user", "content": "a", "speaker_line": True},
+             {"role": "user", "content": "b"}]) == 1
+    assert "speaker line: 1 user row(s) attributed by the host's declared line" in caplog.text
+
+
+def test_stats_rich_render_shows_speaker_lines(capsys, monkeypatch):
+    from daimon_briefing import render
+    monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
+    render.render_stats(_stats_data(4))
+    out = capsys.readouterr().out
+    assert "speaker lines (lifetime)" in out and "4 user rows attributed" in out

@@ -649,6 +649,18 @@ def speaker_line_count(messages) -> int:
                if isinstance(m, dict) and m.get("speaker_line") is True)
 
 
+def note_speaker_lines(messages) -> int | None:
+    """Log the per-capture speaker-line count when the host declared a
+    delimiter; None (and silence) otherwise, so undeclared installs never see
+    the line. `daimon stats` sums the logged counts lifetime (#925)."""
+    if config.speaker_line_delimiter() is None:
+        return None
+    n = speaker_line_count(messages)
+    log.info("speaker line: %d user row(s) attributed by the host's "
+             "declared line", n)
+    return n
+
+
 def signal_message_ids(messages) -> set[str]:
     """Host ids of signal-bearing messages: tool results (#359).
 
@@ -2657,9 +2669,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # said_by anywhere; its out-of-band session speaker fills user rows only.
     derive_stated_by(checkpoint, message_speakers_by_id(
         messages, session_speaker=config.session_speaker()))
-    if config.speaker_line_delimiter() is not None:
-        log.info("speaker line: %d user row(s) attributed by the host's "
-                 "declared line", speaker_line_count(messages))
+    note_speaker_lines(messages)
     # #369: deterministic backstop for constraint pinning — hard-imperative
     # user sentences the model paraphrased away are force-pinned as verbatim
     # items here, AFTER id sanitization (host ids go in directly) and BEFORE
