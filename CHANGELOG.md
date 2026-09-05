@@ -5,6 +5,23 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.41.0](https://github.com/Daily-Nerd/daimon/compare/v0.40.0...v0.41.0) (2026-09-05)
+
+
+### Features
+
+* **serializer:** serialize outcomes reach a container host's captured stream ([#941](https://github.com/Daily-Nerd/daimon/issues/941)) ([53643d9](https://github.com/Daily-Nerd/daimon/commit/53643d9c2588c3166ea88df86d6c8e203d2bab8d))
+
+
+### Bug Fixes
+
+* **status:** a running heal repair reads as in flight, not as retry-exhausted ([#937](https://github.com/Daily-Nerd/daimon/issues/937)) ([5a013e2](https://github.com/Daily-Nerd/daimon/commit/5a013e245fc28d247a817ad3203a170087a1d257))
+
+
+### Documentation
+
+* **rulings:** say where a change to the pinned host surface becomes visible ([#942](https://github.com/Daily-Nerd/daimon/issues/942)) ([27878c0](https://github.com/Daily-Nerd/daimon/commit/27878c002c4e68e62498f271363d62baedeb1730))
+
 ## [0.40.0](https://github.com/Daily-Nerd/daimon/compare/v0.39.0...v0.40.0) (2026-09-05)
 
 
