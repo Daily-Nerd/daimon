@@ -469,9 +469,31 @@ def test_resolve_project_dir_collapses_a_symlink(tmp_path):
     assert config.resolve_project_dir(str(link)) == str(real.resolve())
 
 
-def test_resolve_project_dir_agrees_with_the_cli_resolver(tmp_path):
-    """#948: the two resolvers must not drift. If this ever fails, a write and a
-    read of the same project land in different buckets."""
+def test_the_cli_absolutizes_a_slug_the_library_passes_through(tmp_path,
+                                                               monkeypatch):
+    """The one place the two callers deliberately DISAGREE, and why.
+
+    `--project` is a path, so the CLI opts out of the slug branch: a
+    slug-shaped value is made absolute against the working directory and
+    cannot name a bucket. The library keeps the passthrough, because `--slug`
+    routing and every bucket-iterating reader hand a real slug in as
+    `project_dir`. Asserting both halves is what stops someone collapsing the
+    two into one and reopening the tenant-scope bypass the review caught.
+    """
+    from daimon_briefing import cli
+
+    monkeypatch.chdir(tmp_path)
+    slug = "-Users-x-proj"
+
+    assert config.resolve_project_dir(slug) == slug
+    assert cli._resolve_project(slug) == str(tmp_path.resolve() / slug)
+
+
+def test_the_cli_and_the_library_agree_on_every_real_path(tmp_path):
+    """#948: for an actual directory the two must not drift, or a write and a
+    read of the same project land in different buckets. Compared against a
+    hand-written expectation rather than against each other, so a shared
+    refactor cannot make this pass by construction."""
     from daimon_briefing import cli
 
     repo = tmp_path / "repo"
@@ -482,8 +504,10 @@ def test_resolve_project_dir_agrees_with_the_cli_resolver(tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
 
-    for raw in (str(subdir), str(plain)):
-        assert config.resolve_project_dir(raw) == cli._resolve_project(raw)
+    for raw, expected in ((str(subdir), repo.resolve()),
+                          (str(plain), plain.resolve())):
+        assert Path(config.resolve_project_dir(raw)) == expected
+        assert Path(cli._resolve_project(raw)) == expected
 
 
 def test_scar_harvest_opt_in(monkeypatch):
