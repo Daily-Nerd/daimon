@@ -324,6 +324,92 @@ def test_resolve_project_root_symmetry_subdir_and_root_share_slug(tmp_path):
     assert store.project_slug(from_subdir) == store.project_slug(from_root)
 
 
+# ---- one fork per directory per process (#948 perf) ----
+
+
+def _count_git_calls(monkeypatch) -> list:
+    calls: list = []
+    real = subprocess.run
+
+    def _counting(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _counting)
+    return calls
+
+
+def test_resolve_project_root_forks_git_once_per_directory(tmp_path,
+                                                           monkeypatch):
+    """#948 put this call on every ledger read, and each fork costs about 10ms.
+    A directory's root cannot change under a running process without someone
+    creating a repo mid-flight, so the second answer comes from the memo."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    calls = _count_git_calls(monkeypatch)
+
+    assert config.resolve_project_root(str(plain)) == str(plain)
+    assert config.resolve_project_root(str(plain)) == str(plain)
+
+    assert len(calls) == 1
+
+
+def test_resolve_project_root_forks_again_for_a_different_directory(
+        tmp_path, monkeypatch):
+    first = tmp_path / "one"
+    first.mkdir()
+    second = tmp_path / "two"
+    second.mkdir()
+    calls = _count_git_calls(monkeypatch)
+
+    config.resolve_project_root(str(first))
+    config.resolve_project_root(str(second))
+
+    assert len(calls) == 2
+
+
+def test_resolve_project_root_cache_clear_makes_the_next_call_fork(
+        tmp_path, monkeypatch):
+    """The escape hatch a long-lived host process needs: a directory that
+    BECOMES a git repo is picked up after a clear, or at next process start."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    calls = _count_git_calls(monkeypatch)
+
+    config.resolve_project_root(str(plain))
+    config.resolve_project_root.cache_clear()
+    config.resolve_project_root(str(plain))
+
+    assert len(calls) == 2
+
+
+def test_resolve_project_root_sees_a_directory_that_became_a_repo_after_clear(
+        tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert config.resolve_project_root(str(plain)) == str(plain)
+
+    _init_git_repo(plain)
+    assert config.resolve_project_root(str(plain)) == str(plain), \
+        "the memo must hold until it is cleared"
+
+    config.resolve_project_root.cache_clear()
+    assert Path(config.resolve_project_root(str(plain))) == plain.resolve()
+
+
+def test_resolve_project_root_falsy_input_never_touches_the_memo(monkeypatch):
+    """None and "" short-circuit before the memo, so they can never occupy an
+    entry or be answered from one."""
+    calls = _count_git_calls(monkeypatch)
+    config.resolve_project_root.cache_clear()
+
+    assert config.resolve_project_root(None) is None
+    assert config.resolve_project_root("") == ""
+
+    assert calls == []
+    assert config.resolve_project_root.cache_info().currsize == 0
+
+
 # ---- resolve_project_dir: the ONE resolution the CLI and the library share (#948) ----
 
 

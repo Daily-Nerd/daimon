@@ -12,6 +12,7 @@ import getpass
 import logging
 import os
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import overload
 
@@ -540,12 +541,40 @@ def resolve_project_root(raw: str | None) -> str | None:
     pure file-ops with no git/subprocess dependency.
 
     Falsy `raw` passes through unchanged (None must keep falling back to the global
-    pointer — an unknown project is not invented into a dir). On ANY git failure —
+    pointer — an unknown project is not invented into a dir), and short-circuits
+    before the memo below, so it can never occupy an entry. On ANY git failure —
     not a repo, git binary missing, timeout, OS error, dir gone — `raw` is returned
     UNCHANGED, preserving exact pre-normalization behavior. Never raises.
+
+    MEMOIZED per process, and #948 is why. Resolution moved from once per command
+    to once per ledger call, and a `git rev-parse` fork costs about 10ms: an empty
+    `daimon brief` against a real repo spent 208ms of its 240ms wall time in here,
+    across 14 forks. The memo answers a directory once and the same brief returns
+    to 25ms.
+
+    The contract that buys: within one process, a directory's root is decided the
+    first time it is asked for. A directory that BECOMES a git repo while a
+    long-lived host process runs (`daimon serve`, an in-process library host) is
+    seen at the next process start, or after `resolve_project_root.cache_clear()`,
+    which is exported for exactly that case. Nothing is cached on the falsy path
+    and no exception is ever cached, because none is ever raised.
+
+    The alternative considered and rejected: discovering the toplevel by walking
+    for a `.git` entry in Python. It skips the fork, and it is a SECOND resolver
+    that disagrees with git under `GIT_DIR`, `GIT_CEILING_DIRECTORIES`, a `.git`
+    file pointing elsewhere, or a corrupt repo. Two resolvers that disagree about
+    which bucket a path names is the exact defect #948 exists to close.
     """
     if not raw:
         return raw
+    return _git_toplevel(raw)
+
+
+@lru_cache(maxsize=256)
+def _git_toplevel(raw: str) -> str:
+    """The forking half of `resolve_project_root`, memoized. Never raises, and
+    returns `raw` unchanged on every git failure, so a failure memoizes as
+    "this directory is its own root" until the cache is cleared."""
     try:
         result = subprocess.run(
             ["git", "-C", raw, "rev-parse", "--show-toplevel"],
@@ -559,6 +588,14 @@ def resolve_project_root(raw: str | None) -> str | None:
         return raw
     top = result.stdout.strip()
     return top or raw
+
+
+# The memo controls belong to the public name: a caller holding
+# `resolve_project_root` must be able to clear it without knowing the private
+# worker exists. Assigned rather than declared because the public function is
+# an overloaded def, which cannot carry them in its signature.
+resolve_project_root.cache_clear = _git_toplevel.cache_clear  # type: ignore[attr-defined]
+resolve_project_root.cache_info = _git_toplevel.cache_info  # type: ignore[attr-defined]
 
 
 @overload
