@@ -246,7 +246,7 @@ def _check_ceremony_lines(check: dict, *, label: str, verb: str) -> list[str]:
 
 
 def _ruling_lines(record: dict, *, detailed: bool = False,
-                  tag: bool = False) -> list:
+                  tag: bool = False, firing=None) -> list:
     """#693: a ruling renders its VERDICT (the rule text) and never the
     refutation's ✗ glyph; an overturned ruling reads "retired" (label only,
     the state vocabulary is unchanged); and text authored by a non-human
@@ -282,6 +282,21 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
         shown = "proposed, not armed" if lifecycle == "proposed" else lifecycle
         lines.append(f"  Check: {shown} · intent {check.get('intent')} · "
                      f"match /{check.get('match')}/")
+        # #943 slice 5: liveness, and only where something could have fired.
+        # A `never` on a proposed or disarmed check reports a wiring that
+        # does not exist. `firing` is None on every caller but `ruling show`,
+        # so `list` keeps its exact shape and does not pay to fold the log
+        # once per record.
+        if firing is not None and lifecycle == "armed":
+            fold = firing.for_ruling(record["refutation_id"])
+            if fold["last_ts"]:
+                lines.append(
+                    f"  Fired: last {fold['last_ts']} on {fold['host']} · "
+                    f"lifetime {fold['clean']} clean, "
+                    f"{fold['violation']} violation, "
+                    f"{fold['unresolved']} unresolved")
+            else:
+                lines.append("  Fired: never")
     proposal = record.get("revision_proposed")
     if proposal:
         line = (f"  Pending revision proposal ({proposal.get('by', '?')}): "
@@ -299,9 +314,9 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
 
 
 def _print_ruling(record: dict, *, detailed: bool = False,
-                  tag: bool = False) -> None:
+                  tag: bool = False, firing=None) -> None:
     render.render_ledger_lines(
-        _ruling_lines(record, detailed=detailed, tag=tag))
+        _ruling_lines(record, detailed=detailed, tag=tag, firing=firing))
 
 
 def _refuse_ruling_id(record, verb: str) -> bool:

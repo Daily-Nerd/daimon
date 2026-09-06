@@ -924,3 +924,89 @@ def test_render_status_tolerates_a_dict_without_the_checks_key(capsys):
     render.render_status({"project": "/p", "proj": {"exists": False},
                           "glob": {"exists": False}, "last": None})
     assert "checks:" not in capsys.readouterr().out
+
+
+# ---- `ruling show`: liveness beside the check it already prints -----------
+
+
+def _show(tmp_path, ruling_id, *extra):
+    from daimon_briefing import cli
+    return cli.main(["ruling", "show", ruling_id, "--project", str(tmp_path),
+                     *extra])
+
+
+def test_show_says_never_for_an_armed_check_that_has_not_run(tmp_path,
+                                                             capsys):
+    ruling_id = _arm(tmp_path)
+    assert _show(tmp_path, ruling_id) == 0
+    out = capsys.readouterr().out
+    assert "  Check: armed" in out
+    assert "  Fired: never" in out
+
+
+def test_show_names_the_host_and_the_lifetime_counts(tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    _write_log(
+        _row(ruling_id=ruling_id, outcome="clean", ts="2026-09-06T08:00:00Z"),
+        _row(ruling_id=ruling_id, outcome="violation",
+             ts="2026-09-06T11:00:00Z"),
+    )
+    _show(tmp_path, ruling_id)
+    assert ("  Fired: last 2026-09-06T11:00:00Z on claude-code · lifetime "
+            "1 clean, 1 violation, 0 unresolved") in capsys.readouterr().out
+
+
+def test_show_omits_the_line_for_a_proposed_check(tmp_path, capsys):
+    """Spec 8.5. Nothing is armed, so nothing could have fired, and `never`
+    here would read as a wiring that ran and found nothing."""
+    ruling_id = _propose(tmp_path)
+    _show(tmp_path, ruling_id)
+    out = capsys.readouterr().out
+    assert "proposed, not armed" in out and "Fired:" not in out
+
+
+def test_show_omits_the_line_for_a_disarmed_check(tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=str(tmp_path))
+    _show(tmp_path, ruling_id)
+    out = capsys.readouterr().out
+    assert "Check: disarmed" in out and "Fired:" not in out
+
+
+def test_ruling_list_is_untouched(tmp_path, capsys):
+    """The compact lane keeps its exact shape: `list` passes no summary, so
+    the branch cannot reach it, and the per-record cost of folding the
+    firing log is not paid for every ruling in the project."""
+    from daimon_briefing import cli
+
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean"))
+    assert cli.main(["ruling", "list", "--project", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "[check: armed]" in out and "Fired:" not in out
+
+
+def test_the_briefing_ruling_lines_are_a_different_function_and_stay_quiet(
+        tmp_path):
+    """`briefing.ruling_lines` renders the standing-rulings section and knows
+    nothing about checks. Same name shape as the CLI helper, different
+    function; slice 5 must not have reached it."""
+    from daimon_briefing import briefing
+
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean"))
+    text = "\n".join(briefing.ruling_lines(project_dir=str(tmp_path)))
+    assert ruling_id not in text or "Fired:" not in text
+    assert "Fired:" not in text
+
+
+def test_the_show_line_is_dropped_when_the_summary_cannot_be_read(
+        tmp_path, capsys, monkeypatch):
+    """A ruling's own record is the answer `show` owes; liveness is an
+    extra, and losing the record over the extra would be the wrong trade."""
+    ruling_id = _arm(tmp_path)
+    monkeypatch.setattr(checks, "firing_summary",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    assert _show(tmp_path, ruling_id) == 0
+    out = capsys.readouterr().out
+    assert "  Check: armed" in out and "Fired:" not in out

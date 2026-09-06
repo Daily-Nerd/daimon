@@ -291,7 +291,14 @@ def _cmd_ruling_show(args) -> int:
     if args.json:
         print(_refutation_json(record))
     else:
-        _print_ruling(record, detailed=True)
+        # #943 slice 5: the record is what `show` owes; liveness is an extra,
+        # so a firing log that cannot be folded drops the line rather than
+        # the answer.
+        try:
+            firing = checks.firing_summary(project)
+        except Exception:  # noqa: BLE001
+            firing = None
+        _print_ruling(record, detailed=True, firing=firing)
     return 0
 
 
