@@ -4,6 +4,7 @@
 Manages the daimon hooks in ~/.claude/ (Claude Code):
   - daimon-session-brief.py  SessionStart  inject the latest checkpoint briefing
   - daimon-session-end.py    SessionEnd    serialize the ending session (detached)
+  - daimon-pre-action.py     PreToolUse    run armed checks before a shell action
 
 Same shape as SCAR's scar-hooks.py: idempotent install (skips/updates existing
 entries), uninstall removes only daimon-owned entries (matched by script
@@ -28,9 +29,15 @@ CLAUDE_DIR = Path.home() / ".claude"
 HOOKS_DIR = CLAUDE_DIR / "hooks"
 SETTINGS = CLAUDE_DIR / "settings.json"
 
-# Shared helper module the hook scripts import by same-dir lookup. Copied
-# alongside them on install; removed on uninstall once no daimon hook remains.
+# Shared modules the hook scripts import by same-dir lookup. Copied alongside
+# them on install; removed on uninstall once no daimon hook remains.
+#
+# #943 added the second and third: the pre-action hook loads checks_host.py
+# from its own directory, and that loads checks_runtime.py the same way. A
+# script installed without them is a hook that finds nothing and allows in
+# silence, which is the shape this list exists to prevent.
 LIB = "_daimon_hook_lib.py"
+MODULES = (LIB, "checks_runtime.py", "checks_host.py")
 
 HOOKS = [
     {
@@ -54,6 +61,26 @@ HOOKS = [
                 "command": "python3 ~/.claude/hooks/daimon-session-end.py",
                 "timeout": 10,
                 "statusMessage": "Writing daimon checkpoint...",
+            }],
+        },
+    },
+    {
+        # #943: the pre-action check. This path is the hand install, and it
+        # gets the gate too — a gate that exists on the marketplace path and
+        # not this one is a machine that believes it is guarded.
+        #
+        # `matcher` keeps it to shell actions: without it the hook fires
+        # before every tool call and pays a manifest read for each. No
+        # statusMessage, because the other two fire once a session and this
+        # one fires before every command.
+        "script": "daimon-pre-action.py",
+        "event": "PreToolUse",
+        "entry": {
+            "matcher": "Bash",
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.claude/hooks/daimon-pre-action.py",
+                "timeout": 10,
             }],
         },
     },
@@ -88,29 +115,31 @@ def is_ours(group, script):
 
 
 def install_lib(dry):
-    src, dst = SRC_DIR / LIB, HOOKS_DIR / LIB
-    same = dst.exists() and src.read_bytes() == dst.read_bytes()
-    action = "up-to-date" if same else ("update" if dst.exists() else "copy")
-    print(f"[{LIB}] library: {action}")
-    if not same and not dry:
-        shutil.copy2(src, dst)
+    for name in MODULES:
+        src, dst = SRC_DIR / name, HOOKS_DIR / name
+        same = dst.exists() and src.read_bytes() == dst.read_bytes()
+        action = "up-to-date" if same else ("update" if dst.exists() else "copy")
+        print(f"[{name}] library: {action}")
+        if not same and not dry:
+            shutil.copy2(src, dst)
 
 
 def uninstall_lib(dry):
-    # Remove the shared library only once no daimon hook script remains in the
+    # Remove the shared modules only once no daimon hook script remains in the
     # dir. `remaining` excludes THIS manager's scripts (removed above), so it
     # counts only foreign daimon-*.py — correct under --dry-run too.
-    dst = HOOKS_DIR / LIB
-    if not dst.exists():
-        return
     ours = {spec["script"] for spec in HOOKS}
     remaining = [p.name for p in HOOKS_DIR.glob("daimon-*.py") if p.name not in ours]
-    if remaining:
-        print(f"[{LIB}] library: kept ({len(remaining)} other daimon hook(s) present)")
-        return
-    print(f"[{LIB}] library: remove {dst}")
-    if not dry:
-        dst.unlink()
+    for name in MODULES:
+        dst = HOOKS_DIR / name
+        if not dst.exists():
+            continue
+        if remaining:
+            print(f"[{name}] library: kept ({len(remaining)} other daimon hook(s) present)")
+            continue
+        print(f"[{name}] library: remove {dst}")
+        if not dry:
+            dst.unlink()
 
 
 def install(dry):

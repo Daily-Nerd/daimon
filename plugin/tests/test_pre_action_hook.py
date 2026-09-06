@@ -308,3 +308,160 @@ def test_the_script_names_its_profile_and_nothing_else(host, script):
     assert f'main("{host}")' in text
     assert "permissionDecision" not in text
     assert "hookSpecificOutput" not in text
+
+
+# ---- registration: the event, on both hosts and both install paths --------
+
+import importlib.util  # noqa: E402
+
+REPO = Path(__file__).parents[2]
+
+
+def _module(rel, name):
+    spec = importlib.util.spec_from_file_location(name, REPO / rel)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _core():
+    return _module("plugin/daimon_briefing/checks_host.py", "_core_for_reg")
+
+
+def test_the_plugin_registers_the_hook_on_shell_actions_only():
+    """The first `matcher` in this manifest. Without it the hook would fire
+    before every tool call in the session, including the reads and edits the
+    spec puts out of scope, and pay a manifest read for each."""
+    cfg = json.loads((REPO / "hooks" / "hooks.json").read_text(
+        encoding="utf-8"))["hooks"]
+    groups = cfg["PreToolUse"]
+    assert len(groups) == 1
+    assert groups[0]["matcher"] == "Bash"
+    hook = groups[0]["hooks"][0]
+    assert hook["type"] == "command"
+    assert hook["command"] == \
+        'python3 "${CLAUDE_PLUGIN_ROOT}"/hook/daimon-pre-action.py'
+    # Ten against a runner budget of five: the runner has to decide before
+    # the host gives up, because a hook that reaches the host timeout does
+    # not block and the action proceeds.
+    assert hook["timeout"] == 10
+    # No statusMessage. The other three fire once a session; this one fires
+    # before every shell action, and a spinner on each would be noise.
+    assert "statusMessage" not in hook
+
+
+def test_the_registered_matcher_and_timeout_come_from_the_profile_row():
+    """The registration is hand-written JSON on both hosts, so this is where
+    it is held to the row. A matcher that drifted from `tool_names` is a hook
+    that never fires, or one that fires and allows in silence."""
+    core = _core()
+    cfg = json.loads((REPO / "hooks" / "hooks.json").read_text(
+        encoding="utf-8"))["hooks"]
+    cc = core.PROFILES["claude-code"]
+    assert cfg[cc.event][0]["matcher"] == cc.matcher
+    assert cfg[cc.event][0]["hooks"][0]["timeout"] == cc.install_timeout
+
+    cx = core.PROFILES["codex"]
+    codex = {h["event"]: h for h in
+             _module("plugin/daimon_briefing/codex_hooks.py",
+                     "_codex_for_reg").HOOKS}
+    entry = codex[cx.event]["entry"]
+    assert entry["matcher"] == cx.matcher
+    assert entry["hooks"][0]["timeout"] == cx.install_timeout
+
+
+def test_the_manual_claude_code_manager_registers_the_same_event():
+    """`hook/daimon-hooks.py` writes ~/.claude/settings.json for someone who
+    installed by hand rather than through the marketplace. A gate that exists
+    on one path and not the other is a machine that believes it is guarded."""
+    hooks = {h["event"]: h for h in
+             _module("hook/daimon-hooks.py", "_manual_mgr").HOOKS}
+    entry = hooks["PreToolUse"]
+    assert entry["script"] == "daimon-pre-action.py"
+    assert entry["entry"]["matcher"] == "Bash"
+    assert entry["entry"]["hooks"][0]["timeout"] == 10
+
+
+@pytest.mark.parametrize("rel", ["hook/codex-hooks.py",
+                                 "plugin/daimon_briefing/codex_hooks.py"])
+def test_both_codex_manifests_register_the_pre_action_hook(rel):
+    """The standalone manager cannot import the package, so the shape lives
+    in two files by necessity; test_codex_session_end asserts they agree."""
+    hooks = {h["event"]: h for h in
+             _module(rel, f"_codex_{abs(hash(rel))}").HOOKS}
+    entry = hooks["PreToolUse"]
+    assert entry["script"] == "daimon-codex-pre-action.py"
+    assert entry["entry"]["matcher"] == "Bash|shell"
+    assert entry["entry"]["hooks"][0]["timeout"] == 10
+    assert "daimon-codex-pre-action.py" in \
+        entry["entry"]["hooks"][0]["command"]
+
+
+def test_the_codex_install_ships_the_core_and_the_runtime():
+    """`FILES` is scripts plus the shared modules. A script installed without
+    the two siblings it loads is the silent half-install the fail-open tests
+    above describe, arriving through the supported path."""
+    from daimon_briefing import codex_hooks
+    assert "daimon-codex-pre-action.py" in codex_hooks.FILES
+    assert "checks_host.py" in codex_hooks.FILES
+    assert "checks_runtime.py" in codex_hooks.FILES
+
+
+def test_the_status_audit_can_see_every_file_the_install_writes():
+    """`hooks status` reads `spec["files"]`, so a file installed but not
+    listed there is never audited and goes stale invisibly."""
+    from daimon_briefing import cli, codex_hooks
+    spec = cli._HOOK_HOSTS["codex"]
+    assert set(codex_hooks.FILES) <= set(spec["files"])
+    assert "PreToolUse" in spec["events"]
+
+
+def test_the_codex_script_ships_through_the_sync_manifest():
+    sync = _module("scripts/sync_hooks.py", "_sync_for_reg")
+    assert ("hook/daimon-codex-pre-action.py",
+            "plugin/daimon_briefing/_hooks/daimon-codex-pre-action.py") \
+        in sync.SYNC_PAIRS
+
+
+def test_the_claude_code_script_has_no_packaged_copy():
+    """Deliberate, and the same as the other three Claude Code hooks: the
+    plugin runs them straight out of `hook/` through CLAUDE_PLUGIN_ROOT, and
+    a packaged copy nothing installs is a second file to keep in step."""
+    sync = _module("scripts/sync_hooks.py", "_sync_for_reg2")
+    assert not any("daimon-pre-action.py" in dst
+                   for _src, dst in sync.SYNC_PAIRS)
+    assert not (REPO / "plugin" / "daimon_briefing" / "_hooks"
+                / "daimon-pre-action.py").exists()
+
+
+def test_the_manual_manager_installs_the_modules_the_hook_loads(tmp_path):
+    """The hand-install path ships the two siblings too. Registering the
+    script alone would install the silent half-broken shape by hand, on
+    purpose, through the supported command."""
+    proc = subprocess.run(
+        [sys.executable, str(HOOK_DIR / "daimon-hooks.py"), "install"],
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "HOME": str(tmp_path)})
+    assert proc.returncode == 0, proc.stderr
+    installed = tmp_path / ".claude" / "hooks"
+    for name in ("daimon-pre-action.py", CORE, RUNTIME):
+        assert (installed / name).is_file(), f"{name} not installed"
+        assert (installed / name).read_bytes() == \
+            (HOOK_DIR / name).read_bytes()
+    cfg = json.loads((tmp_path / ".claude" / "settings.json").read_text(
+        encoding="utf-8"))["hooks"]
+    assert cfg["PreToolUse"][0]["matcher"] == "Bash"
+
+
+def test_the_manual_manager_uninstall_removes_what_it_installed(tmp_path):
+    """A module left behind after uninstall is a file `hooks status` will
+    never mention again and nothing will ever refresh."""
+    env = {**os.environ, "HOME": str(tmp_path)}
+    for verb in ("install", "uninstall"):
+        proc = subprocess.run(
+            [sys.executable, str(HOOK_DIR / "daimon-hooks.py"), verb],
+            capture_output=True, text=True, timeout=60, env=env)
+        assert proc.returncode == 0, proc.stderr
+    installed = tmp_path / ".claude" / "hooks"
+    for name in ("daimon-pre-action.py", CORE, RUNTIME):
+        assert not (installed / name).exists(), f"{name} left behind"

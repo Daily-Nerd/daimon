@@ -3025,10 +3025,15 @@ _HOOK_HOSTS: dict[str, _HookHostSpec] = {
     # registration, so it carries `register: "codex"` and the install command
     # delegates the whole flow to codex_hooks.install (#262). `files`/`events`
     # here drive `hooks list` only; codex_hooks owns the copy + registration.
+    # #943 added daimon-codex-pre-action.py and the two modules it loads by
+    # same-dir lookup. `files` is what the status audit walks, so a file the
+    # install writes and this list omits goes stale invisibly.
     "codex": {
         "files": ("daimon-codex-session-start.py", "daimon-codex-stop.py",
-                  "_daimon_hook_lib.py"),
-        "events": ("SessionStart", "Stop"),
+                  "daimon-codex-session-end.py", "daimon-codex-pre-action.py",
+                  "_daimon_hook_lib.py", "checks_runtime.py",
+                  "checks_host.py"),
+        "events": ("SessionStart", "Stop", "SessionEnd", "PreToolUse"),
         "register": "codex",
     },
 }

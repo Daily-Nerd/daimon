@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli
+from daimon_briefing import cli, codex_hooks
 
 REPO_HOOK_DIR = Path(__file__).parents[2] / "hook"
 PKG_HOOKS_DIR = Path(__file__).parents[1] / "daimon_briefing" / "_hooks"
@@ -26,8 +26,11 @@ _SHIPPED = tuple(
 )
 
 _WINDSURF_FILES = cli._HOOK_HOSTS["windsurf"]["files"]
-_CODEX_SCRIPTS = ("daimon-codex-session-start.py", "daimon-codex-stop.py")
-_CODEX_FILES = _CODEX_SCRIPTS + ("_daimon_hook_lib.py",)
+# Derived from the installer's own manifest rather than restated here: a
+# second list would let the install ship a file no test looks at. Scripts are
+# what Codex executes; MODULES are imported by same-dir lookup (#943).
+_CODEX_FILES = codex_hooks.FILES
+_CODEX_SCRIPTS = tuple(n for n in _CODEX_FILES if n not in codex_hooks.MODULES)
 
 
 @pytest.mark.parametrize("name", _SHIPPED)
@@ -130,7 +133,7 @@ def test_codex_scripts_are_packaged_and_drift_guarded():
     # The drift guard (test_packaged_hook_matches_repo_copy) parametrizes over
     # _SHIPPED, so proving the codex scripts are in _SHIPPED proves they are
     # both packaged AND covered by the byte-identity drift test.
-    for name in _CODEX_SCRIPTS:
+    for name in _CODEX_FILES:
         assert name in _SHIPPED, f"{name} not shipped via sync_hooks manifest"
 
 
@@ -139,6 +142,25 @@ def test_hooks_list_names_codex_with_events(capsys):
     out = capsys.readouterr().out
     assert "codex" in out
     assert "SessionStart" in out and "Stop" in out
+    assert "PreToolUse" in out
+
+
+def test_the_codex_modules_are_shipped_but_never_registered(tmp_path,
+                                                            monkeypatch):
+    # #943: the modules ride along because the scripts load them by same-dir
+    # lookup. They are imported, never run, and nothing registers them as a
+    # hook — a module in the HOOKS manifest would be a command Codex tries to
+    # execute on an event.
+    assert set(codex_hooks.MODULES) <= set(codex_hooks.FILES)
+    assert not (set(codex_hooks.MODULES)
+                & {spec["script"] for spec in codex_hooks.HOOKS})
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    cfg = json.loads((tmp_path / ".codex" / "hooks.json").read_text())["hooks"]
+    commands = [h["command"] for groups in cfg.values() for g in groups
+                for h in g["hooks"]]
+    for name in codex_hooks.MODULES:
+        assert not any(name in c for c in commands), f"{name} registered"
 
 
 def test_hooks_install_codex_copies_scripts_and_lib_to_codex_dir(tmp_path, monkeypatch):
@@ -154,7 +176,7 @@ def test_hooks_install_codex_copies_scripts_and_lib_to_codex_dir(tmp_path, monke
         assert (hooks_dir / name).stat().st_mode & stat.S_IXUSR, f"{name} not executable"
 
 
-def test_hooks_install_codex_registers_both_events(tmp_path, monkeypatch):
+def test_hooks_install_codex_registers_every_event(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli.main(["hooks", "install", "codex"]) == 0
     cfg = json.loads((tmp_path / ".codex" / "hooks.json").read_text())["hooks"]
@@ -171,6 +193,15 @@ def test_hooks_install_codex_registers_both_events(tmp_path, monkeypatch):
     assert "daimon-codex-stop.py" in stop_hook["command"]
     assert stop_hook["statusMessage"] == "Writing daimon checkpoint..."
 
+    # #943: the pre-action check, kept to shell actions by its matcher and
+    # carrying no statusMessage — it fires before every command, not once a
+    # session.
+    pre = cfg["PreToolUse"][0]
+    assert pre["matcher"] == "Bash|shell"
+    assert "daimon-codex-pre-action.py" in pre["hooks"][0]["command"]
+    assert pre["hooks"][0]["timeout"] == 10
+    assert "statusMessage" not in pre["hooks"][0]
+
 
 def test_hooks_install_codex_preserves_unrelated_entries(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -182,7 +213,7 @@ def test_hooks_install_codex_preserves_unrelated_entries(tmp_path, monkeypatch):
             "SessionStart": [
                 {"hooks": [{"type": "command", "command": "python3 /other/thing.py"}]}
             ],
-            # an event daimon never touches
+            # a foreign entry under the event #943 added
             "PreToolUse": [
                 {"hooks": [{"type": "command", "command": "echo hi"}]}
             ],
@@ -194,7 +225,9 @@ def test_hooks_install_codex_preserves_unrelated_entries(tmp_path, monkeypatch):
     ss_cmds = [h["command"] for g in cfg["SessionStart"] for h in g["hooks"]]
     assert "python3 /other/thing.py" in ss_cmds  # foreign entry untouched
     assert any("daimon-codex-session-start.py" in c for c in ss_cmds)  # ours added
-    assert cfg["PreToolUse"][0]["hooks"][0]["command"] == "echo hi"  # unrelated event kept
+    pre_cmds = [h["command"] for g in cfg["PreToolUse"] for h in g["hooks"]]
+    assert "echo hi" in pre_cmds  # foreign entry untouched
+    assert any("daimon-codex-pre-action.py" in c for c in pre_cmds)  # ours added
 
 
 def test_hooks_install_codex_recovers_corrupt_hooks_json(tmp_path, monkeypatch):
@@ -216,8 +249,8 @@ def test_hooks_install_codex_is_idempotent(tmp_path, monkeypatch):
     assert cli.main(["hooks", "install", "codex"]) == 0
     assert cli.main(["hooks", "install", "codex"]) == 0  # re-run must not duplicate
     cfg = json.loads((tmp_path / ".codex" / "hooks.json").read_text())["hooks"]
-    assert len(cfg["SessionStart"]) == 1
-    assert len(cfg["Stop"]) == 1
+    for spec in codex_hooks.HOOKS:
+        assert len(cfg[spec["event"]]) == 1, spec["event"]
 
 
 def test_hooks_install_codex_refreshes_stale_script(tmp_path, monkeypatch):
