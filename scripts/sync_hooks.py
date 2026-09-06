@@ -30,6 +30,11 @@ SYNC_PAIRS = (
     ("plugin/daimon_briefing/checks_runtime.py",
      "plugin/daimon_briefing/_hooks/checks_runtime.py"),
     ("plugin/daimon_briefing/checks_runtime.py", "hook/checks_runtime.py"),
+    # #943 slice 3: the adapter core, same direction and same reason. The
+    # per-host scripts are thin and load this from their own directory.
+    ("plugin/daimon_briefing/checks_host.py",
+     "plugin/daimon_briefing/_hooks/checks_host.py"),
+    ("plugin/daimon_briefing/checks_host.py", "hook/checks_host.py"),
     ("hook/daimon-windsurf-hooks.py", "plugin/daimon_briefing/_hooks/daimon-windsurf-hooks.py"),
     ("hook/daimon-codex-session-start.py", "plugin/daimon_briefing/_hooks/daimon-codex-session-start.py"),
     ("hook/daimon-codex-stop.py", "plugin/daimon_briefing/_hooks/daimon-codex-stop.py"),

@@ -62,6 +62,29 @@ def test_shipped_checks_runtime_matches_canonical_module():
         "hook-shipped checks_runtime.py drifted from the canonical module"
 
 
+def test_shipped_checks_host_matches_canonical_module():
+    # #943 slice 3: the adapter core ships beside the runtime, same direction
+    # (scar 0049, the PACKAGE module is canonical). The parametrized guard
+    # above compares hook/ against _hooks/; this one is the third side of the
+    # triangle, and without it both copies could drift together.
+    canonical = (Path(__file__).parents[1] / "daimon_briefing"
+                 / "checks_host.py").read_bytes()
+    shipped = (PKG_HOOKS_DIR / "checks_host.py").read_bytes()
+    assert shipped == canonical, \
+        "hook-shipped checks_host.py drifted from the canonical module"
+
+
+def test_the_adapter_core_ships_to_both_standalone_dirs():
+    # A host script loads checks_host.py as a same-dir sibling. Missing from
+    # either destination is a hook that finds nothing and allows in silence,
+    # on the plugin path or the installed path depending on which copy is
+    # absent, which is the half-broken shape nobody reproduces.
+    dests = {dst for src, dst in SYNC_PAIRS
+             if src == "plugin/daimon_briefing/checks_host.py"}
+    assert dests == {"plugin/daimon_briefing/_hooks/checks_host.py",
+                     "hook/checks_host.py"}
+
+
 def test_hooks_install_windsurf_writes_stable_executable_copies(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     rc = cli.main(["hooks", "install", "windsurf"])
