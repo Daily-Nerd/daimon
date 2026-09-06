@@ -109,7 +109,7 @@ custodia las acciones de shell:
   se carga desde al lado del script, y el script solo nombra a su anfitrión.
   Sale con 0 en todos los caminos, no escribe nada en stderr y escribe o bien
   un objeto JSON o bien nada. Mira
-  [Checks en ejecución](../reference/cli#checks-at-runtime).
+  [Checks en ejecución](../reference/cli#checks-en-ejecución).
 
   Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`. Una fila
   prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`

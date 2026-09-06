@@ -78,7 +78,7 @@ python3 hook/codex-hooks.py status
   para una advertencia, así que la intención `warn` degrada acá a
   `record-only`: la corrida queda en el registro y no se muestra nada. Sale
   con 0 en todos los caminos. Mira
-  [Checks en ejecución](../reference/cli#checks-at-runtime).
+  [Checks en ejecución](../reference/cli#checks-en-ejecución).
 
   Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`. Una fila
   prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
