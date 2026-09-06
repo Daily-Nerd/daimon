@@ -335,10 +335,6 @@ def _firing_summary(project_dir) -> FiringSummary:
     path = Path(where)
     if not path.exists():
         return FiringSummary("absent", {}, {}, _empty_fold(), where)
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
 
     try:
         mine = {str(record.get("refutation_id") or "")
@@ -350,13 +346,27 @@ def _firing_summary(project_dir) -> FiringSummary:
     rulings: dict = {}
     hook_seen: dict = {}
     totals = _empty_fold()
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(row, dict):
-            continue
+    # STREAMED, one line at a time, single pass. `daimon status` folds this
+    # on every run and the log has no cap yet, so reading it whole made the
+    # most-used verb hold the entire file: 150 MB of resident memory on a
+    # 34 MB log. Nothing here needs two passes or random access.
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                _fold_line(line, mine, rulings, hook_seen, totals)
+    except (OSError, UnicodeDecodeError):
+        return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
+    return FiringSummary("read", rulings, hook_seen, totals, where)
+
+
+def _fold_line(line, mine: set, rulings: dict, hook_seen: dict,
+               totals: dict) -> None:
+    """One row into the fold. Malformed lines never sink the read."""
+    try:
+        row = json.loads(line)
+    except (ValueError, TypeError):
+        return
+    if isinstance(row, dict):
         ruling_id = str(row.get("ruling_id") or "")
         host = str(row.get("host") or "")
         if not ruling_id:
@@ -373,12 +383,9 @@ def _firing_summary(project_dir) -> FiringSummary:
             ts = str(row.get("ts") or "")
             if ts > seen["last_ts"]:
                 seen["last_ts"] = ts
-            continue
-        if ruling_id not in mine:
-            continue
-        _absorb(rulings.setdefault((ruling_id, host), _empty_fold()), row)
-        _absorb(totals, row)
-    return FiringSummary("read", rulings, hook_seen, totals, where)
+        elif ruling_id in mine:
+            _absorb(rulings.setdefault((ruling_id, host), _empty_fold()), row)
+            _absorb(totals, row)
 
 
 def try_run(ruling_id: str, command: str, *, channel: str, cwd=None,

@@ -1173,3 +1173,46 @@ def test_nothing_armed_outranks_an_unreadable_log(tmp_path, monkeypatch,
     _log_is_a_directory()
     _stats(tmp_path)
     assert "checks: none armed" in capsys.readouterr().out
+
+
+def test_the_log_is_never_materialized_whole(tmp_path, monkeypatch):
+    """`daimon status` folds this log on every run and the log has no cap
+    yet, so the read has to be a stream. `read_text` on a 34 MB log held
+    150 MB of resident memory before this; a caller that reaches for it
+    again reintroduces that."""
+    ruling_id = _arm(tmp_path)
+    _write_log(*[_row(ruling_id=ruling_id, outcome="clean")] * 50)
+    slurped = []
+    real = Path.read_text
+
+    def _watch(self, *a, **kw):
+        if self.name == "checks.jsonl":
+            slurped.append(str(self))
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "read_text", _watch)
+    summary = checks.firing_summary(str(tmp_path))
+    assert slurped == [], "the firing log must be streamed, not slurped"
+    assert summary.rulings[(ruling_id, CC)]["clean"] == 50
+
+
+def test_streaming_keeps_every_earlier_guarantee(tmp_path):
+    """One pass, and the same answers: malformed lines skipped, foreign ids
+    dropped, project-level rows folded per host, greatest stamp wins."""
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    mine = _arm(tmp_path)
+    theirs = _arm(other, subject="their posts")
+    _write_log(
+        "not json", "",
+        _row(ruling_id=mine, outcome="clean", ts="2026-09-06T12:00:00Z"),
+        _row(ruling_id=mine, outcome="violation", ts="2026-09-06T09:00:00Z"),
+        _row(ruling_id=theirs, outcome="violation"),
+        _row(cause="no-match", ts="2026-09-06T07:00:00Z"),
+    )
+    summary = checks.firing_summary(str(tmp_path))
+    fold = summary.rulings[(mine, CC)]
+    assert (fold["clean"], fold["violation"]) == (1, 1)
+    assert fold["last_ts"] == "2026-09-06T12:00:00Z"
+    assert list(summary.rulings) == [(mine, CC)]
+    assert summary.hook_seen[CC]["rows"] == 1
