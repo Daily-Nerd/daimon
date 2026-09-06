@@ -11,6 +11,7 @@ change what renders.
 """
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -1124,7 +1125,6 @@ def test_the_reference_states_where_a_change_to_this_surface_shows_up(
     promise we can keep is that the change is VISIBLE, so the page must keep
     saying where. Both language mirrors, because a host reading the Spanish
     page is owed the same warning."""
-    from pathlib import Path
     root = Path(__file__).parent.parent.parent
     pages = [
         root / "website/docs/reference/cli.md",
@@ -1135,6 +1135,25 @@ def test_the_reference_states_where_a_change_to_this_surface_shows_up(
         text = page.read_text(encoding="utf-8")
         assert "CHANGELOG.md" in text, f"{page} stopped naming the changelog"
         assert "1.0" in text, f"{page} stopped saying daimon is pre-1.0"
+
+
+def test_the_reference_names_the_resolver_a_host_shares_with_the_cli(
+        tmp_checkpoint_dir):
+    """#948: a host passing `project_dir` gets the CLI's resolution, and the
+    page has to say so, or a host standing in a subdirectory writes a bucket
+    its own `daimon ruling list` never reads. Both language mirrors, because a
+    host reading the Spanish page is owed the same contract."""
+    root = Path(__file__).parent.parent.parent
+    pages = [
+        root / "website/docs/reference/cli.md",
+        root / ("website/i18n/es/docusaurus-plugin-content-docs"
+                "/current/reference/cli.md"),
+    ]
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        assert "resolve_project_dir" in text, \
+            f"{page} stopped naming the shared resolver"
+        assert "git" in text, f"{page} stopped saying where a path resolves to"
 
 
 def _check(**overrides):

@@ -35,7 +35,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon audit quotes` | Re-verifica cada cita verbatim almacenada contra su transcripción de origen y reporta discrepancias. Solo lectura — nunca reescribe etiquetas. |
 | `daimon audit privacy` | Prueba el contrato de borrado: hashea cada campo con texto plano en cada superficie (checkpoints, punteros rotados, el registro de eventos, el espejo de equipo, el índice de recall y sus snapshots huérfanos) y reporta todo valor olvidado que haya sobrevivido. Solo lectura. |
 | `daimon refute list\|show\|search\|guard` | Lee el ledger de conocimiento negativo sin decaimiento. `guard` emite solo matches activos por ancla exacta o frase de sujeto; es consultivo y nunca bloquea un comando. `search` devuelve ambas polaridades, etiquetadas; `list` y `guard` quedan solo para refutaciones. Sumá `--json` para integraciones de deliberación. |
-| `daimon ruling list\|show` | Lee las reglas vigentes: restricciones positivas ratificadas por humanos en el mismo ledger, que nunca decaen ni se re-extraen. `show` incluye propuestas de agentes pendientes. |
+| `daimon ruling list\|show` | Lee las reglas vigentes: restricciones positivas ratificadas por humanos en el mismo ledger, que nunca decaen ni se re-extraen. `show` incluye propuestas de agentes pendientes. Un `list` que no encuentra nada sale con 1 y nombra el bucket en stderr cuando el proyecto nunca fue escrito, y sale con 0 cuando el proyecto tiene un bucket sin reglas. |
 | `daimon serve` | Abre el [visor local de solo lectura](viewer.md) en localhost — búsqueda como recall, páginas "why" por entrada, refutaciones, diff, check strip, vista de impresión. Nada escribe. |
 | `daimon relations list\|show\|confirm\|reject\|retract` | El [ledger de relaciones tipadas](relations.md): las máquinas proponen, solo una persona confirma, y decidir necesita una terminal interactiva. Los candidatos nunca se renderizan en la superficie de una entrada. |
 
@@ -68,6 +68,8 @@ La CLI emite solo dos canales: `cli-tty` (una terminal interactiva) y `cli-agent
 - `daimon_briefing.refutations.listing(states={"active"}, polarity="ruling", project_dir=...)` y `daimon_briefing.briefing.active_rulings(project_dir)` leen el conjunto activo, cada fila con `subject`, `scope`, `anchors`, `activation_channel`, `evidence` y el texto de la regla. Los `anchors` son cadenas libres que se fijan con `ruling propose --anchor`; un anfitrión que aplica reglas por mensaje compara contra ellos y decide por su cuenta qué pasa.
 
 El registro se muestra como `ratified (signed)` o `ratified (ui)`, nunca como ratificado por humano sin el nivel. Nada local es infalsificable: quien tiene acceso a la máquina puede manejar una UI o abrir una terminal. Lo que el canal gana es procedencia, no prueba; falsificar cuesta una suplantación deliberada en vez de una palabra, y el canal queda auditable después.
+
+`project_dir` se resuelve igual que la CLI resuelve `--project`: se vuelve absoluto, se colapsan los symlinks y después se normaliza al toplevel de git. Un anfitrión parado en un subdirectorio de un repositorio lee y escribe el mismo bucket que la CLI lee desde la raíz del repositorio. `daimon_briefing.config.resolve_project_dir(path)` es la función pública que devuelve el directorio al que rutea una ruta; un valor sin separador de ruta que no nombra ningún directorio existente se toma como slug de bucket y pasa sin tocar.
 
 #### Con qué puede contar un host
 
@@ -150,6 +152,8 @@ prefiera reimplementar la regla puede chequear su copia contra `daimon slug`
 directamente. Una ruta que empieza con `-` necesita `--` antes (`daimon slug
 -- -Users-x`), el mismo escape que necesita cualquier argumento posicional con
 guion inicial.
+
+La regla es una transformación de caracteres que se aplica DESPUÉS de la resolución. `daimon slug` imprime la transformación de la cadena literal que le pasás, y por eso responde para una ruta a la que daimon nunca escribió. Para ver la raíz y el slug a los que una ruta rutea de verdad, con los pasos de symlink y toplevel de git ya aplicados, corré `daimon status --project <path> --json` y mirá `identity`.
 
 ## Internos (los invocan los hooks; documentados por completitud)
 
