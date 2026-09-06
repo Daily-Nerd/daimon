@@ -711,6 +711,13 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_stats():
         run(["stats"], 0)
 
+    def r_check_sync():
+        # #943: writes under ~/.daimon/checks, outside both audited roots, so
+        # the guard sees no write here. Driven anyway because the registry is
+        # about every leaf verb being exercised, not only the ones that land
+        # inside the checkpoint store.
+        run(["check", "sync"], 0)
+
     def r_hooks_list():
         run(["hooks", "list"], 0)
 
@@ -797,6 +804,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("team", "status"): r_team_status,
         ("configure",): r_configure,
         ("stats",): r_stats,
+        ("check", "sync"): r_check_sync,
         ("hooks", "list"): r_hooks_list,
         ("hooks", "install"): r_hooks_install,
         ("hooks", "status"): r_hooks_status,

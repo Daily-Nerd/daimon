@@ -67,6 +67,13 @@ NOT_AGENT_FACING = {
         "decision about their own memory, not an agent's"
     ),
     "log": "human bookkeeping: a freeform timeline entry, zero-LLM",
+    "check": (
+        "repair verb (#943): the armed-check manifest is a DERIVED view, and "
+        "every ledger writer already rebuilds it, so this exists for a "
+        "manifest damaged out of band and for `hooks install` to call. An "
+        "agent has nothing to decide with it, and running it changes what "
+        "executes before that agent's own shell actions"
+    ),
     "serve": (
         "human-only viewer: opens a local browser UI for a person to read "
         "memory; an agent reads the same engines through brief/recall/why "

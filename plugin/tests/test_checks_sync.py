@@ -483,3 +483,55 @@ def test_the_ratify_ceremony_is_quiet_when_the_manifest_updated(
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     assert cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT]) == 0
     assert "warning: check manifest" not in capsys.readouterr().out
+
+
+# ---- `daimon check sync` --------------------------------------------------
+
+
+def test_check_sync_reports_what_it_armed(tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+    _arm()
+    (config.checks_dir() / "manifest.json").unlink()
+    rc = cli.main(["check", "sync", "--project", PROJECT])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "checks: 1 armed for -p-checks-sync" in out
+    assert _manifest().entries
+
+
+def test_check_sync_says_zero_rather_than_nothing(tmp_checkpoint_dir, capsys):
+    """A silent success is how a project that armed nothing and a project
+    whose sync never ran look identical."""
+    from daimon_briefing import cli
+    assert cli.main(["check", "sync", "--project", PROJECT]) == 0
+    assert "checks: 0 armed for -p-checks-sync" in capsys.readouterr().out
+
+
+def test_check_sync_is_safe_to_repeat(tmp_checkpoint_dir):
+    from daimon_briefing import cli
+    _arm()
+    before = _snapshot()
+    time.sleep(0.01)
+    assert cli.main(["check", "sync", "--project", PROJECT]) == 0
+    assert _snapshot() == before
+
+
+def test_check_sync_reports_a_failure_and_exits_non_zero(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(checks, "sync",
+                        lambda *a, **k: checks.SyncReport(
+                            False, 0, "", "the disk said no"))
+    rc = cli.main(["check", "sync", "--project", PROJECT])
+    assert rc == 1
+    assert "the disk said no" in capsys.readouterr().out
+
+
+def test_check_sync_has_no_slug_flag(tmp_checkpoint_dir):
+    """Slice 2 adds no routing primitive. `--slug` reaches ten human-only
+    decision verbs and is refused outright on a tenant-scoped home; widening
+    it here would hand a bucket-choosing power to a verb that writes
+    executables."""
+    from daimon_briefing import cli
+    with pytest.raises(SystemExit):
+        cli.main(["check", "sync", "--slug", "-p-checks-sync"])
