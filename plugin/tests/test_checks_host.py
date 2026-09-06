@@ -300,3 +300,380 @@ def test_an_unknown_encoder_name_is_a_silent_allow():
 
 def test_the_decision_vocabulary_is_what_the_firing_log_records():
     assert ch.DECISIONS == ("allow", "warn", "deny")
+
+
+# ---- decide: one pipeline, driven by a manifest the ledger wrote ----------
+#
+# Every manifest below is written by `checks.sync` from a ruling ratified
+# through `refutations` on a human channel. A hand-written manifest would
+# test the adapter against a shape nobody produces, and the seam this slice
+# adds is exactly the one between what the ledger writes and what the hook
+# reads.
+
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+
+from daimon_briefing import refutations  # noqa: E402
+
+CLEAN = "#!/bin/sh\nexit 0\n"
+VIOLATION = "#!/bin/sh\necho 'no em-dash in a public body' >&2\nexit 1\n"
+CRASHES = "#!/bin/sh\nexit 3\n"
+MATCH = "gh pr create"
+
+
+def _sha(body):
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _arm(project, *, body=VIOLATION, match=MATCH, intent="warn",
+         subject="public posts", scope="publishing"):
+    """Arm one check the way a human does: an agent proposes, a human
+    ratifies through an in-process human channel, and the ratify syncs."""
+    ruling_id = refutations.assert_ruling(
+        subject=subject, verdict=f"the rule for {subject} in {scope}",
+        scope=scope, evidence=["issue:943"], channel="cli-agent",
+        check={"match": match, "body": body, "intent": intent},
+        project_dir=str(project))
+    refutations.ratify(ruling_id, channel="ui", check_sha256=_sha(body),
+                       project_dir=str(project))
+    return ruling_id
+
+
+def _payload(command, cwd, tool="Bash"):
+    return {"tool_name": tool, "tool_input": {"command": command},
+            "cwd": str(cwd)}
+
+
+CC = "claude-code"
+
+
+def test_a_tool_that_is_not_a_shell_action_is_a_silent_allow(tmp_path):
+    """No row either: nothing ran and nothing declined to run. A row here
+    would report a firing on every file edit in the session."""
+    _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC],
+                  {"tool_name": "Edit", "tool_input": {"command": MATCH},
+                   "cwd": str(tmp_path)})
+    assert (d.stdout, d.stderr, d.exit_code, d.rows) == ("", "", 0, [])
+
+
+@pytest.mark.parametrize("payload", [
+    {},
+    {"tool_name": "Bash", "cwd": "."},
+    {"tool_name": "Bash", "tool_input": {}, "cwd": "."},
+    {"tool_name": "Bash", "tool_input": {"command": None}, "cwd": "."},
+    {"tool_name": "Bash", "tool_input": {"command": 7}, "cwd": "."},
+    {"tool_name": "Bash", "tool_input": "gh pr create", "cwd": "."},
+    {"tool_name": "Bash", "tool_input": {"command": ""}, "cwd": "."},
+])
+def test_a_payload_without_a_command_is_a_silent_allow_and_no_row(payload,
+                                                                  tmp_path):
+    """Scar 0068 generalised: a host payload field is a CLAIM. A missing or
+    non-string command is an action daimon cannot see, which is an allow with
+    nothing to record, never a crash."""
+    _arm(tmp_path, intent="enforce")
+    payload = dict(payload)
+    if "cwd" in payload:
+        payload["cwd"] = str(tmp_path)
+    d = ch.decide(ch.PROFILES[CC], payload)
+    assert (d.stdout, d.exit_code, d.rows) == ("", 0, [])
+
+
+def test_no_manifest_allows_and_records_one_row_saying_so(tmp_path):
+    """Spec 3.1: the manifest is the wired signal, and "nothing is armed
+    here" has to be countable so the stats surface can say "armed, never
+    fired" instead of "clean"."""
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert d.stdout == ""
+    assert len(d.rows) == 1
+    row = d.rows[0]
+    assert row["cause"] == "no-manifest"
+    assert row["decision_emitted"] == "allow"
+    assert row["host"] == "claude-code"
+    assert row["ruling_id"] == ""
+    assert row["outcome"] == ""
+
+
+def test_an_unreadable_manifest_is_its_own_cause(tmp_path):
+    """An install that armed nothing and a manifest daimon wrote and can no
+    longer parse are different facts; folding them reports the first as the
+    second."""
+    from daimon_briefing import config
+    base = config.checks_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "manifest.json").write_text("{not json", encoding="utf-8")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert d.stdout == ""
+    assert [r["cause"] for r in d.rows] == ["manifest-unreadable"]
+
+
+def test_a_manifest_that_arms_another_project_is_no_match(tmp_path):
+    """The prefix test is the tenancy boundary. A ruling made for one project
+    must not govern the next directory over, and the row says the action was
+    seen and nothing here was armed for it."""
+    other = tmp_path / "other"
+    here = tmp_path / "here"
+    other.mkdir()
+    here.mkdir()
+    _arm(other, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, here))
+    assert d.stdout == ""
+    assert [r["cause"] for r in d.rows] == ["no-match"]
+    assert d.rows[0]["decision_emitted"] == "allow"
+
+
+def test_an_armed_check_whose_pattern_misses_records_nothing(tmp_path):
+    """The prefilter is the whole reason a hook on every Bash call is
+    affordable. A row per non-matching command would make the firing log a
+    transcript of the session, and spec 3.1 names only the two project-level
+    causes."""
+    _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload("ls -la", tmp_path))
+    assert (d.stdout, d.rows) == ("", [])
+
+
+def test_a_clean_check_is_a_silent_allow_with_a_row(tmp_path):
+    ruling_id = _arm(tmp_path, body=CLEAN, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert (d.stdout, d.stderr, d.exit_code) == ("", "", 0)
+    assert len(d.rows) == 1
+    row = d.rows[0]
+    assert row["ruling_id"] == ruling_id
+    assert row["outcome"] == "clean"
+    assert row["cause"] == ""
+    assert row["mode"] == "enforce"
+    assert row["decision_emitted"] == "allow"
+    assert row["duration_ms"] >= 0
+
+
+def test_a_violation_under_enforce_denies_and_names_the_ruling(tmp_path):
+    ruling_id = _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    data = json.loads(d.stdout)
+    out = data["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny"
+    assert out["permissionDecisionReason"] == \
+        f"{ruling_id}: no em-dash in a public body"
+    assert d.exit_code == 0
+    assert d.rows[0]["mode"] == "enforce"
+    assert d.rows[0]["outcome"] == "violation"
+    assert d.rows[0]["decision_emitted"] == "deny"
+
+
+def test_the_same_violation_under_warn_allows_and_says_so(tmp_path):
+    ruling_id = _arm(tmp_path, intent="warn")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    data = json.loads(d.stdout)
+    assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert data["systemMessage"] == f"{ruling_id}: no em-dash in a public body"
+    assert d.rows[0]["mode"] == "warn"
+    assert d.rows[0]["decision_emitted"] == "warn"
+
+
+def test_the_same_violation_under_record_only_is_silent(tmp_path):
+    """The run still happened and the log still says so. Record-only is the
+    mode where the operator learns from the log rather than from the host."""
+    _arm(tmp_path, intent="record-only")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert d.stdout == ""
+    assert d.rows[0]["outcome"] == "violation"
+    assert d.rows[0]["mode"] == "record-only"
+    assert d.rows[0]["decision_emitted"] == "allow"
+
+
+def test_the_codex_cap_turns_the_same_warn_into_a_silent_record(tmp_path):
+    """One ruling, one manifest, two hosts. The only thing that differs is
+    the row, which is the claim this slice makes: Codex documents no warn
+    channel, so a warn there is recorded and not shown."""
+    _arm(tmp_path, intent="warn")
+    payload = _payload(MATCH, tmp_path, tool="shell")
+    cc = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    cx = ch.decide(ch.PROFILES["codex"], payload)
+    assert cc.rows[0]["mode"] == "warn" and cc.stdout != ""
+    assert cx.rows[0]["mode"] == "record-only" and cx.stdout == ""
+    assert cx.rows[0]["host"] == "codex"
+    assert cx.rows[0]["decision_emitted"] == "allow"
+
+
+def test_an_enforce_check_on_windsurf_records_and_never_denies(tmp_path):
+    """The unsupported column, end to end. An enforce intent shows up as a
+    logged run and no decision at all, which is the honest reading of a host
+    whose block path has never been measured."""
+    _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES["windsurf"],
+                  {"tool_info": {"command_line": MATCH}, "cwd": str(tmp_path)})
+    assert (d.stdout, d.stderr, d.exit_code) == ("", "", 0)
+    assert d.rows[0]["mode"] == "unsupported"
+    assert d.rows[0]["outcome"] == "violation"
+    assert d.rows[0]["decision_emitted"] == "allow"
+
+
+def test_an_unresolved_subject_denies_under_enforce_and_names_the_cause(
+        tmp_path):
+    """Spec 2.3 and the 2026-09-05 decision: unresolved is never rendered as
+    clean. daimon could not read what the action sends, so under enforce it
+    cannot let it through."""
+    ruling_id = _arm(tmp_path, body=CLEAN, intent="enforce")
+    command = f"{MATCH} --body-file missing.md"
+    d = ch.decide(ch.PROFILES[CC], _payload(command, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert reason.startswith(f"{ruling_id}: file-missing: ")
+    assert "missing.md" in reason
+    assert d.rows[0]["outcome"] == "unresolved"
+    assert d.rows[0]["cause"] == "file-missing"
+
+
+def test_a_check_that_crashes_is_unresolved_and_not_a_violation(tmp_path):
+    _arm(tmp_path, body=CRASHES, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert d.rows[0]["outcome"] == "unresolved"
+    assert d.rows[0]["cause"] == "check-crashed"
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_two_matching_checks_aggregate_to_the_strongest_failing_mode(tmp_path):
+    """The deny lists both, because the human fixing this needs the whole
+    picture in the one message the host will show."""
+    hard = _arm(tmp_path, intent="enforce", subject="public posts",
+                scope="publishing")
+    soft = _arm(tmp_path, intent="warn", subject="release notes",
+                scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert sorted(reason.splitlines()) == sorted([
+        f"{hard}: no em-dash in a public body",
+        f"{soft}: no em-dash in a public body"])
+    assert {r["mode"] for r in d.rows} == {"enforce", "warn"}
+    # One action, one decision: every row records the decision the hook
+    # actually emitted, not the one its own mode would have produced alone.
+    assert {r["decision_emitted"] for r in d.rows} == {"deny"}
+
+
+def test_a_clean_enforce_check_does_not_deny_for_a_warn_neighbour(tmp_path):
+    """The strongest FAILING mode decides, not the strongest mode present. An
+    enforce check that passed has nothing to say about a warn check that
+    did not, and reading it the other way blocks actions nobody armed."""
+    _arm(tmp_path, body=CLEAN, intent="enforce", subject="public posts",
+         scope="publishing")
+    soft = _arm(tmp_path, intent="warn", subject="release notes",
+                scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    data = json.loads(d.stdout)
+    assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert data["systemMessage"] == f"{soft}: no em-dash in a public body"
+
+
+def test_the_subject_is_resolved_once_for_every_matching_check(tmp_path,
+                                                              monkeypatch):
+    """Resolving reads every file argument off disk. Doing it per entry pays
+    that cost again for a subject that cannot have changed, inside a budget
+    the host will not extend."""
+    _arm(tmp_path, body=CLEAN, intent="warn", subject="a", scope="publishing")
+    _arm(tmp_path, body=CLEAN, intent="warn", subject="b", scope="publishing")
+    rt_mod = ch.runtime()
+    calls = []
+    real = rt_mod.resolve
+    monkeypatch.setattr(rt_mod, "resolve",
+                        lambda *a, **k: (calls.append(a), real(*a, **k))[1])
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert len(d.rows) == 2
+    assert len(calls) == 1
+
+
+def test_the_subject_file_is_discarded_even_when_the_runner_explodes(
+        tmp_path, monkeypatch):
+    """The temp subject holds the command and every file it named. A run that
+    raises must not leave it behind, and `finally` is the only placement that
+    survives an exception nobody predicted."""
+    _arm(tmp_path, body=CLEAN, intent="warn")
+    rt_mod = ch.runtime()
+    seen = []
+    monkeypatch.setattr(rt_mod, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    real_discard = rt_mod.discard
+    monkeypatch.setattr(rt_mod, "discard",
+                        lambda s: (seen.append(getattr(s, "path", "")),
+                                   real_discard(s))[1])
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert seen and seen[0]
+    assert not os.path.exists(seen[0])
+    assert d.stdout == ""
+
+
+@pytest.mark.parametrize("name", ["load_manifest", "armed_for", "matches",
+                                  "resolve", "run", "discard"])
+def test_decide_never_raises_whatever_the_runtime_does(tmp_path, monkeypatch,
+                                                       name):
+    """The one promise this module makes. It fires before every shell action,
+    and on the hosts measured so far a hook that crashes is fail-open: the
+    action proceeds and nothing anywhere says why."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    rt_mod = ch.runtime()
+    monkeypatch.setattr(rt_mod, name,
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError(name)))
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert d.exit_code == 0
+    assert d.stdout == "" or json.loads(d.stdout)
+    assert isinstance(d.rows, list)
+
+
+def test_a_payload_with_no_cwd_falls_back_to_the_process_directory(tmp_path,
+                                                                   monkeypatch):
+    """The host is supposed to send it. When it does not, the process the
+    host launched is standing in the action's directory anyway, and guessing
+    nothing would disarm every check for that action in silence."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    monkeypatch.chdir(tmp_path)
+    d = ch.decide(ch.PROFILES[CC],
+                  {"tool_name": "Bash", "tool_input": {"command": MATCH}})
+    assert [r["outcome"] for r in d.rows] == ["clean"]
+
+
+def test_every_row_of_one_action_shares_one_timestamp(tmp_path):
+    _arm(tmp_path, body=CLEAN, intent="warn", subject="a", scope="publishing")
+    _arm(tmp_path, body=CLEAN, intent="warn", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path),
+                  now="2026-09-06T00:00:00Z")
+    assert {r["ts"] for r in d.rows} == {"2026-09-06T00:00:00Z"}
+
+
+def test_every_row_carries_exactly_the_declared_firing_keys(tmp_path):
+    """`log_firing` projects onto FIRING_KEYS, so a row with a stray field
+    loses it silently. Building the row to the declared shape here is what
+    keeps the two ends one declaration."""
+    _arm(tmp_path, body=CLEAN, intent="warn")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    for row in d.rows:
+        assert set(row) == set(ch.runtime().FIRING_KEYS)
+        assert row["cause"] in ch.runtime().LOG_CAUSES or row["cause"] == ""
+
+
+def test_the_runner_budget_comes_from_the_configured_timeout(tmp_path,
+                                                             monkeypatch):
+    """The mirror added for this slice, actually reached. A hook running on
+    the runtime's bare default would ignore an operator who lowered the
+    budget to fit a slow machine."""
+    _arm(tmp_path, body=CLEAN, intent="warn")
+    rt_mod = ch.runtime()
+    seen = {}
+    real = rt_mod.run
+    monkeypatch.setattr(rt_mod, "run",
+                        lambda *a, **k: (seen.update(k), real(*a, **k))[1])
+    monkeypatch.setenv("DAIMON_CHECK_TIMEOUT", "1.5")
+    ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert seen["timeout"] == 1.5
+    ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path), timeout=0.75)
+    assert seen["timeout"] == 0.75
+
+
+def test_a_missing_runtime_decides_nothing_and_says_nothing(tmp_path,
+                                                            monkeypatch):
+    """A stale install: this module shipped, its sibling did not. There is
+    nothing to write a row WITH, so the caller owns the diagnostic."""
+    monkeypatch.setattr(ch, "_RUNTIME", None)
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert (d.stdout, d.stderr, d.exit_code, d.rows) == ("", "", 0, [])

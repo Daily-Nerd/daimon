@@ -27,6 +27,8 @@ proceeds and nothing anywhere says why.
 
 import importlib.util
 import json
+import os
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -259,3 +261,196 @@ def encode(profile, decision, text) -> Emission:
     if fn is None:
         return _SILENT
     return fn(profile, decision, str(text or ""))
+
+
+# ---- the pipeline (spec sections 3.1, 3.4 and 5) -------------------------
+
+# Where a host names the tool it is about to run. Both hosts that filter by
+# tool name spell it this way. A host that spells it differently declares an
+# empty `tool_names` and is selected by its `command_path` alone, which is
+# what the Windsurf row does.
+TOOL_NAME_KEY = "tool_name"
+
+
+class Decision(NamedTuple):
+    """What one action's checks came to.
+
+    `rows` are firing-log rows, built to `FIRING_KEYS` and not yet written:
+    `decide` decides, `main` records. Keeping the write out of here is what
+    lets the whole matrix be tested without a log on disk, and what keeps a
+    failed write from costing the decision."""
+
+    stdout: str
+    stderr: str
+    exit_code: int
+    rows: list
+
+
+def _dig(payload, path):
+    """Walk a path into a payload, or None. A host payload field is a CLAIM
+    (scar 0068): any step may be missing or may not be a mapping at all, and
+    each of those is an action daimon cannot see rather than a crash."""
+    current = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _accepts(profile, payload) -> bool:
+    """Whether this payload names a shell action on this host. An empty
+    `tool_names` accepts anything, because the host already selected by
+    event."""
+    names: frozenset = getattr(profile, "tool_names", frozenset())
+    if not names:
+        return True
+    return _dig(payload, (TOOL_NAME_KEY,)) in names
+
+
+def _row(profile, ts, *, ruling_id="", mode="", outcome="", cause="",
+         decision="allow", duration_ms=0) -> dict:
+    """One firing-log row, in the declared shape. `log_firing` PROJECTS onto
+    FIRING_KEYS, so a row built with a stray field loses it in silence;
+    building to the shape here keeps the two ends one declaration."""
+    return {
+        "ts": ts,
+        "ruling_id": str(ruling_id or ""),
+        "host": str(getattr(profile, "host", "") or ""),
+        "mode": mode,
+        "outcome": outcome,
+        "cause": cause,
+        "decision_emitted": decision,
+        "duration_ms": int(duration_ms or 0),
+    }
+
+
+def _stamp(now) -> str:
+    if isinstance(now, str) and now:
+        return now
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _failure_line(entry, outcome) -> str:
+    """`<ruling_id>: <reason>`, with the cause in front when daimon could not
+    read what the action sends. The cause is what tells a human whether to
+    fix the command or fix the check."""
+    ruling_id = str(entry.get("ruling_id") or "")
+    reason = outcome.reason or "the check reported a violation and gave no reason"
+    if outcome.outcome == "unresolved" and outcome.cause:
+        reason = f"{outcome.cause}: {reason}"
+    return f"{ruling_id}: {reason}"
+
+
+def decide(profile, payload, *, manifest=None, timeout=None,
+           now=None) -> Decision:
+    """Run this action's armed checks and say what the host should be told.
+
+    Never raises. It fires before every shell action, and on the hosts
+    measured so far a hook that crashes is fail-open: the action proceeds and
+    nothing anywhere says why. An exception on the way through still returns
+    an allow, with the rows already gathered plus one saying the machinery
+    was what failed."""
+    rows: list = []
+    try:
+        return _decide(profile, payload, manifest, timeout, now, rows)
+    except Exception:  # noqa: BLE001 — a decision is mandatory
+        rows.append(_row(profile, _stamp(now), cause="check-crashed",
+                         decision="allow"))
+        return Decision("", "", 0, rows)
+
+
+def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
+    rt = runtime()
+    if rt is None:
+        # Nothing to check WITH, and nothing to write a row with either. The
+        # caller owns the diagnostic; see `main`.
+        return Decision("", "", 0, rows)
+    if not isinstance(payload, dict):
+        payload = {}
+    if not _accepts(profile, payload):
+        return Decision("", "", 0, rows)
+    command = _dig(payload, getattr(profile, "command_path", ()))
+    if not isinstance(command, str) or not command:
+        # Not a row: nothing ran and nothing declined to run. A row for every
+        # payload without a command would make the firing log a transcript of
+        # the session rather than a record of checks.
+        return Decision("", "", 0, rows)
+
+    cwd = payload.get(getattr(profile, "cwd_key", ""))
+    if not isinstance(cwd, str) or not cwd:
+        # The host is supposed to send it. When it does not, the process the
+        # host launched stands in the action's directory anyway, and arming
+        # nothing would disarm every check for that action in silence.
+        cwd = os.getcwd()
+    stamp = _stamp(now)
+
+    loaded = rt.load_manifest() if manifest is None else manifest
+    reason = getattr(loaded, "reason", "")
+    if reason:
+        # Spec 3.1: "nothing is armed here" has to be countable, so the stats
+        # surface can say "armed, never fired" instead of "clean". An install
+        # that armed nothing and a manifest daimon can no longer parse are
+        # different facts and keep different causes.
+        rows.append(_row(profile, stamp, cause=reason, decision="allow"))
+        return Decision("", "", 0, rows)
+
+    entries = rt.armed_for(cwd, loaded)
+    if not entries:
+        rows.append(_row(profile, stamp, cause="no-match", decision="allow"))
+        return Decision("", "", 0, rows)
+
+    matching = [entry for entry in entries if rt.matches(entry, command)]
+    if not matching:
+        # The prefilter is what makes a hook on every shell action
+        # affordable, and spec 3.1 names only the two project-level causes.
+        return Decision("", "", 0, rows)
+
+    budget = (float(timeout) if isinstance(timeout, (int, float))
+              and timeout > 0 else rt.check_timeout())
+
+    # Once, for every matching check. The subject cannot change between two
+    # entries of the same action, and reading every file argument again would
+    # spend a budget the host will not extend.
+    subject = rt.resolve(command, cwd)
+    results = []
+    try:
+        for entry in matching:
+            mode = mode_for(profile, entry.get("intent"))
+            if isinstance(subject, rt.Unresolved):
+                outcome = rt.Outcome("unresolved", subject.cause,
+                                     subject.reason, -1, 0)
+            else:
+                outcome = rt.run(entry, subject, cwd=cwd, timeout=budget)
+            results.append((entry, mode, outcome))
+    finally:
+        # The subject holds the command and every file it named. A `finally`
+        # is the only placement that survives an exception nobody predicted.
+        rt.discard(subject)
+
+    failing = [(entry, mode, outcome) for entry, mode, outcome in results
+               if outcome.outcome in ("violation", "unresolved")]
+    decision, text = "allow", ""
+    if failing:
+        # The strongest FAILING mode decides, not the strongest mode present.
+        # An enforce check that passed has nothing to say about a warn check
+        # that did not, and reading it the other way blocks actions nobody
+        # armed to block.
+        deciding = max((mode for _, mode, _ in failing), key=MODES.index)
+        text = "\n".join(_failure_line(entry, outcome)
+                         for entry, _, outcome in failing)
+        if deciding == "enforce":
+            decision = "deny"
+        elif deciding == "warn":
+            decision = "warn"
+
+    emission = encode(profile, decision, text)
+    for entry, mode, outcome in results:
+        # `mode` is this entry's; `decision_emitted` is the ACTION's. One
+        # action produces one decision, and the row that claimed otherwise
+        # would report a deny the host never received.
+        rows.append(_row(profile, stamp, ruling_id=entry.get("ruling_id"),
+                         mode=mode, outcome=outcome.outcome,
+                         cause=outcome.cause, decision=decision,
+                         duration_ms=outcome.duration_ms))
+    return Decision(emission.stdout, emission.stderr, emission.exit_code, rows)
