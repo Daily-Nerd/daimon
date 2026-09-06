@@ -64,7 +64,25 @@ actuar sobre la respuesta:
 
 ### Checks en ejecución
 
-Ratificar una regla que lleva un check escribe dos cosas bajo `~/.daimon/checks`: un manifiesto que nombra cada check armado y el directorio de proyecto al que pertenece, y un archivo por check con los bytes exactos que la regla guarda. Cada escritura en el ledger que puede armar o desarmar un check los reconstruye; `daimon check sync` los reconstruye a pedido. Los adaptadores de anfitrión que efectivamente corren un check sobre una acción real llegan en una versión posterior — lo que sale acá es la maquinaria de abajo y el comando para probar un cuerpo contra ella.
+Ratificar una regla que lleva un check escribe dos cosas bajo `~/.daimon/checks`: un manifiesto que nombra cada check armado y el directorio de proyecto al que pertenece, y un archivo por check con los bytes exactos que la regla guarda. Cada escritura en el ledger que puede armar o desarmar un check los reconstruye; `daimon check sync` los reconstruye a pedido, y también lo hace `daimon hooks install`, que imprime lo que encontró.
+
+En un anfitrión con el hook de pre-acción instalado, un comando de shell que coincide corre sus checks armados antes de ejecutarse. El hook lee el manifiesto, se queda con los checks cuyo directorio de proyecto contiene el directorio de trabajo de la acción, y corre aquellos cuyo patrón coincide con la cadena del comando. Siempre sale con 0 y escribe o bien un objeto JSON o bien nada: el rechazo es una decisión que el hook toma deliberadamente, nunca un código de salida que un crash podría producir por accidente.
+
+### Qué recibe un check en cada anfitrión
+
+Lo que pidió el autor es una intención. Lo que entrega un anfitrión es un modo, y es el más débil de los dos.
+
+| intención | Claude Code | Codex | Windsurf |
+| --- | --- | --- | --- |
+| `enforce` | `enforce` | `enforce` | `unsupported` |
+| `warn` | `warn` | `record-only` | `unsupported` |
+| `record-only` | `record-only` | `record-only` | `unsupported` |
+
+`enforce` devuelve el rechazo estructurado del anfitrión y el comando no corre. `warn` permite el comando y muestra la razón. `record-only` no le dice nada al anfitrión y deja la corrida en el registro. `unsupported` es lo que recibe un anfitrión del que daimon no midió cómo entrega una decisión: Cascade documenta un evento `pre_run_command`, pero nada medido dice qué hace con una, así que toda la columna de Windsurf queda en `unsupported` en lugar de reclamar una imposición que nadie vio entregada.
+
+Codex es la celda interesante. No documenta ningún canal para una advertencia, así que `warn` degrada allí a `record-only`: el check igual corre y el registro igual lo dice, y daimon no dice haberle mostrado al autor algo que el anfitrión nunca mostró.
+
+Cuando más de un check armado coincide con un comando, decide el modo más fuerte de los que FALLARON. Un check `enforce` que pasó no bloquea el comando por un check `warn` que no, y el mensaje nombra cada check que falló en ese modo o por encima. La razón de un check más débil queda en el registro: `record-only` pidió el registro y nada más, y un vecino que falló más fuerte no la saca en su nombre.
 
 Un check corre contra un **sujeto**: la línea de comando, un separador, y después el contenido de cada argumento de archivo que daimon pudo resolver, cada uno bajo un encabezado que nombra la bandera de la que salió. El sujeto va a un archivo temporal con modo 600 y se borra después de la corrida. Su ruta llega en `DAIMON_CHECK_SUBJECT`, junto con `DAIMON_CHECK_COMMAND` y `DAIMON_CHECK_RULING`; el directorio de trabajo es el de la acción, y la entrada estándar es `/dev/null`.
 

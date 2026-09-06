@@ -2,11 +2,12 @@
 path (#262).
 
 Codex is unlike the other packaged hosts: instead of a single entry script that
-the user registers by hand, it runs two distinct scripts under two events
-(SessionStart briefing injection, Stop opportunistic capture) and discovers them
-from ``~/.codex/hooks.json``. So this installer BOTH copies the scripts into
-``~/.codex/hooks/`` AND writes the registration itself, merging idempotently and
-preserving any unrelated entries already in ``hooks.json``.
+the user registers by hand, it runs several scripts under several events
+(SessionStart briefing injection, SessionEnd and Stop capture, PreToolUse check
+enforcement) and discovers them from ``~/.codex/hooks.json``. So this installer
+BOTH copies the scripts into ``~/.codex/hooks/`` AND writes the registration
+itself, merging idempotently and preserving any unrelated entries already in
+``hooks.json``.
 
 This adapts the standalone ``hook/codex-hooks.py`` lifecycle manager (which only
 runs from a repo clone) into the package. The registration shapes below are kept
@@ -66,13 +67,37 @@ HOOKS = (
             }],
         },
     },
+    {
+        # #943: the pre-action check. `matcher` keeps it to shell actions,
+        # which Codex names both ways depending on the build. No
+        # statusMessage: the other three fire once a session, this one fires
+        # before every command. Timeout 10 against a runner budget of 5, so
+        # the runner decides before Codex gives up and lets the action
+        # through.
+        "script": "daimon-codex-pre-action.py",
+        "event": "PreToolUse",
+        "entry": {
+            "matcher": "Bash|shell",
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.codex/hooks/daimon-codex-pre-action.py",
+                "timeout": 10,
+            }],
+        },
+    },
 )
 
-# Everything installed into ~/.codex/hooks/: the two scripts plus the shared
-# stdlib-only helper module they import by same-dir lookup. No redact.py — the
+# Everything installed into ~/.codex/hooks/: the scripts plus the shared
+# stdlib-only modules they import by same-dir lookup. No redact.py — the
 # Codex hooks spawn `daimon serialize` (the CLI redacts) and never scrub at
 # their own write sites, so the redaction module they'd load is dead weight.
-FILES = tuple(spec["script"] for spec in HOOKS) + (LIB,)
+#
+# #943 added the last two. The pre-action hook loads checks_host.py from its
+# own directory and that loads checks_runtime.py the same way, so a script
+# installed without them is a hook that finds nothing and allows in silence.
+# They are imported and never executed, which is why the +x below skips them.
+MODULES = (LIB, "checks_runtime.py", "checks_host.py")
+FILES = tuple(spec["script"] for spec in HOOKS) + MODULES
 
 
 def _is_ours(group, script):
@@ -120,7 +145,7 @@ def install(pkg, home):
     for name in FILES:
         dest = hooks_dir / name
         dest.write_bytes((pkg / name).read_bytes())
-        if name != LIB:  # the lib is imported, not executed
+        if name not in MODULES:  # imported, never executed
             dest.chmod(dest.stat().st_mode | 0o100)  # u+x — Codex runs the scripts
 
     settings = _load(hooks_json)

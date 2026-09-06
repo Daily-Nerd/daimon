@@ -187,6 +187,26 @@ def log_dir() -> Path:
     return Path.home() / ".daimon" / "logs"
 
 
+def check_timeout() -> float:
+    """Mirror of config.check_timeout(): the runner's own budget in seconds.
+
+    The hook is the caller that most needs it. A budget configured for the
+    CLI and ignored by the hook means the operator who lowered it to fit a
+    slow machine still loses the action to the HOST's timeout, which is
+    fail-open, and nothing anywhere says why.
+
+    Quirk-faithful per scar 0043, including the parts that read like bugs: a
+    present-but-unparseable value falls back to the default instead of
+    raising, and the floor keeps the smallest configured budget an actual
+    budget rather than an unconditional timeout. DEFAULT_TIMEOUT below is
+    this same number for the path where no configuration is consulted at
+    all."""
+    try:
+        return max(0.5, float(_config_get("DAIMON_CHECK_TIMEOUT") or "5"))
+    except ValueError:
+        return 5.0
+
+
 # ---- manifest -------------------------------------------------------------
 
 

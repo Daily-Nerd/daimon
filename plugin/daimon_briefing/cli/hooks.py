@@ -20,6 +20,32 @@ def _cmd_hooks_list(args) -> int:
     render.render_hooks_list(lines)
     return 0
 
+def _checks_line() -> str:
+    """What this project has armed, after materializing it (#943).
+
+    Installing the hook and writing what the hook reads are one step. Left
+    apart, the supported install ends with a gate in place and an empty
+    checks directory, and every surface then reads that as "armed, never
+    fired" rather than "never wired".
+
+    Never a failure. The scripts and the registration already landed; a
+    bookkeeping refusal reported as a failed install sends the operator
+    looking for a problem in the half that worked. The report's own words go
+    out unrewritten, because the reason a sync refused is more specific than
+    anything this line could say for it.
+
+    No `--slug`: that flag reaches ten human-only decision verbs and is
+    refused outright on a tenant-scoped home, and widening it to a verb that
+    materializes executables would hand bucket-choosing power past the check
+    that gates it (#899, #948)."""
+    from .. import checks
+
+    report = checks.sync(_cli._resolve_project(None))
+    if report.ok:
+        return f"checks: {report.armed} armed for {report.slug}"
+    return f"checks: {report.reason}"
+
+
 def _cmd_hooks_install(args) -> int:
     """Copy the host's packaged hook script(s) to ~/.daimon/hooks/ — a STABLE
     path the host's hooks config points at once. Idempotent: re-running after
@@ -38,7 +64,8 @@ def _cmd_hooks_install(args) -> int:
         # events straight into ~/.codex/hooks.json (#262), not a printed snippet.
         from .. import codex_hooks
 
-        render.render_hooks_install(codex_hooks.install(pkg, Path.home()))
+        lines = codex_hooks.install(pkg, Path.home())
+        render.render_hooks_install(lines + ["", _checks_line()])
         return 0
     target = _cli._hooks_target_dir()
     target.mkdir(parents=True, exist_ok=True)
@@ -60,6 +87,7 @@ def _cmd_hooks_install(args) -> int:
     lines.append("")
     lines.append("Re-run `daimon hooks install " + args.host +
                  "` after every `uv tool upgrade daimon-briefing`.")
+    lines += ["", _checks_line()]
     render.render_hooks_install(lines)
     return 0
 

@@ -106,6 +106,52 @@ def test_mirror_and_config_agree_over_the_whole_probe_table(
         "every probe resolved alike — the env file was never read at all"
 
 
+def test_the_timeout_mirror_agrees_with_config_over_its_own_probe_table(
+        tmp_path, monkeypatch):
+    """#943 slice 3: the hook needs the budget, not just the paths.
+
+    `DAIMON_CHECK_TIMEOUT` is a number rather than a path, so it cannot share
+    the table above — every probe there is path-shaped and would collapse to
+    the same 5.0 here, which is exactly the shape that passes while measuring
+    nothing. It gets its own table, asserted the same way: against the config
+    function, never against a literal this test would also have to get right.
+
+    The quirks that look like bugs and are not (scar 0043): a present-but-
+    unparseable value is the default rather than an error, a value under the
+    floor is the floor rather than an unconditional timeout, and the env file
+    is read when the process env is silent, because that is the channel a
+    GUI-launched host actually uses."""
+    name = "DAIMON_CHECK_TIMEOUT"
+    resolved = set()
+    for raw in (None, "", "   ", "0", "0.1", "3", "  7  ", "12.5", "abc",
+                "-2", "1e1"):
+        monkeypatch.delenv(name, raising=False)
+        if raw is not None:
+            monkeypatch.setenv(name, raw)
+        assert rt.check_timeout() == config.check_timeout(), repr(raw)
+        resolved.add(rt.check_timeout())
+    assert len(resolved) > 1, "every probe resolved alike"
+
+    monkeypatch.delenv(name, raising=False)
+    env_file = Path(os.environ["DAIMON_ENV_FILE"])
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    from_file = set()
+    for line in (f"{name}=1",
+                 f'{name}="2"',
+                 f"{name}='3'",
+                 f"export {name}=4",
+                 f"  export   {name} =  6  ",
+                 f"# {name}=8",
+                 f"{name}=",
+                 "NOT_THE_VAR=9",
+                 f"{name}=1\n{name}=11"):
+        env_file.write_text(line + "\n", encoding="utf-8")
+        assert rt.check_timeout() == config.check_timeout(), line
+        from_file.add(rt.check_timeout())
+    assert len(from_file) > 1, \
+        "every probe resolved alike — the env file was never read at all"
+
+
 # ---- manifest -------------------------------------------------------------
 
 
