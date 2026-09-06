@@ -1362,6 +1362,58 @@ def render_lifecycle_lines(lines) -> None:
         console.print(ln, style=_lifecycle_style(ln), markup=False)
 
 
+def _checks_manifest_header(m: dict) -> str:
+    """One line for the state of the file the hooks actually read.
+
+    The four states are kept apart the way `load_manifest` keeps them: an
+    install that armed nothing, a manifest daimon can no longer parse, a
+    manifest that no longer matches the ledger, and one that does. Folding
+    any two of them reports a fresh machine as a broken one, or the reverse."""
+    state = m.get("state")
+    if state == "unreadable":
+        return "manifest unreadable"
+    if state == "absent":
+        return "no manifest"
+    if m.get("drift"):
+        return "manifest drifted, run daimon check sync"
+    return f"armed {len(m.get('have') or [])} of {len(m.get('wanted') or [])} wanted"
+
+
+def checks_table_lines(payload: dict) -> list:
+    """`daimon ruling checks` (#943 slice 5), one host per line under each
+    ruling that carries a check.
+
+    A row with no liveness cell simply ENDS after its mode. A `never fired`
+    there would claim a wiring that does not exist — nothing is armed for a
+    proposed or disarmed check, and a host whose column reads `unsupported`
+    has no channel to fire through."""
+    lines = [_checks_manifest_header(payload.get("manifest") or {})]
+    for host, seen in sorted((payload.get("hosts") or {}).items()):
+        lines.append(f"hook seen on {host}, last {seen['last_ts']}")
+    rows = payload.get("rows") or []
+    if not rows:
+        lines.append("no rulings carry a check")
+        return lines
+    current = None
+    for row in rows:
+        if row["ruling_id"] != current:
+            current = row["ruling_id"]
+            shown = ("proposed, not armed" if row["lifecycle"] == "proposed"
+                     else row["lifecycle"])
+            lines.append(f"{current}  {shown} · intent {row['intent']}")
+        line = f"  {row['host']:<14}{row['mode']}"
+        if row["clean"] is not None:
+            live = (f"last fired {row['last_fired']}"
+                    if row["last_fired"] else "never fired")
+            counts = (f" · lifetime {row['clean']} clean, "
+                      f"{row['violation']} violation, "
+                      f"{row['unresolved']} unresolved"
+                      if row["last_fired"] else "")
+            line = f"  {row['host']:<14}{row['mode']:<14}{live}{counts}"
+        lines.append(line.rstrip())
+    return lines
+
+
 def render_ledger_records(records) -> None:
     """A sequence of record cards (each a list of pre-formatted lines) —
     `ruling list`, `refute list`, `refute search`. Plain path prints them

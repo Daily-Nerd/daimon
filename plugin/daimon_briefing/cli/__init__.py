@@ -1155,6 +1155,7 @@ from .refute import (  # noqa: E402
 )
 from .ruling import (  # noqa: E402
     _cmd_ruling_check_try,  # noqa: F401 — re-exported for compat
+    _cmd_ruling_checks,  # noqa: F401 — re-exported for compat
     _cmd_ruling_list,  # noqa: F401 — re-exported for compat
     _cmd_ruling_propose,  # noqa: F401 — re-exported for compat
     _cmd_ruling_ratify,  # noqa: F401 — re-exported for compat

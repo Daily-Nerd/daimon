@@ -92,8 +92,17 @@ def test_full_fits_size_budget():
     # Trimmed once before raising (the first draft was ~470 chars). New
     # deliberate-review size is 11,463 (2026-09-02); 11,900 keeps the same
     # ~4% slack. Nothing was added to the compact body.
+    #
+    # RAISED 11,900 -> 12,400 on 2026-09-06 (#943 slice 5). The addition is
+    # ~135 chars in "Standing rulings": a ruling may now carry a check that
+    # runs before a matching shell action, and an agent that cannot see what
+    # is armed cannot tell a command it is about to be denied from one nobody
+    # governs. Trimmed twice before raising (the first draft was ~240 chars
+    # and named the per-host modes, which `ruling checks` prints anyway).
+    # New deliberate-review size is 11,991 (2026-09-06). Nothing was added to
+    # the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 11900, f"full body is {len(full)} chars (cap 11900)"
+    assert len(full) <= 12400, f"full body is {len(full)} chars (cap 12400)"
 
 
 def test_full_has_trigger_only_frontmatter():
@@ -461,6 +470,17 @@ def test_full_teaches_the_briefing_rulings_section():
     from daimon_briefing import briefing
     full = skill_content.render_full()
     assert briefing._RULING_HEADER in full
+
+
+def test_full_names_the_verb_that_shows_what_a_ruling_has_armed():
+    """#943 slice 5: a ruling may carry a check that runs before a matching
+    shell action, and an agent that cannot see what is armed cannot tell a
+    command it is about to be denied from one nobody governs. `ruling checks`
+    is a read, it inherits `ruling`'s taught classification, and the installed
+    skill is its own surface."""
+    full = skill_content.render_full()
+    section = full.split("`daimon ruling list` shows them")[1].split("## ")[0]
+    assert "daimon ruling checks" in section
 
 
 def test_full_warns_that_ruling_list_exits_one_on_a_fresh_project():

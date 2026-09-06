@@ -506,3 +506,189 @@ def test_check_sync_check_on_an_empty_ledger_is_zero_with_a_line(
     rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
     assert rc == 0
     assert "checks manifest: in step, 0 armed" in capsys.readouterr().out
+
+
+# ---- `ruling checks`: what is armed, and what each host does with it ------
+
+
+def _checks_table(project, *extra):
+    from daimon_briefing import cli
+    return cli.main(["ruling", "checks", "--project", str(project), *extra])
+
+
+def test_ruling_checks_crosses_every_ruling_with_every_host(tmp_path, capsys):
+    """The CLI has no notion of which host it is on, so the table enumerates
+    the profiles rather than guessing. A missing row is a host whose column
+    an author would never see."""
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    assert _checks_table(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert ruling_id in out
+    for host in ("claude-code", "codex", "windsurf"):
+        assert host in out
+
+
+def test_the_mode_column_is_what_the_host_delivers_not_what_was_asked(
+        tmp_path, capsys):
+    """Spec 5. An author asked for warn; codex documents no warn channel and
+    windsurf is unmeasured, so the same intent reads three ways."""
+    _arm(tmp_path, intent="warn")
+    checks.sync(str(tmp_path))
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    assert "claude-code   warn" in out
+    assert "codex         record-only" in out
+    assert "windsurf      unsupported" in out
+
+
+def test_never_fired_is_not_the_same_cell_as_zero_counts(tmp_path, capsys):
+    """Constraint 2. A check that has never run and a check that ran and
+    found nothing are different facts, and the second is the only one that
+    says the wiring works."""
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _checks_table(tmp_path)
+    before = [ln for ln in capsys.readouterr().out.splitlines()
+              if CC in ln][0]
+    assert before.endswith("never fired")
+    _write_log(_row(ruling_id=ruling_id, outcome="clean"))
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    after = [ln for ln in out.splitlines() if CC in ln][0]
+    assert "never fired" not in after
+    assert "lifetime 1 clean, 0 violation, 0 unresolved" in after
+    # The host that has not seen it still says so: liveness is per host.
+    assert [ln for ln in out.splitlines()
+            if "codex" in ln][0].endswith("never fired")
+
+
+def test_a_proposed_check_shows_no_liveness_cell(tmp_path, capsys):
+    """Spec 8.5's own test. `proposed` is a lifecycle, not a mode: nothing
+    is armed, so there is nothing that could have fired, and a `never fired`
+    cell would report a wiring that does not exist."""
+    _propose(tmp_path)
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    assert "proposed, not armed" in out
+    assert "never fired" not in out and "lifetime" not in out
+
+
+def test_a_disarmed_check_shows_no_liveness_cell(tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=str(tmp_path))
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    assert "disarmed" in out
+    assert "never fired" not in out and "lifetime" not in out
+
+
+def test_an_unsupported_host_shows_no_liveness_cell(tmp_path, capsys):
+    """A column that reads `unsupported` has no channel to fire through, so
+    a count beside it would be a number about nothing."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _checks_table(tmp_path)
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if "windsurf" in ln][0]
+    assert line.strip() == "windsurf      unsupported"
+
+
+def test_the_header_reports_the_manifest_state(tmp_path, capsys):
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _checks_table(tmp_path)
+    assert "armed 1 of 1 wanted" in capsys.readouterr().out
+    _write_manifest([])
+    _checks_table(tmp_path)
+    assert "manifest drifted, run daimon check sync" in capsys.readouterr().out
+
+
+def test_the_header_tells_no_manifest_from_an_unreadable_one(
+        tmp_path, capsys):
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _manifest_path().unlink()
+    _checks_table(tmp_path)
+    assert "no manifest" in capsys.readouterr().out
+    _manifest_path().write_text("{not json", encoding="utf-8")
+    _checks_table(tmp_path)
+    assert "manifest unreadable" in capsys.readouterr().out
+
+
+def test_the_header_reports_every_host_the_hook_ran_on(tmp_path, capsys):
+    """The project-level rows. They prove the hook is wired even when no
+    check of this project's ever matched a command."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_log(_row(cause="no-match", ts="2026-09-06T08:00:00Z"),
+               _row(cause="no-manifest", host="codex",
+                    ts="2026-09-06T09:00:00Z"))
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    assert "hook seen on claude-code, last 2026-09-06T08:00:00Z" in out
+    assert "hook seen on codex, last 2026-09-06T09:00:00Z" in out
+
+
+def test_a_ledger_with_no_checks_says_so_at_zero(tmp_path, capsys):
+    """Scar 0057: a reporting read never refuses to signal a state."""
+    refutations.assert_ruling(
+        subject="no check here", verdict="a rule with nothing to run",
+        scope="publishing", evidence=["issue:943"], channel="cli-tty",
+        ratified=True, project_dir=str(tmp_path))
+    assert _checks_table(tmp_path) == 0
+    assert "no rulings carry a check" in capsys.readouterr().out
+
+
+def test_another_projects_ruling_never_reaches_the_table(tmp_path, capsys):
+    """Scar 0055. Both the manifest and the firing log are global; the table
+    is scoped by project equality on this project's ledger."""
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    mine = _arm(tmp_path)
+    theirs = _arm(other, subject="their posts", match="git push --force")
+    checks.sync(str(tmp_path))
+    checks.sync(str(other))
+    _write_log(_row(ruling_id=theirs, outcome="violation"))
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    assert mine in out and theirs not in out
+    assert "git push --force" not in out
+
+
+def test_ruling_checks_json_has_a_fixed_shape(tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_log(_row(ruling_id=ruling_id, outcome="clean"))
+    _checks_table(tmp_path, "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload) == ["rows", "manifest", "hosts"]
+    row = payload["rows"][0]
+    assert list(row) == ["ruling_id", "lifecycle", "intent", "host", "mode",
+                         "last_fired", "clean", "violation", "unresolved"]
+    assert len(payload["rows"]) == 3  # one per host profile
+    assert payload["manifest"]["drift"] is False
+
+
+def test_ruling_checks_json_says_null_where_there_is_no_liveness_cell(
+        tmp_path, capsys):
+    """Not zero. A JSON consumer that read 0 clean for a proposed check
+    would report a check that ran and found nothing."""
+    _propose(tmp_path)
+    _checks_table(tmp_path, "--json")
+    row = json.loads(capsys.readouterr().out)["rows"][0]
+    assert row["last_fired"] is None and row["clean"] is None
+
+
+def test_ruling_checks_json_on_an_empty_ledger_is_still_the_shape(
+        tmp_path, capsys):
+    assert _checks_table(tmp_path, "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rows"] == [] and list(payload) == ["rows", "manifest",
+                                                       "hosts"]
+
+
+def test_ruling_checks_takes_no_slug(tmp_path):
+    from daimon_briefing import cli
+    with pytest.raises(SystemExit):
+        cli.main(["ruling", "checks", "--slug", "-some-bucket"])
