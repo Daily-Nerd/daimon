@@ -599,10 +599,11 @@ resolve_project_root.cache_info = _git_toplevel.cache_info  # type: ignore[attr-
 
 
 @overload
-def resolve_project_dir(raw: str) -> str: ...
+def resolve_project_dir(raw: str, *, allow_slug: bool = True) -> str: ...
 @overload
-def resolve_project_dir(raw: None) -> None: ...
-def resolve_project_dir(raw: str | None) -> str | None:
+def resolve_project_dir(raw: None, *, allow_slug: bool = True) -> None: ...
+def resolve_project_dir(raw: str | None, *,
+                        allow_slug: bool = True) -> str | None:
     """The ONE canonical answer to "which project directory does this value name"
     (#948). Absolute, symlinks collapsed, then normalized to the git toplevel.
 
@@ -627,6 +628,18 @@ def resolve_project_dir(raw: str | None) -> str | None:
     on them. Resolving `-Users-x-proj` against the cwd would silently
     re-route those to the caller's own bucket.
 
+    `allow_slug=False` turns that branch OFF, and the CLI opts out through it.
+    `--project` is documented as a PATH, and naming a bucket is a separate,
+    deliberately narrow primitive: `--slug` reaches only the ten human-only
+    decision verbs, and it is refused outright on a tenant-scoped home (#899)
+    because a caller choosing a bucket is what that mode exists to remove. With
+    the slug branch on, `--project=<slug>` would hand every verb, writes
+    included, the routing power `--slug` is gated for, past a
+    `_refuses_caller_scope` check that never runs on this path. Absolutizing
+    unconditionally is also what `--project` did before #948, so a value naming
+    no directory keeps minting a bucket derived from the working directory
+    rather than one named after the string itself.
+
     Falsy `raw` passes through unchanged, keeping the "unknown project falls
     back to the global pointer" contract. Never raises: `Path.resolve()` is
     non-strict, and `resolve_project_root` returns its input on any git
@@ -635,11 +648,12 @@ def resolve_project_dir(raw: str | None) -> str | None:
     if not raw:
         return raw
     text = str(raw)
-    looks_like_path = (os.sep in text
-                       or (os.altsep is not None and os.altsep in text)
-                       or os.path.isdir(text))
-    if not looks_like_path:
-        return raw
+    if allow_slug:
+        looks_like_path = (os.sep in text
+                           or (os.altsep is not None and os.altsep in text)
+                           or os.path.isdir(text))
+        if not looks_like_path:
+            return raw
     try:
         absolute = str(Path(text).expanduser().resolve())
     except (OSError, RuntimeError, ValueError):
