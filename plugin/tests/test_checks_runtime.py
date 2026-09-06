@@ -502,3 +502,231 @@ def test_resolve_never_raises_on_a_command_that_is_not_a_string(tmp_path):
     got = rt.resolve(None, str(tmp_path))
     assert isinstance(got, rt.Unresolved)
     assert got.cause == "arg-form-unparsed"
+
+
+# ---- runner (spec 3.3) ----------------------------------------------------
+
+
+import hashlib  # noqa: E402
+
+
+def _body(tmp_path, text, name="check.sh"):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o500)
+    return path
+
+
+def _subject(tmp_path, command="gh pr create --title x"):
+    got = rt.resolve(command, str(tmp_path))
+    assert isinstance(got, rt.Subject), getattr(got, "cause", "")
+    return got
+
+
+def _armed(tmp_path, body, ruling_id="r-abc123", pin=True):
+    sha = hashlib.sha256(Path(body).read_bytes()).hexdigest()
+    return {"ruling_id": ruling_id, "project_dir": str(tmp_path),
+            "match": "gh pr create", "intent": "warn",
+            "sha256": sha if pin else "f" * 64, "armed_at": "t",
+            "body_path": str(body)}
+
+
+def test_a_check_that_exits_zero_is_clean(tmp_path):
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path),
+                 timeout=5)
+    assert (got.outcome, got.cause, got.exit_code) == ("clean", "", 0)
+    assert got.duration_ms >= 0
+    rt.discard(subject)
+
+
+def test_a_check_that_exits_one_is_a_violation_carrying_its_first_line(
+        tmp_path):
+    subject = _subject(tmp_path)
+    body = _body(tmp_path, "echo 'the post names a machine' >&2\n"
+                           "echo 'second line' >&2\n"
+                           "exit 1\n")
+    got = rt.run(body, subject, cwd=str(tmp_path), timeout=5)
+    assert (got.outcome, got.cause, got.exit_code) == ("violation", "", 1)
+    assert got.reason == "the post names a machine"
+    rt.discard(subject)
+
+
+def test_a_violation_with_no_stderr_still_says_something(tmp_path):
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "exit 1\n"), subject, cwd=str(tmp_path),
+                 timeout=5)
+    assert got.outcome == "violation"
+    assert got.reason, "a violation with an empty reason renders as blank"
+    rt.discard(subject)
+
+
+def test_any_other_exit_code_is_unresolved_never_a_violation(tmp_path):
+    """Exit 5 is a script that broke, not a subject that failed. Folding it
+    into violation would deny actions on the strength of a typo."""
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "exit 5\n"), subject, cwd=str(tmp_path),
+                 timeout=5)
+    assert (got.outcome, got.cause, got.exit_code) == \
+        ("unresolved", "check-crashed", 5)
+    rt.discard(subject)
+
+
+def test_a_body_that_reaches_outside_itself_is_caught_by_the_runner(tmp_path):
+    """The slice 1 path refusal catches a bare single-token path. A one-line
+    `sh /host/path.sh` body passes that and is observable only here: sh exits
+    127 and its own first stderr line is the reason."""
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "sh /nonexistent/host.sh\n"), subject,
+                 cwd=str(tmp_path), timeout=5)
+    assert (got.outcome, got.cause) == ("unresolved", "check-crashed")
+    assert got.exit_code == 127
+    assert "nonexistent" in got.reason
+
+
+def test_a_body_that_runs_a_non_executable_file_is_check_crashed(tmp_path):
+    subject = _subject(tmp_path)
+    plain = tmp_path / "plain.txt"
+    plain.write_text("not a program\n", encoding="utf-8")
+    plain.chmod(0o644)
+    got = rt.run(_body(tmp_path, f"{plain}\n"), subject, cwd=str(tmp_path),
+                 timeout=5)
+    assert (got.outcome, got.cause) == ("unresolved", "check-crashed")
+    assert got.exit_code == 126
+    rt.discard(subject)
+
+
+def test_a_check_that_overruns_its_budget_is_unresolved_not_clean(tmp_path):
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "sleep 30\n"), subject, cwd=str(tmp_path),
+                 timeout=0.5)
+    assert (got.outcome, got.cause) == ("unresolved", "check-timeout")
+    assert got.duration_ms > 0
+    rt.discard(subject)
+
+
+def test_the_budget_kills_the_whole_process_group(tmp_path):
+    """start_new_session puts the check in its own group, so a body that
+    backgrounded something is killed WITH it. Killing only the direct child
+    leaves a grandchild holding the pipe and the next read blocks past the
+    host timeout, which is fail-open."""
+    subject = _subject(tmp_path)
+    marker = tmp_path / "alive"
+    body = _body(tmp_path, f"(sleep 20; echo yes > {marker}) &\nsleep 20\n")
+    got = rt.run(body, subject, cwd=str(tmp_path), timeout=0.5)
+    assert got.cause == "check-timeout"
+    assert not marker.exists()
+    rt.discard(subject)
+
+
+def test_a_host_without_sh_reports_runtime_missing(tmp_path, monkeypatch):
+    subject = _subject(tmp_path)
+    monkeypatch.setenv("PATH", "")
+    got = rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path),
+                 timeout=5)
+    assert (got.outcome, got.cause) == ("unresolved", "runtime-missing")
+    rt.discard(subject)
+
+
+def test_a_body_that_no_longer_hashes_to_its_pin_never_runs(tmp_path):
+    """Someone edited the materialized body. Re-hash before exec, and the
+    mismatch is unresolved rather than a silent skip."""
+    subject = _subject(tmp_path)
+    body = _body(tmp_path, "exit 0\n")
+    entry = _armed(tmp_path, body, pin=False)
+    got = rt.run(entry, subject, cwd=str(tmp_path), timeout=5)
+    assert (got.outcome, got.cause) == ("unresolved", "body-hash-mismatch")
+    assert got.exit_code == -1, "the check must not have run at all"
+    rt.discard(subject)
+
+
+def test_a_body_that_matches_its_pin_runs(tmp_path):
+    subject = _subject(tmp_path)
+    entry = _armed(tmp_path, _body(tmp_path, "exit 0\n"))
+    assert rt.run(entry, subject, cwd=str(tmp_path), timeout=5).outcome == \
+        "clean"
+    rt.discard(subject)
+
+
+def test_a_missing_body_file_is_unresolved(tmp_path):
+    subject = _subject(tmp_path)
+    got = rt.run(tmp_path / "gone.sh", subject, cwd=str(tmp_path), timeout=5)
+    assert got.outcome == "unresolved"
+    assert got.cause == "check-crashed"
+    rt.discard(subject)
+
+
+def test_the_check_is_handed_the_subject_the_command_and_the_ruling(tmp_path):
+    subject = _subject(tmp_path, "gh pr create --title 'a title'")
+    out = tmp_path / "seen"
+    entry = _armed(tmp_path, _body(
+        tmp_path,
+        f'printf "%s\\n%s\\n%s\\n" "$DAIMON_CHECK_RULING" '
+        f'"$DAIMON_CHECK_COMMAND" "$(cat "$DAIMON_CHECK_SUBJECT")" > {out}\n'))
+    assert rt.run(entry, subject, cwd=str(tmp_path), timeout=5).outcome == \
+        "clean"
+    seen = out.read_text(encoding="utf-8")
+    assert seen.startswith("r-abc123\n")
+    assert "gh pr create --title 'a title'" in seen
+    rt.discard(subject)
+
+
+def test_the_check_runs_in_the_action_s_working_directory(tmp_path):
+    subject = _subject(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    out = tmp_path / "pwd"
+    body = _body(tmp_path, f"pwd > {out}\n")
+    assert rt.run(body, subject, cwd=str(work), timeout=5).outcome == "clean"
+    assert Path(out.read_text(encoding="utf-8").strip()).resolve() == \
+        work.resolve()
+    rt.discard(subject)
+
+
+def test_the_check_reads_standard_input_as_empty_and_does_not_hang(tmp_path):
+    """stdin is /dev/null, never an open pipe. A body that reads stdin gets
+    EOF; an inherited terminal would block until the budget expires and
+    report check-timeout for a check that was fine."""
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "cat > /dev/null\nexit 0\n"), subject,
+                 cwd=str(tmp_path), timeout=5)
+    assert got.outcome == "clean"
+    rt.discard(subject)
+
+
+def test_the_runner_never_raises(tmp_path, monkeypatch):
+    """Proven by monkeypatching the failure in. The hook fires before every
+    shell action; an exception here is an action that proceeds with no record
+    of why."""
+    subject = _subject(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("the platform said no")
+
+    monkeypatch.setattr(rt.subprocess, "Popen", boom)
+    got = rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path),
+                 timeout=5)
+    assert (got.outcome, got.cause) == ("unresolved", "check-crashed")
+    assert "the platform said no" in got.reason
+    rt.discard(subject)
+
+
+def test_every_cause_the_runner_emits_is_a_declared_cause():
+    assert {"check-timeout", "check-crashed", "body-hash-mismatch",
+            "runtime-missing"} <= rt.CAUSES
+
+
+def test_the_body_file_name_is_the_ruling_and_the_head_of_its_hash():
+    entry = {"ruling_id": "r-1a2b3c4d5e6f", "sha256": "ab" * 32}
+    assert rt.body_name(entry) == "r-1a2b3c4d5e6f-abababababab.sh"
+    assert rt.body_path(entry).parent == rt.checks_dir()
+
+
+def test_run_never_leaves_the_subject_behind_for_its_caller(tmp_path):
+    """The runner does not own the subject file: resolve made it and the
+    caller discards it. Pinned so a later change cannot quietly move that
+    responsibility and leave a double unlink."""
+    subject = _subject(tmp_path)
+    rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path), timeout=5)
+    assert Path(subject.path).exists()
+    rt.discard(subject)

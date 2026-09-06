@@ -23,11 +23,15 @@ why. Every function returns a value that says what happened, including when
 what happened is that daimon could not tell.
 """
 
+import hashlib
 import json
 import os
 import re
 import shlex
+import signal
+import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -74,6 +78,18 @@ class Subject(NamedTuple):
     `discard` once the check has run."""
     path: str
     files: tuple
+    command: str = ""
+
+
+class Outcome(NamedTuple):
+    """What one check run produced. `outcome` is one of the three spec 2.3
+    values and never folds: unresolved is not clean and is not a violation.
+    `exit_code` is -1 when no process ran."""
+    outcome: str
+    cause: str
+    reason: str
+    exit_code: int
+    duration_ms: int
 
 
 class Unresolved(NamedTuple):
@@ -406,7 +422,8 @@ def resolve(command, cwd):
         # the argument, is what went wrong.
         return Unresolved("check-crashed",
                           f"the subject file could not be written: {exc}")
-    return Subject(path, tuple((flag, source) for flag, source, _ in reads))
+    return Subject(path, tuple((flag, source) for flag, source, _ in reads),
+                   command)
 
 
 def discard(subject) -> None:
@@ -419,3 +436,141 @@ def discard(subject) -> None:
         os.unlink(path)
     except OSError:
         pass
+
+
+# ---- runner (spec 3.3) ----------------------------------------------------
+
+DEFAULT_TIMEOUT = 5.0
+
+
+def body_name(entry) -> str:
+    """The materialized body's file name: the ruling id and the head of the
+    hash it was ratified with. Two names for one ruling means the pin moved,
+    and the stale one is swept at the next sync."""
+    return f"{entry.get('ruling_id', '')}-{str(entry.get('sha256', ''))[:12]}.sh"
+
+
+def body_path(entry, base=None) -> Path:
+    return (Path(base) if base is not None else checks_dir()) / body_name(entry)
+
+
+def _kill_group(proc) -> None:
+    """start_new_session put the check in its own process group, so a body
+    that backgrounded something is killed WITH it. Killing only the direct
+    child leaves a grandchild holding the pipe, and the read that follows
+    blocks past the host's hook timeout, which is fail-open: the action
+    proceeds and nothing says why."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, AttributeError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _first_line(text) -> str:
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def run(entry_or_body, subject, *, cwd=None, timeout=None) -> Outcome:
+    """Run one check against one subject and say what happened.
+
+    `entry_or_body` is a manifest entry (whose `sha256` is re-checked against
+    the file on disk before exec) or a plain path to a body the caller just
+    materialized. Never raises: every path returns an Outcome, because the
+    hook that calls this fires before every shell action and an exception is
+    an action that proceeds with no record of why."""
+    started = time.monotonic()
+    try:
+        return _run(entry_or_body, subject, cwd, timeout, started)
+    except Exception as exc:  # noqa: BLE001 — an outcome is mandatory
+        return Outcome("unresolved", "check-crashed",
+                       f"the check runner failed: {type(exc).__name__}: {exc}",
+                       -1, int((time.monotonic() - started) * 1000))
+
+
+def _run(entry_or_body, subject, cwd, timeout, started) -> Outcome:
+    def out(outcome, cause, reason, exit_code=-1):
+        return Outcome(outcome, cause, reason, exit_code,
+                       int((time.monotonic() - started) * 1000))
+
+    ruling_id = ""
+    pinned = ""
+    if isinstance(entry_or_body, dict):
+        ruling_id = str(entry_or_body.get("ruling_id") or "")
+        pinned = str(entry_or_body.get("sha256") or "")
+        override = entry_or_body.get("body_path")
+        path = Path(override) if override else body_path(entry_or_body)
+    else:
+        path = Path(entry_or_body)
+
+    try:
+        body = path.read_bytes()
+    except OSError as exc:
+        return out("unresolved", "check-crashed",
+                   f"the check body could not be read: {exc.strerror or exc}")
+    if pinned and hashlib.sha256(body).hexdigest() != pinned:
+        # Someone edited the materialized body. Never a silent skip: an
+        # unresolved outcome is visible, a skip looks like a clean run.
+        return out("unresolved", "body-hash-mismatch",
+                   "the check body on disk is not the one this ruling was "
+                   "ratified with; run `daimon check sync`")
+
+    env = dict(os.environ)
+    env["DAIMON_CHECK_SUBJECT"] = str(getattr(subject, "path", "") or "")
+    env["DAIMON_CHECK_COMMAND"] = str(getattr(subject, "command", "") or "")
+    env["DAIMON_CHECK_RULING"] = ruling_id
+    budget = (float(timeout) if isinstance(timeout, (int, float))
+              and timeout > 0 else DEFAULT_TIMEOUT)
+
+    try:
+        proc = subprocess.Popen(
+            ["sh", str(path)],
+            cwd=str(cwd) if cwd else None,
+            env=env,
+            # Scar 0034: no stdin PIPE, so nothing here can close a pipe and
+            # make the communicate() below raise on a flush. /dev/null is
+            # also what keeps a body that reads stdin from blocking on an
+            # inherited terminal until the budget expires.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return out("unresolved", "runtime-missing",
+                   "no POSIX sh on PATH, so no check can run on this host")
+    except OSError as exc:
+        return out("unresolved", "check-crashed",
+                   f"the check could not be started: {exc.strerror or exc}")
+
+    try:
+        _, err = proc.communicate(timeout=budget)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        try:
+            proc.communicate(timeout=1)
+        except Exception:  # noqa: BLE001 — the outcome is already decided
+            pass
+        return out("unresolved", "check-timeout",
+                   f"the check did not finish within {budget:g}s")
+
+    code = proc.returncode
+    reason = _first_line(err)
+    if code == 0:
+        return out("clean", "", "", 0)
+    if code == 1:
+        return out("violation", "",
+                   reason or "the check reported a violation and gave no "
+                             "reason", 1)
+    # 126 and 127 land here with sh's own first stderr line, which is how a
+    # body that reaches outside itself becomes observable: the slice 1 path
+    # refusal catches a bare single-token path, and a one-line `sh /host.sh`
+    # passes it.
+    return out("unresolved", "check-crashed",
+               reason or f"the check exited {code}", code)
