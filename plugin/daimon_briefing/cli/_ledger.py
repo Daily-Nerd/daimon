@@ -289,7 +289,12 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
         # once per record.
         if firing is not None and lifecycle == "armed":
             fold = firing.for_ruling(record["refutation_id"])
-            if fold["last_ts"]:
+            if firing.log_state == "unreadable":
+                # Not `never`: this read cannot support that claim, and the
+                # author who believes it widens the pattern on a gate that
+                # has been firing all along.
+                lines.append("  Fired: unknown, firing log unreadable")
+            elif fold["last_ts"]:
                 lines.append(
                     f"  Fired: last {fold['last_ts']} on {fold['host']} · "
                     f"lifetime {fold['clean']} clean, "

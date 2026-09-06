@@ -338,7 +338,11 @@ def _checks_payload(project) -> dict:
             # fired` on a disarmed check or an unsupported host reports a
             # wiring that does not exist, which is the opposite of what this
             # table is for.
-            live = lifecycle == "armed" and mode != "unsupported"
+            # A log daimon could not read leaves every cell blank too: the
+            # header says why, and a `never fired` here would be a claim
+            # this read cannot support.
+            live = (lifecycle == "armed" and mode != "unsupported"
+                    and summary.log_state != "unreadable")
             fold = summary.rulings.get((ruling_id, host)) if live else None
             rows.append({
                 "ruling_id": ruling_id, "lifecycle": lifecycle,
@@ -349,7 +353,8 @@ def _checks_payload(project) -> dict:
                 "unresolved": (fold or {}).get("unresolved", 0) if live else None,
             })
     return {"rows": rows, "manifest": audit._asdict(),
-            "hosts": summary.hook_seen}
+            "hosts": summary.hook_seen,
+            "log": {"state": summary.log_state, "path": summary.path}}
 
 
 def _cmd_ruling_checks(args) -> int:

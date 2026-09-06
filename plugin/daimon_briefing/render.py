@@ -874,7 +874,10 @@ def _checks_status_line(data: dict) -> str:
     if not c:
         return ""
     proposed = f" ({c['proposed']} proposed)" if c.get("proposed") else ""
-    live = f"last fired {c['age']} ago" if c.get("age") else "never fired"
+    if c.get("log_state") == "unreadable":
+        live = "firing log unreadable"
+    else:
+        live = f"last fired {c['age']} ago" if c.get("age") else "never fired"
     drift = " · manifest drifted, run daimon check sync" if c.get("drift") else ""
     return f"checks: {c['armed']} armed{proposed}, {live}{drift}"
 
@@ -1416,6 +1419,12 @@ def checks_table_lines(payload: dict) -> list:
     proposed or disarmed check, and a host whose column reads `unsupported`
     has no channel to fire through."""
     lines = [_checks_manifest_header(payload.get("manifest") or {})]
+    log = payload.get("log") or {}
+    if log.get("state") == "unreadable":
+        # Beside the manifest header, and for the same reason: the liveness
+        # cells below are blank because daimon could not read the log, not
+        # because nothing ran.
+        lines.append(f"firing log unreadable at {log.get('path', '')}")
     for host, seen in sorted((payload.get("hosts") or {}).items()):
         lines.append(f"hook seen on {host}, last {seen['last_ts']}")
     rows = payload.get("rows") or []
@@ -1606,7 +1615,12 @@ def _checks_line(c: dict) -> str:
     between running and being honored. Plain wording only, no court
     vocabulary."""
     if not c.get("armed"):
+        # What is armed is a LEDGER fact and no log state can change it.
         return "checks: none armed"
+    if c.get("log_state") == "unreadable":
+        # Neither silent nor clean. `never fired` here is how an author
+        # widens the pattern on a gate that has been firing all along.
+        return f"checks: {c['armed']} armed, firing log unreadable"
     if not c.get("fired"):
         return f"checks: {c['armed']} armed, never fired"
     return (f"checks (lifetime): {c['fired']} fired, {c['clean']} clean, "

@@ -277,12 +277,17 @@ class FiringSummary(NamedTuple):
     anything about a check.
 
     `totals` sums every host, because the CLI has no notion of which host it
-    is on; `ruling checks` is where the split is rendered."""
+    is on; `ruling checks` is where the split is rendered.
+
+    `path` travels with the summary so a surface naming the log names the
+    file this read actually opened, rather than resolving it a second time
+    and risking the writer/reader split scar 0043 records."""
 
     log_state: str
     rulings: dict
     hook_seen: dict
     totals: dict
+    path: str = ""
 
     def for_ruling(self, ruling_id: str) -> dict:
         """One ruling across every host, for the `ruling show` liveness line.
@@ -318,17 +323,22 @@ def firing_summary(project_dir=None) -> FiringSummary:
     try:
         return _firing_summary(project_dir)
     except Exception:  # noqa: BLE001 — a reporting read never takes a caller down
-        return FiringSummary("unreadable", {}, {}, _empty_fold())
+        return FiringSummary("unreadable", {}, {}, _empty_fold(), _log_path())
+
+
+def _log_path() -> str:
+    return str(config.log_dir() / checks_runtime.FIRING_LOG_NAME)
 
 
 def _firing_summary(project_dir) -> FiringSummary:
-    path = config.log_dir() / checks_runtime.FIRING_LOG_NAME
+    where = _log_path()
+    path = Path(where)
     if not path.exists():
-        return FiringSummary("absent", {}, {}, _empty_fold())
+        return FiringSummary("absent", {}, {}, _empty_fold(), where)
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
-        return FiringSummary("unreadable", {}, {}, _empty_fold())
+        return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
 
     try:
         mine = {str(record.get("refutation_id") or "")
@@ -364,7 +374,7 @@ def _firing_summary(project_dir) -> FiringSummary:
             continue
         _absorb(rulings.setdefault((ruling_id, host), _empty_fold()), row)
         _absorb(totals, row)
-    return FiringSummary("read", rulings, hook_seen, totals)
+    return FiringSummary("read", rulings, hook_seen, totals, where)
 
 
 def try_run(ruling_id: str, command: str, *, channel: str, cwd=None,

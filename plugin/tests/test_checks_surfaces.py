@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -662,7 +663,7 @@ def test_ruling_checks_json_has_a_fixed_shape(tmp_path, capsys):
     _write_log(_row(ruling_id=ruling_id, outcome="clean"))
     _checks_table(tmp_path, "--json")
     payload = json.loads(capsys.readouterr().out)
-    assert list(payload) == ["rows", "manifest", "hosts"]
+    assert list(payload) == ["rows", "manifest", "hosts", "log"]
     row = payload["rows"][0]
     assert list(row) == ["ruling_id", "lifecycle", "intent", "host", "mode",
                          "last_fired", "clean", "violation", "unresolved"]
@@ -684,8 +685,8 @@ def test_ruling_checks_json_on_an_empty_ledger_is_still_the_shape(
         tmp_path, capsys):
     assert _checks_table(tmp_path, "--json") == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["rows"] == [] and list(payload) == ["rows", "manifest",
-                                                       "hosts"]
+    assert payload["rows"] == []
+    assert list(payload) == ["rows", "manifest", "hosts", "log"]
 
 
 def test_ruling_checks_takes_no_slug(tmp_path):
@@ -746,7 +747,7 @@ def test_stats_json_carries_checks_at_the_tail(tmp_path, monkeypatch, capsys):
     assert list(payload)[-1] == "checks"
     assert payload["checks"] == {"armed": 1, "proposed": 0, "fired": 0,
                                  "clean": 0, "violation": 0, "unresolved": 0,
-                                 "denied": 0}
+                                 "denied": 0, "log_state": "absent"}
 
 
 @pytest.mark.parametrize("build,wording", [
@@ -1010,3 +1011,144 @@ def test_the_show_line_is_dropped_when_the_summary_cannot_be_read(
     assert _show(tmp_path, ruling_id) == 0
     out = capsys.readouterr().out
     assert "  Check: armed" in out and "Fired:" not in out
+
+
+# ---- an unreadable firing log is neither silent nor clean ----------------
+#
+# Constraint 2 says an EMPTY log reads as silent. A log daimon cannot read is
+# a third state: it does not say nothing ran, it says daimon cannot tell you.
+# Rendering it as `never fired` is how an author widens the pattern on a gate
+# that has been firing all along. The manifest half of this slice already
+# keeps its four states apart; this is the same rule for the log.
+
+def _log_is_a_directory():
+    path = _log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()
+
+
+def _log_denies_reads():
+    _write_log(_row(outcome="clean"))
+    _log_path().chmod(0o000)
+
+
+_LOG_BREAKERS = [
+    pytest.param(_log_is_a_directory, id="directory-in-its-place"),
+    pytest.param(
+        _log_denies_reads, id="chmod-000",
+        marks=pytest.mark.skipif(
+            hasattr(os, "geteuid") and os.geteuid() == 0,
+            reason="root reads a 000 file, so the branch is unreachable")),
+]
+
+
+@pytest.mark.parametrize("break_log", _LOG_BREAKERS)
+def test_the_reader_reports_an_unreadable_log_as_its_own_state(break_log,
+                                                               tmp_path):
+    _arm(tmp_path)
+    break_log()
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.log_state == "unreadable"
+    assert summary.path == str(_log_path())
+
+
+@pytest.mark.parametrize("break_log", _LOG_BREAKERS)
+def test_stats_says_the_log_is_unreadable_rather_than_never_fired(
+        break_log, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    break_log()
+    assert _stats(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "checks: 1 armed, firing log unreadable" in out
+    assert "never fired" not in out
+
+
+@pytest.mark.parametrize("break_log", _LOG_BREAKERS)
+def test_status_says_the_log_is_unreadable_rather_than_never_fired(
+        break_log, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    break_log()
+    _status(tmp_path)
+    out = capsys.readouterr().out
+    assert "checks: 1 armed, firing log unreadable" in out
+    assert "never fired" not in out
+
+
+@pytest.mark.parametrize("break_log", _LOG_BREAKERS)
+def test_ruling_checks_heads_the_table_with_the_log_state(
+        break_log, tmp_path, capsys):
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    break_log()
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    assert f"firing log unreadable at {_log_path()}" in out
+    assert "never fired" not in out and "lifetime" not in out
+
+
+@pytest.mark.parametrize("break_log", _LOG_BREAKERS)
+def test_show_says_unknown_rather_than_never(break_log, tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    break_log()
+    _show(tmp_path, ruling_id)
+    out = capsys.readouterr().out
+    assert "  Fired: unknown, firing log unreadable" in out
+    assert "Fired: never" not in out
+
+
+def test_the_rich_renderers_carry_the_unreadable_wording_too(
+        tmp_path, monkeypatch, capsys):
+    from daimon_briefing import render
+
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    _log_is_a_directory()
+    _stats(tmp_path)
+    assert "checks: 1 armed, firing log unreadable" in capsys.readouterr().out
+    _status(tmp_path)
+    assert "checks: 1 armed, firing log unreadable" in capsys.readouterr().out
+
+
+def test_the_json_surfaces_carry_the_log_state(tmp_path, monkeypatch,
+                                               capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    _log_is_a_directory()
+    _stats(tmp_path, "--json")
+    assert json.loads(capsys.readouterr().out)["checks"]["log_state"] == \
+        "unreadable"
+    _status(tmp_path, "--json")
+    assert json.loads(capsys.readouterr().out)["checks"]["log_state"] == \
+        "unreadable"
+    _checks_table(tmp_path, "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["log"] == {"state": "unreadable", "path": str(_log_path())}
+    assert payload["rows"][0]["last_fired"] is None
+
+
+def test_an_absent_log_still_reads_as_never_fired(tmp_path, monkeypatch,
+                                                  capsys):
+    """The distinction only cuts one way: nothing ever ran is a real answer,
+    and turning it into a warning would make every fresh install look broken."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    assert _stats(tmp_path, "--json") == 0
+    assert json.loads(capsys.readouterr().out)["checks"]["log_state"] == \
+        "absent"
+    _stats(tmp_path)
+    assert "checks: 1 armed, never fired" in capsys.readouterr().out
+
+
+def test_nothing_armed_outranks_an_unreadable_log(tmp_path, monkeypatch,
+                                                  capsys):
+    """What is armed is a LEDGER fact and the log cannot change it. Reporting
+    the log's state where there is nothing to run would be a warning about
+    a feature this project does not use."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _log_is_a_directory()
+    _stats(tmp_path)
+    assert "checks: none armed" in capsys.readouterr().out

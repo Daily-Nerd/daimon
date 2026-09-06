@@ -2128,7 +2128,8 @@ def _status_checks(project_dir, now: float):
             counts[lifecycle] += 1
     if not counts["armed"] and not counts["proposed"]:
         return None
-    last_ts = checks.firing_summary(project_dir).totals["last_ts"]
+    summary = checks.firing_summary(project_dir)
+    last_ts = summary.totals["last_ts"]
     age = ""
     if last_ts:
         try:
@@ -2138,6 +2139,7 @@ def _status_checks(project_dir, now: float):
         except ValueError:
             age = ""  # an unexpected stamp reports the fact without an age
     return {**counts, "last_ts": last_ts, "age": age,
+            "log_state": summary.log_state,
             "drift": checks.audit(project_dir).drift}
 
 
@@ -2949,10 +2951,15 @@ def _stats_checks(project_dir) -> dict:
                 counts[lifecycle] += 1
     except Exception:  # noqa: BLE001
         pass
-    totals = checks.firing_summary(project_dir).totals
+    summary = checks.firing_summary(project_dir)
+    totals = summary.totals
+    # `log_state` travels with the counts. Without it an unreadable log is
+    # byte-identical to an empty one on this line, and the render layer has
+    # no way to tell "nothing ran" from "daimon cannot tell you".
     return {**counts, "fired": totals["fired"], "clean": totals["clean"],
             "violation": totals["violation"],
-            "unresolved": totals["unresolved"], "denied": totals["denied"]}
+            "unresolved": totals["unresolved"], "denied": totals["denied"],
+            "log_state": summary.log_state}
 
 
 def _stats_resolutions(project_dir, usage: dict) -> dict:
