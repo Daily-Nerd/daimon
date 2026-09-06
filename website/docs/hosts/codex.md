@@ -82,6 +82,11 @@ python3 hook/codex-hooks.py status
   matches more than you meant: the command that retires the ruling is itself
   a shell action the check would otherwise deny.
 
+  The budget is shared across the whole action, not given to each check, so
+  on a crowded manifest a later check can find the time already spent and
+  report `unresolved`, which denies under `enforce` and warns under `warn`.
+  Keep a project's armed checks few and their bodies fast.
+
 Codex docs note that `transcript_path` is provided for convenience but its
 format is not a stable interface. Daimon's JSONL parser is intentionally
 best-effort and ignores unknown rows rather than treating raw JSON as

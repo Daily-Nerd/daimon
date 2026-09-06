@@ -120,6 +120,12 @@ custodia las acciones de shell:
   coincide con más de lo que querías: el comando que retira la regla es a su
   vez una acción de shell que el check rechazaría.
 
+  El presupuesto es compartido por toda la acción, no se le da a cada check,
+  así que en un manifiesto cargado un check tardío puede encontrar el tiempo
+  ya gastado y reportar `unresolved`, que rechaza bajo `enforce` y advierte
+  bajo `warn`. Mantené pocos checks armados por proyecto y sus cuerpos
+  rápidos.
+
 Estos dos scripts de captura/inyección se cablean de una de dos maneras
 mutuamente excluyentes — elige UNA (ambas a la vez disparan todo dos veces
 por sesión: dos inyecciones de briefing, dos llamadas LLM de serialización).

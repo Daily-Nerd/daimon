@@ -115,6 +115,11 @@ close the capture -> inject loop; the fourth guards shell actions:
   matches more than you meant: the command that retires the ruling is itself
   a shell action the check would otherwise deny.
 
+  The budget is shared across the whole action, not given to each check, so
+  on a crowded manifest a later check can find the time already spent and
+  report `unresolved`, which denies under `enforce` and warns under `warn`.
+  Keep a project's armed checks few and their bodies fast.
+
 These two capture/inject scripts are wired in one of two mutually exclusive
 ways — pick ONE (both at once double-fires every session: two briefing
 injections, two serialize LLM calls). See the install sections above.

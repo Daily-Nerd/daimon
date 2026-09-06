@@ -89,6 +89,12 @@ python3 hook/codex-hooks.py status
   coincide con más de lo que querías: el comando que retira la regla es a su
   vez una acción de shell que el check rechazaría.
 
+  El presupuesto es compartido por toda la acción, no se le da a cada check,
+  así que en un manifiesto cargado un check tardío puede encontrar el tiempo
+  ya gastado y reportar `unresolved`, que rechaza bajo `enforce` y advierte
+  bajo `warn`. Mantené pocos checks armados por proyecto y sus cuerpos
+  rápidos.
+
 La documentación de Codex señala que `transcript_path` se provee por
 conveniencia pero su formato no es una interfaz estable. El parser JSONL de
 Daimon es deliberadamente best-effort e ignora filas desconocidas en lugar de

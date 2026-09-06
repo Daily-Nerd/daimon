@@ -570,6 +570,9 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
                for entry, mode, outcome, row in results
                if outcome.outcome in ("violation", "unresolved")]
     decision, text = "allow", ""
+    # Above every real mode until a failure sets it, so that with nothing
+    # failing no row qualifies for the stamp below.
+    floor = len(MODES)
     if failing:
         # The strongest FAILING mode decides, not the strongest mode present.
         # An enforce check that passed has nothing to say about a warn check
@@ -594,13 +597,17 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
 
     emission = encode(profile, decision, text)
     # One action produces one decision, but the log row is per CHECK, so the
-    # row records what THIS check contributed. A check that passed keeps the
-    # `allow` it was written with: it denied nothing, and a clean row stamped
-    # `deny` satisfies the "only a deny under enforce proves it was honored"
-    # filter while proving nothing of the kind. The stats surface counts
-    # these rows.
-    for _entry, _mode, _outcome, row in failing:
-        row["decision_emitted"] = decision
+    # row records what THIS check contributed. Two kinds of row keep the
+    # `allow` they were written with. A check that passed denied nothing, and
+    # a clean row stamped `deny` satisfies the "only a deny under enforce
+    # proves it was honored" filter while proving nothing of the kind. And a
+    # check that failed BELOW the deciding floor had its reason withheld from
+    # the host by its own mode, so it was never heard: stamping the decision
+    # on it claims a contribution to a block it was not allowed to speak in.
+    # The stats surface counts these rows.
+    for _entry, mode, _outcome, row in failing:
+        if MODES.index(mode) >= floor:
+            row["decision_emitted"] = decision
     return Decision(emission.stdout, emission.stderr, emission.exit_code, rows)
 
 

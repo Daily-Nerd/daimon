@@ -548,9 +548,10 @@ def test_two_matching_checks_aggregate_to_the_strongest_failing_mode(tmp_path):
     assert reason == f"{hard}: no em-dash in a public body"
     assert soft not in reason
     assert {r["mode"] for r in d.rows} == {"enforce", "warn"}
-    # One action, one decision: every row records the decision the hook
-    # actually emitted, not the one its own mode would have produced alone.
-    assert {r["decision_emitted"] for r in d.rows} == {"deny"}
+    # The `warn` check failed below the deciding floor, so it was never
+    # heard, and its row does not claim to have denied anything.
+    assert {r["ruling_id"]: r["decision_emitted"] for r in d.rows} == \
+        {hard: "deny", soft: "allow"}
 
 
 def test_a_clean_enforce_check_does_not_deny_for_a_warn_neighbour(tmp_path):
@@ -1035,16 +1036,41 @@ def test_a_clean_row_never_claims_the_decision_a_neighbour_caused(tmp_path):
         "permissionDecision"] == "deny"
 
 
-def test_a_failing_row_below_the_deciding_mode_records_the_action(tmp_path):
-    """It contributed a failure, so it carries what the action emitted. What
-    it does NOT carry is a claim that it alone would have denied, which is
-    what the `mode` column beside it is for."""
+def test_a_failing_row_below_the_deciding_floor_keeps_its_allow(tmp_path):
+    """It failed, but its reason was withheld from the host because its own
+    mode said to withhold it. Stamping `deny` on that row claims a check
+    contributed to a block that it was never allowed to speak in, and the
+    stats surface counts these rows."""
     quiet = _arm(tmp_path, intent="record-only", subject="a",
                  scope="publishing")
     hard = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
     emitted = {r["ruling_id"]: r["decision_emitted"] for r in d.rows}
-    assert emitted == {quiet: "deny", hard: "deny"}
+    assert emitted == {quiet: "allow", hard: "deny"}
+    # Both still ran, and both still say what they found.
+    assert {r["outcome"] for r in d.rows} == {"violation"}
+
+
+def test_two_failures_at_the_floor_both_record_the_decision(tmp_path):
+    """The narrowing is by mode, not to one row. Every check that was heard
+    records what the host was told."""
+    first = _arm(tmp_path, intent="enforce", subject="a", scope="publishing")
+    second = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    emitted = {r["ruling_id"]: r["decision_emitted"] for r in d.rows}
+    assert emitted == {first: "deny", second: "deny"}
+
+
+def test_a_capped_codex_failure_keeps_its_allow_beside_a_deny(tmp_path):
+    """The Codex cap, one column further. A `warn` check degraded to
+    `record-only` there did not reach the operator, so its row does not claim
+    to have denied anything either."""
+    capped = _arm(tmp_path, intent="warn", subject="a", scope="publishing")
+    hard = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES["codex"],
+                  _payload(MATCH, tmp_path, tool="shell"))
+    emitted = {r["ruling_id"]: r["decision_emitted"] for r in d.rows}
+    assert emitted == {capped: "allow", hard: "deny"}
 
 
 def test_every_row_of_a_clean_action_records_an_allow(tmp_path):
