@@ -388,6 +388,11 @@ def resolve(command, cwd):
         return Unresolved("arg-form-unparsed",
                           f"the command could not be tokenized: {exc}")
 
+    # Counted before the walk: binding a heredoc is only safe when there is
+    # exactly one candidate on each side.
+    consumers = sum(1 for flag, value, _ in _walk(tokens)
+                    if flag is not None and value == "-")
+
     reads: list = []
     for flag, value, previous in _walk(tokens):
         if flag is None:
@@ -414,7 +419,25 @@ def resolve(command, cwd):
                     f"{flag} reads standard input and the command carries no "
                     "heredoc, so the bytes come from a process daimon cannot "
                     "see")
-            reads.append((flag, "<heredoc>", heredocs.pop(0)))
+            if len(heredocs) != 1 or consumers != 1:
+                # Which heredoc feeds which argument is a question this
+                # tokenizer cannot answer: it keeps neither the order nor the
+                # redirections. Handing over the first one guesses, and a
+                # wrong guess builds the subject from unrelated text and then
+                # reports clean on a body nothing ever read.
+                #
+                # KNOWN RESIDUAL: one heredoc belonging to an EARLIER command
+                # plus one argument reading standard input counts as one and
+                # one, so it still binds the wrong text. Closing that needs
+                # the heredoc's offset in the raw command matched against the
+                # offset of the argument that consumes it, which is thrown
+                # away above. Pinned by a test that says so out loud.
+                return Unresolved(
+                    "arg-form-unparsed",
+                    f"the command carries {len(heredocs)} heredoc(s) and "
+                    f"{consumers} argument(s) reading standard input; daimon "
+                    "binds one to one or not at all")
+            reads.append((flag, "<heredoc>", heredocs[0]))
             continue
         raw = value
         if flag in _FIELD_FLAGS and "=" in value:
