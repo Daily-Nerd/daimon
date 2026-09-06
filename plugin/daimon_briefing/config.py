@@ -487,6 +487,35 @@ def keys_dir() -> Path:
     return Path.home() / ".daimon" / "keys"
 
 
+def checks_dir() -> Path:
+    """Where #943 materializes armed checks: manifest.json plus one 0o500
+    script per armed ruling. Default ~/.daimon/checks; DAIMON_CHECKS_DIR
+    overrides (the autouse test fixture points it under tmp, because HOME is
+    not redirected and a fall-through here writes the developer's real home).
+
+    `checks_runtime.py` mirrors this accessor line for line — the hook side
+    reads what this side writes, and a divergence splits the two silently."""
+    raw = _get("DAIMON_CHECKS_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".daimon" / "checks"
+
+
+def check_timeout() -> float:
+    """The check runner's own budget in seconds (#943). Default 5, against a
+    host hook timeout of 10.
+
+    The runner has to decide before the HOST gives up: on Claude Code and
+    Codex a hook that reaches the host's timeout does not block and the tool
+    proceeds, so a runner without its own budget converts a hanging check
+    into a silently allowed action. The floor keeps the smallest configured
+    budget an actual budget rather than an unconditional timeout."""
+    try:
+        return max(0.5, float(_get("DAIMON_CHECK_TIMEOUT") or "5"))
+    except ValueError:
+        return 5.0
+
+
 def log_dir() -> Path:
     """Where the session-end hook writes serialize.log. The hook hardcodes
     ~/.daimon/logs; this override exists so the CLI (and tests) can point
