@@ -677,3 +677,140 @@ def test_a_missing_runtime_decides_nothing_and_says_nothing(tmp_path,
     monkeypatch.setattr(ch, "_RUNTIME", None)
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
     assert (d.stdout, d.stderr, d.exit_code, d.rows) == ("", "", 0, [])
+
+
+# ---- main: what the thin scripts call, driven in process -----------------
+#
+# The end-to-end coverage lives in test_pre_action_hook.py, which spawns the
+# real scripts. These drive the same entry point with substitute streams so
+# the branches a subprocess cannot reach from inside this process are still
+# proved rather than assumed.
+
+import io  # noqa: E402
+
+
+def _main(host, payload, **kw):
+    stdin = io.StringIO(payload if isinstance(payload, str)
+                        else json.dumps(payload))
+    out, err = io.StringIO(), io.StringIO()
+    code = ch.main(host, stdin=stdin, stdout=out, stderr=err, **kw)
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_main_writes_the_decision_and_records_every_row(tmp_path):
+    ruling_id = _arm(tmp_path, intent="enforce")
+    code, out, err = _main(CC, _payload(MATCH, tmp_path))
+    assert (code, err) == (0, "")
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    rows = [json.loads(line) for line in
+            (ch.runtime().log_dir() / "checks.jsonl").read_text(
+                encoding="utf-8").splitlines()]
+    assert [r["ruling_id"] for r in rows] == [ruling_id]
+    assert rows[0]["decision_emitted"] == "deny"
+
+
+def test_main_on_a_host_with_no_profile_does_nothing(tmp_path):
+    """A script naming a host this build does not carry. Silent, and never a
+    KeyError before every shell action."""
+    _arm(tmp_path, intent="enforce")
+    assert _main("emacs", _payload(MATCH, tmp_path)) == (0, "", "")
+
+
+def test_main_says_the_runtime_is_missing_where_the_host_will_show_it(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_RUNTIME", None)
+    code, out, err = _main(CC, _payload(MATCH, tmp_path))
+    assert (code, err) == (0, "")
+    assert json.loads(out)["systemMessage"] == ch.RUNTIME_MISSING
+    assert json.loads(out)["hookSpecificOutput"][
+        "permissionDecision"] == "allow"
+
+
+@pytest.mark.parametrize("host", ["codex", "windsurf"])
+def test_main_stays_quiet_about_a_missing_runtime_where_it_cannot_be_shown(
+        host, tmp_path, monkeypatch):
+    """The message channel is a `warn`, and on a host that caps warn below
+    warn it has nowhere to go. Emitting it anyway would put text on a stream
+    the operator never sees, on a host that parses that stream."""
+    monkeypatch.setattr(ch, "_RUNTIME", None)
+    assert _main(host, _payload(MATCH, tmp_path)) == (0, "", "")
+
+
+def test_main_writes_nothing_when_the_decision_itself_explodes(tmp_path,
+                                                               monkeypatch):
+    """Belt and braces over `decide`'s own guard. Nothing written means the
+    host sees no opinion and proceeds, and the row is the only record that
+    anything happened, so it gets one more attempt that cannot itself
+    raise."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    monkeypatch.setattr(ch, "decide",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    assert _main(CC, _payload(MATCH, tmp_path)) == (0, "", "")
+    rows = [json.loads(line) for line in
+            (ch.runtime().log_dir() / "checks.jsonl").read_text(
+                encoding="utf-8").splitlines()]
+    assert [r["cause"] for r in rows] == ["check-crashed"]
+    assert rows[0]["decision_emitted"] == "allow"
+
+
+def test_main_survives_a_log_that_cannot_be_written(tmp_path, monkeypatch):
+    """Losing the decision over the record would be the wrong trade. The row
+    is bookkeeping; the deny is the thing the operator armed."""
+    _arm(tmp_path, intent="enforce")
+    monkeypatch.setattr(ch.runtime(), "log_firing",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("full")))
+    code, out, _ = _main(CC, _payload(MATCH, tmp_path))
+    assert code == 0
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("raw", ["", "not json", "[]", "null", "3"])
+def test_a_payload_that_is_not_an_object_reads_as_an_empty_one(raw):
+    assert ch._read_payload(io.StringIO(raw)) == {}
+
+
+def test_a_stdin_that_cannot_be_read_reads_as_an_empty_payload():
+    """A closed or broken pipe. The host is gone or was never there, and a
+    traceback would be the same allow with a worse record."""
+    class Broken:
+        def read(self):
+            raise OSError("closed")
+
+    assert ch._read_payload(Broken()) == {}
+
+
+# ---- the loader's own failure modes ---------------------------------------
+
+
+def test_the_loader_returns_none_when_the_sibling_is_absent(tmp_path,
+                                                            monkeypatch):
+    monkeypatch.setattr(ch, "__file__", str(tmp_path / "checks_host.py"))
+    assert ch._load_runtime() is None
+
+
+def test_the_loader_returns_none_when_the_sibling_is_broken(tmp_path,
+                                                            monkeypatch):
+    """A truncated or half-written copy from an interrupted install. It must
+    read as absent, not as an import error before every shell action."""
+    (tmp_path / "checks_runtime.py").write_text("def (\n", encoding="utf-8")
+    monkeypatch.setattr(ch, "__file__", str(tmp_path / "checks_host.py"))
+    assert ch._load_runtime() is None
+
+
+def test_decide_treats_a_payload_that_is_not_a_mapping_as_an_empty_one():
+    """`main` only ever hands it a dict, but `decide` is the module's public
+    entry point and a caller is not a guarantee."""
+    for payload in ("nonsense", None, 7, ["tool_input"]):
+        d = ch.decide(ch.PROFILES[CC], payload)
+        assert (d.stdout, d.rows) == ("", [])
+
+
+def test_main_survives_a_crash_it_cannot_even_record(tmp_path, monkeypatch):
+    """The last line of the net: the decision failed AND the log failed. The
+    action still proceeds, silently, rather than the hook taking the session
+    down with it."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    boom = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x"))  # noqa: E731
+    monkeypatch.setattr(ch, "decide", boom)
+    monkeypatch.setattr(ch.runtime(), "log_firing", boom)
+    assert _main(CC, _payload(MATCH, tmp_path)) == (0, "", "")

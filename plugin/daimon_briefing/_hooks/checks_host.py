@@ -509,7 +509,14 @@ def main(host, stdin=None, stdout=None, stderr=None) -> int:
             return 0
         decision = decide(profile, _read_payload(stdin))
         for row in decision.rows:
-            rt.log_firing(row)
+            try:
+                rt.log_firing(row)
+            except Exception:  # noqa: BLE001
+                # `log_firing` promises not to raise, and this guard is what
+                # keeps that promise from being load-bearing. The row is
+                # bookkeeping; the deny is the thing the operator armed, and
+                # losing the decision over the record is the wrong trade.
+                pass
         out.write(decision.stdout)
         err.write(decision.stderr)
         return decision.exit_code
