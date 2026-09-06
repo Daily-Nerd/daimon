@@ -314,6 +314,20 @@ SURFACES: tuple[Surface, ...] = (
     # belief bytes (cli._hooks_target_dir).
     Surface("hooks/*", "cli install-hooks", False, "exempt-no-plaintext",
             "none"),
+    # -- #943 armed checks. Both shapes carry AUTHORED text: the manifest
+    #    holds `check.match` and each body IS `check.body`, and refutations
+    #    already declares that pair plaintext (_PLAINTEXT_NESTED) so forget
+    #    reaches it in the ledger. Declaring these exempt would be the same
+    #    claim contradicting itself one directory over.
+    #
+    #    `rewrite` is what checks.sync already does: it rebuilds the manifest
+    #    from the ledger and removes the bodies no active ruling wants, and
+    #    every writer that can disarm a ruling calls it — forget included. So
+    #    deletion reaches here by re-deriving from a ledger the forget
+    #    already rewrote, rather than by a second walk that could disagree
+    #    with the first. --
+    Surface("checks/manifest.json", "checks.sync", True, "rewrite", "forget"),
+    Surface("checks/*.sh", "checks.sync", True, "rewrite", "forget"),
 )
 
 _PLACEHOLDER_RE = re.compile(r"\{[a-z]+\}")
