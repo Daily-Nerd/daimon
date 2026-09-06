@@ -480,7 +480,8 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # is the only placement that survives an exception nobody predicted.
         rt.discard(subject)
 
-    failing = [(entry, mode, outcome) for entry, mode, outcome in results
+    failing = [(index, entry, mode, outcome)
+               for index, (entry, mode, outcome) in enumerate(results)
                if outcome.outcome in ("violation", "unresolved")]
     decision, text = "allow", ""
     if failing:
@@ -488,7 +489,7 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # An enforce check that passed has nothing to say about a warn check
         # that did not, and reading it the other way blocks actions nobody
         # armed to block.
-        deciding = max((mode for _, mode, _ in failing), key=MODES.index)
+        deciding = max((mode for _, _, mode, _ in failing), key=MODES.index)
         # Only the failures AT OR ABOVE the deciding mode are spoken aloud. A
         # `record-only` check asked for the log and nothing else, and a
         # neighbour that failed at a stronger mode must not carry its reason
@@ -498,7 +499,7 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # would otherwise defeat it.
         floor = MODES.index(deciding)
         text = "\n".join(_failure_line(entry, outcome)
-                         for entry, mode, outcome in failing
+                         for _, entry, mode, outcome in failing
                          if MODES.index(mode) >= floor)
         if deciding == "enforce":
             decision = "deny"
@@ -506,13 +507,19 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
             decision = "warn"
 
     emission = encode(profile, decision, text)
-    for entry, mode, outcome in results:
-        # `mode` is this entry's; `decision_emitted` is the ACTION's. One
-        # action produces one decision, and the row that claimed otherwise
-        # would report a deny the host never received.
+    failed = {index for index, _, _, _ in failing}
+    for index, (entry, mode, outcome) in enumerate(results):
+        # One action produces one decision, but the log row is per CHECK, so
+        # the row records what THIS check contributed. A check that passed
+        # records `allow`: it did not deny anything, and a clean row stamped
+        # `deny` satisfies the "only a deny under enforce proves it was
+        # honored" filter while proving nothing of the kind. The stats
+        # surface counts these rows.
         rows.append(_row(profile, stamp, ruling_id=entry.get("ruling_id"),
                          mode=mode, outcome=outcome.outcome,
-                         cause=outcome.cause, decision=decision,
+                         cause=outcome.cause,
+                         decision=decision if index in failed
+                         else "allow",
                          duration_ms=outcome.duration_ms))
     return Decision(emission.stdout, emission.stderr, emission.exit_code, rows)
 

@@ -1014,3 +1014,40 @@ def test_two_failures_at_the_deciding_mode_are_both_named(tmp_path):
     assert sorted(reason.splitlines()) == sorted([
         f"{first}: no em-dash in a public body",
         f"{second}: no em-dash in a public body"])
+
+
+# ---- a row records what that check contributed ----------------------------
+
+
+def test_a_clean_row_never_claims_the_decision_a_neighbour_caused(tmp_path):
+    """The docs this PR adds say a `deny` under `enforce` is what closes the
+    gap between a check that ran and a check that was honored. A clean row
+    carrying `deny` satisfies that filter while proving nothing of the kind,
+    and the stats surface counts these rows."""
+    passed = _arm(tmp_path, body=CLEAN, intent="enforce", subject="a",
+                  scope="publishing")
+    failed = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    emitted = {r["ruling_id"]: r["decision_emitted"] for r in d.rows}
+    assert emitted == {passed: "allow", failed: "deny"}
+    # The action itself still denied.
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_a_failing_row_below_the_deciding_mode_records_the_action(tmp_path):
+    """It contributed a failure, so it carries what the action emitted. What
+    it does NOT carry is a claim that it alone would have denied, which is
+    what the `mode` column beside it is for."""
+    quiet = _arm(tmp_path, intent="record-only", subject="a",
+                 scope="publishing")
+    hard = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    emitted = {r["ruling_id"]: r["decision_emitted"] for r in d.rows}
+    assert emitted == {quiet: "deny", hard: "deny"}
+
+
+def test_every_row_of_a_clean_action_records_an_allow(tmp_path):
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert [r["decision_emitted"] for r in d.rows] == ["allow"]
