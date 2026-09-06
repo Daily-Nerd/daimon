@@ -574,3 +574,56 @@ def _run(entry_or_body, subject, cwd, timeout, started) -> Outcome:
     # passes it.
     return out("unresolved", "check-crashed",
                reason or f"the check exited {code}", code)
+
+
+# ---- firing log (spec 3.4) ------------------------------------------------
+
+# The whole row, and nothing else. Spec 3.4: no command text, no paths, no
+# subject. `decision_emitted` is what the hook actually wrote to the host, so
+# a reader can tell a check that RAN from a check that was honored — only
+# `deny` under `enforce` closes that gap.
+FIRING_KEYS = ("ts", "ruling_id", "host", "mode", "outcome", "cause",
+               "decision_emitted", "duration_ms")
+
+# Every value `cause` may hold. The manifest reasons join the runner's causes
+# because "nothing was armed here" is a firing the stats surface has to be
+# able to count, and it is the difference between "armed, never fired" and
+# "clean".
+LOG_CAUSES = CAUSES | {"no-manifest", "no-match", "manifest-unreadable"}
+
+
+def log_firing(row, path=None) -> bool:
+    """Append one row to the firing log. Returns whether it landed.
+
+    The row is PROJECTED onto FIRING_KEYS rather than filtered, so a caller
+    that hands over the whole outcome record (reason and command included)
+    cannot leak them here. `cause` is the one field where free text could
+    otherwise reach a log declared to hold no plaintext, so a value outside
+    the declared set is recorded as `unknown`: the state is still signalled,
+    it just cannot bring a path along.
+
+    Never raises. A hook that cannot write its log still has an action to
+    allow or deny, and losing the decision over the record would be the
+    wrong trade."""
+    try:
+        source = row if isinstance(row, dict) else {}
+        cause = str(source.get("cause") or "")
+        stamped = {
+            "ts": str(source.get("ts") or "") or time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "ruling_id": str(source.get("ruling_id") or ""),
+            "host": str(source.get("host") or ""),
+            "mode": str(source.get("mode") or ""),
+            "outcome": str(source.get("outcome") or ""),
+            "cause": cause if cause in LOG_CAUSES else (cause and "unknown"),
+            "decision_emitted": str(source.get("decision_emitted") or ""),
+            "duration_ms": int(source.get("duration_ms") or 0),
+        }
+        target = (Path(path) if path is not None
+                  else log_dir() / FIRING_LOG_NAME)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(stamped, ensure_ascii=False) + "\n")
+        return True
+    except (OSError, ValueError, TypeError):
+        return False

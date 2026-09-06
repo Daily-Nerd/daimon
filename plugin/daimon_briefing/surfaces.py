@@ -266,6 +266,15 @@ SURFACES: tuple[Surface, ...] = (
     #    specific contract wins. --
     Surface("logs/backend-stderr.log", "llm._log_backend_stderr",
             True, "wholesale-purge", "forget"),
+    # -- #943 check firing log: one row per runner invocation, carrying ids,
+    #    outcomes, causes and durations only. No command text, no paths, no
+    #    subject — and that is a property of the WRITER, which projects every
+    #    row onto a fixed key list rather than trusting its callers, so the
+    #    exemption rests on code and not on a convention. Before the *.log
+    #    glob, which would not catch a .jsonl anyway, so the shape sits with
+    #    the other log declarations instead of after the catch-all. --
+    Surface("logs/checks.jsonl", "checks_runtime.log_firing",
+            False, "exempt-no-plaintext", "none"),
     # #616 restored the glob's claim instead of widening it: serializer's
     # downgrade lines — the one writer that put item text under this shape —
     # now log a content hash (normalize.content_key, the same key a forget

@@ -730,3 +730,107 @@ def test_run_never_leaves_the_subject_behind_for_its_caller(tmp_path):
     rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path), timeout=5)
     assert Path(subject.path).exists()
     rt.discard(subject)
+
+
+# ---- firing log (spec 3.4) ------------------------------------------------
+
+
+import json  # noqa: E402
+
+
+def _log_lines():
+    path = config.log_dir() / "checks.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in
+            path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_a_firing_row_carries_the_declared_keys_and_nothing_else():
+    assert rt.log_firing({"ruling_id": "r-1", "host": "claude-code",
+                          "mode": "warn", "outcome": "clean", "cause": "",
+                          "decision_emitted": "allow",
+                          "duration_ms": 12}) is True
+    rows = _log_lines()
+    assert len(rows) == 1
+    assert set(rows[0]) == set(rt.FIRING_KEYS)
+
+
+def test_the_log_never_carries_the_command_the_paths_or_the_reason():
+    """Spec 3.4 in its own words: no command text, no paths, no subject. The
+    reason shown to the agent may name a path; the log does not. Enforced by
+    PROJECTION rather than by asking callers to be careful."""
+    secret = "/Users/someone/private/notes.md"
+    rt.log_firing({"ruling_id": "r-1", "outcome": "unresolved",
+                   "cause": "file-missing", "duration_ms": 3,
+                   "reason": f"{secret} does not exist",
+                   "command": f"gh pr create --body-file {secret}",
+                   "subject": "/tmp/daimon-check-xyz.subject"})
+    raw = (config.log_dir() / "checks.jsonl").read_text(encoding="utf-8")
+    assert secret not in raw
+    assert "gh pr create" not in raw
+    assert "daimon-check-xyz" not in raw
+
+
+def test_a_cause_outside_the_declared_set_is_recorded_without_its_text():
+    """The cause field is the one place free text could reach a no-plaintext
+    log. An unknown value still signals that something happened; it just
+    cannot bring a path along with it."""
+    rt.log_firing({"ruling_id": "r-1", "outcome": "unresolved",
+                   "cause": "exploded reading /Users/someone/x", "duration_ms": 1})
+    rows = _log_lines()
+    assert rows[0]["cause"] == "unknown"
+
+
+@pytest.mark.parametrize("cause", sorted(
+    {"file-missing", "no-manifest", "no-match", "manifest-unreadable",
+     "check-timeout", "body-hash-mismatch"}))
+def test_the_causes_a_hook_actually_emits_survive_the_projection(cause):
+    rt.log_firing({"ruling_id": "r-1", "outcome": "unresolved",
+                   "cause": cause, "duration_ms": 1})
+    assert _log_lines()[0]["cause"] == cause
+
+
+def test_a_row_with_no_timestamp_is_stamped_in_utc():
+    rt.log_firing({"ruling_id": "r-1", "outcome": "clean", "duration_ms": 1})
+    ts = _log_lines()[0]["ts"]
+    assert ts.endswith("Z") and ts[4] == "-" and "T" in ts
+
+
+def test_rows_append_rather_than_replace():
+    rt.log_firing({"ruling_id": "r-1", "outcome": "clean", "duration_ms": 1})
+    rt.log_firing({"ruling_id": "r-2", "outcome": "violation", "duration_ms": 2})
+    assert [r["ruling_id"] for r in _log_lines()] == ["r-1", "r-2"]
+
+
+def test_the_log_directory_is_created_on_first_write():
+    assert not (config.log_dir() / "checks.jsonl").exists()
+    assert rt.log_firing({"ruling_id": "r-1", "outcome": "clean"}) is True
+    assert (config.log_dir() / "checks.jsonl").exists()
+
+
+def test_a_log_that_cannot_be_written_reports_false_and_never_raises(
+        monkeypatch, tmp_path):
+    """A hook that cannot write its own log still has an action to allow or
+    deny. The write failing is not a reason to lose the decision."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(blocker))
+    assert rt.log_firing({"ruling_id": "r-1", "outcome": "clean"}) is False
+
+
+def test_the_firing_log_is_declared_in_the_surface_registry():
+    from daimon_briefing import surfaces
+    entry = [s for s in surfaces.SURFACES if s.shape == "logs/checks.jsonl"]
+    assert entry, "a new file under ~/.daimon must be declared"
+    assert entry[0].plaintext is False
+    assert entry[0].delete == "exempt-no-plaintext"
+
+
+def test_the_firing_log_entry_precedes_the_generic_log_glob():
+    """The registry is order-sensitive: `logs/*.log` would not catch a
+    .jsonl, but the specific declaration still has to sit with the other
+    log shapes rather than after the catch-all."""
+    from daimon_briefing import surfaces
+    shapes = [s.shape for s in surfaces.SURFACES]
+    assert shapes.index("logs/checks.jsonl") < shapes.index("logs/*.log")
