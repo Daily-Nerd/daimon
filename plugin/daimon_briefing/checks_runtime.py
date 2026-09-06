@@ -330,21 +330,21 @@ def _read_file(raw, base):
     paths resolve against the action's working directory, because that is
     what the shell would have done."""
     path = raw if os.path.isabs(raw) else os.path.join(base, raw)
+    # One answer about one file. A stat that decides the cap and an open that
+    # happens afterwards are two answers, and they disagree whenever the file
+    # changes in between; reading one byte past the cap and judging THAT
+    # cannot disagree with itself, and it never holds more than the cap.
     try:
-        size = os.stat(path).st_size
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_SUBJECT_FILE_BYTES + 1)
     except FileNotFoundError:
         return Unresolved("file-missing", f"{raw} does not exist")
     except OSError as exc:
         return Unresolved("file-unreadable", f"{raw}: {exc.strerror or exc}")
-    if size > MAX_SUBJECT_FILE_BYTES:
+    if len(data) > MAX_SUBJECT_FILE_BYTES:
         return Unresolved(
             "file-oversize",
-            f"{raw} is {size} bytes, over the {MAX_SUBJECT_FILE_BYTES} cap")
-    try:
-        with open(path, "rb") as handle:
-            data = handle.read()
-    except OSError as exc:
-        return Unresolved("file-unreadable", f"{raw}: {exc.strerror or exc}")
+            f"{raw} is over the {MAX_SUBJECT_FILE_BYTES} byte cap")
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
@@ -499,6 +499,15 @@ def discard(subject) -> None:
 
 DEFAULT_TIMEOUT = 5.0
 
+# What a check body inherits, plus every LC_* and the three DAIMON_CHECK_*
+# variables the runner sets. A ratified body is human-armed and runs as the
+# user, so this is not a sandbox and does not pretend to be one. It is a blast
+# radius: the body's job is to read one subject file, and handing it every
+# token in the host session widens what a mistake in someone else's script can
+# reach, for nothing. PATH and HOME stay because a body that cannot find its
+# own tools reports check-crashed and looks like a defect in the check.
+_ENV_KEEP = frozenset({"PATH", "HOME", "LANG", "TMPDIR"})
+
 
 def body_name(entry) -> str:
     """The materialized body's file name: the ruling id and the head of the
@@ -577,7 +586,8 @@ def _run(entry_or_body, subject, cwd, timeout, started) -> Outcome:
                    "the check body on disk is not the one this ruling was "
                    "ratified with; run `daimon check sync`")
 
-    env = dict(os.environ)
+    env = {name: value for name, value in os.environ.items()
+           if name in _ENV_KEEP or name.startswith("LC_")}
     env["DAIMON_CHECK_SUBJECT"] = str(getattr(subject, "path", "") or "")
     env["DAIMON_CHECK_COMMAND"] = str(getattr(subject, "command", "") or "")
     env["DAIMON_CHECK_RULING"] = ruling_id

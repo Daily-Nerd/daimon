@@ -580,6 +580,33 @@ def test_a_file_exactly_at_the_cap_still_resolves(tmp_path):
     rt.discard(got)
 
 
+def test_the_cap_is_enforced_by_the_read_not_by_a_prior_stat(tmp_path):
+    """Check-then-read is two answers about one file. A stat that decides the
+    cap and an open that happens afterwards disagree whenever the file grows
+    in between, and the read wins. Reading one byte past the cap and judging
+    THAT is one answer."""
+    big = tmp_path / "grows.md"
+    big.write_bytes(b"x" * 16)
+    real_open = rt.open if hasattr(rt, "open") else open
+
+    def growing(path, *args, **kwargs):
+        # Grow it at the moment of opening: a stat taken earlier is now stale.
+        if str(path).endswith("grows.md"):
+            with real_open(path, "wb") as handle:
+                handle.write(b"x" * (rt.MAX_SUBJECT_FILE_BYTES + 1))
+        return real_open(path, *args, **kwargs)
+
+    import builtins
+    original = builtins.open
+    builtins.open = growing
+    try:
+        got = _resolve(f"gh pr create --body-file {big}", tmp_path)
+    finally:
+        builtins.open = original
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-oversize"
+
+
 def test_a_file_that_is_not_utf8_is_file_binary(tmp_path):
     blob = tmp_path / "blob.bin"
     blob.write_bytes(b"\xff\xfe\x00\x01")
@@ -805,6 +832,40 @@ def test_the_check_reads_standard_input_as_empty_and_does_not_hang(tmp_path):
     got = rt.run(_body(tmp_path, "cat > /dev/null\nexit 0\n"), subject,
                  cwd=str(tmp_path), timeout=5)
     assert got.outcome == "clean"
+    rt.discard(subject)
+
+
+def test_the_body_does_not_inherit_the_parent_environment(tmp_path,
+                                                          monkeypatch):
+    """A ratified body is human-armed and runs as the user, so this is not a
+    sandbox. It is a blast radius: the body has one job, reading a subject
+    file, and handing it every token in the host session widens what a
+    mistake in someone else's script can reach for no gain."""
+    monkeypatch.setenv("MY_API_TOKEN", "zqx-should-not-travel")
+    subject = _subject(tmp_path)
+    out = tmp_path / "seen-env"
+    got = rt.run(_body(tmp_path, f"env > {out}\nexit 0\n"), subject,
+                 cwd=str(tmp_path), timeout=5)
+    assert got.outcome == "clean", got
+    seen = out.read_text(encoding="utf-8")
+    assert "zqx-should-not-travel" not in seen
+    assert "MY_API_TOKEN" not in seen
+    rt.discard(subject)
+
+
+def test_the_body_still_gets_what_it_needs_to_run(tmp_path):
+    """The other half: a minimal environment that dropped PATH would make
+    every body fail to find its own tools, which reads as check-crashed."""
+    subject = _subject(tmp_path)
+    out = tmp_path / "seen-env"
+    entry = _armed(tmp_path, _body(tmp_path, f"env > {out}\nexit 0\n"))
+    assert rt.run(entry, subject, cwd=str(tmp_path), timeout=5).outcome == \
+        "clean"
+    names = {line.split("=", 1)[0]
+             for line in out.read_text(encoding="utf-8").splitlines()
+             if "=" in line}
+    assert {"PATH", "DAIMON_CHECK_SUBJECT", "DAIMON_CHECK_COMMAND",
+            "DAIMON_CHECK_RULING"} <= names
     rt.discard(subject)
 
 

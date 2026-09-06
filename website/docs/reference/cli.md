@@ -71,12 +71,15 @@ What the resolver reads:
 
 | form in the command | what daimon does |
 | --- | --- |
-| `--body-file <path>`, `--body-file=<path>`, `-F <path>` | reads the file |
+| `--body-file <path>`, `--body-file=<path>`, `-F <path>`, `-F<path>` | reads the file |
 | `--notes-file <path>`, `--notes-file=<path>` | reads the file |
-| `-F key=@<path>`, `--field key=@<path>` | reads the file |
-| `<flag> -` with a heredoc in the same command | reads the heredoc text |
+| `-F key=@<path>`, `--field key=@<path>`, `-Fkey=@<path>` | reads the file |
+| `<flag> -` with exactly one heredoc in the command | reads the heredoc text |
 | `<flag> -` with no heredoc | unresolved, cause `stdin-pipe` |
+| more than one heredoc, or more than one argument reading standard input | unresolved, cause `arg-form-unparsed` |
 | any other `@<path>` or `<flag> -` | unresolved, cause `arg-form-unparsed` |
+
+A value attached to a short flag is the same command as a detached one, so `-Fbody.md` is read exactly as `-F body.md` is. Where a heredoc could belong to more than one argument, or an argument could be fed by more than one heredoc, daimon refuses rather than guessing: which one feeds which is a question it cannot answer from the command string alone, and a wrong guess would build the subject from text the action never sends.
 
 Relative paths resolve against the working directory. A file over 1 MiB is `file-oversize`, one that is not UTF-8 text is `file-binary`, and a missing or unreadable one is `file-missing` or `file-unreadable`. One argument daimon cannot read makes the whole subject unresolved, whatever the others say.
 
@@ -89,6 +92,8 @@ Every run ends in exactly one of three outcomes, and they never fold together:
 | `unresolved` | daimon could not prove the subject clean: an argument it could not read, a check that crashed or exceeded its budget, a body that no longer hashes to what the ruling was ratified with, or no `sh` on the host |
 
 `unresolved` is never rendered as clean and never counted as a violation.
+
+The body runs with a minimal environment: `PATH`, `HOME`, `LANG`, the `LC_*` variables and `TMPDIR`, plus the three above. It is not a sandbox — a check you ratified runs as you, and could do anything you could. Trimming the environment only keeps a script whose job is reading one file from being handed every token in the session.
 
 The runner carries its own budget, `DAIMON_CHECK_TIMEOUT`, five seconds by default against a host hook timeout of ten. That budget is not optional: on the hosts measured so far, a hook that reaches the host's own timeout does not block and the action proceeds, so a check without a budget of its own turns a hang into a silent allow. Overrunning kills the check and its whole process group and reports `unresolved`.
 
