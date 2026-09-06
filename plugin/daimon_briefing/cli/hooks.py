@@ -92,12 +92,37 @@ def _cmd_hooks_install(args) -> int:
     return 0
 
 def _cmd_hooks_status(args) -> int:
+    """#943 slice 5: the scripts audit, plus the file those scripts READ.
+
+    A current hook copy over a stale manifest is the shape spec 10 names as a
+    risk: it fails open and is byte-identical to a clean allow, so the audit
+    that reports script drift has to report manifest drift too or the two
+    halves of "the gate is in place" never get checked together.
+
+    The `--json` shape stays a list of host entries, because that is a
+    contract and a script wanting the manifest has `daimon check sync
+    --check --json`. The exit code folds both kinds of drift either way, so
+    CI catches a stale manifest with or without the flag.
+
+    The block is an extra: an unreadable checks directory drops it rather
+    than the report the verb actually owes."""
+    from .. import checks
+
+    from .check import audit_lines
+
     report = _cli._hooks_status_report(Path.home())
+    try:
+        audit = checks.audit(_cli._resolve_project(None))
+    except Exception:  # noqa: BLE001
+        audit = None
     if getattr(args, "json", False):
         print(json.dumps(report, indent=2))
     else:
-        render.render_hooks_status(report)
-    return 1 if any(h["drift"] for h in report) else 0
+        render.render_hooks_status(
+            report,
+            trailing=audit_lines(audit, " (this project)") if audit else ())
+    drift = any(h["drift"] for h in report) or bool(audit and audit.drift)
+    return 1 if drift else 0
 
 
 def register(sub, fmt) -> None:
@@ -113,7 +138,8 @@ def register(sub, fmt) -> None:
     ph_status = hooks_sub.add_parser(
         "status",
         help="audit installed hook copies against the packaged versions "
-             "(CURRENT/STALE/MISSING/NOT INSTALLED); non-zero exit on drift",
+             "(CURRENT/STALE/MISSING/NOT INSTALLED), and this project's check "
+             "manifest against its ledger; non-zero exit on either drift",
     )
     ph_status.add_argument("--json", action="store_true", help="machine-readable output")
     ph_status.set_defaults(func=_cli._cmd_hooks_status)

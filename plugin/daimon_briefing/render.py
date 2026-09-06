@@ -1207,10 +1207,15 @@ def render_hooks_install(lines) -> None:
     _render_lines(lines)
 
 
-def render_hooks_status(report) -> None:
+def render_hooks_status(report, trailing=()) -> None:
     """Per-host, per-file drift audit (#266). NOT INSTALLED hosts get one line;
     installed hosts list each file's verdict, the registration state where the
-    host uses one, and a single fix hint when anything drifted."""
+    host uses one, and a single fix hint when anything drifted.
+
+    `trailing` is the #943 manifest block: the file the installed scripts
+    READ, audited against this project's ledger. It follows the per-host
+    lines rather than joining them because it is not per host, and it is
+    empty on a machine where the audit could not run."""
     lines: list[str] = []
     for h in report:
         if not h["installed"]:
@@ -1225,6 +1230,7 @@ def render_hooks_status(report) -> None:
             lines.append(f"  → fix: daimon hooks install {h['host']}")
     if not lines:
         lines.append("no packaged hook hosts")
+    lines.extend(trailing)
     _render_lines(lines)
 
 

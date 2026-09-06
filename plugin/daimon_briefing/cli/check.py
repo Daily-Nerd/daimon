@@ -16,18 +16,22 @@ import daimon_briefing.cli as _cli
 from .. import checks, render
 
 
-def audit_lines(audit) -> list:
+def audit_lines(audit, scope: str = "") -> list:
     """The manifest audit as text, shared by `check sync --check` and the
     `hooks status` trailing block so the two cannot word the same fact
-    differently."""
+    differently.
+
+    `scope` qualifies the label where the surrounding command is not already
+    project-scoped: `hooks status` audits every host on the machine, and an
+    unqualified manifest line there would read as machine-wide."""
     if audit.state == "unreadable":
-        return ["checks manifest: could not be read",
+        return [f"checks manifest{scope}: could not be read",
                 "  daimon wrote something it can no longer parse, so nothing "
                 "here says what is armed",
                 "  fix: daimon check sync"]
     if not audit.drift:
-        return [f"checks manifest: in step, {len(audit.have)} armed"]
-    lines = ["checks manifest: drifted"]
+        return [f"checks manifest{scope}: in step, {len(audit.have)} armed"]
+    lines = [f"checks manifest{scope}: drifted"]
     for label, ids in (("missing from the manifest", audit.missing),
                        ("no longer wanted", audit.stale),
                        ("body missing", audit.body_missing),
