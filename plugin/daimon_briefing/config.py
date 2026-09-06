@@ -561,6 +561,55 @@ def resolve_project_root(raw: str | None) -> str | None:
     return top or raw
 
 
+@overload
+def resolve_project_dir(raw: str) -> str: ...
+@overload
+def resolve_project_dir(raw: None) -> None: ...
+def resolve_project_dir(raw: str | None) -> str | None:
+    """The ONE canonical answer to "which project directory does this value name"
+    (#948). Absolute, symlinks collapsed, then normalized to the git toplevel.
+
+    Every entry point that routes a caller to a checkpoint bucket must resolve
+    through here: the CLI (`_resolve_project`) and the library ledger helpers
+    alike. Before #948 only the CLI resolved, so a host calling
+    `refutations.assert_ruling(project_dir="<repo>/plugin")` wrote the
+    `-repo-plugin` bucket while `daimon ruling list --project <repo>/plugin`
+    read `-repo`, and the read printed an empty list at exit 0. The two
+    resolutions living in one function is what stops them drifting again.
+
+    It is NOT folded into `store.project_slug`. That function is a documented
+    character transform pinned by `daimon slug` (#913): it must answer for a
+    path daimon has never seen, with no filesystem and no git access, and
+    store.py deliberately carries no subprocess dependency. Resolution is
+    policy and lives here; slugging is a rule and lives there.
+
+    A value with NO path separator that names no existing directory is a
+    BUCKET SLUG, and passes through untouched. `--slug` routing (#766 slice 4),
+    `brief --slug`, and every bucket-iterating reader in pending/requests hand
+    slugs in as `project_dir`, relying on `store.project_slug` being idempotent
+    on them. Resolving `-Users-x-proj` against the cwd would silently
+    re-route those to the caller's own bucket.
+
+    Falsy `raw` passes through unchanged, keeping the "unknown project falls
+    back to the global pointer" contract. Never raises: `Path.resolve()` is
+    non-strict, and `resolve_project_root` returns its input on any git
+    failure.
+    """
+    if not raw:
+        return raw
+    text = str(raw)
+    looks_like_path = (os.sep in text
+                       or (os.altsep is not None and os.altsep in text)
+                       or os.path.isdir(text))
+    if not looks_like_path:
+        return raw
+    try:
+        absolute = str(Path(text).expanduser().resolve())
+    except (OSError, RuntimeError, ValueError):
+        return raw
+    return resolve_project_root(absolute)
+
+
 def git_branch(project_dir) -> str | None:
     """Current branch name for a project working dir at capture time (#222), or
     None on ANY failure/ambiguity — never raises, never returns an empty string:

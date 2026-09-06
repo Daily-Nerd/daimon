@@ -324,6 +324,82 @@ def test_resolve_project_root_symmetry_subdir_and_root_share_slug(tmp_path):
     assert store.project_slug(from_subdir) == store.project_slug(from_root)
 
 
+# ---- resolve_project_dir: the ONE resolution the CLI and the library share (#948) ----
+
+
+def test_resolve_project_dir_subdir_maps_to_git_toplevel(tmp_path):
+    """The defect in one line: a library caller standing in a subdir must route
+    to the same bucket the CLI routes to from the repo root."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    subdir = repo / "plugin" / "pkg"
+    subdir.mkdir(parents=True)
+
+    assert Path(config.resolve_project_dir(str(subdir))) == repo.resolve()
+
+
+def test_resolve_project_dir_non_git_dir_returns_absolute_path(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert config.resolve_project_dir(str(plain)) == str(plain.resolve())
+
+
+def test_resolve_project_dir_none_and_empty_passthrough():
+    assert config.resolve_project_dir(None) is None
+    assert config.resolve_project_dir("") == ""
+
+
+def test_resolve_project_dir_slug_passes_through_untouched(tmp_path,
+                                                           monkeypatch):
+    """`--slug` routing, `brief --slug` and every bucket-iterating reader hand a
+    BUCKET SLUG in as project_dir. A slug has no separator and names no
+    directory, so it must never be resolved against the cwd."""
+    monkeypatch.chdir(tmp_path)
+    assert config.resolve_project_dir("-Users-x-proj") == "-Users-x-proj"
+
+
+def test_resolve_project_dir_dot_inside_a_git_subdir(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    subdir = repo / "plugin"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)
+
+    assert Path(config.resolve_project_dir(".")) == repo.resolve()
+
+
+def test_resolve_project_dir_collapses_a_symlink(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):  # pragma: no cover - platform gate
+        import pytest
+        pytest.skip("no symlink support on this platform")
+
+    assert config.resolve_project_dir(str(link)) == str(real.resolve())
+
+
+def test_resolve_project_dir_agrees_with_the_cli_resolver(tmp_path):
+    """#948: the two resolvers must not drift. If this ever fails, a write and a
+    read of the same project land in different buckets."""
+    from daimon_briefing import cli
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    subdir = repo / "plugin"
+    subdir.mkdir()
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    for raw in (str(subdir), str(plain)):
+        assert config.resolve_project_dir(raw) == cli._resolve_project(raw)
+
+
 def test_scar_harvest_opt_in(monkeypatch):
     monkeypatch.delenv("DAIMON_SCAR_HARVEST", raising=False)
     assert config.scar_harvest_enabled() is False
