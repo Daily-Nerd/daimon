@@ -26,6 +26,7 @@ proceeds and nothing anywhere says why.
 """
 
 import importlib.util
+import json
 from pathlib import Path
 from typing import NamedTuple
 
@@ -71,6 +72,13 @@ INTENTS = ("enforce", "warn", "record-only")
 
 # The decision encoders a profile may name.
 ENCODERS = ("json-permission", "exit2-stderr")
+
+# What the hook actually tells the host, and therefore what reaches the
+# firing log's `decision_emitted`. A record-only mode still emits `allow`:
+# nothing was written to the host, and the `mode` column is where "this only
+# went to the log" is already said. Claiming a fourth word here would report
+# a channel the host was never given.
+DECISIONS = ("allow", "warn", "deny")
 
 
 class Profile(NamedTuple):
@@ -170,3 +178,84 @@ def mode_for(profile, intent) -> str:
     asked = intent if intent in INTENTS else "record-only"
     mode = caps.get(asked, "unsupported")
     return mode if mode in MODES else "unsupported"
+
+
+# ---- encoders (spec section 4) -------------------------------------------
+
+
+class Emission(NamedTuple):
+    """What the hook writes and what it exits with.
+
+    Three channels because the hosts do not agree on one. Claude Code and
+    Codex read a JSON object on stdout and treat a non-zero exit as a hook
+    error; Windsurf documents exit 2 with the reason on stderr. Carrying all
+    three keeps the Windsurf row a row rather than a special case, and the
+    tests pin stderr empty and the exit code 0 on every path of the two
+    hosts that actually ship a script."""
+
+    stdout: str
+    stderr: str
+    exit_code: int
+
+
+_SILENT = Emission("", "", 0)
+
+
+def _encode_json_permission(profile, decision, text) -> Emission:
+    """The measured path on Claude Code and Codex: one JSON object, exit 0.
+
+    The key names are the host's contract, so they are pinned byte for byte
+    by a literal comparison in the tests. A rename here is a deny that
+    silently becomes an allow, and a parsed-dict assertion would not see it.
+
+    A silent allow writes NOTHING rather than an object saying `allow`: the
+    hosts treat absent output as no opinion, and an object claiming a
+    decision is a decision daimon did not make."""
+    event = str(getattr(profile, "event", "") or "")
+    if decision == "deny":
+        return Emission(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "permissionDecision": "deny",
+                "permissionDecisionReason": text,
+            },
+        }, sort_keys=True), "", 0)
+    if decision == "warn" and text:
+        return Emission(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "permissionDecision": "allow",
+            },
+            "systemMessage": text,
+        }, sort_keys=True), "", 0)
+    return _SILENT
+
+
+def _encode_exit2_stderr(profile, decision, text) -> Emission:
+    """Windsurf's documented channel, unmeasured. Reachable only once a
+    Windsurf profile has a mode above `unsupported`, which is after a live
+    probe; until then this exists so the row is complete and its shape is
+    pinned by a test rather than discovered on someone's machine."""
+    if decision not in ("deny", "warn") or not text:
+        return _SILENT
+    return Emission("", text + "\n", 2 if decision == "deny" else 0)
+
+
+_ENCODERS = {
+    "json-permission": _encode_json_permission,
+    "exit2-stderr": _encode_exit2_stderr,
+}
+
+
+def encode(profile, decision, text) -> Emission:
+    """Render one decision the way this host reads it.
+
+    An unknown decision word or an unknown encoder name is a silent allow,
+    never a deny: a value this build does not recognise must not become the
+    strongest thing the host can be asked to do."""
+    if decision not in DECISIONS:
+        return _SILENT
+    fn = _ENCODERS.get(str(getattr(profile, "encoder", "")))
+    if fn is None:
+        return _SILENT
+    return fn(profile, decision, str(text or ""))

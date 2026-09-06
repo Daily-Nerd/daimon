@@ -184,3 +184,119 @@ def test_mode_for_survives_a_profile_that_is_not_one():
     shell action earns its own answer rather than relying on the net."""
     assert ch.mode_for(None, "enforce") == "unsupported"
     assert ch.mode_for(object(), "warn") == "unsupported"
+
+
+# ---- encoders (spec section 4), byte for byte ----------------------------
+
+REASON = "voice gate: no em-dash in a public body"
+
+
+def test_the_json_deny_is_byte_exact():
+    """A literal, not a parsed dict. The host reads these key names and a
+    rename is a deny that silently becomes an allow: a parsed comparison
+    would pass on a dict that spelled every key differently."""
+    out = ch.encode(ch.PROFILES["claude-code"], "deny", REASON)
+    assert out.stdout == (
+        '{"hookSpecificOutput": {"hookEventName": "PreToolUse", '
+        '"permissionDecision": "deny", "permissionDecisionReason": '
+        '"voice gate: no em-dash in a public body"}}')
+    assert out.stderr == ""
+    assert out.exit_code == 0
+
+
+def test_the_json_warn_is_an_allow_carrying_a_message():
+    """Byte-exact for the same reason. A warn that came out as a deny is an
+    action blocked by a check nobody armed to block."""
+    out = ch.encode(ch.PROFILES["claude-code"], "warn", REASON)
+    assert out.stdout == (
+        '{"hookSpecificOutput": {"hookEventName": "PreToolUse", '
+        '"permissionDecision": "allow"}, "systemMessage": '
+        '"voice gate: no em-dash in a public body"}')
+    assert out.stderr == ""
+    assert out.exit_code == 0
+
+
+def test_a_silent_allow_writes_nothing_at_all():
+    """Not an empty JSON object: the hosts treat absent output as no opinion,
+    and an object claiming a decision is a decision daimon did not make."""
+    for host in ("claude-code", "codex"):
+        out = ch.encode(ch.PROFILES[host], "allow", REASON)
+        assert out.stdout == ""
+        assert out.stderr == ""
+        assert out.exit_code == 0
+
+
+def test_a_warn_with_nothing_to_say_is_a_silent_allow():
+    out = ch.encode(ch.PROFILES["claude-code"], "warn", "")
+    assert out.stdout == ""
+
+
+def test_the_event_name_comes_from_the_profile_not_a_literal():
+    """The proof that the encoder is shared rather than copied per host: two
+    profiles, one function, and the event name is read off the row."""
+    import json as _json
+    for host in ("claude-code", "codex"):
+        data = _json.loads(ch.encode(ch.PROFILES[host], "deny", REASON).stdout)
+        assert (data["hookSpecificOutput"]["hookEventName"]
+                == ch.PROFILES[host].event)
+
+
+@pytest.mark.parametrize("host", ["claude-code", "codex"])
+@pytest.mark.parametrize("decision", ["deny", "warn", "allow"])
+def test_the_json_encoder_writes_one_line_and_exits_zero(host, decision):
+    """One JSON object or nothing, on one line, with no trailing text. The
+    hosts parse stdout, so a second line or a stray newline is a decision
+    they cannot read."""
+    out = ch.encode(ch.PROFILES[host], decision, REASON)
+    assert out.exit_code == 0
+    assert out.stderr == ""
+    assert "\n" not in out.stdout
+    if out.stdout:
+        import json as _json
+        _json.loads(out.stdout)
+
+
+def test_a_non_ascii_reason_survives_as_escaped_ascii():
+    """A check's stderr is arbitrary text. Escaping keeps the payload
+    readable on a host whose pipe is not UTF-8 without losing the reason."""
+    import json as _json
+    out = ch.encode(ch.PROFILES["claude-code"], "deny", "café ✅")
+    assert out.stdout.isascii()
+    data = _json.loads(out.stdout)
+    assert (data["hookSpecificOutput"]["permissionDecisionReason"]
+            == "café ✅")
+
+
+def test_the_windsurf_encoder_uses_the_documented_exit_two_channel():
+    """The row is complete so the profile is a row and not a special case.
+    With every mode unsupported nothing in the pipeline reaches a deny here,
+    which is why the shape is pinned by a test rather than by a live host."""
+    out = ch.encode(ch.PROFILES["windsurf"], "deny", REASON)
+    assert out.stdout == ""
+    assert out.stderr == REASON + "\n"
+    assert out.exit_code == 2
+
+    warn = ch.encode(ch.PROFILES["windsurf"], "warn", REASON)
+    assert warn.exit_code == 0
+    assert warn.stderr == REASON + "\n"
+
+    allow = ch.encode(ch.PROFILES["windsurf"], "allow", REASON)
+    assert (allow.stdout, allow.stderr, allow.exit_code) == ("", "", 0)
+
+
+def test_an_unknown_decision_word_is_a_silent_allow():
+    """Never a raise and never a deny. A word this build does not know must
+    not become the strongest thing the host can do."""
+    for host in ch.PROFILES:
+        out = ch.encode(ch.PROFILES[host], "block", REASON)
+        assert (out.stdout, out.stderr, out.exit_code) == ("", "", 0)
+
+
+def test_an_unknown_encoder_name_is_a_silent_allow():
+    broken = ch.PROFILES["claude-code"]._replace(encoder="telepathy")
+    out = ch.encode(broken, "deny", REASON)
+    assert (out.stdout, out.stderr, out.exit_code) == ("", "", 0)
+
+
+def test_the_decision_vocabulary_is_what_the_firing_log_records():
+    assert ch.DECISIONS == ("allow", "warn", "deny")
