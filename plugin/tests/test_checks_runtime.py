@@ -1,10 +1,14 @@
 """#943 slice 2: the standalone check runtime.
 
 `checks_runtime.py` is loaded by host hook scripts that cannot import the
-venv-only package, so every test here loads the SHIPPED copy by file location
-under its own module name — the way a hook will. Byte-identity with the
-canonical module is a separate drift test (test_hooks_install.py); together
-they mean these assertions bind the canonical file too.
+venv-only package, so every test here loads it by FILE LOCATION under its own
+module name, the way a hook will: a relative import or a package import in
+the module fails at that load rather than on someone's host.
+
+It loads the CANONICAL file, not the shipped copy. Byte-identity is a
+separate drift test (test_hooks_install.py), and keeping the two concerns
+apart means an edit that has not been synced yet fails one obvious test
+instead of every test in this file.
 """
 
 import ast
@@ -18,16 +22,14 @@ from daimon_briefing import config
 
 CANONICAL = (Path(__file__).parents[1] / "daimon_briefing"
              / "checks_runtime.py")
-SHIPPED = (Path(__file__).parents[1] / "daimon_briefing" / "_hooks"
-           / "checks_runtime.py")
 
 
 def _runtime():
-    """The shipped runtime, loaded standalone. A relative import or a
-    `daimon_briefing` import in the canonical file fails HERE, which is the
-    only place it can fail before a host hook hits it in production."""
+    """The runtime, loaded standalone. A relative import or a
+    `daimon_briefing` import in it fails HERE, which is the only place it can
+    fail before a host hook hits it in production."""
     spec = importlib.util.spec_from_file_location(
-        "_checks_runtime_under_test", SHIPPED)
+        "_checks_runtime_under_test", CANONICAL)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -273,3 +275,230 @@ def test_an_unusable_pattern_matches_nothing_and_never_raises():
 
 def test_matches_tolerates_a_command_that_is_not_a_string():
     assert rt.matches(_entry("x"), None) is False
+
+
+# ---- resolver: spec 3.2, every row both ways ------------------------------
+
+
+def _text_of(subject):
+    return Path(subject.path).read_text(encoding="utf-8")
+
+
+def _resolve(command, cwd):
+    got = rt.resolve(command, str(cwd))
+    return got
+
+
+def test_a_command_with_no_file_argument_still_resolves(tmp_path):
+    """The command string alone is a subject. A check that only inspects the
+    command must not report unresolved for having nothing to read."""
+    got = _resolve("gh pr create --title x", tmp_path)
+    assert isinstance(got, rt.Subject)
+    assert got.files == ()
+    assert "gh pr create --title x" in _text_of(got)
+    rt.discard(got)
+
+
+def test_the_subject_file_is_owner_only_and_outside_the_daimon_home(tmp_path):
+    """0o600, and in the system temp dir on purpose: a file under ~/.daimon
+    would have to be declared in the surface registry and carry a deletion
+    story, and this one exists for the length of one exec."""
+    got = _resolve("gh pr create", tmp_path)
+    path = Path(got.path)
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert config.checks_dir() not in path.parents
+    assert Path.home() not in path.parents
+    rt.discard(got)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("template", [
+    "gh pr create --body-file {p}",
+    "gh pr create --body-file={p}",
+    "gh issue create -F {p}",
+    "gh release create v1 --notes-file {p}",
+    "gh release create v1 --notes-file={p}",
+    "gh api repos/x -F body=@{p}",
+    "gh api repos/x --field body=@{p}",
+    "gh api repos/x --field=body=@{p}",
+])
+def test_every_resolving_row_reads_the_file(template, tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("the body text\n", encoding="utf-8")
+    got = _resolve(template.format(p=body), tmp_path)
+    assert isinstance(got, rt.Unresolved) is False, getattr(got, "cause", "")
+    assert "the body text" in _text_of(got)
+    rt.discard(got)
+
+
+def test_a_relative_path_resolves_against_the_working_directory(tmp_path):
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "b.md").write_text("relative body", encoding="utf-8")
+    got = _resolve("gh pr create --body-file notes/b.md", tmp_path)
+    assert "relative body" in _text_of(got)
+    rt.discard(got)
+
+
+def test_the_subject_is_the_command_then_a_separator_then_headed_file_bytes(
+        tmp_path):
+    a = tmp_path / "a.md"
+    b = tmp_path / "b.md"
+    a.write_text("AAA", encoding="utf-8")
+    b.write_text("BBB", encoding="utf-8")
+    command = f"gh pr create --body-file {a} --notes-file {b}"
+    got = _resolve(command, tmp_path)
+    text = _text_of(got)
+    assert text.startswith(command)
+    # Each file is announced by the flag it came from, in command order.
+    # Read AFTER the separator: the command itself names both flags, so a
+    # search over the whole subject would find those and prove nothing.
+    body = text.split(rt.SUBJECT_SEPARATOR, 1)[1]
+    assert body.index("--body-file") < body.index("AAA") < \
+        body.index("--notes-file") < body.index("BBB")
+    assert [flag for flag, _ in got.files] == ["--body-file", "--notes-file"]
+    rt.discard(got)
+
+
+def test_a_heredoc_body_is_read_out_of_the_command_string(tmp_path):
+    command = ("gh pr create --body-file - <<'EOF'\n"
+               "the heredoc body\n"
+               "EOF")
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Subject)
+    assert "the heredoc body" in _text_of(got)
+    rt.discard(got)
+
+
+def test_an_unquoted_heredoc_terminator_resolves_the_same_way(tmp_path):
+    command = "gh pr create --body-file - <<EOF\nunquoted body\nEOF"
+    got = _resolve(command, tmp_path)
+    assert "unquoted body" in _text_of(got)
+    rt.discard(got)
+
+
+def test_a_dash_suppressed_heredoc_resolves(tmp_path):
+    command = "gh pr create --body-file - <<-EOF\n\tindented body\n\tEOF"
+    got = _resolve(command, tmp_path)
+    assert "indented body" in _text_of(got)
+    rt.discard(got)
+
+
+def test_a_dash_fed_by_a_pipe_is_unresolved_as_stdin_pipe(tmp_path):
+    """No heredoc in the command string means the bytes are arriving from a
+    process daimon cannot see. Never clean."""
+    got = _resolve("cat notes.md | gh pr create --body-file -", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "stdin-pipe"
+
+
+def test_a_dash_after_a_flag_outside_the_table_is_arg_form_unparsed(tmp_path):
+    got = _resolve("gh pr create --input -", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+def test_an_at_path_outside_the_table_is_arg_form_unparsed(tmp_path):
+    payload = tmp_path / "payload.json"
+    payload.write_text("{}", encoding="utf-8")
+    got = _resolve(f"curl -d @{payload} https://x", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+def test_a_literal_field_value_is_not_a_file_and_resolves(tmp_path):
+    """`-F key=value` with no `@` names no file. Reporting unresolved here
+    would make every gh api call unprovable for no reason."""
+    got = _resolve("gh api repos/x -F name=daimon", tmp_path)
+    assert isinstance(got, rt.Subject)
+    assert got.files == ()
+    rt.discard(got)
+
+
+def test_a_command_that_cannot_be_tokenized_is_arg_form_unparsed(tmp_path):
+    got = _resolve("gh pr create --title 'unbalanced", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+# ---- resolver: the file failure causes ------------------------------------
+
+
+def test_a_missing_file_is_file_missing(tmp_path):
+    got = _resolve(f"gh pr create --body-file {tmp_path}/gone.md", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
+
+
+def test_an_unreadable_file_is_file_unreadable(tmp_path):
+    if os.getuid() == 0:
+        pytest.skip("root reads anything; the mode bit proves nothing")
+    body = tmp_path / "locked.md"
+    body.write_text("secret", encoding="utf-8")
+    body.chmod(0o000)
+    try:
+        got = _resolve(f"gh pr create --body-file {body}", tmp_path)
+        assert isinstance(got, rt.Unresolved)
+        assert got.cause == "file-unreadable"
+    finally:
+        body.chmod(0o600)
+
+
+def test_a_directory_argument_is_file_unreadable(tmp_path):
+    (tmp_path / "adir").mkdir()
+    got = _resolve(f"gh pr create --body-file {tmp_path}/adir", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-unreadable"
+
+
+def test_a_file_over_the_cap_is_file_oversize(tmp_path):
+    big = tmp_path / "big.md"
+    big.write_bytes(b"x" * (rt.MAX_SUBJECT_FILE_BYTES + 1))
+    got = _resolve(f"gh pr create --body-file {big}", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-oversize"
+
+
+def test_a_file_exactly_at_the_cap_still_resolves(tmp_path):
+    at = tmp_path / "at.md"
+    at.write_bytes(b"x" * rt.MAX_SUBJECT_FILE_BYTES)
+    got = _resolve(f"gh pr create --body-file {at}", tmp_path)
+    assert isinstance(got, rt.Subject)
+    rt.discard(got)
+
+
+def test_a_file_that_is_not_utf8_is_file_binary(tmp_path):
+    blob = tmp_path / "blob.bin"
+    blob.write_bytes(b"\xff\xfe\x00\x01")
+    got = _resolve(f"gh pr create --body-file {blob}", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-binary"
+
+
+def test_the_first_failure_wins_and_no_subject_file_is_left_behind(
+        tmp_path, monkeypatch):
+    """Left to right, and fail-closed: one unreadable argument means daimon
+    cannot prove the subject clean, whatever the other arguments say. The
+    temp dir is redirected so the leftover assertion is about THIS call and
+    not about whatever else is in /tmp."""
+    sink = tmp_path / "tmpsink"
+    sink.mkdir()
+    monkeypatch.setattr(rt.tempfile, "tempdir", str(sink))
+    ok = tmp_path / "ok.md"
+    ok.write_text("fine", encoding="utf-8")
+    got = _resolve(
+        f"gh pr create --body-file {tmp_path}/gone.md --notes-file {ok}",
+        tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
+    assert list(sink.iterdir()) == [], "a subject file was left behind"
+
+
+def test_every_cause_the_resolver_emits_is_a_declared_cause():
+    assert {"file-missing", "file-unreadable", "file-oversize", "file-binary",
+            "stdin-pipe", "arg-form-unparsed"} <= rt.CAUSES
+
+
+def test_resolve_never_raises_on_a_command_that_is_not_a_string(tmp_path):
+    got = rt.resolve(None, str(tmp_path))
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"

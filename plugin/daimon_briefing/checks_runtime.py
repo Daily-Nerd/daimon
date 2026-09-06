@@ -26,11 +26,28 @@ what happened is that daimon could not tell.
 import json
 import os
 import re
+import shlex
+import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
 MANIFEST_NAME = "manifest.json"
 FIRING_LOG_NAME = "checks.jsonl"
+
+# Spec 2.3. `unresolved` is one outcome with many causes, and the set is
+# closed: a cause outside it means a code path invented a state no surface
+# knows how to render.
+CAUSES = frozenset({
+    "file-missing", "file-unreadable", "file-oversize", "file-binary",
+    "stdin-pipe", "arg-form-unparsed", "check-timeout", "check-crashed",
+    "body-hash-mismatch", "runtime-missing",
+})
+
+# A file argument daimon will read into the subject. Above this it reports
+# file-oversize rather than paying to read it: the point of the cap is that
+# the hook's budget is spent before the host's, not that large files are
+# suspicious.
+MAX_SUBJECT_FILE_BYTES = 1024 * 1024
 
 # Scar 0022 applied to the SUBJECT rather than the pattern. `check.match` is
 # caller-supplied and capped at 200 bytes, which bounds its length and says
@@ -48,6 +65,22 @@ class Manifest(NamedTuple):
     facts and folding them would report an unwritten install as a broken
     one."""
     entries: list
+    reason: str
+
+
+class Subject(NamedTuple):
+    """A materialized subject: the command string plus every file argument
+    daimon could read. `path` is a temp file the CALLER must hand back to
+    `discard` once the check has run."""
+    path: str
+    files: tuple
+
+
+class Unresolved(NamedTuple):
+    """Daimon could not prove the subject clean. Never rendered as clean and
+    never counted as a violation. `reason` is for a human and may name a
+    path; the firing log carries the cause and never the reason."""
+    cause: str
     reason: str
 
 
@@ -201,3 +234,188 @@ def matches(entry, command) -> bool:
         return re.search(pattern, subject) is not None
     except (re.error, RecursionError):
         return False
+
+
+# ---- resolver (spec 3.2) --------------------------------------------------
+
+SUBJECT_SEPARATOR = "--- daimon:subject ---"
+
+# Flags whose value is a path to read. `-F` is gh's short form of
+# --body-file on `pr create` / `issue create` AND its field flag on `api`,
+# so it appears in both tables and the value's shape decides.
+_PATH_FLAGS = ("--body-file", "--notes-file", "-F")
+_FIELD_FLAGS = ("-F", "--field")
+_KNOWN_FLAGS = frozenset(_PATH_FLAGS) | frozenset(_FIELD_FLAGS)
+
+# A heredoc puts the body INSIDE the command string, so `--body-file -` is
+# resolvable after all. The terminator may be quoted (no expansion), and
+# `<<-` allows a tab-indented terminator line.
+#
+# The lazy body is a scan for the terminator, not an ambiguous alternation,
+# so scar 0022's backtracking shape does not apply. The bound that does apply
+# is upstream: this runs only on a command the prefilter already matched.
+_HEREDOC_RE = re.compile(
+    r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n[ \t]*\2(?=\s|$)", re.DOTALL)
+
+
+def _split_attached(token):
+    """`--body-file=x` -> ("--body-file", "x", True); anything else is left
+    for the two-token form."""
+    if token.startswith("-") and "=" in token:
+        head, _, tail = token.partition("=")
+        if head in _KNOWN_FLAGS:
+            return head, tail, True
+    return token, "", False
+
+
+def _read_file(raw, base):
+    """The file's text, or the Unresolved cause that stopped it. Relative
+    paths resolve against the action's working directory, because that is
+    what the shell would have done."""
+    path = raw if os.path.isabs(raw) else os.path.join(base, raw)
+    try:
+        size = os.stat(path).st_size
+    except FileNotFoundError:
+        return Unresolved("file-missing", f"{raw} does not exist")
+    except OSError as exc:
+        return Unresolved("file-unreadable", f"{raw}: {exc.strerror or exc}")
+    if size > MAX_SUBJECT_FILE_BYTES:
+        return Unresolved(
+            "file-oversize",
+            f"{raw} is {size} bytes, over the {MAX_SUBJECT_FILE_BYTES} cap")
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError as exc:
+        return Unresolved("file-unreadable", f"{raw}: {exc.strerror or exc}")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return Unresolved("file-binary", f"{raw} is not UTF-8 text")
+
+
+def _subject_text(command, reads) -> str:
+    parts = [command, "\n", SUBJECT_SEPARATOR, "\n"]
+    for flag, source, text in reads:
+        parts.append(f"--- daimon:file {flag} {source} ---\n")
+        parts.append(text)
+        if text and not text.endswith("\n"):
+            parts.append("\n")
+    return "".join(parts)
+
+
+def resolve(command, cwd):
+    """The action's subject, or the cause daimon could not build one.
+
+    Subject = the command string, a separator, then every resolved file's
+    bytes under a header naming the flag it came from. Written to a 0o600
+    file in the SYSTEM temp dir: a file under ~/.daimon would have to be
+    declared in the surface registry and carry a deletion story, and this
+    one lives for the length of one exec.
+
+    Fail-closed and first-failure-wins. One argument daimon cannot read
+    means it cannot prove the subject clean, whatever the others say."""
+    if not isinstance(command, str):
+        return Unresolved("arg-form-unparsed", "the command is not a string")
+    base = cwd if isinstance(cwd, str) and cwd else os.getcwd()
+
+    heredocs: list = []
+
+    def _take(match):
+        heredocs.append(match.group(3))
+        return " "
+
+    try:
+        tokens = shlex.split(_HEREDOC_RE.sub(_take, command), posix=True)
+    except ValueError as exc:
+        return Unresolved("arg-form-unparsed",
+                          f"the command could not be tokenized: {exc}")
+
+    reads: list = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        flag, value, attached = _split_attached(token)
+        if flag not in _KNOWN_FLAGS:
+            # Row 6: a form outside the table is never assumed harmless.
+            if token == "-" and index and tokens[index - 1].startswith("-"):
+                return Unresolved(
+                    "arg-form-unparsed",
+                    f"{tokens[index - 1]} reads standard input in a form "
+                    "daimon does not parse")
+            if token.startswith("@") and len(token) > 1:
+                return Unresolved(
+                    "arg-form-unparsed",
+                    f"{token} names a file in a form daimon does not parse")
+            index += 1
+            continue
+        if not attached:
+            index += 1
+            if index >= len(tokens):
+                return Unresolved("arg-form-unparsed",
+                                  f"{flag} was given no value")
+            value = tokens[index]
+        index += 1
+
+        if value == "-":
+            if not heredocs:
+                return Unresolved(
+                    "stdin-pipe",
+                    f"{flag} reads standard input and the command carries no "
+                    "heredoc, so the bytes come from a process daimon cannot "
+                    "see")
+            reads.append((flag, "<heredoc>", heredocs.pop(0)))
+            continue
+        raw = value
+        if flag in _FIELD_FLAGS and "=" in value:
+            _, _, rhs = value.partition("=")
+            if not rhs.startswith("@"):
+                # A literal field value names no file. Reporting unresolved
+                # here would make every `gh api -F name=x` unprovable for
+                # nothing.
+                continue
+            raw = rhs[1:]
+        elif flag in _FIELD_FLAGS and value.startswith("@"):
+            raw = value[1:]
+        elif flag not in _PATH_FLAGS:
+            continue
+        if not raw:
+            return Unresolved("arg-form-unparsed",
+                              f"{flag} was given an empty path")
+        text = _read_file(raw, base)
+        if isinstance(text, Unresolved):
+            return text
+        reads.append((flag, raw, text))
+
+    handle_fd, path = tempfile.mkstemp(prefix="daimon-check-",
+                                       suffix=".subject")
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            handle.write(_subject_text(command, reads))
+        # mkstemp is already umask-independent; stated again so the mode is
+        # a property of this file rather than of the stdlib's default.
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        # Not a cause the spec's table anticipated: the subject could not be
+        # built because daimon's own temp dir failed. It is unresolved either
+        # way, and `check-crashed` is the cause that says the machinery, not
+        # the argument, is what went wrong.
+        return Unresolved("check-crashed",
+                          f"the subject file could not be written: {exc}")
+    return Subject(path, tuple((flag, source) for flag, source, _ in reads))
+
+
+def discard(subject) -> None:
+    """Remove a materialized subject. Never raises: it runs in a `finally`
+    on a path that already has an outcome to report."""
+    path = getattr(subject, "path", None)
+    if not isinstance(path, str) or not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
