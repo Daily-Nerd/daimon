@@ -28,6 +28,7 @@ proceeds and nothing anywhere says why.
 import importlib.util
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -454,3 +455,72 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
                          cause=outcome.cause, decision=decision,
                          duration_ms=outcome.duration_ms))
     return Decision(emission.stdout, emission.stderr, emission.exit_code, rows)
+
+
+# ---- what the thin per-host scripts call ---------------------------------
+
+# Said on a host that renders a message channel, and only there. A host with
+# no channel for it would be told nothing either way, and the firing log is
+# the honest surface for that fact except that there is no runtime to write
+# it with, which is the state being reported.
+RUNTIME_MISSING = "daimon: check runtime missing, nothing enforced"
+
+
+def _read_payload(stream) -> dict:
+    """The host's payload, or an empty one. Unparseable stdin, a closed pipe
+    and a payload that is not an object are all the same fact here: this
+    process cannot see the action, so it has nothing to say about it."""
+    try:
+        raw = (stream if stream is not None else sys.stdin).read()
+    except Exception:  # noqa: BLE001
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def main(host, stdin=None, stdout=None, stderr=None) -> int:
+    """Run this host's pre-action check and write the decision.
+
+    The whole per-host script is a call to this with a profile name. Reads
+    the payload, decides, records every row, writes the encoded decision
+    once at the end, and returns the exit code the encoder chose, which is 0
+    for every host that ships a script today.
+
+    Writing stdout LAST and once is deliberate: a partial object on a host
+    that parses stdout is worse than no object, and an exception after a
+    first write could leave one."""
+    out = stdout if stdout is not None else sys.stdout
+    err = stderr if stderr is not None else sys.stderr
+    profile = PROFILES.get(host)
+    if profile is None:
+        return 0
+    rt = runtime()
+    try:
+        if rt is None:
+            # Nothing to check with and nothing to write a row with. Say so
+            # where the host has a channel for it; a warn that degrades below
+            # `warn` on this host has nowhere to go, so it goes nowhere.
+            if mode_for(profile, "warn") == "warn":
+                emission = encode(profile, "warn", RUNTIME_MISSING)
+                out.write(emission.stdout)
+            return 0
+        decision = decide(profile, _read_payload(stdin))
+        for row in decision.rows:
+            rt.log_firing(row)
+        out.write(decision.stdout)
+        err.write(decision.stderr)
+        return decision.exit_code
+    except Exception:  # noqa: BLE001 — the action must not die with the hook
+        # Nothing written, so the host sees no opinion and proceeds. The row
+        # is the only record that anything happened, and it is worth one more
+        # attempt that itself cannot raise.
+        if rt is not None:
+            try:
+                rt.log_firing(_row(profile, _stamp(None),
+                                   cause="check-crashed", decision="allow"))
+            except Exception:  # noqa: BLE001
+                pass
+        return 0
