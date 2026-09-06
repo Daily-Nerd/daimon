@@ -2876,6 +2876,39 @@ def _stats_receipts(project_dir, usage: dict) -> dict:
             "contradicted": contradicted, "skipped": skipped, "cured": cured}
 
 
+def _stats_checks(project_dir) -> dict:
+    """Armed checks and their lifetime firings (this project, #943 slice 5).
+
+    `armed` and `proposed` come from the LEDGER, because that is where
+    whether a check may run is decided; the manifest is a derived view and
+    an audit of it is a different question (`daimon check sync --check`).
+    The five firing counters come from the log, folded across every host:
+    this process cannot know which host it is running on, and `daimon ruling
+    checks` is the surface that splits them.
+
+    `fired` is separate from `clean + violation + unresolved` on purpose. It
+    counts rows, so an outcome this build does not recognise still proves the
+    check RAN — the one fact constraint 2 exists to make visible. Never
+    raises: a broken log must not take `stats` down with it."""
+    from .. import checks  # local, like cli.hooks: not every verb pays for it
+
+    counts = {"armed": 0, "proposed": 0}
+    try:
+        for record in refutations.listing(polarity="ruling",
+                                          project_dir=project_dir):
+            if not isinstance(record.get("check"), dict):
+                continue
+            lifecycle = record.get("check_lifecycle")
+            if lifecycle in counts:
+                counts[lifecycle] += 1
+    except Exception:  # noqa: BLE001
+        pass
+    totals = checks.firing_summary(project_dir).totals
+    return {**counts, "fired": totals["fired"], "clean": totals["clean"],
+            "violation": totals["violation"],
+            "unresolved": totals["unresolved"], "denied": totals["denied"]}
+
+
 def _stats_resolutions(project_dir, usage: dict) -> dict:
     """Resolution credit, by source (#480 slice 5) — who is closing loops,
     and whether their receipts hold. Two populations, kept honestly apart
@@ -2982,7 +3015,10 @@ def _cmd_stats(args) -> int:
             "receipts": _stats_receipts(project, usage),
             # #475 part 2: current-configuration posture, rendered next to
             # (never merged into) the historical fallback counts above.
-            "rescue_posture": llm.rescue_posture()}
+            "rescue_posture": llm.rescue_posture(),
+            # #943 slice 5: appended at the tail — `stats --json` key order is
+            # the same contract `status --json` documents.
+            "checks": _stats_checks(project)}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0

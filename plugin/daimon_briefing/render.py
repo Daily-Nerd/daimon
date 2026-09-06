@@ -1567,6 +1567,25 @@ def _receipts_line(r: dict) -> str:
             f"{r['cured']} cured")
 
 
+def _checks_line(c: dict) -> str:
+    """#943 slice 5: the one armed-check status line, shared by the plain and
+    rich renderers, in the three states constraint 2 needed told apart —
+    nothing armed, armed but never fired, and armed with lifetime counts.
+
+    Aggregated across hosts because the CLI has no notion of which host it is
+    on; `daimon ruling checks` is where the per-host split lives. `denied` is
+    its own number: a row proves a check RAN, and only a deny closes the gap
+    between running and being honored. Plain wording only, no court
+    vocabulary."""
+    if not c.get("armed"):
+        return "checks: none armed"
+    if not c.get("fired"):
+        return f"checks: {c['armed']} armed, never fired"
+    return (f"checks (lifetime): {c['fired']} fired, {c['clean']} clean, "
+            f"{c['violation']} violation, {c['unresolved']} unresolved, "
+            f"{c['denied']} denied")
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -1643,6 +1662,13 @@ def _plain_stats(data: dict) -> None:
         # attempted yet" are themselves the answer, not noise to gate on.
         print("receipts (this project):")
         print(f"  {_receipts_line(rcpt)}")
+    chk = data.get("checks")
+    if chk:
+        # #943 slice 5: always shown, same reasoning as receipts — "none
+        # armed" and "armed, never fired" are each an answer. Silence here is
+        # the exact ambiguity the line exists to remove.
+        print("checks (this project):")
+        print(f"  {_checks_line(chk)}")
     res = data.get("resolutions")
     if res:
         # #480 slice 5: the credit block — who is closing loops. Always shown
@@ -1805,6 +1831,16 @@ def _rich_stats(data: dict) -> None:
         rcpt_table.add_column("value")
         rcpt_table.add_row("status", _receipts_line(rcpt))
         console.print(rcpt_table)
+
+    chk = data.get("checks")
+    if chk:
+        # #943 slice 5: mirrors the plain renderer, same always-shown rule.
+        chk_table = Table(title="checks (this project)", title_justify="left",
+                          show_header=True, header_style="bold")
+        chk_table.add_column("metric")
+        chk_table.add_column("value")
+        chk_table.add_row("status", _checks_line(chk))
+        console.print(chk_table)
 
     res = data.get("resolutions")
     if res:

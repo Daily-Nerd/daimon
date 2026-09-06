@@ -692,3 +692,111 @@ def test_ruling_checks_takes_no_slug(tmp_path):
     from daimon_briefing import cli
     with pytest.raises(SystemExit):
         cli.main(["ruling", "checks", "--slug", "-some-bucket"])
+
+
+# ---- the `daimon stats` line, three wordings, plain and rich -------------
+#
+# Aggregated across hosts on purpose: the CLI cannot know which host it is
+# running on, and `ruling checks` is where the per-host split lives.
+
+
+def _stats(tmp_path, *extra):
+    from daimon_briefing import cli
+    return cli.main(["stats", *extra])
+
+
+def test_stats_checks_line_says_none_armed(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    assert _stats(tmp_path) == 0
+    assert "checks: none armed" in capsys.readouterr().out
+
+
+def test_stats_checks_line_says_armed_but_never_fired(
+        tmp_path, monkeypatch, capsys):
+    """Constraint 2, on the surface an operator actually reads. Before this
+    line an armed check that never ran was indistinguishable from one that
+    ran clean every time."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    assert _stats(tmp_path) == 0
+    assert "checks: 1 armed, never fired" in capsys.readouterr().out
+
+
+def test_stats_checks_line_renders_lifetime_counts(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    ruling_id = _arm(tmp_path)
+    _write_log(
+        _row(ruling_id=ruling_id, outcome="clean"),
+        _row(ruling_id=ruling_id, outcome="violation", mode="enforce",
+             decision_emitted="deny"),
+        _row(ruling_id=ruling_id, outcome="unresolved", cause="check-timeout"),
+    )
+    assert _stats(tmp_path) == 0
+    assert ("checks (lifetime): 3 fired, 1 clean, 1 violation, "
+            "1 unresolved, 1 denied") in capsys.readouterr().out
+
+
+def test_stats_json_carries_checks_at_the_tail(tmp_path, monkeypatch, capsys):
+    """Key order is part of the --json contract, so a new fact is appended."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    assert _stats(tmp_path, "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload)[-1] == "checks"
+    assert payload["checks"] == {"armed": 1, "proposed": 0, "fired": 0,
+                                 "clean": 0, "violation": 0, "unresolved": 0,
+                                 "denied": 0}
+
+
+@pytest.mark.parametrize("build,wording", [
+    (lambda p: None, "checks: none armed"),
+    (lambda p: _arm(p), "checks: 1 armed, never fired"),
+])
+def test_the_rich_stats_block_carries_the_same_wording(
+        build, wording, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    build(tmp_path)
+    assert _stats(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "checks (this project)" in out
+    assert wording in out
+
+
+def test_the_rich_stats_block_carries_the_lifetime_wording(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean"))
+    assert _stats(tmp_path) == 0
+    assert ("checks (lifetime): 1 fired, 1 clean, 0 violation, "
+            "0 unresolved, 0 denied") in capsys.readouterr().out
+
+
+def test_a_proposed_check_is_counted_but_never_called_armed(
+        tmp_path, monkeypatch, capsys):
+    """`none armed` is the honest reading of a project whose only check is a
+    candidate: nothing runs before any action."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _propose(tmp_path)
+    assert _stats(tmp_path, "--json") == 0
+    assert json.loads(capsys.readouterr().out)["checks"]["proposed"] == 1
+    assert _stats(tmp_path) == 0
+    assert "checks: none armed" in capsys.readouterr().out
+
+
+def test_another_projects_firings_never_reach_this_projects_stats(tmp_path,
+                                                                  monkeypatch,
+                                                                  capsys):
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    _arm(tmp_path)
+    theirs = _arm(other, subject="their posts")
+    _write_log(_row(ruling_id=theirs, outcome="violation"))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    assert _stats(tmp_path) == 0
+    assert "checks: 1 armed, never fired" in capsys.readouterr().out
