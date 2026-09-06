@@ -1051,3 +1051,139 @@ def test_every_row_of_a_clean_action_records_an_allow(tmp_path):
     _arm(tmp_path, body=CLEAN, intent="enforce")
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
     assert [r["decision_emitted"] for r in d.rows] == ["allow"]
+
+
+# ---- a state daimon cannot read stays countable ---------------------------
+
+
+def test_a_command_sent_as_a_list_is_joined_and_checked(tmp_path):
+    """Some Codex builds send the shell tool's command as an argv array. Read
+    as "no command", every armed check on that host goes silently inert and
+    the liveness surface reads "armed, never fired", which the docs describe
+    as the honest signal for a wired-but-quiet install."""
+    ruling_id = _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES["codex"],
+                  {"tool_name": "shell",
+                   "tool_input": {"command": ["gh", "pr", "create", "-t", "x"]},
+                   "cwd": str(tmp_path)})
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"].startswith(ruling_id)
+
+
+def test_a_joined_command_is_quoted_the_way_a_shell_would_read_it(tmp_path):
+    """Joined with shell quoting, not with a space. An argument holding a
+    space would otherwise become two arguments in the subject the check
+    reads, and the check would be judging a command nobody ran."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    seen = []
+    real = ch.runtime().resolve
+    monkeypatch_free = ch.runtime()
+    original = monkeypatch_free.resolve
+    monkeypatch_free.resolve = lambda c, cwd: (seen.append(c), real(c, cwd))[1]
+    try:
+        ch.decide(ch.PROFILES["codex"],
+                  {"tool_name": "shell",
+                   "tool_input": {"command": ["gh", "pr", "create", "--body",
+                                              "a b"]},
+                   "cwd": str(tmp_path)})
+    finally:
+        monkeypatch_free.resolve = original
+    assert seen == ["gh pr create --body 'a b'"]
+
+
+@pytest.mark.parametrize("command", [["gh", 7], [None], [{"a": 1}], [[]]])
+def test_a_list_command_that_is_not_all_strings_is_recorded(command,
+                                                            tmp_path):
+    """Not a rowless allow. daimon could not read what the action sends, and
+    that state has to be countable or the surface reports a quiet install
+    where there was an unreadable one."""
+    _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES["codex"],
+                  {"tool_name": "shell", "tool_input": {"command": command},
+                   "cwd": str(tmp_path)})
+    assert d.stdout == ""
+    assert [(r["cause"], r["outcome"]) for r in d.rows] == \
+        [("arg-form-unparsed", "unresolved")]
+
+
+def test_a_match_that_cannot_compile_is_recorded_and_denies(tmp_path):
+    """`refutations` compiles the pattern at propose time, so this is
+    reachable only by hand-editing the manifest. "A regex that cannot
+    compile" is still a different fact from "a regex that did not match", and
+    only one of them was countable."""
+    ruling_id = _arm(tmp_path, body=CLEAN, intent="enforce")
+    path = ch.runtime().checks_dir() / "manifest.json"
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    entries[0]["match"] = "gh pr create("
+    path.write_text(json.dumps(entries), encoding="utf-8")
+
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert [(r["ruling_id"], r["cause"], r["outcome"]) for r in d.rows] == \
+        [(ruling_id, "check-crashed", "unresolved")]
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_a_broken_pattern_does_not_cost_the_subject_a_resolve(tmp_path):
+    """Nothing to run it against, so nothing is read off disk for it. The
+    resolve is the expensive half and it is bounded by the action budget."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    path = ch.runtime().checks_dir() / "manifest.json"
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    entries[0]["match"] = "gh pr create("
+    path.write_text(json.dumps(entries), encoding="utf-8")
+
+    resolved = []
+    rt_mod = ch.runtime()
+    original = rt_mod.resolve
+    rt_mod.resolve = lambda *a, **k: resolved.append(a)
+    try:
+        ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    finally:
+        rt_mod.resolve = original
+    assert resolved == []
+
+
+def test_a_working_directory_daimon_cannot_read_names_that_cause(tmp_path):
+    """`no-match` says every armed check was compared and none applied. When
+    the working directory itself is unusable, nothing was compared, and the
+    two states must not share a name."""
+    _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC],
+                  _payload(MATCH, str(tmp_path) + "\x00/sub"))
+    assert d.stdout == ""
+    assert [(r["cause"], r["outcome"]) for r in d.rows] == \
+        [("file-unreadable", "unresolved")]
+
+
+def test_rows_already_decided_survive_an_exception_mid_loop(tmp_path,
+                                                            monkeypatch):
+    """`rt.run` is documented never to raise, so this is the theoretical
+    case. It is also the one where the record matters most: the first check's
+    violation is the only evidence of what happened."""
+    armed = {_arm(tmp_path, intent="enforce", subject="a",
+                  scope="publishing"),
+             _arm(tmp_path, intent="enforce", subject="b",
+                  scope="publishing")}
+    rt_mod = ch.runtime()
+    real = rt_mod.run
+    calls = []
+
+    def _run(*a, **k):
+        calls.append(a)
+        if len(calls) > 1:
+            raise RuntimeError("second one explodes")
+        return real(*a, **k)
+
+    monkeypatch.setattr(rt_mod, "run", _run)
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert d.stdout == ""
+    # The check that finished keeps its row, with the decision the host
+    # actually got, which is nothing.
+    survived = [r for r in d.rows if r["outcome"] == "violation"]
+    assert len(survived) == 1
+    assert survived[0]["ruling_id"] in armed
+    assert survived[0]["decision_emitted"] == "allow"
+    # And the crash itself is recorded rather than swallowed.
+    assert any(r["cause"] == "check-crashed" and r["ruling_id"] == ""
+               for r in d.rows)

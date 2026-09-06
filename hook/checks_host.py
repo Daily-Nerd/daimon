@@ -28,6 +28,8 @@ proceeds and nothing anywhere says why.
 import importlib.util
 import json
 import os
+import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -375,6 +377,44 @@ def _failure_line(entry, outcome) -> str:
     return f"{ruling_id}: {reason}"
 
 
+def _command_text(raw):
+    """The action's command string, or None when there is no command, or the
+    Unresolved cause when there is one daimon cannot read.
+
+    Some hosts send the shell tool's command as an argv array. Read as "no
+    command", every armed check on such a host goes silently inert while the
+    liveness surface reads "armed, never fired", which is the phrase reserved
+    for a wired install that nothing has matched yet. It is joined with shell
+    quoting rather than with a space, because an argument holding a space
+    would otherwise become two arguments in the subject and the check would
+    be judging a command nobody ran."""
+    if isinstance(raw, str):
+        return raw or None
+    if isinstance(raw, list):
+        if raw and all(isinstance(part, str) for part in raw):
+            return shlex.join(raw)
+        return ("arg-form-unparsed",
+                "the host sent a command daimon could not read as text")
+    return None
+
+
+def _match_state(rt, entry, command) -> str:
+    """`hit`, `miss`, or `broken` for one entry's pattern.
+
+    `rt.matches` folds an uncompilable pattern into False, which is right for
+    it and wrong here: "a regex that cannot compile" and "a regex that did
+    not match" are different facts and only one of them was countable.
+    `refutations` compiles the pattern at propose time, so a broken one
+    reaches this point only through a hand-edited manifest."""
+    pattern = entry.get("match")
+    if isinstance(pattern, str) and pattern:
+        try:
+            re.compile(pattern)
+        except (re.error, RecursionError):
+            return "broken"
+    return "hit" if rt.matches(entry, command) else "miss"
+
+
 def decide(profile, payload, *, manifest=None, timeout=None,
            now=None) -> Decision:
     """Run this action's armed checks and say what the host should be told.
@@ -408,8 +448,18 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         payload = {}
     if not _accepts(profile, payload):
         return Decision("", "", 0, rows)
-    command = _dig(payload, getattr(profile, "command_path", ()))
-    if not isinstance(command, str) or not command:
+    command = _command_text(_dig(payload, getattr(profile, "command_path",
+                                                  ())))
+    stamp = _stamp(now)
+    if isinstance(command, tuple):
+        # A command that is present and unreadable, which is not the same as
+        # absent. It gets a row so the state is countable; the action is
+        # allowed because nothing was armed against anything yet.
+        cause, _ = command
+        rows.append(_row(profile, stamp, cause=cause, outcome="unresolved",
+                         decision="allow"))
+        return Decision("", "", 0, rows)
+    if command is None:
         # Not a row: nothing ran and nothing declined to run. A row for every
         # payload without a command would make the firing log a transcript of
         # the session rather than a record of checks.
@@ -421,7 +471,6 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # host launched stands in the action's directory anyway, and arming
         # nothing would disarm every check for that action in silence.
         cwd = os.getcwd()
-    stamp = _stamp(now)
 
     loaded = rt.load_manifest() if manifest is None else manifest
     reason = getattr(loaded, "reason", "")
@@ -433,12 +482,25 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         rows.append(_row(profile, stamp, cause=reason, decision="allow"))
         return Decision("", "", 0, rows)
 
+    try:
+        os.path.realpath(cwd)
+    except (OSError, ValueError):
+        # `armed_for` folds this into an empty list, which would come out as
+        # `no-match`. That cause says every armed check was compared and none
+        # applied; here nothing was compared at all.
+        rows.append(_row(profile, stamp, cause="file-unreadable",
+                         outcome="unresolved", decision="allow"))
+        return Decision("", "", 0, rows)
+
     entries = rt.armed_for(cwd, loaded)
     if not entries:
         rows.append(_row(profile, stamp, cause="no-match", decision="allow"))
         return Decision("", "", 0, rows)
 
-    matching = [entry for entry in entries if rt.matches(entry, command)]
+    matching = [(entry, _match_state(rt, entry, command))
+                for entry in entries]
+    matching = [(entry, state) for entry, state in matching
+                if state != "miss"]
     if not matching:
         # The prefilter is what makes a hook on every shell action
         # affordable, and spec 3.1 names only the two project-level causes.
@@ -450,14 +512,26 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
 
     # Once, for every matching check. The subject cannot change between two
     # entries of the same action, and reading every file argument again would
-    # spend a budget the host will not extend.
-    subject = rt.resolve(command, cwd)
+    # spend a budget the host will not extend. Skipped entirely when every
+    # matching entry carries a pattern that will not compile: there is
+    # nothing to run against them, and the resolve is the expensive half.
+    subject = (rt.resolve(command, cwd)
+               if any(state == "hit" for _, state in matching) else None)
     results = []
     try:
-        for entry in matching:
+        for entry, state in matching:
             mode = mode_for(profile, entry.get("intent"))
             left = deadline - time.monotonic()
-            if isinstance(subject, rt.Unresolved):
+            if state == "broken":
+                # The manifest names a pattern daimon cannot compile, so this
+                # check cannot be applied at all. `unresolved`, which under
+                # `enforce` denies: a rule nobody can evaluate is not a rule
+                # that passed.
+                outcome = rt.Outcome(
+                    "unresolved", "check-crashed",
+                    "this ruling's match pattern could not be compiled; run "
+                    "`daimon check sync`", -1, 0)
+            elif isinstance(subject, rt.Unresolved):
                 outcome = rt.Outcome("unresolved", subject.cause,
                                      subject.reason, -1, 0)
             elif left <= 0:
@@ -474,14 +548,26 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
             else:
                 outcome = rt.run(entry, subject, cwd=cwd,
                                  timeout=min(per_check, left))
-            results.append((entry, mode, outcome))
+            # Appended as it is decided, not after the loop. `rt.run` is
+            # documented never to raise, and this is the case where the
+            # record matters most if it ever does: an earlier check's
+            # violation is the only evidence of what happened. The row is
+            # stamped `allow` and corrected below for the ones that failed,
+            # so a row that escapes through an exception says what the host
+            # actually got, which is nothing.
+            row = _row(profile, stamp, ruling_id=entry.get("ruling_id"),
+                       mode=mode, outcome=outcome.outcome,
+                       cause=outcome.cause, decision="allow",
+                       duration_ms=outcome.duration_ms)
+            rows.append(row)
+            results.append((entry, mode, outcome, row))
     finally:
         # The subject holds the command and every file it named. A `finally`
         # is the only placement that survives an exception nobody predicted.
         rt.discard(subject)
 
-    failing = [(index, entry, mode, outcome)
-               for index, (entry, mode, outcome) in enumerate(results)
+    failing = [(entry, mode, outcome, row)
+               for entry, mode, outcome, row in results
                if outcome.outcome in ("violation", "unresolved")]
     decision, text = "allow", ""
     if failing:
@@ -489,7 +575,7 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # An enforce check that passed has nothing to say about a warn check
         # that did not, and reading it the other way blocks actions nobody
         # armed to block.
-        deciding = max((mode for _, _, mode, _ in failing), key=MODES.index)
+        deciding = max((mode for _, mode, _, _ in failing), key=MODES.index)
         # Only the failures AT OR ABOVE the deciding mode are spoken aloud. A
         # `record-only` check asked for the log and nothing else, and a
         # neighbour that failed at a stronger mode must not carry its reason
@@ -499,7 +585,7 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # would otherwise defeat it.
         floor = MODES.index(deciding)
         text = "\n".join(_failure_line(entry, outcome)
-                         for _, entry, mode, outcome in failing
+                         for entry, mode, outcome, _ in failing
                          if MODES.index(mode) >= floor)
         if deciding == "enforce":
             decision = "deny"
@@ -507,20 +593,14 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
             decision = "warn"
 
     emission = encode(profile, decision, text)
-    failed = {index for index, _, _, _ in failing}
-    for index, (entry, mode, outcome) in enumerate(results):
-        # One action produces one decision, but the log row is per CHECK, so
-        # the row records what THIS check contributed. A check that passed
-        # records `allow`: it did not deny anything, and a clean row stamped
-        # `deny` satisfies the "only a deny under enforce proves it was
-        # honored" filter while proving nothing of the kind. The stats
-        # surface counts these rows.
-        rows.append(_row(profile, stamp, ruling_id=entry.get("ruling_id"),
-                         mode=mode, outcome=outcome.outcome,
-                         cause=outcome.cause,
-                         decision=decision if index in failed
-                         else "allow",
-                         duration_ms=outcome.duration_ms))
+    # One action produces one decision, but the log row is per CHECK, so the
+    # row records what THIS check contributed. A check that passed keeps the
+    # `allow` it was written with: it denied nothing, and a clean row stamped
+    # `deny` satisfies the "only a deny under enforce proves it was honored"
+    # filter while proving nothing of the kind. The stats surface counts
+    # these rows.
+    for _entry, _mode, _outcome, row in failing:
+        row["decision_emitted"] = decision
     return Decision(emission.stdout, emission.stderr, emission.exit_code, rows)
 
 
