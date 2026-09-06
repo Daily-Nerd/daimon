@@ -535,3 +535,77 @@ def test_check_sync_has_no_slug_flag(tmp_checkpoint_dir):
     from daimon_briefing import cli
     with pytest.raises(SystemExit):
         cli.main(["check", "sync", "--slug", "-p-checks-sync"])
+
+
+# ---- the fallback branches ------------------------------------------------
+
+
+def test_a_record_whose_check_lost_its_hash_is_not_armed(
+        tmp_checkpoint_dir, monkeypatch):
+    """The writer always computes the hash, so this shape cannot come from
+    the CLI. It can come from a hand-edited ledger, and arming a body with
+    no pin would give the runner nothing to re-hash against, which is the
+    whole mechanism that catches an edited body."""
+    monkeypatch.setattr(refutations, "listing", lambda **kwargs: [
+        {"refutation_id": "r-nohash", "check_lifecycle": "armed",
+         "check": {"match": MATCH, "body": BODY, "intent": "warn"},
+         "activated_at": "t"},
+        {"refutation_id": "", "check_lifecycle": "armed",
+         "check": {"match": MATCH, "body": BODY, "sha256": _sha()},
+         "activated_at": "t"},
+    ])
+    report = checks.sync(PROJECT)
+    assert report.ok and report.armed == 0
+    assert _manifest().entries == []
+    assert _bodies() == []
+
+
+def test_a_stale_body_that_cannot_be_removed_does_not_sink_the_sync(
+        tmp_checkpoint_dir):
+    """Sync runs after a ledger write that already landed. A body that will
+    not go is worth reporting, never worth turning a retirement into a
+    failure: the manifest no longer names it, so no host will run it."""
+    ruling_id = _arm()
+    entry = _manifest().entries[0]
+    body = config.checks_dir() / checks_runtime.body_name(entry)
+    body.unlink()
+    # A directory in its place: unlink refuses, the way a locked file would.
+    body.mkdir()
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    report = checks.sync(PROJECT)
+    assert report.ok
+    assert _manifest().entries == [], "the manifest must stop naming it"
+    assert body.is_dir(), "the fixture stopped exercising the failure"
+
+
+def test_forget_says_so_when_the_armed_body_may_have_outlived_the_ruling(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """forget removes a ruling's check by re-deriving the manifest from the
+    ledger it just rewrote. When that derivation fails, the body is still on
+    disk and still armed, and an irreversible operation reporting a clean
+    sweep it did not perform is worse than one that says what it missed."""
+    from daimon_briefing import cli, store
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    _arm()
+    store.write_checkpoint("S1", {
+        "session_id": "S1",
+        "working_context": {"recent_decisions": [
+            {"text": "the rule for public posts in publishing",
+             "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
+    item_id = stored["working_context"]["recent_decisions"][0]["id"]
+
+    # Removing an ACTIVE ruling is a human decision, so forget wants a
+    # terminal and a confirmation before it will do this at all.
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    monkeypatch.setattr(checks, "sync",
+                        lambda *a, **k: checks.SyncReport(
+                            False, 0, "-p-checks-sync", "the disk said no"))
+    assert cli.main(["forget", item_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "check manifest not updated (the disk said no)" in out
+    assert "may still be armed" in out

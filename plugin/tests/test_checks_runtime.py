@@ -1044,3 +1044,267 @@ def test_the_firing_log_entry_precedes_the_generic_log_glob():
     from daimon_briefing import surfaces
     shapes = [s.shape for s in surfaces.SURFACES]
     assert shapes.index("logs/checks.jsonl") < shapes.index("logs/*.log")
+
+
+# ---- the fallback branches, each exercised rather than excused ------------
+#
+# Every test below drives a path that only runs when something has already
+# gone wrong. They exist because those are exactly the paths that decide
+# whether a hook allows an action with a record saying why, or crashes and
+# lets it through saying nothing.
+
+
+def test_a_manifest_that_is_not_utf8_reads_as_unreadable():
+    path = config.checks_dir() / "manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe\x00 not text")
+    loaded = rt.load_manifest()
+    assert loaded.entries == []
+    assert loaded.reason == "manifest-unreadable"
+
+
+def test_a_manifest_that_cannot_be_opened_at_all_reads_as_unreadable(tmp_path):
+    """A directory where the file should be. Distinct from absent: daimon
+    put something there and can no longer read it."""
+    target = tmp_path / "manifest.json"
+    target.mkdir()
+    assert rt.load_manifest(target).reason == "manifest-unreadable"
+
+
+def test_a_cwd_that_cannot_be_resolved_arms_nothing(tmp_path):
+    """An embedded NUL makes realpath raise rather than return. The hook
+    still has an action in front of it and needs an answer."""
+    root = os.path.realpath(str(tmp_path))
+    assert rt.armed_for("\x00not-a-path", _manifest(root)) == []
+
+
+def test_a_non_object_entry_in_a_hand_built_manifest_is_skipped(tmp_path):
+    """load_manifest filters these, but armed_for is called with whatever a
+    caller holds, and one bad row must not disarm the good ones."""
+    root = os.path.realpath(str(tmp_path))
+    manifest = rt.Manifest(["nope", 7, {"ruling_id": "r-0",
+                                        "project_dir": root, "match": "x"}], "")
+    assert [e["ruling_id"] for e in rt.armed_for(root, manifest)] == ["r-0"]
+
+
+def test_a_command_that_forges_a_heredoc_marker_is_not_read_as_one(tmp_path):
+    """The marker is minted by the substitution and by nothing else, but the
+    command string arrives from a host payload and can spell one out. An
+    index no heredoc answers to is not a heredoc.
+
+    Before the bounds check this raised IndexError out of a module whose
+    whole contract is that it never raises."""
+    forged = f"gh pr create --body-file - {rt._HEREDOC_MARK}0\x00"
+    got = _resolve(forged, tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+def test_a_forged_marker_with_a_junk_index_is_a_plain_argument(tmp_path):
+    """Not a marker, so it is read as the path it looks like. `open` refuses
+    a NUL before the OS sees it, and it raises ValueError rather than
+    OSError, which walked straight past the clause meant to catch it."""
+    forged = f"gh pr create --body-file {rt._HEREDOC_MARK}not-a-number\x00"
+    got = _resolve(forged, tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-unreadable"
+
+
+def test_a_flag_at_the_very_end_with_no_value_is_unparsed(tmp_path):
+    got = _resolve("gh pr create --body-file", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+    assert "no value" in got.reason
+
+
+def test_a_field_flag_given_a_bare_at_path_reads_it(tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("the body text\n", encoding="utf-8")
+    got = _resolve(f"gh api repos/x -F @{body}", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "cause", "")
+    assert "the body text" in _text_of(got)
+    rt.discard(got)
+
+
+def test_a_field_only_flag_given_a_plain_word_names_no_file(tmp_path):
+    """`--field` is not a body flag, so a value with neither `=` nor `@`
+    names nothing to read and is not a reason to call the subject
+    unprovable."""
+    got = _resolve("gh api repos/x --field plain", tmp_path)
+    assert isinstance(got, rt.Subject)
+    assert got.files == ()
+    rt.discard(got)
+
+
+def test_a_flag_given_an_empty_path_is_unparsed(tmp_path):
+    got = _resolve("gh pr create --body-file ''", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+    assert "empty path" in got.reason
+
+
+def test_a_temp_dir_that_refuses_the_subject_is_unresolved_not_a_crash(
+        tmp_path, monkeypatch):
+    """The resolver has read the arguments and has nowhere to put them. It
+    still owes the hook an outcome."""
+    def boom(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(rt.tempfile, "mkstemp", boom)
+    got = _resolve("gh pr create --title x", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "check-crashed"
+    assert "no space left" in got.reason
+
+
+def test_a_subject_that_cannot_be_written_takes_its_temp_file_with_it(
+        tmp_path, monkeypatch):
+    sink = tmp_path / "sink"
+    sink.mkdir()
+    monkeypatch.setattr(rt.tempfile, "tempdir", str(sink))
+
+    def boom(*args, **kwargs):
+        raise OSError("the disk went away mid-write")
+
+    monkeypatch.setattr(rt.os, "fdopen", boom)
+    got = _resolve("gh pr create --title x", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "check-crashed"
+    assert list(sink.iterdir()) == [], "a half-written subject was left behind"
+
+
+def test_a_subject_whose_cleanup_also_fails_still_reports(
+        tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise OSError("write failed")
+
+    def also_boom(*args, **kwargs):
+        raise OSError("and so did the cleanup")
+
+    monkeypatch.setattr(rt.os, "fdopen", boom)
+    monkeypatch.setattr(rt.os, "unlink", also_boom)
+    got = _resolve("gh pr create --title x", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "check-crashed"
+
+
+@pytest.mark.parametrize("value", [None, "", 7, object()])
+def test_discard_ignores_anything_that_is_not_a_subject(value):
+    rt.discard(value)  # must not raise
+    rt.discard(rt.Subject(value if isinstance(value, str) else "", (), ""))
+
+
+def test_discard_survives_a_file_that_is_already_gone(tmp_path):
+    """It runs in a `finally` on a path that already has an outcome to
+    report, so a second failure there must not replace it."""
+    rt.discard(rt.Subject(str(tmp_path / "never-existed"), (), ""))
+
+
+def test_the_budget_falls_back_to_killing_the_child_alone(tmp_path,
+                                                          monkeypatch):
+    """A platform without process groups, or a group that vanished between
+    the timeout and the kill. The check must still stop."""
+    calls = []
+
+    def no_groups(*args, **kwargs):
+        raise ProcessLookupError("no such process group")
+
+    monkeypatch.setattr(rt.os, "killpg", no_groups)
+    real_popen = rt.subprocess.Popen
+
+    def watched(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        original = proc.kill
+        proc.kill = lambda: (calls.append("kill"), original())[1]
+        return proc
+
+    monkeypatch.setattr(rt.subprocess, "Popen", watched)
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "sleep 30\n"), subject, cwd=str(tmp_path),
+                 timeout=0.5)
+    assert got.cause == "check-timeout"
+    assert calls == ["kill"], "the fallback kill never ran"
+    rt.discard(subject)
+
+
+def test_a_spawn_that_fails_for_any_other_reason_is_check_crashed(
+        tmp_path, monkeypatch):
+    """Not a missing sh: an exec that the platform refused. Different cause,
+    because runtime-missing tells an operator to install a shell."""
+    def boom(*args, **kwargs):
+        raise OSError(12, "Cannot allocate memory")
+
+    monkeypatch.setattr(rt.subprocess, "Popen", boom)
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path),
+                 timeout=5)
+    assert (got.outcome, got.cause) == ("unresolved", "check-crashed")
+    assert "Cannot allocate memory" in got.reason
+    rt.discard(subject)
+
+
+def test_a_reap_that_fails_after_the_kill_still_reports_the_timeout(
+        tmp_path, monkeypatch):
+    """The outcome is already decided by the time the corpse is collected.
+    A second failure there must not turn a timeout into a traceback."""
+    class Stubborn:
+        pid = -1
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise rt.subprocess.TimeoutExpired("sh", timeout or 0)
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(rt.subprocess, "Popen",
+                        lambda *a, **k: Stubborn())
+    monkeypatch.setattr(rt.os, "killpg",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(rt.os, "getpgid", lambda pid: pid)
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path),
+                 timeout=0.01)
+    assert (got.outcome, got.cause) == ("unresolved", "check-timeout")
+    rt.discard(subject)
+
+
+def test_a_log_directory_that_cannot_be_made_reports_false(monkeypatch):
+    def boom(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(rt.Path, "mkdir", boom)
+    assert rt.log_firing({"ruling_id": "r-1", "outcome": "clean"}) is False
+
+
+def test_a_firing_row_whose_duration_is_not_a_number_reports_false():
+    assert rt.log_firing({"ruling_id": "r-1", "outcome": "clean",
+                          "duration_ms": "soon"}) is False
+
+
+def test_a_child_that_cannot_be_killed_at_all_still_reports_the_timeout(
+        tmp_path, monkeypatch):
+    """Both kills refused: no process group, and the direct kill fails too
+    (the child is already a zombie, or the platform said no). The outcome
+    was decided at the timeout; nothing after it may replace that with a
+    traceback."""
+    class Unkillable:
+        pid = -1
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise rt.subprocess.TimeoutExpired("sh", timeout or 0)
+
+        def kill(self):
+            raise OSError("no such process")
+
+    def no_groups(*args, **kwargs):
+        raise ProcessLookupError("no such process group")
+
+    monkeypatch.setattr(rt.subprocess, "Popen", lambda *a, **k: Unkillable())
+    monkeypatch.setattr(rt.os, "killpg", no_groups)
+    subject = _subject(tmp_path)
+    got = rt.run(_body(tmp_path, "exit 0\n"), subject, cwd=str(tmp_path),
+                 timeout=0.01)
+    assert (got.outcome, got.cause) == ("unresolved", "check-timeout")
+    rt.discard(subject)

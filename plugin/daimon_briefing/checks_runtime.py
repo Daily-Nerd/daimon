@@ -389,6 +389,12 @@ def _read_file(raw, base):
         return Unresolved("file-missing", f"{raw} does not exist")
     except OSError as exc:
         return Unresolved("file-unreadable", f"{raw}: {exc.strerror or exc}")
+    except ValueError as exc:
+        # A NUL in the path: `open` rejects it before the OS ever sees it, and
+        # it raises ValueError rather than OSError, so it walks straight past
+        # the clause above. The command string comes from a host payload and
+        # can carry one.
+        return Unresolved("file-unreadable", f"{raw}: {exc}")
     if len(data) > MAX_SUBJECT_FILE_BYTES:
         return Unresolved(
             "file-oversize",
@@ -416,6 +422,12 @@ def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
     A heredoc binds only from `marks`, which holds the redirects that stood
     inside THIS command, so text belonging to a neighbour can never be
     presented as what the governed command reads."""
+    # A marker token is minted by `_take` and nothing else, but the command
+    # string arrives from a host payload and can spell one out. An index no
+    # heredoc answers to is simply not a heredoc; without this the bind below
+    # reads past the end of the list and the resolver raises, which is the
+    # one thing this module promises never to do.
+    marks = [index for index in marks if 0 <= index < len(heredocs)]
     # Counted per segment: binding is only safe with exactly one candidate on
     # each side, and the sides are this command's, not the whole string's.
     consumers = sum(1 for flag, value, _ in _walk(tokens)
@@ -534,9 +546,13 @@ def resolve(command, cwd):
         if outcome is not None:
             return outcome
 
-    handle_fd, path = tempfile.mkstemp(prefix="daimon-check-",
-                                       suffix=".subject")
+    # mkstemp inside the try, not before it: a temp dir that is full or
+    # read-only fails HERE, and a raise from this function is an action that
+    # proceeds with no record of why.
+    path = ""
     try:
+        handle_fd, path = tempfile.mkstemp(prefix="daimon-check-",
+                                           suffix=".subject")
         with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
             handle.write(_subject_text(command, reads))
         # mkstemp is already umask-independent; stated again so the mode is
@@ -544,7 +560,8 @@ def resolve(command, cwd):
         os.chmod(path, 0o600)
     except OSError as exc:
         try:
-            os.unlink(path)
+            if path:
+                os.unlink(path)
         except OSError:
             pass
         # Not a cause the spec's table anticipated: the subject could not be
