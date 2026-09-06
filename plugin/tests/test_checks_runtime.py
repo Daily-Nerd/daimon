@@ -447,12 +447,24 @@ def test_one_heredoc_and_one_reader_bind_to_each_other(tmp_path):
     rt.discard(got)
 
 
-def test_a_second_heredoc_makes_the_binding_a_guess_and_daimon_refuses(
-        tmp_path):
-    """A compound line where an earlier command has its own heredoc. The
-    tokenizer has thrown away the order and the redirections, so handing the
-    first heredoc to the first reader builds the subject from unrelated text
-    and reports clean on a body nothing ever read."""
+def test_a_heredoc_belonging_to_another_command_is_never_borrowed(tmp_path):
+    """A heredoc redirect belongs to the simple command it is attached to.
+    Here it belongs to `cat`, and the governed command reads standard input
+    from somewhere daimon cannot see. Binding it anyway builds the subject
+    from text the governed command never reads, and if THAT text is clean the
+    record says the body was proven safe."""
+    command = ("cat <<'EOF' > note.txt\n"
+               "JUNK\n"
+               "EOF\n"
+               "gh pr create -F -")
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+def test_a_heredoc_binds_inside_its_own_command_even_beside_another(tmp_path):
+    """Two commands, one heredoc each: neither is ambiguous, so the governed
+    one resolves and it resolves to ITS heredoc."""
     command = ("cat <<'EOF' > note.txt\n"
                "JUNK\n"
                "EOF\n"
@@ -460,14 +472,29 @@ def test_a_second_heredoc_makes_the_binding_a_guess_and_daimon_refuses(
                "the real body\n"
                "BODY")
     got = _resolve(command, tmp_path)
-    assert isinstance(got, rt.Unresolved)
-    assert got.cause == "arg-form-unparsed"
+    assert isinstance(got, rt.Subject), getattr(got, "cause", "")
+    # Past the separator: the subject opens with the whole command string,
+    # which quotes both heredocs, so a search over all of it proves nothing
+    # about which one was READ.
+    body = _text_of(got).split(rt.SUBJECT_SEPARATOR, 1)[1]
+    assert "the real body" in body
+    assert "JUNK" not in body
+    rt.discard(got)
+
+
+def test_a_trailing_command_after_the_heredoc_does_not_break_the_binding(
+        tmp_path):
+    got = _resolve("gh pr create -F - <<EOF\nthe body\nEOF && echo done",
+                   tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "cause", "")
+    assert "the body" in _text_of(got)
+    rt.discard(got)
 
 
 def test_two_readers_and_one_heredoc_is_a_guess_too(tmp_path):
-    """The other side of the same count. Two arguments reading standard
-    input and one heredoc: whichever one daimon picks, the other is read
-    from somewhere it cannot see."""
+    """The other side of the same count, now inside one simple command. Two
+    arguments reading standard input and one heredoc: whichever one daimon
+    picks, the other is read from somewhere it cannot see."""
     command = ("gh pr create --body-file - --notes-file - <<'EOF'\n"
                "shared\n"
                "EOF")
@@ -476,25 +503,12 @@ def test_two_readers_and_one_heredoc_is_a_guess_too(tmp_path):
     assert got.cause == "arg-form-unparsed"
 
 
-def test_the_one_to_one_rule_does_not_yet_reach_a_borrowed_heredoc(tmp_path):
-    """KNOWN RESIDUAL, pinned so it stays visible rather than becoming a
-    surprise. One heredoc that belongs to an EARLIER command, and one
-    argument reading standard input: the counts are one and one, so the
-    rule above binds them and the subject is built from the wrong text.
-
-    Closing this needs the heredoc's offset in the raw command matched
-    against the offset of the argument that consumes it, which the current
-    tokenizer discards. Until then this is the resolver's one remaining
-    fail-open shape, and it is narrower than the family the count rule
-    already closed."""
-    command = ("cat <<'EOF' > note.txt\n"
-               "JUNK\n"
-               "EOF\n"
-               "gh pr create --body-file -")
-    got = _resolve(command, tmp_path)
-    assert isinstance(got, rt.Subject), "if this now refuses, delete this test"
-    assert "JUNK" in _text_of(got), "the residual this test documents"
-    rt.discard(got)
+def test_a_pipeline_still_reports_the_pipe_rather_than_the_form(tmp_path):
+    """When a `|` feeds the governed command, daimon knows exactly why it
+    cannot read the bytes, and says that instead of blaming the argument."""
+    got = _resolve("printf x | gh pr create -F -", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "stdin-pipe"
 
 
 def test_a_dash_fed_by_a_pipe_is_unresolved_as_stdin_pipe(tmp_path):

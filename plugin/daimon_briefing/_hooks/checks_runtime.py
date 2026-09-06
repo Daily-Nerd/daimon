@@ -273,6 +273,54 @@ _KNOWN_FLAGS = frozenset(_PATH_FLAGS) | frozenset(_FIELD_FLAGS)
 _HEREDOC_RE = re.compile(
     r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n[ \t]*\2(?=\s|$)", re.DOTALL)
 
+# A heredoc is replaced by a marker token rather than by whitespace, so the
+# token stream still says WHERE the redirect stood. NUL is in it because a
+# command string carrying one cannot be executed anyway, which makes a
+# collision with real text impossible rather than unlikely.
+_HEREDOC_MARK = "\x00daimon-heredoc-"
+
+# Tokens that end one simple command and begin the next. `&` is here for the
+# same reason the others are: what follows it is a different command, and a
+# heredoc on one side of it does not feed an argument on the other.
+_SEGMENT_BREAKS = frozenset({"&&", "||", ";", "|", "&"})
+
+
+def _heredoc_index(token):
+    """The heredoc a marker token stands for, or None for a real argument."""
+    if token.startswith(_HEREDOC_MARK) and token.endswith("\x00"):
+        try:
+            return int(token[len(_HEREDOC_MARK):-1])
+        except ValueError:
+            return None
+    return None
+
+
+def _segments(tokens):
+    """The command split into simple commands: (tokens, heredoc indexes, fed
+    by a pipe).
+
+    A heredoc redirect belongs to the command it is attached to, and nothing
+    else in the string can claim it. Without this split, `cat <<EOF ... EOF`
+    followed by a governed command hands the governed command text it never
+    reads — and if that text is clean, the record says the real body was
+    proven safe."""
+    out = []
+    current: list = []
+    marks: list = []
+    piped = False
+    for token in tokens:
+        if token in _SEGMENT_BREAKS:
+            out.append((current, marks, piped))
+            current, marks, piped = [], [], token == "|"
+            continue
+        index = _heredoc_index(token)
+        if index is None:
+            current.append(token)
+        else:
+            marks.append(index)
+    out.append((current, marks, piped))
+    return out
+
 
 def _split_attached(token):
     """`--body-file=x` -> ("--body-file", "x", True); anything else is left
@@ -361,39 +409,17 @@ def _subject_text(command, reads) -> str:
     return "".join(parts)
 
 
-def resolve(command, cwd):
-    """The action's subject, or the cause daimon could not build one.
+def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
+    """Read one simple command's file arguments into `reads`.
 
-    Subject = the command string, a separator, then every resolved file's
-    bytes under a header naming the flag it came from. Written to a 0o600
-    file in the SYSTEM temp dir: a file under ~/.daimon would have to be
-    declared in the surface registry and carry a deletion story, and this
-    one lives for the length of one exec.
-
-    Fail-closed and first-failure-wins. One argument daimon cannot read
-    means it cannot prove the subject clean, whatever the others say."""
-    if not isinstance(command, str):
-        return Unresolved("arg-form-unparsed", "the command is not a string")
-    base = cwd if isinstance(cwd, str) and cwd else os.getcwd()
-
-    heredocs: list = []
-
-    def _take(match):
-        heredocs.append(match.group(3))
-        return " "
-
-    try:
-        tokens = shlex.split(_HEREDOC_RE.sub(_take, command), posix=True)
-    except ValueError as exc:
-        return Unresolved("arg-form-unparsed",
-                          f"the command could not be tokenized: {exc}")
-
-    # Counted before the walk: binding a heredoc is only safe when there is
-    # exactly one candidate on each side.
+    Returns None when the segment is fine, or the Unresolved that stopped it.
+    A heredoc binds only from `marks`, which holds the redirects that stood
+    inside THIS command, so text belonging to a neighbour can never be
+    presented as what the governed command reads."""
+    # Counted per segment: binding is only safe with exactly one candidate on
+    # each side, and the sides are this command's, not the whole string's.
     consumers = sum(1 for flag, value, _ in _walk(tokens)
                     if flag is not None and value == "-")
-
-    reads: list = []
     for flag, value, previous in _walk(tokens):
         if flag is None:
             # Row 6: a form outside the table is never assumed harmless.
@@ -413,32 +439,31 @@ def resolve(command, cwd):
                               f"{flag} was given no value")
 
         if value == "-":
-            if not heredocs:
-                return Unresolved(
-                    "stdin-pipe",
-                    f"{flag} reads standard input and the command carries no "
-                    "heredoc, so the bytes come from a process daimon cannot "
-                    "see")
-            if len(heredocs) != 1 or consumers != 1:
-                # Which heredoc feeds which argument is a question this
-                # tokenizer cannot answer: it keeps neither the order nor the
-                # redirections. Handing over the first one guesses, and a
-                # wrong guess builds the subject from unrelated text and then
-                # reports clean on a body nothing ever read.
-                #
-                # KNOWN RESIDUAL: one heredoc belonging to an EARLIER command
-                # plus one argument reading standard input counts as one and
-                # one, so it still binds the wrong text. Closing that needs
-                # the heredoc's offset in the raw command matched against the
-                # offset of the argument that consumes it, which is thrown
-                # away above. Pinned by a test that says so out loud.
+            if len(marks) == 1 and consumers == 1:
+                reads.append((flag, "<heredoc>", heredocs[marks[0]]))
+                continue
+            if not marks:
+                if piped:
+                    return Unresolved(
+                        "stdin-pipe",
+                        f"{flag} reads standard input and a pipe fills it, so "
+                        "the bytes come from a process daimon cannot see")
+                # A heredoc elsewhere in the string belongs to the command it
+                # is attached to, never to this one. Borrowing it would build
+                # the subject from text this command never reads, and if THAT
+                # text is clean the record says the real body was proven safe.
                 return Unresolved(
                     "arg-form-unparsed",
-                    f"the command carries {len(heredocs)} heredoc(s) and "
-                    f"{consumers} argument(s) reading standard input; daimon "
-                    "binds one to one or not at all")
-            reads.append((flag, "<heredoc>", heredocs[0]))
-            continue
+                    f"{flag} reads standard input and this command carries no "
+                    "heredoc of its own, so daimon cannot see what fills it")
+            # Inside one command the counts still have to be one and one:
+            # which heredoc feeds which argument is not something the token
+            # stream answers, and a guess is the same defect one scope down.
+            return Unresolved(
+                "arg-form-unparsed",
+                f"this command carries {len(marks)} heredoc(s) and "
+                f"{consumers} argument(s) reading standard input; daimon "
+                "binds one to one or not at all")
         raw = value
         if flag in _FIELD_FLAGS and "=" in value:
             _, _, rhs = value.partition("=")
@@ -459,6 +484,55 @@ def resolve(command, cwd):
         if isinstance(text, Unresolved):
             return text
         reads.append((flag, raw, text))
+    return None
+
+
+def resolve(command, cwd):
+    """The action's subject, or the cause daimon could not build one.
+
+    Subject = the command string, a separator, then every resolved file's
+    bytes under a header naming the flag it came from. Written to a 0o600
+    file in the SYSTEM temp dir: a file under ~/.daimon would have to be
+    declared in the surface registry and carry a deletion story, and this
+    one lives for the length of one exec.
+
+    Fail-closed and first-failure-wins. One argument daimon cannot read
+    means it cannot prove the subject clean, whatever the others say."""
+    if not isinstance(command, str):
+        return Unresolved("arg-form-unparsed", "the command is not a string")
+    base = cwd if isinstance(cwd, str) and cwd else os.getcwd()
+
+    heredocs: list = []
+
+    def _take(match):
+        heredocs.append(match.group(3))
+        return f" {_HEREDOC_MARK}{len(heredocs) - 1}\x00 "
+
+    text = _HEREDOC_RE.sub(_take, command)
+    # Every heredoc BODY is gone by now, so a remaining newline separates two
+    # commands exactly as a semicolon does. Spelling it as one lets a single
+    # lexer pass find every boundary; the lexer folds a bare newline into
+    # whitespace and would otherwise run two commands together. A newline
+    # inside a quoted argument is rewritten too, which changes that argument's
+    # text and nothing daimon reads from it.
+    text = text.replace("\r\n", "\n").replace("\n", " ; ")
+    try:
+        # punctuation_chars makes the shell operators their own tokens while
+        # keeping quotes intact, which is what the segment split needs.
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""  # shlex.split's setting: `#` is not a comment
+        tokens = list(lexer)
+    except ValueError as exc:
+        return Unresolved("arg-form-unparsed",
+                          f"the command could not be tokenized: {exc}")
+
+    reads: list = []
+    for seg_tokens, marks, piped in _segments(tokens):
+        outcome = _resolve_segment(seg_tokens, marks, piped, heredocs, base,
+                                   reads)
+        if outcome is not None:
+            return outcome
 
     handle_fd, path = tempfile.mkstemp(prefix="daimon-check-",
                                        suffix=".subject")

@@ -75,12 +75,15 @@ Qué lee el resolutor:
 | `--body-file <ruta>`, `--body-file=<ruta>`, `-F <ruta>`, `-F<ruta>` | lee el archivo |
 | `--notes-file <ruta>`, `--notes-file=<ruta>` | lee el archivo |
 | `-F clave=@<ruta>`, `--field clave=@<ruta>`, `-Fclave=@<ruta>` | lee el archivo |
-| `<bandera> -` con exactamente un heredoc en el comando | lee el texto del heredoc |
-| `<bandera> -` sin heredoc | sin resolver, causa `stdin-pipe` |
-| más de un heredoc, o más de un argumento que lee entrada estándar | sin resolver, causa `arg-form-unparsed` |
+| `<bandera> -` con exactamente un heredoc en el MISMO comando | lee el texto del heredoc |
+| `<bandera> -` alimentada por un pipe | sin resolver, causa `stdin-pipe` |
+| `<bandera> -` cuyo propio comando no trae heredoc | sin resolver, causa `arg-form-unparsed` |
+| un comando con más de un heredoc o más de una `<bandera> -` | sin resolver, causa `arg-form-unparsed` |
 | cualquier otro `@<ruta>` o `<bandera> -` | sin resolver, causa `arg-form-unparsed` |
 
-Un valor pegado a una bandera corta es el mismo comando que uno separado, así que `-Fbody.md` se lee igual que `-F body.md`. Cuando un heredoc podría pertenecer a más de un argumento, o un argumento podría venir de más de un heredoc, daimon se niega en vez de adivinar: cuál alimenta a cuál es una pregunta que no puede responder solo con la línea de comando, y una respuesta equivocada armaría el sujeto con texto que la acción nunca envía.
+Un valor pegado a una bandera corta es el mismo comando que uno separado, así que `-Fbody.md` se lee igual que `-F body.md`.
+
+Un heredoc pertenece al comando al que está pegado, y a ningún otro. daimon parte la línea en `&&`, `||`, `;`, `|` y saltos de línea, y un heredoc en uno de esos pedazos solo puede leerse para un argumento de ese mismo pedazo. Así que `cat <<EOF > note.txt ... EOF` seguido de `gh pr create -F -` queda sin resolver, en vez de comprobarse contra el texto que recibió `cat`. Dentro de un mismo comando las cuentas siguen teniendo que ser uno a uno: cuál heredoc alimenta a cuál argumento no es algo que la línea de comando responda, y una respuesta equivocada armaría el sujeto con texto que la acción nunca envía.
 
 Las rutas relativas resuelven contra el directorio de trabajo. Un archivo de más de 1 MiB es `file-oversize`, uno que no es texto UTF-8 es `file-binary`, y uno que falta o no se puede leer es `file-missing` o `file-unreadable`. Un solo argumento que daimon no puede leer deja todo el sujeto sin resolver, digan lo que digan los demás.
 

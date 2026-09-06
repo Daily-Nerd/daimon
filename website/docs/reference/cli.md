@@ -74,12 +74,15 @@ What the resolver reads:
 | `--body-file <path>`, `--body-file=<path>`, `-F <path>`, `-F<path>` | reads the file |
 | `--notes-file <path>`, `--notes-file=<path>` | reads the file |
 | `-F key=@<path>`, `--field key=@<path>`, `-Fkey=@<path>` | reads the file |
-| `<flag> -` with exactly one heredoc in the command | reads the heredoc text |
-| `<flag> -` with no heredoc | unresolved, cause `stdin-pipe` |
-| more than one heredoc, or more than one argument reading standard input | unresolved, cause `arg-form-unparsed` |
+| `<flag> -` with exactly one heredoc in the SAME command | reads the heredoc text |
+| `<flag> -` fed by a pipe | unresolved, cause `stdin-pipe` |
+| `<flag> -` whose own command carries no heredoc | unresolved, cause `arg-form-unparsed` |
+| a command with more than one heredoc or more than one `<flag> -` | unresolved, cause `arg-form-unparsed` |
 | any other `@<path>` or `<flag> -` | unresolved, cause `arg-form-unparsed` |
 
-A value attached to a short flag is the same command as a detached one, so `-Fbody.md` is read exactly as `-F body.md` is. Where a heredoc could belong to more than one argument, or an argument could be fed by more than one heredoc, daimon refuses rather than guessing: which one feeds which is a question it cannot answer from the command string alone, and a wrong guess would build the subject from text the action never sends.
+A value attached to a short flag is the same command as a detached one, so `-Fbody.md` is read exactly as `-F body.md` is.
+
+A heredoc belongs to the command it is attached to, and to no other. daimon splits the command string at `&&`, `||`, `;`, `|` and newlines, and a heredoc in one of those pieces can only be read for an argument in that same piece. So `cat <<EOF > note.txt ... EOF` followed by `gh pr create -F -` is unresolved rather than checked against the text `cat` was given. Inside one command the counts still have to be one and one: which heredoc feeds which argument is not a question the command string answers, and a wrong guess would build the subject from text the action never sends.
 
 Relative paths resolve against the working directory. A file over 1 MiB is `file-oversize`, one that is not UTF-8 text is `file-binary`, and a missing or unreadable one is `file-missing` or `file-unreadable`. One argument daimon cannot read makes the whole subject unresolved, whatever the others say.
 
