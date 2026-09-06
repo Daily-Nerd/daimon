@@ -184,7 +184,11 @@ class RequestTooLong(RequestError):
 
 
 def _path(project_dir=None):
-    slug = store.project_slug(project_dir)
+    # #948: resolve BEFORE slugging, the same way the CLI resolves --project.
+    # Without this a host calling in with "<repo>/plugin" wrote a bucket the
+    # CLI's read of the same path never looked at. A bucket slug handed in by
+    # `--slug` routing or a bucket-iterating reader passes through untouched.
+    slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not slug:
         return None
     return config.checkpoint_dir() / slug / "requests.jsonl"
@@ -600,6 +604,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     and refusing to record the ask at the module seam would make the ledger
     unusable exactly when a team is onboarding.
     """
+    project_dir = config.resolve_project_dir(project_dir)
     if not _SLUG_RE.fullmatch(str(to or "")):
         raise RequestError(f"invalid recipient slug: {to!r}")
     supersedes = str(supersedes or "").strip()
@@ -900,7 +905,10 @@ def _sender_rows(project_dir) -> dict[str, list]:
     ids this project sent abroad are joined. A project with nothing sent
     abroad (only self-addressed asks, or only answers to foreign asks) reads
     its own bucket and nothing else."""
-    sender_slug = store.project_slug(project_dir)
+    # #948: one resolution, shared with the CLI. Everything below keys
+    # on the project, so a caller standing in a subdir must not answer
+    # for a bucket of its own.
+    sender_slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not sender_slug:
         return {}
     by_id: dict[str, list] = {}
@@ -977,7 +985,10 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
     id this project is not party to are still discarded, and a row claiming
     an agent channel is still refused by the fold's authority re-check, so
     widening the read adds no write reach anywhere."""
-    my_slug = store.project_slug(project_dir)
+    # #948: one resolution, shared with the CLI. Everything below keys
+    # on the project, so a caller standing in a subdir must not answer
+    # for a bucket of its own.
+    my_slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not my_slug:
         return {}
     own_by_id: dict[str, list] = {}

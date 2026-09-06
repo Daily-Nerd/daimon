@@ -995,7 +995,7 @@ def _ambient_scopes(project_dir) -> list[str] | None:
     buckets. Explicit addressing (`slug`, `all_projects`) never comes here:
     an explicit slug IS the scope (#243) and all_projects is already
     everything."""
-    own = store.project_slug(project_dir)
+    own = store.project_slug(config.resolve_project_dir(project_dir))
     if own is None:
         return None
     scopes = [own]

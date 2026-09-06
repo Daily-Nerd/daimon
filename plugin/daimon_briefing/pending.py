@@ -204,6 +204,10 @@ def queue(*, project_dir=None) -> dict:
     emptying the queue, because a human-facing backlog that silently renders
     nothing is worse than one that renders less.
     """
+    # #948: one resolution, shared with the CLI. Everything below keys
+    # on the project, so a caller standing in a subdir must not answer
+    # for a bucket of its own.
+    project_dir = config.resolve_project_dir(project_dir)
     slug = store.project_slug(project_dir)
     pairs, suppressed = [], 0
     try:
@@ -358,7 +362,7 @@ def foreign_queues(*, project_dir=None) -> list[tuple[str, dict]]:
     Scar 0055 still governs the DEFAULT surface: nothing here is reached
     without the flag, and the caller typing it is the user-invoked crossing
     `recall --all-projects` already is."""
-    own = store.project_slug(project_dir)
+    own = store.project_slug(config.resolve_project_dir(project_dir))
     # A project can be waited on before it has ever written a bucket of its
     # own: its mail sits in the SENDER's ledger, addressed by slug. So the
     # candidates are every bucket directory plus every `to` an opened row
@@ -400,7 +404,7 @@ def foreign_counts(*, project_dir=None) -> dict[str, int]:
     degrades that bucket's contribution, never the whole count, and never
     `queue`'s own local result.
     """
-    slug = store.project_slug(project_dir)
+    slug = store.project_slug(config.resolve_project_dir(project_dir))
     counts: dict[str, int] = {}
     try:
         for foreign_slug, n in _foreign_request_counts(slug).items():
