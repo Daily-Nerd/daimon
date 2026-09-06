@@ -10,9 +10,11 @@ at agent initiative, so agents get proposal events and only human channels
 change what renders.
 """
 import hashlib
+import json
+
 import pytest
 
-from daimon_briefing import redact, refutations
+from daimon_briefing import redact, refutations, store
 
 
 PROJECT = "/p/rulings"
@@ -811,8 +813,12 @@ def test_cli_detail_json_and_ceremony_paths(tmp_checkpoint_dir, _tty,
 def test_cli_remaining_ruling_paths(tmp_checkpoint_dir, _tty, monkeypatch,
                                     capsys):
     # Human propose escalation hint; empty list; channel errors off-tty.
-    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
-    assert "no rulings" in capsys.readouterr().out
+    # Nothing has been written from PROJECT yet, so the empty list is the
+    # "no bucket" answer: same stdout, exit 1 and a stderr line since #948.
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 1
+    captured = capsys.readouterr()
+    assert "no rulings" in captured.out
+    assert "no bucket" in captured.err
     assert cli.main(["ruling", "propose", "--subject", "human area",
                      "--verdict", "a human proposed rule",
                      "--scope", "human-scope", "--evidence", "issue:693",
@@ -861,6 +867,59 @@ def test_cli_remaining_ruling_paths(tmp_checkpoint_dir, _tty, monkeypatch,
     assert cli.main(["ruling", "revise", cand, "--verdict", "x",
                      "--evidence", "issue:693", "--project", PROJECT]) == 1
     capsys.readouterr()
+
+
+# ---- "no rulings" and "no bucket" are different answers (#948) ----
+
+
+def test_ruling_list_separates_an_empty_project_from_an_unwritten_one(
+        tmp_checkpoint_dir, capsys):
+    """A path that has never been written from is the shape a mis-resolved
+    --project takes. Reporting it as "no rulings for this project" at exit 0
+    is what let the #948 routing defect stay invisible: the read looked
+    successful. stdout is unchanged so scripts parsing it keep working; the
+    diagnosis goes to stderr and the exit code, matching `daimon status`."""
+    from daimon_briefing import cli
+
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 1
+    captured = capsys.readouterr()
+    assert "no rulings for this project" in captured.out
+    assert store.project_slug(PROJECT) in captured.err
+    assert "no bucket" in captured.err
+
+
+def test_ruling_list_json_on_an_unwritten_project_still_prints_an_empty_list(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+
+    assert cli.main(["ruling", "list", "--json", "--project", PROJECT]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == []
+    assert store.project_slug(PROJECT) in captured.err
+
+
+def test_ruling_list_on_a_bucket_with_no_ledger_is_a_clean_empty_read(
+        tmp_checkpoint_dir, capsys):
+    """The bucket exists, so the project HAS written; it simply holds no
+    rulings. That is a successful empty read, exit 0."""
+    from daimon_briefing import cli
+
+    (tmp_checkpoint_dir / (store.project_slug(PROJECT) or "")).mkdir(
+        parents=True)
+
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    assert "no rulings for this project" in capsys.readouterr().out
+
+
+def test_ruling_list_on_a_ledger_holding_only_refutations_is_exit_zero(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+
+    _refute()
+    capsys.readouterr()
+
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    assert "no rulings for this project" in capsys.readouterr().out
 
 
 def test_cli_list_json_over_cap_goes_to_stderr(tmp_checkpoint_dir,
