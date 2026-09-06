@@ -144,6 +144,19 @@ CHECK_INTENTS = frozenset({"enforce", "warn", "record-only"})
 _MAX_CHECK_BODY = 8192
 _MAX_CHECK_MATCH = 200
 _CHECK_PATH_RE = re.compile(r"\s*(?:~|/|\./)[^\s]*\s*")
+# #943 slice 2, widening the rule above from the whole body to each LINE.
+# The bare-path refusal catches `~/.claude/voicegate.sh` as an entire body; a
+# body that merely CALLS one passes it, and then the check travels to another
+# machine as a script whose real content is a file that is not there. The
+# runner does observe that (sh exits 127) but only after the ruling is
+# ratified and every host has started reporting unresolved. Refusing at
+# propose time is the same constraint one step earlier.
+#
+# Roots only, each with its separator, so `/rooted-thing` and a bare `$HOME`
+# comparison do not trip it. A relative path travels with the repo and is
+# deliberately allowed.
+_CHECK_HOST_ROOT_RE = re.compile(r"(?:^|[^\w/])(?:~/|\$HOME/|\$\{HOME\}/|"
+                                 r"/Users/|/home/|/root/)")
 
 # Every field of a ledger row that can hold ITEM plaintext, flat then nested
 # (#645). One declaration, two consumers: `forget_content_key` below decides
@@ -337,6 +350,16 @@ def _check(value) -> dict | None:
         raise RefutationError(
             "check body must be the script itself, not a path to one: a "
             "path is invisible to every other host and machine")
+    # Checked after the bare-path rule so the older, more specific message
+    # wins for a body that IS a path — that one explains what a body is,
+    # which is the more useful thing to hear.
+    for number, line in enumerate(body.splitlines(), start=1):
+        if _CHECK_HOST_ROOT_RE.search(line):
+            raise RefutationError(
+                f"check body line {number} names a host-local path; the "
+                "check travels with the ruling, so anything outside the body "
+                "is missing on every other host and machine, and the ruling "
+                "reports unresolved there forever")
     for field, text in (("match", match), ("body", body)):
         scrubbed, _ = redact.redact_text(text)
         if scrubbed != text:
