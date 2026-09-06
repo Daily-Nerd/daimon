@@ -237,15 +237,16 @@ def _stray(script, tmp_path, *, include=()):
 
 
 @pytest.mark.parametrize("host,script", HOOKS, ids=IDS)
-def test_a_hook_with_no_adapter_core_beside_it_says_nothing(host, script,
-                                                            tmp_path):
-    """Fail open and silent. There is nothing to check with and nothing to
-    write a row with, and a traceback on stderr before every shell action is
-    worse than the missing check it would be reporting."""
+def test_a_hook_with_no_adapter_core_beside_it_fails_open(host, script,
+                                                          tmp_path):
+    """Exit 0, nothing on stderr, no row. There is nothing to check with and
+    nothing to write a row with, and a traceback before every shell action is
+    worse than the missing check it would be reporting. Whether the hook says
+    so on stdout is the host's own question, answered just below."""
     _arm(tmp_path, intent="enforce")
     proc = _run(_stray(script, tmp_path), _payload(MATCH, tmp_path, host=host),
                 tmp_path)
-    assert _assert_host_contract(proc) == ""
+    _assert_host_contract(proc)
     assert _log_rows() == []
 
 
@@ -300,14 +301,16 @@ def test_the_header_says_this_hook_can_fail_a_host_action(host, script):
 
 
 @pytest.mark.parametrize("host,script", HOOKS, ids=IDS)
-def test_the_script_names_its_profile_and_nothing_else(host, script):
+def test_the_script_names_its_profile_and_little_else(host, script):
     """The thin-script contract: a host is a row plus a name. A script that
     made its own decisions would be a second pipeline, which is the thing
-    this slice exists to not have."""
+    this slice exists to not have. The one exception is the shape below,
+    which a script has to carry because the core is what is missing when it
+    is needed."""
     text = script.read_text(encoding="utf-8")
     assert f'main("{host}")' in text
-    assert "permissionDecision" not in text
-    assert "hookSpecificOutput" not in text
+    assert "mode_caps" not in text
+    assert "armed_for" not in text
 
 
 # ---- registration: the event, on both hosts and both install paths --------
@@ -530,3 +533,54 @@ def test_two_hanging_checks_still_decide_inside_the_host_budget(tmp_path):
     assert len(rows) == 2
     assert {r["outcome"] for r in rows} == {"unresolved"}
     assert {r["cause"] for r in rows} == {"check-timeout"}
+
+
+# ---- a missing core is as visible as a missing runtime --------------------
+
+
+def test_a_missing_core_tells_claude_code_that_nothing_is_enforced(tmp_path):
+    """A missing runtime said so and a missing core did not, and they are the
+    same fact: a partial or half-upgraded install. Silence there is
+    byte-identical to a clean allow, which is the shape the scar candidate on
+    this branch is about."""
+    _arm(tmp_path, intent="enforce")
+    proc = _run(_stray(CLAUDE_HOOK, tmp_path), _payload(MATCH, tmp_path),
+                tmp_path)
+    data = json.loads(_assert_host_contract(proc))
+    assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert data["systemMessage"] == \
+        "daimon: check core missing, nothing enforced"
+    assert _log_rows() == []
+
+
+def test_a_broken_core_says_the_same_thing_as_an_absent_one(tmp_path):
+    """A truncated or half-written copy from an interrupted install. The
+    script cannot tell the two apart and does not need to: neither can
+    decide anything."""
+    _arm(tmp_path, intent="enforce")
+    staged = _stray(CLAUDE_HOOK, tmp_path)
+    (staged.parent / CORE).write_text("def (\n", encoding="utf-8")
+    proc = _run(staged, _payload(MATCH, tmp_path), tmp_path)
+    assert json.loads(_assert_host_contract(proc))["systemMessage"] == \
+        "daimon: check core missing, nothing enforced"
+
+
+def test_a_missing_core_stays_silent_on_codex(tmp_path):
+    """Codex renders no message channel, so the diagnostic has nowhere to go.
+    The profile says which hosts have one, and the script that cannot load
+    the profile has to carry that one fact itself."""
+    _arm(tmp_path, intent="enforce")
+    proc = _run(_stray(CODEX_HOOK, tmp_path),
+                _payload(MATCH, tmp_path, host="codex"), tmp_path)
+    assert _assert_host_contract(proc) == ""
+
+
+@pytest.mark.parametrize("host,script", HOOKS, ids=IDS)
+def test_a_script_can_only_ever_emit_an_allow_on_its_own(host, script):
+    """The thin-script contract, restated now that one of them carries a
+    shape. A script decides nothing: the only thing it can say without the
+    core is that it could not load the core, and that is an allow."""
+    text = script.read_text(encoding="utf-8")
+    assert f'main("{host}")' in text
+    assert '"deny"' not in text
+    assert "permissionDecisionReason" not in text

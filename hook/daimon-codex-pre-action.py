@@ -47,6 +47,12 @@ def _load_core():
 def main() -> int:
     core = _load_core()
     if core is None:
+        # Silent, and that is the profile rather than an oversight: Codex
+        # documents no message channel, so a diagnostic addressed to one
+        # would be text on a stream the operator never sees, on a host that
+        # parses that stream. The Claude Code sibling of this script does
+        # emit one. The firing log would be the honest surface here, and
+        # there is no runtime loaded to write it with.
         return 0
     return core.main("codex")
 

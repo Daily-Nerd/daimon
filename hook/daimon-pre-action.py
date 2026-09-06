@@ -19,6 +19,7 @@ would block an action no check ever judged. The deny is the deliberate path.
 """
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -44,9 +45,28 @@ def _load_core():
         return None
 
 
+# The one thing this script can say without the core, and the only thing it
+# ever says on its own: an allow reporting that it could not load the core.
+# A missing runtime already announced itself this way; a missing CORE said
+# nothing at all, and both are the same fact, a partial or half-upgraded
+# install. Silence there is byte-identical to a clean allow.
+CORE_MISSING = "daimon: check core missing, nothing enforced"
+
+
 def main() -> int:
     core = _load_core()
     if core is None:
+        # Built here rather than read off a profile, because the profile
+        # lives in the file that is missing. Claude Code renders
+        # systemMessage; the Codex sibling of this script stays silent
+        # instead, because Codex documents no channel for one.
+        sys.stdout.write(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+            },
+            "systemMessage": CORE_MISSING,
+        }, sort_keys=True))
         return 0
     return core.main("claude-code")
 
