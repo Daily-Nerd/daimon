@@ -159,7 +159,10 @@ header "Standing rulings (human-ratified — honor these):" — when that
 section is in context, honor it directly; `[agent-written]` marks text a
 human ratified but did not author.
 `daimon ruling list` shows them; `daimon refute search` returns both
-kinds, labelled. Agents may propose: `daimon ruling propose ... --by agent`, and on
+kinds, labelled. `ruling list` exits 1 on a project that has never been
+written to, naming the missing bucket on stderr: that is the expected
+answer for a fresh project, not a failed command, so do not retry it.
+Agents may propose: `daimon ruling propose ... --by agent`, and on
 an active ruling `ruling revise --by agent` or `ruling retire --by agent`
 record proposals while the text stands. Always pass `--by agent`. Never run
 `daimon ruling ratify`, and never `ruling revise`/`retire` without the flag:
