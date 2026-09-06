@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import checks, config, refutations
+from daimon_briefing import checks, checks_runtime, config, refutations
 
 CANONICAL = Path(__file__).parents[1] / "daimon_briefing" / "checks_host.py"
 
@@ -272,3 +272,159 @@ def test_a_ruling_that_is_not_active_still_owns_its_past_firings(
     _write_log(_row(ruling_id=ruling_id, outcome="clean"))
     summary = checks.firing_summary(str(tmp_path))
     assert summary.rulings[(ruling_id, CC)]["clean"] == 1
+
+
+# ---- the manifest audit: what the hooks read vs what the ledger wants -----
+
+
+def _manifest_path():
+    return config.checks_dir() / "manifest.json"
+
+
+def _write_manifest(entries):
+    path = _manifest_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+
+
+def _entry(ruling_id, project, *, body=CLEAN, match=MATCH, intent="warn"):
+    return {"ruling_id": ruling_id, "project_dir": str(project),
+            "match": match, "intent": intent, "sha256": _sha(body),
+            "armed_at": "2026-09-06T10:00:00Z"}
+
+
+def test_an_armed_ruling_that_synced_is_in_step(tmp_path):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    audit = checks.audit(str(tmp_path))
+    assert audit.state == "read" and audit.drift is False
+    assert audit.wanted == [ruling_id] and audit.have == [ruling_id]
+    assert (audit.missing, audit.stale) == ([], [])
+    assert (audit.body_missing, audit.body_mismatch) == ([], [])
+
+
+def test_a_wanted_ruling_the_manifest_never_got_is_missing(tmp_path):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_manifest([])
+    audit = checks.audit(str(tmp_path))
+    assert audit.missing == [ruling_id] and audit.drift is True
+    assert audit.have == []
+
+
+def test_a_manifest_pinned_to_a_body_the_ledger_no_longer_wants_drifts(
+        tmp_path):
+    """A re-pinned hash is BOTH: missing at the hash the ledger wants and
+    stale at the hash the manifest still names. Reporting only one half hides
+    which side moved."""
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_manifest([_entry(ruling_id, config.resolve_project_dir(str(tmp_path)),
+                            body=VIOLATION)])
+    audit = checks.audit(str(tmp_path))
+    assert audit.missing == [ruling_id] and audit.stale == [ruling_id]
+    assert audit.drift is True
+
+
+def test_an_entry_for_a_ruling_that_was_retired_is_stale(tmp_path):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    root = config.resolve_project_dir(str(tmp_path))
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=str(tmp_path))
+    _write_manifest([_entry(ruling_id, root)])
+    audit = checks.audit(str(tmp_path))
+    assert audit.wanted == [] and audit.stale == [ruling_id]
+    assert audit.drift is True
+
+
+def test_a_body_the_manifest_names_and_the_disk_does_not_have_is_drift(
+        tmp_path):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    entry = checks_runtime.load_manifest(_manifest_path()).entries[0]
+    checks_runtime.body_path(entry, config.checks_dir()).unlink()
+    audit = checks.audit(str(tmp_path))
+    assert audit.body_missing == [ruling_id] and audit.drift is True
+    assert audit.body_mismatch == []
+
+
+def test_a_body_edited_out_of_band_is_caught_before_the_runner_sees_it(
+        tmp_path):
+    """The fourth state a manifest cannot express. The runner catches it at
+    exec time as body-hash-mismatch, one action too late to be a report."""
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    entry = checks_runtime.load_manifest(_manifest_path()).entries[0]
+    path = checks_runtime.body_path(entry, config.checks_dir())
+    path.chmod(0o600)
+    path.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    audit = checks.audit(str(tmp_path))
+    assert audit.body_mismatch == [ruling_id] and audit.drift is True
+    assert audit.body_missing == []
+
+
+def test_no_manifest_with_nothing_wanted_is_not_drift(tmp_path):
+    """An install that armed nothing is the ordinary state, not a fault."""
+    audit = checks.audit(str(tmp_path))
+    assert audit.state == "absent" and audit.drift is False
+    assert audit.wanted == [] and audit.have == []
+
+
+def test_no_manifest_with_something_wanted_is_drift(tmp_path):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _manifest_path().unlink()
+    audit = checks.audit(str(tmp_path))
+    assert audit.state == "absent" and audit.drift is True
+    assert audit.missing == [ruling_id]
+
+
+def test_an_unreadable_manifest_is_its_own_state_not_an_empty_one(tmp_path):
+    """daimon wrote something it can no longer read. Folding that into
+    "nothing armed" would report a broken install as a fresh one."""
+    _arm(tmp_path)
+    _manifest_path().write_text("{not json", encoding="utf-8")
+    audit = checks.audit(str(tmp_path))
+    assert audit.state == "unreadable" and audit.drift is True
+
+
+def test_another_projects_entries_are_neither_wanted_nor_stale(tmp_path):
+    """The manifest is global. An entry belonging to a bucket this command
+    was not asked about is not this project's drift, and its id must never
+    reach a line this project prints (scar 0055)."""
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    mine = _arm(tmp_path)
+    theirs = _arm(other, subject="their posts")
+    checks.sync(str(tmp_path))
+    checks.sync(str(other))
+    audit = checks.audit(str(tmp_path))
+    assert audit.wanted == [mine] and audit.have == [mine]
+    assert theirs not in audit.stale and audit.drift is False
+
+
+def test_the_audit_carries_ids_and_nothing_else(tmp_path):
+    """No match patterns, no bodies, no project directories: every list is a
+    list of strings a caller may print."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    audit = checks.audit(str(tmp_path))
+    for name in ("wanted", "have", "missing", "stale", "body_missing",
+                 "body_mismatch"):
+        values = getattr(audit, name)
+        assert all(isinstance(v, str) and v.startswith("r-") for v in values)
+
+
+def test_the_audit_never_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(refutations, "listing",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("x")))
+    audit = checks.audit(str(tmp_path))
+    assert audit.state == "unreadable" and audit.drift is False
+
+
+def test_a_candidate_check_is_never_wanted(tmp_path):
+    """`proposed` is a lifecycle, not a mode. A manifest that carried one
+    would run code no human ratified."""
+    _propose(tmp_path)
+    audit = checks.audit(str(tmp_path))
+    assert audit.wanted == [] and audit.drift is False

@@ -17,6 +17,7 @@ caller reports the failure and keeps its own exit code.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -56,6 +57,38 @@ def _write_body(path: Path, body: str) -> None:
     os.replace(tmp, path)  # atomic on POSIX
 
 
+def _wanted(project_dir, root: str) -> list:
+    """Every entry this project's ledger says should be armed, paired with
+    its body. The ONE place the six-key manifest entry is built, so the
+    writer and the audit that grades the writer cannot describe different
+    shapes."""
+    out = []
+    for record in refutations.listing(states={"active"}, polarity="ruling",
+                                      project_dir=project_dir):
+        check = record.get("check")
+        # `check_lifecycle` is derived at fold time and is the ONE place that
+        # knows a candidate's check is not a mode. Reading `state` here
+        # instead would be a second answer to the same question. Three other
+        # readers of that field exist (`cli._ledger._ruling_lines`, the
+        # viewer payload, and this module's own sync); none of them changes
+        # behavior for this one (scar 0053).
+        if not isinstance(check, dict) or record.get("check_lifecycle") != "armed":
+            continue
+        sha = str(check.get("sha256") or "")
+        ruling_id = str(record.get("refutation_id") or "")
+        if not sha or not ruling_id:
+            continue
+        out.append(({
+            "ruling_id": ruling_id,
+            "project_dir": root,
+            "match": str(check.get("match") or ""),
+            "intent": str(check.get("intent") or "warn"),
+            "sha256": sha,
+            "armed_at": str(record.get("activated_at") or ""),
+        }, str(check.get("body") or "")))
+    return out
+
+
 def sync(project_dir=None) -> SyncReport:
     """Rebuild this project's armed checks from its ledger. Never raises."""
     try:
@@ -83,27 +116,7 @@ def _sync(project_dir) -> SyncReport:
                           "the existing manifest could not be read; rebuilding "
                           "from this project alone would disarm the others")
 
-    armed = []
-    for record in refutations.listing(states={"active"}, polarity="ruling",
-                                      project_dir=project_dir):
-        check = record.get("check")
-        # `check_lifecycle` is derived at fold time and is the ONE place that
-        # knows a candidate's check is not a mode. Reading `state` here
-        # instead would be a second answer to the same question.
-        if not isinstance(check, dict) or record.get("check_lifecycle") != "armed":
-            continue
-        sha = str(check.get("sha256") or "")
-        ruling_id = str(record.get("refutation_id") or "")
-        if not sha or not ruling_id:
-            continue
-        armed.append(({
-            "ruling_id": ruling_id,
-            "project_dir": root,
-            "match": str(check.get("match") or ""),
-            "intent": str(check.get("intent") or "warn"),
-            "sha256": sha,
-            "armed_at": str(record.get("activated_at") or ""),
-        }, str(check.get("body") or "")))
+    armed = _wanted(project_dir, root)
 
     entries = [entry for entry, _ in armed]
     others = [e for e in loaded.entries if e.get("project_dir") != root]
@@ -137,6 +150,88 @@ def _sync(project_dir) -> SyncReport:
         except OSError:
             pass
     return SyncReport(True, len(entries), slug)
+
+
+# ---- auditing the manifest against the ledger (#943 slice 5) --------------
+
+
+class Audit(NamedTuple):
+    """Whether what the hooks read still matches what the ledger wants.
+
+    Every list holds RULING IDS and nothing else: no match patterns, no
+    bodies, no project directories. This result is printed, and printing is
+    a write (scar 0055).
+
+    `state` is the manifest's own read state, kept apart the way
+    `load_manifest` keeps it: an install that armed nothing (`absent`) and a
+    manifest daimon can no longer parse (`unreadable`) are different facts,
+    and folding them would report a fresh machine as a broken one.
+
+    A ruling whose pinned hash moved appears in BOTH `missing` and `stale`:
+    missing at the hash the ledger wants, stale at the hash the manifest
+    still names. Reporting one half hides which side moved."""
+
+    state: str
+    wanted: list
+    have: list
+    missing: list
+    stale: list
+    body_missing: list
+    body_mismatch: list
+    drift: bool
+
+
+def audit(project_dir=None) -> Audit:
+    """Read-only. Never raises, never repairs.
+
+    `sync` has no dry run and could not be borrowed for this: calling it to
+    detect drift would repair the drift as a side effect, and an audit that
+    changes what it audits reports nothing.
+
+    It also catches a state the manifest cannot express — a body whose bytes
+    no longer hash to the pinned value. The runner catches that at exec time
+    as `body-hash-mismatch`, which is one blocked action too late to be a
+    report."""
+    try:
+        return _audit(project_dir)
+    except Exception:  # noqa: BLE001 — a report, never a raise
+        return Audit("unreadable", [], [], [], [], [], [], False)
+
+
+def _audit(project_dir) -> Audit:
+    root = str(config.resolve_project_dir(project_dir))
+    base = config.checks_dir()
+    loaded = checks_runtime.load_manifest(base / checks_runtime.MANIFEST_NAME)
+    state = {"": "read", "no-manifest": "absent",
+             "manifest-unreadable": "unreadable"}.get(loaded.reason, "unreadable")
+
+    wanted = {(e["ruling_id"], e["sha256"]) for e, _ in _wanted(project_dir, root)}
+    # Project EQUALITY, never `armed_for`'s prefix match: that primitive
+    # answers "which entries govern this cwd" and would pull in a parent
+    # project's rows when run from a nested directory.
+    ours = [e for e in loaded.entries if e.get("project_dir") == root
+            and str(e.get("ruling_id") or "")]
+    have = {(str(e.get("ruling_id")), str(e.get("sha256") or ""))
+            for e in ours}
+
+    body_missing, body_mismatch = set(), set()
+    for entry in ours:
+        path = checks_runtime.body_path(entry, base)
+        try:
+            blob = path.read_bytes()
+        except OSError:
+            body_missing.add(str(entry.get("ruling_id")))
+            continue
+        if hashlib.sha256(blob).hexdigest() != str(entry.get("sha256") or ""):
+            body_mismatch.add(str(entry.get("ruling_id")))
+
+    missing = sorted({rid for rid, _ in wanted - have})
+    stale = sorted({rid for rid, _ in have - wanted})
+    drift = bool(missing or stale or body_missing or body_mismatch
+                 or state == "unreadable")
+    return Audit(state, sorted({rid for rid, _ in wanted}),
+                 sorted({rid for rid, _ in have}), missing, stale,
+                 sorted(body_missing), sorted(body_mismatch), drift)
 
 
 # ---- reading the firing log (#943 slice 5) --------------------------------
