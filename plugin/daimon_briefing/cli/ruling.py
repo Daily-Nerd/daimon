@@ -15,6 +15,7 @@ from .. import config, normalize, refutations, render, store
 from ._ledger import (
     _check_args,
     _check_ceremony_lines,
+    _warn_check_sync,
     _print_ruling,
     _refusal_message,
     _refutation_json,
@@ -111,6 +112,7 @@ def _cmd_ruling_ratify(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not ratified", exc))
         return 1
+    _warn_check_sync()
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:ratify")
     if record is None:
@@ -185,6 +187,7 @@ def _cmd_ruling_revise(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not revised", exc))
         return 1
+    _warn_check_sync()
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:revise")
     if record is None:
@@ -217,6 +220,7 @@ def _cmd_ruling_retire(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not retired", exc))
         return 1
+    _warn_check_sync()
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:retire")
     if record is None:

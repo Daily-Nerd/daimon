@@ -250,12 +250,13 @@ def test_sync_reports_a_failure_instead_of_raising(
         tmp_checkpoint_dir, monkeypatch):
     """Sync runs after a ledger write that already landed. Raising here
     would turn a bookkeeping failure into a failed ratify."""
-    _arm()
-
     def boom(*args, **kwargs):
         raise OSError("the disk said no")
 
+    # Patched BEFORE the ratify: arming already syncs, so a sync installed
+    # afterwards would find the manifest correct and never write at all.
     monkeypatch.setattr(checks.store, "_atomic_write", boom)
+    _arm()
     report = checks.sync(PROJECT)
     assert report.ok is False
     assert "the disk said no" in report.reason
@@ -316,3 +317,169 @@ def test_the_manifest_is_json_a_reader_outside_python_can_parse(
     raw = (config.checks_dir() / "manifest.json").read_text(encoding="utf-8")
     assert isinstance(json.loads(raw), list)
     assert os.linesep or True
+
+
+# ---- sync at the writers --------------------------------------------------
+
+
+def _snapshot():
+    base = config.checks_dir()
+    if not base.exists():
+        return {}
+    return {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+            for p in base.iterdir()}
+
+
+def test_ratify_arms_the_check_with_no_explicit_sync(tmp_checkpoint_dir):
+    """The manifest is a derived view of the ledger. A user who ratifies and
+    never learns `check sync` exists still gets an armed check."""
+    ruling_id = _arm()
+    entries = _manifest().entries
+    assert [e["ruling_id"] for e in entries] == [ruling_id]
+    assert len(_bodies()) == 1
+
+
+def test_retire_disarms_it_with_no_explicit_sync(tmp_checkpoint_dir):
+    ruling_id = _arm()
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert _manifest().entries == []
+    assert _bodies() == []
+
+
+def test_a_human_revise_arms_the_new_body_with_no_explicit_sync(
+        tmp_checkpoint_dir):
+    ruling_id = _arm()
+    new_body = BODY.replace("FORBIDDEN", "BANNED")
+    refutations.revise(ruling_id, channel="cli-tty", evidence=["issue:943"],
+                       check={"match": MATCH, "body": new_body,
+                              "intent": "warn"},
+                       project_dir=PROJECT)
+    entry = _manifest().entries[0]
+    assert entry["sha256"] == _sha(new_body)
+    assert (config.checks_dir() / checks_runtime.body_name(entry)).read_text(
+        encoding="utf-8") == new_body
+
+
+def test_an_agent_revision_proposal_leaves_the_armed_body_alone(
+        tmp_checkpoint_dir):
+    """Spec 2.2: an agent's pending revision is `proposed`; the host keeps
+    seeing the old body. The write happens, and nothing on disk moves."""
+    ruling_id = _arm()
+    before = _snapshot()
+    time.sleep(0.01)
+    refutations.revise(ruling_id, channel="cli-agent", evidence=["issue:943"],
+                       check={"match": MATCH, "body": BODY.replace(
+                           "FORBIDDEN", "SNEAKY"), "intent": "warn"},
+                       project_dir=PROJECT)
+    assert _snapshot() == before
+
+
+def test_forget_disarms_the_check_with_no_explicit_sync(tmp_checkpoint_dir):
+    _arm()
+    assert len(_bodies()) == 1
+    refutations.forget_content_key(
+        normalize.content_key("the rule for public posts in publishing"),
+        project_dir=PROJECT)
+    assert _manifest().entries == []
+    assert _bodies() == []
+
+
+def test_a_write_that_touches_no_check_touches_no_file(tmp_checkpoint_dir):
+    """Every refutation ratify in the tree would otherwise pay a full ledger
+    re-fold and an mtime bump for a manifest that cannot have changed."""
+    _arm()
+    before = _snapshot()
+    other = refutations.assert_refutation(
+        subject="a losing approach", verdict="it lost", scope="elsewhere",
+        evidence=["issue:943"], channel="cli-agent", project_dir=PROJECT)
+    time.sleep(0.01)
+    refutations.ratify(other, channel="cli-tty", project_dir=PROJECT)
+    assert _snapshot() == before
+    assert refutations.last_check_sync() is None
+
+
+def test_overturning_a_refutation_never_reaches_the_manifest(
+        tmp_checkpoint_dir):
+    """A ruling is retired, never overturned, so this writer can only ever
+    see a record with no check. Wired anyway, and inert by construction."""
+    _arm()
+    before = _snapshot()
+    other = refutations.assert_refutation(
+        subject="a losing approach", verdict="it lost", scope="elsewhere",
+        evidence=["issue:943"], channel="cli-agent", project_dir=PROJECT)
+    time.sleep(0.01)
+    refutations.overturn(other, channel="cli-tty", evidence=["issue:943"],
+                         project_dir=PROJECT)
+    assert _snapshot() == before
+
+
+def test_the_kill_switch_stops_the_write_and_the_manifest_with_it(
+        tmp_checkpoint_dir, monkeypatch):
+    """append is silent under DAIMON_DISABLE, so the writer raises and the
+    manifest must not be rebuilt from a ledger that did not change."""
+    ruling_id = _arm()
+    before = _snapshot()
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    time.sleep(0.01)
+    with pytest.raises(refutations.RefutationError):
+        refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert _snapshot() == before
+
+
+def test_a_failing_sync_never_fails_the_write(tmp_checkpoint_dir, monkeypatch):
+    """The append already landed. Raising here would report a failed ratify
+    for a ruling the ledger says is active."""
+    ruling_id = _propose()
+    monkeypatch.setattr(checks, "sync",
+                        lambda *a, **k: checks.SyncReport(
+                            False, 0, "-p-checks-sync", "the disk said no"))
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256=_sha(),
+                       project_dir=PROJECT)
+    assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"
+    report = refutations.last_check_sync()
+    assert report is not None and report.ok is False
+    assert report.reason == "the disk said no"
+
+
+def test_a_check_writer_that_cannot_be_loaded_is_reported_not_raised(
+        tmp_checkpoint_dir, monkeypatch):
+    ruling_id = _propose()
+
+    def boom(*args, **kwargs):
+        raise ImportError("no checks module here")
+
+    monkeypatch.setattr(refutations, "_load_checks", boom)
+    refutations.ratify(ruling_id, channel="cli-tty", check_sha256=_sha(),
+                       project_dir=PROJECT)
+    report = refutations.last_check_sync()
+    assert report is not None and report.ok is False
+    assert "no checks module here" in report.reason
+
+
+# ---- the CLI says so ------------------------------------------------------
+
+
+def test_the_ratify_ceremony_warns_when_the_manifest_did_not_update(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import cli
+    ruling_id = _propose()
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    monkeypatch.setattr(checks, "sync",
+                        lambda *a, **k: checks.SyncReport(
+                            False, 0, "-p-checks-sync", "the disk said no"))
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    out = capsys.readouterr().out
+    assert rc == 0, "a bookkeeping failure must not change the verb's exit"
+    assert "warning: check manifest not updated (the disk said no)" in out
+    assert "daimon check sync" in out
+
+
+def test_the_ratify_ceremony_is_quiet_when_the_manifest_updated(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import cli
+    ruling_id = _propose()
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT]) == 0
+    assert "warning: check manifest" not in capsys.readouterr().out
