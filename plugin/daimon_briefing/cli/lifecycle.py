@@ -25,6 +25,7 @@ from .. import (
     serializer,
     store,
 )
+from ._ledger import _check_sync_warning
 
 
 def _cmd_resolve(args) -> int:
@@ -684,6 +685,14 @@ def _cmd_forget(args) -> int:
         report.append(
             f"scrubbed {scrubbed_lines} legacy downgrade line(s) in "
             "serialize.log (payload replaced; ledger lines kept)")
+    # #943: a forgotten ruling's check has to leave the disk with it, and
+    # the removal happens by re-deriving the manifest from the ledger this
+    # forget just rewrote. When that derivation fails, the body is still
+    # armed and the report must say so rather than claiming a clean sweep.
+    check_warning = _check_sync_warning()
+    if check_warning:
+        report.append(f"{check_warning} — a forgotten ruling's check may "
+                      "still be armed on this host")
     render.render_lifecycle_lines(report)
     return 0
 

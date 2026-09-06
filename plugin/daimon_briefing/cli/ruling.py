@@ -11,10 +11,11 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import config, normalize, refutations, render, store
+from .. import checks, config, normalize, refutations, render, store
 from ._ledger import (
     _check_args,
     _check_ceremony_lines,
+    _warn_check_sync,
     _print_ruling,
     _refusal_message,
     _refutation_json,
@@ -111,6 +112,7 @@ def _cmd_ruling_ratify(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not ratified", exc))
         return 1
+    _warn_check_sync()
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:ratify")
     if record is None:
@@ -185,6 +187,7 @@ def _cmd_ruling_revise(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not revised", exc))
         return 1
+    _warn_check_sync()
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:revise")
     if record is None:
@@ -217,6 +220,7 @@ def _cmd_ruling_retire(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not retired", exc))
         return 1
+    _warn_check_sync()
     record = refutations.get(args.ruling_id, project_dir=project)
     _cli._note_usage("ruling:retire")
     if record is None:
@@ -288,6 +292,45 @@ def _cmd_ruling_show(args) -> int:
     else:
         _print_ruling(record, detailed=True)
     return 0
+
+
+def _cmd_ruling_check_try(args) -> int:
+    """#943: run a ruling's check against a command, arming nothing.
+
+    Exit codes are the auditors' three: 0 clean, 1 violation, 3 could not be
+    proven either way. Unresolved never collapses into 0, which would read as
+    clean, or into 1, which would report a violation the check never found.
+    """
+    project = _cli._resolve_project(args.project)
+    try:
+        channel = _refute_channel(args)
+    except refutations.RefutationError as exc:
+        print(_refusal_message("check not run", exc))
+        return 1
+    if channel != "cli-tty":
+        # Never invoke the runner to harvest its error string, and never
+        # execute a body to discover the caller was not allowed to ask.
+        print("check not run: a dry run executes the check body, so it "
+              f"requires a human channel; this call arrived through {channel!r}")
+        return 1
+    try:
+        outcome = checks.try_run(
+            args.ruling_id, args.command, channel=channel, cwd=args.cwd,
+            project_dir=project, proposed=args.proposed)
+    except refutations.RefutationError as exc:
+        print(_refusal_message("check not run", exc))
+        return 1
+    lines = [f"  outcome: {outcome.outcome}"]
+    if outcome.cause:
+        lines.append(f"  cause: {outcome.cause}")
+    if outcome.reason:
+        lines.append(f"  reason: {outcome.reason}")
+    lines.append(f"  duration: {outcome.duration_ms} ms")
+    lines.append("  Nothing was armed and nothing was logged; this was a "
+                 "rehearsal.")
+    render.render_ledger_lines(lines)
+    _cli._note_usage("ruling:check-try")
+    return {"clean": 0, "violation": 1}.get(outcome.outcome, 3)
 
 
 def register(sub, fmt) -> None:
@@ -412,6 +455,30 @@ def register(sub, fmt) -> None:
     rl_retire.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
     rl_retire.add_argument("--json", action="store_true", help="machine-readable output")
     rl_retire.set_defaults(func=_cli._cmd_ruling_retire)
+
+    rl_check = ruling_sub.add_parser(
+        "check", help="the check a ruling carries (#943): try it before a "
+                      "human arms it")
+    check_sub = rl_check.add_subparsers(dest="ruling_check_cmd", required=True)
+    rc_try = check_sub.add_parser(
+        "try", help="run this ruling's check against a command and print the "
+                    "outcome; arms nothing, logs nothing")
+    rc_try.add_argument("ruling_id", help="exact r-... id")
+    rc_try.add_argument("--command", required=True, metavar="CMD",
+                        help="the command string to check, as a host would "
+                             "hand it to the hook")
+    rc_try.add_argument("--cwd", metavar="DIR",
+                        help="working directory the command would run in; "
+                             "relative file arguments resolve against it "
+                             "(default: the current directory)")
+    rc_try.add_argument(
+        "--proposed", action="store_true",
+        help="run the pending revision's check instead of the armed one")
+    rc_try.add_argument("--by", choices=["agent"], default=None,
+                        help="declare yourself an agent; a dry run then "
+                             "refuses, because it executes the body")
+    rc_try.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    rc_try.set_defaults(func=_cli._cmd_ruling_check_try)
 
     rl_list = ruling_sub.add_parser("list", help="list project rulings")
     rl_list.add_argument("--state", action="append",

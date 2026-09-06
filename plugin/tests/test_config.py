@@ -920,3 +920,56 @@ def test_extra_read_slugs_drops_entries_that_are_not_slugs(monkeypatch):
     widen a read."""
     monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", "-p-ok, /etc/x, a b, *, -p-also")
     assert config.extra_read_slugs() == ("-p-ok", "-p-also")
+
+
+# ---- #943 slice 2: the check runtime's two knobs ---------------------------
+
+
+def test_checks_dir_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_CHECKS_DIR", str(tmp_path / "ch"))
+    assert config.checks_dir() == tmp_path / "ch"
+
+
+def test_checks_dir_default(monkeypatch):
+    monkeypatch.delenv("DAIMON_CHECKS_DIR", raising=False)
+    d = config.checks_dir()
+    assert d.name == "checks"
+    assert ".daimon" in str(d)
+
+
+def test_checks_dir_expands_a_tilde(monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKS_DIR", "~/somewhere/checks")
+    assert config.checks_dir() == Path.home() / "somewhere" / "checks"
+
+
+def test_check_timeout_default_and_override(monkeypatch):
+    monkeypatch.delenv("DAIMON_CHECK_TIMEOUT", raising=False)
+    assert config.check_timeout() == 5.0
+    monkeypatch.setenv("DAIMON_CHECK_TIMEOUT", "2.5")
+    assert config.check_timeout() == 2.5
+
+
+def test_check_timeout_garbage_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECK_TIMEOUT", "soon")
+    assert config.check_timeout() == 5.0
+
+
+def test_check_timeout_has_a_floor(monkeypatch):
+    """A budget of zero is not "no budget", it is a runner that reports
+    check-timeout on every check and reads as if every check crashed. The
+    floor keeps the smallest configured budget a budget."""
+    monkeypatch.setenv("DAIMON_CHECK_TIMEOUT", "0")
+    assert config.check_timeout() == 0.5
+    monkeypatch.setenv("DAIMON_CHECK_TIMEOUT", "-9")
+    assert config.check_timeout() == 0.5
+
+
+def test_the_autouse_fixture_isolates_the_checks_dir():
+    """HOME is NOT redirected by the autouse fixture, so a checks dir that
+    fell through to the default would be the DEVELOPER'S real one — the shape
+    of the incident where manual runs wrote scratch buckets into the live
+    store. The fixture must own this path like every other ~/.daimon path."""
+    resolved = config.checks_dir()
+    assert resolved != Path.home() / ".daimon" / "checks"
+    assert not (Path.home() / ".daimon" / "checks").exists() or \
+        Path.home() not in resolved.parents

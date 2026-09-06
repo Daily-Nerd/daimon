@@ -24,6 +24,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SYNC_PAIRS = (
     ("plugin/daimon_briefing/redact.py", "plugin/daimon_briefing/_hooks/redact.py"),
     ("plugin/daimon_briefing/redact.py", "hook/redact.py"),
+    # #943: same direction as redact.py — the PACKAGE file is canonical and
+    # both standalone copies are derivatives. Edit
+    # plugin/daimon_briefing/checks_runtime.py, then run this script.
+    ("plugin/daimon_briefing/checks_runtime.py",
+     "plugin/daimon_briefing/_hooks/checks_runtime.py"),
+    ("plugin/daimon_briefing/checks_runtime.py", "hook/checks_runtime.py"),
     ("hook/daimon-windsurf-hooks.py", "plugin/daimon_briefing/_hooks/daimon-windsurf-hooks.py"),
     ("hook/daimon-codex-session-start.py", "plugin/daimon_briefing/_hooks/daimon-codex-session-start.py"),
     ("hook/daimon-codex-stop.py", "plugin/daimon_briefing/_hooks/daimon-codex-stop.py"),

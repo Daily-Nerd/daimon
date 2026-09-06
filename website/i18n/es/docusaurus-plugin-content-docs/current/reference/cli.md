@@ -14,6 +14,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon configure` | Detecta el backend LLM resuelto y completa los huecos en `~/.daimon/env`. `--test` corre un round-trip real. |
 | `daimon hooks install <host>` | Instala los hook scripts del host (Windsurf, Codex) desde el paquete. `list` / `status` inspeccionan. |
 | `daimon skill install <host>` | Instala la skill de agente de daimon en el directorio de skills del host. Volvé a correrlo después de cada upgrade. |
+| `daimon check sync` | Reconstruye `~/.daimon/checks` — el manifiesto de checks armados que lee un hook del anfitrión, y un archivo por cada cuerpo de check — desde el ledger de este proyecto. Cada ratify, revise, retire y forget ya lo hace, así que correlo solo cuando el manifiesto se dañó por fuera. Es seguro repetirlo: un manifiesto que no cambió no se reescribe. Imprime cuántos checks quedaron armados, cero incluido. |
 | `daimon heal` | Re-serializa la última sesión fallida cuando es seguro hacerlo. |
 | `daimon mcp serve` | Sirve las herramientas de daimon por MCP (stdio). |
 
@@ -36,6 +37,7 @@ comando trae la superficie completa de flags; esta página es el mapa.
 | `daimon audit privacy` | Prueba el contrato de borrado: hashea cada campo con texto plano en cada superficie (checkpoints, punteros rotados, el registro de eventos, el espejo de equipo, el índice de recall y sus snapshots huérfanos) y reporta todo valor olvidado que haya sobrevivido. Solo lectura. |
 | `daimon refute list\|show\|search\|guard` | Lee el ledger de conocimiento negativo sin decaimiento. `guard` emite solo matches activos por ancla exacta o frase de sujeto; es consultivo y nunca bloquea un comando. `search` devuelve ambas polaridades, etiquetadas; `list` y `guard` quedan solo para refutaciones. Sumá `--json` para integraciones de deliberación. |
 | `daimon ruling list\|show` | Lee las reglas vigentes: restricciones positivas ratificadas por humanos en el mismo ledger, que nunca decaen ni se re-extraen. `show` incluye propuestas de agentes pendientes. Un `list` que no encuentra nada sale con 1 y nombra el bucket en stderr cuando el proyecto nunca fue escrito, y sale con 0 cuando el proyecto tiene un bucket sin reglas. |
+| `daimon ruling check try <id> --command "<cmd>"` | Corre el check de esa regla contra una línea de comando que vos nombrás e imprime el resultado. No arma nada, no registra nada, y materializa el cuerpo fuera del directorio de checks. `--cwd` fija el directorio de trabajo contra el que resuelven las rutas relativas; `--proposed` corre el cuerpo de una revisión de agente pendiente en lugar del armado. Solo vía humana, como `ratify`: ejecuta el cuerpo, así que hace falta una terminal interactiva y `--by agent` se rechaza. Mismo contrato de salida que los auditores de abajo. |
 | `daimon serve` | Abre el [visor local de solo lectura](viewer.md) en localhost — búsqueda como recall, páginas "why" por entrada, refutaciones, diff, check strip, vista de impresión. Nada escribe. |
 | `daimon relations list\|show\|confirm\|reject\|retract` | El [ledger de relaciones tipadas](relations.md): las máquinas proponen, solo una persona confirma, y decidir necesita una terminal interactiva. Los candidatos nunca se renderizan en la superficie de una entrada. |
 
@@ -58,7 +60,60 @@ actuar sobre la respuesta:
 | `daimon resolve <id o texto>` | Marca un ítem como resuelto — evento append-only; el ítem deja de arrastrarse. `--dry-run` previsualiza el match; `--by agent --evidence "<cita>"` reclama un cierre que se verifica byte a byte al final de la sesión. |
 | `daimon anchor <archivo> <símbolo>` | Ancla un ítem cognitivo a un símbolo de código; los briefings avisan cuando el código anclado cambió. |
 | `daimon refute add\|ratify\|revise\|overturn` | Gestiona conocimiento negativo con alcance en su propio ledger append-only. Las escrituras de agentes quedan como candidatas; solo una ratificación humana explícita activa un guard, y `ratify` exige la vía humana: una terminal interactiva y `--by` omitido. Las revisiones exigen una cita de evidencia tipada nueva, cuya forma se valida pero nunca se resuelve ni se verifica, y devuelven una refutación activa a candidata hasta que se vuelva a ratificar. Los overturns de agentes siguen siendo propuestas. |
-| `daimon ruling propose\|ratify\|revise\|retire` | Gestiona reglas vigentes en el mismo ledger, con un ciclo más estricto: `ratify` muestra el texto completo, avisa que va a renderizarse en cada sesión futura y ata la activación al texto mostrado; un humano que revisa una regla activa confirma el cambio y la regla sigue activa; los revise y retire de agentes registran propuestas mientras el texto queda en pie; la activación se rechaza pasado el tope (`DAIMON_RULING_CAP`, por defecto 7). Retirar no exige cita de evidencia. `propose` y `revise` pueden adjuntar un check con `--check-body-file`, `--check-match` y `--check-intent`: un script cuyos bytes quedan guardados en la regla (una ruta se rechaza), un patrón sobre la línea de comando que elige las acciones antes de las cuales corre, y qué le pide a cada anfitrión (`warn` por defecto). El check de una candidata se lee como propuesto, no armado, y ningún anfitrión lo ejecuta. `ratify` muestra el check y ata la activación al cuerpo que mostró, por hash. Ejecutar el check llega en una versión posterior; esta versión lo registra y lo muestra. |
+| `daimon ruling propose\|ratify\|revise\|retire` | Gestiona reglas vigentes en el mismo ledger, con un ciclo más estricto: `ratify` muestra el texto completo, avisa que va a renderizarse en cada sesión futura y ata la activación al texto mostrado; un humano que revisa una regla activa confirma el cambio y la regla sigue activa; los revise y retire de agentes registran propuestas mientras el texto queda en pie; la activación se rechaza pasado el tope (`DAIMON_RULING_CAP`, por defecto 7). Retirar no exige cita de evidencia. `propose` y `revise` pueden adjuntar un check con `--check-body-file`, `--check-match` y `--check-intent`: un script cuyos bytes quedan guardados en la regla (una ruta se rechaza), un patrón sobre la línea de comando que elige las acciones antes de las cuales corre, y qué le pide a cada anfitrión (`warn` por defecto). El check de una candidata se lee como propuesto, no armado, y ningún anfitrión lo ejecuta. `ratify` muestra el check y ata la activación al cuerpo que mostró, por hash, y lo materializa para que un anfitrión pueda correrlo. Un cuerpo que nombra una ruta local del anfitrión en cualquier línea se rechaza, porque el check viaja con la regla y una ruta fuera de él no existe en ninguna otra máquina. Ver [Checks en ejecución](#checks-en-ejecución). |
+
+### Checks en ejecución
+
+Ratificar una regla que lleva un check escribe dos cosas bajo `~/.daimon/checks`: un manifiesto que nombra cada check armado y el directorio de proyecto al que pertenece, y un archivo por check con los bytes exactos que la regla guarda. Cada escritura en el ledger que puede armar o desarmar un check los reconstruye; `daimon check sync` los reconstruye a pedido. Los adaptadores de anfitrión que efectivamente corren un check sobre una acción real llegan en una versión posterior — lo que sale acá es la maquinaria de abajo y el comando para probar un cuerpo contra ella.
+
+Un check corre contra un **sujeto**: la línea de comando, un separador, y después el contenido de cada argumento de archivo que daimon pudo resolver, cada uno bajo un encabezado que nombra la bandera de la que salió. El sujeto va a un archivo temporal con modo 600 y se borra después de la corrida. Su ruta llega en `DAIMON_CHECK_SUBJECT`, junto con `DAIMON_CHECK_COMMAND` y `DAIMON_CHECK_RULING`; el directorio de trabajo es el de la acción, y la entrada estándar es `/dev/null`.
+
+Qué lee el resolutor:
+
+| forma en el comando | qué hace daimon |
+| --- | --- |
+| `--body-file <ruta>`, `--body-file=<ruta>`, `-F <ruta>`, `-F<ruta>` | lee el archivo |
+| `--notes-file <ruta>`, `--notes-file=<ruta>` | lee el archivo |
+| `-F clave=@<ruta>`, `--field clave=@<ruta>`, `-Fclave=@<ruta>` | lee el archivo |
+| `<bandera> -` con exactamente un heredoc en el MISMO comando | lee el texto del heredoc |
+| `<bandera> -` alimentada por un pipe | sin resolver, causa `stdin-pipe` |
+| `<bandera> -` cuyo propio comando no trae heredoc | sin resolver, causa `arg-form-unparsed` |
+| un comando con más de un heredoc o más de una `<bandera> -` | sin resolver, causa `arg-form-unparsed` |
+| cualquier otro `@<ruta>` o `<bandera> -` | sin resolver, causa `arg-form-unparsed` |
+
+Un valor pegado a una bandera corta es el mismo comando que uno separado, así que `-Fbody.md` se lee igual que `-F body.md`.
+
+Un heredoc pertenece al comando al que está pegado, y a ningún otro. daimon parte la línea en `&&`, `||`, `;`, `|` y saltos de línea, y un heredoc en uno de esos pedazos solo puede leerse para un argumento de ese mismo pedazo. Así que `cat <<EOF > note.txt ... EOF` seguido de `gh pr create -F -` queda sin resolver, en vez de comprobarse contra el texto que recibió `cat`. Dentro de un mismo comando las cuentas siguen teniendo que ser uno a uno: cuál heredoc alimenta a cuál argumento no es algo que la línea de comando responda, y una respuesta equivocada armaría el sujeto con texto que la acción nunca envía.
+
+Un comando de más de 64 KiB, una vez apartados los cuerpos de sus heredocs, es `arg-form-unparsed`: tokenizar un solo argumento enorme cuesta más que todo el presupuesto del hook, y un resolutor al que se le adelanta el timeout del anfitrión deja pasar la acción sin ningún registro. Un heredoc largo no cuenta para ese límite, así que un cuerpo de PR grande sigue resolviendo.
+
+Las rutas relativas resuelven contra el directorio de trabajo. Un archivo de más de 1 MiB es `file-oversize`, uno que no es texto UTF-8 es `file-binary`, y uno que falta o no se puede leer es `file-missing` o `file-unreadable`. Un solo argumento que daimon no puede leer deja todo el sujeto sin resolver, digan lo que digan los demás.
+
+Cada corrida termina en exactamente uno de tres resultados, y nunca se mezclan:
+
+| resultado | qué significa |
+| --- | --- |
+| `clean` | el check corrió sobre el sujeto completo y salió con 0 |
+| `violation` | el check corrió sobre el sujeto completo y salió con 1 — su propia primera línea de stderr es la razón |
+| `unresolved` | daimon no pudo probar que el sujeto estuviera limpio: un argumento que no pudo leer, un check que se rompió o se pasó de presupuesto, un cuerpo que ya no hashea a lo que se ratificó, o un anfitrión sin `sh` |
+
+`unresolved` nunca se muestra como limpio y nunca se cuenta como violación.
+
+El cuerpo corre con un entorno mínimo: `PATH`, `HOME`, `LANG`, las variables `LC_*` y `TMPDIR`, más las tres de arriba. No es un sandbox — un check que ratificaste corre como vos, y podría hacer cualquier cosa que vos puedas. Recortar el entorno solo evita que a un script cuyo trabajo es leer un archivo se le entregue cada token de la sesión.
+
+El runner lleva su propio presupuesto, `DAIMON_CHECK_TIMEOUT`, cinco segundos por defecto contra un timeout de hook del anfitrión de diez. Ese presupuesto no es opcional: en los anfitriones medidos hasta ahora, un hook que llega al timeout del propio anfitrión no bloquea y la acción sigue, así que un check sin presupuesto propio convierte un cuelgue en un permiso silencioso. Pasarse mata el check y todo su grupo de procesos, y reporta `unresolved`.
+
+Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`: ids, resultados, causas, duraciones, anfitrión y modo. Nada del texto del comando, ninguna ruta, nada del sujeto. La razón que ve el agente puede nombrar una ruta; el log no.
+
+Leé ese log para saber si el check está vivo, no para saber si se cumplió. Una fila prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce` cierra la distancia entre un check que corrió y un check que fue respetado.
+
+Dos convenciones que conviene sostener. Armá un check nuevo con intención `warn` primero, así un patrón que agarra más de lo que pensabas cuesta una advertencia y no una acción bloqueada. Y corré `daimon ruling check try` antes de ratificar — para eso está.
+
+| variable | por defecto | qué guarda |
+| --- | --- | --- |
+| `DAIMON_CHECKS_DIR` | `~/.daimon/checks` | el manifiesto y los cuerpos materializados |
+| `DAIMON_CHECK_TIMEOUT` | `5` | el presupuesto del runner en segundos, con piso de 0.5 |
+| `DAIMON_LOG_DIR` | `~/.daimon/logs` | contiene `checks.jsonl` |
 
 ### Reglas desde un proceso anfitrión
 

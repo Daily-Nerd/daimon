@@ -1154,6 +1154,7 @@ from .refute import (  # noqa: E402
     _cmd_refute_show,  # noqa: F401 — re-exported for compat
 )
 from .ruling import (  # noqa: E402
+    _cmd_ruling_check_try,  # noqa: F401 — re-exported for compat
     _cmd_ruling_list,  # noqa: F401 — re-exported for compat
     _cmd_ruling_propose,  # noqa: F401 — re-exported for compat
     _cmd_ruling_ratify,  # noqa: F401 — re-exported for compat
@@ -1199,6 +1200,9 @@ from .team import (  # noqa: E402
     _cmd_team_status,  # noqa: F401 — re-exported for compat
     _cmd_team_sync,  # noqa: F401 — re-exported for compat
 )
+from .check import (  # noqa: E402
+    _cmd_check_sync,  # noqa: F401 — re-exported for compat
+)
 from .hooks import (  # noqa: E402
     _cmd_hooks_install,  # noqa: F401 — re-exported for compat
     _cmd_hooks_list,  # noqa: F401 — re-exported for compat
@@ -1214,6 +1218,7 @@ from .skill import (  # noqa: E402
 from . import (  # noqa: E402
     amend,
     audit,
+    check,
     hooks,
     lifecycle,
     refute,
@@ -1785,11 +1790,15 @@ def _write_worldcheck_ledger(rows, route) -> None:
     the first place that knows where the item currently stands. A cure for an
     item nothing contradicted changes nothing, and writing it anyway would
     turn a ledger of problems found into a ledger of work done."""
-    for item_ref, check, reason in rows:
-        if check == worldcheck.LEDGER_CONFIRM_CHECK:
+    # `check_name`, not `check`: the #943 `daimon check` verb family is
+    # imported into this module under that name, and a loop variable shadowing
+    # it is the kind of collision that is silent until the shadowed name is
+    # needed in the same scope.
+    for item_ref, check_name, reason in rows:
+        if check_name == worldcheck.LEDGER_CONFIRM_CHECK:
             store.append_receipt_cure(item_ref, project_dir=route)
         else:
-            store.append_verification(item_ref, check, reason,
+            store.append_verification(item_ref, check_name, reason,
                                       project_dir=route)
 
 
@@ -3642,6 +3651,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_stats.add_argument("--json", action="store_true", help="machine-readable output")
     p_stats.set_defaults(func=_cmd_stats)
+
+    check.register(sub, fmt)
 
     hooks.register(sub, fmt)
 

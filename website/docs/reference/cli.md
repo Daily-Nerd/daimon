@@ -14,6 +14,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon configure` | Detect the resolved LLM backend and fill gaps in `~/.daimon/env`. `--test` runs a live round-trip. |
 | `daimon hooks install <host>` | Ship the host hook scripts (Windsurf, Codex) from the package. `list` / `status` inspect. |
 | `daimon skill install <host>` | Install the daimon agent skill into a host's skill directory. Re-run after upgrades. |
+| `daimon check sync` | Rebuild `~/.daimon/checks` — the manifest of armed checks a host hook reads, and one file per check body — from this project's ledger. Every ratify, revise, retire and forget already does this, so run it only when the manifest was damaged out of band. Safe to repeat: an unchanged manifest is not rewritten. Prints how many checks are armed, zero included. |
 | `daimon heal` | Re-serialize the most recent failed session when it is safe to do so. |
 | `daimon mcp serve` | Serve the daimon tools over MCP (stdio). |
 
@@ -36,6 +37,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon audit privacy` | Prove the deletion contract: hash every plaintext field on every surface (checkpoints, rotated pointers, the event ledger, the team mirror, the recall index and its orphan snapshots) and report any forgotten value that survived. Read-only. |
 | `daimon refute list\|show\|search\|guard` | Read the negative-knowledge ledger without decay. `guard` emits active exact-anchor/subject matches only; it is advisory and never blocks a command. `search` returns both polarities, labelled; `list` and `guard` stay refutation-only. Add `--json` for deliberation integrations. |
 | `daimon ruling list\|show` | Read the standing rulings: human-ratified positive constraints on the same ledger, never decayed, never re-extracted. `show` includes pending agent proposals. A `list` that finds nothing exits 1 and names the bucket on stderr when the project has never been written from, and exits 0 when the project has a bucket that holds no rulings. |
+| `daimon ruling check try <id> --command "<cmd>"` | Run this ruling's check against a command you name and print the outcome. Arms nothing, logs nothing, and materializes the body outside the checks directory. `--cwd` sets the working directory relative file arguments resolve against; `--proposed` runs a pending agent revision's body instead of the armed one. Human path only, like `ratify`: it executes the body, so an interactive terminal is required and `--by agent` is refused. Same exit contract as the auditors below. |
 | `daimon serve` | Open the [read-only local viewer](viewer.md) on localhost — search as recall, per-entry "why" pages, refutations, diff, check strip, print view. Nothing writes. |
 | `daimon relations list\|show\|confirm\|reject\|retract` | The [typed relation ledger](relations.md): machines propose, only a person confirms, and deciding needs an interactive terminal. Candidates never render on an entry surface. |
 
@@ -57,7 +59,60 @@ The auditors share one exit contract, so a script can act on the answer:
 | `daimon resolve <id or text>` | Mark an item resolved — append-only event; the item stops carrying. `--dry-run` previews the match; `--by agent --evidence "<quote>"` claims a close that is byte-checked at session end. |
 | `daimon anchor <file> <symbol>` | Bind a cognitive item to a code symbol; briefings then warn when the anchored code drifts. |
 | `daimon refute add\|ratify\|revise\|overturn` | Manage scoped negative knowledge in its own append-only ledger. Agent writes remain candidates; only an explicit human ratification activates a guard, and `ratify` requires the human path — an interactive terminal with `--by` omitted. Revisions require a new typed evidence citation, whose shape is checked but never resolved or verified, and reset an active refutation to candidate until it is ratified again. Agent overturns remain proposals. |
-| `daimon ruling propose\|ratify\|revise\|retire` | Manage standing rulings on the same ledger, with a stricter lifecycle: `ratify` shows the full text, discloses that it will render into every future session, and binds the activation to the text it displayed; a human revising an active ruling confirms the change and the ruling stays active; agent revise and retire calls record proposals while the text stands; activation refuses past the cap (`DAIMON_RULING_CAP`, default 7). Retirement needs no evidence citation. `propose` and `revise` may attach a check with `--check-body-file`, `--check-match` and `--check-intent`: a script whose bytes are stored on the ruling (a path is refused), a pattern on the command string that selects the actions it runs before, and what it asks each host for (`warn` by default). A candidate's check reads as proposed, not armed, and no host runs it. `ratify` prints the check and binds the activation to the body it showed, by hash. Running the check is a later release; this release records and renders it. |
+| `daimon ruling propose\|ratify\|revise\|retire` | Manage standing rulings on the same ledger, with a stricter lifecycle: `ratify` shows the full text, discloses that it will render into every future session, and binds the activation to the text it displayed; a human revising an active ruling confirms the change and the ruling stays active; agent revise and retire calls record proposals while the text stands; activation refuses past the cap (`DAIMON_RULING_CAP`, default 7). Retirement needs no evidence citation. `propose` and `revise` may attach a check with `--check-body-file`, `--check-match` and `--check-intent`: a script whose bytes are stored on the ruling (a path is refused), a pattern on the command string that selects the actions it runs before, and what it asks each host for (`warn` by default). A candidate's check reads as proposed, not armed, and no host runs it. `ratify` prints the check and binds the activation to the body it showed, by hash, and materializes it for a host to run. A body that names a host-local path on any line is refused, because the check travels with the ruling and a path outside it is missing on every other machine. See [Checks at runtime](#checks-at-runtime). |
+
+### Checks at runtime
+
+Ratifying a ruling that carries a check writes two things under `~/.daimon/checks`: a manifest naming every armed check and the project directory it belongs to, and one file per check holding the exact body the ruling stores. Every ledger write that can arm or disarm a check rebuilds them; `daimon check sync` rebuilds them on demand. The host adapters that actually run a check on a real action arrive in a later release — what ships here is the machinery underneath and the command to test a body against it.
+
+A check runs against a **subject**: the command string, a separator, then the contents of every file argument daimon could resolve, each under a header naming the flag it came from. The subject goes to a temporary file at mode 600 and is removed after the run. Its path arrives in `DAIMON_CHECK_SUBJECT`, alongside `DAIMON_CHECK_COMMAND` and `DAIMON_CHECK_RULING`; the working directory is the action's own, and standard input is `/dev/null`.
+
+What the resolver reads:
+
+| form in the command | what daimon does |
+| --- | --- |
+| `--body-file <path>`, `--body-file=<path>`, `-F <path>`, `-F<path>` | reads the file |
+| `--notes-file <path>`, `--notes-file=<path>` | reads the file |
+| `-F key=@<path>`, `--field key=@<path>`, `-Fkey=@<path>` | reads the file |
+| `<flag> -` with exactly one heredoc in the SAME command | reads the heredoc text |
+| `<flag> -` fed by a pipe | unresolved, cause `stdin-pipe` |
+| `<flag> -` whose own command carries no heredoc | unresolved, cause `arg-form-unparsed` |
+| a command with more than one heredoc or more than one `<flag> -` | unresolved, cause `arg-form-unparsed` |
+| any other `@<path>` or `<flag> -` | unresolved, cause `arg-form-unparsed` |
+
+A value attached to a short flag is the same command as a detached one, so `-Fbody.md` is read exactly as `-F body.md` is.
+
+A heredoc belongs to the command it is attached to, and to no other. daimon splits the command string at `&&`, `||`, `;`, `|` and newlines, and a heredoc in one of those pieces can only be read for an argument in that same piece. So `cat <<EOF > note.txt ... EOF` followed by `gh pr create -F -` is unresolved rather than checked against the text `cat` was given. Inside one command the counts still have to be one and one: which heredoc feeds which argument is not a question the command string answers, and a wrong guess would build the subject from text the action never sends.
+
+A command over 64 KiB once its heredoc bodies are set aside is `arg-form-unparsed`: tokenizing one enormous inline argument costs more than the whole hook budget, and a resolver overtaken by the host's timeout lets the action through with no record at all. A long heredoc body does not count toward that, so a large PR body still resolves.
+
+Relative paths resolve against the working directory. A file over 1 MiB is `file-oversize`, one that is not UTF-8 text is `file-binary`, and a missing or unreadable one is `file-missing` or `file-unreadable`. One argument daimon cannot read makes the whole subject unresolved, whatever the others say.
+
+Every run ends in exactly one of three outcomes, and they never fold together:
+
+| outcome | what it means |
+| --- | --- |
+| `clean` | the check ran on the full subject and exited 0 |
+| `violation` | the check ran on the full subject and exited 1 — its own first stderr line is the reason |
+| `unresolved` | daimon could not prove the subject clean: an argument it could not read, a check that crashed or exceeded its budget, a body that no longer hashes to what the ruling was ratified with, or no `sh` on the host |
+
+`unresolved` is never rendered as clean and never counted as a violation.
+
+The body runs with a minimal environment: `PATH`, `HOME`, `LANG`, the `LC_*` variables and `TMPDIR`, plus the three above. It is not a sandbox — a check you ratified runs as you, and could do anything you could. Trimming the environment only keeps a script whose job is reading one file from being handed every token in the session.
+
+The runner carries its own budget, `DAIMON_CHECK_TIMEOUT`, five seconds by default against a host hook timeout of ten. That budget is not optional: on the hosts measured so far, a hook that reaches the host's own timeout does not block and the action proceeds, so a check without a budget of its own turns a hang into a silent allow. Overrunning kills the check and its whole process group and reports `unresolved`.
+
+Each run appends one row to `~/.daimon/logs/checks.jsonl`: ids, outcomes, causes, durations, host and mode. No command text, no paths, no subject. The reason shown to the agent may name a path; the log does not.
+
+Read that log for liveness, not for compliance. A row proves the check RAN. Only `decision_emitted: deny` under `enforce` closes the gap between a check that ran and a check that was honored.
+
+Two conventions worth keeping. Arm a new check with intent `warn` first, so a pattern that matches more than you meant costs a warning rather than a blocked action. And run `daimon ruling check try` before you ratify — that is what it is for.
+
+| variable | default | what it holds |
+| --- | --- | --- |
+| `DAIMON_CHECKS_DIR` | `~/.daimon/checks` | the manifest and the materialized bodies |
+| `DAIMON_CHECK_TIMEOUT` | `5` | the runner's budget in seconds, floored at 0.5 |
+| `DAIMON_LOG_DIR` | `~/.daimon/logs` | holds `checks.jsonl` |
 
 ### Rulings from a host process
 

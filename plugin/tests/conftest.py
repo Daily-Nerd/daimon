@@ -30,6 +30,10 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     # write the developer's real ~/.daimon/windsurf, and the purge/reap paths
     # DELETE, so an unredirected default would destroy real host state.
     monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(home / "windsurf"))
+    # #943: the check manifest and the materialized 0o500 bodies. HOME is NOT
+    # redirected here, so an unset override resolves to the DEVELOPER'S real
+    # ~/.daimon/checks and a sync test would arm scripts in the live install.
+    monkeypatch.setenv("DAIMON_CHECKS_DIR", str(home / "checks"))
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
     monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
     # #896: and the host-declared per-session speaker — a developer who exports

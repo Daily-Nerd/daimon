@@ -1462,3 +1462,52 @@ def test_stale_check_pin_ratify_does_not_reset_the_proposal_cap(tmp_checkpoint_d
 def test_check_validator_refuses_a_non_object():
     with pytest.raises(refutations.RefutationError, match="must be an object"):
         refutations._check("exit 0")
+
+
+# ---- #943 slice 2: a body that reaches outside itself ---------------------
+#
+# The slice 1 refusal above catches a body that IS a bare path. A multi-line
+# body that merely CALLS one passes it, and the check then travels to another
+# machine as a script whose real content is a file that is not there. The
+# runner sees that as exit 127, which is honest but late: the ruling was
+# already ratified and every host reports unresolved forever.
+
+
+@pytest.mark.parametrize("body", [
+    "#!/bin/sh\nsh ~/.claude/voicegate.sh \"$DAIMON_CHECK_SUBJECT\"\n",
+    "#!/bin/sh\nexec $HOME/gate \"$DAIMON_CHECK_SUBJECT\"\n",
+    "#!/bin/sh\n. /Users/someone/lib/rules.sh\nexit 0\n",
+    "#!/bin/sh\n/home/someone/gate || exit 1\n",
+    "#!/bin/sh\ntest -f /root/allowlist && exit 0\nexit 1\n",
+    "#!/bin/sh\nexit 0  # see ~/notes/why.md\n",
+])
+def test_a_check_body_line_reaching_a_host_local_root_is_refused(body):
+    with pytest.raises(refutations.RefutationError,
+                       match="host-local path"):
+        refutations._check(_check(body=body))
+
+
+@pytest.mark.parametrize("body", [
+    "#!/bin/sh\nsh ./scripts/gate.sh \"$DAIMON_CHECK_SUBJECT\"\nexit 0\n",
+    "#!/bin/sh\ngrep -q FORBIDDEN \"$DAIMON_CHECK_SUBJECT\" && exit 1\nexit 0\n",
+    "#!/bin/sh\ntest -x /usr/bin/grep || exit 0\nexit 0\n",
+    "#!/bin/sh\necho \"$DAIMON_CHECK_COMMAND\" | grep -q gh && exit 1\nexit 0\n",
+    "#!/bin/sh\nmktemp -d /tmp/check.XXXX >/dev/null\nexit 0\n",
+])
+def test_a_body_that_stays_inside_itself_is_accepted(body):
+    assert refutations._check(_check(body=body))["body"] == body
+
+
+def test_the_refusal_names_the_line_it_found(_capture=None):
+    """A body is up to 8192 bytes. "somewhere in here" is not a fix."""
+    body = "#!/bin/sh\nexit 0\nsh ~/gate.sh\n"
+    with pytest.raises(refutations.RefutationError) as excinfo:
+        refutations._check(_check(body=body))
+    assert "line 3" in str(excinfo.value)
+
+
+def test_the_single_token_path_refusal_still_says_what_it_always_said():
+    """The two rules overlap and the older, more specific one must win: a
+    bare path gets the message that explains what a body IS."""
+    with pytest.raises(refutations.RefutationError, match="must be the script"):
+        refutations._check(_check(body="~/.claude/voicegate.sh"))

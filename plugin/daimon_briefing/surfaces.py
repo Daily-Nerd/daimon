@@ -266,6 +266,15 @@ SURFACES: tuple[Surface, ...] = (
     #    specific contract wins. --
     Surface("logs/backend-stderr.log", "llm._log_backend_stderr",
             True, "wholesale-purge", "forget"),
+    # -- #943 check firing log: one row per runner invocation, carrying ids,
+    #    outcomes, causes and durations only. No command text, no paths, no
+    #    subject — and that is a property of the WRITER, which projects every
+    #    row onto a fixed key list rather than trusting its callers, so the
+    #    exemption rests on code and not on a convention. Before the *.log
+    #    glob, which would not catch a .jsonl anyway, so the shape sits with
+    #    the other log declarations instead of after the catch-all. --
+    Surface("logs/checks.jsonl", "checks_runtime.log_firing",
+            False, "exempt-no-plaintext", "none"),
     # #616 restored the glob's claim instead of widening it: serializer's
     # downgrade lines — the one writer that put item text under this shape —
     # now log a content hash (normalize.content_key, the same key a forget
@@ -305,6 +314,20 @@ SURFACES: tuple[Surface, ...] = (
     # belief bytes (cli._hooks_target_dir).
     Surface("hooks/*", "cli install-hooks", False, "exempt-no-plaintext",
             "none"),
+    # -- #943 armed checks. Both shapes carry AUTHORED text: the manifest
+    #    holds `check.match` and each body IS `check.body`, and refutations
+    #    already declares that pair plaintext (_PLAINTEXT_NESTED) so forget
+    #    reaches it in the ledger. Declaring these exempt would be the same
+    #    claim contradicting itself one directory over.
+    #
+    #    `rewrite` is what checks.sync already does: it rebuilds the manifest
+    #    from the ledger and removes the bodies no active ruling wants, and
+    #    every writer that can disarm a ruling calls it — forget included. So
+    #    deletion reaches here by re-deriving from a ledger the forget
+    #    already rewrote, rather than by a second walk that could disagree
+    #    with the first. --
+    Surface("checks/manifest.json", "checks.sync", True, "rewrite", "forget"),
+    Surface("checks/*.sh", "checks.sync", True, "rewrite", "forget"),
 )
 
 _PLACEHOLDER_RE = re.compile(r"\{[a-z]+\}")

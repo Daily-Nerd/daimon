@@ -201,6 +201,31 @@ def _check_args(args) -> dict | None:
     return {"match": match, "body": body, "intent": intent or "warn"}
 
 
+def _check_sync_warning() -> str:
+    """#943: the line to show when a write landed but the armed-check
+    manifest did not, or "" when there is nothing to say.
+
+    The verb succeeded — the ledger is the record and it changed. What did
+    not change is the derived view a host hook reads, so the check the human
+    just armed is not yet armed anywhere. Silence there would leave someone
+    believing a ratified check is running. The exit code stays the verb's:
+    this is bookkeeping, not a failed ratification.
+
+    One wording, two renderers: the ruling verbs print it directly and
+    `forget` folds it into its report list."""
+    report = refutations.last_check_sync()
+    if report is None or report.ok:
+        return ""
+    return (f"warning: check manifest not updated ({report.reason}); "
+            "run daimon check sync")
+
+
+def _warn_check_sync() -> None:
+    line = _check_sync_warning()
+    if line:
+        print(line)
+
+
 def _check_ceremony_lines(check: dict, *, label: str, verb: str) -> list[str]:
     """#943: the two disclosure lines a ceremony prints before a human arms
     a check. One home for the wording, shared by ratify and revise, so the

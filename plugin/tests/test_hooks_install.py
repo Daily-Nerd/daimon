@@ -49,6 +49,19 @@ def test_shipped_redact_matches_canonical_module():
     assert shipped == canonical, "hook-shipped redact.py drifted from the canonical module"
 
 
+def test_shipped_checks_runtime_matches_canonical_module():
+    # #943: the pre-action hook runs the check runtime standalone and cannot
+    # import the venv-only package, so a copy ships beside it. Same direction
+    # as redact.py (scar 0049): the PACKAGE module is canonical. Hand-written
+    # for the same reason redact's is — the parametrized test above joins
+    # REPO_HOOK_DIR, which is the wrong end of this pair.
+    canonical = (Path(__file__).parents[1] / "daimon_briefing"
+                 / "checks_runtime.py").read_bytes()
+    shipped = (PKG_HOOKS_DIR / "checks_runtime.py").read_bytes()
+    assert shipped == canonical, \
+        "hook-shipped checks_runtime.py drifted from the canonical module"
+
+
 def test_hooks_install_windsurf_writes_stable_executable_copies(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     rc = cli.main(["hooks", "install", "windsurf"])

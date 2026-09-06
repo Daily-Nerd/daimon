@@ -32,6 +32,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from . import config, normalize, policy, redact, store
 
@@ -143,6 +144,19 @@ CHECK_INTENTS = frozenset({"enforce", "warn", "record-only"})
 _MAX_CHECK_BODY = 8192
 _MAX_CHECK_MATCH = 200
 _CHECK_PATH_RE = re.compile(r"\s*(?:~|/|\./)[^\s]*\s*")
+# #943 slice 2, widening the rule above from the whole body to each LINE.
+# The bare-path refusal catches `~/.claude/voicegate.sh` as an entire body; a
+# body that merely CALLS one passes it, and then the check travels to another
+# machine as a script whose real content is a file that is not there. The
+# runner does observe that (sh exits 127) but only after the ruling is
+# ratified and every host has started reporting unresolved. Refusing at
+# propose time is the same constraint one step earlier.
+#
+# Roots only, each with its separator, so `/rooted-thing` and a bare `$HOME`
+# comparison do not trip it. A relative path travels with the repo and is
+# deliberately allowed.
+_CHECK_HOST_ROOT_RE = re.compile(r"(?:^|[^\w/])(?:~/|\$HOME/|\$\{HOME\}/|"
+                                 r"/Users/|/home/|/root/)")
 
 # Every field of a ledger row that can hold ITEM plaintext, flat then nested
 # (#645). One declaration, two consumers: `forget_content_key` below decides
@@ -336,6 +350,16 @@ def _check(value) -> dict | None:
         raise RefutationError(
             "check body must be the script itself, not a path to one: a "
             "path is invisible to every other host and machine")
+    # Checked after the bare-path rule so the older, more specific message
+    # wins for a body that IS a path — that one explains what a body is,
+    # which is the more useful thing to hear.
+    for number, line in enumerate(body.splitlines(), start=1):
+        if _CHECK_HOST_ROOT_RE.search(line):
+            raise RefutationError(
+                f"check body line {number} names a host-local path; the "
+                "check travels with the ruling, so anything outside the body "
+                "is missing on every other host and machine, and the ruling "
+                "reports unresolved there forever")
     for field, text in (("match", match), ("body", body)):
         scrubbed, _ = redact.redact_text(text)
         if scrubbed != text:
@@ -627,6 +651,11 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
         except OSError:
             pass
         return []
+    # A forgotten ruling's check must leave the disk with it. The dropped
+    # records are already gone from the ledger here, so the manifest is
+    # rebuilt unconditionally rather than from a record that no longer
+    # exists to be inspected.
+    _sync_checks(project_dir, force=bool(doomed))
     return sorted(doomed)
 
 
@@ -1061,6 +1090,62 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
     return ref_id
 
 
+class _CheckSyncFailure(NamedTuple):
+    """Stands in for a `checks.SyncReport` when the writer could not even be
+    reached. Same field names, so the caller reads one shape."""
+    reason: str
+    ok: bool = False
+    armed: int = 0
+    slug: str = ""
+
+
+_last_check_sync = None
+
+
+def last_check_sync():
+    """The report from the most recent writer-triggered manifest sync, or
+    None when the last write carried no check.
+
+    The ledger writers return their own things (an event name, an id,
+    nothing), and a bookkeeping failure must not change any of them. So the
+    report is left here for the caller that just made the write to pick up
+    and render. Every writer that can touch a check assigns it, None
+    included, so a caller reading it straight after its own call cannot see
+    a previous verb's answer."""
+    return _last_check_sync
+
+
+def _load_checks():
+    """Imported at call time, not at module scope: `checks` reads this module
+    to build the manifest, and a top-level import would be a cycle."""
+    from . import checks
+    return checks
+
+
+def _sync_checks(project_dir=None, *, record=None, row=None,
+                 force: bool = False) -> None:
+    """Rebuild the armed-check manifest after a write that could change it.
+
+    Skipped when nothing in sight carries a check. `checks.sync` re-folds the
+    whole ledger, and every refutation ratify in the tree paying for a
+    manifest that cannot have changed is a cost with no reader.
+
+    Never raises. It runs after an append that already landed, so a failure
+    here is bookkeeping, not a failed write, and the caller reports it
+    through `last_check_sync()`."""
+    global _last_check_sync
+    _last_check_sync = None
+    carries = force or any(
+        isinstance(source, dict) and source.get("check") is not None
+        for source in (record, row))
+    if not carries:
+        return
+    try:
+        _last_check_sync = _load_checks().sync(project_dir)
+    except Exception as exc:  # noqa: BLE001 — a report, never a raise
+        _last_check_sync = _CheckSyncFailure(f"{type(exc).__name__}: {exc}")
+
+
 def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
            project_dir=None) -> str:
     """#693: end an active ruling. Human channels retire directly; an agent
@@ -1084,6 +1169,7 @@ def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir):
         raise RefutationError("retirement not written")
+    _sync_checks(project_dir, record=current)
     return event
 
 
@@ -1120,6 +1206,7 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
         row["check_sha256"] = str(check_sha256)
     if not append(row, project_dir=project_dir):
         raise RefutationError("ratification not written")
+    _sync_checks(project_dir, record=current)
 
 
 def revise(refutation_id: str, *, channel: str, evidence,
@@ -1220,6 +1307,9 @@ def revise(refutation_id: str, *, channel: str, evidence,
         row["ratified"] = True
     if not append(row, project_dir=project_dir):
         raise RefutationError("revision not written")
+    # Either side can carry it: the record may already be armed, and this
+    # row may be what arms it.
+    _sync_checks(project_dir, record=current, row=row)
 
 
 def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
@@ -1242,6 +1332,10 @@ def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir):
         raise RefutationError("overturn event not written")
+    # Inert by construction today: this function refuses rulings outright,
+    # and only a ruling carries a check. Wired so the seam is one set of
+    # writers rather than four plus an exception.
+    _sync_checks(project_dir, record=current)
     return event
 
 
