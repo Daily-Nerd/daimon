@@ -727,16 +727,33 @@ def test_any_other_exit_code_is_unresolved_never_a_violation(tmp_path):
     rt.discard(subject)
 
 
+# What `sh` IS differs by platform, and so does what it says when a script
+# operand is missing. Measured on both:
+#
+#   dash (Debian /bin/sh)      exit 2    "cannot open <path>: No such file"
+#   bash and macOS /bin/sh     exit 127  "<path>: No such file or directory"
+#
+# The claim these tests make is that neither number is 0 or 1, which is what
+# puts the run in `check-crashed` rather than in `clean` or `violation`. The
+# number itself is the shell's business. Pinning 127 passed on macOS and
+# failed every Linux lane, so do not re-pin it.
+_SHELL_MISSING_WORDINGS = ("nonexistent", "not found", "can't open",
+                           "cannot open", "no such file")
+
+
 def test_a_body_that_reaches_outside_itself_is_caught_by_the_runner(tmp_path):
     """The slice 1 path refusal catches a bare single-token path. A one-line
-    `sh /host/path.sh` body passes that and is observable only here: sh exits
-    127 and its own first stderr line is the reason."""
+    `sh /host/path.sh` body passes that and is observable only here: sh fails
+    to open the script and its own first stderr line becomes the reason."""
     subject = _subject(tmp_path)
     got = rt.run(_body(tmp_path, "sh /nonexistent/host.sh\n"), subject,
                  cwd=str(tmp_path), timeout=5)
     assert (got.outcome, got.cause) == ("unresolved", "check-crashed")
-    assert got.exit_code == 127
-    assert "nonexistent" in got.reason
+    assert got.exit_code not in (0, 1), \
+        "0 would read as clean and 1 as a violation the check never found"
+    assert any(word in got.reason.casefold()
+               for word in _SHELL_MISSING_WORDINGS), got.reason
+    rt.discard(subject)
 
 
 def test_a_body_that_runs_a_non_executable_file_is_check_crashed(tmp_path):
@@ -747,7 +764,11 @@ def test_a_body_that_runs_a_non_executable_file_is_check_crashed(tmp_path):
     got = rt.run(_body(tmp_path, f"{plain}\n"), subject, cwd=str(tmp_path),
                  timeout=5)
     assert (got.outcome, got.cause) == ("unresolved", "check-crashed")
-    assert got.exit_code == 126
+    # 126 on both shells measured, and still not pinned: what this test is
+    # for is that a body which cannot execute what it names lands outside
+    # clean and violation, not that the shell picked a particular number.
+    assert got.exit_code not in (0, 1)
+    assert got.reason, "sh said why, and the runner must carry it"
     rt.discard(subject)
 
 
