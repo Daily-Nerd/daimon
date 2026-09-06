@@ -469,6 +469,24 @@ def test_resolve_project_dir_collapses_a_symlink(tmp_path):
     assert config.resolve_project_dir(str(link)) == str(real.resolve())
 
 
+def test_resolve_project_dir_returns_raw_when_the_path_cannot_be_resolved(
+        tmp_path, monkeypatch):
+    """`Path.resolve` reaches the filesystem, so it can fail on a path the
+    caller had every reason to think was fine: a dead automount, a loop of
+    symlinks, a name the OS rejects. Resolution is not allowed to take a
+    command down over that, so the raw value comes back and the caller keeps
+    exactly the pre-#948 behavior."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    def _boom(self, *args, **kwargs):
+        raise OSError("stale NFS file handle")
+
+    monkeypatch.setattr(config.Path, "resolve", _boom)
+
+    assert config.resolve_project_dir(str(plain)) == str(plain)
+
+
 def test_the_cli_absolutizes_a_slug_the_library_passes_through(tmp_path,
                                                                monkeypatch):
     """The one place the two callers deliberately DISAGREE, and why.

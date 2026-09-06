@@ -220,3 +220,33 @@ def test_an_ambient_recall_scope_from_a_subdir_is_the_project_bucket(
     unaddressed read to a bucket nothing was ever written to."""
     repo, subdir = repo_and_subdir
     assert recall._ambient_scopes(subdir) == [store.project_slug(repo)]
+
+
+# ---- bucket_exists degrades to "no bucket", never to an exception ----
+
+
+@pytest.mark.parametrize("unknown", [None, ""])
+def test_bucket_exists_is_false_when_the_project_is_unknown(unknown,
+                                                            tmp_checkpoint_dir):
+    """No project means no slug means no bucket path to test. `ruling list`
+    reads this to decide its exit code, so an unrouted call has to answer
+    False rather than raise on a None path."""
+    assert refutations.bucket_exists(unknown) is False
+
+
+def test_bucket_exists_is_false_when_the_checkpoint_root_cannot_be_read(
+        repo_and_subdir, tmp_checkpoint_dir, monkeypatch):
+    """An unreadable checkpoint root is not proof that the project has no
+    bucket, but `ruling list` still has to answer. It degrades to the same
+    "no bucket" report it gives for a project that has never been written
+    from, rather than letting an OSError escape a reporting read."""
+    repo, _ = repo_and_subdir
+    _write_ruling(repo)
+    assert refutations.bucket_exists(repo) is True
+
+    def _boom(self):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "is_dir", _boom)
+
+    assert refutations.bucket_exists(repo) is False
