@@ -158,9 +158,20 @@ def test_a_project_level_row_is_liveness_never_a_rulings_firing(tmp_path):
     )
     summary = checks.firing_summary(str(tmp_path))
     assert summary.rulings == {}
-    assert summary.hook_seen[CC] == {"rows": 1,
+    assert summary.hook_seen[CC] == {"rows": 1, "scope": "machine",
                                      "last_ts": "2026-09-06T08:00:00Z"}
     assert summary.hook_seen["codex"]["last_ts"] == "2026-09-06T09:00:00Z"
+
+
+def test_hook_liveness_is_machine_wide_and_says_so(tmp_path):
+    """A project-level row carries no cwd and no project (spec 3.4), so it
+    cannot be scoped and must not be presented as this project's liveness.
+    Rendering another project's activity stamp as this one's writes that
+    project's timeline into this transcript (scar 0055)."""
+    _arm(tmp_path)
+    _write_log(_row(cause="no-match"))
+    assert checks.firing_summary(str(tmp_path)).hook_seen[CC]["scope"] == \
+        "machine"
 
 
 def test_another_projects_ruling_id_never_reaches_the_summary(tmp_path):
@@ -627,8 +638,18 @@ def test_the_header_reports_every_host_the_hook_ran_on(tmp_path, capsys):
                     ts="2026-09-06T09:00:00Z"))
     _checks_table(tmp_path)
     out = capsys.readouterr().out
-    assert "hook seen on claude-code, last 2026-09-06T08:00:00Z" in out
-    assert "hook seen on codex, last 2026-09-06T09:00:00Z" in out
+    assert ("hook seen on claude-code (any project), "
+            "last 2026-09-06T08:00:00Z") in out
+    assert "hook seen on codex (any project), last 2026-09-06T09:00:00Z" in out
+
+
+def test_the_json_hosts_object_labels_the_line_machine_wide(tmp_path,
+                                                            capsys):
+    _arm(tmp_path)
+    _write_log(_row(cause="no-match"))
+    _checks_table(tmp_path, "--json")
+    assert json.loads(capsys.readouterr().out)["hosts"][CC]["scope"] == \
+        "machine"
 
 
 def test_a_ledger_with_no_checks_says_so_at_zero(tmp_path, capsys):

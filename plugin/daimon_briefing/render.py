@@ -1426,7 +1426,11 @@ def checks_table_lines(payload: dict) -> list:
         # because nothing ran.
         lines.append(f"firing log unreadable at {log.get('path', '')}")
     for host, seen in sorted((payload.get("hosts") or {}).items()):
-        lines.append(f"hook seen on {host}, last {seen['last_ts']}")
+        # `(any project)`: these rows carry no project, so the line is about
+        # the machine. Printed unqualified under a project heading it reads
+        # as this project's liveness and quietly shows another one's.
+        lines.append(
+            f"hook seen on {host} (any project), last {seen['last_ts']}")
     rows = payload.get("rows") or []
     if not rows:
         lines.append("no rulings carry a check")

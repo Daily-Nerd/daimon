@@ -364,7 +364,11 @@ def _firing_summary(project_dir) -> FiringSummary:
             # no-manifest, manifest-unreadable and no-match. It proves the
             # hook ran and says nothing about any check, so it is counted
             # per host and never attributed to a ruling.
-            seen = hook_seen.setdefault(host, {"rows": 0, "last_ts": ""})
+            # MACHINE-wide, and labelled so. The row shape carries no cwd
+            # and no project (spec 3.4), so this fold cannot be scoped and a
+            # caller must not present it as one project's liveness.
+            seen = hook_seen.setdefault(
+                host, {"rows": 0, "scope": "machine", "last_ts": ""})
             seen["rows"] += 1
             ts = str(row.get("ts") or "")
             if ts > seen["last_ts"]:
