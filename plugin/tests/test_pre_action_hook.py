@@ -485,3 +485,48 @@ def test_the_kill_switch_turns_the_gate_off_on_both_hosts(host, script,
         env={**os.environ, "HOME": str(tmp_path), "DAIMON_DISABLE": "1"})
     assert _assert_host_contract(proc) == ""
     assert _log_rows() == []
+
+
+# ---- the action budget, measured through the real script ------------------
+
+import time  # noqa: E402
+
+SLOW_VIOLATION = "#!/bin/sh\nsleep 4\necho 'slow and wrong' >&2\nexit 1\n"
+HANGS = "#!/bin/sh\nsleep 30\n"
+
+
+def _elapsed(script, payload, tmp_path):
+    started = time.monotonic()
+    proc = _run(script, payload, tmp_path)
+    return time.monotonic() - started, proc
+
+
+def test_three_slow_checks_still_decide_inside_the_host_budget(tmp_path):
+    """The host timeout is 10 s and it is fail-open: a hook that reaches it
+    does not block, the action proceeds, and no row is written. Three checks
+    at 4 s each is 12 s when the budget is per check, which is silence
+    byte-identical to a clean allow."""
+    for name in ("a", "b", "c"):
+        _arm(tmp_path, body=SLOW_VIOLATION, intent="enforce", subject=name,
+             scope="publishing")
+    seconds, proc = _elapsed(CLAUDE_HOOK, _payload(MATCH, tmp_path), tmp_path)
+    data = json.loads(_assert_host_contract(proc))
+    assert data["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert seconds < 9.0, f"{seconds:.2f}s leaves the host no room"
+    assert len(_log_rows()) == 3
+
+
+def test_two_hanging_checks_still_decide_inside_the_host_budget(tmp_path):
+    """Two checks that both reach the runner's own timeout is the ordinary
+    bad case, not a contrived one: per check it is 10 s before the drains."""
+    for name in ("a", "b"):
+        _arm(tmp_path, body=HANGS, intent="enforce", subject=name,
+             scope="publishing")
+    seconds, proc = _elapsed(CLAUDE_HOOK, _payload(MATCH, tmp_path), tmp_path)
+    data = json.loads(_assert_host_contract(proc))
+    assert data["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert seconds < 9.0, f"{seconds:.2f}s leaves the host no room"
+    rows = _log_rows()
+    assert len(rows) == 2
+    assert {r["outcome"] for r in rows} == {"unresolved"}
+    assert {r["cause"] for r in rows} == {"check-timeout"}

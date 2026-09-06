@@ -286,6 +286,18 @@ def encode(profile, decision, text) -> Emission:
 
 # ---- the pipeline (spec sections 3.1, 3.4 and 5) -------------------------
 
+# One deadline for the whole action, in seconds, against a host hook timeout
+# of ten. The two seconds left over pay for the manifest read, the resolve,
+# and the kill-and-drain after a check that had to be stopped.
+#
+# `DAIMON_CHECK_TIMEOUT` still caps ONE check; this caps their sum. Without
+# it the budget was per check, so two checks that both reached the runner's
+# own timeout took past ten seconds, and a hook that reaches the HOST's
+# timeout does not block: the action proceeds, nothing is emitted, and
+# nothing is logged. That silence is byte-identical to a clean allow, which
+# is the one outcome this whole slice exists to make impossible.
+ACTION_BUDGET = 8.0
+
 # Where a host names the tool it is about to run. Both hosts that filter by
 # tool name spell it this way. A host that spells it differently declares an
 # empty `tool_names` and is selected by its `command_path` alone, which is
@@ -432,8 +444,9 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # affordable, and spec 3.1 names only the two project-level causes.
         return Decision("", "", 0, rows)
 
-    budget = (float(timeout) if isinstance(timeout, (int, float))
-              and timeout > 0 else rt.check_timeout())
+    per_check = (float(timeout) if isinstance(timeout, (int, float))
+                 and timeout > 0 else rt.check_timeout())
+    deadline = time.monotonic() + ACTION_BUDGET
 
     # Once, for every matching check. The subject cannot change between two
     # entries of the same action, and reading every file argument again would
@@ -443,11 +456,24 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
     try:
         for entry in matching:
             mode = mode_for(profile, entry.get("intent"))
+            left = deadline - time.monotonic()
             if isinstance(subject, rt.Unresolved):
                 outcome = rt.Outcome("unresolved", subject.cause,
                                      subject.reason, -1, 0)
+            elif left <= 0:
+                # The action's budget is already spent, so this check never
+                # runs. `unresolved`, not clean: daimon proved nothing about
+                # the subject, and letting it through because time ran out is
+                # exactly the fail-open the deadline exists to prevent. Under
+                # `enforce` it still denies. The row is what keeps a starved
+                # check countable instead of invisible.
+                outcome = rt.Outcome(
+                    "unresolved", "check-timeout",
+                    "the action's check budget was spent before this check "
+                    "could run", -1, 0)
             else:
-                outcome = rt.run(entry, subject, cwd=cwd, timeout=budget)
+                outcome = rt.run(entry, subject, cwd=cwd,
+                                 timeout=min(per_check, left))
             results.append((entry, mode, outcome))
     finally:
         # The subject holds the command and every file it named. A `finally`

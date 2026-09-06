@@ -883,3 +883,74 @@ def test_the_kill_switch_silences_the_missing_runtime_message_too(
     monkeypatch.setattr(ch, "_RUNTIME", None)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     assert _main(CC, _payload(MATCH, tmp_path)) == (0, "", "")
+
+
+# ---- one budget for the whole action --------------------------------------
+
+
+def test_the_action_budget_leaves_the_host_room_to_receive_the_decision():
+    """Eight seconds against a host timeout of ten. The two that are left pay
+    for the manifest read, the resolve, and the kill-and-drain after a check
+    that had to be stopped. A hook that reaches the HOST's timeout does not
+    block: the action proceeds, and nothing is written and nothing is
+    logged."""
+    assert ch.ACTION_BUDGET == 8.0
+    assert ch.ACTION_BUDGET < ch.PROFILES[CC].install_timeout
+
+
+def test_a_check_with_no_budget_left_never_spawns_and_is_unresolved(
+        tmp_path, monkeypatch):
+    """The budget belongs to the ACTION, so the last check of a slow action
+    can find it already spent. It is `unresolved`, which under `enforce` is a
+    deny: daimon could not prove the subject clean, and letting it through
+    because time ran out is exactly the fail-open the budget exists to
+    prevent."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    monkeypatch.setattr(ch, "ACTION_BUDGET", 0.0)
+    spawned = []
+    monkeypatch.setattr(ch.runtime(), "run",
+                        lambda *a, **k: spawned.append(a))
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert spawned == []
+    assert d.rows[0]["outcome"] == "unresolved"
+    assert d.rows[0]["cause"] == "check-timeout"
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_each_check_gets_the_lesser_of_its_own_cap_and_what_is_left(
+        tmp_path, monkeypatch):
+    """`DAIMON_CHECK_TIMEOUT` still caps one check. The action deadline caps
+    the sum. Whichever is smaller is what the runner is given, because a
+    per-check cap that outlives the action's own budget is the defect being
+    fixed."""
+    _arm(tmp_path, body=CLEAN, intent="warn", subject="a", scope="publishing")
+    _arm(tmp_path, body=CLEAN, intent="warn", subject="b", scope="publishing")
+    seen = []
+    real = ch.runtime().run
+    monkeypatch.setattr(ch.runtime(), "run",
+                        lambda *a, **k: (seen.append(k["timeout"]),
+                                         real(*a, **k))[1])
+
+    monkeypatch.setenv("DAIMON_CHECK_TIMEOUT", "0.6")
+    ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert seen == [0.6, 0.6], seen  # the per-check cap is the smaller one
+
+    seen.clear()
+    monkeypatch.setattr(ch, "ACTION_BUDGET", 0.4)
+    ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert seen and all(t <= 0.4 for t in seen), seen
+
+
+def test_every_matching_check_gets_a_row_even_the_ones_that_got_no_time(
+        tmp_path, monkeypatch):
+    """The row is how a check that never ran stays countable. Dropping it
+    would leave the liveness surface reading "armed, never fired" for a check
+    that was armed, matched, and starved."""
+    for name in ("a", "b", "c"):
+        _arm(tmp_path, body=CLEAN, intent="warn", subject=name,
+             scope="publishing")
+    monkeypatch.setattr(ch, "ACTION_BUDGET", 0.0)
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert len(d.rows) == 3
+    assert {r["cause"] for r in d.rows} == {"check-timeout"}
