@@ -139,6 +139,139 @@ def _sync(project_dir) -> SyncReport:
     return SyncReport(True, len(entries), slug)
 
 
+# ---- reading the firing log (#943 slice 5) --------------------------------
+
+# The three outcomes, never folded (spec 2.3). A row carrying anything else
+# is still a firing — it ran — but it lands in no outcome column.
+_OUTCOMES = ("clean", "violation", "unresolved")
+
+
+def _empty_fold() -> dict:
+    return {"fired": 0, "clean": 0, "violation": 0, "unresolved": 0,
+            "denied": 0, "last_ts": ""}
+
+
+def _absorb(fold: dict, row: dict) -> None:
+    fold["fired"] += 1
+    outcome = str(row.get("outcome") or "")
+    if outcome in _OUTCOMES:
+        fold[outcome] += 1
+    if str(row.get("decision_emitted") or "") == "deny":
+        fold["denied"] += 1
+    ts = str(row.get("ts") or "")
+    # Greatest stamp, never the last line. An append-only log is ordered by
+    # append and nothing else, and a reader that takes the tail reports
+    # whichever row happened to land last (scar 0009). The format is a fixed
+    # %Y-%m-%dT%H:%M:%SZ, so a string compare IS a time compare.
+    if ts > fold["last_ts"]:
+        fold["last_ts"] = ts
+
+
+class FiringSummary(NamedTuple):
+    """What the firing log says about THIS project, folded.
+
+    `log_state` tells an absent log from an unreadable one from a read one,
+    because the whole point of this surface is that silence is a state and
+    not a synonym for clean.
+
+    `rulings` is keyed by `(ruling_id, host)`: the per-host split is the only
+    honest form, since a check's mode is a property of the host and one
+    ruling can be enforcing on one and record-only on another. `hook_seen` is
+    keyed by host alone and holds the project-level rows — the ones the hook
+    writes with no ruling id at all, which prove it RAN without proving
+    anything about a check.
+
+    `totals` sums every host, because the CLI has no notion of which host it
+    is on; `ruling checks` is where the split is rendered."""
+
+    log_state: str
+    rulings: dict
+    hook_seen: dict
+    totals: dict
+
+    def for_ruling(self, ruling_id: str) -> dict:
+        """One ruling across every host, for the `ruling show` liveness line.
+        `host` names the host that wrote the most recent row, which is the
+        only host a single line can honestly attribute a last firing to."""
+        fold = _empty_fold()
+        fold["host"] = ""
+        for (rid, host), part in self.rulings.items():
+            if rid != ruling_id:
+                continue
+            for key in ("fired", "clean", "violation", "unresolved", "denied"):
+                fold[key] += part[key]
+            if part["last_ts"] > fold["last_ts"]:
+                fold["last_ts"] = part["last_ts"]
+                fold["host"] = host
+        return fold
+
+
+def firing_summary(project_dir=None) -> FiringSummary:
+    """Fold `~/.daimon/logs/checks.jsonl` for one project. Never raises.
+
+    The log is GLOBAL and this is a rendering path, so every id that is not
+    in this project's ledger is discarded here, before anything can print it
+    (scar 0055: printing another bucket's record text writes that text into
+    this project's checkpoint). The ledger read spans every state, not just
+    active: retiring a ruling disarms its check, it does not un-fire what
+    already ran.
+
+    Read through `config.log_dir()`, which `checks_runtime.log_dir()` is a
+    quirk-faithful mirror of (scar 0043). Resolving the path any other way
+    reads an empty directory while the same command reports checks armed.
+    """
+    try:
+        return _firing_summary(project_dir)
+    except Exception:  # noqa: BLE001 — a reporting read never takes a caller down
+        return FiringSummary("unreadable", {}, {}, _empty_fold())
+
+
+def _firing_summary(project_dir) -> FiringSummary:
+    path = config.log_dir() / checks_runtime.FIRING_LOG_NAME
+    if not path.exists():
+        return FiringSummary("absent", {}, {}, _empty_fold())
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return FiringSummary("unreadable", {}, {}, _empty_fold())
+
+    try:
+        mine = {str(record.get("refutation_id") or "")
+                for record in refutations.listing(polarity="ruling",
+                                                  project_dir=project_dir)}
+    except Exception:  # noqa: BLE001
+        mine = set()
+
+    rulings: dict = {}
+    hook_seen: dict = {}
+    totals = _empty_fold()
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        ruling_id = str(row.get("ruling_id") or "")
+        host = str(row.get("host") or "")
+        if not ruling_id:
+            # Scar 0042: the empty id is a VALUE — the hook writes it for
+            # no-manifest, manifest-unreadable and no-match. It proves the
+            # hook ran and says nothing about any check, so it is counted
+            # per host and never attributed to a ruling.
+            seen = hook_seen.setdefault(host, {"rows": 0, "last_ts": ""})
+            seen["rows"] += 1
+            ts = str(row.get("ts") or "")
+            if ts > seen["last_ts"]:
+                seen["last_ts"] = ts
+            continue
+        if ruling_id not in mine:
+            continue
+        _absorb(rulings.setdefault((ruling_id, host), _empty_fold()), row)
+        _absorb(totals, row)
+    return FiringSummary("read", rulings, hook_seen, totals)
+
+
 def try_run(ruling_id: str, command: str, *, channel: str, cwd=None,
             project_dir=None, proposed: bool = False):
     """Run one ruling's check against a command, without arming anything.
