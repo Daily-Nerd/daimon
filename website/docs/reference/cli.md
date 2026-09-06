@@ -63,7 +63,25 @@ The auditors share one exit contract, so a script can act on the answer:
 
 ### Checks at runtime
 
-Ratifying a ruling that carries a check writes two things under `~/.daimon/checks`: a manifest naming every armed check and the project directory it belongs to, and one file per check holding the exact body the ruling stores. Every ledger write that can arm or disarm a check rebuilds them; `daimon check sync` rebuilds them on demand. The host adapters that actually run a check on a real action arrive in a later release — what ships here is the machinery underneath and the command to test a body against it.
+Ratifying a ruling that carries a check writes two things under `~/.daimon/checks`: a manifest naming every armed check and the project directory it belongs to, and one file per check holding the exact body the ruling stores. Every ledger write that can arm or disarm a check rebuilds them; `daimon check sync` rebuilds them on demand, and so does `daimon hooks install`, which prints what it found.
+
+On a host with a pre-action hook installed, a matching shell command runs its armed checks before it executes. The hook reads the manifest, keeps the checks whose project directory contains the action's working directory, and runs the ones whose pattern matches the command string. It always exits 0 and writes either one JSON object or nothing: the deny is a decision the hook makes deliberately, never an exit code that a crash could produce by accident.
+
+### What a check gets on each host
+
+What the author asked for is an intent. What a host delivers is a mode, and it is the weaker of the two.
+
+| intent | Claude Code | Codex | Windsurf |
+| --- | --- | --- | --- |
+| `enforce` | `enforce` | `enforce` | `unsupported` |
+| `warn` | `warn` | `record-only` | `unsupported` |
+| `record-only` | `record-only` | `record-only` | `unsupported` |
+
+`enforce` returns the host's structured deny and the command does not run. `warn` allows the command and shows the reason. `record-only` says nothing to the host and leaves the run in the log. `unsupported` is what a host gets when daimon has not measured how it delivers a decision at all: Cascade documents a `pre_run_command` event, but nothing measured says what it does with one, so the whole Windsurf column stays `unsupported` rather than claiming an enforcement nobody has seen delivered.
+
+Codex is the interesting cell. It documents no channel for a warning, so `warn` degrades to `record-only` there: the check still runs and the log still says so, and daimon does not claim to have shown the author something the host never rendered.
+
+When more than one armed check matches a command, the strongest FAILING mode decides. An `enforce` check that passed does not block the command for a `warn` check that did not, and the message names every check that failed.
 
 A check runs against a **subject**: the command string, a separator, then the contents of every file argument daimon could resolve, each under a header naming the flag it came from. The subject goes to a temporary file at mode 600 and is removed after the run. Its path arrives in `DAIMON_CHECK_SUBJECT`, alongside `DAIMON_CHECK_COMMAND` and `DAIMON_CHECK_RULING`; the working directory is the action's own, and standard input is `/dev/null`.
 

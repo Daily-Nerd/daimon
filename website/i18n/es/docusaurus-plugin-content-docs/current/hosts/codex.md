@@ -20,8 +20,9 @@ publicado (sin necesidad de clonar el repo):
 daimon hooks install codex
 ```
 
-Esto copia los tres scripts de hook y su helper compartido a `~/.codex/hooks/` y
-registra `SessionStart`, `SessionEnd` y `Stop` en `~/.codex/hooks.json`, preservando
+Esto copia los cuatro scripts de hook y los módulos que comparten a
+`~/.codex/hooks/` y registra `SessionStart`, `SessionEnd`, `Stop` y
+`PreToolUse` en `~/.codex/hooks.json`, preservando
 cualquier entrada no relacionada que ya exista. Es idempotente — re-ejecútalo
 después de cada `uv tool upgrade daimon-briefing` para refrescar los scripts
 y que coincidan con el CLI instalado. Tras instalar, abre `/hooks` en Codex
@@ -67,6 +68,21 @@ python3 hook/codex-hooks.py status
   sesión). Ponlo en `0` para serializar cada turno, o pon
   `DAIMON_CODEX_SERIALIZE_ON_STOP=0` para desactivar la captura de Codex
   dejando instalada la inyección del briefing.
+
+- **`daimon-codex-pre-action.py`** — hook `PreToolUse`, matcher `Bash|shell`.
+  **Este es el primer hook de daimon que puede hacer fallar una acción del
+  anfitrión.** Antes de que corra un comando de shell, corre contra él los
+  checks armados de este proyecto y devuelve el rechazo estructurado de Codex
+  cuando un check ratificado con intención `enforce` reporta una violación o
+  daimon no pudo leer lo que el comando envía. Codex no documenta ningún canal
+  para una advertencia, así que la intención `warn` degrada acá a
+  `record-only`: la corrida queda en el registro y no se muestra nada. Sale
+  con 0 en todos los caminos. Mira
+  [Checks en ejecución](../reference/cli#checks-at-runtime).
+
+  Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`. Una fila
+  prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
+  cierra la distancia entre un check que corrió y un check que fue respetado.
 
 La documentación de Codex señala que `transcript_path` se provee por
 conveniencia pero su formato no es una interfaz estable. El parser JSONL de

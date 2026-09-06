@@ -58,6 +58,12 @@ de Cascade:
   (como máximo un volcado por nombre de evento), para que la siguiente
   iteración del adaptador tenga evidencia real en lugar de otra ronda de
   probes manuales.
+- **Sin checks de pre-acción:** el check de una regla lee `unsupported` en
+  Windsurf. Cascade documenta un evento `pre_run_command`, pero nada que
+  daimon haya medido dice qué hace con una decisión, así que la columna queda
+  en `unsupported` en lugar de reclamar una imposición que nadie vio
+  entregada. Un check armado en `enforce` muestra `unsupported` acá, no
+  `registered`.
 - **Sin inyección de briefing:** el conjunto de hooks de Cascade no tiene un
   evento equivalente a inicio de sesión, así que a diferencia de Claude
   Code/Codex/Gemini el briefing no se inyecta como contexto. Es una

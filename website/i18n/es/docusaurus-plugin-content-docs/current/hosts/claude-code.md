@@ -14,7 +14,7 @@ vive en el
 ```
 
 El plugin registra por sí mismo los hooks `SessionStart` / `UserPromptSubmit`
-/ `SessionEnd` vía `.claude-plugin/plugin.json` + `hooks/hooks.json`. El orden
+/ `SessionEnd` / `PreToolUse` vía `.claude-plugin/plugin.json` + `hooks/hooks.json`. El orden
 no importa respecto a instalar el CLI `daimon`: si los hooks llegan antes que
 el CLI, las sesiones arrancan con normalidad y el hook imprime una línea con
 la sugerencia de instalación en lugar de un briefing.
@@ -37,7 +37,7 @@ python3 hook/daimon-hooks.py status
 ```
 
 Install copia los scripts de hook a `~/.claude/hooks/` y los registra bajo
-`SessionStart` / `SessionEnd` en `~/.claude/settings.json` (idempotente; los
+`SessionStart` / `SessionEnd` / `PreToolUse` en `~/.claude/settings.json` (idempotente; los
 settings se respaldan antes de cada mutación). Requiere el CLI `daimon` en el
 PATH — `uv tool install 'daimon-briefing[pretty]'`, mira el
 [inicio rápido](../getting-started/quickstart) — y los hooks también aceptan
@@ -46,8 +46,9 @@ CLI, re-ejecuta install para que los scripts de hook queden sincronizados.
 
 ## Qué hace cada script
 
-Tres scripts cierran el ciclo de captura -> inyección, sea cual sea la ruta de
-instalación que los registre:
+Cuatro scripts corren en este anfitrión, sea cual sea la ruta de instalación
+que los registre. Tres cierran el ciclo de captura -> inyección; el cuarto
+custodia las acciones de shell:
 
 - **`daimon-session-brief.py`** — hook `SessionStart`. Lee el payload de stdin
   y delega en el CLI `daimon brief` instalado (única fuente de verdad para el
@@ -95,6 +96,24 @@ instalación que los registre:
   nunca coinciden: los comandos slash (directivas del host) y los bloques
   emitidos por el host — notificaciones de tareas en segundo plano, mensajes
   de agentes o compañeros de equipo, salida de comandos.
+
+- **`daimon-pre-action.py`** — hook `PreToolUse`, matcher `Bash`. **Este es el
+  primer hook de daimon que puede hacer fallar una acción del anfitrión.**
+  Antes de que corra un comando de shell, lee el manifiesto de checks armados,
+  se queda con los armados para el directorio de trabajo de la acción y corre
+  aquellos cuyo patrón coincide con el comando. Un check ratificado con
+  intención `enforce` que reporta una violación, o un sujeto que daimon no
+  pudo leer, vuelve como el rechazo estructurado de Claude Code y el comando
+  no corre; `warn` vuelve como un permiso que lleva la razón; `record-only` no
+  le dice nada al anfitrión. Todo lo que decide vive en `checks_host.py`, que
+  se carga desde al lado del script, y el script solo nombra a su anfitrión.
+  Sale con 0 en todos los caminos, no escribe nada en stderr y escribe o bien
+  un objeto JSON o bien nada. Mira
+  [Checks en ejecución](../reference/cli#checks-at-runtime).
+
+  Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`. Una fila
+  prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
+  cierra la distancia entre un check que corrió y un check que fue respetado.
 
 Estos dos scripts de captura/inyección se cablean de una de dos maneras
 mutuamente excluyentes — elige UNA (ambas a la vez disparan todo dos veces

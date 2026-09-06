@@ -18,9 +18,10 @@ clone needed):
 daimon hooks install codex
 ```
 
-This copies the three hook scripts and their shared helper to `~/.codex/hooks/`
-and registers `SessionStart`, `SessionEnd`, and `Stop` in `~/.codex/hooks.json`, preserving any
-unrelated entries already there. It is idempotent — re-run it after every
+This copies the four hook scripts and the modules they share to
+`~/.codex/hooks/` and registers `SessionStart`, `SessionEnd`, `Stop` and
+`PreToolUse` in `~/.codex/hooks.json`, preserving any unrelated entries
+already there. It is idempotent — re-run it after every
 `uv tool upgrade daimon-briefing` to refresh the scripts to match the installed
 CLI. After installing, open `/hooks` in Codex to review and trust the hook
 definitions — Codex skips untrusted hook definitions until you do.
@@ -62,6 +63,19 @@ python3 hook/codex-hooks.py status
   (default `300` seconds per session). Set it to `0` to serialize every turn,
   or set `DAIMON_CODEX_SERIALIZE_ON_STOP=0` to disable Codex capture while
   leaving briefing injection installed.
+
+- **`daimon-codex-pre-action.py`** — `PreToolUse` hook, matcher `Bash|shell`.
+  **This is the first daimon hook that can fail a host action.** Before a
+  shell command runs, it runs this project's armed checks against it and
+  returns Codex's structured deny when a check ratified with intent `enforce`
+  reports a violation or daimon could not read what the command sends. Codex
+  documents no channel for a warning, so intent `warn` degrades to
+  `record-only` here: the run is logged and nothing is shown. Exits 0 on every
+  path. See [Checks at runtime](../reference/cli#checks-at-runtime).
+
+  Every run appends one row to `~/.daimon/logs/checks.jsonl`. A row proves the
+  check RAN. Only `decision_emitted: deny` under `enforce` closes the gap
+  between a check that ran and a check that was honored.
 
 Codex docs note that `transcript_path` is provided for convenience but its
 format is not a stable interface. Daimon's JSONL parser is intentionally

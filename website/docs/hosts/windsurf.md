@@ -53,6 +53,11 @@ events:
   `~/.daimon/windsurf/unparsed-<event>-<stamp>.json` (at most one dump per
   event name), so the next adapter iteration has real evidence to work from
   instead of another manual probe round.
+- **No pre-action checks:** a ruling's check reads `unsupported` on Windsurf.
+  Cascade documents a `pre_run_command` event, but nothing daimon has measured
+  says what it does with a decision, so the column stays `unsupported` rather
+  than claiming an enforcement nobody has seen delivered. A check armed to
+  `enforce` shows `unsupported` here, not `registered`.
 - **No briefing injection:** Cascade's hook set has no session-start-equivalent
   event, so unlike Claude Code/Codex/Gemini the briefing is not injected as
   context. This is a permanent host constraint, not a bug — the skill closes
