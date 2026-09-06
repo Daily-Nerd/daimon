@@ -286,3 +286,83 @@ def test_skill_install_codex_is_not_lifecycle_hooks(tmp_path, monkeypatch):
     assert cli.main(["skill", "install", "codex"]) == 0
     assert (tmp_path / ".codex" / "AGENTS.md").exists()
     assert not (tmp_path / ".codex" / "hooks.json").exists()
+
+
+# ---- #943: installing the hook also materializes what it reads ------------
+
+
+def _arm_a_check(project):
+    """A ruling with a check, armed the way a human arms one."""
+    import hashlib
+
+    from daimon_briefing import refutations
+    body = "#!/bin/sh\nexit 0\n"
+    ruling_id = refutations.assert_ruling(
+        subject="public posts", verdict="the rule for public posts",
+        scope="publishing", evidence=["issue:943"], channel="cli-agent",
+        check={"match": "gh pr create", "body": body, "intent": "warn"},
+        project_dir=str(project))
+    refutations.ratify(
+        ruling_id, channel="ui",
+        check_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        project_dir=str(project))
+    return ruling_id
+
+
+@pytest.mark.parametrize("host", ["codex", "windsurf"])
+def test_hooks_install_reports_what_is_armed_for_this_project(
+        host, tmp_path, monkeypatch, capsys):
+    """Installing the hook and materializing what it reads are one step. Left
+    apart, the supported install ends with a hook in place and an empty
+    checks directory, which reads on every surface as "armed, nothing fired"
+    rather than "never wired"."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    _arm_a_check(project)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(project)
+    assert cli.main(["hooks", "install", host]) == 0
+    out = capsys.readouterr().out
+    assert "checks: 1 armed for " in out
+
+
+def test_hooks_install_says_zero_when_the_project_arms_nothing(
+        tmp_path, monkeypatch, capsys):
+    """Not silence. "Nothing is armed here" is the ordinary state and it is
+    the one a reader most needs told apart from "the sync did not run"."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(project)
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    assert "checks: 0 armed for " in capsys.readouterr().out
+
+
+def test_a_failed_check_sync_is_information_and_not_a_failed_install(
+        tmp_path, monkeypatch, capsys):
+    """The hook files landed and the registration landed. Returning non-zero
+    would report that as a failed install and send the operator looking for a
+    problem in the half that worked."""
+    from daimon_briefing import config
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(project)
+    base = config.checks_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "manifest.json").write_text("{not json", encoding="utf-8")
+
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    out = capsys.readouterr().out
+    assert "checks: " in out
+    assert "disarm" in out  # the refusal's own words, not a rewrite
+    assert (tmp_path / ".codex" / "hooks.json").exists()
+
+
+def test_hooks_install_grows_no_slug_flag(capsys):
+    """`--slug` reaches ten human-only decision verbs and is refused on a
+    tenant-scoped home. Widening it to a verb that materializes executables
+    would hand bucket-choosing power past the check that gates it (#899,
+    #948)."""
+    with pytest.raises(SystemExit):
+        cli.main(["hooks", "install", "codex", "--slug", "somewhere"])
