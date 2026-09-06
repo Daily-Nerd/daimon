@@ -99,14 +99,23 @@ def _cmd_hooks_status(args) -> int:
     that reports script drift has to report manifest drift too or the two
     halves of "the gate is in place" never get checked together.
 
-    The `--json` shape stays a list of host entries, because that is a
-    contract and a script wanting the manifest has `daimon check sync
-    --check --json`. The exit code folds both kinds of drift either way, so
-    CI catches a stale manifest with or without the flag.
+    The exit code folds both kinds of drift, so CI catches a stale manifest
+    with or without `--json`. A non-zero exit a script cannot account for is
+    worse than no audit, so `--json` carries the reason: the manifest rides
+    at the END of the same list, shaped like a host entry so an iterator
+    written against the old payload still walks the real hosts unchanged,
+    with the ids-only audit under its own `manifest` key.
+
+    It is appended HERE and never inside `_hooks_status_report`, because
+    `_hook_drift_present` folds that report into one `daimon status` line
+    whose wording is about SCRIPT copies. A manifest entry in the report
+    would make a stale manifest print "installed hooks out of date", which
+    points at the wrong repair; `daimon status` has its own checks line for
+    this, naming `daimon check sync`.
 
     The block is an extra: an unreadable checks directory drops it rather
     than the report the verb actually owes."""
-    from .. import checks
+    from .. import checks, config
 
     from .check import audit_lines
 
@@ -116,7 +125,19 @@ def _cmd_hooks_status(args) -> int:
     except Exception:  # noqa: BLE001
         audit = None
     if getattr(args, "json", False):
-        print(json.dumps(report, indent=2))
+        rows = list(report)
+        if audit is not None:
+            rows.append({
+                "host": "checks-manifest",
+                "dir": str(config.checks_dir()),
+                # A manifest that exists and cannot be parsed is still
+                # present. `absent` is the only state that means nothing was
+                # ever written here.
+                "installed": audit.state != "absent",
+                "registration": None, "files": [], "drift": audit.drift,
+                "manifest": audit._asdict(),
+            })
+        print(json.dumps(rows, indent=2))
     else:
         render.render_hooks_status(
             report,
@@ -139,7 +160,9 @@ def register(sub, fmt) -> None:
         "status",
         help="audit installed hook copies against the packaged versions "
              "(CURRENT/STALE/MISSING/NOT INSTALLED), and this project's check "
-             "manifest against its ledger; non-zero exit on either drift",
+             "manifest against its ledger; non-zero exit on either drift. "
+             "--json appends one trailing `checks-manifest` entry carrying "
+             "the manifest audit, after the real hosts",
     )
     ph_status.add_argument("--json", action="store_true", help="machine-readable output")
     ph_status.set_defaults(func=_cli._cmd_hooks_status)
