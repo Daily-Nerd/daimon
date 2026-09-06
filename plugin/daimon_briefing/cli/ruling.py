@@ -11,7 +11,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import config, normalize, refutations, render
+from .. import config, normalize, refutations, render, store
 from ._ledger import (
     _check_args,
     _check_ceremony_lines,
@@ -238,6 +238,17 @@ def _cmd_ruling_list(args) -> int:
     rows = refutations.listing(states=set(args.state or refutations.STATES),
                                polarity="ruling", project_dir=project)
     _cli._note_usage("ruling:list")
+    # #948: an empty answer for a project that has never been written from is
+    # not the same fact as an empty ledger, and it is what a path routed to
+    # the wrong bucket looks like. stdout keeps its exact shape so parsers are
+    # unaffected; the distinction rides on stderr and the exit code, the way
+    # `daimon status` already reports "no checkpoint here".
+    rc = 0
+    if not rows and not refutations.bucket_exists(project):
+        print(f"no bucket for {store.project_slug(project)} yet (resolved "
+              f"{project}): nothing has been written from this project",
+              file=sys.stderr)
+        rc = 1
     if args.json:
         print(_refutation_json(rows))
         active_j = sum(1 for r in rows if r.get("state") == "active")
@@ -246,10 +257,10 @@ def _cmd_ruling_list(args) -> int:
             # stderr so the JSON stays parseable and machines still learn it.
             print(f"over cap: {active_j} active vs cap {cap_j}",
                   file=sys.stderr)
-        return 0
+        return rc
     if not rows:
         render.render_ledger_lines(["no rulings for this project"])
-        return 0
+        return rc
     render.render_ledger_records([_ruling_lines(row) for row in rows])
     # The cap binds ACTIVATION; a lowered DAIMON_RULING_CAP leaves the
     # excess active, so the over-cap state must be visible somewhere.

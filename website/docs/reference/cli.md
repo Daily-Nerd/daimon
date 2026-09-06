@@ -35,7 +35,7 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | `daimon audit quotes` | Re-check every stored verbatim quote against its source transcript and report mismatches. Read-only — it never rewrites trust tags. |
 | `daimon audit privacy` | Prove the deletion contract: hash every plaintext field on every surface (checkpoints, rotated pointers, the event ledger, the team mirror, the recall index and its orphan snapshots) and report any forgotten value that survived. Read-only. |
 | `daimon refute list\|show\|search\|guard` | Read the negative-knowledge ledger without decay. `guard` emits active exact-anchor/subject matches only; it is advisory and never blocks a command. `search` returns both polarities, labelled; `list` and `guard` stay refutation-only. Add `--json` for deliberation integrations. |
-| `daimon ruling list\|show` | Read the standing rulings: human-ratified positive constraints on the same ledger, never decayed, never re-extracted. `show` includes pending agent proposals. |
+| `daimon ruling list\|show` | Read the standing rulings: human-ratified positive constraints on the same ledger, never decayed, never re-extracted. `show` includes pending agent proposals. A `list` that finds nothing exits 1 and names the bucket on stderr when the project has never been written from, and exits 0 when the project has a bucket that holds no rulings. |
 | `daimon serve` | Open the [read-only local viewer](viewer.md) on localhost — search as recall, per-entry "why" pages, refutations, diff, check strip, print view. Nothing writes. |
 | `daimon relations list\|show\|confirm\|reject\|retract` | The [typed relation ledger](relations.md): machines propose, only a person confirms, and deciding needs an interactive terminal. Candidates never render on an entry surface. |
 
@@ -67,6 +67,8 @@ The CLI mints two channels only: `cli-tty` (an interactive terminal) and `cli-ag
 - `daimon_briefing.refutations.listing(states={"active"}, polarity="ruling", project_dir=...)` and `daimon_briefing.briefing.active_rulings(project_dir)` read the active set, each row with `subject`, `scope`, `anchors`, `activation_channel`, `evidence`, and the rule text itself. `anchors` are free strings set with `ruling propose --anchor`; a host that enforces per message matches on them and decides what happens itself.
 
 The record renders as `ratified (signed)` or `ratified (ui)`, never as human-ratified without the tier. Nothing local is unforgeable: a caller with machine access can drive a UI or allocate a terminal. What the channel earns is provenance, not proof; forgery costs deliberate impersonation instead of one word, and the channel stays auditable afterwards.
+
+In the two calls above, and in the refutation, request, amendment and relation ledger helpers behind them, `project_dir` is resolved the same way the CLI resolves `--project`: made absolute, symlinks collapsed, then normalized to the git toplevel. A host standing in a subdirectory of a repository therefore reads the same bucket the CLI reads from the repository root. `daimon_briefing.config.resolve_project_dir(path)` is the public function that returns the directory a path routes to. Note the scope: this covers the ledger surfaces named here, not every function that takes a `project_dir`. The checkpoint store still derives its bucket from the literal path you hand it, so pass an already-resolved directory if you call it yourself. The CLI resolves before it calls either, so a hook-written checkpoint and a CLI-written ledger always agree.
 
 #### What a host can rely on
 
@@ -143,6 +145,8 @@ disagree on `_` (daimon keeps it, Claude Code folds it to `-`). A host that
 reimplements the rule can check its copy against `daimon slug` directly. A
 path that starts with `-` needs `--` before it (`daimon slug -- -Users-x`),
 the same escape any positional argument needs for a leading dash.
+
+The rule is a character transform applied AFTER resolution. `daimon slug` prints the transform of the literal string you hand it, which is why it answers for a path daimon has never written to. To see the root and the slug a path actually routes to, with the symlink and git-toplevel steps already applied, run `daimon status --project <path> --json` and read `identity`.
 
 ## Internals (invoked by hooks, documented for completeness)
 

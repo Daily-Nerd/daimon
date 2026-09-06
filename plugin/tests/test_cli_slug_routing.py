@@ -167,3 +167,66 @@ def test_request_done_takes_no_slug(project, capsys):
         cli.main(["request", "done", "q-0123456789ab", "--evidence", "x",
                   f"--slug={_b()}", "--by", "agent"])
     assert exc.value.code == 2
+
+
+# ---- `--project` is a PATH, never a bucket name (#948 review blocker) ------
+
+
+def test_project_never_addresses_a_bucket_by_its_slug(project, capsys,
+                                                      tmp_checkpoint_dir):
+    """`--slug` is the ONLY way to name a bucket, and it is gated. If a
+    slug-shaped `--project` addressed one too, every verb would carry the
+    routing primitive `_slug_route` deliberately restricted to ten human-only
+    decision verbs, with no channel gate and no tenant check anywhere on the
+    path."""
+    ruling_id = _ruling_in_b()
+    capsys.readouterr()
+
+    rc = cli.main(["ruling", "list", "--json", f"--project={_b()}"])
+
+    assert ruling_id not in capsys.readouterr().out, \
+        "--project named a bucket by its slug"
+    assert rc == 1, "the slug resolved as a path, so it has no bucket"
+
+
+def test_a_tenant_scoped_home_cannot_be_escaped_through_project(
+        project, capsys, monkeypatch, tmp_checkpoint_dir):
+    """#899 removes the caller's ability to choose a bucket. The refusal guards
+    `--slug` and `--all-projects` because `--project` could never reach one."""
+    ruling_id = _ruling_in_b()
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    capsys.readouterr()
+
+    assert cli.main(["ruling", "list", "--json", f"--project={_b()}"]) == 1
+    assert ruling_id not in capsys.readouterr().out
+
+
+def test_a_tenant_scoped_home_cannot_be_written_through_project(
+        project, capsys, monkeypatch, tmp_checkpoint_dir):
+    """The write half. A candidate landing in a foreign bucket is an agent
+    planting a record in a project it was never given."""
+    _ruling_in_b()
+    foreign = tmp_checkpoint_dir / (store.project_slug(B) or "")
+    before = (foreign / "refutations.jsonl").read_bytes()
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    capsys.readouterr()
+
+    cli.main(["ruling", "propose", "--subject", "theirs",
+              "--verdict", "an injected rule", "--scope", "theirs",
+              "--evidence", "issue:1", "--by", "agent",
+              f"--project={_b()}"])
+
+    assert (foreign / "refutations.jsonl").read_bytes() == before, \
+        "a write reached a foreign bucket through --project"
+
+
+def test_a_slug_shaped_project_resolves_the_way_it_did_before(project):
+    """The pre-branch behavior, restored: the value is a path, made absolute
+    against the working directory like any other relative path."""
+    from pathlib import Path
+
+    from daimon_briefing import config
+
+    assert cli._resolve_project(_b()) == str(Path(_b()).resolve())
+    # the library keeps the passthrough its bucket-iterating readers need
+    assert config.resolve_project_dir(_b()) == _b()

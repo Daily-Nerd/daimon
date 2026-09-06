@@ -324,6 +324,210 @@ def test_resolve_project_root_symmetry_subdir_and_root_share_slug(tmp_path):
     assert store.project_slug(from_subdir) == store.project_slug(from_root)
 
 
+# ---- one fork per directory per process (#948 perf) ----
+
+
+def _count_git_calls(monkeypatch) -> list:
+    calls: list = []
+    real = subprocess.run
+
+    def _counting(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _counting)
+    return calls
+
+
+def test_resolve_project_root_forks_git_once_per_directory(tmp_path,
+                                                           monkeypatch):
+    """#948 put this call on every ledger read, and each fork costs about 10ms.
+    A directory's root cannot change under a running process without someone
+    creating a repo mid-flight, so the second answer comes from the memo."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    calls = _count_git_calls(monkeypatch)
+
+    assert config.resolve_project_root(str(plain)) == str(plain)
+    assert config.resolve_project_root(str(plain)) == str(plain)
+
+    assert len(calls) == 1
+
+
+def test_resolve_project_root_forks_again_for_a_different_directory(
+        tmp_path, monkeypatch):
+    first = tmp_path / "one"
+    first.mkdir()
+    second = tmp_path / "two"
+    second.mkdir()
+    calls = _count_git_calls(monkeypatch)
+
+    config.resolve_project_root(str(first))
+    config.resolve_project_root(str(second))
+
+    assert len(calls) == 2
+
+
+def test_resolve_project_root_cache_clear_makes_the_next_call_fork(
+        tmp_path, monkeypatch):
+    """The escape hatch a long-lived host process needs: a directory that
+    BECOMES a git repo is picked up after a clear, or at next process start."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    calls = _count_git_calls(monkeypatch)
+
+    config.resolve_project_root(str(plain))
+    config.resolve_project_root.cache_clear()
+    config.resolve_project_root(str(plain))
+
+    assert len(calls) == 2
+
+
+def test_resolve_project_root_sees_a_directory_that_became_a_repo_after_clear(
+        tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert config.resolve_project_root(str(plain)) == str(plain)
+
+    _init_git_repo(plain)
+    assert config.resolve_project_root(str(plain)) == str(plain), \
+        "the memo must hold until it is cleared"
+
+    config.resolve_project_root.cache_clear()
+    assert Path(config.resolve_project_root(str(plain))) == plain.resolve()
+
+
+def test_resolve_project_root_falsy_input_never_touches_the_memo(monkeypatch):
+    """None and "" short-circuit before the memo, so they can never occupy an
+    entry or be answered from one."""
+    calls = _count_git_calls(monkeypatch)
+    config.resolve_project_root.cache_clear()
+
+    assert config.resolve_project_root(None) is None
+    assert config.resolve_project_root("") == ""
+
+    assert calls == []
+    assert config.resolve_project_root.cache_info().currsize == 0
+
+
+# ---- resolve_project_dir: the ONE resolution the CLI and the library share (#948) ----
+
+
+def test_resolve_project_dir_subdir_maps_to_git_toplevel(tmp_path):
+    """The defect in one line: a library caller standing in a subdir must route
+    to the same bucket the CLI routes to from the repo root."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    subdir = repo / "plugin" / "pkg"
+    subdir.mkdir(parents=True)
+
+    assert Path(config.resolve_project_dir(str(subdir))) == repo.resolve()
+
+
+def test_resolve_project_dir_non_git_dir_returns_absolute_path(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert config.resolve_project_dir(str(plain)) == str(plain.resolve())
+
+
+def test_resolve_project_dir_none_and_empty_passthrough():
+    assert config.resolve_project_dir(None) is None
+    assert config.resolve_project_dir("") == ""
+
+
+def test_resolve_project_dir_slug_passes_through_untouched(tmp_path,
+                                                           monkeypatch):
+    """`--slug` routing, `brief --slug` and every bucket-iterating reader hand a
+    BUCKET SLUG in as project_dir. A slug has no separator and names no
+    directory, so it must never be resolved against the cwd."""
+    monkeypatch.chdir(tmp_path)
+    assert config.resolve_project_dir("-Users-x-proj") == "-Users-x-proj"
+
+
+def test_resolve_project_dir_dot_inside_a_git_subdir(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    subdir = repo / "plugin"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)
+
+    assert Path(config.resolve_project_dir(".")) == repo.resolve()
+
+
+def test_resolve_project_dir_collapses_a_symlink(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):  # pragma: no cover - platform gate
+        import pytest
+        pytest.skip("no symlink support on this platform")
+
+    assert config.resolve_project_dir(str(link)) == str(real.resolve())
+
+
+def test_resolve_project_dir_returns_raw_when_the_path_cannot_be_resolved(
+        tmp_path, monkeypatch):
+    """`Path.resolve` reaches the filesystem, so it can fail on a path the
+    caller had every reason to think was fine: a dead automount, a loop of
+    symlinks, a name the OS rejects. Resolution is not allowed to take a
+    command down over that, so the raw value comes back and the caller keeps
+    exactly the pre-#948 behavior."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    def _boom(self, *args, **kwargs):
+        raise OSError("stale NFS file handle")
+
+    monkeypatch.setattr(config.Path, "resolve", _boom)
+
+    assert config.resolve_project_dir(str(plain)) == str(plain)
+
+
+def test_the_cli_absolutizes_a_slug_the_library_passes_through(tmp_path,
+                                                               monkeypatch):
+    """The one place the two callers deliberately DISAGREE, and why.
+
+    `--project` is a path, so the CLI opts out of the slug branch: a
+    slug-shaped value is made absolute against the working directory and
+    cannot name a bucket. The library keeps the passthrough, because `--slug`
+    routing and every bucket-iterating reader hand a real slug in as
+    `project_dir`. Asserting both halves is what stops someone collapsing the
+    two into one and reopening the tenant-scope bypass the review caught.
+    """
+    from daimon_briefing import cli
+
+    monkeypatch.chdir(tmp_path)
+    slug = "-Users-x-proj"
+
+    assert config.resolve_project_dir(slug) == slug
+    assert cli._resolve_project(slug) == str(tmp_path.resolve() / slug)
+
+
+def test_the_cli_and_the_library_agree_on_every_real_path(tmp_path):
+    """#948: for an actual directory the two must not drift, or a write and a
+    read of the same project land in different buckets. Compared against a
+    hand-written expectation rather than against each other, so a shared
+    refactor cannot make this pass by construction."""
+    from daimon_briefing import cli
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    subdir = repo / "plugin"
+    subdir.mkdir()
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    for raw, expected in ((str(subdir), repo.resolve()),
+                          (str(plain), plain.resolve())):
+        assert Path(config.resolve_project_dir(raw)) == expected
+        assert Path(cli._resolve_project(raw)) == expected
+
+
 def test_scar_harvest_opt_in(monkeypatch):
     monkeypatch.delenv("DAIMON_SCAR_HARVEST", raising=False)
     assert config.scar_harvest_enabled() is False

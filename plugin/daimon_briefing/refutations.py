@@ -184,10 +184,36 @@ class RefutationTooLong(RefutationError):
 
 
 def _path(project_dir=None):
-    slug = store.project_slug(project_dir)
+    # #948: resolve BEFORE slugging, the same way the CLI resolves --project.
+    # Without this a host calling in with "<repo>/plugin" wrote a bucket the
+    # CLI's read of the same path never looked at. A bucket slug handed in by
+    # `--slug` routing or a bucket-iterating reader passes through untouched.
+    slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not slug:
         return None
     return config.checkpoint_dir() / slug / "refutations.jsonl"
+
+
+def bucket_exists(project_dir=None) -> bool:
+    """Has anything ever been written from this project? #948.
+
+    A reporting read that comes back empty has two very different causes: the
+    project has no records of this kind, or the path routes to a bucket that
+    does not exist because nothing was ever written from it. The second is
+    what a mis-resolved `--project` looks like, and reported as the first it
+    reads like a successful read of an empty ledger.
+
+    The question is about the project's bucket DIRECTORY, not this ledger's
+    file: a bucket holding only checkpoints has been written from, it simply
+    carries no ledger yet, and that is a clean empty read.
+    """
+    path = _path(project_dir)
+    if path is None:
+        return False
+    try:
+        return path.parent.is_dir()
+    except OSError:
+        return False
 
 
 def _text(name: str, value, *, required: bool = True) -> str:

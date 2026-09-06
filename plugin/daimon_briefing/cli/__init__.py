@@ -99,17 +99,21 @@ def _prompt(question: str) -> str:
 def _resolve_project(arg) -> str:
     """Project dir for routing: explicit --project, else DAIMON_PROJECT_DIR, else cwd.
 
-    Resolved to an absolute path BEFORE the store slugs it: the store derives
-    slugs from absolute paths, so a relative "." (or a bare manual re-run) would
-    otherwise never match a written checkpoint's slug.
+    Only the PRECEDENCE lives here. The resolution itself is
+    `config.resolve_project_dir` — absolute, symlinks collapsed, then the git
+    toplevel (#74) — which the library ledger entry points call on the same
+    raw value. Holding one function means a write from a subdir and a read
+    from the repo root cannot land in different buckets (#948); when this was
+    two copies, only the CLI half existed.
 
-    Then normalized to the git toplevel (#74) so a subdir session shares the ONE
-    repo bucket; resolve_project_root returns the input unchanged when it is not a
-    git repo, so the absolute-path fallback above still holds.
+    `allow_slug=False` because `--project` is a PATH. The library needs the
+    slug-passthrough branch for its bucket-iterating readers; the CLI must not
+    have it, or a slug-shaped `--project` would address that bucket on every
+    verb, writes included, bypassing both the ten-verb limit `--slug` is held
+    to and the tenant-scope refusal that guards it (#899).
     """
     project = arg or config.project_dir() or os.getcwd()
-    resolved = str(Path(project).expanduser().resolve())
-    return config.resolve_project_root(resolved)
+    return config.resolve_project_dir(project, allow_slug=False)
 
 
 def _note_usage(command: str) -> None:

@@ -10,9 +10,12 @@ at agent initiative, so agents get proposal events and only human channels
 change what renders.
 """
 import hashlib
+import json
+from pathlib import Path
+
 import pytest
 
-from daimon_briefing import redact, refutations
+from daimon_briefing import redact, refutations, store
 
 
 PROJECT = "/p/rulings"
@@ -811,8 +814,12 @@ def test_cli_detail_json_and_ceremony_paths(tmp_checkpoint_dir, _tty,
 def test_cli_remaining_ruling_paths(tmp_checkpoint_dir, _tty, monkeypatch,
                                     capsys):
     # Human propose escalation hint; empty list; channel errors off-tty.
-    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
-    assert "no rulings" in capsys.readouterr().out
+    # Nothing has been written from PROJECT yet, so the empty list is the
+    # "no bucket" answer: same stdout, exit 1 and a stderr line since #948.
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 1
+    captured = capsys.readouterr()
+    assert "no rulings" in captured.out
+    assert "no bucket" in captured.err
     assert cli.main(["ruling", "propose", "--subject", "human area",
                      "--verdict", "a human proposed rule",
                      "--scope", "human-scope", "--evidence", "issue:693",
@@ -861,6 +868,59 @@ def test_cli_remaining_ruling_paths(tmp_checkpoint_dir, _tty, monkeypatch,
     assert cli.main(["ruling", "revise", cand, "--verdict", "x",
                      "--evidence", "issue:693", "--project", PROJECT]) == 1
     capsys.readouterr()
+
+
+# ---- "no rulings" and "no bucket" are different answers (#948) ----
+
+
+def test_ruling_list_separates_an_empty_project_from_an_unwritten_one(
+        tmp_checkpoint_dir, capsys):
+    """A path that has never been written from is the shape a mis-resolved
+    --project takes. Reporting it as "no rulings for this project" at exit 0
+    is what let the #948 routing defect stay invisible: the read looked
+    successful. stdout is unchanged so scripts parsing it keep working; the
+    diagnosis goes to stderr and the exit code, matching `daimon status`."""
+    from daimon_briefing import cli
+
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 1
+    captured = capsys.readouterr()
+    assert "no rulings for this project" in captured.out
+    assert store.project_slug(PROJECT) in captured.err
+    assert "no bucket" in captured.err
+
+
+def test_ruling_list_json_on_an_unwritten_project_still_prints_an_empty_list(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+
+    assert cli.main(["ruling", "list", "--json", "--project", PROJECT]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == []
+    assert store.project_slug(PROJECT) in captured.err
+
+
+def test_ruling_list_on_a_bucket_with_no_ledger_is_a_clean_empty_read(
+        tmp_checkpoint_dir, capsys):
+    """The bucket exists, so the project HAS written; it simply holds no
+    rulings. That is a successful empty read, exit 0."""
+    from daimon_briefing import cli
+
+    (tmp_checkpoint_dir / (store.project_slug(PROJECT) or "")).mkdir(
+        parents=True)
+
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    assert "no rulings for this project" in capsys.readouterr().out
+
+
+def test_ruling_list_on_a_ledger_holding_only_refutations_is_exit_zero(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+
+    _refute()
+    capsys.readouterr()
+
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    assert "no rulings for this project" in capsys.readouterr().out
 
 
 def test_cli_list_json_over_cap_goes_to_stderr(tmp_checkpoint_dir,
@@ -1065,7 +1125,6 @@ def test_the_reference_states_where_a_change_to_this_surface_shows_up(
     promise we can keep is that the change is VISIBLE, so the page must keep
     saying where. Both language mirrors, because a host reading the Spanish
     page is owed the same warning."""
-    from pathlib import Path
     root = Path(__file__).parent.parent.parent
     pages = [
         root / "website/docs/reference/cli.md",
@@ -1076,6 +1135,25 @@ def test_the_reference_states_where_a_change_to_this_surface_shows_up(
         text = page.read_text(encoding="utf-8")
         assert "CHANGELOG.md" in text, f"{page} stopped naming the changelog"
         assert "1.0" in text, f"{page} stopped saying daimon is pre-1.0"
+
+
+def test_the_reference_names_the_resolver_a_host_shares_with_the_cli(
+        tmp_checkpoint_dir):
+    """#948: a host passing `project_dir` gets the CLI's resolution, and the
+    page has to say so, or a host standing in a subdirectory writes a bucket
+    its own `daimon ruling list` never reads. Both language mirrors, because a
+    host reading the Spanish page is owed the same contract."""
+    root = Path(__file__).parent.parent.parent
+    pages = [
+        root / "website/docs/reference/cli.md",
+        root / ("website/i18n/es/docusaurus-plugin-content-docs"
+                "/current/reference/cli.md"),
+    ]
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        assert "resolve_project_dir" in text, \
+            f"{page} stopped naming the shared resolver"
+        assert "git" in text, f"{page} stopped saying where a path resolves to"
 
 
 def _check(**overrides):

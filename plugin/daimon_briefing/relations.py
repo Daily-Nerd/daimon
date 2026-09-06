@@ -95,7 +95,11 @@ class RelationError(ValueError):
 
 
 def _path(project_dir=None):
-    slug = store.project_slug(project_dir)
+    # #948: resolve BEFORE slugging, the same way the CLI resolves --project.
+    # Without this a host calling in with "<repo>/plugin" wrote a bucket the
+    # CLI's read of the same path never looked at. A bucket slug handed in by
+    # `--slug` routing or a bucket-iterating reader passes through untouched.
+    slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not slug:
         return None
     return config.checkpoint_dir() / slug / "relations.jsonl"

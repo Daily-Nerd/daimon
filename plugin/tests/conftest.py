@@ -44,6 +44,12 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     monkeypatch.delenv("DAIMON_TEAM_PROJECT", raising=False)
     from daimon_briefing import teamproject
     teamproject._cache.clear()
+    # #948: and the project-root memo, same reasoning. It is keyed on the raw
+    # directory string, and tmp_path differs per test, but a test that git-inits
+    # a directory another test already resolved would otherwise read the stale
+    # answer — and the order that exposes it is not the order anyone runs.
+    from daimon_briefing import config as _config
+    _config.resolve_project_root.cache_clear()
     # Clear kill switch / overrides that may leak from the host env.
     monkeypatch.delenv("DAIMON_DISABLE", raising=False)
     monkeypatch.delenv("DAIMON_MIN_MESSAGES", raising=False)

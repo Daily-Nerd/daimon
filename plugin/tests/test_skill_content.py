@@ -463,6 +463,19 @@ def test_full_teaches_the_briefing_rulings_section():
     assert briefing._RULING_HEADER in full
 
 
+def test_full_warns_that_ruling_list_exits_one_on_a_fresh_project():
+    """#948: `ruling list` now exits 1 when the project has no bucket yet, so
+    an agent following this skill on a project that has never serialized sees
+    a non-zero exit. Unwarned it reads as a failed command, and the likely
+    reaction is to retry it or to report daimon as broken. The installed skill
+    is its own surface: saying this on the website does not reach an agent
+    reading the skill."""
+    full = skill_content.render_full()
+    section = full.split("`daimon ruling list` shows them")[1]
+
+    assert "exits 1" in section.split("## ")[0]
+
+
 # ---- #766: the handed-over command needs somewhere to land ----
 
 def test_skill_points_the_handed_over_command_at_decide():

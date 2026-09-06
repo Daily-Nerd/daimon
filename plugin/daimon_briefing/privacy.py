@@ -314,6 +314,9 @@ def _scan_team_dir(slug: str, keys: set[str], project_dir,
 
 
 def audit_project(project_dir=None) -> dict:
+    # #948: the report names a project, and the tombstone read below is scoped
+    # to the same one, so both take the resolution the CLI applies.
+    project_dir = config.resolve_project_dir(project_dir)
     slug = store.project_slug(project_dir)
     keys = store.forgotten_content_keys(project_dir=project_dir)
     # Heterogeneous by design: the slug, two finding lists, a scan counter,
