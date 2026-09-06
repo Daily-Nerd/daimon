@@ -489,8 +489,17 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # that did not, and reading it the other way blocks actions nobody
         # armed to block.
         deciding = max((mode for _, mode, _ in failing), key=MODES.index)
+        # Only the failures AT OR ABOVE the deciding mode are spoken aloud. A
+        # `record-only` check asked for the log and nothing else, and a
+        # neighbour that failed at a stronger mode must not carry its reason
+        # out on its behalf. On Codex that is the whole point of the cap:
+        # `warn` degrades to `record-only` there so nothing is shown that the
+        # host never rendered, and a second check the author did not control
+        # would otherwise defeat it.
+        floor = MODES.index(deciding)
         text = "\n".join(_failure_line(entry, outcome)
-                         for entry, _, outcome in failing)
+                         for entry, mode, outcome in failing
+                         if MODES.index(mode) >= floor)
         if deciding == "enforce":
             decision = "deny"
         elif deciding == "warn":

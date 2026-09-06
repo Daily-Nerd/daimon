@@ -81,7 +81,7 @@ What the author asked for is an intent. What a host delivers is a mode, and it i
 
 Codex is the interesting cell. It documents no channel for a warning, so `warn` degrades to `record-only` there: the check still runs and the log still says so, and daimon does not claim to have shown the author something the host never rendered.
 
-When more than one armed check matches a command, the strongest FAILING mode decides. An `enforce` check that passed does not block the command for a `warn` check that did not, and the message names every check that failed.
+When more than one armed check matches a command, the strongest FAILING mode decides. An `enforce` check that passed does not block the command for a `warn` check that did not, and the message names every check that failed at that mode or above. A weaker check's reason stays in the log: `record-only` asked for the log and nothing else, and a neighbour that failed harder does not carry it out on its behalf.
 
 A check runs against a **subject**: the command string, a separator, then the contents of every file argument daimon could resolve, each under a header naming the flag it came from. The subject goes to a temporary file at mode 600 and is removed after the run. Its path arrives in `DAIMON_CHECK_SUBJECT`, alongside `DAIMON_CHECK_COMMAND` and `DAIMON_CHECK_RULING`; the working directory is the action's own, and standard input is `/dev/null`.
 

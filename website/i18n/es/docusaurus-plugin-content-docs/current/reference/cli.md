@@ -82,7 +82,7 @@ Lo que pidió el autor es una intención. Lo que entrega un anfitrión es un mod
 
 Codex es la celda interesante. No documenta ningún canal para una advertencia, así que `warn` degrada allí a `record-only`: el check igual corre y el registro igual lo dice, y daimon no dice haberle mostrado al autor algo que el anfitrión nunca mostró.
 
-Cuando más de un check armado coincide con un comando, decide el modo más fuerte de los que FALLARON. Un check `enforce` que pasó no bloquea el comando por un check `warn` que no, y el mensaje nombra cada check que falló.
+Cuando más de un check armado coincide con un comando, decide el modo más fuerte de los que FALLARON. Un check `enforce` que pasó no bloquea el comando por un check `warn` que no, y el mensaje nombra cada check que falló en ese modo o por encima. La razón de un check más débil queda en el registro: `record-only` pidió el registro y nada más, y un vecino que falló más fuerte no la saca en su nombre.
 
 Un check corre contra un **sujeto**: la línea de comando, un separador, y después el contenido de cada argumento de archivo que daimon pudo resolver, cada uno bajo un encabezado que nombra la bandera de la que salió. El sujeto va a un archivo temporal con modo 600 y se borra después de la corrida. Su ruta llega en `DAIMON_CHECK_SUBJECT`, junto con `DAIMON_CHECK_COMMAND` y `DAIMON_CHECK_RULING`; el directorio de trabajo es el de la acción, y la entrada estándar es `/dev/null`.
 

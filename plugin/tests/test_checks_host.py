@@ -535,8 +535,9 @@ def test_a_check_that_crashes_is_unresolved_and_not_a_violation(tmp_path):
 
 
 def test_two_matching_checks_aggregate_to_the_strongest_failing_mode(tmp_path):
-    """The deny lists both, because the human fixing this needs the whole
-    picture in the one message the host will show."""
+    """The strongest failing mode decides the action. The message names the
+    checks that decided it; the `warn` check that failed alongside is in the
+    log, which is where its own mode said to put it."""
     hard = _arm(tmp_path, intent="enforce", subject="public posts",
                 scope="publishing")
     soft = _arm(tmp_path, intent="warn", subject="release notes",
@@ -544,9 +545,8 @@ def test_two_matching_checks_aggregate_to_the_strongest_failing_mode(tmp_path):
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
     reason = json.loads(d.stdout)["hookSpecificOutput"][
         "permissionDecisionReason"]
-    assert sorted(reason.splitlines()) == sorted([
-        f"{hard}: no em-dash in a public body",
-        f"{soft}: no em-dash in a public body"])
+    assert reason == f"{hard}: no em-dash in a public body"
+    assert soft not in reason
     assert {r["mode"] for r in d.rows} == {"enforce", "warn"}
     # One action, one decision: every row records the decision the hook
     # actually emitted, not the one its own mode would have produced alone.
@@ -954,3 +954,63 @@ def test_every_matching_check_gets_a_row_even_the_ones_that_got_no_time(
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
     assert len(d.rows) == 3
     assert {r["cause"] for r in d.rows} == {"check-timeout"}
+
+
+# ---- the message carries only what its mode earned ------------------------
+
+
+def test_a_record_only_reason_never_reaches_the_operator(tmp_path):
+    """`record-only` means the log and nothing else. A neighbour that failed
+    at a stronger mode must not carry the quiet check's reason out with it,
+    or the author who asked for silence gets none."""
+    quiet = _arm(tmp_path, intent="record-only", subject="a",
+                 scope="publishing")
+    loud = _arm(tmp_path, intent="warn", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    message = json.loads(d.stdout)["systemMessage"]
+    assert message == f"{loud}: no em-dash in a public body"
+    assert quiet not in message
+    # It still ran, and the log still says so.
+    assert {r["ruling_id"] for r in d.rows} == {quiet, loud}
+
+
+def test_a_warn_reason_never_reaches_a_deny_below_it(tmp_path):
+    """Same rule one step up. The deny names the checks that denied; a warn
+    that failed alongside is in the log, where its mode said to put it."""
+    soft = _arm(tmp_path, intent="warn", subject="a", scope="publishing")
+    hard = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert reason == f"{hard}: no em-dash in a public body"
+    assert soft not in reason
+
+
+def test_the_codex_cap_is_not_defeated_by_a_second_check(tmp_path):
+    """The sharp case. `warn` caps to `record-only` on Codex precisely so
+    nothing is shown that the host never rendered. A second check the author
+    did not control must not carry the capped one's reason out inside a
+    deny."""
+    capped = _arm(tmp_path, intent="warn", subject="a", scope="publishing")
+    hard = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES["codex"],
+                  _payload(MATCH, tmp_path, tool="shell"))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert reason == f"{hard}: no em-dash in a public body"
+    assert capped not in reason
+    assert {r["mode"] for r in d.rows} == {"record-only", "enforce"}
+
+
+def test_two_failures_at_the_deciding_mode_are_both_named(tmp_path):
+    """The narrowing is by mode, not to one line. A human fixing a blocked
+    command needs every check that blocked it in the one message the host
+    will show."""
+    first = _arm(tmp_path, intent="enforce", subject="a", scope="publishing")
+    second = _arm(tmp_path, intent="enforce", subject="b", scope="publishing")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert sorted(reason.splitlines()) == sorted([
+        f"{first}: no em-dash in a public body",
+        f"{second}: no em-dash in a public body"])
