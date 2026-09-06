@@ -331,6 +331,61 @@ def test_every_resolving_row_reads_the_file(template, tmp_path):
     rt.discard(got)
 
 
+@pytest.mark.parametrize("template", [
+    "gh pr create -F{p}",
+    "gh api repos/x -Fbody=@{p}",
+    "gh api repos/x -Ffield=@{p}",
+])
+def test_an_attached_short_flag_value_is_read_like_a_detached_one(
+        template, tmp_path):
+    """pflag, which gh uses, accepts a shorthand value attached to its flag,
+    so `-Fbody.md` is the same command as `-F body.md`. A resolver that skips
+    the attached form reports CLEAN for a file it never opened, which is the
+    one outcome that lets the action through carrying a record saying it was
+    proven safe."""
+    body = tmp_path / "body.md"
+    body.write_text("the body text\n", encoding="utf-8")
+    got = _resolve(template.format(p=body), tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "cause", "")
+    assert "the body text" in _text_of(got)
+    rt.discard(got)
+
+
+def test_an_attached_short_flag_reading_stdin_is_not_silently_skipped(
+        tmp_path):
+    got = _resolve("cat notes.md | gh pr create -F-", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "stdin-pipe"
+
+
+@pytest.mark.parametrize("command", [
+    "gh pr create -Fbody.md",
+    "gh api repos/x -Fbody=@body.md",
+    "gh pr create -F-",
+    "gh pr create -F=body.md",
+    "gh pr create -Fnotes/body.md",
+])
+def test_no_attached_short_flag_form_ever_resolves_without_reading_it(
+        command, tmp_path):
+    """The general guard. Every form here names a file that does not exist,
+    so the only honest answers are a read that fails or a form daimon says it
+    cannot parse. A Subject carrying no files would mean the resolver decided
+    a command it did not understand was safe."""
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Unresolved), \
+        f"{command!r} resolved with files {getattr(got, 'files', None)}"
+    assert got.cause in rt.CAUSES
+
+
+def test_an_attached_literal_field_still_names_no_file(tmp_path):
+    """The one attached form that legitimately reads nothing: `-Fname=x` is a
+    value, not a path, exactly as the detached form is."""
+    got = _resolve("gh api repos/x -Fname=daimon", tmp_path)
+    assert isinstance(got, rt.Subject)
+    assert got.files == ()
+    rt.discard(got)
+
+
 def test_a_relative_path_resolves_against_the_working_directory(tmp_path):
     (tmp_path / "notes").mkdir()
     (tmp_path / "notes" / "b.md").write_text("relative body", encoding="utf-8")

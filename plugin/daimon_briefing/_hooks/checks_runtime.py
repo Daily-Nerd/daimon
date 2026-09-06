@@ -276,12 +276,53 @@ _HEREDOC_RE = re.compile(
 
 def _split_attached(token):
     """`--body-file=x` -> ("--body-file", "x", True); anything else is left
-    for the two-token form."""
+    for the two-token form.
+
+    The single-dash case comes FIRST and does not need an `=`. pflag, the
+    flag library gh uses, accepts a shorthand value attached to its flag, so
+    `-Fbody.md` is the same command as `-F body.md` and `-Fkey=@p` the same
+    as `-F key=@p`. Splitting here rather than at the use sites means the
+    field and the dash rules below apply to both spellings unchanged: an
+    attached form daimon did not split fell through every branch and left
+    the subject holding only the command string, which reports CLEAN for a
+    file that was never opened."""
+    if (token.startswith("-") and not token.startswith("--")
+            and len(token) > 2 and token[:2] in _KNOWN_FLAGS):
+        value = token[2:]
+        # pflag treats a leading `=` after a shorthand as the separator, so
+        # `-F=body.md` names the file body.md and not a field with an empty
+        # name. Following it keeps the two spellings one command.
+        return token[:2], value[1:] if value.startswith("=") else value, True
     if token.startswith("-") and "=" in token:
         head, _, tail = token.partition("=")
         if head in _KNOWN_FLAGS:
             return head, tail, True
     return token, "", False
+
+
+def _walk(tokens):
+    """(flag, value, previous token) for each step of the command.
+
+    `flag` is None for a token that names no known flag, and `value` is None
+    when a known flag ran off the end with nothing after it. One generator,
+    two readers: the dash-consumer count below and the resolver itself, so
+    the two can never disagree about what a token means."""
+    index = 0
+    while index < len(tokens):
+        previous = tokens[index - 1] if index else ""
+        flag, value, attached = _split_attached(tokens[index])
+        if flag not in _KNOWN_FLAGS:
+            index += 1
+            yield None, tokens[index - 1], previous
+            continue
+        if not attached:
+            index += 1
+            if index >= len(tokens):
+                yield flag, None, previous
+                return
+            value = tokens[index]
+        index += 1
+        yield flag, value, previous
 
 
 def _read_file(raw, base):
@@ -348,30 +389,23 @@ def resolve(command, cwd):
                           f"the command could not be tokenized: {exc}")
 
     reads: list = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        flag, value, attached = _split_attached(token)
-        if flag not in _KNOWN_FLAGS:
+    for flag, value, previous in _walk(tokens):
+        if flag is None:
             # Row 6: a form outside the table is never assumed harmless.
-            if token == "-" and index and tokens[index - 1].startswith("-"):
+            token = value
+            if token == "-" and previous.startswith("-"):
                 return Unresolved(
                     "arg-form-unparsed",
-                    f"{tokens[index - 1]} reads standard input in a form "
-                    "daimon does not parse")
+                    f"{previous} reads standard input in a form daimon does "
+                    "not parse")
             if token.startswith("@") and len(token) > 1:
                 return Unresolved(
                     "arg-form-unparsed",
                     f"{token} names a file in a form daimon does not parse")
-            index += 1
             continue
-        if not attached:
-            index += 1
-            if index >= len(tokens):
-                return Unresolved("arg-form-unparsed",
-                                  f"{flag} was given no value")
-            value = tokens[index]
-        index += 1
+        if value is None:
+            return Unresolved("arg-form-unparsed",
+                              f"{flag} was given no value")
 
         if value == "-":
             if not heredocs:
