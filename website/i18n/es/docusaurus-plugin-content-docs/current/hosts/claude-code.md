@@ -115,6 +115,11 @@ custodia las acciones de shell:
   prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
   cierra la distancia entre un check que corrió y un check que fue respetado.
 
+  `DAIMON_DISABLE=1` en el entorno del anfitrión apaga todos los hooks de
+  daimon, este incluido, y es la salida de un check `enforce` cuyo patrón
+  coincide con más de lo que querías: el comando que retira la regla es a su
+  vez una acción de shell que el check rechazaría.
+
 Estos dos scripts de captura/inyección se cablean de una de dos maneras
 mutuamente excluyentes — elige UNA (ambas a la vez disparan todo dos veces
 por sesión: dos inyecciones de briefing, dos llamadas LLM de serialización).

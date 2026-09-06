@@ -465,3 +465,23 @@ def test_the_manual_manager_uninstall_removes_what_it_installed(tmp_path):
     installed = tmp_path / ".claude" / "hooks"
     for name in ("daimon-pre-action.py", CORE, RUNTIME):
         assert not (installed / name).exists(), f"{name} left behind"
+
+
+# ---- the kill switch, through the real scripts ----------------------------
+
+
+@pytest.mark.parametrize("host,script", HOOKS, ids=IDS)
+def test_the_kill_switch_turns_the_gate_off_on_both_hosts(host, script,
+                                                          tmp_path):
+    """The way out of an over-broad `enforce` check. Setting `DAIMON_DISABLE`
+    in the host's environment turns every daimon hook off, and this is the one
+    that most needs it: the command that would retire the ruling is itself a
+    shell action the check would deny."""
+    _arm(tmp_path, intent="enforce")
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        input=json.dumps(_payload(MATCH, tmp_path, host=host)),
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "HOME": str(tmp_path), "DAIMON_DISABLE": "1"})
+    assert _assert_host_contract(proc) == ""
+    assert _log_rows() == []

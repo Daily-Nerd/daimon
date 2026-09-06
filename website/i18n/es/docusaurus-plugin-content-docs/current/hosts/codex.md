@@ -84,6 +84,11 @@ python3 hook/codex-hooks.py status
   prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
   cierra la distancia entre un check que corrió y un check que fue respetado.
 
+  `DAIMON_DISABLE=1` en el entorno del anfitrión apaga todos los hooks de
+  daimon, este incluido, y es la salida de un check `enforce` cuyo patrón
+  coincide con más de lo que querías: el comando que retira la regla es a su
+  vez una acción de shell que el check rechazaría.
+
 La documentación de Codex señala que `transcript_path` se provee por
 conveniencia pero su formato no es una interfaz estable. El parser JSONL de
 Daimon es deliberadamente best-effort e ignora filas desconocidas en lugar de

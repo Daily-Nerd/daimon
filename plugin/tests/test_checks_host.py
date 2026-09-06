@@ -814,3 +814,72 @@ def test_main_survives_a_crash_it_cannot_even_record(tmp_path, monkeypatch):
     monkeypatch.setattr(ch, "decide", boom)
     monkeypatch.setattr(ch.runtime(), "log_firing", boom)
     assert _main(CC, _payload(MATCH, tmp_path)) == (0, "", "")
+
+
+# ---- the kill switch ------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on", " 1 ", "yes\n"])
+def test_the_kill_switch_stops_the_check_before_anything_is_read(
+        value, tmp_path, monkeypatch):
+    """Every other daimon hook returns 0 in silence when `DAIMON_DISABLE` is
+    set, and this one has the most to answer for: it is the hook that can
+    block a command, so it is the hook an operator most needs a way out of.
+    Checked before the manifest, so a disabled hook costs one env read."""
+    _arm(tmp_path, intent="enforce")
+    monkeypatch.setenv("DAIMON_DISABLE", value)
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert (d.stdout, d.stderr, d.exit_code, d.rows) == ("", "", 0, [])
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "maybe",
+                                   "TRUE", "Yes"])
+def test_a_value_that_is_not_the_kill_switch_leaves_the_check_armed(
+        value, tmp_path, monkeypatch):
+    """`DAIMON_DISABLE=0` is the shape someone writes meaning "leave it on".
+    Reading any non-empty value as true would disarm a gate the operator
+    believes is armed.
+
+    `TRUE` is in this list on purpose: the existing hooks compare
+    case-sensitively, and a switch that disables three hooks and not the
+    fourth is worse than one that is strict everywhere."""
+    _arm(tmp_path, intent="enforce")
+    monkeypatch.setenv("DAIMON_DISABLE", value)
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_the_kill_switch_is_read_from_the_process_environment_only(
+        tmp_path, monkeypatch):
+    """Unlike the path accessors (scar 0043) this does NOT fall back to
+    `~/.daimon/env`. The paths mirror a config value a writer and a deleter
+    must agree on; this is a switch someone flips for one session, and a copy
+    left in a file on disk would keep every later session disarmed with
+    nothing on screen to say so."""
+    _arm(tmp_path, intent="enforce")
+    monkeypatch.delenv("DAIMON_DISABLE", raising=False)
+    env_file = Path(os.environ["DAIMON_ENV_FILE"])
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text("DAIMON_DISABLE=1\n", encoding="utf-8")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_main_writes_nothing_when_the_kill_switch_is_set(tmp_path,
+                                                         monkeypatch):
+    _arm(tmp_path, intent="enforce")
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert _main(CC, _payload(MATCH, tmp_path)) == (0, "", "")
+    assert not (ch.runtime().log_dir() / "checks.jsonl").exists()
+
+
+def test_the_kill_switch_silences_the_missing_runtime_message_too(
+        tmp_path, monkeypatch):
+    """The diagnostic never reaches `decide`, so `main` checks the switch on
+    its own. A hook the operator turned off must not still be talking to the
+    host about its own install."""
+    monkeypatch.setattr(ch, "_RUNTIME", None)
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    assert _main(CC, _payload(MATCH, tmp_path)) == (0, "", "")

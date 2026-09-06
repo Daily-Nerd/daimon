@@ -77,6 +77,11 @@ python3 hook/codex-hooks.py status
   check RAN. Only `decision_emitted: deny` under `enforce` closes the gap
   between a check that ran and a check that was honored.
 
+  `DAIMON_DISABLE=1` in the host's environment turns every daimon hook off,
+  this one included, and is the way out of an `enforce` check whose pattern
+  matches more than you meant: the command that retires the ruling is itself
+  a shell action the check would otherwise deny.
+
 Codex docs note that `transcript_path` is provided for convenience but its
 format is not a stable interface. Daimon's JSONL parser is intentionally
 best-effort and ignores unknown rows rather than treating raw JSON as

@@ -110,6 +110,11 @@ close the capture -> inject loop; the fourth guards shell actions:
   check RAN. Only `decision_emitted: deny` under `enforce` closes the gap
   between a check that ran and a check that was honored.
 
+  `DAIMON_DISABLE=1` in the host's environment turns every daimon hook off,
+  this one included, and is the way out of an `enforce` check whose pattern
+  matches more than you meant: the command that retires the ruling is itself
+  a shell action the check would otherwise deny.
+
 These two capture/inject scripts are wired in one of two mutually exclusive
 ways — pick ONE (both at once double-fires every session: two briefing
 injections, two serialize LLM calls). See the install sections above.

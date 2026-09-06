@@ -168,6 +168,26 @@ PROFILES = {
 }
 
 
+def disabled() -> bool:
+    """The `DAIMON_DISABLE` kill switch, read the way every other daimon hook
+    reads it: `1`, `true`, `yes` or `on`, stripped, case-sensitive.
+
+    Copied line for line from `_daimon_hook_lib.disabled()` rather than
+    reinterpreted, quirks included. A switch that turns off three hooks and
+    leaves the fourth armed is worse than one that is strict everywhere, and
+    this is the fourth hook: the one that can block a command, and therefore
+    the one an operator most needs a way out of. An over-broad `enforce`
+    check denies the very shell action that would retire the ruling.
+
+    PROCESS ENVIRONMENT ONLY. Unlike the path accessors above it does NOT
+    fall back to `~/.daimon/env` (scar 0043 does not reach here). Those
+    mirror a location a writer and a deleter have to agree on; this is a
+    switch someone flips for one session, and a copy left on disk would keep
+    every later session disarmed with nothing on screen to say so."""
+    return os.environ.get("DAIMON_DISABLE", "").strip() in (
+        "1", "true", "yes", "on")
+
+
 def mode_for(profile, intent) -> str:
     """The mode this host actually delivers for that intent.
 
@@ -362,6 +382,11 @@ def decide(profile, payload, *, manifest=None, timeout=None,
 
 
 def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
+    if disabled():
+        # Before the manifest read, before the payload is even looked at: a
+        # disabled hook costs one environment read and leaves no trace. No
+        # row either, because nothing ran and nothing declined to run.
+        return Decision("", "", 0, rows)
     rt = runtime()
     if rt is None:
         # Nothing to check WITH, and nothing to write a row with either. The
@@ -499,6 +524,11 @@ def main(host, stdin=None, stdout=None, stderr=None) -> int:
         return 0
     rt = runtime()
     try:
+        if disabled():
+            # `decide` checks this too. Here as well because the missing-
+            # runtime diagnostic below never reaches it, and a hook the
+            # operator turned off must not still be talking to the host.
+            return 0
         if rt is None:
             # Nothing to check with and nothing to write a row with. Say so
             # where the host has a channel for it; a warn that degrades below
