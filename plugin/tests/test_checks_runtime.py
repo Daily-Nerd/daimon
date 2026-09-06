@@ -1308,3 +1308,59 @@ def test_a_child_that_cannot_be_killed_at_all_still_reports_the_timeout(
                  timeout=0.01)
     assert (got.outcome, got.cause) == ("unresolved", "check-timeout")
     rt.discard(subject)
+
+
+# ---- the resolver's own input bound (scar 0022, second door) --------------
+
+
+def test_a_command_at_the_cap_still_resolves(tmp_path):
+    command = "gh pr create --title " + "A" * (
+        rt.MAX_COMMAND_BYTES - len("gh pr create --title "))
+    assert len(command.encode("utf-8")) == rt.MAX_COMMAND_BYTES
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "cause", "")
+    rt.discard(got)
+
+
+def test_a_command_over_the_cap_is_unresolved_never_skipped(tmp_path):
+    """One byte past the cap. Unresolved, not allowed: a command daimon
+    declined to parse is one it cannot prove anything about."""
+    command = "gh pr create --title " + "A" * rt.MAX_COMMAND_BYTES
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+    assert "too long" in got.reason
+
+
+def test_the_cap_counts_bytes_not_characters(tmp_path):
+    command = "gh pr create --title " + "é" * rt.MAX_COMMAND_BYTES
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+def test_a_large_heredoc_body_is_not_what_the_cap_counts(tmp_path):
+    """The heredoc is stripped before the cap is measured, so a two megabyte
+    PR body still resolves. The cost is in tokenizing a long inline
+    ARGUMENT, and that is what the cap bounds."""
+    body = "x" * (2 * 1024 * 1024)
+    command = f"gh pr create --body-file - <<'EOF'\n{body}\nEOF"
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "cause", "")
+    assert body in _text_of(got)
+    rt.discard(got)
+
+
+def test_a_megabyte_of_inline_argument_returns_well_inside_the_budget(
+        tmp_path):
+    """Measured before the cap existed: 5.3s at 512 KiB and 21s at 1 MiB on
+    the author's machine, against a 10s host hook timeout that is fail-open.
+    A hook that outlives it does not block and the action proceeds with no
+    record, so the resolver has to decline long before then."""
+    import time as _time
+    command = "gh pr create --title " + "A" * (1024 * 1024)
+    started = _time.monotonic()
+    got = _resolve(command, tmp_path)
+    elapsed = _time.monotonic() - started
+    assert isinstance(got, rt.Unresolved)
+    assert elapsed < 0.5, f"resolve took {elapsed:.2f}s on a 1 MiB command"

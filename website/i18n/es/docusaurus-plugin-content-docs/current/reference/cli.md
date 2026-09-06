@@ -85,6 +85,8 @@ Un valor pegado a una bandera corta es el mismo comando que uno separado, así q
 
 Un heredoc pertenece al comando al que está pegado, y a ningún otro. daimon parte la línea en `&&`, `||`, `;`, `|` y saltos de línea, y un heredoc en uno de esos pedazos solo puede leerse para un argumento de ese mismo pedazo. Así que `cat <<EOF > note.txt ... EOF` seguido de `gh pr create -F -` queda sin resolver, en vez de comprobarse contra el texto que recibió `cat`. Dentro de un mismo comando las cuentas siguen teniendo que ser uno a uno: cuál heredoc alimenta a cuál argumento no es algo que la línea de comando responda, y una respuesta equivocada armaría el sujeto con texto que la acción nunca envía.
 
+Un comando de más de 64 KiB, una vez apartados los cuerpos de sus heredocs, es `arg-form-unparsed`: tokenizar un solo argumento enorme cuesta más que todo el presupuesto del hook, y un resolutor al que se le adelanta el timeout del anfitrión deja pasar la acción sin ningún registro. Un heredoc largo no cuenta para ese límite, así que un cuerpo de PR grande sigue resolviendo.
+
 Las rutas relativas resuelven contra el directorio de trabajo. Un archivo de más de 1 MiB es `file-oversize`, uno que no es texto UTF-8 es `file-binary`, y uno que falta o no se puede leer es `file-missing` o `file-unreadable`. Un solo argumento que daimon no puede leer deja todo el sujeto sin resolver, digan lo que digan los demás.
 
 Cada corrida termina en exactamente uno de tres resultados, y nunca se mezclan:

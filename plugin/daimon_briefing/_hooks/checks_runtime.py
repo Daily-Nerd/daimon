@@ -61,6 +61,20 @@ MAX_SUBJECT_FILE_BYTES = 1024 * 1024
 # proceeds. This is the one known bound and it is documented as such.
 MATCH_INPUT_BYTES = 4096
 
+# The same bound at the resolver's door, which is the second way in. The
+# prefilter above reads a slice; the resolver has to TOKENIZE what it was
+# given, and shlex is superlinear in the length of a single argument.
+# Measured, with heredocs already stripped: 0.14s at 64 KiB, 5.3s at 512 KiB,
+# 21s at 1 MiB. The host hook timeout is 10s and it is fail-open, so a
+# resolver that outlives it lets the action through with no record at all.
+#
+# It counts the command AFTER heredoc bodies are removed, because those cost
+# nothing to skip: the expensive input is one long inline argument, a base64
+# blob or an expanded --body. A command above this is unresolved, never
+# allowed, because a command daimon declined to parse is one it can prove
+# nothing about.
+MAX_COMMAND_BYTES = 64 * 1024
+
 
 class Manifest(NamedTuple):
     """What `load_manifest` found. `reason` is empty when the manifest was
@@ -521,6 +535,15 @@ def resolve(command, cwd):
         return f" {_HEREDOC_MARK}{len(heredocs) - 1}\x00 "
 
     text = _HEREDOC_RE.sub(_take, command)
+    # Bounded BEFORE the lexer, which is the expensive part. Above the cap
+    # daimon declines rather than spending the host's whole hook budget on
+    # tokenizing one enormous argument and then being overtaken by a timeout
+    # that lets the action through.
+    if len(text.encode("utf-8", "replace")) > MAX_COMMAND_BYTES:
+        return Unresolved(
+            "arg-form-unparsed",
+            f"the command is too long to resolve within the check budget "
+            f"(over {MAX_COMMAND_BYTES} bytes with heredocs removed)")
     # Every heredoc BODY is gone by now, so a remaining newline separates two
     # commands exactly as a semicolon does. Spelling it as one lets a single
     # lexer pass find every boundary; the lexer folds a bare newline into

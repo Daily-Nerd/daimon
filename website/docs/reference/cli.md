@@ -84,6 +84,8 @@ A value attached to a short flag is the same command as a detached one, so `-Fbo
 
 A heredoc belongs to the command it is attached to, and to no other. daimon splits the command string at `&&`, `||`, `;`, `|` and newlines, and a heredoc in one of those pieces can only be read for an argument in that same piece. So `cat <<EOF > note.txt ... EOF` followed by `gh pr create -F -` is unresolved rather than checked against the text `cat` was given. Inside one command the counts still have to be one and one: which heredoc feeds which argument is not a question the command string answers, and a wrong guess would build the subject from text the action never sends.
 
+A command over 64 KiB once its heredoc bodies are set aside is `arg-form-unparsed`: tokenizing one enormous inline argument costs more than the whole hook budget, and a resolver overtaken by the host's timeout lets the action through with no record at all. A long heredoc body does not count toward that, so a large PR body still resolves.
+
 Relative paths resolve against the working directory. A file over 1 MiB is `file-oversize`, one that is not UTF-8 text is `file-binary`, and a missing or unreadable one is `file-missing` or `file-unreadable`. One argument daimon cannot read makes the whole subject unresolved, whatever the others say.
 
 Every run ends in exactly one of three outcomes, and they never fold together:
