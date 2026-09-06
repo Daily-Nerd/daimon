@@ -479,6 +479,24 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_ruling_retire():
         run(["ruling", "retire", ctx["ruling_id"]], 0)
 
+    def r_ruling_check_try():
+        # #943: the one ruling verb that EXECUTES the body, so it needs a
+        # ruling that actually carries one. Proposed rather than ratified —
+        # trying a candidate before a human arms it is the verb's purpose,
+        # and it keeps this recipe off the ruling cap's ratify path.
+        body = tmp_path / "try-gate.sh"
+        body.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        subject = "check-try subject"
+        run([
+            "ruling", "propose", "--subject", subject,
+            "--verdict", "a rule whose check exits clean",
+            "--scope", "publishing", "--evidence", "issue:943", "--by", "agent",
+            "--check-body-file", str(body), "--check-match", "gh pr create",
+        ], 0)
+        run(["ruling", "check", "try",
+             refutations.make_id(subject, "publishing"),
+             "--command", "gh pr create --title x"], 0)
+
     def r_ruling_show():
         run(["ruling", "show", ctx["ruling_id"]], 0)
 
@@ -740,6 +758,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("ruling", "revise"): r_ruling_revise,
         ("ruling", "retire"): r_ruling_retire,
         ("ruling", "show"): r_ruling_show,
+        ("ruling", "check", "try"): r_ruling_check_try,
         ("ruling", "list"): r_ruling_list,
         ("amend", "propose"): r_amend_propose,
         ("amend", "ratify"): r_amend_ratify,

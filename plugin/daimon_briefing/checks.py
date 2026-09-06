@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
@@ -135,3 +137,65 @@ def _sync(project_dir) -> SyncReport:
         except OSError:
             pass
     return SyncReport(True, len(entries), slug)
+
+
+def try_run(ruling_id: str, command: str, *, channel: str, cwd=None,
+            project_dir=None, proposed: bool = False):
+    """Run one ruling's check against a command, without arming anything.
+
+    Human-only, and enforced HERE rather than only at the CLI: this is the
+    one verb in the family that EXECUTES a body, and `ui` and `signed` reach
+    it directly. A dry run of a candidate is the whole point of the verb —
+    docs tell an author to try a body before a human arms it — so a body no
+    human has confirmed does run, which is exactly why the caller has to be
+    a human.
+
+    Writes nothing. Not the firing log (a rehearsal counted as a firing
+    makes the liveness surface report a check that never guarded an action),
+    not the manifest, and not a body under ~/.daimon/checks, where the hook
+    could not tell it from an armed one."""
+    if refutations.CHANNEL_AUTHORITY.get(channel) != "human":
+        raise refutations.RefutationError(
+            "a dry run executes the check body, so it requires a human "
+            f"channel; this call arrived through {channel!r}")
+    record = refutations.get(ruling_id, project_dir=project_dir)
+    if record is None:
+        raise refutations.RefutationError(f"unknown ruling: {ruling_id}")
+    if record.get("polarity") != "ruling":
+        raise refutations.RefutationError(
+            f"{ruling_id} is a refutation; only a ruling carries a check")
+    if proposed:
+        check = (record.get("revision_proposed") or {}).get("check")
+        if not isinstance(check, dict):
+            raise refutations.RefutationError(
+                f"{ruling_id} has no proposed check; drop --proposed to run "
+                "the one it carries")
+    else:
+        check = record.get("check")
+        if not isinstance(check, dict):
+            raise refutations.RefutationError(
+                f"{ruling_id} carries no check")
+    body = str(check.get("body") or "")
+
+    workdir = tempfile.mkdtemp(prefix="daimon-check-try-")
+    try:
+        path = Path(workdir) / "check.sh"
+        path.write_text(body, encoding="utf-8")
+        os.chmod(path, 0o500)
+        subject = checks_runtime.resolve(command, cwd or os.getcwd())
+        if isinstance(subject, checks_runtime.Unresolved):
+            return checks_runtime.Outcome(
+                "unresolved", subject.cause, subject.reason, -1, 0)
+        try:
+            # The stored sha256 goes along, so the dry run exercises the same
+            # re-hash the armed path does instead of a shortcut around it.
+            return checks_runtime.run(
+                {"ruling_id": ruling_id,
+                 "sha256": str(check.get("sha256") or ""),
+                 "body_path": str(path)},
+                subject, cwd=cwd or os.getcwd(),
+                timeout=config.check_timeout())
+        finally:
+            checks_runtime.discard(subject)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
