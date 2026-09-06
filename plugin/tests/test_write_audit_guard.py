@@ -717,6 +717,10 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # about every leaf verb being exercised, not only the ones that land
         # inside the checkpoint store.
         run(["check", "sync"], 0)
+        # #943 slice 5: the audit half of the same leaf, driven so a flag
+        # that reads the ledger and the manifest is exercised under the
+        # guard rather than trusted to be read-only because it says so.
+        run(["check", "sync", "--check"], 0)
 
     def r_hooks_list():
         run(["hooks", "list"], 0)

@@ -428,3 +428,81 @@ def test_a_candidate_check_is_never_wanted(tmp_path):
     _propose(tmp_path)
     audit = checks.audit(str(tmp_path))
     assert audit.wanted == [] and audit.drift is False
+
+
+# ---- `check sync --check`: the audit as a read-only verb ------------------
+
+
+def _run(argv):
+    from daimon_briefing import cli
+    return cli.main(argv)
+
+
+def test_check_sync_check_exits_zero_and_says_in_step(tmp_path, capsys):
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
+    assert rc == 0
+    assert "checks manifest: in step, 1 armed" in capsys.readouterr().out
+
+
+def test_check_sync_check_exits_one_on_drift_and_names_the_ids(
+        tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_manifest([])
+    rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "checks manifest: drifted" in out
+    assert f"missing from the manifest: {ruling_id}" in out
+    assert "fix: daimon check sync" in out
+
+
+def test_check_sync_check_exits_three_when_the_manifest_cannot_be_read(
+        tmp_path, capsys):
+    """Distinct from drift on purpose. Drift is a repair the fix line names;
+    a manifest daimon cannot parse is a state where the audit has no opinion
+    about what is armed, and a script must be able to tell them apart."""
+    _arm(tmp_path)
+    _manifest_path().write_text("{not json", encoding="utf-8")
+    rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
+    assert rc == 3
+    assert "checks manifest: could not be read" in capsys.readouterr().out
+
+
+def test_check_sync_check_writes_nothing(tmp_path):
+    """The whole point of the flag. A repair disguised as an audit reports a
+    clean machine it just made clean."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_manifest([])
+    _run(["check", "sync", "--check", "--project", str(tmp_path)])
+    assert checks_runtime.load_manifest(_manifest_path()).entries == []
+
+
+def test_check_sync_check_json_carries_every_audit_field(tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _run(["check", "sync", "--check", "--json", "--project", str(tmp_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload) == ["state", "wanted", "have", "missing", "stale",
+                             "body_missing", "body_mismatch", "drift"]
+    assert payload["wanted"] == [ruling_id] and payload["drift"] is False
+
+
+def test_check_sync_json_without_the_flag_still_reports_the_sync(
+        tmp_path, capsys):
+    _arm(tmp_path)
+    rc = _run(["check", "sync", "--json", "--project", str(tmp_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0 and payload["ok"] is True and payload["armed"] == 1
+
+
+def test_check_sync_check_on_an_empty_ledger_is_zero_with_a_line(
+        tmp_path, capsys):
+    """Scar 0057: a reporting read never refuses to signal a state. Nothing
+    armed anywhere is the ordinary answer, not a failure."""
+    rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
+    assert rc == 0
+    assert "checks manifest: in step, 0 armed" in capsys.readouterr().out
