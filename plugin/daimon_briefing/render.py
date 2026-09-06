@@ -863,6 +863,22 @@ def _plugin_drift_line(pd: dict) -> str:
             f"{pd['cli']} — {fix}")
 
 
+def _checks_status_line(data: dict) -> str:
+    """#943 slice 5: one line on `daimon status`, or none at all.
+
+    Quiet by default (#113's rule): a machine that never armed or proposed a
+    check gets no line, so the feature cannot generate a permanent warning
+    about not being used. The liveness half is the point — `never fired`
+    beside a non-zero armed count is the state that used to be invisible."""
+    c = data.get("checks")
+    if not c:
+        return ""
+    proposed = f" ({c['proposed']} proposed)" if c.get("proposed") else ""
+    live = f"last fired {c['age']} ago" if c.get("age") else "never fired"
+    drift = " · manifest drifted, run daimon check sync" if c.get("drift") else ""
+    return f"checks: {c['armed']} armed{proposed}, {live}{drift}"
+
+
 def _plain_status(data: dict) -> None:
     alarm = data.get("capture_alarm")
     if alarm:
@@ -905,6 +921,9 @@ def _plain_status(data: dict) -> None:
     ho_line = _handoff_line(data)
     if ho_line:
         print(ho_line)  # #662: one line, only when a baton is waiting
+    ck_line = _checks_status_line(data)
+    if ck_line:
+        print(ck_line)  # #943: one line, only when a check exists
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -1007,6 +1026,9 @@ def _rich_status(data: dict) -> None:
     ho_line = _handoff_line(data)
     if ho_line:
         console.print(ho_line)  # #662: one line, only when a baton is waiting
+    ck_line = _checks_status_line(data)
+    if ck_line:
+        console.print(ck_line)  # #943: one line, only when a check exists
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

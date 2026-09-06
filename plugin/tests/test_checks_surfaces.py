@@ -800,3 +800,127 @@ def test_another_projects_firings_never_reach_this_projects_stats(tmp_path,
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     assert _stats(tmp_path) == 0
     assert "checks: 1 armed, never fired" in capsys.readouterr().out
+
+
+# ---- the `daimon status` line, quiet by default ---------------------------
+
+
+def _status(tmp_path, *extra):
+    from daimon_briefing import cli
+    return cli.main(["status", *extra])
+
+
+def test_status_says_nothing_when_no_check_exists(tmp_path, monkeypatch,
+                                                  capsys):
+    """The quiet-by-default family (#113's rule): no line, no false alarm on
+    a machine that never used the feature."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _status(tmp_path)
+    assert "checks:" not in capsys.readouterr().out
+
+
+def test_status_reports_an_armed_check_that_has_never_fired(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    _status(tmp_path)
+    assert "checks: 1 armed, never fired" in capsys.readouterr().out
+
+
+def test_status_reports_the_age_of_the_last_firing(tmp_path, monkeypatch,
+                                                   capsys):
+    import time as _time
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    ruling_id = _arm(tmp_path)
+    stamp = _time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                           _time.gmtime(_time.time() - 7200))
+    _write_log(_row(ruling_id=ruling_id, outcome="clean", ts=stamp))
+    _status(tmp_path)
+    assert "checks: 1 armed, last fired 2h ago" in capsys.readouterr().out
+
+
+def test_status_counts_proposed_checks_beside_armed_ones(
+        tmp_path, monkeypatch, capsys):
+    """A candidate arms nothing, so it cannot be counted as armed. It is
+    still the thing a human has to act on, so it is not silent either."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _propose(tmp_path)
+    _status(tmp_path)
+    assert "checks: 0 armed (1 proposed), never fired" in capsys.readouterr().out
+
+
+def test_status_appends_the_drift_pointer(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_manifest([])
+    _status(tmp_path)
+    out = capsys.readouterr().out
+    assert ("checks: 1 armed, never fired · manifest drifted, "
+            "run daimon check sync") in out
+
+
+def test_status_json_carries_checks_at_the_tail(tmp_path, monkeypatch,
+                                                capsys):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    _status(tmp_path, "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload)[-1] == "checks"
+    assert payload["checks"]["armed"] == 1
+    assert payload["checks"]["last_ts"] == ""
+
+
+def test_status_json_carries_null_when_nothing_is_armed_or_proposed(
+        tmp_path, monkeypatch, capsys):
+    """dict-or-None, the same optional-fact convention `handoff` and
+    `recall_index` use — never a fabricated zero shape."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _status(tmp_path, "--json")
+    assert json.loads(capsys.readouterr().out)["checks"] is None
+
+
+def test_the_status_line_never_moves_the_exit_code(tmp_path, monkeypatch):
+    """rc is a checkpoint-presence test and nothing else. Drift does not
+    change it, the same way hook drift never has."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    before = _status(tmp_path)
+    _write_manifest([])
+    assert _status(tmp_path) == before
+
+
+def test_the_status_fact_fails_open_to_no_line(tmp_path, monkeypatch,
+                                               capsys):
+    """Every best-effort status fact is wrapped this way: a broken reader
+    must never take `status` down with it."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    monkeypatch.setattr(checks, "audit",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    assert _status(tmp_path) in (0, 1)
+    assert "checks:" not in capsys.readouterr().out
+
+
+def test_the_rich_status_line_carries_the_same_wording(tmp_path, monkeypatch,
+                                                       capsys):
+    from daimon_briefing import render
+
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    _status(tmp_path)
+    assert "checks: 1 armed, never fired" in capsys.readouterr().out
+
+
+def test_render_status_tolerates_a_dict_without_the_checks_key(capsys):
+    """`render_status` is called with hand-built dicts in this suite and by
+    the MCP lane; a new fact must not make a missing key an exception."""
+    from daimon_briefing import render
+
+    render.render_status({"project": "/p", "proj": {"exists": False},
+                          "glob": {"exists": False}, "last": None})
+    assert "checks:" not in capsys.readouterr().out

@@ -2106,6 +2106,41 @@ def _capture_alarm(now: float) -> dict | None:
             "window_days": _RETENTION_WINDOW_DAYS}
 
 
+def _status_checks(project_dir, now: float):
+    """#943 slice 5: armed checks, their liveness and their manifest, or None.
+
+    dict-or-None like `handoff` and `recall_index`, never a fabricated zero
+    shape: a machine that has never used the feature gets no line at all,
+    which is the quiet-by-default rule the team and receipts lines follow.
+
+    `proposed` is counted beside `armed` because a candidate arms nothing but
+    is still the thing a human has to act on, and a status that hid it would
+    make an unratified check invisible until someone ran `ruling list`."""
+    from .. import checks
+
+    counts = {"armed": 0, "proposed": 0}
+    for record in refutations.listing(polarity="ruling",
+                                      project_dir=project_dir):
+        if not isinstance(record.get("check"), dict):
+            continue
+        lifecycle = record.get("check_lifecycle")
+        if lifecycle in counts:
+            counts[lifecycle] += 1
+    if not counts["armed"] and not counts["proposed"]:
+        return None
+    last_ts = checks.firing_summary(project_dir).totals["last_ts"]
+    age = ""
+    if last_ts:
+        try:
+            stamp = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ")
+            age = _format_age(now - stamp.replace(
+                tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            age = ""  # an unexpected stamp reports the fact without an age
+    return {**counts, "last_ts": last_ts, "age": age,
+            "drift": checks.audit(project_dir).drift}
+
+
 def _status_world(project_arg=None) -> dict:
     """Every status fact, computed once — the single source for the plain
     render, `status --json`, and the MCP status tool (#261)."""
@@ -2198,6 +2233,13 @@ def _status_world(project_arg=None) -> dict:
         handoff = {"written_at": _baton["ts"]} if _baton else None
     except Exception:
         handoff = None
+    # #943 slice 5: armed checks and whether any ever fired. Fail-open like
+    # every other best-effort status fact — a broken firing log or an
+    # unreadable checks directory must never take `status` down with it.
+    try:
+        checks_fact = _status_checks(project, now)
+    except Exception:
+        checks_fact = None
     identity = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
@@ -2217,7 +2259,7 @@ def _status_world(project_arg=None) -> dict:
         "rescue_gap": rescue_gap,
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
         "forget_hits": forget_hits, "requests": request_counts,
-        "handoff": handoff, "rc": rc,
+        "handoff": handoff, "checks": checks_fact, "rc": rc,
     }
 
 
@@ -2239,6 +2281,9 @@ def status_payload(project_arg=None) -> tuple:
         "forget_hits": w["forget_hits"],
         "requests": w["requests"],
         "handoff": w["handoff"],
+        # #943 slice 5: appended at the tail — payload key order is
+        # part of the --json contract.
+        "checks": w["checks"],
     }
     return payload, w["rc"]
 
@@ -2266,6 +2311,7 @@ def _cmd_status(args) -> int:
         "forget_hits": w["forget_hits"],
         "requests": w["requests"],
         "handoff": w["handoff"],
+        "checks": w["checks"],
     })
     return w["rc"]
 
