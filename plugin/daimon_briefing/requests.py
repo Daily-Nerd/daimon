@@ -46,7 +46,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import config, normalize, policy, redact, store
+from . import buckets, config, normalize, policy, redact, store
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. Importing the table keeps a
 # future channel tier ("ui", "signed") consistent across ledgers instead of
@@ -991,19 +991,30 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
     my_slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not my_slug:
         return {}
+    # #963: an ask minted before 0.42.0 is addressed to the LITERAL-path slug
+    # this project used to have, and `to` is the whole recipient join. Without
+    # the alias every such ask silently leaves the inbox the day the bucket
+    # moves — the ask is still open, still owed, and nobody is shown it.
+    # `mine` is the recipient identity everywhere below, never `my_slug`
+    # alone; the aliases come from the migration receipt, so a project that
+    # never migrated pays one absent-file read and gets the set it had.
+    mine = {my_slug} | set(buckets.aliases_for(my_slug))
     own_by_id: dict[str, list] = {}
     for row in events(project_dir=my_slug):
         own_by_id.setdefault(str(row.get("request_id") or ""), []).append(row)
     by_id: dict[str, list] = {}
     for rid, rows in own_by_id.items():
         opened = next((r for r in rows if r.get("event") == "opened"), None)
-        if opened is not None and str(opened.get("to") or "") != my_slug:
+        if opened is not None and str(opened.get("to") or "") not in mine:
             continue  # this project's own OUTGOING ask — never its own inbox
         by_id[rid] = rows
     origin_of: dict[str, str] = {}
     orphans: list[tuple[str, list]] = []
     for slug in _bucket_slugs():
-        if slug == my_slug:
+        # A bucket this project MOVED OUT OF is not a foreign sender. Left
+        # standing by a merge that could not empty it, its rows would
+        # otherwise come back labeled as asks from a stranger.
+        if slug in mine:
             continue
         grouped: dict[str, list] = {}
         for row in events(project_dir=slug):
@@ -1013,7 +1024,7 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
                          None)
             if opened is None:
                 orphans.append((rid, rows))  # decided elsewhere, maybe ours
-            elif str(opened.get("to") or "") == my_slug:
+            elif str(opened.get("to") or "") in mine:
                 by_id.setdefault(rid, []).extend(rows)
                 origin_of[rid] = slug
     for rid, rows in orphans:

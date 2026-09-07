@@ -60,8 +60,8 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (config, normalize, policy, redact, schema, scoring, store,
-               teamproject)
+from . import (buckets, config, normalize, policy, redact, schema, scoring,
+               store, teamproject)
 
 log = logging.getLogger("daimon.recall")
 
@@ -356,6 +356,13 @@ def _fingerprint() -> str:
         paths.extend(config.team_dir().rglob(store._TOMBSTONE_NAME))
     except OSError:
         pass
+    # #963: the bucket-migration receipt is index CONTENT for the same reason
+    # events.jsonl is — the rebuild maps an aliased legacy slug to the bucket
+    # it moved into — so it must be fingerprint INPUT too. Without it a
+    # migration leaves the fingerprint unchanged, no rebuild runs, and the
+    # index keeps serving the attribution the move just corrected. Named
+    # .jsonl at the flat level, so neither *.json walk above sees it.
+    paths.append(buckets.migrations_path())
     entries = []
     for p in paths:
         try:
@@ -831,7 +838,17 @@ def rebuild() -> int:
         # (author, slug, kind, owner_sid, owner_recency, owner_item_id,
         #  owner_text, target) per supersedes link (#234).
         links: list[tuple] = []
+        # #963: a checkpoint written before 0.42.0 carries the LITERAL-path
+        # slug, and `daimon bucket migrate` cannot restamp it — the flat file
+        # is receipt-signed over its exact bytes. Mapped HERE instead, once
+        # per rebuild, so the migrated project searches its own history and
+        # `describe_scope` does not render it as somebody else's. Applied to
+        # both scan sources: a team copy of the same session carries the same
+        # stamp. Empty when no migration has ever run, which is the common
+        # case and costs one absent-file read.
+        aliases = buckets.alias_map()
         for sid, author, slug, recency, cp in _scan_sources():
+            slug = aliases.get(slug, slug)
             # Unattributed sessions never supersede each other (#31 item 6):
             # NULL slugs are UNRELATED projects sharing a non-identity, not
             # one project's history — they stay out of the newest map entirely.
