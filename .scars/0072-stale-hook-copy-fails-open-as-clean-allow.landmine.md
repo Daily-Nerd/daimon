@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 72
 type: landmine
 title: A stale hook copy fails open and is byte-identical to a clean allow
 severity: high
 confidence: 0.9
 created: 2026-09-06
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/checks_host.py
   - path: hook/
   - pattern: "spec_from_file_location"
 evidence:
-  - note: "#943 slice 3, one debugging cycle lost to it"
-status: candidate
+  - note: #943 slice 3, one debugging cycle lost to it
 expires:
   condition: "the end-to-end hook tests load the canonical file, or the sync runs automatically before pytest"
   review_after: 2027-03-06
+status: active
 ---
 
 The pre-action hook loads `checks_host.py` from its own directory by file
