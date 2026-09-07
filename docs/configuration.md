@@ -123,7 +123,8 @@ installed, with no openssl-with-Ed25519 required.
 ## Host hooks
 
 Serialize-throttle knobs for hosts that lack a clean session-end event. See
-[docs/hosts/](./hosts/) for per-host setup.
+[the host setup guides](https://daily-nerd.github.io/daimon/docs/hosts/) for
+per-host setup.
 
 | Variable | Default | What it does |
 |---|---|---|
