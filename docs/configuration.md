@@ -27,6 +27,7 @@ called out in the "What it does" column.
 | `DAIMON_DISABLE` | off | Kill switch. When truthy, every hook becomes a no-op — no capture, no briefing. |
 | `DAIMON_ENV_FILE` | `~/.daimon/env` | Path to the env file that backs every other variable. Read from the process env only (it names the file, so it can't live inside it). |
 | `DAIMON_PROJECT_DIR` | unset | Working directory of the session being briefed or serialized, used to route per-project checkpoints. Hooks pass the host's cwd through it; unset means the project is unknown and daimon falls back to the global pointer. |
+| `DAIMON_CAPTURE_HOST` | unset | Host-set hint naming which agent produced a capture (`claude-code`, `codex`, `windsurf`, `gemini`, `hermes`, `manual`), forwarded by installed capture hooks (#594). Not something you set by hand — a hook wires it into the environment it hands to the CLI, for the cases a bare transcript path can't resolve on its own. |
 | `DAIMON_SESSION_SPEAKER` | unset | The one person this session belongs to, declared by the host. Fills an item's `stated_by` when the transcript carries no per-message `said_by`, and only for items bound entirely to user messages; anything citing an assistant or tool message stays unattributed. A pure label, never a key, so it does not touch `DAIMON_AUTHOR`'s namespacing. Set it only where one session is one person for its whole life. A host that serves several people through a single session must leave it unset. |
 | `DAIMON_SPEAKER_LINE` | unset | The delimiter a host writes around its own speaker line at the head of each user message, for a host that serves several people through one session but does not author the transcript. Literal character(s) or the `U+E000` spelling. When set, a user row that starts with `<delim>from=<id> name="<name>"...<delim>` gets `said_by` as `name (id)` and the line is cut from the content before anything reads it; only position zero counts, and only user rows. The value is host-declared, the same honesty as a row's own `said_by`. The host must strip the delimiter from user text before prepending its line, or a user can forge one. Unset means content is never read for attribution. |
 | `DAIMON_MIN_MESSAGES` | `10` | Minimum message count before a session is worth serializing. Shorter sessions are skipped. |
@@ -62,6 +63,19 @@ Deterministic cross-session carry-over of unresolved items.
 | `DAIMON_STALE_DAYS` | `7.0` | Age threshold (days) past which a carried item's effective last-verified stamp (its `last_verified`, else the latest resolutions.jsonl event, else `first_seen`) is stale enough for `brief` to warn about it. `0` warns on every carried item. |
 | `DAIMON_PLAIN` | off | When truthy (case-insensitive), forces plain-text output — disables the rich tables/panels in `status`, `brief`, and `--help`. |
 | `NO_COLOR` | unset | Presence-based, per the [NO_COLOR convention](https://no-color.org/): if the variable is set to *any* value (even empty), rich output is disabled. |
+
+## Worldcheck
+
+Opt-in (#365): a brief-time spot-check of carried PR/issue-state claims
+against reality, via read-only `gh` probes. Default off — `daimon brief` runs
+on the SessionStart hook's latency-critical injection path (an 8s subprocess
+budget inside a 10s hook budget), so even budget-bounded network probes there
+must be deliberately opted into. Flag off, the render path never touches the
+worldcheck module at all — output stays byte-identical to a build without it.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DAIMON_WORLDCHECK` | off | When truthy, spot-check carried PR/issue-state claims against reality via read-only `gh` probes at brief time. |
 
 ## Recall
 
@@ -129,6 +143,7 @@ per-host setup.
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_CODEX_SERIALIZE_ON_STOP` | on | Whether the Codex `Stop` hook serializes at all. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). |
+| `DAIMON_CODEX_SERIALIZE_ON_SESSION_END` | on | Whether the Codex `SessionEnd` hook serializes at all — the real end of a session, fired once on graceful teardown with the complete transcript, deliberately unthrottled. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). Does not replace `Stop`, which stays as crash insurance for a SIGKILL or a closed terminal that never reaches `SessionEnd`. |
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Codex serialize spawns. `0` serializes on every `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Windsurf serialize spawns (Windsurf has no session-end event, so capture runs on this throttle). `0` serializes every turn. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
@@ -163,6 +178,30 @@ checkpoints, so candidate files are committable.
 |---|---|---|
 | `DAIMON_SCAR_HARVEST` | off | When truthy, draft scar (negative-knowledge) candidates at session end into `.scars/candidates/` — repos with a `.scars/` directory only. |
 
+## Heal escalation
+
+Opt-in (#360): `daimon heal`'s default retry re-runs the same extraction
+shape that already failed. Escalation re-serializes from several distinct
+perspectives instead, merged by the ordinary merge pass — multiplying the LLM
+token cost roughly by the perspective count on your own backend, which is why
+it ships off by default. Gates the heal path only: the session-end default
+serialize never escalates, flag or no flag.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DAIMON_HEAL_ESCALATION` | off | When truthy, `daimon heal` re-serializes from multiple perspectives instead of retrying the same extraction shape. Heal-path only. |
+
+## Scene traces
+
+Opt-in experiment (#317): the serializer asks for a per-item `scene`, one to
+two sentences of episodic context, alongside the rest of the extraction.
+Gated on the LongMemEval harness clearing it as a net win before it can
+become default.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DAIMON_SCENE_TRACES` | off | When truthy, ask the serializer to also produce each item's `scene` field. |
+
 ## Ops & diagnostics
 
 | Variable | Default | What it does |
@@ -190,6 +229,7 @@ The URL, key, and model each fall back to a `LITELLM_*` variable if the
 | `DAIMON_LLM_TEMPERATURE` | `0.0` | Sampling temperature for every chat call. `0.0` for deterministic extraction; some upstreams reject anything but a fixed value. |
 | `DAIMON_LLM_FALLBACK` | on | When the primary backend fails, auto-fall-back to the rescue command (`DAIMON_LLM_COMMAND_FALLBACK`). Applies to both a litellm and a `command` primary. Set to `0` to disable. |
 | `DAIMON_FALLBACK_MIN_SECONDS` | `DAIMON_TIMEOUT` | Minimum budget the rescue command is guaranteed on entry. The primary may have drained the shared serialize deadline retrying the very failure the rescue exists to fix, which would kill the rescue on arrival; a healthy remaining budget is never shrunk. |
+| `DAIMON_RESAMPLE_MIN_SECONDS` | `DAIMON_TIMEOUT` | #553: minimum budget the validation resample is guaranteed on entry — the same failure #341 fixed for the command fallback, one path over. The shared deadline can be drained by the attempt whose output just got rejected, which would hand the resample nothing to work with. Defaults to `timeout_seconds()` for the same reason `DAIMON_FALLBACK_MIN_SECONDS` does. |
 | `DAIMON_LLM_STREAM` | on | Stream the litellm response so the socket timeout bounds the inter-frame gap rather than the whole completion. Without it, a long completion trips the timeout and retries from scratch. Set to `0` to disable. |
 | `DAIMON_LLM_NO_CACHE` | off | When truthy, bypass gateway response caching per request — needed when a cached bad response pins a failure or runs must be statistically independent. |
 | `DAIMON_LLM_BRIEFING` | off | When truthy, render the briefing via the LLM instead of the deterministic template. |
@@ -220,3 +260,5 @@ only matter if your sessions routinely run very long.
 | `DAIMON_CHUNK_OVERLAP` | `100` | Lines of overlap between adjacent chunks, so an item straddling a boundary is seen whole by at least one chunk. |
 | `DAIMON_CHUNK_CONCURRENCY` | `4` | Parallel chunk-serialize LLM calls. Minimum 1 (sequential). |
 | `DAIMON_MERGE_GROUP_SIZE` | `3` | Max partial checkpoints merged per hierarchical merge call. Minimum 2. Lower to `2` if merge calls die on a gateway with a server-side request ceiling (reasoning models generating 3-way merges can exceed it; raising `DAIMON_TIMEOUT` won't help — the kill is server-side). |
+| `DAIMON_CHUNK_CACHE` | on | #48: content-addressed cache of chunk-extraction output, keyed on the chunk's own bytes, so a re-run of a heal or retry re-pays a call only when the chunk source actually changed. Kill switch — on unless set to `0`. |
+| `DAIMON_CHUNK_CACHE_DAYS` | `3` | Rotation window for the chunk cache, in days. Cached output is pre-redaction (the #125 quote-verification ordering forces this), so the window is a privacy bound as much as a disk bound — 3 days covers the heal/retry window while keeping exposure short. |

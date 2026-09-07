@@ -37,6 +37,7 @@ medido, no configuración de usuario.
 | `DAIMON_DISABLE` | off | Interruptor de apagado. Cuando es verdadero, cada hook se vuelve un no-op — sin captura, sin briefing. |
 | `DAIMON_ENV_FILE` | `~/.daimon/env` | Ruta del archivo de entorno que respalda a todas las demás variables. Se lee solo del entorno del proceso (nombra al archivo, así que no puede vivir dentro de él). |
 | `DAIMON_PROJECT_DIR` | sin definir | Directorio de trabajo de la sesión que se briefea o serializa, usado para enrutar checkpoints por proyecto. Los hooks pasan el cwd del host a través de ella; sin definir significa proyecto desconocido y daimon cae al puntero global. |
+| `DAIMON_CAPTURE_HOST` | sin definir | Pista puesta por el host indicando qué agente produjo una captura (`claude-code`, `codex`, `windsurf`, `gemini`, `hermes`, `manual`), enviada por los hooks de captura instalados (#594). No es algo que definas a mano — un hook la mete en el entorno que le pasa al CLI, para los casos en que una ruta de transcript sola no alcanza para resolverlo. |
 | `DAIMON_MIN_MESSAGES` | `10` | Conteo mínimo de mensajes para que una sesión valga la pena serializar. Las sesiones más cortas se omiten. |
 | `DAIMON_TIMEOUT` | `420` | Presupuesto total de serialización en segundos, compartido entre reintentos (los timeouts de socket por intento se limitan al presupuesto restante). Las llamadas reales de serialize/merge en backends gateway y CLI corren 74s–25min; mantén ≥420 o las llamadas lentas y los reintentos no caben. |
 | `DAIMON_HUNG_AFTER` | `1800` | Segundos tras los cuales un proceso de serialización sin línea de resultado se trata como colgado/matado en lugar de aún corriendo. El default de 30 min queda con margen sobre una corrida lenta (las serializaciones en producción toman 4–25 min). |
@@ -70,6 +71,21 @@ Arrastre determinista de ítems sin resolver entre sesiones.
 | `DAIMON_STALE_DAYS` | `7.0` | Umbral de edad (días) tras el cual el sello efectivo de última verificación de un ítem arrastrado (su `last_verified`, si no el último evento de resolutions.jsonl, si no `first_seen`) está lo bastante desactualizado para que `brief` lo advierta. `0` advierte en cada ítem arrastrado. |
 | `DAIMON_PLAIN` | off | Cuando es verdadero (sin distinción de mayúsculas), fuerza salida de texto plano — desactiva las tablas/paneles enriquecidos en `status`, `brief` y `--help`. |
 | `NO_COLOR` | sin definir | Por presencia, según la [convención NO_COLOR](https://no-color.org/): si la variable está definida con *cualquier* valor (incluso vacío), la salida enriquecida se desactiva. |
+
+## Worldcheck
+
+Opt-in (#365): un chequeo puntual, al momento del briefing, de las
+afirmaciones de estado de PR/issue arrastradas contra la realidad, vía
+probes de solo-lectura con `gh`. Apagado por defecto — `daimon brief` corre
+en la ruta de inyección crítica en latencia del hook SessionStart (un
+presupuesto de subproceso de 8s dentro de un presupuesto de hook de 10s),
+así que incluso probes de red acotados en presupuesto ahí deben activarse a
+propósito. Con el flag apagado, la ruta de render nunca toca el módulo de
+worldcheck — la salida queda byte-idéntica a una build sin él.
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `DAIMON_WORLDCHECK` | off | Cuando es verdadero, chequea las afirmaciones de estado de PR/issue arrastradas contra la realidad vía probes de solo-lectura con `gh` al momento del briefing. |
 
 ## Recall
 
@@ -132,11 +148,37 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 | Variable | Default | Qué hace |
 |---|---|---|
 | `DAIMON_CODEX_SERIALIZE_ON_STOP` | on | Si el hook `Stop` de Codex serializa en absoluto. Activo salvo que valga `0`, `false`, `no` u `off` (sin distinción de mayúsculas). |
+| `DAIMON_CODEX_SERIALIZE_ON_SESSION_END` | on | Si el hook `SessionEnd` de Codex serializa en absoluto — el fin real de una sesión, disparado una sola vez en el cierre ordenado con el transcript completo, deliberadamente sin throttle. Activo salvo que valga `0`, `false`, `no` u `off` (sin distinción de mayúsculas). No reemplaza a `Stop`, que sigue como seguro ante un SIGKILL o una terminal cerrada que nunca llega a `SessionEnd`. |
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Codex. `0` serializa en cada `Stop`. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Segundos mínimos entre lanzamientos de serialización de Windsurf (Windsurf no tiene evento de fin de sesión, así que la captura corre con este throttle). `0` serializa cada turno. |
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Periodo de silencio tras la última actividad de Windsurf antes de que un finalizador con debounce serialice el estado final del transcript de la trayectoria — cubre sesiones cuyos últimos turnos caen dentro de la ventana del throttle. Acepta valores fraccionarios; `0` desactiva el finalizador. |
 | `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Dónde guarda el adaptador de Windsurf los transcripts que acumula. Lo leen tanto el hook que los escribe como las rutas de `forget`/`heal` que los borran — cámbialo en un solo sitio, o el que escribe y el que borra dejan de coincidir. |
 | `DAIMON_WINDSURF_STATE_DAYS` | `7` | Ventana de antigüedad para los transcripts de Windsurf que escribe daimon y los volcados `unparsed`, recogidos por `daimon heal`. Es un límite de privacidad: un valor olvidado no puede localizarse dentro de la prosa, así que esto acota cuánto tiempo permanece la conversación de origen entre ejecuciones de `forget`. Con mínimo 1 — a diferencia de los otros ajustes de Windsurf, `0` no lo desactiva. |
+
+## Escalamiento de heal
+
+Opt-in (#360): el reintento por defecto de `daimon heal` vuelve a correr la
+misma forma de extracción que ya había fallado. El escalamiento serializa de
+nuevo desde varias perspectivas distintas en su lugar, fusionadas por el paso
+de merge de siempre — lo que multiplica el costo de tokens del LLM
+aproximadamente por la cantidad de perspectivas en tu propio backend, razón
+por la cual sale apagado por defecto. Regula solo la ruta de heal: la
+serialización por defecto de fin de sesión nunca escala, con o sin el flag.
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `DAIMON_HEAL_ESCALATION` | off | Cuando es verdadero, `daimon heal` serializa de nuevo desde varias perspectivas en vez de reintentar la misma forma de extracción. Solo en la ruta de heal. |
+
+## Scene traces
+
+Experimento opt-in (#317): el serializador pide un `scene` por ítem, una o
+dos oraciones de contexto episódico, junto con el resto de la extracción.
+Depende de que el harness de LongMemEval lo confirme como ganancia neta
+antes de poder volverse default.
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `DAIMON_SCENE_TRACES` | off | Cuando es verdadero, le pide al serializador que también produzca el campo `scene` de cada ítem. |
 
 ## Operación y diagnóstico
 
@@ -166,6 +208,7 @@ significa que la configuración está incompleta, no que el endpoint esté caíd
 | `DAIMON_LLM_TEMPERATURE` | `0.0` | Temperatura de muestreo de cada llamada de chat. `0.0` para extracción determinista; algunos upstreams rechazan cualquier valor que no sea uno fijo. |
 | `DAIMON_LLM_FALLBACK` | on | Cuando el backend primario falla, cae automáticamente al comando de rescate (`DAIMON_LLM_COMMAND_FALLBACK`). Aplica tanto a un primario litellm como a uno `command`. Ponlo en `0` para desactivarlo. |
 | `DAIMON_FALLBACK_MIN_SECONDS` | `DAIMON_TIMEOUT` | Presupuesto mínimo garantizado al comando de rescate al entrar. El primario pudo haber agotado el deadline compartido reintentando la misma falla que el rescate existe para resolver, lo que lo mataría al llegar; un presupuesto restante sano nunca se recorta. |
+| `DAIMON_RESAMPLE_MIN_SECONDS` | `DAIMON_TIMEOUT` | #553: presupuesto mínimo garantizado al remuestreo de validación al entrar — la misma falla que #341 arregló para el fallback de comando, un paso más allá. El deadline compartido puede agotarlo el intento cuya salida acaba de ser rechazada, lo que dejaría al remuestreo sin nada con qué trabajar. Cae a `timeout_seconds()` por la misma razón que `DAIMON_FALLBACK_MIN_SECONDS`. |
 | `DAIMON_LLM_STREAM` | on | Transmite la respuesta de litellm para que el timeout del socket acote el intervalo entre frames y no la longitud total de la respuesta. Sin esto, una respuesta larga dispara el timeout y reintenta desde cero. Ponlo en `0` para desactivarlo. |
 | `DAIMON_LLM_NO_CACHE` | off | Cuando es verdadero, evita el cache de respuestas del gateway por request — necesario cuando una respuesta mala cacheada fija una falla o cuando las corridas deben ser estadísticamente independientes. |
 | `DAIMON_LLM_BRIEFING` | off | Cuando es verdadero, renderiza el briefing vía LLM en lugar de la plantilla determinista. |
@@ -196,3 +239,5 @@ campo; solo importan si tus sesiones son rutinariamente muy largas.
 | `DAIMON_CHUNK_OVERLAP` | `100` | Líneas de solapamiento entre chunks adyacentes, para que un ítem que cruza un borde sea visto entero por al menos un chunk. |
 | `DAIMON_CHUNK_CONCURRENCY` | `4` | Llamadas LLM de serialización de chunks en paralelo. Mínimo 1 (secuencial). |
 | `DAIMON_MERGE_GROUP_SIZE` | `3` | Máximo de checkpoints parciales fusionados por llamada de merge jerárquico. Mínimo 2. Bájalo a `2` si las llamadas de merge mueren en un gateway con techo de request del lado del servidor (los modelos de razonamiento generando merges de 3 vías pueden excederlo; subir `DAIMON_TIMEOUT` no ayuda — el kill es del lado del servidor). |
+| `DAIMON_CHUNK_CACHE` | on | #48: cache de contenido-direccionado de la salida de extracción por chunk, indexada por los bytes del propio chunk, para que un reintento de heal o retry vuelva a pagar una llamada solo cuando el chunk de origen cambió de verdad. Interruptor de apagado — activo salvo que valga `0`. |
+| `DAIMON_CHUNK_CACHE_DAYS` | `3` | Ventana de rotación del cache de chunks, en días. La salida cacheada es previa a la redacción (lo exige el orden de verificación de citas de #125), así que la ventana es tanto un límite de privacidad como de disco — 3 días cubre la ventana de heal/retry manteniendo la exposición corta. |
