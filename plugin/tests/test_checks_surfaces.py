@@ -517,7 +517,7 @@ def test_check_sync_check_on_an_empty_ledger_is_zero_with_a_line(
     armed anywhere is the ordinary answer, not a failure."""
     rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
     assert rc == 0
-    assert "checks manifest: in step, 0 armed" in capsys.readouterr().out
+    assert "checks manifest: no manifest" in capsys.readouterr().out
 
 
 # ---- `ruling checks`: what is armed, and what each host does with it ------
@@ -687,7 +687,8 @@ def test_ruling_checks_json_has_a_fixed_shape(tmp_path, capsys):
     assert list(payload) == ["rows", "manifest", "hosts", "log"]
     row = payload["rows"][0]
     assert list(row) == ["ruling_id", "lifecycle", "intent", "host", "mode",
-                         "last_fired", "clean", "violation", "unresolved"]
+                         "fired", "last_fired", "clean", "violation",
+                         "unresolved"]
     assert len(payload["rows"]) == 3  # one per host profile
     assert payload["manifest"]["drift"] is False
 
@@ -699,6 +700,7 @@ def test_ruling_checks_json_says_null_where_there_is_no_liveness_cell(
     _propose(tmp_path)
     _checks_table(tmp_path, "--json")
     row = json.loads(capsys.readouterr().out)["rows"][0]
+    assert row["fired"] is None
     assert row["last_fired"] is None and row["clean"] is None
 
 
@@ -1216,3 +1218,67 @@ def test_streaming_keeps_every_earlier_guarantee(tmp_path):
     assert fold["last_ts"] == "2026-09-06T12:00:00Z"
     assert list(summary.rulings) == [(mine, CC)]
     assert summary.hook_seen[CC]["rows"] == 1
+
+
+def test_no_manifest_reads_the_same_on_both_manifest_surfaces(tmp_path,
+                                                              capsys):
+    """The two surfaces share `audit_lines` precisely so they cannot word
+    one fact differently. A machine with no manifest and nothing wanted read
+    `in step, 0 armed` here and `no manifest` on the table, and "in step"
+    with nothing on disk is the half that is misleading."""
+    assert _run(["check", "sync", "--check", "--project", str(tmp_path)]) == 0
+    assert "checks manifest: no manifest" in capsys.readouterr().out
+    _checks_table(tmp_path)
+    assert "no manifest" in capsys.readouterr().out
+
+
+def test_hooks_status_uses_the_same_no_manifest_wording(tmp_path,
+                                                        monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    from daimon_briefing import cli
+
+    assert cli.main(["hooks", "status"]) == 0
+    assert "checks manifest (this project): no manifest" in \
+        capsys.readouterr().out
+
+
+def test_an_empty_manifest_that_is_in_step_still_says_in_step(tmp_path,
+                                                              capsys):
+    """`absent` is about the FILE, not about the count. A manifest that
+    exists and correctly holds nothing for this project is in step."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    refutations.retire(_propose(tmp_path, subject="second"),
+                       channel="cli-tty", project_dir=str(tmp_path))
+    _write_manifest([])
+    _run(["check", "sync", "--check", "--project", str(tmp_path)])
+    assert "drifted" in capsys.readouterr().out
+
+
+def test_json_nulls_the_counts_on_a_never_fired_row(tmp_path, capsys):
+    """The table prints `never fired` with no counts beside it. A consumer
+    reading `clean` without first checking `last_fired` would get the exact
+    "0 clean" reading constraint 2 exists to prevent, so JSON says nothing
+    where the table says nothing."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _checks_table(tmp_path, "--json")
+    row = json.loads(capsys.readouterr().out)["rows"][0]
+    assert row["fired"] is False and row["last_fired"] is None
+    assert (row["clean"], row["violation"], row["unresolved"]) == \
+        (None, None, None)
+    # The row is still distinguishable from one with no liveness cell at
+    # all: that one is armed on a host that can deliver it.
+    assert row["lifecycle"] == "armed" and row["mode"] != "unsupported"
+
+
+def test_json_carries_the_counts_once_a_row_has_fired(tmp_path, capsys):
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_log(_row(ruling_id=ruling_id, outcome="violation"))
+    _checks_table(tmp_path, "--json")
+    row = [r for r in json.loads(capsys.readouterr().out)["rows"]
+           if r["host"] == CC][0]
+    assert row["last_fired"] == "2026-09-06T10:00:00Z"
+    assert (row["clean"], row["violation"], row["unresolved"]) == (0, 1, 0)

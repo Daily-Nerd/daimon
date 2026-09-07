@@ -1443,13 +1443,13 @@ def checks_table_lines(payload: dict) -> list:
                      else row["lifecycle"])
             lines.append(f"{current}  {shown} · intent {row['intent']}")
         line = f"  {row['host']:<14}{row['mode']}"
-        if row["clean"] is not None:
-            live = (f"last fired {row['last_fired']}"
-                    if row["last_fired"] else "never fired")
+        if row["fired"] is not None:
+            live = f"last fired {row['last_fired']}" if row["fired"] \
+                else "never fired"
             counts = (f" · lifetime {row['clean']} clean, "
                       f"{row['violation']} violation, "
                       f"{row['unresolved']} unresolved"
-                      if row["last_fired"] else "")
+                      if row["fired"] else "")
             line = f"  {row['host']:<14}{row['mode']:<14}{live}{counts}"
         lines.append(line.rstrip())
     return lines

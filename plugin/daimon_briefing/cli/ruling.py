@@ -344,13 +344,25 @@ def _checks_payload(project) -> dict:
             live = (lifecycle == "armed" and mode != "unsupported"
                     and summary.log_state != "unreadable")
             fold = summary.rulings.get((ruling_id, host)) if live else None
+            # Counts are null wherever the table prints none, including the
+            # never-fired row: a consumer reading `clean` without checking
+            # `last_fired` would get the "0 clean" reading constraint 2
+            # exists to prevent. `lifecycle` and `mode` still tell a
+            # never-fired row from one with no liveness cell at all.
+            # Bound once, so the "has it fired" test and the four values
+            # that depend on it cannot answer differently.
+            seen = fold if fold and fold["last_ts"] else None
             rows.append({
                 "ruling_id": ruling_id, "lifecycle": lifecycle,
                 "intent": intent, "host": host, "mode": mode,
-                "last_fired": (fold or {}).get("last_ts") or None,
-                "clean": (fold or {}).get("clean", 0) if live else None,
-                "violation": (fold or {}).get("violation", 0) if live else None,
-                "unresolved": (fold or {}).get("unresolved", 0) if live else None,
+                # Tri-state, and the renderer's only input: None means the
+                # row has no liveness cell at all, False means it has one
+                # and nothing has fired, True means the counts are real.
+                "fired": (seen is not None) if live else None,
+                "last_fired": seen["last_ts"] if seen else None,
+                "clean": seen["clean"] if seen else None,
+                "violation": seen["violation"] if seen else None,
+                "unresolved": seen["unresolved"] if seen else None,
             })
     return {"rows": rows, "manifest": audit._asdict(),
             "hosts": summary.hook_seen,

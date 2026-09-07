@@ -29,6 +29,14 @@ def audit_lines(audit, scope: str = "") -> list:
                 "  daimon wrote something it can no longer parse, so nothing "
                 "here says what is armed",
                 "  fix: daimon check sync"]
+    if audit.state == "absent" and not audit.drift:
+        # `render._checks_manifest_header` keeps four states apart and this
+        # kept three, so a machine with nothing armed anywhere read "in
+        # step, 0 armed" here and "no manifest" on the table. "In step" with
+        # no file on disk is the half that misleads. `absent` is about the
+        # FILE: a manifest that exists and correctly holds nothing for this
+        # project is in step, and still says so.
+        return [f"checks manifest{scope}: no manifest"]
     if not audit.drift:
         return [f"checks manifest{scope}: in step, {len(audit.have)} armed"]
     lines = [f"checks manifest{scope}: drifted"]

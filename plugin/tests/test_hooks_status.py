@@ -452,7 +452,7 @@ def test_a_project_with_no_checks_adds_no_manifest_noise(tmp_path,
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     assert cli.main(["hooks", "status"]) == 0
-    assert "checks manifest (this project): in step, 0 armed" in \
+    assert "checks manifest (this project): no manifest" in \
         capsys.readouterr().out
 
 
