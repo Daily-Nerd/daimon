@@ -79,6 +79,14 @@ verb does not recognize is left where it is and named in the report. It is
 safe to run twice; a project with nothing to move says so and changes
 nothing. `--dry-run` prints the same plan and writes nothing.
 
+Two exit codes are worth knowing. A `--project` value containing a `..`
+component is refused at exit 2: the old rule collapses `..` before following a
+symlink and the current one follows the symlink first, so such a path names two
+different directories and a move could reach a bucket that is not yours. Pass
+the collapsed path. Exit 1 means a partial move: a file in the old bucket could
+not be read, so nothing about it was moved or deleted and the old directory is
+still there. Exit 0 means the move is complete.
+
 Every completed move appends one line to
 `~/.daimon/checkpoints/migrations.jsonl`. That file is what keeps `daimon
 recall` and the request inbox finding history under the old bucket name once

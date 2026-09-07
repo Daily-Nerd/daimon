@@ -1115,17 +1115,35 @@ def _raw_project(arg) -> str:
 def _cmd_bucket_migrate(args) -> int:
     """Move this project's pre-0.42.0 bucket into the one daimon reads (#963).
 
-    `--project` is a PATH and is absolutized, never treated as a bucket name:
-    both slugs are derived from the caller's own path, so no run of this verb
-    can name a bucket the caller could not already reach (scar 0071)."""
+    `--project` is a PATH and is absolutized, never treated as a bucket name,
+    so it can never be a bare bucket slug (scar 0071).
+
+    That alone is NOT enough, and the earlier version of this docstring said
+    it was. The two slug rules differ in WHEN they resolve: the legacy rule
+    collapses `..` lexically before touching a symlink, the current one
+    resolves the symlink first. A path combining both therefore names two
+    different DIRECTORIES, and a migration would move a bucket the caller has
+    no claim on. `buckets.migrate` refuses any `..` component outright, which
+    is what makes the sentence above true; the refusal arrives here as a
+    MigrationError and leaves as rc 2, the same code every other refusal on
+    this surface uses.
+
+    rc 1 is a PARTIAL merge: something was left behind because it could not
+    be read. The caller learns that from the exit code without parsing the
+    receipt."""
     raw = _raw_project(args.project)
-    record = buckets.migrate(raw, dry_run=args.dry_run)
+    try:
+        record = buckets.migrate(raw, dry_run=args.dry_run)
+    except buckets.MigrationError as exc:
+        print(f"bucket not migrated: {exc}", file=sys.stderr)
+        return 2
+    rc = 1 if record.get("unreadable") else 0
     if args.json:
         print(json.dumps(record, indent=2, ensure_ascii=False))
-        return 0
+        return rc
     lines = _bucket_migrate_lines(record, raw, dry_run=args.dry_run)
     render.render_ledger_lines(lines)
-    return 0
+    return rc
 
 
 def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
@@ -1149,8 +1167,16 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
     if record["pointers"]:
         kept = "would keep" if dry_run else "kept"
         lines.append(f"  pointers: {kept} {record['pointers']} in the chain")
+    unreadable = record.get("unreadable") or []
+    for name in unreadable:
+        lines.append(f"  left in place, could not be read: {name}")
     for name in record["leftovers"]:
+        if name in unreadable:
+            continue  # already named above, with its reason
         lines.append(f"  left in place, not understood: {name}")
+    if unreadable:
+        lines.append("  partial: this bucket still holds data that could not "
+                     "be read, so nothing about it was moved or deleted")
     return lines
 
 
