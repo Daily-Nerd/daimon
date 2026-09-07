@@ -1143,6 +1143,19 @@ def test_audit_quotes_cannot_prove_when_every_item_is_exempt(
     assert "rate:" not in out
 
 
+def test_audit_quotes_names_an_empty_store_as_its_own_cause(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """Nothing on disk and everything exempt are both cannot-prove, and both
+    exit 3, but they are different causes and the fix for each is different.
+    The all-exempt sentence blames exemptions a store with no checkpoint at
+    all never had."""
+    assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 3
+    out = capsys.readouterr().out
+    assert "WARNING: no checkpoint to check" in out
+    assert "all-exempt" not in out
+
+
 def test_audit_quotes_counts_an_unresolvable_source_as_exempt(
     tmp_checkpoint_dir, _projects_dir, capsys
 ):
@@ -1228,6 +1241,28 @@ def test_audit_quotes_json_carries_a_real_rate_when_it_checked_something(
     data = json.loads(capsys.readouterr().out)
     assert data["checkable"] == 1 and data["rate"] == 1.0
     assert data["exit_code"] == 0
+
+
+def test_audit_quotes_json_lists_every_failure_while_the_lines_truncate(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """--top bounds what a person reads; a machine reading the document gets
+    all of them. Documented, because a consumer that assumed --top applied
+    would silently under-count."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [("user", "nothing matches")])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": f"fabricated {n}", "trust": "verbatim",
+         "quote": f"absent sentence number {n}", "id": f"d-{n}"}
+        for n in range(3)
+    ]), project_dir="/p/A")
+
+    assert cli.main(
+        ["audit", "quotes", "--project", "/p/A", "--top", "1"]) == 1
+    assert "top 1 failures" in capsys.readouterr().out
+    assert cli.main(
+        ["audit", "quotes", "--project", "/p/A", "--top", "1", "--json"]) == 1
+    assert len(json.loads(capsys.readouterr().out)["failures"]) == 3
 
 
 def test_audit_quotes_reads_origin_slug_from_the_origin_checkpoint(

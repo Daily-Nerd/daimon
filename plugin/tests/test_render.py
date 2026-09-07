@@ -1847,10 +1847,26 @@ def test_capture_gate_reports_how_far_over_it_is_when_it_fires():
     assert any("exceeds the 10% gate, over by 2.1pp" in ln for ln in lines)
 
 
-def test_rescue_gate_reports_how_far_over_it_is_when_it_fires():
+def test_rescue_gate_reports_how_far_short_it_is_when_it_fires():
+    """The rescue gate is a FLOOR: a rate below it fires. "over by" reads as
+    an excess of the thing being measured, which is backwards on this one."""
     lines = render._capture_window_lines(
         _window(fallback_attempts=3, fallback_serializes=1))
-    assert any("recorded on #742, over by 16.7pp" in ln for ln in lines)
+    assert any("recorded on #742, short by 16.7pp" in ln for ln in lines)
+    # Scoped to the rescue line: this fixture's error rate trips the capture
+    # CEILING at the same time, and that one is correctly still "over by".
+    rescue = [ln for ln in lines if "rescue succeeded" in ln]
+    assert rescue and not any("over by" in ln for ln in rescue)
+
+
+def test_a_fired_gate_never_displays_a_zero_distance():
+    """2499 rescues of 5000 attempts is 49.98%, which fires the 50% floor and
+    rounds to 50.0 at one decimal. "short by 0pp" reads as a gate that did not
+    fire at all, so the distance carries enough precision to stay non-zero."""
+    lines = render._capture_window_lines(
+        _window(fallback_attempts=5000, fallback_serializes=2499))
+    assert any("short by 0.02pp" in ln for ln in lines)
+    assert not any("short by 0pp" in ln for ln in lines)
 
 
 def test_a_gate_with_nothing_to_judge_reports_no_margin():

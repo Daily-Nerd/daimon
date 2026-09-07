@@ -227,7 +227,12 @@ def _cmd_audit_quotes(args) -> int:
         counts if rate is None else f"{counts}  rate: {rate:.1%}",
         f"  exempt: {exempt}",
     ]
-    if code == 3:
+    if code == 3 and not scanned:
+        # Both states are cannot-prove and both exit 3, but the cause differs
+        # and so does the fix. Blaming exemptions a store with no checkpoint
+        # at all never had sends the reader looking in the wrong place.
+        lines.append("  WARNING: no checkpoint to check")
+    elif code == 3:
         lines.append(f"  WARNING: zero verbatim quotes checkable ({seen} "
                      f"items: {exempt}) — cannot distinguish an all-exempt "
                      "checkpoint from a clean one")
@@ -290,7 +295,9 @@ def register(sub, fmt) -> None:
         "--top", type=int, default=10,
         help="how many failing quotes to list (default: 10)")
     pa_quotes.add_argument(
-        "--json", action="store_true", help="machine-readable output")
+        "--json", action="store_true",
+        help="machine-readable output; lists EVERY failure, where the printed "
+             "lines stop at --top")
     pa_quotes.set_defaults(func=_cli._cmd_audit_quotes)
     pa_priv = audit_sub.add_parser(
         "privacy",

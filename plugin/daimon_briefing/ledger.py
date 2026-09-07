@@ -593,20 +593,23 @@ def capture_gates(w: dict | None) -> list[dict]:
     """
     if not w:
         return []
+    # Two decimals, not one: 2499 rescues of 5000 attempts is 49.98%, which
+    # trips the 50% floor and rounds to a margin of 0.0 at one decimal. A
+    # fired gate reporting zero distance reads as a gate that never fired.
     gates: list[dict] = []
     rate = w.get("error_rate_pct")
     if rate is not None:
         gates.append({"name": "capture_error_rate", "value": rate,
                       "threshold": _CAPTURE_ERROR_GATE_PCT,
-                      "margin": round(_CAPTURE_ERROR_GATE_PCT - rate, 1),
+                      "margin": round(_CAPTURE_ERROR_GATE_PCT - rate, 2),
                       "fired": rate > _CAPTURE_ERROR_GATE_PCT})
     attempts = w.get("fallback_attempts", 0)
     rescued = w.get("fallback_serializes", 0)
     if attempts:
-        pct = round(rescued * 100 / attempts, 1)
+        pct = round(rescued * 100 / attempts, 2)
         gates.append({"name": "rescue_rate", "value": pct,
                       "threshold": _RESCUE_GATE_PCT,
-                      "margin": round(pct - _RESCUE_GATE_PCT, 1),
+                      "margin": round(pct - _RESCUE_GATE_PCT, 2),
                       "fired": rescued * 100 < attempts * _RESCUE_GATE_PCT})
     return gates
 

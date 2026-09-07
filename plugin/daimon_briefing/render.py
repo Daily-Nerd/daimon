@@ -1538,6 +1538,20 @@ def _pp(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
+def _pp_distance(value: float) -> str:
+    """The same, for the distance a gate that FIRED is past its threshold —
+    but never rendered as `0`. 2499 rescues of 5000 attempts is 49.98%, which
+    trips the 50% floor and still rounds to 0.0pp at one decimal, and `short
+    by 0pp` reads as a gate that did not fire at all. Take another decimal
+    until the number says something, rather than printing a floor value the
+    measurement does not support."""
+    for places in (1, 2, 3):
+        out = f"{value:.{places}f}".rstrip("0").rstrip(".")
+        if out.lstrip("-") != "0":
+            return out
+    return out
+
+
 def _capture_window_lines(c: dict) -> list[str]:
     """#364: the rolling-window capture-rate line(s), shared verbatim by the
     plain and rich stats renderers."""
@@ -1574,11 +1588,12 @@ def _capture_window_entries(c: dict) -> list[tuple[str, bool]]:
     for g in capture_gates(w):
         # abs, not negation: the label already carries the direction, and a
         # margin that rounds to zero on a gate that fired would print "-0pp".
-        over = _pp(abs(g["margin"]))
+        past = _pp_distance(abs(g["margin"]))
         if g["name"] == "capture_error_rate" and g["fired"]:
+            # A CEILING: the rate went over it.
             out.append((f"⚠ capture error rate {rate}% (last {w['days']}d) "
                         f"exceeds the {_CAPTURE_ERROR_GATE_PCT}% gate, over "
-                        f"by {over}pp — see `daimon status` for failing "
+                        f"by {past}pp — see `daimon status` for failing "
                         "serializes", True))
         elif g["name"] == "capture_error_rate":
             # NOTE: "capture errors", not "capture error rate" — the firing
@@ -1589,9 +1604,11 @@ def _capture_window_entries(c: dict) -> list[tuple[str, bool]]:
                         f"{_CAPTURE_ERROR_GATE_PCT}% gate, margin "
                         f"{_pp(g['margin'])}pp", False))
         elif g["fired"]:
+            # A FLOOR, so the rate fell SHORT of it. "over by" here would read
+            # as an excess of the thing being measured, which is backwards.
             out.append((f"⚠ rescue succeeded {rescued} of {attempts} attempts "
                         f"(last {w['days']}d) — below the {_RESCUE_GATE_PCT}% "
-                        f"gate recorded on #742, over by {over}pp", True))
+                        f"gate recorded on #742, short by {past}pp", True))
         else:
             out.append((f"rescue {rescued} of {attempts} attempts against the "
                         f"{_RESCUE_GATE_PCT}% floor, margin "
