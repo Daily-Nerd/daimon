@@ -443,11 +443,26 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         for name in ("events.jsonl", "refutations.jsonl"):
             with open(legacy / name, "w", encoding="utf-8") as fh:
                 fh.write('{"event_id": "e-migrated"}\n')
+        # A REAL pointer copy, and the lock sidecar every real bucket carries.
+        # The pointer is a copy of one the store actually wrote in this drive,
+        # not a hand-built dict: a real pointer payload has no `session_id`
+        # (#963 review), and inventing one made the audited merge exercise a
+        # shape the store never produces. The lock is what made the merge
+        # non-idempotent, so the second run below is only a real idempotence
+        # check with it present.
+        live = config.checkpoint_dir() / (buckets.target_slug(str(link)) or "")
+        with open(live / "latest.json", encoding="utf-8") as fh:
+            pointer = json.loads(fh.read())
+        pointer["created"] = "2020-01-01T00:00:00Z"
+        pointer["project_slug"] = legacy.name
         with open(legacy / "latest.json", "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"session_id": "S-legacy",
-                                 "created": "2020-01-01T00:00:00Z"}))
+            fh.write(json.dumps(pointer))
+        with open(legacy / ".pointer.lock", "a", encoding="utf-8"):
+            pass
         run(["bucket", "migrate", f"--project={link}"], 0)
-        # Idempotent by contract, and the second run must stay silent on disk.
+        # Idempotent by contract: the legacy bucket is gone, so the second run
+        # has nothing to move and writes nothing at all.
+        assert not legacy.exists(), "the merge left the legacy bucket standing"
         run(["bucket", "migrate", f"--project={link}"], 0)
 
     def r_slug():

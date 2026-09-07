@@ -22,6 +22,7 @@ readers join on afterwards.
 answers for a path daimon has never seen, with no filesystem and no git.
 """
 
+import hashlib
 import json
 import os
 import time
@@ -56,6 +57,49 @@ LEDGERS = (
     "forget-hits.jsonl",
     "relations.jsonl",
 )
+
+
+# Files a merge may DELETE from the legacy bucket even though they are not
+# ledgers. `.pointer.lock` is store._pointer_lock's flock sidecar: opened
+# "a+", never written, declared in surfaces.py as exempt-no-plaintext because
+# it holds nothing by construction. Every bucket the store has ever written to
+# has one, so treating it as an unrecognized leftover kept the legacy
+# directory alive forever and made a second run merge and receipt again
+# (#963 review). Nothing else is ever removed on this list's word.
+_REMOVABLE = frozenset({store._LOCK_NAME})
+
+
+def climbs_out(project_dir) -> bool:
+    """Whether the raw value contains a lexical `..` component.
+
+    The ONE vector by which the two slug rules can name different DIRECTORIES
+    rather than different names for one directory. `legacy_slug` uses
+    `os.path.abspath`, which collapses `..` lexically, BEFORE resolving any
+    symlink. `target_slug` resolves symlinks FIRST and applies `..` after. So
+    `<root>/me/link/../../tenantB/proj`, where `link` points into
+    `<root>/me/a/b/c`, has abspath naming tenantB's directory and resolve
+    naming one under the caller's own tree. A migration would then rename the
+    victim's bucket into the caller's and mint a permanent alias row for it.
+
+    A symlink alone is the legitimate case #963 exists for and stays allowed:
+    there the two rules name two NAMES for the same directory, which is the
+    whole premise of the move.
+    """
+    text = str(project_dir or "")
+    if not text:
+        return False
+    if os.altsep:
+        text = text.replace(os.altsep, os.sep)
+    return ".." in text.split(os.sep)
+
+
+def _refuse_climbing(project_dir) -> None:
+    if climbs_out(project_dir):
+        raise MigrationError(
+            "refusing a --project path with a '..' component: it makes the "
+            "pre-0.42.0 rule and the current one name two different "
+            "directories, which is how a migration reaches a bucket that is "
+            "not yours. Pass the collapsed path instead.")
 
 
 def legacy_slug(project_dir) -> str | None:
@@ -169,10 +213,14 @@ def alias_provenance(slug) -> tuple[dict, ...]:
 def legacy_bucket(project_dir) -> str | None:
     """The orphaned pre-0.42.0 bucket for `project_dir`, or None.
 
-    None in the two silent cases: the two rules agree on this path (nothing
-    was ever orphaned), or the legacy directory is simply not there. Only a
-    directory that EXISTS is reported, so a surface calling this can say "a
-    legacy bucket exists" as a fact rather than a possibility."""
+    None in three silent cases: the path climbs with `..` (see `climbs_out` —
+    `status` and `ruling list` state a legacy bucket as a FACT, and for such a
+    path the fact would be about somebody else's bucket), the two rules agree
+    on this path (nothing was ever orphaned), or the legacy directory is
+    simply not there. Only a directory that EXISTS is reported, so a surface
+    calling this can say "a legacy bucket exists" without hedging."""
+    if climbs_out(project_dir):
+        return None
     legacy = legacy_slug(project_dir)
     target = target_slug(project_dir)
     if not legacy or not target or legacy == target:
@@ -185,12 +233,31 @@ def legacy_bucket(project_dir) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _lines(path: Path) -> list[str]:
+def _read_lines(path: Path) -> tuple[list[str], bool]:
+    """(non-empty lines, whether the file was read in full).
+
+    The second half is load bearing and used to be thrown away. A ledger
+    holding a byte sequence that is not UTF-8 raises `UnicodeDecodeError`,
+    which is a `ValueError`; swallowing that into an empty list makes the
+    merge below believe there was nothing to move, so it appends nothing,
+    finds nothing missing from the target, and UNLINKS the source. The whole
+    file is destroyed, the receipt says zero lines, and the exit code says
+    success. A file that cannot be read cannot be compared, so it cannot be
+    proven safe to delete."""
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return []
-    return [ln for ln in text.splitlines() if ln.strip()]
+    except OSError:
+        return [], False
+    except ValueError:  # UnicodeDecodeError is one
+        return [], False
+    return [ln for ln in text.splitlines() if ln.strip()], True
+
+
+def _lines(path: Path) -> list[str]:
+    """The lines only, for the target side where an unreadable file is not a
+    deletion decision: an unreadable target simply holds nothing this merge
+    can prove is already there, so every legacy line is appended."""
+    return _read_lines(path)[0]
 
 
 def _append_lines(path: Path, lines: list[str]) -> None:
@@ -237,6 +304,29 @@ def _restamp(path: Path, legacy: str, target: str) -> None:
     store._atomic_write(path, json.dumps(payload, ensure_ascii=False))
 
 
+def _pointer_identity(payload: dict) -> str:
+    """What makes two pointer copies the SAME checkpoint.
+
+    The checkpoint's own content, hashed. NOT `session_id`: a pointer payload
+    written by `store.write_checkpoint` does not have that field at all. The
+    session id is the function's ARGUMENT, and the blob it writes carries
+    author, created, format_version, project_name, project_slug and the
+    checkpoint's sections. Keying on it therefore fell through to the
+    FILENAME, `latest.json` in the legacy bucket collided with `latest.json`
+    in the target, and the whole legacy chain was dropped while the receipt
+    still reported a pointer count at exit 0 (#963 review).
+
+    `project_slug` and `project_name` are excluded because they name the
+    BUCKET, not the checkpoint, and a migration rewrites them: hashing them
+    would make one checkpoint sitting in both buckets look like two and spend
+    two slots of a chain that has a fixed length."""
+    body = {k: v for k, v in payload.items()
+            if k not in ("project_slug", "project_name")}
+    canonical = json.dumps(body, sort_keys=True, ensure_ascii=False,
+                           default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
                     target: str, *, apply: bool) -> int:
     """Rewrite the target's pointer chain over the union of both buckets'
@@ -245,8 +335,8 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
     Ordered by the checkpoint's own written stamp (`created`, the field
     write_checkpoint setdefaults and the one that survives rotation), mtime
     only as the fallback store._file_recency already uses. Deduped by
-    session_id: the same session can hold a pointer in both buckets, and the
-    chain must not spend two of its slots on one session."""
+    CONTENT (`_pointer_identity`), because the same checkpoint can sit in
+    both buckets and the chain must not spend two of its slots on one."""
     if not _pointer_files(legacy_dir):
         # Nothing to merge in, so the target's chain is already the answer.
         # Rewriting it with its own contents would be churn on the one file
@@ -258,9 +348,8 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
             payload = _pointer_payload(path)
             if payload is None:
                 continue
-            sid = str(payload.get("session_id") or path.name)
-            candidates.append((store._file_recency(path), sid, path,
-                               from_legacy))
+            candidates.append((store._file_recency(path),
+                               _pointer_identity(payload), path, from_legacy))
     best: dict[str, tuple[float, str, Path, bool]] = {}
     for entry in candidates:
         current = best.get(entry[1])
@@ -295,16 +384,21 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
     return len(blobs)
 
 
-def _leftovers(d: Path) -> list[str]:
+def _leftovers(d: Path, *, prune: bool = True) -> list[str]:
+    """What is still in the legacy directory. `prune=False` is the dry-run
+    view, which must predict the same answer the real run will produce: the
+    removable sidecars are gone by the time the real run counts."""
     try:
-        return sorted(p.name for p in d.iterdir())
+        names = sorted(p.name for p in d.iterdir())
     except OSError:
         return []
+    return [n for n in names if prune or n not in _REMOVABLE]
 
 
 def _record(mode: str, legacy: str | None, target: str | None, *,
             ledgers: dict | None = None, pointers: int = 0,
-            leftovers: list | None = None, by: str = "cli") -> dict:
+            leftovers: list | None = None, unreadable: list | None = None,
+            by: str = "cli") -> dict:
     return {
         "version": RECORD_VERSION,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -314,6 +408,11 @@ def _record(mode: str, legacy: str | None, target: str | None, *,
         "ledgers": ledgers or {},
         "pointers": pointers,
         "leftovers": leftovers or [],
+        # The files this run could not read, and therefore could not move or
+        # delete. Non-empty means a PARTIAL merge, which the CLI turns into a
+        # non-zero exit so a caller never has to parse the receipt to learn
+        # that something stayed behind.
+        "unreadable": unreadable or [],
         "by": by,
     }
 
@@ -341,6 +440,7 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
     Never raises for a filesystem it cannot move: a failed rename falls
     through to the merge path, which is line-wise and restartable.
     """
+    _refuse_climbing(project_dir)
     legacy = legacy_slug(project_dir)
     target = target_slug(project_dir)
     if not legacy or not target:
@@ -370,18 +470,33 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
             _append_record(record)
             return record
 
+    # ONCE, before any merge work, and not inside the ledger loop below. A
+    # legacy bucket holding only a pointer chain skips that loop entirely, so
+    # a directory created there left `_merge_pointers` writing into a path
+    # that was never made: FileNotFoundError out of a verb documented never to
+    # raise for a filesystem it cannot move, and no receipt (#963 review). The
+    # cross-device fall-through above reaches here with no target directory at
+    # all, which is exactly that case.
+    if not dry_run:
+        target_dir.mkdir(parents=True, exist_ok=True)
+
     ledgers: dict[str, int] = {}
+    unreadable: list[str] = []
     for name in LEDGERS:
         source = legacy_dir / name
         if not source.is_file():
             continue
-        pending = _lines(source)
+        pending, readable = _read_lines(source)
+        if not readable:
+            # Never counted, never appended, never unlinked. The file stays
+            # exactly as it is and the caller is told which one it was.
+            unreadable.append(name)
+            continue
         held = set(_lines(target_dir / name))
         new = [line for line in pending if line not in held]
         ledgers[name] = len(new)
         if dry_run:
             continue
-        target_dir.mkdir(parents=True, exist_ok=True)
         if new:
             _append_lines(target_dir / name, new)
         # Only drop the legacy copy once every one of its lines is provably
@@ -396,9 +511,23 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
     pointers = _merge_pointers(legacy_dir, target_dir, legacy, target,
                                apply=not dry_run)
     if dry_run:
+        # Predict what will REMAIN, not what is there now. Listing the files
+        # the real run is about to consume makes the plan say a bucket will
+        # survive when it is about to be removed, which is the one thing a
+        # dry run exists to get right.
+        consumed = (set(ledgers) | set(_REMOVABLE)
+                    | {p.name for p in _pointer_files(legacy_dir)})
         return _record("merge", legacy, target, ledgers=ledgers,
-                       pointers=pointers, leftovers=_leftovers(legacy_dir),
-                       by=by)
+                       pointers=pointers,
+                       leftovers=[n for n in _leftovers(legacy_dir,
+                                                        prune=False)
+                                  if n not in consumed or n in unreadable],
+                       unreadable=unreadable, by=by)
+    for name in _REMOVABLE:
+        try:
+            (legacy_dir / name).unlink()
+        except OSError:
+            pass
     leftovers = _leftovers(legacy_dir)
     if not leftovers:
         try:
@@ -406,7 +535,8 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
         except OSError:
             pass
     record = _record("merge", legacy, target, ledgers=ledgers,
-                     pointers=pointers, leftovers=leftovers, by=by)
+                     pointers=pointers, leftovers=leftovers,
+                     unreadable=unreadable, by=by)
     _append_record(record)
     return record
 
