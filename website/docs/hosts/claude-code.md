@@ -108,7 +108,9 @@ close the capture -> inject loop; the fourth guards shell actions:
 
   Every run appends one row to `~/.daimon/logs/checks.jsonl`. A row proves the
   check RAN. Only `decision_emitted: deny` under `enforce` closes the gap
-  between a check that ran and a check that was honored.
+  between a check that ran and a check that was honored. The file is capped at
+  256 KiB, the last 64 KiB kept, so the counts daimon reports from it cover a
+  window and every surface that prints them says where that window starts.
 
   `DAIMON_DISABLE=1` in the host's environment turns every daimon hook off,
   this one included, and is the way out of an `enforce` check whose pattern
