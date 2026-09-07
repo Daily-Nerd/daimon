@@ -2925,7 +2925,8 @@ def _stats_receipts(project_dir, usage: dict) -> dict:
 
 
 def _stats_checks(project_dir) -> dict:
-    """Armed checks and their lifetime firings (this project, #943 slice 5).
+    """Armed checks and their firings over the retained window (this
+    project, #943 slice 5).
 
     `armed` and `proposed` come from the LEDGER, because that is where
     whether a check may run is decided; the manifest is a derived view and

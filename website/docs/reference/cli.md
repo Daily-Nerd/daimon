@@ -127,7 +127,7 @@ The file is capped at 256 KiB. Past that the writer keeps the last 64 KiB and dr
 
 Read that log for liveness, not for compliance. A row proves the check RAN. Only `decision_emitted: deny` under `enforce` closes the gap between a check that ran and a check that was honored.
 
-Three surfaces read it for you. `daimon ruling checks` folds it per ruling and host, `daimon stats` reports one lifetime line across every host, and `daimon ruling show` adds a `Fired:` line to a single ruling. All three report a timestamp and counts over the retained window, never a last outcome: an append-only log is ordered by append, so the last row is not the current state. An armed check with no rows reads as `never fired`, which is a different answer from zero violations. A log daimon cannot open is a third answer again: every surface says the log is unreadable rather than claiming nothing ran.
+Three surfaces read it for you. `daimon ruling checks` folds it per ruling and host, `daimon stats` reports one line across every host, and `daimon ruling show` adds a `Fired:` line to a single ruling. All three report a timestamp and counts over the retained window, never a last outcome: an append-only log is ordered by append, so the last row is not the current state. An armed check with no rows reads as `never fired`, which is a different answer from zero violations. A log daimon cannot open is a third answer again: every surface says the log is unreadable rather than claiming nothing ran.
 
 Two conventions worth keeping. Arm a new check with intent `warn` first, so a pattern that matches more than you meant costs a warning rather than a blocked action. And run `daimon ruling check try` before you ratify — that is what it is for.
 

@@ -1628,7 +1628,8 @@ def _receipts_line(r: dict) -> str:
 def _checks_line(c: dict) -> str:
     """#943 slice 5: the one armed-check status line, shared by the plain and
     rich renderers, in the three states constraint 2 needed told apart —
-    nothing armed, armed but never fired, and armed with lifetime counts.
+    nothing armed, armed but never fired, and armed with counts over the
+    window the capped log still holds.
 
     Aggregated across hosts because the CLI has no notion of which host it is
     on; `daimon ruling checks` is where the per-host split lives. `denied` is
