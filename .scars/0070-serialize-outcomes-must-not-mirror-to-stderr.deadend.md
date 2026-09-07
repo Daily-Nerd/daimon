@@ -1,22 +1,24 @@
 ---
-id: 0
+id: 70
 type: deadend
 title: Serialize outcomes reach a container host through inherited stdout, never through stderr; stderr already means crash here
 severity: medium
 confidence: 0.85
 created: 2026-09-05
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/_hooks/_daimon_hook_lib.py
   - path: plugin/daimon_briefing/cli/__init__.py
-  - pattern: "stderr\\s*=\\s*(crashf|subprocess\\.DEVNULL)"
+  - pattern: "stderr=crashf"
 evidence:
   - pr: 194
-  - note: "2026-09-05: a downstream consumer running daimon in a long-lived container asked for an opt-in stderr mirror of serialize outcomes, because a file under ~/.daimon/logs is invisible to a container runtime. Implemented literally, it lands in serialize-crash.log, another file on the same volume, and ships nothing."
+  - note: 2026-09-05: a downstream consumer running daimon in a long-lived container asked for an opt-in stderr mirror of serialize outcomes, because a file under ~/.daimon/logs is invisible to a container runtime. Implemented literally, it lands in serialize-crash.log, another file on the same volume, and ships nothing.
 expires:
   condition: "spawn_serialize stops routing child stderr to crash_log_path(), or #194's separation of diagnostics from crash output is retired"
   review_after: 2027-03-05
-status: candidate
+status: active
 ---
 
 Making a serialize outcome visible to a container host looks like a stderr job, and
