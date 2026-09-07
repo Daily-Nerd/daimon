@@ -88,6 +88,45 @@ def project_slug(project_dir) -> str | None:
     return re.sub(r"[^\w-]", "-", s) or None
 
 
+def _resolved(project_dir):
+    """The project directory this store will actually address (#954).
+
+    `project_slug` above is a pure character transform and stays one: it must
+    answer for a path daimon has never seen, with no filesystem and no git
+    access, because `daimon slug` pins exactly that (#913). Resolution is a
+    different question — WHICH directory does this value name — and #948 gave
+    it one answer in `config.resolve_project_dir`: absolute, symlinks
+    collapsed, normalized to the git toplevel, with a bucket slug passing
+    through untouched.
+
+    Before #954 only the ledgers and the CLI asked it. `write_checkpoint` and
+    the pointer reads slugged the literal path, so an in-process host calling
+    from `<repo>/plugin` wrote its checkpoint to a `-repo-plugin` bucket and
+    the ruling it ratified in the same process to `-repo`. Two buckets, no
+    error, and nothing shipped hit it only because the hooks and the CLI both
+    resolve before they reach here.
+
+    Called at the PUBLIC entry points, once each, never inside a per-file loop:
+    `resolve_project_root` memoizes the git fork but `Path.resolve` still
+    reaches the filesystem on every call. store.py owns no subprocess code and
+    this does not change that — the git dependency lives in config, which is
+    where the resolution policy lives (scar 0).
+    """
+    return config.resolve_project_dir(project_dir)
+
+
+def project_bucket(project_dir) -> str | None:
+    """The bucket directory name this store will use for `project_dir`, or None
+    when the project is unknown.
+
+    The host-facing way to CHECK before writing (#954). `project_slug` answers
+    for the literal string; this answers for the resolved directory, which is
+    what every read and write below actually addresses. A host that wants the
+    two to agree hands this value, or the resolved directory from
+    `config.resolve_project_dir`, to whatever else it calls."""
+    return project_slug(_resolved(project_dir))
+
+
 def _safe_name(session_id: str) -> str:
     # session_id is host-provided; keep file ops from escaping the dir.
     return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
@@ -309,6 +348,7 @@ def project_surfaces(project_dir=None) -> list[Path]:
 
     A file whose slug cannot be read is EXCLUDED. Deleting from a surface whose
     ownership is unknown is the failure this function exists to prevent."""
+    project_dir = _resolved(project_dir)
     slug = project_slug(project_dir)
     if not slug:
         return []
@@ -422,6 +462,7 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
     Best-effort per file; returns the paths rewritten."""
     if not content_hash:
         return []
+    project_dir = _resolved(project_dir)
     team = config.team_dir()
     own = project_slug(config.author()) or "unknown"
     slug = project_slug(project_dir)
@@ -792,6 +833,7 @@ def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
     local deletion, which already happened by the time this runs."""
     if not content_hash or not config.team_enabled():
         return []
+    project_dir = _resolved(project_dir)
     written: list[str] = []
     row = json.dumps({
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -894,6 +936,7 @@ def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
     forget would be work without effect."""
     if not config.team_apply_forget():
         return []
+    project_dir = _resolved(project_dir)
     if all_projects:
         try:
             targets = [d.name for d in config.checkpoint_dir().iterdir()
@@ -1163,6 +1206,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     delete outside its own contract."""
     if config.is_disabled() and not allow_disabled:
         return None
+    project_dir = _resolved(project_dir)
     d = config.checkpoint_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = _contained_path(d, session_id)
@@ -1286,6 +1330,7 @@ def global_latest_path() -> Path:
 
 def project_latest_path(project_dir) -> Path | None:
     """Where a project's latest pointer lives, or None if project unknown."""
+    project_dir = _resolved(project_dir)
     slug = project_slug(project_dir)
     if not slug:
         return None
@@ -1297,6 +1342,7 @@ def sibling_buckets(project_dir) -> list[dict]:
     this project's slug + '-<suffix>' (a subdir of the git-root that forked its own
     bucket — the #74 shape). Pure file-ops, never raises. Returns [] when the slug
     is unknown or the checkpoint dir is absent."""
+    project_dir = _resolved(project_dir)
     slug = project_slug(project_dir)
     if not slug:
         return []
@@ -1508,6 +1554,7 @@ def read_latest_body(project_dir=None, *, route: "Route", admit: "Admit") -> dic
     a TypeError instead of a silently unsafe answer. Callers that need to know
     HOW the value arrived use `read_latest_result` instead — the choice is
     "do I reference `fell_back`?", nothing else."""
+    project_dir = _resolved(project_dir)
     return _scoped_read(project_dir, route, admit).checkpoint
 
 
@@ -1515,6 +1562,7 @@ def read_latest_result(project_dir=None, *, route: "Route", admit: "Admit") -> "
     """`read_latest_body` plus the route fact, as a `ReadResult` — for the one
     caller (`brief`) that must LABEL a fallback rather than infer it (#787,
     scar 0058). Everyone else takes the body projection above."""
+    project_dir = _resolved(project_dir)
     return _scoped_read(project_dir, route, admit)
 
 
@@ -1526,6 +1574,7 @@ def read_own_stream_latest(project_dir=None) -> dict | None:
     the global pointer IS that stream's own prior checkpoint (pre-routing
     legacy). Takes NO policy argument on purpose: nothing an env var can
     reach may change what write_checkpoint persists."""
+    project_dir = _resolved(project_dir)
     route = Route.OWN if project_slug(project_dir) else Route.OWN_ELSE_GLOBAL
     return read_latest_body(project_dir=project_dir, route=route, admit=Admit.ANY)
 
@@ -1699,6 +1748,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     verifiable).
 
     Pure file-ops, never raises — a missing/broken/torn team dir yields []."""
+    project_dir = _resolved(project_dir)
     root = config.team_dir()
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
@@ -1809,6 +1859,7 @@ def sessions_since_count(ts: str, project_dir=None) -> int:
     ts = str(ts or "")
     if not ts:
         return 0
+    project_dir = _resolved(project_dir)
     slug = project_slug(project_dir)
     if not slug:
         return 0
@@ -1851,6 +1902,7 @@ def active_handoff(project_dir=None) -> dict | None:
     provisional plus its superseding reconstruction would otherwise count
     one session twice and kill the baton before any consumer saw it.
     Fail-open: unreadable files read as "no baton", never an exception."""
+    project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
     if path is None or not path.exists():
         return None
@@ -1907,6 +1959,7 @@ def append_verification(item_ref: str, check: str, reason: str,
     never fail a capture."""
     if config.is_disabled():
         return False
+    project_dir = _resolved(project_dir)
     path = _ledger_path(project_dir)
     if path is None:
         return False
@@ -1950,6 +2003,7 @@ def verification_rows(project_dir=None, *, bucket=None) -> list:
     if bucket is not None:
         path = Path(bucket) / "verification.jsonl"
     else:
+        project_dir = _resolved(project_dir)
         path = _ledger_path(project_dir)
         if path is None:
             return []
@@ -2103,6 +2157,7 @@ def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
     leak forget closes. The published value is the COUNT, not the content."""
     if config.is_disabled():
         return False
+    project_dir = _resolved(project_dir)
     path = _forget_hits_path(project_dir)
     if path is None or not items:
         return False
@@ -2139,6 +2194,7 @@ def forget_hit_stats(project_dir=None) -> dict:
     what they always measured."""
     out: dict = {"count": 0, "ruling_echo_count": 0, "last_hit_at": None,
                  "ruling_echo_last_at": None}
+    project_dir = _resolved(project_dir)
     path = _forget_hits_path(project_dir)
     if path is None:
         return out
@@ -2200,6 +2256,7 @@ def append_event(item_ref: str, status: str, note: str = "",
     caller may pass it."""
     if config.is_disabled() and not allow_disabled:
         return False
+    project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
     if path is None:
         return False
@@ -2282,6 +2339,7 @@ def scrub_event_fields(content_hash: str, project_dir=None) -> int:
     Returns the number of rows redacted."""
     if not content_hash:
         return 0
+    project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
     if path is None:
         return 0
@@ -2366,6 +2424,7 @@ def resolutions(project_dir=None) -> dict:
     skipped best-effort: a reader must never drop the log over one bad
     line."""
     out: dict = {}
+    project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
     if path is None:
         return out
@@ -2489,6 +2548,7 @@ def corroborations(project_dir=None) -> dict:
     (the same posture `resolutions` takes). Fails open to {} on a missing,
     unreadable or corrupt log; unparseable lines are skipped best-effort."""
     out: dict = {}
+    project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
     if path is None:
         return out
