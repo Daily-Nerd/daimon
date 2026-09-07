@@ -122,7 +122,6 @@ KNOWN_BYPASSES = frozenset({
     ("bucket migrate", "checkpoints/{slug}/refutations.jsonl"),
     ("bucket migrate", "checkpoints/{slug}/latest.json"),
     ("bucket migrate", "checkpoints/{slug}/prev-1.json"),
-    ("bucket migrate", "checkpoints/{slug}/prev-2.json"),
 })
 
 # Commands that genuinely cannot be driven headless would be named here with
@@ -459,11 +458,15 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
             fh.write(json.dumps(pointer))
         with open(legacy / ".pointer.lock", "a", encoding="utf-8"):
             pass
-        run(["bucket", "migrate", f"--project={link}"], 0)
+        # A chain with room for the union of both buckets: overflow is a
+        # separate behavior with its own tests, and a recipe that hit it would
+        # audit a partial merge instead of a complete one.
+        history = (("DAIMON_CHECKPOINT_HISTORY", "9"),)
+        run(["bucket", "migrate", f"--project={link}"], 0, env=history)
         # Idempotent by contract: the legacy bucket is gone, so the second run
         # has nothing to move and writes nothing at all.
         assert not legacy.exists(), "the merge left the legacy bucket standing"
-        run(["bucket", "migrate", f"--project={link}"], 0)
+        run(["bucket", "migrate", f"--project={link}"], 0, env=history)
 
     def r_slug():
         # #913: drives the command so the audit proves it makes no

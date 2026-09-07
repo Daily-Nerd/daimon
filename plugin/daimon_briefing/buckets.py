@@ -96,10 +96,12 @@ def climbs_out(project_dir) -> bool:
 def _refuse_climbing(project_dir) -> None:
     if climbs_out(project_dir):
         raise MigrationError(
-            "refusing a --project path with a '..' component: it makes the "
-            "pre-0.42.0 rule and the current one name two different "
-            "directories, which is how a migration reaches a bucket that is "
-            "not yours. Pass the collapsed path instead.")
+            "the pre-0.42.0 bucket rule cannot be applied to a path with a "
+            "'..' component: that rule collapses '..' before following a "
+            "symlink and the current one follows the symlink first, so the "
+            "two name different directories. A bucket written before 0.42.0, "
+            "if there is one, was written under the literal slug of the "
+            "COLLAPSED path, so pass that path.")
 
 
 def legacy_slug(project_dir) -> str | None:
@@ -169,8 +171,48 @@ def records() -> list[dict]:
     return out
 
 
+def _is_complete(row: dict) -> bool:
+    """Whether a receipt row claims the legacy bucket was fully absorbed.
+
+    Rows written before this field existed have no `complete` key. They are
+    read as complete: at the time they were written the verb removed the
+    legacy directory or reported leftovers, and treating an older row as
+    incomplete would silently drop an alias somebody's history depends on."""
+    return bool(row.get("complete", True))
+
+
+def latest_rows() -> dict[tuple, dict]:
+    """{(from_slug, to_slug): the LAST row for that pair}.
+
+    The receipt file is append-only, so one migration can carry several rows:
+    a partial move, then the run that finishes it. Every reader wants the
+    current answer for a pair, which is the last row written for it."""
+    out: dict[tuple, dict] = {}
+    for row in records():
+        out[(str(row["from_slug"]), str(row["to_slug"]))] = row
+    return out
+
+
 def _edges() -> dict[str, str]:
-    return {str(r["from_slug"]): str(r["to_slug"]) for r in records()}
+    """The alias graph, built from COMPLETE rows only.
+
+    An alias means "that bucket's history lives here now". A partial move has
+    not made that true, and acting on it is worse than having no alias at
+    all: `requests.recipient_join` skips any bucket in its own identity set,
+    so an alias minted over a still-populated legacy bucket stops that bucket
+    being scanned and its asks leave the inbox entirely (#963 review)."""
+    return {pair[0]: pair[1] for pair, row in latest_rows().items()
+            if _is_complete(row)}
+
+
+def incomplete_for(slug) -> tuple[dict, ...]:
+    """Receipt rows for `slug` that did NOT finish, newest last. `status`
+    renders a `partial:` line off this: a migration that stopped half way is
+    a state a person has to finish, not one to leave quietly on disk."""
+    if not slug:
+        return ()
+    return tuple(row for pair, row in latest_rows().items()
+                 if pair[1] == slug and not _is_complete(row))
 
 
 def alias_map() -> dict[str, str]:
@@ -274,6 +316,40 @@ def _append_lines(path: Path, lines: list[str]) -> None:
             handle.write(line + "\n")
 
 
+def legacy_leftovers(project_dir) -> tuple[str, ...]:
+    """What the legacy bucket holds that a migration will NOT move.
+
+    A merge that could not empty the directory leaves it standing on purpose,
+    and the `legacy:` warning then fires forever, which is correct: something
+    IS still there. The warning has to name it, or the reader is told to run a
+    verb that will keep saying the same thing.
+
+    Only the files the verb will not touch are named. A bucket nobody has
+    migrated yet holds ledgers and pointers, which is exactly what the verb
+    moves; reporting those as things daimon will not move is false, and it
+    sends a reader deleting their own history by hand."""
+    legacy = legacy_bucket(project_dir)
+    if not legacy:
+        return ()
+    d = config.checkpoint_dir() / legacy
+    # A pointer left behind AFTER a migration was attempted is stranded: the
+    # chain was full, so the verb will not move it however often it is run.
+    # The same file before any attempt is simply pending, and naming it would
+    # send a reader deleting a pointer the next run would have absorbed.
+    attempted = any(pair[0] == legacy and not _is_complete(row)
+                    for pair, row in latest_rows().items())
+    out = []
+    for name in _leftovers(d):
+        if name in _REMOVABLE:
+            continue  # the verb deletes this one
+        if store._POINTER_RE.match(name) and not attempted:
+            continue  # pending, not stranded
+        if name in LEDGERS and _read_lines(d / name)[1]:
+            continue  # a READABLE ledger is exactly what the verb moves
+        out.append(name)
+    return tuple(out)
+
+
 def _pointer_files(d: Path) -> list[Path]:
     try:
         return sorted(p for p in d.iterdir()
@@ -305,43 +381,65 @@ def _restamp(path: Path, legacy: str, target: str) -> None:
 
 
 def _pointer_identity(payload: dict) -> str:
-    """What makes two pointer copies the SAME checkpoint.
+    """What makes two pointer copies the SAME capture: the session id.
 
-    The checkpoint's own content, hashed. NOT `session_id`: a pointer payload
-    written by `store.write_checkpoint` does not have that field at all. The
-    session id is the function's ARGUMENT, and the blob it writes carries
-    author, created, format_version, project_name, project_slug and the
-    checkpoint's sections. Keying on it therefore fell through to the
-    FILENAME, `latest.json` in the legacy bucket collided with `latest.json`
-    in the target, and the whole legacy chain was dropped while the receipt
-    still reported a pointer count at exit 0 (#963 review).
+    `session_id` is a code-owned envelope field (`field_table.ENVELOPE_RULES`,
+    presence-validated, assigned by the serialize pipeline after model output
+    is stripped), and `store._pointer_stems` already reads it off pointer
+    files to protect those sessions from GC. It is the field that answers
+    "same capture?" and it is the one used here.
 
-    `project_slug` and `project_name` are excluded because they name the
-    BUCKET, not the checkpoint, and a migration rewrites them: hashing them
-    would make one checkpoint sitting in both buckets look like two and spend
-    two slots of a chain that has a fixed length."""
+    The content hash below is the FALLBACK, and only for a blob damaged or
+    old enough to carry no session id. It cannot be the primary key: a
+    checkpoint for one session does not stay byte-identical across buckets.
+    `_stamp_first_seen`, an anchor rewrite, a receipts stamp and this
+    module's own `_restamp` all change a field, so the legacy copy and the
+    evolved target copy hash differently, both take a slot, and a genuinely
+    distinct session falls off the end of a fixed-length chain (#963 review).
+
+    `project_slug` and `project_name` are excluded from the fallback hash
+    because they name the BUCKET, not the checkpoint, and a migration
+    rewrites them."""
+    session_id = payload.get("session_id")
+    if isinstance(session_id, str) and session_id.strip():
+        return f"sid:{session_id.strip()}"
     body = {k: v for k, v in payload.items()
             if k not in ("project_slug", "project_name")}
     canonical = json.dumps(body, sort_keys=True, ensure_ascii=False,
                            default=str)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return "blob:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _pointer_label(payload: dict) -> str:
+    """How a dropped pointer is named to a human: its session id when it has
+    one, else a short form of the content hash."""
+    identity = _pointer_identity(payload)
+    return identity[4:] if identity.startswith("sid:") else identity[:19]
 
 
 def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
-                    target: str, *, apply: bool) -> int:
-    """Rewrite the target's pointer chain over the union of both buckets'
-    pointer checkpoints, newest first, honoring DAIMON_CHECKPOINT_HISTORY.
+                    target: str, *,
+                    apply: bool) -> tuple[int, list[str], set[str], int]:
+    """(pointers written, session ids that did not fit, legacy filenames
+    holding those, legacy copies ABSORBED by this run).
 
-    Ordered by the checkpoint's own written stamp (`created`, the field
-    write_checkpoint setdefaults and the one that survives rotation), mtime
-    only as the fallback store._file_recency already uses. Deduped by
-    CONTENT (`_pointer_identity`), because the same checkpoint can sit in
-    both buckets and the chain must not spend two of its slots on one."""
+    Rewrites the target's pointer chain over the union of both buckets'
+    pointer checkpoints, newest first, honoring DAIMON_CHECKPOINT_HISTORY,
+    ordered by the checkpoint's own `created` stamp with mtime as the fallback
+    `store._file_recency` already uses, and deduped by `_pointer_identity`.
+
+    What does not FIT is reported and left on disk, never unlinked. The chain
+    has a fixed length and a union can exceed it; dropping the overflow
+    silently is data loss in a smaller hat, because a session that leaves the
+    chain also leaves `store._pointer_stems` and its flat checkpoint becomes
+    GC-eligible. The legacy copies that did not make it stay where they are,
+    which keeps the bucket non-empty, which is what makes the leftover report
+    and the `legacy:` warning tell the truth."""
     if not _pointer_files(legacy_dir):
         # Nothing to merge in, so the target's chain is already the answer.
         # Rewriting it with its own contents would be churn on the one file
         # every briefing read goes through, for no change.
-        return 0
+        return 0, [], set(), 0
     candidates: list[tuple[float, str, Path, bool]] = []
     for source, from_legacy in ((target_dir, False), (legacy_dir, True)):
         for path in _pointer_files(source):
@@ -354,14 +452,32 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
     for entry in candidates:
         current = best.get(entry[1])
         # Target copies are visited first, so a strict > keeps the target's
-        # copy on an exact tie: the bucket that is staying wins.
+        # copy on an exact tie: the same session evolved in the live bucket is
+        # the newer of the two, and the older legacy copy must not win.
         if current is None or entry[0] > current[0]:
             best[entry[1]] = entry
-    chain = sorted(best.values(), key=lambda e: (-e[0], e[1]))
+    ordered = sorted(best.values(), key=lambda e: (-e[0], e[1]))
     history = config.checkpoint_history()
-    chain = chain[:history]
+    chain, overflow = ordered[:history], ordered[history:]
+    # Keyed on IDENTITY, not on which file it came from. A legacy pointer for
+    # a session the target already holds a newer copy of is ABSORBED: it never
+    # reaches the chain and it never overflows, so a path check would leave it
+    # on disk forever, keeping the bucket non-empty and the migration marked
+    # partial for a move that actually finished (#963 review).
+    kept_ids = {entry[1] for entry in chain}
+    dropped: list[str] = []
+    stranded: set[str] = set()
+    for _, _, path, from_legacy in overflow:
+        payload = _pointer_payload(path)
+        dropped.append(_pointer_label(payload) if payload else path.name)
+        if from_legacy:
+            stranded.add(path.name)
     if not apply:
-        return len(chain)
+        absorbable = sum(1 for p in _pointer_files(legacy_dir)
+                         if (_pointer_payload(p) or {}) and
+                         _pointer_identity(_pointer_payload(p) or {}) in
+                         {e[1] for e in chain})
+        return len(chain), dropped, stranded, absorbable
     blobs = [(path.read_text(encoding="utf-8"), from_legacy)
              for _, _, path, from_legacy in chain]
     with store._pointer_lock(target_dir):
@@ -376,12 +492,19 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
             store._atomic_write(written, blob)
             if from_legacy:
                 _restamp(written, legacy, target)
+    # Only the legacy copies whose capture is now IN the chain are removed,
+    # whether this exact file supplied it or a newer copy of the same session
+    # did. What remains is the true overflow, and it stays where it is.
+    absorbed = 0
     for path in _pointer_files(legacy_dir):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-    return len(blobs)
+        payload = _pointer_payload(path)
+        if payload is not None and _pointer_identity(payload) in kept_ids:
+            try:
+                path.unlink()
+                absorbed += 1
+            except OSError:
+                pass
+    return len(blobs), dropped, stranded, absorbed
 
 
 def _leftovers(d: Path, *, prune: bool = True) -> list[str]:
@@ -398,7 +521,10 @@ def _leftovers(d: Path, *, prune: bool = True) -> list[str]:
 def _record(mode: str, legacy: str | None, target: str | None, *,
             ledgers: dict | None = None, pointers: int = 0,
             leftovers: list | None = None, unreadable: list | None = None,
-            by: str = "cli") -> dict:
+            dropped_pointers: list | None = None, by: str = "cli") -> dict:
+    leftovers = leftovers or []
+    unreadable = unreadable or []
+    dropped_pointers = dropped_pointers or []
     return {
         "version": RECORD_VERSION,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -407,12 +533,21 @@ def _record(mode: str, legacy: str | None, target: str | None, *,
         "mode": mode,
         "ledgers": ledgers or {},
         "pointers": pointers,
-        "leftovers": leftovers or [],
+        "leftovers": leftovers,
         # The files this run could not read, and therefore could not move or
-        # delete. Non-empty means a PARTIAL merge, which the CLI turns into a
-        # non-zero exit so a caller never has to parse the receipt to learn
-        # that something stayed behind.
-        "unreadable": unreadable or [],
+        # delete.
+        "unreadable": unreadable,
+        # Sessions whose pointer did not fit the chain. Left on disk, never
+        # unlinked: a session that leaves the chain leaves _pointer_stems too.
+        "dropped_pointers": dropped_pointers,
+        # Whether the legacy bucket was fully absorbed. ONLY a complete row
+        # mints an alias: the alias claims "that bucket's history lives here
+        # now", and while the legacy directory still holds rows that claim is
+        # false in the one direction that hurts. `requests.recipient_join`
+        # SKIPS a bucket it believes is its own, so an alias minted over a
+        # still-populated bucket stops it being scanned at all and its asks
+        # leave the inbox (#963 review).
+        "complete": not (leftovers or unreadable or dropped_pointers),
         "by": by,
     }
 
@@ -508,21 +643,23 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
                 source.unlink()
             except OSError:
                 pass
-    pointers = _merge_pointers(legacy_dir, target_dir, legacy, target,
-                               apply=not dry_run)
+    pointers, dropped, stranded, absorbed = _merge_pointers(
+        legacy_dir, target_dir, legacy, target, apply=not dry_run)
     if dry_run:
         # Predict what will REMAIN, not what is there now. Listing the files
         # the real run is about to consume makes the plan say a bucket will
         # survive when it is about to be removed, which is the one thing a
-        # dry run exists to get right.
+        # dry run exists to get right. A pointer that will not fit the chain
+        # is not consumed, so it stays in the prediction.
         consumed = (set(ledgers) | set(_REMOVABLE)
-                    | {p.name for p in _pointer_files(legacy_dir)})
+                    | ({p.name for p in _pointer_files(legacy_dir)}
+                       - stranded))
         return _record("merge", legacy, target, ledgers=ledgers,
                        pointers=pointers,
                        leftovers=[n for n in _leftovers(legacy_dir,
                                                         prune=False)
                                   if n not in consumed or n in unreadable],
-                       unreadable=unreadable, by=by)
+                       unreadable=unreadable, dropped_pointers=dropped, by=by)
     for name in _REMOVABLE:
         try:
             (legacy_dir / name).unlink()
@@ -536,7 +673,26 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
             pass
     record = _record("merge", legacy, target, ledgers=ledgers,
                      pointers=pointers, leftovers=leftovers,
-                     unreadable=unreadable, by=by)
+                     unreadable=unreadable, dropped_pointers=dropped, by=by)
+    # A run that MOVED nothing has nothing to record. Measured as what this
+    # run ABSORBED, never as the size of the chain it rebuilt: a re-run
+    # rebuilds the same chain over the same union, so a pointer COUNT is
+    # non-zero every time and would append a receipt per run for a bucket
+    # nobody has cleared. The "a no-op run writes no receipt" rule in this
+    # docstring has to hold for this shape too, not only for `stable` and
+    # `absent`.
+    #
+    # The one exception is a run that FINISHES a migration somebody left
+    # half done: it moves no bytes, but it changes the answer to "is this
+    # bucket migrated", and without a row the alias is never minted and
+    # `status` warns about an unfinished migration forever.
+    moved = any(ledgers.values()) or absorbed
+    completes_a_partial = (
+        record["complete"]
+        and any(not _is_complete(row) for pair, row in latest_rows().items()
+                if pair == (legacy, target)))
+    if not moved and not completes_a_partial:
+        return record
     _append_record(record)
     return record
 

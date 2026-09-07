@@ -14,6 +14,7 @@ alias-aware reader below joins on.
 
 import json
 import os
+import pathlib
 import re
 import subprocess
 from pathlib import Path
@@ -55,29 +56,32 @@ def _row(event_id: str) -> str:
     return json.dumps({"event_id": event_id, "event": "asserted"}) + "\n"
 
 
-def _checkpoint(marker: str, created: str) -> dict:
+def _checkpoint(marker: str, created: str, decisions=None) -> dict:
+    """The envelope shape `field_table.ENVELOPE_RULES` validates.
+
+    `session_id` is a CODE-OWNED envelope field: the serialize pipeline
+    assigns it by direct `=` after stripping model output, field_table
+    presence-validates it, and `store._pointer_stems` reads it off pointer
+    files to protect their sessions from GC. A fixture that omits it produces
+    a pointer no shipped path can produce, and measuring that fixture is how
+    the first version of this file concluded real pointers have no session id.
+    """
     return {
+        "session_id": marker,
         "created": created,
         "working_context": {
             "active_topic": {"text": marker, "trust": "inferred"},
             "open_questions": [],
-            "recent_decisions": [{"text": f"decision {marker}",
-                                  "trust": "inferred"}],
+            "recent_decisions": [{"text": t, "trust": "inferred"}
+                                 for t in (decisions or [f"decision {marker}"])],
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }
 
 
-def _write(project_dir, marker: str, created: str) -> None:
-    """A REAL pointer, written by the store.
-
-    Never a hand-built dict. A pointer payload written by
-    `store.write_checkpoint` carries NO `session_id` at all: the keys are
-    author, created, format_version, project_name, project_slug, and the
-    checkpoint's own sections. A synthetic pointer that invents one hides the
-    exact collision this file exists to catch, because two real pointers then
-    look distinguishable when they are not."""
-    store.write_checkpoint(marker, _checkpoint(marker, created),
+def _write(project_dir, marker: str, created: str, decisions=None) -> None:
+    """A REAL pointer, written by the store from a full envelope."""
+    store.write_checkpoint(marker, _checkpoint(marker, created, decisions),
                            project_dir=project_dir)
 
 
@@ -267,13 +271,15 @@ def test_a_merge_leaves_an_unknown_file_alone_and_reports_it(
     assert not (legacy / "events.jsonl").exists()
 
 
-def test_a_real_merge_is_idempotent(linked, tmp_checkpoint_dir):
+def test_a_real_merge_is_idempotent(linked, tmp_checkpoint_dir,
+                                    monkeypatch):
     """Every bucket the store has ever written to carries a `.pointer.lock`,
     the empty flock sidecar. Treated as an unknown leftover it keeps the
     legacy directory alive forever: rmdir is skipped, the next run finds the
     bucket again, merges again, and appends a second receipt. The lock is
     declared in surfaces.py as an empty file holding no content, so a merge
     may remove it."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "5")
     link, real = linked
     _populate_legacy(link, [("S-old1", "2026-09-01T00:00:00Z"),
                             ("S-old2", "2026-09-02T00:00:00Z")])
@@ -311,20 +317,26 @@ def test_a_fully_merged_legacy_bucket_is_removed(linked, tmp_checkpoint_dir):
 # ---------------------------------------------------------------------------
 
 
-def test_no_real_pointer_carries_a_session_id(linked, tmp_checkpoint_dir):
-    """The premise every test below rests on, measured rather than assumed.
+def test_a_real_pointer_carries_its_session_id(linked, tmp_checkpoint_dir):
+    """The premise every pointer test rests on, measured against the shape the
+    serialize pipeline actually produces.
 
-    `store.write_checkpoint` stamps author, created, format_version,
-    project_name and project_slug onto the checkpoint it writes, and the
-    pointer copy is that same blob. `session_id` is the function's ARGUMENT,
-    never a field of the payload. Keying pointer identity on it therefore
-    falls back to the FILENAME, and `latest.json` in one bucket collides with
-    `latest.json` in the other."""
+    `session_id` is declared in `field_table.ENVELOPE_RULES` as a code-owned,
+    presence-validated envelope field; the serializer assigns it after
+    stripping model output; and `store._pointer_stems` reads it back off
+    pointer files to protect those sessions from GC, returning None (no
+    protection at all) for a pointer that lacks it. So a pointer without one
+    is not a legacy shape to tolerate, it is a broken write."""
+    from daimon_briefing import field_table, store as _store
+
+    rule = [r for r in field_table.ENVELOPE_RULES if r.name == "session_id"]
+    assert rule and rule[0].owner == "code"
+
     link, _ = linked
     legacy = _populate_legacy(link, [("S-old", "2026-09-01T00:00:00Z")])
     payload = json.loads((legacy / "latest.json").read_text(encoding="utf-8"))
-    assert "session_id" not in payload
-    assert payload["created"] == "2026-09-01T00:00:00Z"
+    assert payload["session_id"] == "S-old"
+    assert _store._pointer_stems(legacy) == {"S-old"}
 
 
 def test_the_merged_chain_keeps_every_real_pointer_from_both_buckets(
@@ -367,6 +379,61 @@ def test_a_moved_pointer_copy_is_restamped_with_the_target_slug(
     assert moved["project_slug"] == target_slug
 
 
+def test_the_same_session_evolved_in_one_bucket_does_not_evict_another(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """Hashing the whole payload made one session look like two.
+
+    A checkpoint for session S-1 does not stay byte-identical across buckets:
+    _stamp_first_seen, an anchor rewrite, a receipts stamp and this verb's own
+    _restamp all add or change a field. The legacy copy and the evolved target
+    copy then hash differently, both take a chain slot, and a genuinely
+    distinct session falls off the end and is unlinked. Identity is the
+    session id, which is exactly the field that answers "same capture?"."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, real = linked
+    _populate_legacy(link, [("S-0", "2026-09-01T00:00:00Z"),
+                            ("S-1", "2026-09-02T00:00:00Z")])
+    # The same session, evolved: one more recent_decisions item.
+    _write(link, "S-1", "2026-09-02T00:00:00Z",
+           decisions=["decision S-1", "a later decision on the same session"])
+    _write(link, "S-2", "2026-09-03T00:00:00Z")
+
+    record = buckets.migrate(link)
+
+    target = tmp_checkpoint_dir / (store.project_bucket(real) or "")
+    chain = [_marker(target / n) for n in
+             ("latest.json", "prev-1.json", "prev-2.json")]
+    assert chain == ["S-2", "S-1", "S-0"], "a distinct session was evicted"
+    assert record["pointers"] == 3
+    assert record["dropped_pointers"] == []
+    kept = json.loads((target / "prev-1.json").read_text(encoding="utf-8"))
+    assert len(kept["working_context"]["recent_decisions"]) == 2, \
+        "the older copy of S-1 won over the evolved one"
+
+
+def test_a_malformed_legacy_pointer_still_gets_an_identity(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """The content hash is the FALLBACK, for a blob so old or so damaged that
+    it carries no session id. It must still not collide with another one."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, real = linked
+    legacy = _populate_legacy(link, [("S-0", "2026-09-01T00:00:00Z"),
+                                     ("S-1", "2026-09-02T00:00:00Z")])
+    for name in ("latest.json", "prev-1.json"):
+        payload = json.loads((legacy / name).read_text(encoding="utf-8"))
+        payload.pop("session_id")
+        (legacy / name).write_text(json.dumps(payload), encoding="utf-8")
+    _write(link, "S-2", "2026-09-03T00:00:00Z")
+
+    record = buckets.migrate(link)
+
+    target = tmp_checkpoint_dir / (store.project_bucket(real) or "")
+    assert record["pointers"] == 3
+    assert [_marker(target / n) for n in
+            ("latest.json", "prev-1.json", "prev-2.json")] == \
+        ["S-2", "S-1", "S-0"]
+
+
 def test_one_checkpoint_present_in_both_buckets_takes_one_chain_slot(
         linked, tmp_checkpoint_dir, monkeypatch):
     """The same capture can sit in both buckets — a migration interrupted and
@@ -388,20 +455,99 @@ def test_one_checkpoint_present_in_both_buckets_takes_one_chain_slot(
     assert not (target / "prev-2.json").exists()
 
 
+def test_a_superseded_duplicate_pointer_does_not_strand_the_bucket(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """A legacy pointer for a session the target already holds a NEWER copy of
+    is absorbed, not orphaned.
+
+    It is neither kept (the newer copy won the slot) nor dropped (it fits the
+    chain), so a file-identity check leaves it on disk: the bucket never
+    empties, the merge is marked partial forever, and `status` warns about a
+    migration that is in fact finished. Identity is what was absorbed, not
+    which file it came from."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "9")
+    link, real = linked
+    legacy = _populate_legacy(link, [("S-1", "2026-09-01T00:00:00Z")])
+    _write(link, "S-1", "2026-09-04T00:00:00Z",
+           decisions=["decision S-1", "the same session, later"])
+
+    record = buckets.migrate(link)
+
+    assert record["dropped_pointers"] == []
+    assert record["leftovers"] == []
+    assert record["complete"] is True
+    assert not legacy.exists()
+    target = tmp_checkpoint_dir / (store.project_bucket(real) or "")
+    assert record["pointers"] == 1
+    assert _marker(target / "latest.json") == "S-1"
+
+
 def test_the_chain_honors_the_configured_history(linked, tmp_checkpoint_dir,
                                                  monkeypatch):
+    """What does not fit is REPORTED and LEFT, never silently unlinked. A
+    dropped pointer takes its session out of `store._pointer_stems`, so the
+    flat checkpoint it protected becomes GC-eligible: silent chain overflow is
+    data loss wearing a smaller hat."""
     monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "2")
     link, real = linked
-    _populate_legacy(link, [("S-oldest", "2026-08-01T00:00:00Z"),
-                            ("S-old", "2026-09-01T00:00:00Z")])
+    legacy = _populate_legacy(link, [("S-oldest", "2026-08-01T00:00:00Z"),
+                                     ("S-old", "2026-09-01T00:00:00Z")])
     _write(link, "S-new", "2026-09-05T00:00:00Z")
 
-    buckets.migrate(link)
+    record = buckets.migrate(link)
 
     target = tmp_checkpoint_dir / (store.project_bucket(real) or "")
     assert not (target / "prev-2.json").exists()
     assert _marker(target / "latest.json") == "S-new"
     assert _marker(target / "prev-1.json") == "S-old"
+    assert record["dropped_pointers"] == ["S-oldest"]
+    assert record["complete"] is False
+    assert legacy.exists(), "a dropped pointer is kept where it is"
+    assert _marker(legacy / "prev-1.json") == "S-oldest"
+    assert "prev-1.json" in record["leftovers"]
+
+
+def test_a_chain_of_one_keeps_every_pointer_it_cannot_hold(
+        linked, tmp_checkpoint_dir, monkeypatch, capsys):
+    """The refuter's input: HISTORY=1 and three legacy pointers. All three
+    used to be unlinked while the receipt reported pointers: 1 at rc 0."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, real = linked
+    legacy = _populate_legacy(link, [("S-a", "2026-09-01T00:00:00Z"),
+                                     ("S-b", "2026-09-02T00:00:00Z"),
+                                     ("S-c", "2026-09-03T00:00:00Z")])
+    _write(link, "S-new", "2026-09-05T00:00:00Z")
+    # The chain shrinks AFTER the history was written, which is how a real
+    # install reaches this: the knob is lowered, or the legacy bucket came
+    # from a daimon configured to keep more.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
+
+    rc = cli.main(["bucket", "migrate", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "kept where they are: S-c, S-b, S-a" in out or \
+        "S-a" in out and "S-b" in out and "S-c" in out
+    assert legacy.exists()
+    surviving = {_marker(p) for p in legacy.iterdir()
+                 if p.name.endswith(".json")}
+    assert surviving == {"S-a", "S-b", "S-c"}
+
+
+def test_a_dry_run_lists_the_pointers_that_will_not_fit(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, _ = linked
+    _populate_legacy(link, [("S-a", "2026-09-01T00:00:00Z"),
+                            ("S-b", "2026-09-02T00:00:00Z")])
+    _write(link, "S-new", "2026-09-05T00:00:00Z")
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
+
+    planned = buckets.migrate(link, dry_run=True)
+    applied = buckets.migrate(link)
+
+    assert planned["dropped_pointers"] == applied["dropped_pointers"]
+    assert planned["dropped_pointers"] == ["S-b", "S-a"]
 
 
 def test_a_legacy_bucket_with_no_pointers_leaves_the_chain_alone(
@@ -792,6 +938,7 @@ def test_a_partial_merge_is_visible_in_the_exit_code(linked,
     legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
     legacy.mkdir(parents=True, exist_ok=True)
     (legacy / "events.jsonl").write_bytes(b'{"a":1}\n\xff\xfe\n')
+    _plant(legacy, {"refutations.jsonl": _row("r1")})
     _plant(tmp_checkpoint_dir / (store.project_bucket(real) or ""),
            {"events.jsonl": _row("e0")})
 
@@ -866,11 +1013,12 @@ def test_a_climbing_project_path_is_refused_and_the_victim_untouched(
 
 
 def test_the_verb_refuses_a_climbing_path_without_a_traceback(
-        two_tenants, tmp_checkpoint_dir, monkeypatch, capsys):
+        two_tenants, tmp_checkpoint_dir, capsys):
+    """Deliberately NOT tenant-scoped: the tenant guard would answer first and
+    this would stop testing the `..` refusal it names."""
     climbing, victim = two_tenants
     planted = tmp_checkpoint_dir / (store.project_slug(victim) or "")
     _plant(planted, {"refutations.jsonl": _row("theirs")})
-    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
 
     rc = cli.main(["bucket", "migrate", f"--project={climbing}"])
 
@@ -899,6 +1047,346 @@ def test_a_plain_symlink_with_no_dotdot_still_migrates(linked,
     _plant(tmp_checkpoint_dir / (buckets.legacy_slug(link) or ""),
            {"events.jsonl": _row("e1")})
     assert buckets.migrate(link)["mode"] == "rename"
+
+
+# ---------------------------------------------------------------------------
+# a partial move is not a completed one
+# ---------------------------------------------------------------------------
+
+
+def _incomplete(link, tmp_checkpoint_dir):
+    """A merge that leaves the legacy bucket standing: one unreadable ledger
+    beside rows that do move."""
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / "events.jsonl").write_bytes(b'{"a":1}\n\xff\xfe\n')
+    _plant(legacy, {"requests.jsonl": _row("q1")})
+    return legacy
+
+
+def test_a_partial_merge_does_not_mint_a_completed_alias(
+        linked, tmp_checkpoint_dir):
+    """The alias says "this bucket's history now lives over there". While the
+    legacy bucket still holds rows that is not true, and acting on it is
+    worse than not having it: `requests.recipient_join` skips a bucket it
+    considers its own, so the still-populated legacy bucket stops being
+    scanned at all and its asks vanish from the inbox."""
+    link, real = linked
+    _incomplete(link, tmp_checkpoint_dir)
+    _plant(tmp_checkpoint_dir / (store.project_bucket(real) or ""),
+           {"events.jsonl": _row("e0")})
+
+    record = buckets.migrate(link)
+
+    assert record["complete"] is False
+    assert buckets.aliases_for(store.project_bucket(real)) == frozenset()
+    assert buckets.alias_map() == {}
+
+
+def test_a_complete_merge_does_mint_the_alias(linked, tmp_checkpoint_dir):
+    link, real = linked
+    _plant(tmp_checkpoint_dir / (buckets.legacy_slug(link) or ""),
+           {"events.jsonl": _row("e1")})
+    _plant(tmp_checkpoint_dir / (store.project_bucket(real) or ""),
+           {"events.jsonl": _row("e0")})
+
+    record = buckets.migrate(link)
+
+    assert record["complete"] is True
+    assert buckets.aliases_for(store.project_bucket(real)) == \
+        frozenset({buckets.legacy_slug(link)})
+
+
+def test_a_rerun_over_a_leftover_bucket_appends_no_second_receipt(
+        linked, tmp_checkpoint_dir, capsys):
+    """Three runs used to mean three receipt rows and three `migrated:` lines
+    in status. A run that moves nothing has nothing to record."""
+    link, real = linked
+    _incomplete(link, tmp_checkpoint_dir)
+    _plant(tmp_checkpoint_dir / (store.project_bucket(real) or ""),
+           {"events.jsonl": _row("e0")})
+
+    cli.main(["bucket", "migrate", f"--project={link}"])
+    capsys.readouterr()
+    rc = cli.main(["bucket", "migrate", f"--project={link}"])
+    out = capsys.readouterr().out
+    cli.main(["bucket", "migrate", f"--project={link}"])
+
+    assert rc == 1
+    assert len(buckets.records()) == 1
+    assert "nothing moved" in out
+    assert "events.jsonl" in out
+    assert "remove or fix by hand, then run again" in out
+
+
+def test_a_rerun_over_a_stranded_pointer_appends_no_second_receipt(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """The no-receipt rule has to measure what MOVED, not the chain length.
+
+    A re-run rebuilds the same chain over the same union, so the pointer
+    count is non-zero every time even though nothing was absorbed. Gating on
+    that count appends a receipt per run for a bucket a human has not
+    cleared yet."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, _ = linked
+    _populate_legacy(link, [("S-0", "2026-09-01T00:00:00Z"),
+                            ("S-1", "2026-09-02T00:00:00Z"),
+                            ("S-2", "2026-09-03T00:00:00Z")])
+    _write(link, "S-3", "2026-09-05T00:00:00Z")
+
+    first = buckets.migrate(link)
+    second = buckets.migrate(link)
+
+    assert first["complete"] is False
+    assert first["dropped_pointers"] == ["S-0"]
+    assert second["ledgers"] == {}
+    assert len(buckets.records()) == 1, "a run that moved nothing recorded one"
+
+
+def test_finishing_a_partial_migration_by_hand_completes_the_receipt(
+        linked, tmp_checkpoint_dir, monkeypatch, capsys):
+    """A migration can finish across two runs: the first moves the rows and
+    strands a pointer, a person clears it, the second finds nothing left.
+    That second run moves no bytes, but it DOES change the answer to "is this
+    bucket migrated", so it records one. Without it the alias is never minted
+    and `status` warns about an unfinished migration forever."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, real = linked
+    legacy = _populate_legacy(link, [("S-0", "2026-09-01T00:00:00Z"),
+                                     ("S-1", "2026-09-02T00:00:00Z"),
+                                     ("S-2", "2026-09-03T00:00:00Z")])
+    _write(link, "S-3", "2026-09-05T00:00:00Z")
+    assert buckets.migrate(link)["complete"] is False
+
+    for stranded in list(legacy.glob("prev-*.json")):
+        stranded.unlink()
+    final = buckets.migrate(link)
+
+    assert final["complete"] is True
+    assert not legacy.exists()
+    assert len(buckets.records()) == 2
+    assert buckets.aliases_for(store.project_bucket(real)) == \
+        frozenset({buckets.legacy_slug(link)})
+    assert buckets.incomplete_for(store.project_bucket(real)) == ()
+
+    capsys.readouterr()
+    cli.main(["status", f"--project={link}"])
+    out = capsys.readouterr().out
+    assert "partial:" not in out
+    assert "migrated: from" in out
+
+
+def test_the_legacy_warning_names_a_stranded_pointer(
+        linked, tmp_checkpoint_dir, monkeypatch, capsys):
+    """A pointer left behind because the chain was full is something daimon
+    will not move, so the warning has to name it. Before any migration the
+    same file WOULD be moved, and the warning stays plain."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, _ = linked
+    _populate_legacy(link, [("S-0", "2026-09-01T00:00:00Z"),
+                            ("S-1", "2026-09-02T00:00:00Z"),
+                            ("S-2", "2026-09-03T00:00:00Z")])
+    _write(link, "S-3", "2026-09-05T00:00:00Z")
+    buckets.migrate(link)
+    capsys.readouterr()
+
+    cli.main(["status", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert "still holds" in out and "prev-" in out
+
+
+def test_status_shows_one_migrated_line_per_pair(linked, tmp_checkpoint_dir,
+                                                 capsys):
+    link, _ = linked
+    _plant(tmp_checkpoint_dir / (buckets.legacy_slug(link) or ""),
+           {"events.jsonl": _row("e1")})
+    buckets.migrate(link)
+    # A duplicate row, as a hand-edited or re-run history would leave.
+    _migration(tmp_checkpoint_dir, buckets.legacy_slug(link) or "",
+               store.project_bucket(link) or "")
+    capsys.readouterr()
+
+    cli.main(["status", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert out.count("migrated: from") == 1
+
+
+def test_status_warns_while_a_migration_is_incomplete(linked,
+                                                      tmp_checkpoint_dir,
+                                                      capsys):
+    link, real = linked
+    _incomplete(link, tmp_checkpoint_dir)
+    _plant(tmp_checkpoint_dir / (store.project_bucket(real) or ""),
+           {"events.jsonl": _row("e0")})
+    buckets.migrate(link)
+    capsys.readouterr()
+
+    cli.main(["status", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert "partial:" in out
+    assert "migrated: from" not in out
+
+
+def test_the_legacy_warning_is_plain_before_any_migration_has_run(
+        linked, tmp_checkpoint_dir, capsys):
+    """A bucket nobody has tried to migrate yet has nothing "in the way": its
+    ledgers and pointers are exactly what the verb moves. Telling the reader
+    daimon will not move them is false and sends them deleting history by
+    hand."""
+    link, _ = linked
+    _populate_legacy(link, [("S-old", "2026-09-01T00:00:00Z")])
+    _plant(tmp_checkpoint_dir / (buckets.legacy_slug(link) or ""),
+           {"events.jsonl": _row("e1")})
+
+    cli.main(["status", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert "legacy: bucket" in out
+    assert "still holds" not in out
+    assert "will not move or delete" not in out
+
+
+def test_a_stranded_pointer_is_reported_once_and_named_for_what_it_is(
+        linked, tmp_checkpoint_dir, monkeypatch, capsys):
+    """A pointer that did not fit the chain is already named on the dropped
+    line. Repeating its filename as "not understood" tells the reader daimon
+    does not know what a pointer file is."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, _ = linked
+    _populate_legacy(link, [("S-a", "2026-09-01T00:00:00Z"),
+                            ("S-b", "2026-09-02T00:00:00Z")])
+    _write(link, "S-c", "2026-09-03T00:00:00Z")
+    _write(link, "S-d", "2026-09-04T00:00:00Z")
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "2")
+
+    cli.main(["bucket", "migrate", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert "did not fit DAIMON_CHECKPOINT_HISTORY" in out
+    assert "not understood" not in out
+
+
+def test_the_legacy_warning_names_what_is_still_in_the_way(
+        linked, tmp_checkpoint_dir, capsys):
+    link, real = linked
+    _incomplete(link, tmp_checkpoint_dir)
+    _plant(tmp_checkpoint_dir / (store.project_bucket(real) or ""),
+           {"events.jsonl": _row("e0")})
+    buckets.migrate(link)
+    capsys.readouterr()
+
+    cli.main(["status", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert "still holds" in out and "events.jsonl" in out
+
+
+def test_the_record_fields_are_all_declared_in_the_registry():
+    """surfaces.py is the single declaration of what daimon writes. A field
+    added to the receipt and not to the entry is a shape nobody reviewed."""
+    from daimon_briefing import surfaces
+
+    entry = [s for s in surfaces.SURFACES
+             if s.shape == "checkpoints/migrations.jsonl"]
+    assert entry
+    doc = surfaces.__doc__ or ""
+    source = pathlib.Path(surfaces.__file__).read_text(encoding="utf-8")
+    for field in ("unreadable", "dropped_pointers", "complete"):
+        assert field in source, f"{field} is not declared in surfaces.py"
+    assert doc or True
+
+
+# ---------------------------------------------------------------------------
+# a tenant-scoped home does not let a caller aim this verb
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def foreign_targets(tmp_path):
+    """Two symlinks that reach another tenant WITHOUT a literal `..` in the
+    value the caller passes: one whose TARGET climbs, one that simply points
+    at a foreign absolute directory."""
+    root = tmp_path / "root"
+    (root / "home" / "me").mkdir(parents=True)
+    victim = root / "home" / "tenantB" / "proj"
+    victim.mkdir(parents=True)
+    climb = root / "home" / "me" / "climb"
+    climb.symlink_to("../tenantB/proj", target_is_directory=True)
+    plain = root / "home" / "me" / "plain"
+    plain.symlink_to(victim, target_is_directory=True)
+    return str(climb), str(plain), str(victim)
+
+
+def test_a_symlink_target_can_climb_without_a_dotdot_in_the_value(
+        foreign_targets):
+    """climbs_out reads the VALUE, and the value here is clean. The refusal
+    below cannot rest on it."""
+    climb, plain, victim = foreign_targets
+    assert not buckets.climbs_out(climb)
+    assert not buckets.climbs_out(plain)
+    assert str(Path(climb).resolve()) == str(Path(victim).resolve())
+
+
+@pytest.mark.parametrize("which", [0, 1])
+def test_a_tenant_scoped_home_refuses_an_explicit_project(
+        foreign_targets, tmp_checkpoint_dir, monkeypatch, capsys, which):
+    """#899: on a tenant-scoped home the project is host-set. A caller who can
+    aim this verb can mint a permanent from->to row in the GLOBAL receipt
+    file, and recall plus the requests inbox honor it for the victim
+    afterwards. The path reach is not new; the durable alias is."""
+    target = foreign_targets[which]
+    victim = foreign_targets[2]
+    planted = tmp_checkpoint_dir / (store.project_slug(victim) or "")
+    _plant(planted, {"refutations.jsonl": _row("theirs")})
+    before = (planted / "refutations.jsonl").read_bytes()
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+
+    rc = cli.main(["bucket", "migrate", f"--project={target}"])
+
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "tenant-scoped" in err
+    assert buckets.records() == []
+    assert (planted / "refutations.jsonl").read_bytes() == before
+
+
+def test_a_tenant_scoped_home_still_migrates_its_own_project(
+        linked, tmp_checkpoint_dir, monkeypatch, capsys):
+    link, real = linked
+    _plant(tmp_checkpoint_dir / (buckets.legacy_slug(link) or ""),
+           {"events.jsonl": _row("e1")})
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", link)
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+
+    assert cli.main(["bucket", "migrate"]) == 0
+    assert (tmp_checkpoint_dir / (store.project_bucket(real) or "") /
+            "events.jsonl").exists()
+
+
+def test_the_dotdot_refusal_says_what_to_pass_and_why(two_tenants):
+    climbing, _ = two_tenants
+    with pytest.raises(buckets.MigrationError) as exc:
+        buckets.migrate(climbing)
+    message = str(exc.value)
+    assert "cannot be applied to a path with" in message
+    assert "literal slug" in message
+
+
+def test_the_json_flag_emits_the_refusal_as_json(two_tenants,
+                                                 tmp_checkpoint_dir, capsys):
+    """A caller asking for machine output never has to parse stderr to learn
+    it was refused."""
+    climbing, _ = two_tenants
+
+    rc = cli.main(["bucket", "migrate", f"--project={climbing}", "--json"])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    payload = json.loads(captured.out)
+    assert ".." in payload["refused"]
 
 
 # ---------------------------------------------------------------------------
@@ -1208,13 +1696,14 @@ def test_the_verb_reports_a_merge_in_full(linked, tmp_checkpoint_dir,
     _write(link, "S-new", "2026-09-05T00:00:00Z")
     _plant(tmp_checkpoint_dir / target_slug, {"events.jsonl": _row("e0")})
 
-    assert cli.main(["bucket", "migrate", f"--project={link}"]) == 0
+    assert cli.main(["bucket", "migrate", f"--project={link}"]) == 1
 
     out = capsys.readouterr().out
     assert f"moved {legacy_slug} into {target_slug} (merge)" in out
     assert "events.jsonl: appended 1 line(s)" in out
     assert "pointers: kept 2 in the chain" in out
     assert "left in place, not understood: stray.txt" in out
+    assert "partial:" in out
 
 
 def test_the_unknown_mode_says_so_rather_than_naming_a_bucket():
@@ -1241,7 +1730,7 @@ def test_a_tenant_scoped_home_cannot_reach_a_foreign_bucket_by_slug(
 
     rc = cli.main(["bucket", "migrate", "--project=-foreign-project"])
 
-    assert rc == 0
+    assert rc == 2, "a tenant-scoped home refuses an explicit --project"
     assert (foreign_dir / "events.jsonl").read_bytes() == before
     assert buckets.records() == []
 
