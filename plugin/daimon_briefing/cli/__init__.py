@@ -1128,16 +1128,44 @@ def _cmd_bucket_migrate(args) -> int:
     MigrationError and leaves as rc 2, the same code every other refusal on
     this surface uses.
 
-    rc 1 is a PARTIAL merge: something was left behind because it could not
-    be read. The caller learns that from the exit code without parsing the
-    receipt."""
+    rc 1 is a PARTIAL merge: something was left behind, unreadable or too big
+    for the pointer chain. The caller learns that from the exit code without
+    parsing the receipt.
+
+    On a TENANT-SCOPED home an explicit `--project` is refused outright, the
+    way `--slug` and `--all-projects` already are (#899). The path reach is
+    not what is new: `--project` could always name another directory. What
+    this verb adds is a PERMANENT row in the global migrations file, which
+    `recall.rebuild` and `requests.recipient_join` then honor for whichever
+    bucket it names. A caller who may not choose a read scope must not be
+    able to mint a durable alias between two of them, so the project comes
+    from the host (DAIMON_PROJECT_DIR, else cwd) and from nowhere else."""
+    if config.tenant_scoped() and args.project:
+        message = (
+            "this daimon home is tenant-scoped (DAIMON_TENANT_SCOPED): the "
+            "project is host-set, so `bucket migrate` takes it from "
+            "DAIMON_PROJECT_DIR (else the working directory) and refuses an "
+            "explicit --project. A migration writes a lasting alias between "
+            "two buckets, which is a scope choice.")
+        if args.json:
+            print(json.dumps({"refused": message}, indent=2,
+                             ensure_ascii=False))
+        else:
+            print(f"error: {message}", file=sys.stderr)
+        return 2
     raw = _raw_project(args.project)
     try:
         record = buckets.migrate(raw, dry_run=args.dry_run)
     except buckets.MigrationError as exc:
-        print(f"bucket not migrated: {exc}", file=sys.stderr)
+        # Machine callers get the refusal in the format they asked for; they
+        # must never have to parse stderr to learn the verb said no.
+        if args.json:
+            print(json.dumps({"refused": str(exc)}, indent=2,
+                             ensure_ascii=False))
+        else:
+            print(f"bucket not migrated: {exc}", file=sys.stderr)
         return 2
-    rc = 1 if record.get("unreadable") else 0
+    rc = 0 if record.get("complete", True) else 1
     if args.json:
         print(json.dumps(record, indent=2, ensure_ascii=False))
         return rc
@@ -1158,6 +1186,14 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
     if mode == "absent":
         return [f"nothing to migrate: no legacy bucket "
                 f"{record['from_slug']} for {raw}"]
+    moved_nothing = (not any((record["ledgers"] or {}).values())
+                     and not record["pointers"])
+    if moved_nothing and not dry_run and record["leftovers"]:
+        # Nothing was moved and nothing was recorded, so the report is about
+        # the one thing that changes the outcome: what a person has to clear.
+        return [f"nothing moved: {record['from_slug']} still holds "
+                f"{', '.join(record['leftovers'])}",
+                "  remove or fix by hand, then run again"]
     verb = "would move" if dry_run else "moved"
     lines = [f"{verb} {record['from_slug']} into {record['to_slug']} "
              f"({mode})"]
@@ -1167,16 +1203,27 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
     if record["pointers"]:
         kept = "would keep" if dry_run else "kept"
         lines.append(f"  pointers: {kept} {record['pointers']} in the chain")
+    dropped = record.get("dropped_pointers") or []
+    if dropped:
+        lines.append(
+            f"  {len(dropped)} pointer(s) did not fit "
+            f"DAIMON_CHECKPOINT_HISTORY and were kept where they are: "
+            f"{', '.join(dropped)}")
     unreadable = record.get("unreadable") or []
     for name in unreadable:
         lines.append(f"  left in place, could not be read: {name}")
     for name in record["leftovers"]:
         if name in unreadable:
             continue  # already named above, with its reason
+        if dropped and store._POINTER_RE.match(name):
+            # A pointer that did not fit the chain: named on the dropped line
+            # above, by session. Repeating the filename here would say daimon
+            # does not know what a pointer file is.
+            continue
         lines.append(f"  left in place, not understood: {name}")
-    if unreadable:
-        lines.append("  partial: this bucket still holds data that could not "
-                     "be read, so nothing about it was moved or deleted")
+    if not record.get("complete", True):
+        lines.append(f"  partial: {record['from_slug']} still exists and is "
+                     f"not read; remove or fix by hand, then run again")
     return lines
 
 
@@ -1888,7 +1935,8 @@ def _write_worldcheck_ledger(rows, route) -> None:
 def _status_health(proj, glob, outstanding, siblings, *, now,
                    disabled: bool = False,
                    global_fallback: bool = False,
-                   legacy: tuple | None = None) -> dict:
+                   legacy: tuple | None = None,
+                   incomplete: list | None = None) -> dict:
     """Objective health verdict for `status`. Pure — `now` is injected. Warns only
     on data-driven signals: a NEWER phantom-child bucket (the #74 split), a missing
     project checkpoint, outstanding serialize failures, or the kill switch being
@@ -1914,11 +1962,26 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
     # same way, next to it. Injected, like `now` and `disabled`: a verdict
     # that reads its own filesystem cannot be tested at the verdict level.
     if legacy:
-        legacy_slug, legacy_path = legacy
+        legacy_slug, legacy_path, holds = legacy
+        if holds:
+            # The bucket survived a merge, so pointing at the verb again would
+            # print the same thing again. What moves this forward is a person
+            # clearing what the verb refused to touch, so name it.
+            warnings.append(
+                f"legacy: bucket {legacy_slug} was written before 0.42.0 "
+                f"from this path and is not read; it still holds "
+                f"{', '.join(holds)}, which daimon will not move or delete "
+                f"— remove or fix them by hand, then run daimon bucket "
+                f"migrate --project {legacy_path}")
+        else:
+            warnings.append(
+                f"legacy: bucket {legacy_slug} was written before 0.42.0 "
+                f"from this path and is not read; run daimon bucket migrate "
+                f"--project {legacy_path}")
+    for from_slug in (incomplete or []):
         warnings.append(
-            f"legacy: bucket {legacy_slug} was written before 0.42.0 from "
-            f"this path and is not read; run daimon bucket migrate "
-            f"--project {legacy_path}")
+            f"partial: the migration from {from_slug} did not finish, so "
+            f"that bucket is not read as part of this project's history")
 
     proj_mtime = (now - proj["age_seconds"]) if proj.get("exists") else None
     newer = [
@@ -2315,17 +2378,33 @@ def _status_world(project_arg=None) -> dict:
     # fact — an unreadable checkpoint dir must not take `status` down.
     try:
         legacy_slug = buckets.legacy_bucket(raw_project)
+        legacy_holds = list(buckets.legacy_leftovers(raw_project))
         aliases = buckets.alias_provenance(identity["slug"])
+        incomplete = buckets.incomplete_for(identity["slug"])
     except Exception:
-        legacy_slug, aliases = None, ()
+        legacy_slug, legacy_holds, aliases, incomplete = None, [], (), ()
     identity["legacy_slug"] = legacy_slug
     identity["aliases"] = [a["slug"] for a in aliases]
-    identity["migrated"] = [dict(a) for a in aliases]
+    # One line per (from, to) pair. A hand-edited receipt file, or an older
+    # daimon that appended a row per re-run, otherwise prints the same
+    # migration several times and reads as several migrations.
+    seen_pairs: set = set()
+    migrated: list[dict] = []
+    for entry in aliases:
+        pair = (entry["slug"], identity["slug"])
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        migrated.append(dict(entry))
+    identity["migrated"] = migrated
+    identity["incomplete"] = [str(r.get("from_slug") or "")
+                              for r in incomplete]
     health = _status_health(proj, glob, outstanding, siblings, now=now,
                             disabled=disabled,
                             global_fallback=config.brief_global_fallback(),
-                            legacy=((legacy_slug, raw_project)
-                                    if legacy_slug else None))
+                            legacy=((legacy_slug, raw_project, legacy_holds)
+                                    if legacy_slug else None),
+                            incomplete=identity["incomplete"])
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()

@@ -87,14 +87,23 @@ está cualquier archivo que el verbo no reconozca, nombrándolo en el reporte. S
 puede correr dos veces sin problema; un proyecto que no tiene nada para mover lo
 dice y no cambia nada. `--dry-run` imprime el mismo plan y no escribe nada.
 
-Hay dos códigos de salida que conviene conocer. Un valor de `--project` que
-contenga un componente `..` se rechaza con salida 2: la regla vieja colapsa el
-`..` antes de seguir un symlink y la actual sigue el symlink primero, así que
-una ruta así nombra dos directorios distintos y el movimiento podría alcanzar un
-bucket que no es tuyo. Pasá la ruta ya colapsada. La salida 1 significa
-movimiento parcial: un archivo del bucket viejo no se pudo leer, así que no se
-movió ni se borró nada de él y el directorio viejo sigue estando. La salida 0
-significa que el movimiento está completo.
+La salida 0 significa que el movimiento terminó y el bucket viejo ya no está.
+La salida 1 significa que no: un archivo no se pudo leer, un puntero no entró en
+`DAIMON_CHECKPOINT_HISTORY`, o quedó algo que el verbo no reconoce. Lo que queda
+se nombra en stdout, se deja tal cual y mantiene el bucket viejo en disco;
+limpialo a mano y volvé a correr. Un movimiento parcial no cuenta como migrado,
+así que las filas del bucket viejo todavía no se leen como historia de este
+proyecto.
+
+La salida 2 es un rechazo. Un `--project` con un componente `..` se rechaza
+porque la regla vieja colapsa el `..` antes de seguir un symlink y la actual
+sigue el symlink primero, así que las dos nombran directorios distintos; un
+bucket escrito antes de 0.42.0 se escribió bajo el slug literal de la ruta ya
+colapsada, así que pasá esa ruta. En un home con alcance de inquilino
+(`DAIMON_TENANT_SCOPED`) un `--project` explícito se rechaza directamente y el
+proyecto sale de `DAIMON_PROJECT_DIR`, o del directorio de trabajo: una
+migración escribe un alias duradero entre dos buckets, y elegir cuáles dos es
+elegir un alcance.
 
 Cada movimiento completado agrega una línea a
 `~/.daimon/checkpoints/migrations.jsonl`. Ese archivo es lo que permite que
