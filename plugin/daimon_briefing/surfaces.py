@@ -272,7 +272,16 @@ SURFACES: tuple[Surface, ...] = (
     #    row onto a fixed key list rather than trusting its callers, so the
     #    exemption rests on code and not on a convention. Before the *.log
     #    glob, which would not catch a .jsonl anyway, so the shape sits with
-    #    the other log declarations instead of after the catch-all. --
+    #    the other log declarations instead of after the catch-all.
+    #
+    #    RETENTION (#955): bounded, and by the WRITER. log_firing caps the
+    #    file at 256 KiB and keeps the last 64 KiB, the crash log's numbers,
+    #    so the walker stays `none` and no reaper owns this shape. The bound
+    #    is a size and not an age: a busy host writes a row per shell action
+    #    and a quiet one writes almost none, so a day-based rotation would
+    #    keep a quiet machine's rows forever and lose a loud one's in
+    #    batches. Every surface that folds this log names the window it has
+    #    left rather than calling its counts lifetime. --
     Surface("logs/checks.jsonl", "checks_runtime.log_firing",
             False, "exempt-no-plaintext", "none"),
     # #616 restored the glob's claim instead of widening it: serializer's

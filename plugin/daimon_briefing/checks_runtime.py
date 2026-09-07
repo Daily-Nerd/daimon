@@ -38,6 +38,14 @@ from typing import NamedTuple
 MANIFEST_NAME = "manifest.json"
 FIRING_LOG_NAME = "checks.jsonl"
 
+# #955. The crash log's own numbers (_daimon_hook_lib.CRASH_LOG_MAX_BYTES and
+# CRASH_LOG_KEEP_BYTES, #605): cap at 256 KiB, keep the last 64 KiB. Every
+# shell action on a hooked host appends a row here, so the file is the one
+# daimon writes most and nothing was bounding it. No env knob: a log the
+# reading surfaces describe by its window is not a thing to make per host.
+FIRING_LOG_MAX_BYTES = 262144
+FIRING_LOG_KEEP_BYTES = 65536
+
 # Spec 2.3. `unresolved` is one outcome with many causes, and the set is
 # closed: a cause outside it means a code path invented a state no surface
 # knows how to render.
@@ -825,6 +833,78 @@ def log_firing(row, path=None) -> bool:
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(stamped, ensure_ascii=False) + "\n")
+        # After the append, so the row this call just wrote is inside the
+        # kept tail. Silent by contract: see trim_firing_log.
+        trim_firing_log(target)
         return True
     except (OSError, ValueError, TypeError):
         return False
+
+
+def trim_firing_log(path) -> None:
+    """Cap the firing log at FIRING_LOG_MAX_BYTES, keeping its last
+    FIRING_LOG_KEEP_BYTES (#955). Called from log_firing, the only writer, so
+    the bound costs no separate reaper.
+
+    Rewritten IN PLACE rather than through a temp-and-rename, for the reason
+    trim_crash_log gives: another hook process may hold this file open as an
+    append target, and replacing the inode would send its rows to a file
+    nobody reads.
+
+    The cut lands mid-line, so everything up to the next newline is dropped
+    and the first kept row is whole. A reader of this log parses every line,
+    unlike the crash log, so a half row at the head would be a parse error on
+    every read from here on. A torn row at the END of the window goes too: it
+    cannot parse either, and leaving it there is what the next append would
+    be glued onto.
+
+    A window with no line boundary left in it holds no whole row, so there is
+    nothing to keep and the file is LEFT ALONE. Emptying it would take the row
+    log_firing just wrote with it, and every surface would then read `never
+    fired`, which the docs define as a different answer and not a smaller one.
+    It takes a row larger than the kept size to get here.
+
+    The rewrite has two steps and no lock, so the head it is about to
+    overwrite is read first. If the truncate fails (once is retried) the head
+    goes back and the file is byte-identical to what it was. Without that, a
+    failure between the write and the truncate leaves the kept tail sitting on
+    top of the rows it was meant to replace, every row in it counted twice.
+
+    Accepted, deliberately, the same trade trim_crash_log takes: in place
+    means unlocked, so a row appended by a concurrent hook between the read
+    and the truncate is cut away. That is one liveness row, and a lock in a
+    fail-open hook seam costs more than the row is worth.
+
+    Best-effort and silent: the decision to allow or deny is the product, the
+    log is the record of it, and a trim that raised would cost the caller the
+    row it just wrote."""
+    try:
+        size = path.stat().st_size
+        if size <= FIRING_LOG_MAX_BYTES:
+            return
+        with path.open("r+b") as handle:
+            handle.seek(size - FIRING_LOG_KEEP_BYTES)
+            tail = handle.read()
+            if not tail.endswith(b"\n"):
+                # rfind of -1 leaves nothing, which the guard below catches.
+                tail = tail[:tail.rfind(b"\n") + 1]
+            cut = tail.find(b"\n")
+            if cut < 0:
+                return
+            tail = tail[cut + 1:]
+            if not tail:
+                return
+            handle.seek(0)
+            head = handle.read(len(tail))
+            handle.seek(0)
+            handle.write(tail)
+            try:
+                handle.truncate(len(tail))
+            except OSError:
+                try:
+                    handle.truncate(len(tail))
+                except OSError:
+                    handle.seek(0)
+                    handle.write(head)
+    except Exception:  # noqa: BLE001 — housekeeping never blocks a hook
+        pass

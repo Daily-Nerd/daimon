@@ -281,13 +281,23 @@ class FiringSummary(NamedTuple):
 
     `path` travels with the summary so a surface naming the log names the
     file this read actually opened, rather than resolving it a second time
-    and risking the writer/reader split scar 0043 records."""
+    and risking the writer/reader split scar 0043 records.
+
+    `window_since` is the oldest stamp still in the FILE, which is where
+    every count here starts. The log is capped (#955), so a count over it is
+    a count over a window, and a surface that called it lifetime would be
+    reporting numbers the file cannot support. It is the whole file's oldest
+    row and not this project's, because rows that belong to nobody here still
+    hold the head of the log; the stamp is the only thing a foreign row
+    contributes (scar 0055). Empty when the read found no stamped row at all,
+    which is also what an absent and an unreadable log report."""
 
     log_state: str
     rulings: dict
     hook_seen: dict
     totals: dict
     path: str = ""
+    window_since: str = ""
 
     def for_ruling(self, ruling_id: str) -> dict:
         """One ruling across every host, for the `ruling show` liveness line.
@@ -352,6 +362,9 @@ def _firing_summary(project_dir) -> FiringSummary:
     rulings: dict = {}
     hook_seen: dict = {}
     totals = _empty_fold()
+    # Mutable because the fold is one streaming pass and the oldest stamp is
+    # not known until it ends.
+    window = {"since": ""}
     # STREAMED, one line at a time, single pass. `daimon status` folds this
     # on every run and the log has no cap yet, so reading it whole made the
     # most-used verb hold the entire file: 150 MB of resident memory on a
@@ -359,14 +372,15 @@ def _firing_summary(project_dir) -> FiringSummary:
     try:
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
-                _fold_line(line, mine, rulings, hook_seen, totals)
+                _fold_line(line, mine, rulings, hook_seen, totals, window)
     except (OSError, UnicodeDecodeError):
         return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
-    return FiringSummary("read", rulings, hook_seen, totals, where)
+    return FiringSummary("read", rulings, hook_seen, totals, where,
+                         window["since"])
 
 
 def _fold_line(line, mine: set, rulings: dict, hook_seen: dict,
-               totals: dict) -> None:
+               totals: dict, window: dict) -> None:
     """One row into the fold. Malformed lines never sink the read."""
     try:
         row = json.loads(line)
@@ -375,6 +389,13 @@ def _fold_line(line, mine: set, rulings: dict, hook_seen: dict,
     if isinstance(row, dict):
         ruling_id = str(row.get("ruling_id") or "")
         host = str(row.get("host") or "")
+        stamp = str(row.get("ts") or "")
+        # Every row the read can see, including the ones this project never
+        # gets to count: the window is where the FILE starts. An unstamped
+        # row is skipped rather than taken as the oldest, since "" sorts
+        # before every real stamp and would report a window starting nowhere.
+        if stamp and (not window["since"] or stamp < window["since"]):
+            window["since"] = stamp
         if not ruling_id:
             # Scar 0042: the empty id is a VALUE — the hook writes it for
             # no-manifest, manifest-unreadable and no-match. It proves the
@@ -386,9 +407,8 @@ def _fold_line(line, mine: set, rulings: dict, hook_seen: dict,
             seen = hook_seen.setdefault(
                 host, {"rows": 0, "scope": "machine", "last_ts": ""})
             seen["rows"] += 1
-            ts = str(row.get("ts") or "")
-            if ts > seen["last_ts"]:
-                seen["last_ts"] = ts
+            if stamp > seen["last_ts"]:
+                seen["last_ts"] = stamp
         elif ruling_id in mine:
             _absorb(rulings.setdefault((ruling_id, host), _empty_fold()), row)
             _absorb(totals, row)

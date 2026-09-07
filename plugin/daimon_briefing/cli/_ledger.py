@@ -295,9 +295,13 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
                 # has been firing all along.
                 lines.append("  Fired: unknown, firing log unreadable")
             elif fold["last_ts"]:
+                # #955: counts over the retained window, named by its first
+                # day. `lifetime` stood here while the log grew forever.
+                since = firing.window_since[:10]
+                window = f"since {since}: " if since else ""
                 lines.append(
                     f"  Fired: last {fold['last_ts']} on {fold['host']} · "
-                    f"lifetime {fold['clean']} clean, "
+                    f"{window}{fold['clean']} clean, "
                     f"{fold['violation']} violation, "
                     f"{fold['unresolved']} unresolved")
             else:

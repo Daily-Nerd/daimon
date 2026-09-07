@@ -366,7 +366,10 @@ def _checks_payload(project) -> dict:
             })
     return {"rows": rows, "manifest": audit._asdict(),
             "hosts": summary.hook_seen,
-            "log": {"state": summary.log_state, "path": summary.path}}
+            "log": {"state": summary.log_state, "path": summary.path},
+            # #955: where the counts start. Appended, because key order is
+            # part of the --json contract.
+            "window_since": summary.window_since}
 
 
 def _cmd_ruling_checks(args) -> int:

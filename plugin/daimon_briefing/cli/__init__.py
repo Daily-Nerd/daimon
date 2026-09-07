@@ -2925,7 +2925,8 @@ def _stats_receipts(project_dir, usage: dict) -> dict:
 
 
 def _stats_checks(project_dir) -> dict:
-    """Armed checks and their lifetime firings (this project, #943 slice 5).
+    """Armed checks and their firings over the retained window (this
+    project, #943 slice 5).
 
     `armed` and `proposed` come from the LEDGER, because that is where
     whether a check may run is decided; the manifest is a derived view and
@@ -2968,7 +2969,11 @@ def _stats_checks(project_dir) -> dict:
             **{key: (totals[key] if known else None)
                for key in ("fired", "clean", "violation", "unresolved",
                            "denied")},
-            "log_state": summary.log_state}
+            "log_state": summary.log_state,
+            # #955: the log is capped, so the counts above are a window's and
+            # a consumer reading them as a machine's whole history would be
+            # wrong. At the tail: key order is part of the --json contract.
+            "window_since": summary.window_since}
 
 
 def _stats_resolutions(project_dir, usage: dict) -> dict:

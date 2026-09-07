@@ -114,6 +114,9 @@ custodia las acciones de shell:
   Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`. Una fila
   prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
   cierra la distancia entre un check que corrió y un check que fue respetado.
+  El archivo tiene un tope de 256 KiB y conserva los últimos 64 KiB, así que
+  los conteos que daimon reporta desde ahí cubren una ventana y cada
+  superficie que los imprime dice dónde arranca esa ventana.
 
   `DAIMON_DISABLE=1` en el entorno del anfitrión apaga todos los hooks de
   daimon, este incluido, y es la salida de un check `enforce` cuyo patrón

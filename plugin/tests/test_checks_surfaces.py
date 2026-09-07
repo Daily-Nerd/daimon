@@ -189,6 +189,90 @@ def test_another_projects_ruling_id_never_reaches_the_summary(tmp_path):
     assert summary.totals["violation"] == 0
 
 
+# ---- the window the counts cover (#955) -----------------------------------
+
+
+def test_the_summary_names_the_oldest_row_it_can_still_see(tmp_path):
+    """#955 capped the log, so a count over it is a count over a WINDOW. The
+    surfaces name that window, and this is where they read it from."""
+    ruling_id = _arm(tmp_path)
+    _write_log(
+        _row(ruling_id=ruling_id, outcome="clean", ts="2026-09-04T08:00:00Z"),
+        _row(ruling_id=ruling_id, outcome="clean", ts="2026-09-06T12:00:00Z"),
+    )
+    assert checks.firing_summary(str(tmp_path)).window_since == \
+        "2026-09-04T08:00:00Z"
+
+
+def test_the_window_is_the_files_oldest_row_not_this_projects(tmp_path):
+    """The window is a property of the FILE. Rows this project never gets to
+    count still hold the head of the log, and a window starting at this
+    project's own first row would claim coverage the file does not have.
+
+    The stamp is the only thing taken from a foreign row: no id, no host, no
+    count crosses over (scar 0055)."""
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    mine = _arm(tmp_path)
+    theirs = _arm(other, subject="their posts")
+    _write_log(
+        _row(ruling_id=theirs, outcome="violation", ts="2026-09-01T00:00:00Z"),
+        _row(cause="no-match", ts="2026-09-02T00:00:00Z"),
+        _row(ruling_id=mine, outcome="clean", ts="2026-09-05T00:00:00Z"),
+    )
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.window_since == "2026-09-01T00:00:00Z"
+    assert list(summary.rulings) == [(mine, CC)]
+
+
+def test_the_window_moves_forward_when_the_log_is_trimmed(tmp_path):
+    """The point of the field. After a trim the dropped rows are gone and
+    the counts start where the kept tail starts."""
+    ruling_id = _arm(tmp_path)
+    path = _log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for i in range(3000):
+            handle.write(_row(ruling_id=ruling_id, outcome="clean",
+                              ts="2026-09-06T%02d:00:00Z" % (i % 24)) + "\n")
+    checks_runtime.log_firing({"ruling_id": ruling_id, "outcome": "clean",
+                               "host": CC, "ts": "2026-09-07T00:00:00Z"})
+    assert path.stat().st_size <= checks_runtime.FIRING_LOG_KEEP_BYTES
+    kept = [json.loads(line) for line in
+            path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.window_since == min(row["ts"] for row in kept)
+    assert summary.totals["fired"] == len(kept)
+
+
+def test_an_absent_log_has_no_window(tmp_path):
+    _arm(tmp_path)
+    assert checks.firing_summary(str(tmp_path)).window_since == ""
+
+
+def test_an_unreadable_log_has_no_window(tmp_path):
+    """Not a window of zero length: this read cannot say when the retained
+    rows start, and an empty string is how every other field here says so."""
+    _arm(tmp_path)
+    path = _log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.log_state == "unreadable"
+    assert summary.window_since == ""
+
+
+def test_a_row_with_no_stamp_never_becomes_the_window(tmp_path):
+    """An empty `ts` sorts before every real stamp, so a naive minimum would
+    report a window starting at nothing at all."""
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean", ts=""),
+               _row(ruling_id=ruling_id, outcome="clean",
+                    ts="2026-09-06T10:00:00Z"))
+    assert checks.firing_summary(str(tmp_path)).window_since == \
+        "2026-09-06T10:00:00Z"
+
+
 def test_a_malformed_line_never_sinks_the_read(tmp_path):
     ruling_id = _arm(tmp_path)
     _write_log("not json", "[]", "null", "3", "",
@@ -569,7 +653,10 @@ def test_never_fired_is_not_the_same_cell_as_zero_counts(tmp_path, capsys):
     out = capsys.readouterr().out
     after = [ln for ln in out.splitlines() if CC in ln][0]
     assert "never fired" not in after
-    assert "lifetime 1 clean, 0 violation, 0 unresolved" in after
+    # No `lifetime` on the row: the header above it names the window these
+    # counts cover, and the log they come from is capped (#955).
+    assert "· 1 clean, 0 violation, 0 unresolved" in after
+    assert "firing log since 2026-09-06T10:00:00Z" in out
     # The host that has not seen it still says so: liveness is per host.
     assert [ln for ln in out.splitlines()
             if "codex" in ln][0].endswith("never fired")
@@ -643,6 +730,56 @@ def test_the_header_reports_every_host_the_hook_ran_on(tmp_path, capsys):
     assert "hook seen on codex (any project), last 2026-09-06T09:00:00Z" in out
 
 
+def test_the_table_header_names_the_window_the_counts_cover(tmp_path,
+                                                           capsys):
+    """#955. The log is capped, so every count under this header is a count
+    over a retained window, and the header is where the window is named."""
+    ruling_id = _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _write_log(_row(ruling_id=ruling_id, outcome="clean",
+                    ts="2026-09-01T07:00:00Z"),
+               _row(ruling_id=ruling_id, outcome="clean",
+                    ts="2026-09-06T07:00:00Z"))
+    _checks_table(tmp_path)
+    assert "firing log since 2026-09-01T07:00:00Z" in capsys.readouterr().out
+
+
+def test_the_table_names_no_window_when_the_log_holds_no_rows(tmp_path,
+                                                              capsys):
+    """A window over nothing is a claim about a file that has none. The
+    header simply ends."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    _checks_table(tmp_path)
+    assert "firing log since" not in capsys.readouterr().out
+
+
+def test_the_table_names_no_window_when_the_log_cannot_be_read(tmp_path,
+                                                               capsys):
+    """The unreadable line already says why every cell is blank. A window
+    beside it would be a fact this read cannot support."""
+    _arm(tmp_path)
+    checks.sync(str(tmp_path))
+    path = _log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()
+    _checks_table(tmp_path)
+    out = capsys.readouterr().out
+    assert "firing log unreadable" in out
+    assert "firing log since" not in out
+
+
+def test_the_checks_json_carries_the_window_at_the_tail(tmp_path, capsys):
+    """Key order is part of the --json contract, so a new fact is appended."""
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean",
+                    ts="2026-09-02T05:00:00Z"))
+    _checks_table(tmp_path, "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload)[-1] == "window_since"
+    assert payload["window_since"] == "2026-09-02T05:00:00Z"
+
+
 def test_the_json_hosts_object_labels_the_line_machine_wide(tmp_path,
                                                             capsys):
     _arm(tmp_path)
@@ -684,7 +821,7 @@ def test_ruling_checks_json_has_a_fixed_shape(tmp_path, capsys):
     _write_log(_row(ruling_id=ruling_id, outcome="clean"))
     _checks_table(tmp_path, "--json")
     payload = json.loads(capsys.readouterr().out)
-    assert list(payload) == ["rows", "manifest", "hosts", "log"]
+    assert list(payload) == ["rows", "manifest", "hosts", "log", "window_since"]
     row = payload["rows"][0]
     assert list(row) == ["ruling_id", "lifecycle", "intent", "host", "mode",
                          "fired", "last_fired", "clean", "violation",
@@ -709,7 +846,7 @@ def test_ruling_checks_json_on_an_empty_ledger_is_still_the_shape(
     assert _checks_table(tmp_path, "--json") == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["rows"] == []
-    assert list(payload) == ["rows", "manifest", "hosts", "log"]
+    assert list(payload) == ["rows", "manifest", "hosts", "log", "window_since"]
 
 
 def test_ruling_checks_takes_no_slug(tmp_path):
@@ -746,7 +883,7 @@ def test_stats_checks_line_says_armed_but_never_fired(
     assert "checks: 1 armed, never fired" in capsys.readouterr().out
 
 
-def test_stats_checks_line_renders_lifetime_counts(
+def test_stats_checks_line_renders_the_counts_over_the_window(
         tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     ruling_id = _arm(tmp_path)
@@ -757,8 +894,23 @@ def test_stats_checks_line_renders_lifetime_counts(
         _row(ruling_id=ruling_id, outcome="unresolved", cause="check-timeout"),
     )
     assert _stats(tmp_path) == 0
-    assert ("checks (lifetime): 3 fired, 1 clean, 1 violation, "
+    assert ("checks (since 2026-09-06): 3 fired, 1 clean, 1 violation, "
             "1 unresolved, 1 denied") in capsys.readouterr().out
+
+
+def test_the_stats_line_drops_the_window_when_no_row_carries_a_stamp(
+        tmp_path, monkeypatch, capsys):
+    """A row with no timestamp still proves a check ran, so the counts are
+    real. The window is not, and a `since` with nothing after it would be
+    worse than no window at all."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean", ts=""))
+    assert _stats(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert ("checks: 1 fired, 1 clean, 0 violation, 0 unresolved, "
+            "0 denied") in out
+    assert "since" not in out.split("checks:")[-1].splitlines()[0]
 
 
 def test_stats_json_carries_checks_at_the_tail(tmp_path, monkeypatch, capsys):
@@ -770,7 +922,9 @@ def test_stats_json_carries_checks_at_the_tail(tmp_path, monkeypatch, capsys):
     assert list(payload)[-1] == "checks"
     assert payload["checks"] == {"armed": 1, "proposed": 0, "fired": 0,
                                  "clean": 0, "violation": 0, "unresolved": 0,
-                                 "denied": 0, "log_state": "absent"}
+                                 "denied": 0, "log_state": "absent",
+                                 "window_since": ""}
+    assert list(payload["checks"])[-1] == "window_since"
 
 
 @pytest.mark.parametrize("build,wording", [
@@ -789,7 +943,7 @@ def test_the_rich_stats_block_carries_the_same_wording(
     assert wording in out
 
 
-def test_the_rich_stats_block_carries_the_lifetime_wording(
+def test_the_rich_stats_block_carries_the_window_wording(
         tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
     monkeypatch.setenv("COLUMNS", "200")
@@ -797,7 +951,7 @@ def test_the_rich_stats_block_carries_the_lifetime_wording(
     ruling_id = _arm(tmp_path)
     _write_log(_row(ruling_id=ruling_id, outcome="clean"))
     assert _stats(tmp_path) == 0
-    assert ("checks (lifetime): 1 fired, 1 clean, 0 violation, "
+    assert ("checks (since 2026-09-06): 1 fired, 1 clean, 0 violation, "
             "0 unresolved, 0 denied") in capsys.readouterr().out
 
 
@@ -968,7 +1122,7 @@ def test_show_says_never_for_an_armed_check_that_has_not_run(tmp_path,
     assert "  Fired: never" in out
 
 
-def test_show_names_the_host_and_the_lifetime_counts(tmp_path, capsys):
+def test_show_names_the_host_and_the_counts_over_the_window(tmp_path, capsys):
     ruling_id = _arm(tmp_path)
     _write_log(
         _row(ruling_id=ruling_id, outcome="clean", ts="2026-09-06T08:00:00Z"),
@@ -976,8 +1130,9 @@ def test_show_names_the_host_and_the_lifetime_counts(tmp_path, capsys):
              ts="2026-09-06T11:00:00Z"),
     )
     _show(tmp_path, ruling_id)
-    assert ("  Fired: last 2026-09-06T11:00:00Z on claude-code · lifetime "
-            "1 clean, 1 violation, 0 unresolved") in capsys.readouterr().out
+    assert ("  Fired: last 2026-09-06T11:00:00Z on claude-code · since "
+            "2026-09-06: 1 clean, 1 violation, 0 unresolved"
+            ) in capsys.readouterr().out
 
 
 def test_show_omits_the_line_for_a_proposed_check(tmp_path, capsys):

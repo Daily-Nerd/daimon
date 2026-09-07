@@ -1428,6 +1428,12 @@ def checks_table_lines(payload: dict) -> list:
     has no channel to fire through."""
     lines = [_checks_manifest_header(payload.get("manifest") or {})]
     log = payload.get("log") or {}
+    since = str(payload.get("window_since") or "")
+    if since:
+        # #955: the log is capped, so the counts below start somewhere. The
+        # full stamp here, beside the other stamps this table prints, rather
+        # than the date the one-line stats summary carries.
+        lines.append(f"firing log since {since}")
     if log.get("state") == "unreadable":
         # Beside the manifest header, and for the same reason: the liveness
         # cells below are blank because daimon could not read the log, not
@@ -1454,7 +1460,10 @@ def checks_table_lines(payload: dict) -> list:
         if row["fired"] is not None:
             live = f"last fired {row['last_fired']}" if row["fired"] \
                 else "never fired"
-            counts = (f" · lifetime {row['clean']} clean, "
+            # No `lifetime` word: the header names the window every count
+            # in this table covers, and repeating a claim the capped log
+            # cannot support on each row would undo it (#955).
+            counts = (f" · {row['clean']} clean, "
                       f"{row['violation']} violation, "
                       f"{row['unresolved']} unresolved"
                       if row["fired"] else "")
@@ -1619,13 +1628,18 @@ def _receipts_line(r: dict) -> str:
 def _checks_line(c: dict) -> str:
     """#943 slice 5: the one armed-check status line, shared by the plain and
     rich renderers, in the three states constraint 2 needed told apart —
-    nothing armed, armed but never fired, and armed with lifetime counts.
+    nothing armed, armed but never fired, and armed with counts over the
+    window the capped log still holds.
 
     Aggregated across hosts because the CLI has no notion of which host it is
     on; `daimon ruling checks` is where the per-host split lives. `denied` is
     its own number: a row proves a check RAN, and only a deny closes the gap
     between running and being honored. Plain wording only, no court
-    vocabulary."""
+    vocabulary.
+
+    The counts were called lifetime until #955 capped the log. They are the
+    retained window's now, and the line names it: a number a reader takes for
+    a machine's whole history is worse than one that says what it covers."""
     if not c.get("armed"):
         # What is armed is a LEDGER fact and no log state can change it.
         return "checks: none armed"
@@ -1635,7 +1649,14 @@ def _checks_line(c: dict) -> str:
         return f"checks: {c['armed']} armed, firing log unreadable"
     if not c.get("fired"):
         return f"checks: {c['armed']} armed, never fired"
-    return (f"checks (lifetime): {c['fired']} fired, {c['clean']} clean, "
+    # #955: the log is capped, so these are counts over a RETAINED WINDOW and
+    # the line says where the window starts. The date alone, not the stamp:
+    # this is a one-line summary and the day is the resolution a reader of it
+    # acts on. A fold that saw no stamped row has no window to name and says
+    # nothing rather than trailing an empty `since`.
+    since = str(c.get("window_since") or "")[:10]
+    window = f" (since {since})" if since else ""
+    return (f"checks{window}: {c['fired']} fired, {c['clean']} clean, "
             f"{c['violation']} violation, {c['unresolved']} unresolved, "
             f"{c['denied']} denied")
 
