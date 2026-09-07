@@ -1,6 +1,7 @@
 # Agent hook adapters
 
-> Setting up daimon for your agent? See [docs/hosts/](../docs/hosts/) for
+> Setting up daimon for your agent? See
+> [the host setup guides](https://daily-nerd.github.io/daimon/docs/hosts/) for
 > per-host install and setup guides. This file is contributor-facing
 > reference for the adapter internals.
 
