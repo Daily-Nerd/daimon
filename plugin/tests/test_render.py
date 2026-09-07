@@ -1820,3 +1820,72 @@ def test_rescue_gate_silent_with_no_attempts_or_healthy_rate():
     assert not any("rescue succeeded" in ln
                    for ln in render._capture_window_lines(
                        _window(fallback_attempts=2, fallback_serializes=1)))
+
+
+# ---- #944: a gate reports the margin by which it barely passes -------------
+# A gate that says only "silent" hides how close it came, so a partial revert
+# that slips under it reads identically to real headroom. Both directions are
+# reported: the distance to the line when silent, and the distance past it
+# when it fires.
+
+
+def test_capture_gate_reports_its_margin_when_it_stays_silent():
+    lines = render._capture_window_lines(_window(error_rate_pct=8.7))
+    assert any("capture errors 8.7% against the 10% gate, margin 1.3pp" in ln
+               for ln in lines)
+
+
+def test_rescue_gate_reports_its_margin_when_it_stays_silent():
+    lines = render._capture_window_lines(
+        _window(fallback_attempts=10, fallback_serializes=6))
+    assert any("rescue 6 of 10 attempts against the 50% floor, margin 10pp"
+               in ln for ln in lines)
+
+
+def test_capture_gate_reports_how_far_over_it_is_when_it_fires():
+    lines = render._capture_window_lines(_window(error_rate_pct=12.1))
+    assert any("exceeds the 10% gate, over by 2.1pp" in ln for ln in lines)
+
+
+def test_rescue_gate_reports_how_far_short_it_is_when_it_fires():
+    """The rescue gate is a FLOOR: a rate below it fires. "over by" reads as
+    an excess of the thing being measured, which is backwards on this one."""
+    lines = render._capture_window_lines(
+        _window(fallback_attempts=3, fallback_serializes=1))
+    assert any("recorded on #742, short by 16.7pp" in ln for ln in lines)
+    # Scoped to the rescue line: this fixture's error rate trips the capture
+    # CEILING at the same time, and that one is correctly still "over by".
+    rescue = [ln for ln in lines if "rescue succeeded" in ln]
+    assert rescue and not any("over by" in ln for ln in rescue)
+
+
+def test_a_fired_gate_never_displays_a_zero_distance():
+    """2499 rescues of 5000 attempts is 49.98%, which fires the 50% floor and
+    rounds to 50.0 at one decimal. "short by 0pp" reads as a gate that did not
+    fire at all, so the distance carries enough precision to stay non-zero."""
+    lines = render._capture_window_lines(
+        _window(fallback_attempts=5000, fallback_serializes=2499))
+    assert any("short by 0.02pp" in ln for ln in lines)
+    assert not any("short by 0pp" in ln for ln in lines)
+
+
+def test_a_gate_with_nothing_to_judge_reports_no_margin():
+    """"Not measured" and "exactly on the line" are different facts. A window
+    with no capture attempts and no rescue attempts judged neither gate, so
+    neither may report a margin of any size."""
+    lines = render._capture_window_lines(
+        _window(error_rate_pct=None, fallback_attempts=0))
+    assert not any("against the" in ln for ln in lines)
+
+
+def test_the_margin_follows_the_constant_not_a_typed_literal(monkeypatch):
+    """The threshold in the wording is the constant the gate is judged
+    against. Pinned as a pair: if the line carried a typed literal it would
+    still read 10% here, and the margin would still say 1.3pp, while the gate
+    itself had moved."""
+    from daimon_briefing import ledger
+    assert any("against the 10% gate, margin 1.3pp" in ln
+               for ln in render._capture_window_lines(_window(error_rate_pct=8.7)))
+    monkeypatch.setattr(ledger, "_CAPTURE_ERROR_GATE_PCT", 20)
+    assert any("against the 20% gate, margin 11.3pp" in ln
+               for ln in render._capture_window_lines(_window(error_rate_pct=8.7)))

@@ -903,9 +903,12 @@ def test_usage_tag_distinguishes_the_three_outcomes(tmp_checkpoint_dir):
 
 def test_audit_quotes_moved_and_alias_deprecated(tmp_checkpoint_dir, capsys):
     _write("S1", KEEPER)
-    assert cli.main(["audit", "quotes", "--project", PROJECT]) == 0
+    # rc 3 both ways (#944): this fixture has no checkable quote. What is
+    # under test here is the move and the alias, and both spellings must
+    # reach the same command and report the same thing about it.
+    assert cli.main(["audit", "quotes", "--project", PROJECT]) == 3
     capsys.readouterr()
-    assert cli.main(["audit-quotes", "--project", PROJECT]) == 0
+    assert cli.main(["audit-quotes", "--project", PROJECT]) == 3
     assert "deprecated" in capsys.readouterr().out.lower()
 
 

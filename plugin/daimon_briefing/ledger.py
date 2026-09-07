@@ -571,6 +571,49 @@ _CAPTURE_ERROR_GATE_PCT = 10
 _RESCUE_GATE_PCT = 50
 
 
+def capture_gates(w: dict | None) -> list[dict]:
+    """#944: what each stats gate measured, against what, and by how much.
+
+    A gate that reports only "fired" or "silent" hides how close it came, so a
+    partial revert that slips just under it reads exactly like real headroom.
+    One entry per gate, `margin` signed so POSITIVE is headroom: the distance
+    the measured value would have to travel to trip the gate, negative once it
+    has.
+
+    A gate with nothing to judge is ABSENT rather than reported at zero — no
+    in-window capture attempts, no rescue attempts. "Not measured" and
+    "exactly on the line" are different facts and a reader has to be able to
+    tell them apart.
+
+    `fired` is the gate's own comparison, not a re-derivation from the rounded
+    value, so the rounding here can never disagree with the line the renderer
+    decides to print. #452's `_AGE_GATE_DAYS` is deliberately not a member: it
+    judges one recall row at a time and renders no stats line, so it has no
+    margin surface.
+    """
+    if not w:
+        return []
+    # Two decimals, not one: 2499 rescues of 5000 attempts is 49.98%, which
+    # trips the 50% floor and rounds to a margin of 0.0 at one decimal. A
+    # fired gate reporting zero distance reads as a gate that never fired.
+    gates: list[dict] = []
+    rate = w.get("error_rate_pct")
+    if rate is not None:
+        gates.append({"name": "capture_error_rate", "value": rate,
+                      "threshold": _CAPTURE_ERROR_GATE_PCT,
+                      "margin": round(_CAPTURE_ERROR_GATE_PCT - rate, 2),
+                      "fired": rate > _CAPTURE_ERROR_GATE_PCT})
+    attempts = w.get("fallback_attempts", 0)
+    rescued = w.get("fallback_serializes", 0)
+    if attempts:
+        pct = round(rescued * 100 / attempts, 2)
+        gates.append({"name": "rescue_rate", "value": pct,
+                      "threshold": _RESCUE_GATE_PCT,
+                      "margin": round(pct - _RESCUE_GATE_PCT, 2),
+                      "fired": rescued * 100 < attempts * _RESCUE_GATE_PCT})
+    return gates
+
+
 def _stats_capture(now=None) -> dict:
     """serialize.log -> aggregate counters. Tallies EVERY line (scar #9: no
     last-of-kind collapse — a buried failure still counts), except an
@@ -621,7 +664,12 @@ def _stats_capture(now=None) -> dict:
                  "hosts": {}, "max_serialize_seconds": 0,
                  "total_serialize_seconds": 0,
                  "speaker_lines": 0,
-                 "window": win}
+                 "window": win,
+                 # #944, appended at the TAIL: `stats --json` key order is the
+                 # same contract `status --json` documents. Declared here so
+                 # the no-log early return below carries the key too, filled
+                 # in once the window is folded.
+                 "gates": []}
     try:
         text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
@@ -700,6 +748,7 @@ def _stats_capture(now=None) -> dict:
     attempts = win["success"] + win["errors"]
     if attempts:
         win["error_rate_pct"] = round(win["errors"] * 100 / attempts, 1)
+    out["gates"] = capture_gates(win)
     return out
 
 

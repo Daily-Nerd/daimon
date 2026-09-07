@@ -6877,6 +6877,87 @@ def test_stats_json_includes_capture_window(tmp_checkpoint_dir, tmp_log_dir,
         "fallback_serializes", "starved", "error_rate_pct"}
 
 
+# ---- #944: the margin travels with the result, on every surface ------------
+
+
+def test_stats_json_carries_the_gate_margins(tmp_checkpoint_dir, tmp_log_dir,
+                                             sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+        "error: boom (transcript: /t/B.jsonl) after 3s",
+    ])
+    assert cli.main(["stats", "--json"]) == 0
+    cap = json.loads(capsys.readouterr().out)["capture"]
+    # Appended at the TAIL: `stats --json` key order is the same contract
+    # `status --json` documents.
+    assert list(cap)[-1] == "gates"
+    assert cap["gates"] == [{"name": "capture_error_rate", "value": 50.0,
+                             "threshold": 10, "margin": -40.0, "fired": True}]
+
+
+def test_stats_json_omits_a_gate_that_judged_nothing(tmp_checkpoint_dir,
+                                                     tmp_log_dir, capsys):
+    """No serialize log at all: neither gate had an input. Reporting them at
+    margin 0 would say every gate is sitting exactly on its line."""
+    assert cli.main(["stats", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["capture"]["gates"] == []
+
+
+@pytest.mark.parametrize("window", [None, {}])
+def test_capture_gates_judges_nothing_without_a_window(window):
+    """`capture_gates` is reachable with no window at all: a fold that failed
+    to read the log, or a caller holding a capture dict from an older shape.
+    No window is no measurement, so there is nothing to report a margin about
+    and every gate is absent rather than sitting at zero."""
+    from daimon_briefing import ledger
+    assert ledger.capture_gates(window) == []
+
+
+def test_stats_plain_shows_the_margin_when_the_gate_stays_silent(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys,
+        monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PLAIN", "1")
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+        f"{_iso(now - timedelta(days=1))} WARNING daimon_briefing.llm: "
+        "llm.fallback backend=command (litellm failed)",
+        "wrote checkpoint: /c/B.json (took 9s) [fallback backend]",
+    ])
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "capture errors 0.0% against the 10% gate, margin 10pp" in out
+    assert "rescue 1 of 1 attempts against the 50% floor, margin 50pp" in out
+
+
+def test_stats_rich_shows_the_margin_when_the_gate_stays_silent(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys,
+        monkeypatch):
+    pytest.importorskip("rich")
+    from daimon_briefing import render, store
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    store.write_checkpoint("S1", sample_checkpoint)
+    now = datetime.now(timezone.utc)
+    _write_log(tmp_log_dir, [
+        f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
+        "(project: /p/A)",
+        "wrote checkpoint: /c/A.json (took 10s)",
+    ])
+    assert cli.main(["stats"]) == 0
+    out = capsys.readouterr().out
+    assert "capture errors 0.0% against the 10% gate, margin 10pp" in out
+
+
 def test_stats_plain_renders_capture_window_line(tmp_checkpoint_dir,
                                                  tmp_log_dir,
                                                  sample_checkpoint, capsys,
