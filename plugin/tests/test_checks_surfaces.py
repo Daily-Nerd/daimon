@@ -189,6 +189,90 @@ def test_another_projects_ruling_id_never_reaches_the_summary(tmp_path):
     assert summary.totals["violation"] == 0
 
 
+# ---- the window the counts cover (#955) -----------------------------------
+
+
+def test_the_summary_names_the_oldest_row_it_can_still_see(tmp_path):
+    """#955 capped the log, so a count over it is a count over a WINDOW. The
+    surfaces name that window, and this is where they read it from."""
+    ruling_id = _arm(tmp_path)
+    _write_log(
+        _row(ruling_id=ruling_id, outcome="clean", ts="2026-09-04T08:00:00Z"),
+        _row(ruling_id=ruling_id, outcome="clean", ts="2026-09-06T12:00:00Z"),
+    )
+    assert checks.firing_summary(str(tmp_path)).window_since == \
+        "2026-09-04T08:00:00Z"
+
+
+def test_the_window_is_the_files_oldest_row_not_this_projects(tmp_path):
+    """The window is a property of the FILE. Rows this project never gets to
+    count still hold the head of the log, and a window starting at this
+    project's own first row would claim coverage the file does not have.
+
+    The stamp is the only thing taken from a foreign row: no id, no host, no
+    count crosses over (scar 0055)."""
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    mine = _arm(tmp_path)
+    theirs = _arm(other, subject="their posts")
+    _write_log(
+        _row(ruling_id=theirs, outcome="violation", ts="2026-09-01T00:00:00Z"),
+        _row(cause="no-match", ts="2026-09-02T00:00:00Z"),
+        _row(ruling_id=mine, outcome="clean", ts="2026-09-05T00:00:00Z"),
+    )
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.window_since == "2026-09-01T00:00:00Z"
+    assert list(summary.rulings) == [(mine, CC)]
+
+
+def test_the_window_moves_forward_when_the_log_is_trimmed(tmp_path):
+    """The point of the field. After a trim the dropped rows are gone and
+    the counts start where the kept tail starts."""
+    ruling_id = _arm(tmp_path)
+    path = _log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for i in range(3000):
+            handle.write(_row(ruling_id=ruling_id, outcome="clean",
+                              ts="2026-09-06T%02d:00:00Z" % (i % 24)) + "\n")
+    checks_runtime.log_firing({"ruling_id": ruling_id, "outcome": "clean",
+                               "host": CC, "ts": "2026-09-07T00:00:00Z"})
+    assert path.stat().st_size <= checks_runtime.FIRING_LOG_KEEP_BYTES
+    kept = [json.loads(line) for line in
+            path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.window_since == min(row["ts"] for row in kept)
+    assert summary.totals["fired"] == len(kept)
+
+
+def test_an_absent_log_has_no_window(tmp_path):
+    _arm(tmp_path)
+    assert checks.firing_summary(str(tmp_path)).window_since == ""
+
+
+def test_an_unreadable_log_has_no_window(tmp_path):
+    """Not a window of zero length: this read cannot say when the retained
+    rows start, and an empty string is how every other field here says so."""
+    _arm(tmp_path)
+    path = _log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.log_state == "unreadable"
+    assert summary.window_since == ""
+
+
+def test_a_row_with_no_stamp_never_becomes_the_window(tmp_path):
+    """An empty `ts` sorts before every real stamp, so a naive minimum would
+    report a window starting at nothing at all."""
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean", ts=""),
+               _row(ruling_id=ruling_id, outcome="clean",
+                    ts="2026-09-06T10:00:00Z"))
+    assert checks.firing_summary(str(tmp_path)).window_since == \
+        "2026-09-06T10:00:00Z"
+
+
 def test_a_malformed_line_never_sinks_the_read(tmp_path):
     ruling_id = _arm(tmp_path)
     _write_log("not json", "[]", "null", "3", "",
