@@ -120,8 +120,10 @@ KNOWN_BYPASSES = frozenset({
     ("bucket migrate", "checkpoints/migrations.jsonl"),
     ("bucket migrate", "checkpoints/{slug}/events.jsonl"),
     ("bucket migrate", "checkpoints/{slug}/refutations.jsonl"),
-    ("bucket migrate", "checkpoints/{slug}/latest.json"),
-    ("bucket migrate", "checkpoints/{slug}/prev-1.json"),
+    # One admitted legacy pointer, written into the first free slot. The
+    # target's own pointers are never rewritten (#963 review), so no
+    # latest.json / prev-1 entry belongs here.
+    ("bucket migrate", "checkpoints/{slug}/prev-3.json"),
 })
 
 # Commands that genuinely cannot be driven headless would be named here with
@@ -444,16 +446,21 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
                 fh.write('{"event_id": "e-migrated"}\n')
         # A REAL pointer copy, and the lock sidecar every real bucket carries.
         # The pointer is a copy of one the store actually wrote in this drive,
-        # not a hand-built dict: a real pointer payload has no `session_id`
-        # (#963 review), and inventing one made the audited merge exercise a
-        # shape the store never produces. The lock is what made the merge
-        # non-idempotent, so the second run below is only a real idempotence
-        # check with it present.
+        # never a hand-built dict: an invented payload is how the identity
+        # rule was first written against a shape the store never produces
+        # (#963 review). The lock is what made the merge non-idempotent, so
+        # the second run below is only a real idempotence check with it
+        # present.
         live = config.checkpoint_dir() / (buckets.target_slug(str(link)) or "")
         with open(live / "latest.json", encoding="utf-8") as fh:
             pointer = json.loads(fh.read())
         pointer["created"] = "2020-01-01T00:00:00Z"
         pointer["project_slug"] = legacy.name
+        # A DISTINCT session, so the merge admits it into a free slot and the
+        # audit sees the pointer write. A copy of a session the target already
+        # holds is absorbed without writing anything, which would leave this
+        # recipe auditing no pointer path at all.
+        pointer["session_id"] = "S-legacy-only"
         with open(legacy / "latest.json", "w", encoding="utf-8") as fh:
             fh.write(json.dumps(pointer))
         with open(legacy / ".pointer.lock", "a", encoding="utf-8"):

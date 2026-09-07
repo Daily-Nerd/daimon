@@ -185,16 +185,20 @@ SURFACES: tuple[Surface, ...] = (
             True, "rewrite", "forget"),
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
-    #    pointers, leftovers, unreadable, dropped_pointers, complete, by}.
+    #    pointers, leftovers, unreadable, stranded_pointers,
+    #    target_unreadable, complete, observed, by}.
     #    Global rather than per-bucket on purpose — it names a bucket that no
     #    longer exists, so it cannot live inside one.
     #
     #    `complete` is the one field with reach beyond reporting: only a
     #    complete row mints an alias, because an alias claims the old
     #    bucket's history now lives here and a partial move has not made that
-    #    true. `unreadable` and `dropped_pointers` name what stayed behind
-    #    (a ledger that would not decode, a pointer that did not fit
-    #    DAIMON_CHECKPOINT_HISTORY); both are file names or session ids.
+    #    true. `unreadable`, `target_unreadable` and `stranded_pointers` name
+    #    what stayed behind (a ledger that would not decode, a target pointer
+    #    that could not be parsed, a pointer with no free slot under
+    #    DAIMON_CHECKPOINT_HISTORY); all are file names or session ids.
+    #    `observed` is free text for a state the fields cannot carry, and
+    #    today holds one value: a legacy bucket a person cleared themselves.
     #
     #    exempt-no-plaintext, and the guarantee is `buckets._record`, which
     #    builds the whole row: two slugs the caller's own path already
