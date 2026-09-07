@@ -1532,11 +1532,30 @@ def render_stats(data: dict) -> None:
         _plain_stats(data)
 
 
+def _pp(value: float) -> str:
+    """A margin in percentage points, without a trailing `.0` on the whole
+    numbers that dominate these lines."""
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
 def _capture_window_lines(c: dict) -> list[str]:
     """#364: the rolling-window capture-rate line(s), shared verbatim by the
-    plain and rich stats renderers. Second line only when the rolling error
-    rate trips the reopen gate recorded on #364."""
-    from .ledger import _CAPTURE_ERROR_GATE_PCT, _RESCUE_GATE_PCT
+    plain and rich stats renderers."""
+    return [text for text, _ in _capture_window_entries(c)]
+
+
+def _capture_window_entries(c: dict) -> list[tuple[str, bool]]:
+    """The window lines paired with whether each one is a gate that FIRED, so
+    the rich renderer can colour a warning without colouring a margin.
+
+    #944: an evaluated gate always says something. Silent, it names the
+    measured value against its threshold and the headroom between them; fired,
+    it keeps the warning wording every existing reader knows and gains the
+    distance it is over by. A gate with nothing to judge stays absent — see
+    ledger.capture_gates for why zero is not an honest stand-in for unmeasured.
+    """
+    from .ledger import (_CAPTURE_ERROR_GATE_PCT, _RESCUE_GATE_PCT,
+                         capture_gates)
     w = c.get("window")
     if not w:
         return []
@@ -1545,21 +1564,39 @@ def _capture_window_lines(c: dict) -> list[str]:
     # line shape every existing reader knows.
     starved = w.get("starved", 0)
     starved_part = f"starved {starved}  " if starved else ""
-    lines = [f"last {w['days']}d: serialized {w['success']}  "
-             f"errors {w['errors']}  rescued {w['fallback_serializes']}  "
-             f"{starved_part}"
-             f"error rate: {'n/a' if rate is None else f'{rate}%'}"]
-    if rate is not None and rate > _CAPTURE_ERROR_GATE_PCT:
-        lines.append(f"⚠ capture error rate {rate}% (last {w['days']}d) "
-                     f"exceeds the {_CAPTURE_ERROR_GATE_PCT}% gate — see "
-                     "`daimon status` for failing serializes")
-    attempts = w.get("fallback_attempts", 0)
+    out: list[tuple[str, bool]] = [
+        (f"last {w['days']}d: serialized {w['success']}  "
+         f"errors {w['errors']}  rescued {w['fallback_serializes']}  "
+         f"{starved_part}"
+         f"error rate: {'n/a' if rate is None else f'{rate}%'}", False)]
     rescued = w.get("fallback_serializes", 0)
-    if attempts and rescued * 100 < attempts * _RESCUE_GATE_PCT:
-        lines.append(f"⚠ rescue succeeded {rescued} of {attempts} attempts "
-                     f"(last {w['days']}d) — below the {_RESCUE_GATE_PCT}% "
-                     "gate recorded on #742")
-    return lines
+    attempts = w.get("fallback_attempts", 0)
+    for g in capture_gates(w):
+        # abs, not negation: the label already carries the direction, and a
+        # margin that rounds to zero on a gate that fired would print "-0pp".
+        over = _pp(abs(g["margin"]))
+        if g["name"] == "capture_error_rate" and g["fired"]:
+            out.append((f"⚠ capture error rate {rate}% (last {w['days']}d) "
+                        f"exceeds the {_CAPTURE_ERROR_GATE_PCT}% gate, over "
+                        f"by {over}pp — see `daimon status` for failing "
+                        "serializes", True))
+        elif g["name"] == "capture_error_rate":
+            # NOTE: "capture errors", not "capture error rate" — the firing
+            # line's marker must not appear on a line reporting silence, or
+            # every "must stay silent" control in test_gate_controls.py passes
+            # against a gate wired on.
+            out.append((f"capture errors {rate}% against the "
+                        f"{_CAPTURE_ERROR_GATE_PCT}% gate, margin "
+                        f"{_pp(g['margin'])}pp", False))
+        elif g["fired"]:
+            out.append((f"⚠ rescue succeeded {rescued} of {attempts} attempts "
+                        f"(last {w['days']}d) — below the {_RESCUE_GATE_PCT}% "
+                        f"gate recorded on #742, over by {over}pp", True))
+        else:
+            out.append((f"rescue {rescued} of {attempts} attempts against the "
+                        f"{_RESCUE_GATE_PCT}% floor, margin "
+                        f"{_pp(g['margin'])}pp", False))
+    return out
 
 
 # #475 part 2: `fallback: attempted 0, succeeded 0` reads identically whether
@@ -1831,10 +1868,10 @@ def _rich_stats(data: dict) -> None:
     capture_table.add_row("fallback", f"attempted {fallback_attempts}, "
                                       f"succeeded {c['fallback_serializes']}"
                                       + (f"  ({suffix})" if suffix else ""))
-    window_lines = _capture_window_lines(c)
-    if window_lines:
+    window_entries = _capture_window_entries(c)
+    if window_entries:
         # first line is `last Nd: <values>` — split it into the two columns
-        label, _, values = window_lines[0].partition(": ")
+        label, _, values = window_entries[0][0].partition(": ")
         capture_table.add_row(label, values)
     if c["hosts"]:
         capture_table.add_row("spawns by host", ", ".join(
@@ -1850,8 +1887,11 @@ def _rich_stats(data: dict) -> None:
         label, _, values = speaker_line.partition(": ")
         capture_table.add_row(label, values)
     console.print(capture_table)
-    for warning in window_lines[1:]:  # the #364 gate warning, when tripped
-        console.print(f"[yellow]{warning}[/yellow]")
+    # The #364/#742 gate warnings when tripped, and #944's margin line when
+    # not. Only a warning is coloured: a margin printed in yellow reads as a
+    # problem, which is the opposite of what it says.
+    for text, fired in window_entries[1:]:
+        console.print(f"[yellow]{text}[/yellow]" if fired else text)
 
     store_table = Table(title="store", title_justify="left",
                         show_header=True, header_style="bold")

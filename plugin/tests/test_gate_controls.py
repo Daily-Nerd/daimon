@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, render
+from daimon_briefing import cli, ledger, render
 
 _SRC = Path(__file__).parent.parent / "daimon_briefing"
 
@@ -143,6 +143,42 @@ def test_each_gate_actually_fires_on_its_firing_case(name):
 def test_each_gate_actually_stays_silent_on_its_silent_case(name):
     probe, _, silent = CONTROLS[name]
     assert not probe(silent), f"{name} always fires; a gate wired on"
+
+
+# The stats gates only, each with a window that leaves it EVALUATED and
+# silent, plus the noun its margin line uses for the threshold. Mapped to the
+# ledger constant so the wording is checked against the number the gate is
+# actually judged against.
+STATS_GATE_MARGINS: dict = {
+    "_CAPTURE_ERROR_GATE_PCT": (
+        "gate", _window(errors=0, success=10, error_rate_pct=0.0)),
+    "_RESCUE_GATE_PCT": (
+        "floor", _window(fallback_attempts=2, fallback_serializes=2)),
+}
+
+
+def test_every_margin_entry_is_a_registered_gate():
+    """A margin for something that carries no disagreeing control would report
+    fragility about a gate nobody has proven is alive."""
+    assert set(STATS_GATE_MARGINS) <= set(CONTROLS)
+
+
+@pytest.mark.parametrize("name", sorted(STATS_GATE_MARGINS))
+def test_each_margin_line_names_the_constant_it_is_judged_against(
+        name, monkeypatch):
+    """#944's companion convention, with the same teeth as the rest of the
+    file. A threshold typed into the wording as a literal reads correct today
+    and lies the day the constant moves, so the line is proven to FOLLOW the
+    constant: same window, different constant, different number."""
+    noun, silent = STATS_GATE_MARGINS[name]
+    lines = render._capture_window_lines({"window": silent})
+    assert any(f"against the {getattr(ledger, name)}% {noun}" in ln
+               for ln in lines), f"{name}'s margin line does not name it"
+    monkeypatch.setattr(ledger, name, getattr(ledger, name) + 7)
+    moved = render._capture_window_lines({"window": silent})
+    assert any(f"against the {getattr(ledger, name)}% {noun}" in ln
+               for ln in moved), \
+        f"{name}'s margin line carries a typed literal, not the constant"
 
 
 @pytest.mark.parametrize("name", sorted(CONTROLS))
