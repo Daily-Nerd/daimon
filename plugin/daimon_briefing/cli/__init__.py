@@ -1112,6 +1112,16 @@ def _raw_project(arg) -> str:
     return arg or config.project_dir() or os.getcwd()
 
 
+def _migrate_command(project_path) -> str:
+    """The runnable form of "migrate this bucket", for whichever mode the
+    home is in. Under DAIMON_TENANT_SCOPED an explicit --project is refused at
+    rc 2, so printing it hands the reader a command that cannot work."""
+    if config.tenant_scoped():
+        return ("run daimon bucket migrate with DAIMON_PROJECT_DIR set to "
+                f"{project_path}")
+    return f"run daimon bucket migrate --project {project_path}"
+
+
 def _cmd_bucket_migrate(args) -> int:
     """Move this project's pre-0.42.0 bucket into the one daimon reads (#963).
 
@@ -1186,14 +1196,6 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
     if mode == "absent":
         return [f"nothing to migrate: no legacy bucket "
                 f"{record['from_slug']} for {raw}"]
-    moved_nothing = (not any((record["ledgers"] or {}).values())
-                     and not record["pointers"])
-    if moved_nothing and not dry_run and record["leftovers"]:
-        # Nothing was moved and nothing was recorded, so the report is about
-        # the one thing that changes the outcome: what a person has to clear.
-        return [f"nothing moved: {record['from_slug']} still holds "
-                f"{', '.join(record['leftovers'])}",
-                "  remove or fix by hand, then run again"]
     verb = "would move" if dry_run else "moved"
     lines = [f"{verb} {record['from_slug']} into {record['to_slug']} "
              f"({mode})"]
@@ -1201,29 +1203,39 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
         appended = "would append" if dry_run else "appended"
         lines.append(f"  {name}: {appended} {count} line(s)")
     if record["pointers"]:
-        kept = "would keep" if dry_run else "kept"
-        lines.append(f"  pointers: {kept} {record['pointers']} in the chain")
-    dropped = record.get("dropped_pointers") or []
-    if dropped:
+        landed = "would move" if dry_run else "moved"
+        lines.append(f"  pointers: {landed} {record['pointers']} into the "
+                     f"chain")
+    # Every remaining line names a CONCRETE remedy for one thing. The earlier
+    # wording said "remove or fix by hand" for all of them, which invited
+    # deleting a legacy bucket outright and left a migration nothing could
+    # ever finish.
+    stranded = record.get("stranded_pointers") or []
+    if stranded:
+        # Every stranded pointer needs exactly one more slot than the chain
+        # currently has. Deriving it from the record's own counts understates
+        # it: the slots the live bucket already occupies are not in there.
+        need = config.checkpoint_history() + len(stranded)
         lines.append(
-            f"  {len(dropped)} pointer(s) did not fit "
-            f"DAIMON_CHECKPOINT_HISTORY and were kept where they are: "
-            f"{', '.join(dropped)}")
+            f"  {len(stranded)} pointer(s) found no free slot and are still "
+            f"in {record['from_slug']}: {', '.join(stranded)}")
+        lines.append(f"  raise DAIMON_CHECKPOINT_HISTORY to at least {need} "
+                     f"and run again")
+    for name in record.get("target_unreadable") or []:
+        lines.append(f"  {name} in {record['to_slug']} could not be read, so "
+                     f"no pointer was moved: fix or move that file, then run "
+                     f"again")
     unreadable = record.get("unreadable") or []
     for name in unreadable:
-        lines.append(f"  left in place, could not be read: {name}")
+        lines.append(f"  {name} could not be read, so it was not moved: fix "
+                     f"or move that file, then run again")
     for name in record["leftovers"]:
         if name in unreadable:
-            continue  # already named above, with its reason
-        if dropped and store._POINTER_RE.match(name):
-            # A pointer that did not fit the chain: named on the dropped line
-            # above, by session. Repeating the filename here would say daimon
-            # does not know what a pointer file is.
-            continue
-        lines.append(f"  left in place, not understood: {name}")
-    if not record.get("complete", True):
-        lines.append(f"  partial: {record['from_slug']} still exists and is "
-                     f"not read; remove or fix by hand, then run again")
+            continue  # already named above, with its remedy
+        if stranded and store._POINTER_RE.match(name):
+            continue  # named on the stranded line above, by session
+        lines.append(f"  {name} is not written by daimon and was left alone: "
+                     f"move it out of {record['from_slug']} to finish")
     return lines
 
 
@@ -1963,21 +1975,11 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
     # that reads its own filesystem cannot be tested at the verdict level.
     if legacy:
         legacy_slug, legacy_path, holds = legacy
-        if holds:
-            # The bucket survived a merge, so pointing at the verb again would
-            # print the same thing again. What moves this forward is a person
-            # clearing what the verb refused to touch, so name it.
-            warnings.append(
-                f"legacy: bucket {legacy_slug} was written before 0.42.0 "
-                f"from this path and is not read; it still holds "
-                f"{', '.join(holds)}, which daimon will not move or delete "
-                f"— remove or fix them by hand, then run daimon bucket "
-                f"migrate --project {legacy_path}")
-        else:
-            warnings.append(
-                f"legacy: bucket {legacy_slug} was written before 0.42.0 "
-                f"from this path and is not read; run daimon bucket migrate "
-                f"--project {legacy_path}")
+        held = (f"; it still holds {', '.join(holds)}" if holds else "")
+        warnings.append(
+            f"legacy: bucket {legacy_slug} was written before 0.42.0 from "
+            f"this path and is not read{held}; "
+            f"{_migrate_command(legacy_path)}")
     for from_slug in (incomplete or []):
         warnings.append(
             f"partial: the migration from {from_slug} did not finish, so "
@@ -3761,8 +3763,10 @@ def build_parser() -> argparse.ArgumentParser:
                     "project into the bucket this daimon reads. Affects a "
                     "project whose path carries a symlink component, or one "
                     "below a git toplevel: before 0.42.0 the library slugged "
-                    "the literal path. Safe to run twice — a project with "
-                    "nothing to move says so and changes nothing.",
+                    "the literal path. A pointer already in the current "
+                    "bucket is never removed or displaced. Safe to run twice: "
+                    "a second run over an unchanged state writes nothing new "
+                    "and returns the code matching the state it finds.",
         epilog="Examples:\n"
                "  daimon bucket migrate\n"
                "  daimon bucket migrate --project /tmp/my-repo --dry-run\n",

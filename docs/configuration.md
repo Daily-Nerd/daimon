@@ -71,19 +71,28 @@ daimon bucket migrate --project /path/to/project --dry-run
 ```
 
 The move renames the old directory when the new one does not exist yet, and
-merges otherwise: every ledger line the new bucket does not already hold is
-appended, the pointer chain is rebuilt over both buckets, and any file the
-verb does not recognize is left where it is and named in the report. It is
-safe to run twice; a project with nothing to move says so and changes
-nothing. `--dry-run` prints the same plan and writes nothing.
+merges otherwise. A merge appends every ledger line the new bucket does not
+already hold, and adds the old bucket's pointers to the new bucket's chain.
+Pointers already in the new bucket are never removed and never displaced: they
+belong to the live project. Old pointers go into whatever slots
+`DAIMON_CHECKPOINT_HISTORY` leaves free, newest first, except that an old copy
+of a session the new bucket already points at simply replaces that one slot
+when it is the newer of the two. Anything else, an old pointer with no free
+slot or a file daimon does not write, is left exactly where it is and named in
+the report with what to do about it.
 
-Exit 0 means the move finished and the old bucket is gone. Exit 1 means it
-did not: a file could not be read, a pointer did not fit
-`DAIMON_CHECKPOINT_HISTORY`, or something the verb does not recognize is still
-there. Whatever remains is named on stdout, is left exactly as it is, and keeps
-the old bucket on disk; clear it by hand and run again. A partial move does not
-count as migrated, so the old bucket's rows are not yet read as this project's
-history.
+Running it twice is safe: a second run over an unchanged state writes nothing
+new and returns the code that matches the state it finds. `--dry-run` prints
+the same plan and writes nothing.
+
+Exit 0 means the move finished and the old bucket is gone. Exit 1 means it did
+not, and stdout names each thing left with its own remedy: raise
+`DAIMON_CHECKPOINT_HISTORY` to the number it names and run again for pointers
+with no free slot; fix or move a file that could not be read; move a file
+daimon does not write out of the old bucket. A partial move does not count as
+migrated, so the old bucket's rows are not yet read as this project's history.
+If you finish the job yourself by clearing the old directory, the next run
+records that and the migration is complete.
 
 Exit 2 is a refusal. A `--project` containing a `..` component is refused
 because the old rule collapses `..` before following a symlink and the current

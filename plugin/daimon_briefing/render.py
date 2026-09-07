@@ -903,7 +903,12 @@ def _migrated_lines(ident: dict) -> list:
     for entry in ident.get("migrated") or []:
         stamp = str(entry.get("ts") or "")[:10]
         on = f" on {stamp}" if stamp else ""
-        out.append(f"migrated: from {entry.get('slug')}{on}")
+        # #963: a migration somebody finished themselves is still a migration,
+        # and the row that closed it says so. A stored field with no renderer
+        # is a lie, so the qualifier is shown rather than folded away.
+        note = (" (finished outside daimon)"
+                if entry.get("observed") else "")
+        out.append(f"migrated: from {entry.get('slug')}{on}{note}")
     return out
 
 

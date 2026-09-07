@@ -258,8 +258,8 @@ def _cmd_ruling_list(args) -> int:
         # decision), so a parser sees exactly what it saw before.
         raw = _cli._raw_project(args.project)
         legacy = buckets.legacy_bucket(raw)
-        hint = (f"; a legacy bucket {legacy} exists, run daimon bucket "
-                f"migrate --project {raw}") if legacy else ""
+        hint = (f"; a legacy bucket {legacy} exists, "
+                f"{_cli._migrate_command(raw)}") if legacy else ""
         print(f"no bucket for {store.project_slug(project)} yet (resolved "
               f"{project}): nothing has been written from this project{hint}",
               file=sys.stderr)

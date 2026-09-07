@@ -81,19 +81,29 @@ daimon bucket migrate --project /ruta/al/proyecto --dry-run
 ```
 
 El movimiento renombra el directorio viejo cuando el nuevo todavía no existe, y
-en caso contrario fusiona: agrega cada línea de ledger que el bucket nuevo no
-tenga ya, reconstruye la cadena de punteros sobre los dos buckets, y deja donde
-está cualquier archivo que el verbo no reconozca, nombrándolo en el reporte. Se
-puede correr dos veces sin problema; un proyecto que no tiene nada para mover lo
-dice y no cambia nada. `--dry-run` imprime el mismo plan y no escribe nada.
+en caso contrario fusiona. Una fusión agrega cada línea de ledger que el bucket
+nuevo no tenga ya, y suma los punteros del bucket viejo a la cadena del nuevo.
+Los punteros que ya están en el bucket nuevo nunca se borran ni se desplazan:
+son del proyecto vivo. Los punteros viejos entran en los espacios que deje
+libres `DAIMON_CHECKPOINT_HISTORY`, del más nuevo al más viejo, salvo que una
+copia vieja de una sesión a la que el bucket nuevo ya apunta reemplaza ese
+único espacio cuando es la más nueva de las dos. Todo lo demás, un puntero
+viejo sin espacio libre o un archivo que daimon no escribe, queda exactamente
+donde está y se nombra en el reporte junto con qué hacer al respecto.
+
+Correrlo dos veces es seguro: una segunda corrida sobre un estado sin cambios no
+escribe nada nuevo y devuelve el código que corresponde al estado que encuentra.
+`--dry-run` imprime el mismo plan y no escribe nada.
 
 La salida 0 significa que el movimiento terminó y el bucket viejo ya no está.
-La salida 1 significa que no: un archivo no se pudo leer, un puntero no entró en
-`DAIMON_CHECKPOINT_HISTORY`, o quedó algo que el verbo no reconoce. Lo que queda
-se nombra en stdout, se deja tal cual y mantiene el bucket viejo en disco;
-limpialo a mano y volvé a correr. Un movimiento parcial no cuenta como migrado,
-así que las filas del bucket viejo todavía no se leen como historia de este
-proyecto.
+La salida 1 significa que no, y stdout nombra cada cosa que quedó con su propio
+remedio: subí `DAIMON_CHECKPOINT_HISTORY` al número que indica y volvé a correr
+para los punteros sin espacio libre; arreglá o movés un archivo que no se pudo
+leer; sacá del bucket viejo un archivo que daimon no escribe. Un movimiento
+parcial no cuenta como migrado, así que las filas del bucket viejo todavía no se
+leen como historia de este proyecto. Si terminás el trabajo por tu cuenta
+limpiando el directorio viejo, la siguiente corrida lo registra y la migración
+queda completa.
 
 La salida 2 es un rechazo. Un `--project` con un componente `..` se rechaza
 porque la regla vieja colapsa el `..` antes de seguir un symlink y la actual
