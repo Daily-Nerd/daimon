@@ -51,6 +51,51 @@ medido, no configuración de usuario.
 | `DAIMON_CHECKPOINT_HISTORY` | `3` | Cuántos punteros de checkpoint retener por directorio (`latest.json` más `prev-1` … `prev-(N-1)`), para que una serialización fallida pueda caer a un puntero previo. Mínimo 1 (solo latest). |
 | `DAIMON_GC_PIN_IMPORTANCE` | `9` | Umbral de importancia de ítem que fija un archivo de checkpoint contra el GC: un archivo cuya importancia máxima de ítem alcanza este valor sobrevive fuera de la ventana de los N más nuevos. `0` desactiva el fijado (ventana de recencia pura); valores sobre 10 se recortan a 10. |
 
+### Actualizar a través de la 0.42.0
+
+Antes de la 0.42.0 la biblioteca nombraba el bucket de un proyecto a partir de
+la ruta literal que recibía. Desde la 0.42.0 cada entry point resuelve la ruta
+primero: la vuelve absoluta, colapsa los symlinks y después la normaliza al
+toplevel de git. Por eso hay dos formas de ruta que ahora nombran un bucket
+distinto al de antes:
+
+- una ruta con un **symlink en cualquier parte** — en macOS eso incluye todo lo
+  que se alcanza a través de `/tmp`, y cualquier punto de montaje que sea un
+  enlace;
+- una ruta **debajo de un toplevel de git**, cuando la escritura vino por la
+  biblioteca y no por la línea de comandos.
+
+La CLI ya resolvía las dos cosas antes de la 0.42.0, así que un bucket escrito
+corriendo `daimon` en una terminal no está afectado. Un bucket escrito por un
+proceso anfitrión que llamó a la biblioteca desde una ruta así queda con el
+nombre viejo, y nada lo lee.
+
+`daimon status` lo dice. Cada vez que existe un bucket escrito con la regla
+vieja para la ruta donde estás parado, el bloque de salud trae una línea
+`legacy:` que lo nombra. Movelo una sola vez:
+
+```sh
+daimon bucket migrate                                # este proyecto
+daimon bucket migrate --project /ruta/al/proyecto
+daimon bucket migrate --project /ruta/al/proyecto --dry-run
+```
+
+El movimiento renombra el directorio viejo cuando el nuevo todavía no existe, y
+en caso contrario fusiona: agrega cada línea de ledger que el bucket nuevo no
+tenga ya, reconstruye la cadena de punteros sobre los dos buckets, y deja donde
+está cualquier archivo que el verbo no reconozca, nombrándolo en el reporte. Se
+puede correr dos veces sin problema; un proyecto que no tiene nada para mover lo
+dice y no cambia nada. `--dry-run` imprime el mismo plan y no escribe nada.
+
+Cada movimiento completado agrega una línea a
+`~/.daimon/checkpoints/migrations.jsonl`. Ese archivo es lo que permite que
+`daimon recall` y la bandeja de pedidos sigan encontrando el historial bajo el
+nombre viejo del bucket una vez que el directorio ya no está: los archivos de
+checkpoint por sesión conservan el nombre con el que fueron sellados, porque sus
+receipts atan sus bytes exactos. Cuando un bucket ya absorbió a otro, `daimon
+status` muestra una línea `migrated: from <bucket viejo> on <fecha>` en lugar de
+la advertencia.
+
 ## Arrastre (carry)
 
 Arrastre determinista de ítems sin resolver entre sesiones.
