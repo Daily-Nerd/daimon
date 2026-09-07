@@ -22,11 +22,12 @@ scanning the source, so adding a new `_*_GATE_*` without a control fails here
 rather than shipping unproven.
 """
 import re
+from functools import partial
 from pathlib import Path
 
 import pytest
 
-from daimon_briefing import render
+from daimon_briefing import cli, render
 
 _SRC = Path(__file__).parent.parent / "daimon_briefing"
 
@@ -38,8 +39,17 @@ _GATE_CONST_RE = re.compile(r"^(_[A-Z0-9_]*GATE[A-Z0-9_]*)\s*=", re.M)
 
 
 def _declared_gate_constants() -> set[str]:
+    # rglob, not glob: the flat scan stopped at the package root, so
+    # `_AGE_GATE_DAYS` in cli/__init__.py was never under the obligation at
+    # all. It happened to carry a disagreeing pair already (test_cli.py), so
+    # the hole cost nothing this time, which is exactly how a discovery scan
+    # that reports coverage it does not have stays invisible.
+    #
+    # daimon_ui/ is a sibling package and stays out of scope on purpose: it
+    # declares no gate constant, and it is a separate program reading the
+    # store rather than a threshold this suite renders against.
     found: set[str] = set()
-    for path in sorted(_SRC.glob("*.py")):
+    for path in sorted(_SRC.rglob("*.py")):
         found |= set(_GATE_CONST_RE.findall(path.read_text(encoding="utf-8")))
     return found
 
@@ -62,17 +72,39 @@ def _fired(marker: str, w: dict) -> bool:
                for ln in render._capture_window_lines({"window": w}))
 
 
-# metric name -> (marker, window that MUST fire, window that MUST stay silent)
+# A stats gate is proven through the renderer; the marker is bound here so the
+# probe below has one shape for every gate.
+def _renders(marker: str):
+    return partial(_fired, marker)
+
+
+# #452's gate is not a stats gate: it decides one recall row at a time and
+# renders no line, so it is proven through the predicate itself. `age_days` is
+# passed explicitly and `term_hits` is held weak on BOTH sides, so the pair
+# pivots on _AGE_GATE_DAYS alone and not on _STALE_MIN_HITS beside it.
+_GATE_NOW = 1_800_000_000.0
+
+
+def _age_gate_blocks(age_days: float) -> bool:
+    return cli.age_gate_blocks({"term_hits": 1}, _GATE_NOW, age_days=age_days)
+
+
+# metric name -> (probe, input that MUST fire it, input that MUST leave it silent)
 CONTROLS: dict = {
     "_CAPTURE_ERROR_GATE_PCT": (
-        "capture error rate",
+        _renders("capture error rate"),
         _window(errors=5, success=5, error_rate_pct=50.0),
         _window(errors=0, success=10, error_rate_pct=0.0),
     ),
     "_RESCUE_GATE_PCT": (
-        "rescue succeeded",
+        _renders("rescue succeeded"),
         _window(fallback_attempts=3, fallback_serializes=1),
         _window(fallback_attempts=2, fallback_serializes=1),
+    ),
+    "_AGE_GATE_DAYS": (
+        _age_gate_blocks,
+        30.0,
+        1.0,
     ),
 }
 
@@ -94,25 +126,29 @@ def test_the_scan_finds_the_constants_we_know_exist():
     found = _declared_gate_constants()
     assert "_CAPTURE_ERROR_GATE_PCT" in found
     assert "_RESCUE_GATE_PCT" in found
+    # Lives in cli/__init__.py: the scan must walk subpackages, or a whole
+    # directory of thresholds sits outside the obligation while this file
+    # still reads as coverage.
+    assert "_AGE_GATE_DAYS" in found, "the scan must reach subpackages"
     assert "_DECAY_FLOOR" not in found, "the pattern must stay narrow"
 
 
 @pytest.mark.parametrize("name", sorted(CONTROLS))
 def test_each_gate_actually_fires_on_its_firing_case(name):
-    marker, firing, _ = CONTROLS[name]
-    assert _fired(marker, firing), f"{name} never fires; a gate wired off"
+    probe, firing, _ = CONTROLS[name]
+    assert probe(firing), f"{name} never fires; a gate wired off"
 
 
 @pytest.mark.parametrize("name", sorted(CONTROLS))
 def test_each_gate_actually_stays_silent_on_its_silent_case(name):
-    marker, _, silent = CONTROLS[name]
-    assert not _fired(marker, silent), f"{name} always fires; a gate wired on"
+    probe, _, silent = CONTROLS[name]
+    assert not probe(silent), f"{name} always fires; a gate wired on"
 
 
 @pytest.mark.parametrize("name", sorted(CONTROLS))
 def test_the_two_cases_disagree(name):
     """States the point directly: a control whose two sides agree proves
     nothing, however many cases it lists."""
-    marker, firing, silent = CONTROLS[name]
-    assert _fired(marker, firing) != _fired(marker, silent), \
+    probe, firing, silent = CONTROLS[name]
+    assert probe(firing) != probe(silent), \
         f"{name}'s control does not disagree with itself"
