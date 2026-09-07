@@ -38,6 +38,14 @@ from typing import NamedTuple
 MANIFEST_NAME = "manifest.json"
 FIRING_LOG_NAME = "checks.jsonl"
 
+# #955. The crash log's own numbers (_daimon_hook_lib.CRASH_LOG_MAX_BYTES and
+# CRASH_LOG_KEEP_BYTES, #605): cap at 256 KiB, keep the last 64 KiB. Every
+# shell action on a hooked host appends a row here, so the file is the one
+# daimon writes most and nothing was bounding it. No env knob: a log the
+# reading surfaces describe by its window is not a thing to make per host.
+FIRING_LOG_MAX_BYTES = 262144
+FIRING_LOG_KEEP_BYTES = 65536
+
 # Spec 2.3. `unresolved` is one outcome with many causes, and the set is
 # closed: a cause outside it means a code path invented a state no surface
 # knows how to render.
@@ -825,6 +833,50 @@ def log_firing(row, path=None) -> bool:
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(stamped, ensure_ascii=False) + "\n")
+        # After the append, so the row this call just wrote is inside the
+        # kept tail. Silent by contract: see trim_firing_log.
+        trim_firing_log(target)
         return True
     except (OSError, ValueError, TypeError):
         return False
+
+
+def trim_firing_log(path) -> None:
+    """Cap the firing log at FIRING_LOG_MAX_BYTES, keeping its last
+    FIRING_LOG_KEEP_BYTES (#955). Called from log_firing, the only writer, so
+    the bound costs no separate reaper.
+
+    Rewritten IN PLACE rather than through a temp-and-rename, for the reason
+    trim_crash_log gives: another hook process may hold this file open as an
+    append target, and replacing the inode would send its rows to a file
+    nobody reads.
+
+    The cut lands mid-line, so everything up to the next newline is dropped
+    and the first kept row is whole. A reader of this log parses every line,
+    unlike the crash log, so a half row at the head would be a parse error on
+    every read from here on. A 64 KiB tail with no newline in it at all keeps
+    nothing: no whole row is in the window, and the rows this writer mints are
+    a few hundred bytes.
+
+    Accepted, deliberately, the same trade trim_crash_log takes: in place
+    means unlocked, so a row appended by a concurrent hook between the read
+    and the truncate is cut away. That is one liveness row, and a lock in a
+    fail-open hook seam costs more than the row is worth.
+
+    Best-effort and silent: the decision to allow or deny is the product, the
+    log is the record of it, and a trim that raised would cost the caller the
+    row it just wrote."""
+    try:
+        size = path.stat().st_size
+        if size <= FIRING_LOG_MAX_BYTES:
+            return
+        with path.open("r+b") as handle:
+            handle.seek(size - FIRING_LOG_KEEP_BYTES)
+            tail = handle.read()
+            cut = tail.find(b"\n")
+            tail = tail[cut + 1:] if cut >= 0 else b""
+            handle.seek(0)
+            handle.write(tail)
+            handle.truncate()
+    except Exception:  # noqa: BLE001 — housekeeping never blocks a hook
+        pass

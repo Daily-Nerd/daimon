@@ -1083,6 +1083,96 @@ def test_the_firing_log_is_declared_in_the_surface_registry():
     assert entry[0].delete == "exempt-no-plaintext"
 
 
+# ---- the cap (#955) -------------------------------------------------------
+
+
+def _fill_log(rows):
+    """Write `rows` fat rows straight to the log, bypassing log_firing, so a
+    test reaches the cap in one write rather than in thousands of appends."""
+    path = config.log_dir() / "checks.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for i in range(rows):
+            handle.write(json.dumps({
+                "ts": "2026-09-0%dT00:00:00Z" % (i % 9 + 1),
+                "ruling_id": "q-%08d" % i, "host": "claude-code",
+                "mode": "warn", "outcome": "clean", "cause": "",
+                "decision_emitted": "allow", "duration_ms": i,
+            }) + "\n")
+    return path
+
+
+def test_the_firing_log_is_capped_the_way_the_crash_log_is():
+    """#955. Every shell action on a hooked host appends a row and nothing
+    trimmed them, so the log grew forever and `daimon status` folded all of
+    it. The numbers are the crash log's own."""
+    assert rt.FIRING_LOG_MAX_BYTES == 262144
+    assert rt.FIRING_LOG_KEEP_BYTES == 65536
+    path = _fill_log(3000)
+    assert path.stat().st_size > rt.FIRING_LOG_MAX_BYTES
+    assert rt.log_firing({"ruling_id": "q-newest", "outcome": "clean"}) is True
+    assert path.stat().st_size <= rt.FIRING_LOG_KEEP_BYTES
+
+
+def test_every_line_of_a_trimmed_log_is_a_whole_row():
+    """The cut lands mid-line, so the trim drops forward to the next line
+    boundary. A half row at the head would be a parse error on every read of
+    the file, forever."""
+    path = _fill_log(3000)
+    rt.log_firing({"ruling_id": "q-newest", "outcome": "clean"})
+    assert path.stat().st_size <= rt.FIRING_LOG_KEEP_BYTES
+    rows = _log_lines()
+    assert len(rows) > 1
+    assert all(set(row) == set(rt.FIRING_KEYS) for row in rows)
+
+
+def test_the_newest_row_survives_the_trim():
+    """The trim runs after the append, so the row that triggered it is in
+    the kept tail. A cap that dropped the row it was writing would lose the
+    firing it was called to record."""
+    path = _fill_log(3000)
+    rt.log_firing({"ruling_id": "q-newest", "outcome": "violation"})
+    assert path.stat().st_size <= rt.FIRING_LOG_KEEP_BYTES
+    assert _log_lines()[-1]["ruling_id"] == "q-newest"
+
+
+def test_a_log_under_the_cap_is_left_exactly_as_it_was():
+    _fill_log(10)
+    path = config.log_dir() / "checks.jsonl"
+    rt.log_firing({"ruling_id": "q-newest", "outcome": "clean"})
+    before = path.read_bytes()
+    rt.trim_firing_log(path)
+    assert path.read_bytes() == before
+
+
+def test_a_trim_that_fails_leaves_the_bytes_alone_and_still_reports_true(
+        monkeypatch):
+    """The append is the product; the trim is housekeeping. A trim that
+    raised into the hook would cost the record it just wrote."""
+    path = _fill_log(3000)
+    real_open = Path.open
+
+    def refuse(self, mode="r", *args, **kwargs):
+        if "b" in mode:
+            raise OSError("no rewrite here")
+        return real_open(self, mode, *args, **kwargs)
+
+    before = path.read_bytes()
+    monkeypatch.setattr(Path, "open", refuse)
+    assert rt.log_firing({"ruling_id": "q-newest", "outcome": "clean"}) is True
+    monkeypatch.undo()
+    after = path.read_bytes()
+    # Nothing was rewritten: the old bytes are still at the head, and the
+    # only difference is the row this call appended.
+    assert after.startswith(before)
+    assert json.loads(after[len(before):])["ruling_id"] == "q-newest"
+    assert path.stat().st_size > rt.FIRING_LOG_MAX_BYTES
+
+
+def test_the_trim_never_raises_on_a_log_that_is_not_there():
+    rt.trim_firing_log(config.log_dir() / "checks.jsonl")
+
+
 def test_the_firing_log_entry_precedes_the_generic_log_glob():
     """The registry is order-sensitive: `logs/*.log` would not catch a
     .jsonl, but the specific declaration still has to sit with the other
