@@ -186,6 +186,21 @@ def test_forget_hits_written_from_a_subdir_are_counted_from_the_root(
     assert store.forget_hit_stats(project_dir=str(repo))["count"] >= 1
 
 
+def test_record_forget_hits_refuses_an_empty_list_before_it_resolves(
+        tmp_checkpoint_dir, repo_and_sub, monkeypatch):
+    """Nothing to record is decided from the arguments alone. Resolution reaches
+    the filesystem and can fork git, so a call that is already a no-op must not
+    pay for it: the guard sits above the resolve, not below."""
+    _repo, sub = repo_and_sub
+
+    def _never(project_dir=None):
+        raise AssertionError("resolved on a call with nothing to record")
+
+    monkeypatch.setattr(store, "_resolved", _never)
+
+    assert store.record_forget_hits([], project_dir=str(sub)) is False
+
+
 def test_project_surfaces_finds_a_subdir_write_from_the_root(
         tmp_checkpoint_dir, sample_checkpoint, repo_and_sub):
     repo, sub = repo_and_sub
@@ -322,17 +337,41 @@ def _public_entry_points(sub: str):
     ]
 
 
-def test_the_audit_list_covers_every_public_entry_point():
-    """The list above is checked against the module, so a new public function
-    that takes a `project_dir` fails here rather than shipping unresolved."""
-    tree = ast.parse(Path(store.__file__).read_text(encoding="utf-8"))
+def _public_project_dir_functions(source: str) -> set[str]:
+    """Every top-level PUBLIC function in `source` that accepts a
+    `project_dir`. Both function kinds: a coroutine that takes a project path
+    would name a bucket exactly like a plain one, so an audit that only walks
+    `ast.FunctionDef` would let it through unresolved."""
     found = set()
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
+    for node in ast.parse(source).body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name.startswith("_"):
             continue
         args = [a.arg for a in node.args.args] + [a.arg for a in node.args.kwonlyargs]
         if "project_dir" in args:
             found.add(node.name)
+    return found
+
+
+def test_the_audit_scan_sees_both_function_kinds():
+    """The scan itself, on a scratch copy: private skipped, plain found, async
+    found. Without the async arm the third name goes missing and the audit
+    below passes over a real entry point."""
+    source = (
+        "def public_one(project_dir=None): pass\n"
+        "def _private_one(project_dir=None): pass\n"
+        "async def public_async(project_dir=None): pass\n"
+        "def unrelated(other=None): pass\n"
+    )
+    assert _public_project_dir_functions(source) == {"public_one", "public_async"}
+
+
+def test_the_audit_list_covers_every_public_entry_point():
+    """The list above is checked against the module, so a new public function
+    that takes a `project_dir` fails here rather than shipping unresolved."""
+    found = _public_project_dir_functions(
+        Path(store.__file__).read_text(encoding="utf-8"))
 
     covered = {name for name, _ in _public_entry_points("x")} | {"project_slug"}
     assert found - covered == set()

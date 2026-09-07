@@ -2155,11 +2155,13 @@ def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
     free-text PII users actually forget (a name, a client, "the X office
     closed"), so re-persisting even a short snapshot here would reopen the very
     leak forget closes. The published value is the COUNT, not the content."""
-    if config.is_disabled():
+    # Both no-op gates BEFORE the resolve (#954): nothing to record is decided
+    # from the arguments alone, and resolution reaches the filesystem.
+    if config.is_disabled() or not items:
         return False
     project_dir = _resolved(project_dir)
     path = _forget_hits_path(project_dir)
-    if path is None or not items:
+    if path is None:
         return False
     try:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
