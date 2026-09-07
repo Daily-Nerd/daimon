@@ -672,12 +672,15 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_verify_receipt():
         run(["verify-receipt"], 2)  # rc 2 = unable (receipts off — no sidecar)
 
+    # rc 3 = nothing checkable (#944). The drive's corpus carries no verbatim
+    # item with a resolvable source, and this guard is about writes, not about
+    # what the audit concluded.
     def r_audit_quotes():
-        run(["audit-quotes"], 0)
+        run(["audit-quotes"], 3)
 
     def r_audit_quotes_grouped():
         # #598: same command, moved under the `audit` group.
-        run(["audit", "quotes"], 0)
+        run(["audit", "quotes"], 3)
 
     def r_audit_privacy():
         # #598: read-only tombstone residue audit. r_forget already scrubbed

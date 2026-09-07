@@ -110,6 +110,17 @@ def _cmd_audit_quotes(args) -> int:
     """Read-only audit (#125): re-check every stored verbatim quote against its
     source transcript with the SAME tier-f matcher serialize uses, and REPORT.
 
+    #944: exit 0 checked clean / 1 mismatch / 3 nothing checkable. The check
+    skips an item on three conditions before it counts, and a corpus where
+    every claim hits one verified nothing at all. That state used to print
+    `checked: 0 ... rate: 0.0%` and exit 0, which no script and no reader can
+    tell apart from a corpus that was checked and came back clean. 3 exists
+    because "could not check" must never look like "all clean" — the same
+    reason `audit privacy` carries it. The exemption breakdown prints in every
+    state, not only that one: a corpus where one claim in four is checkable is
+    a fact about how much this audit can say, and it is invisible if the
+    counts only appear once they reach zero.
+
     #594: a valid item receipt is authoritative for source identity and message
     binding. Legacy origin_session may form an explicitly inferred Claude
     candidate, but an absent/unresolved source NEVER falls back to the
@@ -131,6 +142,11 @@ def _cmd_audit_quotes(args) -> int:
         files = []
     scanned = paired = unpaired = items = verified = failed = id_resolved = 0
     origin_resolved = 0
+    # #944: the three conditions that skip an item, counted rather than
+    # dropped. `seen` is every item the audit looked at, so the exemptions and
+    # the checkable count add up to it and a reader can see the whole
+    # denominator instead of the surviving slice.
+    seen = ex_not_verbatim = ex_blank = ex_unresolvable = 0
     transcripts: dict = {}
     resolver = provenance.SourceResolver(
         claude_projects=config.claude_projects_dir(),
@@ -157,14 +173,18 @@ def _cmd_audit_quotes(args) -> int:
         else:
             unpaired += 1
         for item in serializer.iter_items(cp):
+            seen += 1
             if item.get("trust") != "verbatim":
+                ex_not_verbatim += 1
                 continue
             quote = item.get("quote")
             if not isinstance(quote, str) or not quote.strip():
+                ex_blank += 1
                 continue
             source, receipt = _audit_item_source(item)
             resolved = _resolve_audit_source(source, resolver, transcripts)
             if resolved is None:
+                ex_unresolvable += 1
                 continue
             haystack, texts_by_id = resolved
             items += 1
@@ -191,21 +211,45 @@ def _cmd_audit_quotes(args) -> int:
             else:
                 failed += 1
                 failures.append((session_id, str(item.get("text") or "")))
-    rate = (verified / items) if items else 0.0
+    # #944: None, never 0.0. A ratio over nothing is the number that made an
+    # all-exempt corpus read as a clean one.
+    rate = (verified / items) if items else None
+    code = 3 if not items else (1 if failed else 0)
+    exempt = f"{ex_not_verbatim} not verbatim, {ex_blank} blank, " \
+             f"{ex_unresolvable} source unresolvable"
     scope = "all projects" if args.all else project
+    counts = (f"  verbatim quotes checked: {items}  verified: {verified}  "
+              f"failed: {failed}  id-resolved: {id_resolved}  "
+              f"origin-resolved: {origin_resolved}")
     lines = [
         f"audit-quotes ({scope})",
         f"  checkpoints scanned: {scanned}  paired: {paired}  unpaired: {unpaired}",
-        f"  verbatim quotes checked: {items}  verified: {verified}  "
-        f"failed: {failed}  id-resolved: {id_resolved}  "
-        f"origin-resolved: {origin_resolved}  rate: {rate:.1%}",
+        counts if rate is None else f"{counts}  rate: {rate:.1%}",
+        f"  exempt: {exempt}",
     ]
+    if code == 3:
+        lines.append(f"  WARNING: zero verbatim quotes checkable ({seen} "
+                     f"items: {exempt}) — cannot distinguish an all-exempt "
+                     "checkpoint from a clean one")
     if failures:
         top = max(0, args.top)
         lines.append(f"  top {min(top, len(failures))} failures (item text prefix):")
         for sid, text in failures[:top]:
             lines.append(f"    [{sid}] {text[:80]}")
-    render.render_lifecycle_lines(lines)
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "scope": str(scope), "scanned": scanned, "paired": paired,
+            "unpaired": unpaired, "checkable": items, "verified": verified,
+            "failed": failed, "id_resolved": id_resolved,
+            "origin_resolved": origin_resolved, "items": seen,
+            "exempt": {"not_verbatim": ex_not_verbatim, "blank": ex_blank,
+                       "unresolvable": ex_unresolvable},
+            "rate": rate,
+            "failures": [{"session_id": s, "text": t} for s, t in failures],
+            "exit_code": code,
+        }, indent=2))
+    else:
+        render.render_lifecycle_lines(lines)
     # #504: the only read-side verification verb recorded nothing, so there was
     # no evidence either way about whether anyone reaches for it. The unpaired
     # variant is a distinct event, not a detail of this one: a run that resolved
@@ -217,7 +261,7 @@ def _cmd_audit_quotes(args) -> int:
     # checkpoints and would report that run as silence.
     resolved_any = any(v is not None for v in transcripts.values())
     _cli._note_usage("audit-quotes" if resolved_any else "audit-quotes:unpaired")
-    return 0
+    return code
 
 
 def register(sub, fmt) -> None:
@@ -230,10 +274,12 @@ def register(sub, fmt) -> None:
     pa_quotes = audit_sub.add_parser(
         "quotes",
         help="re-check stored verbatim quotes against their source transcripts "
-             "and report mismatches (read-only, never rewrites tags, #125)",
+             "and report mismatches (read-only, never rewrites tags, #125; "
+             "exit 0 checked clean, 1 mismatch, 3 nothing checkable)",
         epilog="Examples:\n"
                "  daimon audit quotes\n"
-               "  daimon audit quotes --all --top 20\n",
+               "  daimon audit quotes --all --top 20\n"
+               "  daimon audit quotes --json\n",
     )
     pa_quotes.add_argument(
         "--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
@@ -243,6 +289,8 @@ def register(sub, fmt) -> None:
     pa_quotes.add_argument(
         "--top", type=int, default=10,
         help="how many failing quotes to list (default: 10)")
+    pa_quotes.add_argument(
+        "--json", action="store_true", help="machine-readable output")
     pa_quotes.set_defaults(func=_cli._cmd_audit_quotes)
     pa_priv = audit_sub.add_parser(
         "privacy",
@@ -263,7 +311,10 @@ def register(sub, fmt) -> None:
         help="audit every local project, each against its own tombstone set")
     pa_priv.set_defaults(func=_cli._cmd_audit_privacy)
     # Deprecated flat alias (#504-era name). metavar on the top-level
-    # subparsers (set below) keeps it out of the usage brace list.
+    # subparsers (set below) keeps it out of the usage brace list. No --json
+    # here on purpose: the alias prints a deprecation note first, which would
+    # sit in front of the document and break every parser reading it. A
+    # machine reader takes the supported spelling.
     p_audit_old = sub.add_parser("audit-quotes")
     p_audit_old.add_argument("--project")
     p_audit_old.add_argument("--all", action="store_true")

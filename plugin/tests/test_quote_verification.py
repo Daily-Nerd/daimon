@@ -701,7 +701,7 @@ def test_audit_quotes_reports_verified_and_failed(
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
-    assert rc == 0
+    assert rc == 1  # #944: one of the two quotes did not match its source
     assert "verified" in out.lower()
     assert "1" in out  # 1 verified, 1 failed
     assert "fabricated decision" in out  # failing item's text prefix reported
@@ -739,7 +739,7 @@ def test_audit_quotes_counts_unpaired_when_transcript_missing(
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out.lower()
-    assert rc == 0
+    assert rc == 3  # #944: no transcript resolved, so nothing was checkable
     assert "unpaired" in out
 
 
@@ -783,7 +783,9 @@ def test_audit_quotes_records_unpaired_variant_when_nothing_pairs(
     ])
     store.write_checkpoint("SNO", cp, project_dir="/p/A")
 
-    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    # #944: nothing pairs, so nothing is checkable — the usage event is
+    # recorded on the way out regardless of which of the three codes it is.
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 3
     usage = (_log_dir / "usage.log").read_text(encoding="utf-8")
     assert "audit-quotes:unpaired" in usage
 
@@ -1051,7 +1053,7 @@ def test_audit_quotes_missing_origin_transcript_never_falls_back(
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
-    assert rc == 0
+    assert rc == 3  # #944: it checked nothing, which is not the same as clean
     assert "verbatim quotes checked: 0" in out
     assert "verified: 0" in out
 
@@ -1111,6 +1113,123 @@ def test_audit_quotes_skips_verbatim_items_with_no_usable_quote(
     assert "failed: 0" in out
 
 
+# ---- #944: an all-exempt corpus is not a clean one ------------------------
+# The quote check skips an item on three conditions before it counts as
+# checked. If every claim hits one, the loop verified nothing, and the report
+# used to read `checked: 0  verified: 0  failed: 0 ... rate: 0.0%` and exit 0,
+# which is indistinguishable from a corpus that was checked and came back
+# clean. `audit privacy` already separates those states; this one now does too.
+
+
+def test_audit_quotes_cannot_prove_when_every_item_is_exempt(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [("user", "anything at all")])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": "inferred", "trust": "inferred", "id": "d-1"},
+        {"text": "no quote", "trust": "verbatim", "id": "d-2"},
+        {"text": "blank quote", "trust": "verbatim", "quote": "  ", "id": "d-3"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 3
+    out = capsys.readouterr().out
+    # 4 items, not 3: the fixture's active_topic is an item the audit looked
+    # at, and the denominator is everything it looked at.
+    assert ("WARNING: zero verbatim quotes checkable (4 items: 2 not "
+            "verbatim, 2 blank, 0 source unresolvable) — cannot distinguish "
+            "an all-exempt checkpoint from a clean one") in out
+    # A rate over nothing is the number that made this look clean.
+    assert "rate:" not in out
+
+
+def test_audit_quotes_counts_an_unresolvable_source_as_exempt(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    # No transcript on disk: the item is verbatim and quoted, and still
+    # nothing can be checked against it.
+    store.write_checkpoint("SNO", _stored_checkpoint("SNO", slug, [
+        {"text": "d", "trust": "verbatim", "quote": "some quoted text", "id": "d-c"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 3
+    assert "1 not verbatim, 0 blank, 1 source unresolvable" in \
+        capsys.readouterr().out
+
+
+def test_audit_quotes_reports_the_exemptions_even_when_it_checked_something(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    """A corpus where one claim in four is checkable is a margin fact about
+    the audit, and it is invisible if the breakdown only appears when the
+    count reaches zero."""
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA",
+                      [("user", "a real sentence that one item quotes")])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": "inferred", "trust": "inferred", "id": "d-1"},
+        {"text": "blank", "trust": "verbatim", "quote": "", "id": "d-2"},
+        {"text": "real", "trust": "verbatim",
+         "quote": "a real sentence that one item quotes", "id": "d-3"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    assert "exempt: 2 not verbatim, 1 blank, 0 source unresolvable" in out
+    assert "verbatim quotes checked: 1" in out
+    assert "rate: 100.0%" in out
+
+
+def test_audit_quotes_exits_one_on_a_mismatch(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA",
+                      [("user", "totally unrelated content here")])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": "fabricated", "trust": "verbatim",
+         "quote": "this sentence is nowhere in the source", "id": "d-b"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 1
+
+
+def test_audit_quotes_json_carries_the_exemptions_and_a_null_rate(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA", [("user", "anything at all")])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": "no quote", "trust": "verbatim", "id": "d-2"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit", "quotes", "--project", "/p/A", "--json"]) == 3
+    data = json.loads(capsys.readouterr().out)
+    assert data["checkable"] == 0
+    assert data["exempt"] == {"not_verbatim": 1, "blank": 1, "unresolvable": 0}
+    # null, not 0.0 — a ratio over nothing is the shape of the false clean.
+    assert data["rate"] is None
+    assert data["exit_code"] == 3
+
+
+def test_audit_quotes_json_carries_a_real_rate_when_it_checked_something(
+    tmp_checkpoint_dir, _projects_dir, capsys
+):
+    slug = store.project_slug("/p/A")
+    _write_transcript(_projects_dir, slug, "SA",
+                      [("user", "a real sentence that one item quotes")])
+    store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
+        {"text": "real", "trust": "verbatim",
+         "quote": "a real sentence that one item quotes", "id": "d-3"},
+    ]), project_dir="/p/A")
+
+    assert cli.main(["audit", "quotes", "--project", "/p/A", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["checkable"] == 1 and data["rate"] == 1.0
+    assert data["exit_code"] == 0
+
+
 def test_audit_quotes_reads_origin_slug_from_the_origin_checkpoint(
     tmp_checkpoint_dir, _projects_dir, capsys
 ):
@@ -1166,7 +1285,7 @@ def test_audit_quotes_unreadable_origin_transcript_never_falls_back(
         return real_from_file(path)
     monkeypatch.setattr(transcript, "from_file", exploding_from_file)
 
-    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 3  # #944
     out = capsys.readouterr().out
     assert "verbatim quotes checked: 0" in out
     assert "verified: 0" in out
@@ -1553,7 +1672,7 @@ def test_audit_quotes_does_not_verify_an_echoed_quote(
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
-    assert rc == 0
+    assert rc == 1  # #944: a mismatch is the failure code, not a clean exit
     assert "verified: 0" in out
     assert "failed: 1" in out
 
