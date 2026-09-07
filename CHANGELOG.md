@@ -5,6 +5,28 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.42.0](https://github.com/Daily-Nerd/daimon/compare/v0.41.1...v0.42.0) (2026-09-07)
+
+
+### Features
+
+* **checks:** a human can see what is armed, what mode it gets, and whether it ever fired ([#956](https://github.com/Daily-Nerd/daimon/issues/956)) ([5670466](https://github.com/Daily-Nerd/daimon/commit/5670466685014e4b4aca16d851f0845a2a12d758))
+* **checks:** an armed check runs under a budget and a human can try one first ([#952](https://github.com/Daily-Nerd/daimon/issues/952)) ([a2511e5](https://github.com/Daily-Nerd/daimon/commit/a2511e539f91be0f54409871d1f2680d966d9a01))
+* **checks:** the firing log is capped in place and every reader names the window it covers ([#958](https://github.com/Daily-Nerd/daimon/issues/958)) ([c9de616](https://github.com/Daily-Nerd/daimon/commit/c9de616f32c1aebdff421ef19dd9ad83309bfdd5))
+* **hooks:** a matching shell action runs its armed checks before it executes ([#953](https://github.com/Daily-Nerd/daimon/issues/953)) ([763bbe9](https://github.com/Daily-Nerd/daimon/commit/763bbe9d0f952ba3cd9ae266c644d32784eb4ffb))
+* **rulings:** a ruling carries a check that only a human can arm ([#949](https://github.com/Daily-Nerd/daimon/issues/949)) ([4961aa2](https://github.com/Daily-Nerd/daimon/commit/4961aa2577813a4cdce0f61804b610f3bd2af91a))
+
+
+### Bug Fixes
+
+* **config:** the library and the CLI route a project path to one bucket ([#951](https://github.com/Daily-Nerd/daimon/issues/951)) ([8ad0202](https://github.com/Daily-Nerd/daimon/commit/8ad0202001b3de8a40964be8d25e63176435f8de))
+* **store:** every public store entry point resolves a project path the way the ledgers do ([#957](https://github.com/Daily-Nerd/daimon/issues/957)) ([cd0a836](https://github.com/Daily-Nerd/daimon/commit/cd0a836a511098ca76da4b4a48ded7e9cba156df))
+
+
+### Documentation
+
+* **hosts:** docs/hosts points at the maintained site pages instead of copying them ([#959](https://github.com/Daily-Nerd/daimon/issues/959)) ([cf7dc34](https://github.com/Daily-Nerd/daimon/commit/cf7dc3461aac7bb8f53979cb4443a76d6e4a3f5a))
+
 ## [0.41.1](https://github.com/Daily-Nerd/daimon/compare/v0.41.0...v0.41.1) (2026-09-05)
 
 
