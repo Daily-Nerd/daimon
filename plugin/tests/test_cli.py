@@ -6908,6 +6908,16 @@ def test_stats_json_omits_a_gate_that_judged_nothing(tmp_checkpoint_dir,
     assert json.loads(capsys.readouterr().out)["capture"]["gates"] == []
 
 
+@pytest.mark.parametrize("window", [None, {}])
+def test_capture_gates_judges_nothing_without_a_window(window):
+    """`capture_gates` is reachable with no window at all: a fold that failed
+    to read the log, or a caller holding a capture dict from an older shape.
+    No window is no measurement, so there is nothing to report a margin about
+    and every gate is absent rather than sitting at zero."""
+    from daimon_briefing import ledger
+    assert ledger.capture_gates(window) == []
+
+
 def test_stats_plain_shows_the_margin_when_the_gate_stays_silent(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys,
         monkeypatch):
