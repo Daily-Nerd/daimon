@@ -1282,3 +1282,39 @@ def test_json_carries_the_counts_once_a_row_has_fired(tmp_path, capsys):
            if r["host"] == CC][0]
     assert row["last_fired"] == "2026-09-06T10:00:00Z"
     assert (row["clean"], row["violation"], row["unresolved"]) == (0, 1, 0)
+
+
+def test_stats_json_nulls_the_counts_when_the_log_is_unreadable(
+        tmp_path, monkeypatch, capsys):
+    """`fired: 0` beside `log_state: "unreadable"` is the same "0 clean"
+    reading `ruling checks --json` already refuses: a consumer that reads
+    the counts without reading the state concludes nothing ran. Null says
+    what a read that failed actually knows."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    _log_is_a_directory()
+    assert _stats(tmp_path, "--json") == 0
+    c = json.loads(capsys.readouterr().out)["checks"]
+    assert c["log_state"] == "unreadable"
+    assert c["armed"] == 1 and c["proposed"] == 0
+    for key in ("fired", "clean", "violation", "unresolved", "denied"):
+        assert c[key] is None, key
+
+
+@pytest.mark.parametrize("state,rows", [("absent", ()),
+                                        ("read", ("clean",))])
+def test_stats_json_keeps_integer_counts_on_a_log_it_could_read(
+        state, rows, tmp_path, monkeypatch, capsys):
+    """Only the failed read is unknown. An absent log and a log holding no
+    matching rows both know the answer is zero, and turning those into null
+    would make a fresh install indistinguishable from a broken one."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    ruling_id = _arm(tmp_path)
+    if rows:
+        _write_log(*[_row(ruling_id=ruling_id, outcome=o) for o in rows])
+    assert _stats(tmp_path, "--json") == 0
+    c = json.loads(capsys.readouterr().out)["checks"]
+    assert c["log_state"] == state
+    for key in ("fired", "clean", "violation", "unresolved", "denied"):
+        assert isinstance(c[key], int), key
+    assert c["fired"] == len(rows)

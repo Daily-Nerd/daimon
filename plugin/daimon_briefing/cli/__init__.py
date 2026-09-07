@@ -2956,9 +2956,18 @@ def _stats_checks(project_dir) -> dict:
     # `log_state` travels with the counts. Without it an unreadable log is
     # byte-identical to an empty one on this line, and the render layer has
     # no way to tell "nothing ran" from "daimon cannot tell you".
-    return {**counts, "fired": totals["fired"], "clean": totals["clean"],
-            "violation": totals["violation"],
-            "unresolved": totals["unresolved"], "denied": totals["denied"],
+    #
+    # And a read that FAILED reports null rather than zero, the way
+    # `ruling checks --json` does: a consumer reading the counts without
+    # reading the state would otherwise conclude nothing ran. Only the
+    # failed read is unknown. An absent log and a log holding no matching
+    # rows both know the answer is zero and say so, so a fresh install stays
+    # distinguishable from a broken one.
+    known = summary.log_state != "unreadable"
+    return {**counts,
+            **{key: (totals[key] if known else None)
+               for key in ("fired", "clean", "violation", "unresolved",
+                           "denied")},
             "log_state": summary.log_state}
 
 
