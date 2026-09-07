@@ -854,9 +854,21 @@ def trim_firing_log(path) -> None:
     The cut lands mid-line, so everything up to the next newline is dropped
     and the first kept row is whole. A reader of this log parses every line,
     unlike the crash log, so a half row at the head would be a parse error on
-    every read from here on. A 64 KiB tail with no newline in it at all keeps
-    nothing: no whole row is in the window, and the rows this writer mints are
-    a few hundred bytes.
+    every read from here on. A torn row at the END of the window goes too: it
+    cannot parse either, and leaving it there is what the next append would
+    be glued onto.
+
+    A window with no line boundary left in it holds no whole row, so there is
+    nothing to keep and the file is LEFT ALONE. Emptying it would take the row
+    log_firing just wrote with it, and every surface would then read `never
+    fired`, which the docs define as a different answer and not a smaller one.
+    It takes a row larger than the kept size to get here.
+
+    The rewrite has two steps and no lock, so the head it is about to
+    overwrite is read first. If the truncate fails (once is retried) the head
+    goes back and the file is byte-identical to what it was. Without that, a
+    failure between the write and the truncate leaves the kept tail sitting on
+    top of the rows it was meant to replace, every row in it counted twice.
 
     Accepted, deliberately, the same trade trim_crash_log takes: in place
     means unlocked, so a row appended by a concurrent hook between the read
@@ -873,10 +885,26 @@ def trim_firing_log(path) -> None:
         with path.open("r+b") as handle:
             handle.seek(size - FIRING_LOG_KEEP_BYTES)
             tail = handle.read()
+            if not tail.endswith(b"\n"):
+                # rfind of -1 leaves nothing, which the guard below catches.
+                tail = tail[:tail.rfind(b"\n") + 1]
             cut = tail.find(b"\n")
-            tail = tail[cut + 1:] if cut >= 0 else b""
+            if cut < 0:
+                return
+            tail = tail[cut + 1:]
+            if not tail:
+                return
+            handle.seek(0)
+            head = handle.read(len(tail))
             handle.seek(0)
             handle.write(tail)
-            handle.truncate()
+            try:
+                handle.truncate(len(tail))
+            except OSError:
+                try:
+                    handle.truncate(len(tail))
+                except OSError:
+                    handle.seek(0)
+                    handle.write(head)
     except Exception:  # noqa: BLE001 — housekeeping never blocks a hook
         pass
