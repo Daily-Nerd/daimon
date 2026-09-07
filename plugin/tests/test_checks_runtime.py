@@ -1209,6 +1209,20 @@ def test_an_append_onto_such_a_log_still_lands_and_reports_true():
     assert path.stat().st_size > 0
 
 
+def test_a_window_holding_no_newline_at_all_leaves_the_file_alone():
+    """The other way to reach a window with no whole row: an unterminated
+    fragment longer than the kept size, which a writer killed mid-row leaves
+    behind. Dropping the torn end takes the whole window with it, so there is
+    nothing to keep and the file is left exactly as it was."""
+    _fill_log(1200)
+    path = _write_raw(b'{"ts": "2026-09-06T00:00:00Z", "ruling_id": "q-'
+                      + b"a" * 70000)
+    before = path.read_bytes()
+    assert path.stat().st_size > rt.FIRING_LOG_MAX_BYTES
+    rt.trim_firing_log(path)
+    assert path.read_bytes() == before
+
+
 def test_a_torn_last_line_is_dropped_rather_than_kept():
     """A row without its newline cannot parse, and keeping it at the end of
     the window means the next append is glued onto it."""
