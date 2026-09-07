@@ -876,8 +876,16 @@ def _checks_status_line(data: dict) -> str:
     proposed = f" ({c['proposed']} proposed)" if c.get("proposed") else ""
     if c.get("log_state") == "unreadable":
         live = "firing log unreadable"
+    elif c.get("age"):
+        live = f"last fired {c['age']} ago"
+    elif c.get("last_ts"):
+        # A row that will not parse still proves the check RAN, and `never
+        # fired` here is the false negative this line exists to remove. The
+        # stamp itself stays out: the log is declared to hold no plaintext,
+        # and a value outside the minted format is not trusted to.
+        live = "last fired, timestamp unreadable"
     else:
-        live = f"last fired {c['age']} ago" if c.get("age") else "never fired"
+        live = "never fired"
     drift = " · manifest drifted, run daimon check sync" if c.get("drift") else ""
     return f"checks: {c['armed']} armed{proposed}, {live}{drift}"
 

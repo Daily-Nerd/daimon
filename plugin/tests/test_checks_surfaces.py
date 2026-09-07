@@ -1318,3 +1318,34 @@ def test_stats_json_keeps_integer_counts_on_a_log_it_could_read(
     for key in ("fired", "clean", "violation", "unresolved", "denied"):
         assert isinstance(c[key], int), key
     assert c["fired"] == len(rows)
+
+
+def test_the_guard_holds_when_the_path_resolution_is_what_failed(
+        tmp_path, monkeypatch):
+    """`firing_summary` promises it never raises, and its guard called back
+    into the same path resolution that had just failed. Anything that broke
+    `config.log_dir` therefore escaped the guard and took the caller down."""
+    monkeypatch.setattr(
+        config, "log_dir",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no log dir")))
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.log_state == "unreadable"
+    assert summary.path == ""
+    assert summary.totals["fired"] == 0
+
+
+def test_a_firing_whose_stamp_will_not_parse_is_not_reported_as_never(
+        tmp_path, monkeypatch, capsys):
+    """The row proves the check ran. Failing to age it is a formatting
+    problem, and answering `never fired` turns that into the false negative
+    this whole slice exists to remove."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean", ts="yesterday"))
+    _status(tmp_path)
+    out = capsys.readouterr().out
+    assert "checks: 1 armed, last fired, timestamp unreadable" in out
+    assert "never fired" not in out
+    # The stamp itself never reaches the line: the log is declared to hold
+    # no plaintext and a value outside the minted format is not trusted to.
+    assert "yesterday" not in out

@@ -323,7 +323,13 @@ def firing_summary(project_dir=None) -> FiringSummary:
     try:
         return _firing_summary(project_dir)
     except Exception:  # noqa: BLE001 — a reporting read never takes a caller down
-        return FiringSummary("unreadable", {}, {}, _empty_fold(), _log_path())
+        # The path resolution may be exactly what failed, so the guard must
+        # not depend on it: a raise in here defeats the whole promise.
+        try:
+            where = _log_path()
+        except Exception:  # noqa: BLE001
+            where = ""
+        return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
 
 
 def _log_path() -> str:
