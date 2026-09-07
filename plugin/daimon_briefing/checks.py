@@ -17,6 +17,7 @@ caller reports the failure and keeps its own exit code.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -56,6 +57,38 @@ def _write_body(path: Path, body: str) -> None:
     os.replace(tmp, path)  # atomic on POSIX
 
 
+def _wanted(project_dir, root: str) -> list:
+    """Every entry this project's ledger says should be armed, paired with
+    its body. The ONE place the six-key manifest entry is built, so the
+    writer and the audit that grades the writer cannot describe different
+    shapes."""
+    out = []
+    for record in refutations.listing(states={"active"}, polarity="ruling",
+                                      project_dir=project_dir):
+        check = record.get("check")
+        # `check_lifecycle` is derived at fold time and is the ONE place that
+        # knows a candidate's check is not a mode. Reading `state` here
+        # instead would be a second answer to the same question. Three other
+        # readers of that field exist (`cli._ledger._ruling_lines`, the
+        # viewer payload, and this module's own sync); none of them changes
+        # behavior for this one (scar 0053).
+        if not isinstance(check, dict) or record.get("check_lifecycle") != "armed":
+            continue
+        sha = str(check.get("sha256") or "")
+        ruling_id = str(record.get("refutation_id") or "")
+        if not sha or not ruling_id:
+            continue
+        out.append(({
+            "ruling_id": ruling_id,
+            "project_dir": root,
+            "match": str(check.get("match") or ""),
+            "intent": str(check.get("intent") or "warn"),
+            "sha256": sha,
+            "armed_at": str(record.get("activated_at") or ""),
+        }, str(check.get("body") or "")))
+    return out
+
+
 def sync(project_dir=None) -> SyncReport:
     """Rebuild this project's armed checks from its ledger. Never raises."""
     try:
@@ -83,27 +116,7 @@ def _sync(project_dir) -> SyncReport:
                           "the existing manifest could not be read; rebuilding "
                           "from this project alone would disarm the others")
 
-    armed = []
-    for record in refutations.listing(states={"active"}, polarity="ruling",
-                                      project_dir=project_dir):
-        check = record.get("check")
-        # `check_lifecycle` is derived at fold time and is the ONE place that
-        # knows a candidate's check is not a mode. Reading `state` here
-        # instead would be a second answer to the same question.
-        if not isinstance(check, dict) or record.get("check_lifecycle") != "armed":
-            continue
-        sha = str(check.get("sha256") or "")
-        ruling_id = str(record.get("refutation_id") or "")
-        if not sha or not ruling_id:
-            continue
-        armed.append(({
-            "ruling_id": ruling_id,
-            "project_dir": root,
-            "match": str(check.get("match") or ""),
-            "intent": str(check.get("intent") or "warn"),
-            "sha256": sha,
-            "armed_at": str(record.get("activated_at") or ""),
-        }, str(check.get("body") or "")))
+    armed = _wanted(project_dir, root)
 
     entries = [entry for entry, _ in armed]
     others = [e for e in loaded.entries if e.get("project_dir") != root]
@@ -137,6 +150,248 @@ def _sync(project_dir) -> SyncReport:
         except OSError:
             pass
     return SyncReport(True, len(entries), slug)
+
+
+# ---- auditing the manifest against the ledger (#943 slice 5) --------------
+
+
+class Audit(NamedTuple):
+    """Whether what the hooks read still matches what the ledger wants.
+
+    Every list holds RULING IDS and nothing else: no match patterns, no
+    bodies, no project directories. This result is printed, and printing is
+    a write (scar 0055).
+
+    `state` is the manifest's own read state, kept apart the way
+    `load_manifest` keeps it: an install that armed nothing (`absent`) and a
+    manifest daimon can no longer parse (`unreadable`) are different facts,
+    and folding them would report a fresh machine as a broken one.
+
+    A ruling whose pinned hash moved appears in BOTH `missing` and `stale`:
+    missing at the hash the ledger wants, stale at the hash the manifest
+    still names. Reporting one half hides which side moved."""
+
+    state: str
+    wanted: list
+    have: list
+    missing: list
+    stale: list
+    body_missing: list
+    body_mismatch: list
+    drift: bool
+
+
+def audit(project_dir=None) -> Audit:
+    """Read-only. Never raises, never repairs.
+
+    `sync` has no dry run and could not be borrowed for this: calling it to
+    detect drift would repair the drift as a side effect, and an audit that
+    changes what it audits reports nothing.
+
+    It also catches a state the manifest cannot express — a body whose bytes
+    no longer hash to the pinned value. The runner catches that at exec time
+    as `body-hash-mismatch`, which is one blocked action too late to be a
+    report."""
+    try:
+        return _audit(project_dir)
+    except Exception:  # noqa: BLE001 — a report, never a raise
+        return Audit("unreadable", [], [], [], [], [], [], False)
+
+
+def _audit(project_dir) -> Audit:
+    root = str(config.resolve_project_dir(project_dir))
+    base = config.checks_dir()
+    loaded = checks_runtime.load_manifest(base / checks_runtime.MANIFEST_NAME)
+    state = {"": "read", "no-manifest": "absent",
+             "manifest-unreadable": "unreadable"}.get(loaded.reason, "unreadable")
+
+    wanted = {(e["ruling_id"], e["sha256"]) for e, _ in _wanted(project_dir, root)}
+    # Project EQUALITY, never `armed_for`'s prefix match: that primitive
+    # answers "which entries govern this cwd" and would pull in a parent
+    # project's rows when run from a nested directory.
+    ours = [e for e in loaded.entries if e.get("project_dir") == root
+            and str(e.get("ruling_id") or "")]
+    have = {(str(e.get("ruling_id")), str(e.get("sha256") or ""))
+            for e in ours}
+
+    body_missing, body_mismatch = set(), set()
+    for entry in ours:
+        path = checks_runtime.body_path(entry, base)
+        try:
+            blob = path.read_bytes()
+        except OSError:
+            body_missing.add(str(entry.get("ruling_id")))
+            continue
+        if hashlib.sha256(blob).hexdigest() != str(entry.get("sha256") or ""):
+            body_mismatch.add(str(entry.get("ruling_id")))
+
+    missing = sorted({rid for rid, _ in wanted - have})
+    stale = sorted({rid for rid, _ in have - wanted})
+    drift = bool(missing or stale or body_missing or body_mismatch
+                 or state == "unreadable")
+    return Audit(state, sorted({rid for rid, _ in wanted}),
+                 sorted({rid for rid, _ in have}), missing, stale,
+                 sorted(body_missing), sorted(body_mismatch), drift)
+
+
+# ---- reading the firing log (#943 slice 5) --------------------------------
+
+# The three outcomes, never folded (spec 2.3). A row carrying anything else
+# is still a firing — it ran — but it lands in no outcome column.
+_OUTCOMES = ("clean", "violation", "unresolved")
+
+
+def _empty_fold() -> dict:
+    return {"fired": 0, "clean": 0, "violation": 0, "unresolved": 0,
+            "denied": 0, "last_ts": ""}
+
+
+def _absorb(fold: dict, row: dict) -> None:
+    fold["fired"] += 1
+    outcome = str(row.get("outcome") or "")
+    if outcome in _OUTCOMES:
+        fold[outcome] += 1
+    if str(row.get("decision_emitted") or "") == "deny":
+        fold["denied"] += 1
+    ts = str(row.get("ts") or "")
+    # Greatest stamp, never the last line. An append-only log is ordered by
+    # append and nothing else, and a reader that takes the tail reports
+    # whichever row happened to land last (scar 0009). The format is a fixed
+    # %Y-%m-%dT%H:%M:%SZ, so a string compare IS a time compare.
+    if ts > fold["last_ts"]:
+        fold["last_ts"] = ts
+
+
+class FiringSummary(NamedTuple):
+    """What the firing log says about THIS project, folded.
+
+    `log_state` tells an absent log from an unreadable one from a read one,
+    because the whole point of this surface is that silence is a state and
+    not a synonym for clean.
+
+    `rulings` is keyed by `(ruling_id, host)`: the per-host split is the only
+    honest form, since a check's mode is a property of the host and one
+    ruling can be enforcing on one and record-only on another. `hook_seen` is
+    keyed by host alone and holds the project-level rows — the ones the hook
+    writes with no ruling id at all, which prove it RAN without proving
+    anything about a check.
+
+    `totals` sums every host, because the CLI has no notion of which host it
+    is on; `ruling checks` is where the split is rendered.
+
+    `path` travels with the summary so a surface naming the log names the
+    file this read actually opened, rather than resolving it a second time
+    and risking the writer/reader split scar 0043 records."""
+
+    log_state: str
+    rulings: dict
+    hook_seen: dict
+    totals: dict
+    path: str = ""
+
+    def for_ruling(self, ruling_id: str) -> dict:
+        """One ruling across every host, for the `ruling show` liveness line.
+        `host` names the host that wrote the most recent row, which is the
+        only host a single line can honestly attribute a last firing to."""
+        fold = _empty_fold()
+        fold["host"] = ""
+        for (rid, host), part in self.rulings.items():
+            if rid != ruling_id:
+                continue
+            for key in ("fired", "clean", "violation", "unresolved", "denied"):
+                fold[key] += part[key]
+            if part["last_ts"] > fold["last_ts"]:
+                fold["last_ts"] = part["last_ts"]
+                fold["host"] = host
+        return fold
+
+
+def firing_summary(project_dir=None) -> FiringSummary:
+    """Fold `~/.daimon/logs/checks.jsonl` for one project. Never raises.
+
+    The log is GLOBAL and this is a rendering path, so every id that is not
+    in this project's ledger is discarded here, before anything can print it
+    (scar 0055: printing another bucket's record text writes that text into
+    this project's checkpoint). The ledger read spans every state, not just
+    active: retiring a ruling disarms its check, it does not un-fire what
+    already ran.
+
+    Read through `config.log_dir()`, which `checks_runtime.log_dir()` is a
+    quirk-faithful mirror of (scar 0043). Resolving the path any other way
+    reads an empty directory while the same command reports checks armed.
+    """
+    try:
+        return _firing_summary(project_dir)
+    except Exception:  # noqa: BLE001 — a reporting read never takes a caller down
+        # The path resolution may be exactly what failed, so the guard must
+        # not depend on it: a raise in here defeats the whole promise.
+        try:
+            where = _log_path()
+        except Exception:  # noqa: BLE001
+            where = ""
+        return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
+
+
+def _log_path() -> str:
+    return str(config.log_dir() / checks_runtime.FIRING_LOG_NAME)
+
+
+def _firing_summary(project_dir) -> FiringSummary:
+    where = _log_path()
+    path = Path(where)
+    if not path.exists():
+        return FiringSummary("absent", {}, {}, _empty_fold(), where)
+
+    try:
+        mine = {str(record.get("refutation_id") or "")
+                for record in refutations.listing(polarity="ruling",
+                                                  project_dir=project_dir)}
+    except Exception:  # noqa: BLE001
+        mine = set()
+
+    rulings: dict = {}
+    hook_seen: dict = {}
+    totals = _empty_fold()
+    # STREAMED, one line at a time, single pass. `daimon status` folds this
+    # on every run and the log has no cap yet, so reading it whole made the
+    # most-used verb hold the entire file: 150 MB of resident memory on a
+    # 34 MB log. Nothing here needs two passes or random access.
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                _fold_line(line, mine, rulings, hook_seen, totals)
+    except (OSError, UnicodeDecodeError):
+        return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
+    return FiringSummary("read", rulings, hook_seen, totals, where)
+
+
+def _fold_line(line, mine: set, rulings: dict, hook_seen: dict,
+               totals: dict) -> None:
+    """One row into the fold. Malformed lines never sink the read."""
+    try:
+        row = json.loads(line)
+    except (ValueError, TypeError):
+        return
+    if isinstance(row, dict):
+        ruling_id = str(row.get("ruling_id") or "")
+        host = str(row.get("host") or "")
+        if not ruling_id:
+            # Scar 0042: the empty id is a VALUE — the hook writes it for
+            # no-manifest, manifest-unreadable and no-match. It proves the
+            # hook ran and says nothing about any check, so it is counted
+            # per host and never attributed to a ruling.
+            # MACHINE-wide, and labelled so. The row shape carries no cwd
+            # and no project (spec 3.4), so this fold cannot be scoped and a
+            # caller must not present it as one project's liveness.
+            seen = hook_seen.setdefault(
+                host, {"rows": 0, "scope": "machine", "last_ts": ""})
+            seen["rows"] += 1
+            ts = str(row.get("ts") or "")
+            if ts > seen["last_ts"]:
+                seen["last_ts"] = ts
+        elif ruling_id in mine:
+            _absorb(rulings.setdefault((ruling_id, host), _empty_fold()), row)
+            _absorb(totals, row)
 
 
 def try_run(ruling_id: str, command: str, *, channel: str, cwd=None,

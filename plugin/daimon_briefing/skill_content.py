@@ -169,6 +169,8 @@ human ratified but did not author.
 kinds, labelled. `ruling list` exits 1 on a project that has never been
 written to, naming the missing bucket on stderr: that is the expected
 answer for a fresh project, not a failed command, so do not retry it.
+A ruling may carry a check that runs before a matching shell action;
+`daimon ruling checks` shows what is armed and whether it ever fired.
 Agents may propose: `daimon ruling propose ... --by agent`, and on
 an active ruling `ruling revise --by agent` or `ruling retire --by agent`
 record proposals while the text stands. Always pass `--by agent`. Never run

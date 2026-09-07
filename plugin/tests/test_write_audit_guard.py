@@ -503,6 +503,12 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_ruling_list():
         run(["ruling", "list"], 0)
 
+    def r_ruling_checks():
+        # #943 slice 5: a read. It folds the firing log and grades the
+        # manifest, and neither is under an audited root, but the registry is
+        # about every leaf verb being exercised.
+        run(["ruling", "checks"], 0)
+
     def r_amend_propose():
         # Runs BEFORE r_resolve in the recipe order: propose binds against
         # the LIVE unresolved item, and _T_KEEP is resolved later.
@@ -717,6 +723,10 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # about every leaf verb being exercised, not only the ones that land
         # inside the checkpoint store.
         run(["check", "sync"], 0)
+        # #943 slice 5: the audit half of the same leaf, driven so a flag
+        # that reads the ledger and the manifest is exercised under the
+        # guard rather than trusted to be read-only because it says so.
+        run(["check", "sync", "--check"], 0)
 
     def r_hooks_list():
         run(["hooks", "list"], 0)
@@ -766,6 +776,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("ruling", "retire"): r_ruling_retire,
         ("ruling", "show"): r_ruling_show,
         ("ruling", "check", "try"): r_ruling_check_try,
+        ("ruling", "checks"): r_ruling_checks,
         ("ruling", "list"): r_ruling_list,
         ("amend", "propose"): r_amend_propose,
         ("amend", "ratify"): r_amend_ratify,

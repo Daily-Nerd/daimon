@@ -7,6 +7,7 @@ the `cli.<name>` seam tests and hosts patch keeps working on moved code.
 """
 
 import argparse
+import json
 import sys
 
 import daimon_briefing.cli as _cli
@@ -290,7 +291,95 @@ def _cmd_ruling_show(args) -> int:
     if args.json:
         print(_refutation_json(record))
     else:
-        _print_ruling(record, detailed=True)
+        # #943 slice 5: the record is what `show` owes; liveness is an extra,
+        # so a firing log that cannot be folded drops the line rather than
+        # the answer.
+        try:
+            firing = checks.firing_summary(project)
+        except Exception:  # noqa: BLE001
+            firing = None
+        _print_ruling(record, detailed=True, firing=firing)
+    return 0
+
+
+def _checks_payload(project) -> dict:
+    """The `ruling checks` answer, once, for both the table and `--json`.
+
+    One row per (ruling that carries a check) x (host profile). The CLI has
+    no notion of which host it is running on — there is no `config.host()` —
+    so the hosts are ENUMERATED from `checks_host.PROFILES` rather than
+    guessed. A host left out is a column an author would never see.
+
+    Scoping is by this project's ledger, and the ids that come out of it are
+    the only ids the firing summary and the audit are allowed to contribute
+    (scar 0055: the manifest and the log are both global, and rendering
+    another bucket's ids writes them into this project's checkpoint).
+
+    Reading `check_lifecycle` here makes a fourth consumer of the field
+    (scar 0053). The other three are `_ruling_lines`, `checks._sync` and the
+    viewer payload; none of them changes behavior for this one, and this
+    reader adds no new derivation — it renders the value the fold already
+    computed."""
+    from .. import checks_host
+
+    summary = checks.firing_summary(project)
+    audit = checks.audit(project)
+    rows = []
+    for record in refutations.listing(polarity="ruling", project_dir=project):
+        check = record.get("check")
+        lifecycle = record.get("check_lifecycle")
+        if not isinstance(check, dict) or not lifecycle:
+            continue
+        ruling_id = record["refutation_id"]
+        intent = str(check.get("intent") or "warn")
+        for host, profile in checks_host.PROFILES.items():
+            mode = checks_host.mode_for(profile, intent)
+            # No liveness cell where nothing could have fired. A `never
+            # fired` on a disarmed check or an unsupported host reports a
+            # wiring that does not exist, which is the opposite of what this
+            # table is for.
+            # A log daimon could not read leaves every cell blank too: the
+            # header says why, and a `never fired` here would be a claim
+            # this read cannot support.
+            live = (lifecycle == "armed" and mode != "unsupported"
+                    and summary.log_state != "unreadable")
+            fold = summary.rulings.get((ruling_id, host)) if live else None
+            # Counts are null wherever the table prints none, including the
+            # never-fired row: a consumer reading `clean` without checking
+            # `last_fired` would get the "0 clean" reading constraint 2
+            # exists to prevent. `lifecycle` and `mode` still tell a
+            # never-fired row from one with no liveness cell at all.
+            # Bound once, so the "has it fired" test and the four values
+            # that depend on it cannot answer differently.
+            seen = fold if fold and fold["last_ts"] else None
+            rows.append({
+                "ruling_id": ruling_id, "lifecycle": lifecycle,
+                "intent": intent, "host": host, "mode": mode,
+                # Tri-state, and the renderer's only input: None means the
+                # row has no liveness cell at all, False means it has one
+                # and nothing has fired, True means the counts are real.
+                "fired": (seen is not None) if live else None,
+                "last_fired": seen["last_ts"] if seen else None,
+                "clean": seen["clean"] if seen else None,
+                "violation": seen["violation"] if seen else None,
+                "unresolved": seen["unresolved"] if seen else None,
+            })
+    return {"rows": rows, "manifest": audit._asdict(),
+            "hosts": summary.hook_seen,
+            "log": {"state": summary.log_state, "path": summary.path}}
+
+
+def _cmd_ruling_checks(args) -> int:
+    """#943 slice 5: what is armed, what mode each host gives it, and whether
+    it ever fired. Read-only, agent-callable, exit 0 even when empty — a
+    reporting read never refuses to signal a state."""
+    project = _cli._resolve_project(args.project)
+    payload = _checks_payload(project)
+    _cli._note_usage("ruling:checks")
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return 0
+    render.render_ledger_lines(render.checks_table_lines(payload))
     return 0
 
 
@@ -479,6 +568,16 @@ def register(sub, fmt) -> None:
                              "refuses, because it executes the body")
     rc_try.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rc_try.set_defaults(func=_cli._cmd_ruling_check_try)
+
+    rl_checks = ruling_sub.add_parser(
+        "checks", help="what this project has armed, the mode each host "
+                       "gives it, and whether it ever fired (#943)")
+    rl_checks.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    rl_checks.add_argument("--json", action="store_true", help="machine-readable output")
+    # No `--slug`: this is a read, but it prints ruling ids, and routing a
+    # read to a bucket the caller only names would put another project's ids
+    # into this session's transcript (scar 0055, #899, #948).
+    rl_checks.set_defaults(func=_cli._cmd_ruling_checks)
 
     rl_list = ruling_sub.add_parser("list", help="list project rulings")
     rl_list.add_argument("--state", action="append",

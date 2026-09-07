@@ -1155,6 +1155,7 @@ from .refute import (  # noqa: E402
 )
 from .ruling import (  # noqa: E402
     _cmd_ruling_check_try,  # noqa: F401 — re-exported for compat
+    _cmd_ruling_checks,  # noqa: F401 — re-exported for compat
     _cmd_ruling_list,  # noqa: F401 — re-exported for compat
     _cmd_ruling_propose,  # noqa: F401 — re-exported for compat
     _cmd_ruling_ratify,  # noqa: F401 — re-exported for compat
@@ -2105,6 +2106,43 @@ def _capture_alarm(now: float) -> dict | None:
             "window_days": _RETENTION_WINDOW_DAYS}
 
 
+def _status_checks(project_dir, now: float):
+    """#943 slice 5: armed checks, their liveness and their manifest, or None.
+
+    dict-or-None like `handoff` and `recall_index`, never a fabricated zero
+    shape: a machine that has never used the feature gets no line at all,
+    which is the quiet-by-default rule the team and receipts lines follow.
+
+    `proposed` is counted beside `armed` because a candidate arms nothing but
+    is still the thing a human has to act on, and a status that hid it would
+    make an unratified check invisible until someone ran `ruling list`."""
+    from .. import checks
+
+    counts = {"armed": 0, "proposed": 0}
+    for record in refutations.listing(polarity="ruling",
+                                      project_dir=project_dir):
+        if not isinstance(record.get("check"), dict):
+            continue
+        lifecycle = record.get("check_lifecycle")
+        if lifecycle in counts:
+            counts[lifecycle] += 1
+    if not counts["armed"] and not counts["proposed"]:
+        return None
+    summary = checks.firing_summary(project_dir)
+    last_ts = summary.totals["last_ts"]
+    age = ""
+    if last_ts:
+        try:
+            stamp = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ")
+            age = _format_age(now - stamp.replace(
+                tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            age = ""  # an unexpected stamp reports the fact without an age
+    return {**counts, "last_ts": last_ts, "age": age,
+            "log_state": summary.log_state,
+            "drift": checks.audit(project_dir).drift}
+
+
 def _status_world(project_arg=None) -> dict:
     """Every status fact, computed once — the single source for the plain
     render, `status --json`, and the MCP status tool (#261)."""
@@ -2197,6 +2235,13 @@ def _status_world(project_arg=None) -> dict:
         handoff = {"written_at": _baton["ts"]} if _baton else None
     except Exception:
         handoff = None
+    # #943 slice 5: armed checks and whether any ever fired. Fail-open like
+    # every other best-effort status fact — a broken firing log or an
+    # unreadable checks directory must never take `status` down with it.
+    try:
+        checks_fact = _status_checks(project, now)
+    except Exception:
+        checks_fact = None
     identity = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
@@ -2216,7 +2261,7 @@ def _status_world(project_arg=None) -> dict:
         "rescue_gap": rescue_gap,
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
         "forget_hits": forget_hits, "requests": request_counts,
-        "handoff": handoff, "rc": rc,
+        "handoff": handoff, "checks": checks_fact, "rc": rc,
     }
 
 
@@ -2238,6 +2283,9 @@ def status_payload(project_arg=None) -> tuple:
         "forget_hits": w["forget_hits"],
         "requests": w["requests"],
         "handoff": w["handoff"],
+        # #943 slice 5: appended at the tail — payload key order is
+        # part of the --json contract.
+        "checks": w["checks"],
     }
     return payload, w["rc"]
 
@@ -2265,6 +2313,7 @@ def _cmd_status(args) -> int:
         "forget_hits": w["forget_hits"],
         "requests": w["requests"],
         "handoff": w["handoff"],
+        "checks": w["checks"],
     })
     return w["rc"]
 
@@ -2875,6 +2924,53 @@ def _stats_receipts(project_dir, usage: dict) -> dict:
             "contradicted": contradicted, "skipped": skipped, "cured": cured}
 
 
+def _stats_checks(project_dir) -> dict:
+    """Armed checks and their lifetime firings (this project, #943 slice 5).
+
+    `armed` and `proposed` come from the LEDGER, because that is where
+    whether a check may run is decided; the manifest is a derived view and
+    an audit of it is a different question (`daimon check sync --check`).
+    The five firing counters come from the log, folded across every host:
+    this process cannot know which host it is running on, and `daimon ruling
+    checks` is the surface that splits them.
+
+    `fired` is separate from `clean + violation + unresolved` on purpose. It
+    counts rows, so an outcome this build does not recognise still proves the
+    check RAN — the one fact constraint 2 exists to make visible. Never
+    raises: a broken log must not take `stats` down with it."""
+    from .. import checks  # local, like cli.hooks: not every verb pays for it
+
+    counts = {"armed": 0, "proposed": 0}
+    try:
+        for record in refutations.listing(polarity="ruling",
+                                          project_dir=project_dir):
+            if not isinstance(record.get("check"), dict):
+                continue
+            lifecycle = record.get("check_lifecycle")
+            if lifecycle in counts:
+                counts[lifecycle] += 1
+    except Exception:  # noqa: BLE001
+        pass
+    summary = checks.firing_summary(project_dir)
+    totals = summary.totals
+    # `log_state` travels with the counts. Without it an unreadable log is
+    # byte-identical to an empty one on this line, and the render layer has
+    # no way to tell "nothing ran" from "daimon cannot tell you".
+    #
+    # And a read that FAILED reports null rather than zero, the way
+    # `ruling checks --json` does: a consumer reading the counts without
+    # reading the state would otherwise conclude nothing ran. Only the
+    # failed read is unknown. An absent log and a log holding no matching
+    # rows both know the answer is zero and say so, so a fresh install stays
+    # distinguishable from a broken one.
+    known = summary.log_state != "unreadable"
+    return {**counts,
+            **{key: (totals[key] if known else None)
+               for key in ("fired", "clean", "violation", "unresolved",
+                           "denied")},
+            "log_state": summary.log_state}
+
+
 def _stats_resolutions(project_dir, usage: dict) -> dict:
     """Resolution credit, by source (#480 slice 5) — who is closing loops,
     and whether their receipts hold. Two populations, kept honestly apart
@@ -2981,7 +3077,10 @@ def _cmd_stats(args) -> int:
             "receipts": _stats_receipts(project, usage),
             # #475 part 2: current-configuration posture, rendered next to
             # (never merged into) the historical fallback counts above.
-            "rescue_posture": llm.rescue_posture()}
+            "rescue_posture": llm.rescue_posture(),
+            # #943 slice 5: appended at the tail — `stats --json` key order is
+            # the same contract `status --json` documents.
+            "checks": _stats_checks(project)}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0

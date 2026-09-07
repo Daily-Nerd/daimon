@@ -863,6 +863,33 @@ def _plugin_drift_line(pd: dict) -> str:
             f"{pd['cli']} — {fix}")
 
 
+def _checks_status_line(data: dict) -> str:
+    """#943 slice 5: one line on `daimon status`, or none at all.
+
+    Quiet by default (#113's rule): a machine that never armed or proposed a
+    check gets no line, so the feature cannot generate a permanent warning
+    about not being used. The liveness half is the point — `never fired`
+    beside a non-zero armed count is the state that used to be invisible."""
+    c = data.get("checks")
+    if not c:
+        return ""
+    proposed = f" ({c['proposed']} proposed)" if c.get("proposed") else ""
+    if c.get("log_state") == "unreadable":
+        live = "firing log unreadable"
+    elif c.get("age"):
+        live = f"last fired {c['age']} ago"
+    elif c.get("last_ts"):
+        # A row that will not parse still proves the check RAN, and `never
+        # fired` here is the false negative this line exists to remove. The
+        # stamp itself stays out: the log is declared to hold no plaintext,
+        # and a value outside the minted format is not trusted to.
+        live = "last fired, timestamp unreadable"
+    else:
+        live = "never fired"
+    drift = " · manifest drifted, run daimon check sync" if c.get("drift") else ""
+    return f"checks: {c['armed']} armed{proposed}, {live}{drift}"
+
+
 def _plain_status(data: dict) -> None:
     alarm = data.get("capture_alarm")
     if alarm:
@@ -905,6 +932,9 @@ def _plain_status(data: dict) -> None:
     ho_line = _handoff_line(data)
     if ho_line:
         print(ho_line)  # #662: one line, only when a baton is waiting
+    ck_line = _checks_status_line(data)
+    if ck_line:
+        print(ck_line)  # #943: one line, only when a check exists
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -1007,6 +1037,9 @@ def _rich_status(data: dict) -> None:
     ho_line = _handoff_line(data)
     if ho_line:
         console.print(ho_line)  # #662: one line, only when a baton is waiting
+    ck_line = _checks_status_line(data)
+    if ck_line:
+        console.print(ck_line)  # #943: one line, only when a check exists
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")
@@ -1185,10 +1218,15 @@ def render_hooks_install(lines) -> None:
     _render_lines(lines)
 
 
-def render_hooks_status(report) -> None:
+def render_hooks_status(report, trailing=()) -> None:
     """Per-host, per-file drift audit (#266). NOT INSTALLED hosts get one line;
     installed hosts list each file's verdict, the registration state where the
-    host uses one, and a single fix hint when anything drifted."""
+    host uses one, and a single fix hint when anything drifted.
+
+    `trailing` is the #943 manifest block: the file the installed scripts
+    READ, audited against this project's ledger. It follows the per-host
+    lines rather than joining them because it is not per host, and it is
+    empty on a machine where the audit could not run."""
     lines: list[str] = []
     for h in report:
         if not h["installed"]:
@@ -1203,6 +1241,7 @@ def render_hooks_status(report) -> None:
             lines.append(f"  → fix: daimon hooks install {h['host']}")
     if not lines:
         lines.append("no packaged hook hosts")
+    lines.extend(trailing)
     _render_lines(lines)
 
 
@@ -1362,6 +1401,68 @@ def render_lifecycle_lines(lines) -> None:
         console.print(ln, style=_lifecycle_style(ln), markup=False)
 
 
+def _checks_manifest_header(m: dict) -> str:
+    """One line for the state of the file the hooks actually read.
+
+    The four states are kept apart the way `load_manifest` keeps them: an
+    install that armed nothing, a manifest daimon can no longer parse, a
+    manifest that no longer matches the ledger, and one that does. Folding
+    any two of them reports a fresh machine as a broken one, or the reverse."""
+    state = m.get("state")
+    if state == "unreadable":
+        return "manifest unreadable"
+    if state == "absent":
+        return "no manifest"
+    if m.get("drift"):
+        return "manifest drifted, run daimon check sync"
+    return f"armed {len(m.get('have') or [])} of {len(m.get('wanted') or [])} wanted"
+
+
+def checks_table_lines(payload: dict) -> list:
+    """`daimon ruling checks` (#943 slice 5), one host per line under each
+    ruling that carries a check.
+
+    A row with no liveness cell simply ENDS after its mode. A `never fired`
+    there would claim a wiring that does not exist — nothing is armed for a
+    proposed or disarmed check, and a host whose column reads `unsupported`
+    has no channel to fire through."""
+    lines = [_checks_manifest_header(payload.get("manifest") or {})]
+    log = payload.get("log") or {}
+    if log.get("state") == "unreadable":
+        # Beside the manifest header, and for the same reason: the liveness
+        # cells below are blank because daimon could not read the log, not
+        # because nothing ran.
+        lines.append(f"firing log unreadable at {log.get('path', '')}")
+    for host, seen in sorted((payload.get("hosts") or {}).items()):
+        # `(any project)`: these rows carry no project, so the line is about
+        # the machine. Printed unqualified under a project heading it reads
+        # as this project's liveness and quietly shows another one's.
+        lines.append(
+            f"hook seen on {host} (any project), last {seen['last_ts']}")
+    rows = payload.get("rows") or []
+    if not rows:
+        lines.append("no rulings carry a check")
+        return lines
+    current = None
+    for row in rows:
+        if row["ruling_id"] != current:
+            current = row["ruling_id"]
+            shown = ("proposed, not armed" if row["lifecycle"] == "proposed"
+                     else row["lifecycle"])
+            lines.append(f"{current}  {shown} · intent {row['intent']}")
+        line = f"  {row['host']:<14}{row['mode']}"
+        if row["fired"] is not None:
+            live = f"last fired {row['last_fired']}" if row["fired"] \
+                else "never fired"
+            counts = (f" · lifetime {row['clean']} clean, "
+                      f"{row['violation']} violation, "
+                      f"{row['unresolved']} unresolved"
+                      if row["fired"] else "")
+            line = f"  {row['host']:<14}{row['mode']:<14}{live}{counts}"
+        lines.append(line.rstrip())
+    return lines
+
+
 def render_ledger_records(records) -> None:
     """A sequence of record cards (each a list of pre-formatted lines) —
     `ruling list`, `refute list`, `refute search`. Plain path prints them
@@ -1515,6 +1616,30 @@ def _receipts_line(r: dict) -> str:
             f"{r['cured']} cured")
 
 
+def _checks_line(c: dict) -> str:
+    """#943 slice 5: the one armed-check status line, shared by the plain and
+    rich renderers, in the three states constraint 2 needed told apart —
+    nothing armed, armed but never fired, and armed with lifetime counts.
+
+    Aggregated across hosts because the CLI has no notion of which host it is
+    on; `daimon ruling checks` is where the per-host split lives. `denied` is
+    its own number: a row proves a check RAN, and only a deny closes the gap
+    between running and being honored. Plain wording only, no court
+    vocabulary."""
+    if not c.get("armed"):
+        # What is armed is a LEDGER fact and no log state can change it.
+        return "checks: none armed"
+    if c.get("log_state") == "unreadable":
+        # Neither silent nor clean. `never fired` here is how an author
+        # widens the pattern on a gate that has been firing all along.
+        return f"checks: {c['armed']} armed, firing log unreadable"
+    if not c.get("fired"):
+        return f"checks: {c['armed']} armed, never fired"
+    return (f"checks (lifetime): {c['fired']} fired, {c['clean']} clean, "
+            f"{c['violation']} violation, {c['unresolved']} unresolved, "
+            f"{c['denied']} denied")
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -1591,6 +1716,13 @@ def _plain_stats(data: dict) -> None:
         # attempted yet" are themselves the answer, not noise to gate on.
         print("receipts (this project):")
         print(f"  {_receipts_line(rcpt)}")
+    chk = data.get("checks")
+    if chk:
+        # #943 slice 5: always shown, same reasoning as receipts — "none
+        # armed" and "armed, never fired" are each an answer. Silence here is
+        # the exact ambiguity the line exists to remove.
+        print("checks (this project):")
+        print(f"  {_checks_line(chk)}")
     res = data.get("resolutions")
     if res:
         # #480 slice 5: the credit block — who is closing loops. Always shown
@@ -1753,6 +1885,16 @@ def _rich_stats(data: dict) -> None:
         rcpt_table.add_column("value")
         rcpt_table.add_row("status", _receipts_line(rcpt))
         console.print(rcpt_table)
+
+    chk = data.get("checks")
+    if chk:
+        # #943 slice 5: mirrors the plain renderer, same always-shown rule.
+        chk_table = Table(title="checks (this project)", title_justify="left",
+                          show_header=True, header_style="bold")
+        chk_table.add_column("metric")
+        chk_table.add_column("value")
+        chk_table.add_row("status", _checks_line(chk))
+        console.print(chk_table)
 
     res = data.get("resolutions")
     if res:
