@@ -1349,3 +1349,77 @@ def test_a_firing_whose_stamp_will_not_parse_is_not_reported_as_never(
     # The stamp itself never reaches the line: the log is declared to hold
     # no plaintext and a value outside the minted format is not trusted to.
     assert "yesterday" not in out
+
+
+def test_for_ruling_ignores_the_other_rulings_rows(tmp_path):
+    """The `show` fold walks every (ruling, host) pair in the summary, so a
+    project with two armed checks has to skip the one it was not asked
+    about. Folding both together would attribute one ruling's firings to
+    another on the surface that names a single rule."""
+    first = _arm(tmp_path)
+    second = _arm(tmp_path, subject="release notes", match="gh release create")
+    _write_log(
+        _row(ruling_id=first, outcome="clean", ts="2026-09-06T08:00:00Z"),
+        _row(ruling_id=second, outcome="violation",
+             ts="2026-09-06T11:00:00Z"),
+        _row(ruling_id=second, outcome="violation", host="codex"),
+    )
+    summary = checks.firing_summary(str(tmp_path))
+    mine = summary.for_ruling(first)
+    assert (mine["fired"], mine["clean"], mine["violation"]) == (1, 1, 0)
+    assert mine["last_ts"] == "2026-09-06T08:00:00Z"
+    theirs = summary.for_ruling(second)
+    assert theirs["fired"] == 2 and theirs["violation"] == 2
+
+
+def test_a_ledger_that_cannot_be_read_leaves_the_log_scoped_to_nothing(
+        tmp_path, monkeypatch):
+    """The id set is what scopes a GLOBAL log to this project. If it cannot
+    be built, the safe answer is an empty set: attributing rows without
+    knowing whose they are is how another project's counts reach this
+    project's output (scar 0055). The earlier never-raises test returns at
+    the absent-log branch and never reaches this one."""
+    ruling_id = _arm(tmp_path)
+    _write_log(_row(ruling_id=ruling_id, outcome="clean"),
+               _row(cause="no-match", host="codex"))
+    monkeypatch.setattr(refutations, "listing",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("x")))
+    summary = checks.firing_summary(str(tmp_path))
+    assert summary.log_state == "read"
+    assert summary.rulings == {} and summary.totals["fired"] == 0
+    # The project-level rows still land: they are attributed to no ruling,
+    # so scoping cannot affect them.
+    assert summary.hook_seen["codex"]["rows"] == 1
+
+
+def test_stats_survives_a_ledger_read_that_explodes(tmp_path, monkeypatch,
+                                                    capsys):
+    """`stats` aggregates what is on disk and must not die on one broken
+    reader. The armed count falls back to zero rather than to a guess."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm(tmp_path)
+    monkeypatch.setattr(refutations, "listing",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("x")))
+    assert _stats(tmp_path, "--json") == 0
+    c = json.loads(capsys.readouterr().out)["checks"]
+    assert c["armed"] == 0 and c["proposed"] == 0
+    assert _stats(tmp_path) == 0
+    assert "checks: none armed" in capsys.readouterr().out
+
+
+def test_rulings_without_a_check_are_not_counted_by_stats_or_status(
+        tmp_path, monkeypatch, capsys):
+    """Most rulings carry no check at all. Counting them would report every
+    standing rule in the project as an armed gate."""
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    refutations.assert_ruling(
+        subject="plain rule", verdict="a rule with nothing to run",
+        scope="publishing", evidence=["issue:943"], channel="cli-tty",
+        ratified=True, project_dir=str(tmp_path))
+    _arm(tmp_path)
+    assert _stats(tmp_path, "--json") == 0
+    assert json.loads(capsys.readouterr().out)["checks"]["armed"] == 1
+    _status(tmp_path, "--json")
+    assert json.loads(capsys.readouterr().out)["checks"]["armed"] == 1
+    _status(tmp_path)
+    assert "checks: 1 armed, never fired" in capsys.readouterr().out
