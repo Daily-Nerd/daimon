@@ -183,6 +183,26 @@ SURFACES: tuple[Surface, ...] = (
     #    growth is measured, never silent. --
     Surface("checkpoints/{slug}/relations.jsonl", "relations._append",
             True, "rewrite", "forget"),
+    # -- the bucket-migration receipt (#963): one line per completed move,
+    #    {version, ts, from_slug, to_slug, mode, ledgers, pointers,
+    #    leftovers, by}. Global rather than per-bucket on purpose — it names
+    #    a bucket that no longer exists, so it cannot live inside one.
+    #
+    #    exempt-no-plaintext, and the guarantee is `buckets._record`, which
+    #    builds the whole row: two slugs the caller's own path already
+    #    derives, a UTC stamp, a mode from a closed set, per-ledger LINE
+    #    COUNTS (never lines), the FILE NAMES a merge did not understand, and
+    #    a literal channel. No item text, quote, scene or note has a path
+    #    into it, and no ledger content is copied through it. The slugs are
+    #    the bucket directory names the store already shows the auditor.
+    #
+    #    Deletion is `none` for the same reason the shape exists: this file
+    #    is what makes rows moved out of a legacy bucket reachable again
+    #    (recall's alias mapping, the requests recipient join). Dropping a
+    #    row would re-orphan exactly the history the migration rescued, and
+    #    it holds nothing forget is asked to reach. --
+    Surface("checkpoints/migrations.jsonl", "buckets._append_record",
+            False, "exempt-no-plaintext", "none", audit_exempt=True),
     # -- serializer chunk cache: PRE-redaction by design (#125), so it can
     #    only be purged wholesale (#422); age reaper bounds survivors. --
     Surface("checkpoints/.chunk-cache/*", "serializer._save_chunk_cache",
