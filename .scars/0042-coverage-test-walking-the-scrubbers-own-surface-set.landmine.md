@@ -13,6 +13,7 @@ anchors:
 evidence:
   - note: test_opt_in_scrubs_local_copies asserted no residue by iterating store.project_surfaces(PROJECT) — the exact set scrub_content_key walks. apply_foreign_tombstones reaches only that set, so the chunk cache, crash log, adapter transcripts, events.jsonl and own team-mirror copies all kept the plaintext while the test passed and the CLI printed success. Found in the #600 slice B design review, 2026-08-07; filed as #620.
   - note: Second instance of the class. The first shipped a forget bug to main because a passing test asserted the residue it was meant to catch (see forget-plaintext-surfaces).
+  - note: "firing-review 2026-09-08: this id (42) is shared with 0042-append-forged-key-reads-as-fold-intent.landmine.md, a pre-existing duplicate-id defect flagged separately for a human to renumber, which means the firing log cannot attribute counts between the two by id alone; the fires that land on store.py match this scar's own anchors and the hazard is still live, so anchors are left unchanged"
 expires:
   condition: "residue assertions enumerate surfaces from surfaces.SURFACES (plaintext=True) rather than from the walk under test"
   review_after: 2027-02-07

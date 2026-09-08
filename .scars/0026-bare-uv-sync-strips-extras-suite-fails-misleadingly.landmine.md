@@ -18,6 +18,7 @@ evidence:
   - pr: 424
   - pr: 425
   - note: 2026-07-30: recurred TWICE independently — the #418 and #419 fix agents each hit the identical 31-failure test_render shape in fresh git worktrees (`uv sync --extra dev` alone); both recovered only via `uv sync --all-extras`. Two later agents avoided it solely because their prompts pre-warned them. Three independent hits in two days.
+  - note: "firing-review 2026-09-08: 10 fires since the last revision, on .github/workflows/ci.yml, plugin/pyproject.toml and docs/ pages that reference uv sync; anchors reviewed and confirmed on-target, hazard still live"
 expires:
   condition: "dev/pretty move from [project.optional-dependencies] to default dependency-groups, or a sync wrapper/Makefile target becomes the documented path"
   review_after: 2026-10-29

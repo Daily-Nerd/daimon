@@ -7,7 +7,6 @@ confidence: 0.9
 created: 2026-08-15
 authors: ["claude-code", "Kibukx"]
 anchors:
-  - path: plugin/tests/
   - pattern: "inspect\.getsource"
 evidence:
   - pr: 693 PR 2 review round 1: both blind reviewers independently proved the mutation survives

@@ -7,7 +7,7 @@ confidence: 0.9
 created: 2026-09-02
 authors: ["claude-code", "Kibukx"]
 promoted_by: Kibukx
-promoted_by_source: git-config
+promoted_by_source: explicit
 anchors:
   - pattern: "_suggest_weight"
 evidence:

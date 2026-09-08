@@ -7,7 +7,7 @@ confidence: 0.9
 created: 2026-08-01
 authors: ["claude-code", "Kibukx"]
 anchors:
-  - path: plugin/
+  - path: plugin/daimon_briefing/
 violation: "sd '[^']*\\n"
 evidence:
   - note: 2026-08-01 session, twice in one day. (1) #475 review: sd pattern spanning 'backend = resolve_backend()...' lines did not match; the 'restored' file still held the mutant and the full suite ran 2 failures that were misread as new-test signal. (2) #480 slice-2 review: sd multiline pattern on _tie_rank did not match, tie-break test 'passed' against UNMUTATED code and the pass was nearly reported as mutation-proof. Both caught only by re-grepping for the MUTANT marker / the expected changed line before trusting the run.

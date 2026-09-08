@@ -8,7 +8,7 @@ created: 2026-06-12
 authors: ["claude-code", "Kibukx"]
 anchors:
   - path: research/experiments/track-a/
-  - pattern: "stale|staleness|adversarial.{0,40}verif|overturn"
+  - pattern: "judge.{0,60}(stale|staleness|overturn)|(stale|staleness|overturn).{0,60}judge|adversarial.{0,40}verif"
 evidence:
   - note: H1 holdout judging 2026-06-12, LOGBOOK.md entry; runs/H1/haiku-judge/*-holdout.json hand_review blocks (local)
   - note: v2 revalidation 2026-06-12: staleness judge flagged 5 more (H2 gt9, H4 gt4/5/7/10) — all 5 wrong-dimension errors again; 10/10 false flags across v1+v2. Recall verifier: 3 of 8 overturn claims rejected in hand review (wrong-item evidence, partial-component evidence). runs/H*/haiku-judge/ hand_review blocks (local)

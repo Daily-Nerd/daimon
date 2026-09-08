@@ -10,6 +10,7 @@ anchors:
   - path: .scars/
 evidence:
   - note: 2026-07-06: armed a violation tripwire as violation: 'len\\(\\w+\\)\\s*==\\s*\\d' (single quotes); guilty-diff `scar check --diff` returned violations: [] and `scar lint` reported 0 errors — dead tripwire, green gauge. Same regex in double quotes fired correctly. Mechanism: scar-cli 0.16.1 model.py:150 parses the field with .strip('\"') — double quotes stripped, single quotes kept as literal characters inside the regex, which then never matches
+  - note: "firing-review 2026-09-08: 37 fires since the last revision, all from editing .scars/candidates and active .scars/*.md files during ongoing scar authoring; path .scars/ is the correct and complete risk surface for this quoting trap, left unchanged"
 expires:
   condition: "scar-cli parser also strips single quotes, or scar lint flags a violation value wrapped in single quotes"
   review_after: 2027-07-06

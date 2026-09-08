@@ -11,6 +11,7 @@ anchors:
   - pattern: "project_slug"
 evidence:
   - note: 2026-07-15: two agents independently lost time to this while manually exercising `daimon resolve` (#303/#304 verification). Both saw 'no checkpoint for this project yet — nothing to resolve' and assumed a code fault; the checkpoint existed, under a different slug.
+  - note: "firing-review 2026-09-08: 63 fires since the last revision, concentrated on store.py, recall.py and cli/ plus other files that reference project_slug; anchors reviewed and confirmed on-target, hazard still live"
 expires:
   condition: "project_slug resolves symlinks (or the CLI reports a slug mismatch instead of 'no checkpoint')"
   review_after: 2027-01-15

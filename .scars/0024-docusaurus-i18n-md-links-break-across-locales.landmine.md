@@ -11,6 +11,7 @@ anchors:
   - path: website/i18n/
 evidence:
   - pr: 334 (runs 29661022607 and 29661156116 — two failures, one from each direction, same evening)
+  - note: "firing-review 2026-09-08: 21 fires since the last revision, concentrated on website/docs/reference/cli.md and website/docs/hosts/claude-code.md plus their es mirrors under website/i18n/; the whole docs/i18n tree is the correct risk surface for this locale-fallback hazard, left unchanged"
 expires:
   condition: "the site moves off .md-relative doc links entirely (URL-style everywhere), or i18n gains a build-time guarantee that no locale can fall back. NOTE: 100% es coverage does NOT retire this scar — coverage was already 15/15 when it was promoted, and the hazard returns the moment one untranslated page is added."
   review_after: 2026-10-01
