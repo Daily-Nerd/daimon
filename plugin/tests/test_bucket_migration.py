@@ -2117,3 +2117,244 @@ def test_the_verb_defaults_to_the_current_project(linked, tmp_checkpoint_dir,
     assert cli.main(["bucket", "migrate"]) == 0
     assert (tmp_checkpoint_dir / store.project_bucket(real) /
             "events.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# fail-open branches (#967 codecov patch)
+# ---------------------------------------------------------------------------
+
+
+def test_climbs_out_normalizes_the_alt_separator_before_checking(monkeypatch):
+    """`os.altsep` is None on macOS/Linux, so the normalization line only runs
+    on a platform (or a patched os module) where it is set. Without it, a
+    literal backslash never splits into its own path component and a '..'
+    hidden behind it would be missed."""
+    monkeypatch.setattr(buckets.os, "altsep", "\\")
+    assert buckets.climbs_out("a\\..\\b") is True
+
+
+def test_incomplete_for_with_no_slug_is_empty():
+    assert buckets.incomplete_for(None) == ()
+    assert buckets.incomplete_for("") == ()
+
+
+def test_pointer_files_returns_empty_list_when_the_directory_is_unreadable(
+        tmp_path):
+    """`_pointer_files` is read from `migrate` and from planning surfaces that
+    must never raise for a directory that vanished out from under them."""
+    ghost = tmp_path / "does-not-exist"
+    assert buckets._pointer_files(ghost) == []
+
+
+def test_leftovers_returns_empty_list_when_the_directory_is_unreadable(
+        tmp_path):
+    ghost = tmp_path / "does-not-exist"
+    assert buckets._leftovers(ghost) == []
+
+
+def test_append_lines_defaults_the_tail_when_it_cannot_be_read(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """A ledger appender that cannot even READ the file it is appending to
+    must still append rather than raise: the merge is the one thing #963
+    exists to keep restartable."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    _plant(target, {"events.jsonl": _row("e0")})
+    target_file = target / "events.jsonl"
+    orig_read_bytes = pathlib.Path.read_bytes
+
+    def _boom(self):
+        if self == target_file:
+            raise OSError("boom")
+        return orig_read_bytes(self)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", _boom)
+
+    record = buckets.migrate(link)
+
+    assert record["mode"] == "merge"
+    assert record["ledgers"] == {"events.jsonl": 1}
+    lines = target_file.read_text(encoding="utf-8").splitlines()
+    assert sorted(lines) == sorted([_row("e0").strip(), _row("e1").strip()])
+
+
+def test_a_pointer_that_cannot_be_unlinked_after_landing_is_left_in_place(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """A pointer copy that landed in the target chain but could not be
+    unlinked from the legacy bucket is reported as a leftover, never raised:
+    the bytes are safe in the target either way."""
+    link, real = linked
+    legacy = _populate_legacy(link, [("S-old", "2026-09-01T00:00:00Z")])
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    target = tmp_checkpoint_dir / (store.project_bucket(real) or "")
+    _plant(target, {"events.jsonl": _row("e0")})
+    source = legacy / "latest.json"
+    orig_unlink = pathlib.Path.unlink
+
+    def _boom(self, *a, **k):
+        if self == source:
+            raise OSError("permission denied")
+        return orig_unlink(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", _boom)
+
+    record = buckets.migrate(link)
+
+    assert record["mode"] == "merge"
+    assert record["pointers"] == 1, "the pointer landed in the target chain"
+    assert source.exists(), "an unremovable source pointer is left in place"
+    assert "latest.json" in record["leftovers"]
+    assert _marker(target / "latest.json") == "S-old"
+
+
+def test_a_ledger_that_cannot_be_unlinked_after_merging_is_left_in_place(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """Every legacy line already lives in the target, so the merge tries to
+    drop the legacy copy. A failed unlink must not raise: the file is simply
+    reported as still there."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    _plant(target, {"events.jsonl": _row("e1")})
+    source = legacy / "events.jsonl"
+    orig_unlink = pathlib.Path.unlink
+
+    def _boom(self, *a, **k):
+        if self == source:
+            raise OSError("boom")
+        return orig_unlink(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", _boom)
+
+    record = buckets.migrate(link)
+
+    assert record["mode"] == "merge"
+    assert record["ledgers"] == {"events.jsonl": 0}
+    assert source.exists(), "an unremovable ledger is left in place, not raised"
+    assert "events.jsonl" in record["leftovers"]
+
+
+def test_a_legacy_directory_that_cannot_be_removed_is_reported_not_raised(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """Everything the merge understands was absorbed, so it tries to remove
+    the now-empty legacy directory. A failed rmdir (a race, a permission
+    error) must be swallowed: the directory is simply left standing."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    _plant(target, {"events.jsonl": _row("e0")})
+    orig_rmdir = pathlib.Path.rmdir
+
+    def _boom(self, *a, **k):
+        if self == legacy:
+            raise OSError("directory not empty")
+        return orig_rmdir(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "rmdir", _boom)
+
+    record = buckets.migrate(link)
+
+    assert record["mode"] == "merge"
+    assert record["leftovers"] == []
+    assert legacy.exists(), \
+        "an unremovable empty legacy directory is left, not raised"
+
+
+# ---------------------------------------------------------------------------
+# CLI patch coverage (#967)
+# ---------------------------------------------------------------------------
+
+
+def test_a_tenant_scoped_refusal_in_json_carries_the_refused_key(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    link, _ = linked
+    foreign_dir = tmp_checkpoint_dir / "-foreign-project"
+    _plant(foreign_dir, {"events.jsonl": _row("theirs")})
+    monkeypatch.chdir(link)
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+
+    import io
+    from contextlib import redirect_stdout
+
+    out = io.StringIO()
+    with redirect_stdout(out):
+        rc = cli.main(["bucket", "migrate", "--project=-foreign-project",
+                       "--json"])
+
+    assert rc == 2
+    payload = json.loads(out.getvalue())
+    assert "tenant-scoped" in payload["refused"]
+    assert buckets.records() == []
+
+
+def test_the_verb_names_an_unreadable_target_pointer_in_its_human_output(
+        linked, tmp_checkpoint_dir, monkeypatch, capsys):
+    """The rc-1 human render has to name the specific file the merge could
+    not read, or the reader has nothing to go fix."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
+    link, real = linked
+    _write(link, "S-t0", "2026-01-01T00:00:00Z")
+    _write(link, "S-t1", "2026-01-02T00:00:00Z")
+    target = tmp_checkpoint_dir / (store.project_bucket(real) or "")
+    (target / "prev-1.json").write_bytes(b'{"session_id": "S-t0", "cre')
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    legacy.mkdir(parents=True, exist_ok=True)
+    _stage_legacy_pointers(link, legacy, [("S-l0", "2026-06-01T00:00:00Z")])
+
+    rc = cli.main(["bucket", "migrate", f"--project={link}"])
+
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert ("prev-1.json in " + (store.project_bucket(real) or "") +
+            " could not be read, so no pointer was moved") in out
+
+
+def test_status_swallows_a_bucket_read_failure_as_a_fail_open_fact(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """Every migration-derived status fact is best-effort: an exception from
+    any of the reads must not take `status` down, and the identity fields
+    fall back to the documented empty shape."""
+    link, _ = linked
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("checkpoint dir vanished")
+
+    monkeypatch.setattr(buckets, "legacy_bucket", _boom)
+
+    world = cli._status_world(link)
+
+    assert world["identity"]["legacy_slug"] is None
+    assert world["identity"]["aliases"] == []
+    assert world["identity"]["migrated"] == []
+    assert world["identity"]["incomplete"] == []
+
+
+def test_status_dedupes_a_migration_pair_named_by_two_receipt_rows(
+        linked, tmp_checkpoint_dir):
+    """A hand-edited receipt file, or an older daimon that appended a row per
+    re-run, can make the same (from, to) pair reachable through two distinct
+    rows. `status` must print that migration once, not once per row."""
+    link, real = linked
+    target_slug = store.project_bucket(real) or ""
+    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"version": 1, "from_slug": "-a", "to_slug": target_slug,
+         "complete": True, "ts": "2026-09-01T00:00:00Z", "ledgers": {}},
+        {"version": 1, "from_slug": "-a", "to_slug": "-mid",
+         "complete": True, "ts": "2026-09-02T00:00:00Z", "ledgers": {}},
+        {"version": 1, "from_slug": "-mid", "to_slug": target_slug,
+         "complete": True, "ts": "2026-09-03T00:00:00Z", "ledgers": {}},
+    ]
+    (tmp_checkpoint_dir / "migrations.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    world = cli._status_world(link)
+
+    slugs = [entry["slug"] for entry in world["identity"]["migrated"]]
+    assert slugs.count("-a") == 1, \
+        "the same (from, to) pair reached through two rows prints once"
+    assert sorted(slugs) == ["-a", "-mid"]
