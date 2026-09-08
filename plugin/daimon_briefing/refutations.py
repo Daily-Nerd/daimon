@@ -659,8 +659,18 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     return sorted(doomed)
 
 
-def events(project_dir=None) -> list[dict]:
-    """Read valid ledger rows best-effort; malformed lines never sink reads."""
+def events(project_dir=None, *, strict: bool = False) -> list[dict]:
+    """Read valid ledger rows best-effort; malformed lines never sink reads.
+
+    `strict` (#962, default False): every existing caller keeps today's
+    fail-open contract byte for byte — an unreadable ledger reads as no
+    events at all. Passing `strict=True` re-raises the `OSError` (or
+    `UnicodeDecodeError`) instead, for a caller that needs to tell "could not
+    read" apart from "genuinely has none" — `briefing.rulings_read` is the
+    one caller that does. A ledger path replaced by a directory still passes
+    `path.exists()`, and `read_text` on it raises `IsADirectoryError`, an
+    `OSError` subclass, so that case is caught here too.
+    """
     path = _path(project_dir)
     if path is None or not path.exists():
         return []
@@ -668,6 +678,8 @@ def events(project_dir=None) -> list[dict]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
+        if strict:
+            raise
         return []
     for index, line in enumerate(lines):
         try:

@@ -110,12 +110,27 @@ def test_ruling_loader_fails_open(tmp_checkpoint_dir, sample_checkpoint,
                                   monkeypatch):
     _rule("this ruling will not load")
 
-    def boom(**kwargs):
+    def boom(*args, **kwargs):
         raise OSError("ledger unreadable")
 
-    monkeypatch.setattr(briefing.refutations, "listing", boom)
+    # #962: active_rulings now reads through briefing.rulings_read, which
+    # reads events() (strict) + fold() directly rather than
+    # refutations.listing() — this is the seam that must still fail open.
+    monkeypatch.setattr(briefing.refutations, "events", boom)
     out = briefing.render(sample_checkpoint, project_dir=PROJECT)
     assert out  # the briefing still renders
+    assert "Standing rulings" not in out
+
+
+def test_ruling_loader_fails_open_on_an_unreadable_ledger(
+        tmp_checkpoint_dir, sample_checkpoint):
+    """The real #962 shape, not a monkeypatch stand-in: a ledger replaced by
+    a directory must degrade the same way a raised OSError does."""
+    _rule("this ruling will not load either")
+    refutations._path(PROJECT).unlink()
+    refutations._path(PROJECT).mkdir()
+    out = briefing.render(sample_checkpoint, project_dir=PROJECT)
+    assert out
     assert "Standing rulings" not in out
 
 
