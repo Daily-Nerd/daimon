@@ -977,9 +977,15 @@ def request_panel_lines(project_dir=None) -> list[str]:
         return []
     lines = [_REQUEST_PANEL_HEADER]
     for row in rows:
+        # #961 slice 2: marked only for `info` — `work` is the default and
+        # the legacy reading, so marking it too would be noise on every
+        # line. Read from the folded row only (THE ONE RULE): `row` here is
+        # already a `requests.inbox_renderable` record, never a raw event.
+        kind_marker = "  [info]" if row.get("kind") == "info" else ""
         marker = "  [blocking]" if row.get("blocking") else ""
         lines.append(f"→ {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}{marker}")
+                     f"{_truncate_request_ask(row.get('ask', ''))}"
+                     f"{kind_marker}{marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
     if overflow:
@@ -1018,9 +1024,12 @@ def owed_panel_lines(project_dir=None) -> list[str]:
         return []
     lines = [_OWED_PANEL_HEADER]
     for row in rows:
+        # #961 slice 2: same marker, same posture as `request_panel_lines`.
+        kind_marker = "  [info]" if row.get("kind") == "info" else ""
         marker = "  [blocking]" if row.get("blocking") else ""
         lines.append(f"✓ {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}{marker}")
+                     f"{_truncate_request_ask(row.get('ask', ''))}"
+                     f"{kind_marker}{marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
     if overflow:
@@ -1046,7 +1055,13 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
     sent has been decided yet, or `project_dir` is None). Same posture as
     `request_panel_lines`: fail-open, skeleton furniture, never silently
     truncated over RENDER_CAP. `project_dir` is the CLI's
-    `worldcheck_project` — same D2 CLI-only gate, same caller contract."""
+    `worldcheck_project` — same D2 CLI-only gate, same caller contract.
+
+    #961 slice 2: deliberately carries no `kind` marker. This panel reports
+    the OUTCOME of a request this project itself sent, and it already chose
+    the kind at open time — unlike the two panels above, nothing here is
+    deciding how much scrutiny an ask deserves. Mirrors the same call made
+    for `cli/request.py`'s `_verdict_inject_lines`."""
     if project_dir is None:
         return []
     try:

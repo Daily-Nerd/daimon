@@ -179,3 +179,21 @@ def test_cli_brief_shows_both_panels_together(tmp_checkpoint_dir,
     assert "the sent ask" in out
     assert "the incoming ask" in out
     assert sent_id  # keeps the linter from flagging an unused id
+
+
+def test_verdict_panel_never_shows_a_kind_marker(tmp_checkpoint_dir):
+    """Decision (#961 slice 2): the verdict panel reports the OUTCOME of a
+    request this project itself opened, and it already assigned the kind at
+    open time — re-surfacing it here tells the sender something about its
+    own record it already knows. No marker is added to this surface, the
+    same call made for cli/request.py's `_verdict_inject_lines`."""
+    from daimon_briefing import briefing
+    sender = "/p/cbv-sender-kind"
+    recipient_dir = "/p/cbv-recipient-kind"
+    _seed_checkpoint(recipient_dir, "S-cbv-recipient-kind")
+    q_id = requests.open_request(
+        to=store.project_slug(recipient_dir), ask="publish the schema",
+        why="because", channel="cli-tty", kind="info", project_dir=sender)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_dir)
+    lines = briefing.verdict_panel_lines(sender)
+    assert not any("[info]" in ln for ln in lines)

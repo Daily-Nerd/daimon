@@ -5,7 +5,9 @@ shape: fail-open, always present, never budget-dropped. The CLI-only gate
 this file drives briefing.request_panel_lines/render directly.
 """
 
-from daimon_briefing import briefing, requests, store
+import json
+
+from daimon_briefing import briefing, config, requests, store
 
 RECIPIENT = "/p/req-brief-recipient"
 SENDER = "/p/req-brief-sender"
@@ -20,10 +22,10 @@ def _seed_sender(session="S-req-sender"):
     return store.project_slug(SENDER)
 
 
-def _ask(sender_slug, ask="publish the schema", **kw):
+def _ask(sender_slug, ask="publish the schema", channel="cli-agent", **kw):
     return requests.open_request(
         to=store.project_slug(RECIPIENT), ask=ask,
-        why="the client needs it", channel="cli-agent",
+        why="the client needs it", channel=channel,
         project_dir=sender_slug, **kw)
 
 
@@ -46,6 +48,53 @@ def test_panel_marks_blocking(tmp_checkpoint_dir):
     _ask(sender, blocking=True)
     lines = briefing.request_panel_lines(RECIPIENT)
     assert any("blocking" in ln.lower() for ln in lines)
+
+
+def test_panel_marks_an_info_ask(tmp_checkpoint_dir):
+    sender = _seed_sender()
+    _ask(sender, channel="cli-tty", kind="info")
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert any("[info]" in ln for ln in lines)
+
+
+def test_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
+    sender = _seed_sender()
+    _ask(sender)
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert not any("[info]" in ln for ln in lines)
+
+
+def test_panel_legacy_row_renders_without_a_kind_marker(tmp_checkpoint_dir):
+    """A record minted before #961 carries no `kind` field at all; the panel
+    must render it exactly like an ordinary `work` ask — no marker, no
+    crash."""
+    sender = _seed_sender()
+    _ask(sender, channel="cli-tty", kind="info")
+    path = (config.checkpoint_dir() / store.project_slug(sender)
+            / "requests.jsonl")
+    rows = [json.loads(ln) for ln in
+            path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    del rows[0]["kind"]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert not any("[info]" in ln for ln in lines)
+
+
+def test_panel_never_reads_kind_off_a_raw_row(tmp_checkpoint_dir):
+    """THE FOLD RULE THROUGH THE SURFACE: a raw `opened` row appended on a
+    non-human channel with `kind="info"` folds to `work`, and the panel must
+    show exactly what the fold says, never the forged raw value. Appended
+    directly because `open_request` refuses this combination at the write
+    boundary."""
+    sender = _seed_sender()
+    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
+    row.update({"to": store.project_slug(RECIPIENT),
+               "ask": "publish the schema", "why": "the client needs it",
+               "kind": "info"})
+    assert requests.append(row, project_dir=sender)
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert not any("[info]" in ln for ln in lines)
 
 
 def test_panel_never_silently_truncates_over_cap(tmp_checkpoint_dir):
