@@ -54,6 +54,17 @@ from . import buckets, config, normalize, policy, redact, store
 from .refutations import CHANNEL_AUTHORITY, CHANNEL_LABEL
 
 VERSION = 1
+# #961: the approval-requirement a request carries. `info` is answerable from
+# the recipient's own artifacts and owes no accept; `work` asks the recipient
+# to change something or spend effort and waits on a person. Two values,
+# never a free string — the same discrete-enum posture CHANNEL_AUTHORITY and
+# EVENTS already hold this module to.
+KINDS = frozenset({"info", "work"})
+# The fold's fallback for a row that carries no readable `kind` at all — every
+# request minted before this field existed, and any other unreadable value.
+# Nothing is reclassified by the field's absence (the amendment's own words),
+# and the unreadable case defaults toward MORE scrutiny, never less.
+DEFAULT_KIND = "work"
 # The closed event vocabulary, frozen in PR 1 so the format cannot drift as
 # the arc lands: `surfaced` (the recipient's brief stamped this ask) and
 # `verdict_surfaced` (the sender's brief stamped the answer) are written by
@@ -327,6 +338,21 @@ def events(project_dir=None) -> list[dict]:
     return rows
 
 
+def _kind_of(row: dict) -> str:
+    """The approval-requirement kind an `opened` row carries (#961), folding
+    the legacy default and the `--to-human` invariant into one place.
+
+    A row minted before this field existed carries no `kind` key at all and
+    reads as `work` — nothing is reclassified by the field's absence. A
+    `to_human` ask reads as `work` regardless of what is stored: the write
+    boundary in `open_request` already refuses the combination, but the
+    invariant belongs here too, so a future reader (a ruling's widened
+    default among them) can never see the two disagree."""
+    value = row.get("kind")
+    kind = value if value in KINDS else DEFAULT_KIND
+    return DEFAULT_KIND if row.get("to_human") is True else kind
+
+
 def fold(rows: list[dict]) -> dict[str, dict]:
     """Fold this bucket's rows into current records, deterministic under
     reorder.
@@ -374,6 +400,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "to": str(row.get("to") or ""),
                 "to_human": row.get("to_human") is True,
                 "blocking": row.get("blocking") is True,
+                "kind": _kind_of(row),
                 "ask": str(row.get("ask") or ""),
                 "why": str(row.get("why") or ""),
                 "evidence": str(row.get("evidence") or ""),
@@ -596,13 +623,21 @@ def renderable(project_dir=None) -> dict:
 def open_request(*, to: str, ask: str, why: str, channel: str,
                  blocking: bool = False, to_human: bool = False,
                  evidence: str = "", supersedes: str = "",
-                 project_dir=None) -> str:
+                 kind: str = DEFAULT_KIND, project_dir=None) -> str:
     """Open a request addressed to another project's slug.
 
     Slug SHAPE is validated here; whether it names a bucket that exists is
     the CLI's check — a project that has not serialized yet has no bucket,
     and refusing to record the ask at the module seam would make the ledger
     unusable exactly when a team is onboarding.
+
+    #961: `kind` is the approval requirement, assigned once, here, by the
+    SENDER. Only a person may assign `info` — an agent lowering its own
+    ask's approval bar is exactly the assertion the wedge principle forbids
+    — so this is enforced at this library boundary, not only in the CLI a
+    caller could otherwise route around. `--to-human` is audience, not
+    approval requirement, and can never be paired with `info`: a person is
+    always the one who reads it.
     """
     project_dir = config.resolve_project_dir(project_dir)
     if not _SLUG_RE.fullmatch(str(to or "")):
@@ -610,6 +645,19 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     supersedes = str(supersedes or "").strip()
     if supersedes and not _REQUEST_ID_RE.fullmatch(supersedes):
         raise RequestError(f"invalid superseded request id: {supersedes!r}")
+    if kind not in KINDS:
+        raise RequestError(f"kind must be one of: {', '.join(sorted(KINDS))}")
+    if to_human and kind == "info":
+        raise RequestError(
+            "--to-human addresses that project's person, which is always "
+            "the work approval requirement; it cannot be opened as kind "
+            "info")
+    if kind == "info" and CHANNEL_AUTHORITY.get(channel) != "human":
+        raise RequestError(
+            "kind info lowers this request's own approval requirement, and "
+            "only the sender's human channel may assign it; open it as kind "
+            f"work (the default), or run this from a human channel — this "
+            f"call arrived through {channel!r}")
     slug = store.project_slug(project_dir)
     if not slug:
         raise RequestError("project unknown; requests are recorded in the "
@@ -628,6 +676,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
         "to": to,
         "to_human": bool(to_human),
         "blocking": bool(blocking),
+        "kind": kind,
         "ask": ask,
         "why": why,
         "from_label": _sender_label(project_dir),

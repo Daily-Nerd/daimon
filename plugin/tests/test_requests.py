@@ -143,6 +143,89 @@ def test_non_length_failures_still_raise_plain_request_error(project):
     assert not isinstance(exc_info.value, requests.RequestTooLong)
 
 
+def test_open_kind_defaults_to_work(project):
+    q_id = _open(project)
+    assert requests.get(q_id, project_dir=project)["kind"] == "work"
+
+
+def test_open_accepts_kind_work_explicitly(project):
+    q_id = _open(project, channel="cli-tty", kind="work")
+    assert requests.get(q_id, project_dir=project)["kind"] == "work"
+
+
+def test_open_accepts_kind_info_from_a_human_channel(project):
+    q_id = _open(project, channel="cli-tty", kind="info")
+    assert requests.get(q_id, project_dir=project)["kind"] == "info"
+
+
+def test_open_refuses_an_invalid_kind(project):
+    with pytest.raises(requests.RequestError):
+        _open(project, channel="cli-tty", kind="urgent")
+
+
+def test_a_legacy_record_with_no_kind_field_reads_as_work(project):
+    """#961 amendment: nothing is reclassified by the field's absence. Write
+    a real record through the shipping writer, then strip the `kind` key the
+    way a pre-ship record would lack it, and confirm the read lands on
+    `work` — the ledger's own default, not an artifact of the test."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    rows = _rows(project)
+    assert rows[0]["kind"] == "info"
+    del rows[0]["kind"]
+    path = (config.checkpoint_dir() / store.project_slug(project)
+            / "requests.jsonl")
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    record = requests.get(q_id, project_dir=project)
+    assert record["kind"] == "work"
+
+
+def test_to_human_with_no_kind_yields_work(project):
+    q_id = _open(project, channel="cli-tty", to_human=True)
+    assert requests.get(q_id, project_dir=project)["kind"] == "work"
+
+
+def test_to_human_combined_with_kind_info_is_refused(project):
+    with pytest.raises(requests.RequestError) as exc_info:
+        _open(project, channel="cli-tty", to_human=True, kind="info")
+    assert "human" in str(exc_info.value)
+    assert not requests.records(project_dir=project)
+
+
+def test_an_agent_channel_cannot_open_a_request_as_kind_info(project):
+    with pytest.raises(requests.RequestError) as exc_info:
+        _open(project, channel="cli-agent", kind="info")
+    assert "human channel" in str(exc_info.value)
+    assert not requests.records(project_dir=project)
+
+
+def test_an_agent_channel_opening_kind_work_is_unaffected(project):
+    """Explicit `--kind work` from an agent is the default, not a
+    bar-lowering move, so it must still succeed."""
+    q_id = _open(project, channel="cli-agent", kind="work")
+    assert requests.get(q_id, project_dir=project)["kind"] == "work"
+
+
+def test_revise_never_changes_an_existing_records_kind(project):
+    """Kind is assigned once, at open, by a person. `revise` carries no
+    `kind` parameter at all, so an agent channel revising the ask has no way
+    to touch it — the record's kind must survive every revision unchanged."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.revise(q_id, channel="cli-agent", ask="a sharper ask",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["kind"] == "info"
+    assert record["ask"] == "a sharper ask"
+
+
+def test_kind_round_trips_through_the_ledger(project):
+    q_id = _open(project, channel="cli-tty", kind="info")
+    row = _rows(project)[0]
+    assert row["kind"] == "info"
+    record = requests.get(q_id, project_dir=project)
+    assert record["kind"] == "info"
+
+
 def test_unresolvable_project_writes_nothing(project):
     assert requests._path(None) is None
     assert requests.append({"event": "opened"}, project_dir=None) is False
@@ -765,6 +848,57 @@ def test_cli_open_anyway_records_it_with_a_loud_warning(project, recipient,
     assert "warning:" in out and "never surfaced" in out
 
 
+def test_cli_open_defaults_kind_to_work(project, recipient, capsys):
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    assert requests.get(q_id, project_dir=project)["kind"] == "work"
+
+
+def test_cli_open_accepts_the_kind_flag_from_a_human_channel(
+        project, recipient, monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                   "--why", WHY, "--kind", "info", "--project", project])
+    assert rc == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    assert requests.get(q_id, project_dir=project)["kind"] == "info"
+
+
+def test_cli_open_refuses_kind_info_from_the_agent_channel(project, recipient,
+                                                            capsys):
+    from daimon_briefing import cli
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                   "--why", WHY, "--kind", "info", "--by", "agent",
+                   "--project", project])
+    assert rc == 1
+    assert not requests.records(project_dir=project)
+    out = capsys.readouterr().out
+    assert "human channel" in out
+
+
+def test_cli_open_refuses_to_human_with_kind_info(project, recipient,
+                                                   monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                   "--why", WHY, "--to-human", "--kind", "info",
+                   "--project", project])
+    assert rc == 1
+    assert not requests.records(project_dir=project)
+    out = capsys.readouterr().out
+    assert "human" in out
+
+
+def test_cli_open_rejects_an_unknown_kind_choice(project, recipient, capsys):
+    from daimon_briefing import cli
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                 "--why", WHY, "--kind", "urgent", "--by", "agent",
+                 "--project", project])
+    assert exc_info.value.code == 2
+
+
 def test_cli_open_human_path_requires_a_terminal(project, recipient,
                                                  monkeypatch, capsys):
     from daimon_briefing import cli
@@ -936,6 +1070,40 @@ def test_cli_list_renders_records_and_json(project, recipient, monkeypatch,
     payload = json.loads(capsys.readouterr().out)
     assert [r["request_id"] for r in payload] == [q_id]
     assert payload[0]["state"] == "open"
+
+
+def test_request_json_payload_carries_kind_including_the_legacy_default(
+        project, recipient, monkeypatch, capsys):
+    """#961: the `--json` payload is a parsing contract (#948 and #963 both
+    held its shape deliberately unchanged while moving signals to stderr and
+    exit codes instead). `kind` is a DELIBERATE addition to that contract,
+    not an accidental one, and this pins it — without this test, slice 2
+    could rename or drop the key with nothing going red."""
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    info_id = requests.open_request(
+        to=store.project_slug(OTHER), ask=ASK, why=WHY, channel="cli-tty",
+        kind="info", project_dir=project)
+    legacy_id = requests.open_request(
+        to=store.project_slug(OTHER), ask="a second, older-shaped ask",
+        why=WHY, channel="cli-tty", project_dir=project)
+    # Simulate a record written before `kind` existed: strip the key from
+    # its raw `opened` row the way a pre-ship line would never have carried
+    # it, never a hand-shaped fixture (#963's own lesson).
+    path = (config.checkpoint_dir() / store.project_slug(project)
+            / "requests.jsonl")
+    rows = [json.loads(ln) for ln in
+            path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    for row in rows:
+        if row.get("request_id") == legacy_id:
+            del row["kind"]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    assert cli.main(["request", "list", "--json", "--project", project]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    by_id = {row["request_id"]: row for row in payload}
+    assert by_id[info_id]["kind"] == "info"
+    assert by_id[legacy_id]["kind"] == "work"
 
 
 def test_cli_list_keeps_suppressed_records_visible(project, recipient,
