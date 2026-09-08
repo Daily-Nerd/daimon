@@ -896,9 +896,21 @@ def _decide_cards(rows: list) -> list:
         tag = row["kind"] + (f" · {age}" if age else "")
         blocking = " [blocking: the sender says it is waiting]" if row.get(
             "blocking") else ""
+        # #961 slice 2: `row["approval"]` is the request lane's
+        # approval-requirement kind (info/work) from the folded record — a
+        # DIFFERENT axis from `row["kind"]` above, which is the queue LANE
+        # this card's tag already names. THE LANDMINE this file's own
+        # queue-row builder warns about: overloading `kind` here would make
+        # a request-lane row that happens to be `info` say `[info]` in the
+        # tag instead of `[request]`, silently hiding which lane it is.
+        # Marked only for `info`, same reasoning as the panels: `work` is
+        # the default and the legacy reading.
+        info_marker = (" [info]" if row.get("kind") == "request"
+                       and row.get("approval") == "info" else "")
         # Two spaces after the id: `render._LEDGER_HEADER_RE` reads that shape
         # to give the id its own span, because it is what a human copies.
-        card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
+        card = [f"[{tag}] {row['id']}  {row['headline']}{info_marker}"
+               f"{blocking}"]
         if row.get("context"):
             card.append(f"  {row['context']}")
         card += [f"    {label}: {command}"

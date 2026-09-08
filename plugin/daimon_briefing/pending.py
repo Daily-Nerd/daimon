@@ -53,7 +53,7 @@ _KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2}
 
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
-         commands, context="", blocking=False) -> dict:
+         commands, context="", blocking=False, approval=None) -> dict:
     return {
         "kind": kind,
         "id": record_id,
@@ -66,6 +66,12 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         "waiting_since": waiting_since,
         "blocking": blocking,
         "commands": commands,
+        # #961 slice 2: the request lane's approval-requirement kind
+        # (info/work), from the FOLDED record — a DIFFERENT axis from
+        # `kind` above, which is the queue LANE (request/amendment/ruling/
+        # refutation). None for every lane but `request`, which never
+        # assigns one.
+        "approval": approval,
     }
 
 
@@ -124,6 +130,9 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
                      if record.get("from_label") else ""),
             waiting_since=record.get("created_at") or "",
             blocking=bool(record.get("blocking")),
+            # #961 slice 2: read from THIS folded record only — `record` is
+            # already `requests.recipient_join`'s output, never a raw row.
+            approval=record.get("kind"),
             commands=[
                 ("accept", f"daimon request accept {rid}"),
                 ("reject", f"daimon request reject {rid} --note \"<why>\""),

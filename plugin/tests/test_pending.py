@@ -12,9 +12,18 @@ anchor drives `is_stale`, so a stamping reader would make the person reading
 their own queue the mechanism that ages their asks out of the agent's panel.
 """
 
+import json
+
 import pytest
 
-from daimon_briefing import amendments, pending, refutations, requests, store
+from daimon_briefing import (
+    amendments,
+    config,
+    pending,
+    refutations,
+    requests,
+    store,
+)
 
 
 @pytest.fixture
@@ -125,6 +134,86 @@ def test_a_decided_request_is_not_owed(project):
     requests.accept(q_id, channel="cli-tty", project_dir=project)
 
     assert pending.queue(project_dir=project)["rows"] == []
+
+
+def test_a_request_row_carries_its_approval_kind_from_the_fold(project):
+    """#961 slice 2: `approval` on the queue row comes from the FOLDED
+    record's `kind` — pending.py's own `kind` key on this same row is the
+    queue LANE (request/amendment/ruling/refutation), a different axis
+    entirely, and must stay untouched by this."""
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="an info-only ask",
+        why="the recipient can read this from its own artifacts",
+        channel="cli-tty", kind="info", project_dir=project)
+
+    row = pending.queue(project_dir=project)["rows"][0]
+
+    assert row["id"] == q_id
+    assert row["kind"] == "request"      # the LANE, untouched by this
+    assert row["approval"] == "info"     # the approval requirement
+
+
+def test_a_work_request_row_carries_approval_work(project):
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
+
+    row = pending.queue(project_dir=project)["rows"][0]
+
+    assert row["id"] == q_id
+    assert row["approval"] == "work"
+
+
+def test_a_non_request_row_carries_no_approval(project):
+    """The ruling/refutation/amendment lanes never assign an approval kind:
+    `approval` stays absent for them, and the render surface reads that as
+    no marker."""
+    refutations.assert_ruling(
+        subject="release", verdict="never bump to 1.0 without a human call",
+        scope="repo", evidence=["issue:766"], channel="cli-agent",
+        project_dir=project)
+
+    row = pending.queue(project_dir=project)["rows"][0]
+
+    assert row["kind"] == "ruling"
+    assert row.get("approval") is None
+
+
+def test_a_legacy_request_row_carries_approval_work(project):
+    """A record minted before #961 has no `kind` field at all; the fold
+    already defaults it to `work` (#961 slice 1), and this queue row must
+    carry that default, never blank or a crash."""
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="an info-only ask",
+        why="why", channel="cli-tty", kind="info", project_dir=project)
+    path = (config.checkpoint_dir() / store.project_slug(project)
+            / "requests.jsonl")
+    rows = [json.loads(ln) for ln in
+            path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    del rows[0]["kind"]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+
+    row = pending.queue(project_dir=project)["rows"][0]
+
+    assert row["id"] == q_id
+    assert row["approval"] == "work"
+
+
+def test_a_request_row_never_reads_approval_off_a_raw_row(project):
+    """THE FOLD RULE THROUGH THE SURFACE: a raw `opened` row appended on a
+    non-human channel with `kind="info"` folds to `work`, and the queue row
+    must carry exactly that, never the forged raw value. Appended directly
+    because `open_request` refuses this combination at the write
+    boundary."""
+    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
+    row.update({"to": store.project_slug(project), "ask": "an ask",
+               "why": "why", "kind": "info"})
+    assert requests.append(row, project_dir=project)
+
+    result_row = pending.queue(project_dir=project)["rows"][0]
+
+    assert result_row["approval"] == "work"
 
 
 def test_a_foreign_addressed_request_is_owed_but_our_own_outgoing_ask_is_not(
