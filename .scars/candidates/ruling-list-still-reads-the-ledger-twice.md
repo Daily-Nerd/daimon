@@ -11,7 +11,7 @@ anchors:
   - path: plugin/daimon_briefing/briefing.py
   - pattern: "briefing\.rulings_read"
 evidence:
-  - note: "#962: briefing.rulings_read(project_dir) reads standing rulings only (state==\"active\", polarity==\"ruling\"), but `daimon ruling list` supports --state candidate/overturned and is a general listing, so `_cmd_ruling_list` still has to call refutations.listing() separately for `rows`. It calls rulings_read() a second time, only when rows is empty, purely to learn the no-bucket/unreadable/read fact."
+  - note: "#962: briefing.rulings_read(project_dir) reads standing rulings only (state==\"active\", polarity==\"ruling\"), but `daimon ruling list` supports --state candidate/overturned and is a general listing, so `_cmd_ruling_list` still has to call refutations.listing() separately for `rows`. It calls rulings_read() a second time, only when rows is empty, purely to learn which of the four states (unresolved/no-bucket/unreadable/read) applies."
 expires:
   condition: "listing()/records() gain their own strict= parameter so one call produces both the rows and the read-state, closing the second read"
   review_after: 2027-03-01
@@ -24,8 +24,9 @@ way — it lists candidate/active/overturned rulings via `--state`, and always
 polarity `"ruling"`. Those two shapes cannot be satisfied by a single read, so
 `_cmd_ruling_list` keeps its original `refutations.listing(...)` call for the
 rows it renders, and *separately* calls `briefing.rulings_read(project)` (only
-when `rows` comes back empty) purely to classify the empty answer as
-`"no-bucket"`, `"unreadable"`, or a clean `"read"`.
+when `rows` comes back empty) purely to classify the empty answer as one of
+`rulings_read`'s four states: `"unresolved"`, `"no-bucket"`, `"unreadable"`,
+or a clean `"read"`.
 
 This closed the correctness gap #962 was filed for (the CLI no longer reports
 "cannot read the ledger" as "no rulings"), but it did not close the TOCTOU the

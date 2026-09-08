@@ -250,17 +250,26 @@ def _cmd_ruling_list(args) -> int:
     # unaffected; the distinction rides on stderr and the exit code, the way
     # `daimon status` already reports "no checkpoint here".
     #
-    # #962: a THIRD cause reads the same as an empty ledger — the bucket is
-    # there, but refutations.jsonl could not be read (permissions, or
-    # replaced by a directory). `briefing.rulings_read` is the shared reader
-    # that already tells no-bucket apart from unreadable apart from a clean
-    # empty read, so it settles both branches from one probe instead of this
-    # command reaching for `bucket_exists` on its own (a second, independent
-    # read of the same fact is exactly the shape a TOCTOU takes).
+    # #962: two more causes read the same as an empty ledger. The bucket can
+    # be there with refutations.jsonl unreadable (permissions, a symlink
+    # loop, or replaced by a directory), or the ledger path itself can never
+    # get resolved at all (a config problem, not a project problem — see
+    # `briefing.rulings_read`). `rulings_read` is the shared reader that
+    # already tells all four states apart, so it settles every branch here
+    # from one probe instead of this command reaching for `bucket_exists` on
+    # its own (a second, independent read of the same fact is exactly the
+    # shape a TOCTOU takes).
     rc = 0
     if not rows:
         read = briefing.rulings_read(project)
-        if read.state == "unreadable":
+        if read.state == "unresolved":
+            # No `path` to name — resolution never got that far, so this
+            # line never interpolates one.
+            print(f"cannot resolve a ledger path for {project}: check "
+                  f"DAIMON_CHECKPOINT_DIR and ~/.daimon/env for a bad value",
+                  file=sys.stderr)
+            rc = 1
+        elif read.state == "unreadable":
             print(f"cannot read the ledger for {store.project_slug(project)} "
                   f"(resolved {project}): {read.path} exists but could not "
                   f"be read", file=sys.stderr)

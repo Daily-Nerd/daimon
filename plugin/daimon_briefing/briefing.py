@@ -752,10 +752,15 @@ _RULING_HEADER = "Standing rulings (human-ratified — honor these):"
 
 class RulingsRead(NamedTuple):
     """The result of one attempt to read standing rulings (#962). `state` is
-    exactly one of "read", "no-bucket", "unreadable" — see `rulings_read`.
-    `rows` is `[]` for every state but "read". `path` is the resolved
-    refutations.jsonl path, or None when the project slug cannot be
-    resolved at all."""
+    exactly one of "unresolved", "no-bucket", "unreadable", "read" — see
+    `rulings_read`. `rows` is `[]` for every state but "read". `path` is the
+    resolved refutations.jsonl path, or None exactly when `state` is
+    "unresolved" — no other combination occurs.
+
+    `rulings_read` never raises; it always returns one of the four states.
+    `active_rulings` never raises either, and returns a plain list — a host
+    that only wants "do I have anything to enforce" wraps that one, a host
+    that must react to WHY an answer came back empty reads this one."""
     rows: list[dict]
     state: str
     path: Path | None
@@ -768,24 +773,35 @@ def rulings_read(project_dir=None) -> RulingsRead:
     refutation_id (the fold keeps no finer stamp).
 
     `active_rulings` is reimplemented on top of this — the two cannot drift.
-    Where it collapsed three distinct facts into one empty list, this names
+    Where it collapsed four distinct facts into one empty list, this names
     them:
 
-    - "no-bucket": the project's bucket does not exist — a mis-resolved
-      path. Checked FIRST, before any read is attempted, so a missing
-      bucket never reports as "unreadable".
-    - "unreadable": the bucket exists but the ledger could not be read
-      (permissions, or refutations.jsonl replaced by a directory), or the
-      fold/sort raised over hand-edited rows. `rows` is [].
+    - "unresolved": `refutations._path` returned None, or raised, before a
+      ledger path was ever produced — the project could not be identified at
+      all (an unrouted call, or `config` itself failing to resolve, e.g. a
+      corrupt `~/.daimon/env` file). `path` is None. Checked FIRST: nothing
+      downstream is attempted once this fires.
+    - "no-bucket": the path resolved, but the project's bucket directory
+      does not exist — a mis-resolved `--project`, never written from.
+    - "unreadable": the path resolved and the bucket exists, but the ledger
+      could not be read (permissions, a symlink loop, refutations.jsonl
+      replaced by a directory), or the fold/sort raised over hand-edited
+      rows (a stray non-list `anchors`/`evidence` on a hand-built row is one
+      way to land here — known, not fixed by this function). `rows` is [].
     - "read": a successful read, including a bucket that simply carries no
       ledger yet (a clean empty read per `bucket_exists`'s own docstring)
       and a ledger whose malformed lines stay skipped and invisible, same
       as always.
     """
-    path = refutations._path(project_dir)
-    if not refutations.bucket_exists(project_dir):
-        return RulingsRead(rows=[], state="no-bucket", path=path)
     try:
+        path = refutations._path(project_dir)
+    except Exception:
+        return RulingsRead(rows=[], state="unresolved", path=None)
+    if path is None:
+        return RulingsRead(rows=[], state="unresolved", path=None)
+    try:
+        if not refutations.bucket_exists(project_dir):
+            return RulingsRead(rows=[], state="no-bucket", path=path)
         records = refutations.fold(
             refutations.events(project_dir, strict=True))
         rows = [r for r in records.values()
@@ -805,11 +821,17 @@ def active_rulings(project_dir=None) -> list[dict]:
     newest ratifications; `daimon ruling list` and the viewer lane keep
     refutations.listing's own presentation order.
 
-    Fail-open: ANY error — read, fold, or sort over hand-edited rows, a
-    missing bucket, an unreadable ledger — yields [] rather than costing the
-    briefing. A host that needs to tell those apart reads `rulings_read`
-    instead (#962); this stays the fail-open sibling on top of it."""
-    return rulings_read(project_dir).rows
+    Fail-open: ANY error — path resolution, read, fold, or sort over
+    hand-edited rows, a missing bucket, an unreadable ledger — yields []
+    rather than costing the briefing. `rulings_read` already catches all of
+    these itself, but the guard here is repeated on purpose: this is the
+    pinned fail-open API (#940), and a future change to the strict sibling
+    must not be able to reintroduce a crash here by accident. A host that
+    needs to tell the failures apart reads `rulings_read` instead (#962)."""
+    try:
+        return rulings_read(project_dir).rows
+    except Exception:
+        return []
 
 
 def ruling_lines(project_dir=None) -> list[str]:

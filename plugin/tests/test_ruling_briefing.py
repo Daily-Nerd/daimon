@@ -134,6 +134,23 @@ def test_ruling_loader_fails_open_on_an_unreadable_ledger(
     assert "Standing rulings" not in out
 
 
+def test_ruling_loader_fails_open_when_path_resolution_itself_raises(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    """#962 F1: `refutations._path` sits ABOVE the ledger read (it reaches
+    `config.checkpoint_dir()`, which can raise on a corrupt env file — a
+    `UnicodeDecodeError`, not an `OSError`). That seam must fail open too,
+    not just the read/fold path below it."""
+    _rule("this ruling will not load for a third reason")
+
+    def boom(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte")
+
+    monkeypatch.setattr(briefing.refutations, "_path", boom)
+    out = briefing.render(sample_checkpoint, project_dir=PROJECT)
+    assert out  # the briefing still renders, never a raised exception
+    assert "Standing rulings" not in out
+
+
 def test_no_rulings_render_is_byte_identical_to_legacy(tmp_checkpoint_dir,
                                                        sample_checkpoint):
     b = briefing.build(sample_checkpoint)
