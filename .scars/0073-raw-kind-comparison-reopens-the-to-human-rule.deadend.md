@@ -12,8 +12,8 @@ anchors:
   - path: plugin/daimon_briefing/requests.py
   - pattern: "_kind_of\(row\) != current\[.kind.\]"
 evidence:
-  - commit: f4bdb74
-  - pr: 971
+  - commit: 636a1b7
+  - pr: 972
   - note: #961 slice 1. The shipped disagreement rule fired unconditionally and compared post-gate values, so any non-human duplicate downgraded a human info ask (measured: an agent duplicate copying kind=info verbatim still forced work). Two candidate fixes were built and measured, both 5929 passed / 10 skipped, no existing test separating them.
 expires:
   condition: "the founder's raw kind is retained on the record, so a raw comparison no longer needs side state in fold"

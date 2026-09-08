@@ -11,7 +11,7 @@ promoted_by_source: explicit
 anchors:
   - path: docs/
   - path: website/docs/
-  - pattern: "cd /Users/[a-z]+/Documents/Daily-Nerd/daimon &&"
+violation: "cd /Users/[a-z]+/Documents/Daily-Nerd/daimon &&"
 evidence:
   - note: #963, fix/963-bucket-migration: five doc files were edited from the shared checkout path while the branch lived in a worktree. git status in the worktree showed no docs change, and the reader-vocabulary and website gates ran green against the worktree's unedited copies.
 expires:

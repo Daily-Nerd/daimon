@@ -13,7 +13,7 @@ anchors:
   - path: plugin/daimon_briefing/briefing.py
   - pattern: "monkeypatch\.setattr\([^,]*refutations"
 evidence:
-  - commit: 3b352ff
+  - commit: 8d66b44
   - pr: 971
   - note: #962: test_ruling_loader_fails_open patched refutations.listing, the OUTERMOST call, so its guard covered everything active_rulings touched including config-layer path resolution. The refactor moved active_rulings onto events()+fold(), the patch was repointed to refutations.events, and events sits INSIDE the new try. Path resolution moved outside the guard in the same change. active_rulings began raising UnicodeDecodeError and RuntimeError on config faults and briefing.render went from degrading to crashing, while 5888 tests passed. Caught only by an adversarial pass that ran the repro against both branches.
 expires:
