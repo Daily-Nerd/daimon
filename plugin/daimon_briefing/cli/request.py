@@ -351,7 +351,7 @@ def _cmd_request_open(args) -> int:
             to=to, ask=args.ask, why=args.why, channel=_request_channel(args),
             blocking=bool(args.blocking), to_human=bool(args.to_human),
             evidence=args.evidence or "", supersedes=args.supersedes or "",
-            project_dir=project)
+            kind=args.kind, project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:open:refused")
         print(_refusal_message("request not recorded", exc))
@@ -501,6 +501,11 @@ def register(sub, fmt) -> None:
     rq_open.add_argument(
         "--to-human", action="store_true",
         help="the ask is for that project's human, not its agent")
+    rq_open.add_argument(
+        "--kind", choices=sorted(requests.KINDS), default=requests.DEFAULT_KIND,
+        help="approval requirement: work (default) waits on a person, info "
+             "is answerable from the recipient's own artifacts and owes no "
+             "accept; only a human channel may open one as info")
     rq_open.add_argument(
         "--blocking", action="store_true",
         help="mark the sender as blocked on it; a flag on the record, never "
