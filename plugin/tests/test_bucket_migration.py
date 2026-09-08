@@ -765,6 +765,65 @@ def test_a_chain_of_one_keeps_every_pointer_it_cannot_hold(
     assert surviving == {"S-a", "S-b", "S-c"}
 
 
+def test_the_named_history_lands_the_pointer_when_the_target_is_overfull(
+        linked, tmp_checkpoint_dir, monkeypatch, capsys):
+    """The remedy has to be arithmetic on what is actually there.
+
+    Deriving it from `DAIMON_CHECKPOINT_HISTORY` assumes the target occupies
+    exactly that many slots. A target holding MORE than the current history
+    (the knob was lowered after those pointers were written) makes the message
+    name a number that strands the same pointer all over again."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "4")
+    link, real = linked
+    for index, created in enumerate(("2026-01-01T00:00:00Z",
+                                     "2026-01-02T00:00:00Z",
+                                     "2026-01-03T00:00:00Z",
+                                     "2026-01-04T00:00:00Z")):
+        _write(link, f"S-t{index}", created)
+    target = tmp_checkpoint_dir / (store.project_bucket(real) or "")
+    assert len(list(target.glob("*.json"))) == 4
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    legacy.mkdir(parents=True, exist_ok=True)
+    _stage_legacy_pointers(link, legacy, [("S-l0", "2026-06-01T00:00:00Z")])
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "2")
+
+    assert cli.main(["bucket", "migrate", f"--project={link}"]) == 1
+    named = capsys.readouterr().out
+    wanted = int(named.split("to at least ")[1].split()[0])
+
+    assert wanted == 5, "four occupied slots plus the one stranded pointer"
+    monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", str(wanted))
+    final = buckets.migrate(link)
+
+    assert final["complete"] is True
+    assert final["stranded_pointers"] == []
+    assert store._pointer_stems(target) == {"S-t0", "S-t1", "S-t2", "S-t3",
+                                            "S-l0"}
+    assert buckets.aliases_for(store.project_bucket(real)) == \
+        frozenset({buckets.legacy_slug(link)})
+
+
+def test_a_leftover_daimon_could_not_read_is_not_called_someone_elses(
+        linked, tmp_checkpoint_dir, capsys):
+    """A dangling symlink named `prev-2.json` carries daimon's own naming.
+    Saying it "is not written by daimon" claims an authorship nobody can
+    check; the line describes what the file is instead."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    legacy.mkdir(parents=True, exist_ok=True)
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    (legacy / "prev-2.json").symlink_to(legacy / "nothing-here.json")
+    _plant(tmp_checkpoint_dir / (store.project_bucket(real) or ""),
+           {"events.jsonl": _row("e0")})
+
+    assert cli.main(["bucket", "migrate", f"--project={link}"]) == 1
+
+    out = capsys.readouterr().out
+    assert "prev-2.json" in out
+    assert "not written by daimon" not in out
+    assert f"move it out of {buckets.legacy_slug(link)} to finish" in out
+
+
 def test_a_dry_run_lists_the_pointers_that_will_not_fit(
         linked, tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "3")
@@ -2015,7 +2074,7 @@ def test_the_verb_reports_a_merge_in_full(linked, tmp_checkpoint_dir,
     assert f"moved {legacy_slug} into {target_slug} (merge)" in out
     assert "events.jsonl: appended 1 line(s)" in out
     assert "pointers: moved 1 into the chain" in out
-    assert "stray.txt is not written by daimon and was left alone" in out
+    assert "stray.txt could not be read as anything this verb moves" in out
     assert f"move it out of {legacy_slug} to finish" in out
 
 

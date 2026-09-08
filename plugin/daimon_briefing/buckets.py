@@ -433,9 +433,10 @@ def _free_slot(target_dir: Path) -> str:
 
 def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
                     target: str, *, apply: bool
-                    ) -> tuple[int, list[str], set[str], int, list[str]]:
+                    ) -> tuple[int, list[str], set[str], int, list[str], int]:
     """(legacy pointers landed, stranded labels, stranded filenames, legacy
-    pointer files consumed, unreadable TARGET filenames).
+    pointer files consumed, unreadable TARGET filenames, slots the target
+    occupies after this run).
 
     THE INVARIANT, and it is the whole design: a pointer already in the target
     is never unlinked and never evicted. The target's chain belongs to the
@@ -461,7 +462,7 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
     legacy_files = _pointer_files(legacy_dir)
     if not legacy_files:
         # Nothing to merge in, so the target's chain is already the answer.
-        return 0, [], set(), 0, []
+        return 0, [], set(), 0, [], len(_pointer_files(target_dir))
 
     target_unreadable: list[str] = []
     by_identity: dict[str, tuple[Path, float]] = {}
@@ -514,7 +515,8 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
     landed = len(replacements) + len(admissions)
     if not apply:
         return (landed, stranded_labels, stranded_names,
-                len(consumed) + len(admissions), target_unreadable)
+                len(consumed) + len(admissions), target_unreadable,
+                occupied + len(admissions))
 
     with store._pointer_lock(target_dir):
         for slot, source in replacements:
@@ -531,7 +533,8 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
             removed += 1
         except OSError:
             pass
-    return landed, stranded_labels, stranded_names, removed, target_unreadable
+    return (landed, stranded_labels, stranded_names, removed,
+            target_unreadable, occupied + len(admissions))
 
 
 def _leftovers(d: Path, *, prune: bool = True) -> list[str]:
@@ -550,6 +553,7 @@ def _record(mode: str, legacy: str | None, target: str | None, *,
             leftovers: list | None = None, unreadable: list | None = None,
             stranded_pointers: list | None = None,
             target_unreadable: list | None = None,
+            target_slots: int = 0,
             observed: str = "", by: str = "cli") -> dict:
     leftovers = leftovers or []
     unreadable = unreadable or []
@@ -576,6 +580,12 @@ def _record(mode: str, legacy: str | None, target: str | None, *,
         # Target pointer files this run could not parse. Each one occupies a
         # slot the run cannot count, so nothing is admitted while one exists.
         "target_unreadable": target_unreadable,
+        # How many pointer slots the target holds after this run. Recorded so
+        # the remedy for a stranded pointer is arithmetic on what is actually
+        # there: a bucket can hold MORE pointers than the current history,
+        # when the knob was lowered after they were written, and deriving the
+        # number from the knob then names a value that strands them again.
+        "target_slots": target_slots,
         # Free text for a state the fields above cannot carry. Set when a run
         # closes a migration somebody finished by hand.
         "observed": observed,
@@ -694,7 +704,7 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
             except OSError:
                 pass
     (pointers, stranded_labels, stranded_names, absorbed,
-     target_unreadable) = _merge_pointers(
+     target_unreadable, target_slots) = _merge_pointers(
         legacy_dir, target_dir, legacy, target, apply=not dry_run)
     if dry_run:
         # Predict what will REMAIN, not what is there now. Listing the files
@@ -712,7 +722,8 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
                                   if n not in consumed or n in unreadable],
                        unreadable=unreadable,
                        stranded_pointers=stranded_labels,
-                       target_unreadable=target_unreadable, by=by)
+                       target_unreadable=target_unreadable,
+                       target_slots=target_slots, by=by)
     for name in _REMOVABLE:
         try:
             (legacy_dir / name).unlink()
@@ -727,7 +738,8 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
     record = _record("merge", legacy, target, ledgers=ledgers,
                      pointers=pointers, leftovers=leftovers,
                      unreadable=unreadable, stranded_pointers=stranded_labels,
-                     target_unreadable=target_unreadable, by=by)
+                     target_unreadable=target_unreadable,
+                     target_slots=target_slots, by=by)
     # A run that MOVED nothing has nothing to record. Measured as what this
     # run ABSORBED, never as the size of the chain it rebuilt: a re-run
     # rebuilds the same chain over the same union, so a pointer COUNT is

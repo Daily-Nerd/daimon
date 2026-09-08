@@ -1212,10 +1212,12 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
     # ever finish.
     stranded = record.get("stranded_pointers") or []
     if stranded:
-        # Every stranded pointer needs exactly one more slot than the chain
-        # currently has. Deriving it from the record's own counts understates
-        # it: the slots the live bucket already occupies are not in there.
-        need = config.checkpoint_history() + len(stranded)
+        # Arithmetic on the slots the target ACTUALLY holds, which the record
+        # carries. Deriving it from DAIMON_CHECKPOINT_HISTORY assumes the
+        # target occupies exactly that many, and a bucket written while the
+        # knob was higher holds more: the message then names a value that
+        # strands the same pointer again.
+        need = record.get("target_slots", 0) + len(stranded)
         lines.append(
             f"  {len(stranded)} pointer(s) found no free slot and are still "
             f"in {record['from_slug']}: {', '.join(stranded)}")
@@ -1234,8 +1236,12 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
             continue  # already named above, with its remedy
         if stranded and store._POINTER_RE.match(name):
             continue  # named on the stranded line above, by session
-        lines.append(f"  {name} is not written by daimon and was left alone: "
-                     f"move it out of {record['from_slug']} to finish")
+        # Never a claim about who wrote it: a dangling symlink named
+        # `prev-2.json` carries daimon's own naming, and an authorship claim
+        # here is one nobody can check. What is true is that this verb could
+        # not read it as anything it knows how to move.
+        lines.append(f"  {name} could not be read as anything this verb "
+                     f"moves: move it out of {record['from_slug']} to finish")
     return lines
 
 

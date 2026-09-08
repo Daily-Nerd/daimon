@@ -186,7 +186,7 @@ SURFACES: tuple[Surface, ...] = (
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,
-    #    target_unreadable, complete, observed, by}.
+    #    target_unreadable, target_slots, complete, observed, by}.
     #    Global rather than per-bucket on purpose — it names a bucket that no
     #    longer exists, so it cannot live inside one.
     #
@@ -197,6 +197,9 @@ SURFACES: tuple[Surface, ...] = (
     #    what stayed behind (a ledger that would not decode, a target pointer
     #    that could not be parsed, a pointer with no free slot under
     #    DAIMON_CHECKPOINT_HISTORY); all are file names or session ids.
+    #    `target_slots` is how many pointer slots the target holds after the
+    #    run, recorded so the remedy for a stranded pointer is arithmetic on
+    #    what is there rather than on the current knob.
     #    `observed` is free text for a state the fields cannot carry, and
     #    today holds one value: a legacy bucket a person cleared themselves.
     #
