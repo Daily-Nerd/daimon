@@ -339,18 +339,44 @@ def events(project_dir=None) -> list[dict]:
 
 
 def _kind_of(row: dict) -> str:
-    """The approval-requirement kind an `opened` row carries (#961), folding
-    the legacy default and the `--to-human` invariant into one place.
+    """The approval-requirement kind an `opened` row carries (#961).
 
-    A row minted before this field existed carries no `kind` key at all and
-    reads as `work` — nothing is reclassified by the field's absence. A
-    `to_human` ask reads as `work` regardless of what is stored: the write
-    boundary in `open_request` already refuses the combination, but the
-    invariant belongs here too, so a future reader (a ruling's widened
-    default among them) can never see the two disagree."""
+    Read from a row in exactly one place, this branch of `fold` — no other
+    event re-folds `kind` — so gating it here gates the field for the
+    record's entire lifetime, not one snapshot of it. Three rules, kept in
+    one place because a caller wanting to lower this ask's approval bar has
+    three doors to try, and closing two of them would just relabel the hole:
+
+    1. A row minted before this field existed, or one that otherwise carries
+       no readable member of `KINDS`, reads as `work` — nothing is
+       reclassified by absence, and the unreadable case defaults toward MORE
+       scrutiny, never less. `isinstance(value, str)` guards a non-scalar
+       `kind` (a list, a dict) from raising inside `value in KINDS` — every
+       other expression in this branch is total over arbitrary JSON, and
+       this one must be too, or one poisoned line in one bucket takes down
+       every read surface for that bucket (records, listing, renderable,
+       status_counts, and both `--json` surfaces cross-bucket).
+    2. A `to_human` ask reads as `work` regardless of what is stored.
+    3. `kind == "info"` requires the OPENER's channel to carry human
+       authority — the same `CHANNEL_AUTHORITY` lookup the `_HUMAN_ONLY`
+       re-check below uses for verdict/suppression events. `open_request`
+       already refuses a non-human channel and the `to_human` combination at
+       the WRITE boundary, but `requests.append` is public, takes an
+       arbitrary dict, and validates no payload field — so a caller that
+       skips `open_request` (or a back-dated duplicate `opened` row for an
+       id that already exists) could otherwise mint or reclassify an `info`
+       ask with no person ever touching it. Rules 2 and 3 belong at THIS
+       boundary, not only the write one, for exactly that reason. `ui` and
+       `signed` both map to `"human"`, so the legitimate in-process human
+       writer pays nothing for this check.
+    """
     value = row.get("kind")
-    kind = value if value in KINDS else DEFAULT_KIND
-    return DEFAULT_KIND if row.get("to_human") is True else kind
+    kind = value if isinstance(value, str) and value in KINDS else DEFAULT_KIND
+    if row.get("to_human") is True:
+        return DEFAULT_KIND
+    if CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) != "human":
+        return DEFAULT_KIND
+    return kind
 
 
 def fold(rows: list[dict]) -> dict[str, dict]:
@@ -386,7 +412,23 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         current = out.get(q_id)
         if event == "opened":
             if current is not None:
-                continue  # duplicate logical open, first writer wins
+                # #961: a duplicate `opened` for an id that already has a
+                # founder is still first-writer-wins for every other field,
+                # but if the two rows DISAGREE about the approval
+                # requirement, that disagreement is free evidence that one
+                # of them is lying about it — the genuine row is still on
+                # disk right beside the forgery, this branch never deletes
+                # either. The authority gate in `_kind_of` already closes
+                # every case where the forger does not also claim a human
+                # channel; a forgery that claims `cli-tty` outright is the
+                # pre-existing forgery boundary this project has already
+                # reasoned about and accepted (see CHANNEL_AUTHORITY's own
+                # comment), and this is the cheap second layer for exactly
+                # that residual case: fail toward MORE scrutiny rather than
+                # trust whichever `opened` row happened to sort first.
+                if _kind_of(row) != current["kind"]:
+                    current["kind"] = DEFAULT_KIND
+                continue  # duplicate logical open, first writer wins otherwise
             # Read-boundary shape check (the write boundary is not the
             # boundary that matters — events() is deliberately tolerant, and
             # a row edited on disk must not ride into the render).
@@ -645,6 +687,14 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     supersedes = str(supersedes or "").strip()
     if supersedes and not _REQUEST_ID_RE.fullmatch(supersedes):
         raise RequestError(f"invalid superseded request id: {supersedes!r}")
+    # #961 review finding 5: an unknown channel is a channel-shaped problem,
+    # not a kind-shaped one. `_stamp` re-checks this too (the row is not
+    # written until it runs), but that happens after every check below, so a
+    # caller with a bogus channel and `kind="info"` would otherwise be told
+    # about `info`'s human-only rule rather than about the typo.
+    if channel not in CHANNEL_AUTHORITY:
+        raise RequestError(
+            f"channel must be one of: {', '.join(sorted(CHANNEL_AUTHORITY))}")
     if kind not in KINDS:
         raise RequestError(f"kind must be one of: {', '.join(sorted(KINDS))}")
     if to_human and kind == "info":
