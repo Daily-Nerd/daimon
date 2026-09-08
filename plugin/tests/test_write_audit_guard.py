@@ -73,8 +73,9 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import (amendments, cli, config, policy, refutations,
-                             relations, requests, store, teamsync)
+from daimon_briefing import (amendments, buckets, cli, config, policy,
+                             refutations, relations, requests, store,
+                             teamsync)
 
 from tests.conftest import FIXTURES, FakeChat
 import pytest as _pytest
@@ -105,6 +106,24 @@ KNOWN_BYPASSES = frozenset({
     # checkpoint content can reach either file.
     ("team init", "team/{remote}/README.md"),
     ("team init", "team/{remote}/daimon-team.toml"),
+    # buckets.migrate (#963): a one-shot MOVE of bytes that already passed the
+    # seam when they were first written. Nothing new is admitted here — the
+    # merge appends legacy ledger lines the target does not already hold, and
+    # rebuilds the pointer chain over the union of both buckets' pointer
+    # copies. Routing it through policy.admit_row would re-admit rows against
+    # TODAY's tombstones and redaction, silently rewriting history the user
+    # asked to move, not to re-judge; and admit_checkpoint on a pointer copy
+    # would re-stamp ids on a checkpoint whose receipt binds its exact bytes.
+    # The bypass is the deliberate choice, and it is bounded: the verb writes
+    # only into the caller's OWN target bucket, and its receipt below records
+    # every move.
+    ("bucket migrate", "checkpoints/migrations.jsonl"),
+    ("bucket migrate", "checkpoints/{slug}/events.jsonl"),
+    ("bucket migrate", "checkpoints/{slug}/refutations.jsonl"),
+    # One admitted legacy pointer, written into the first free slot. The
+    # target's own pointers are never rewritten (#963 review), so no
+    # latest.json / prev-1 entry belongs here.
+    ("bucket migrate", "checkpoints/{slug}/prev-3.json"),
 })
 
 # Commands that genuinely cannot be driven headless would be named here with
@@ -406,6 +425,55 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
 
     def r_projects():
         run(["projects"], 0)
+
+    def r_bucket_migrate():
+        # #963: the MERGE path, driven end to end — a legacy bucket beside a
+        # live one is the case that reads and rewrites bytes, so it is the one
+        # worth auditing. A symlinked twin of the project directory reproduces
+        # the pre-0.42.0 rule exactly: the literal path slugs one way, the
+        # resolved path another.
+        link = tmp_path / "proj-link"
+        if not link.exists():
+            link.symlink_to(proj, target_is_directory=True)
+        audit.placeholders[buckets.target_slug(str(link))] = "{slug}"
+        legacy = config.checkpoint_dir() / (buckets.legacy_slug(str(link)) or "")
+        legacy.mkdir(parents=True, exist_ok=True)
+        # Planted through the BUILTIN open, which this audit deliberately does
+        # not patch (see the module docstring): the fixture's own setup must
+        # not be recorded as a write by the command under audit.
+        for name in ("events.jsonl", "refutations.jsonl"):
+            with open(legacy / name, "w", encoding="utf-8") as fh:
+                fh.write('{"event_id": "e-migrated"}\n')
+        # A REAL pointer copy, and the lock sidecar every real bucket carries.
+        # The pointer is a copy of one the store actually wrote in this drive,
+        # never a hand-built dict: an invented payload is how the identity
+        # rule was first written against a shape the store never produces
+        # (#963 review). The lock is what made the merge non-idempotent, so
+        # the second run below is only a real idempotence check with it
+        # present.
+        live = config.checkpoint_dir() / (buckets.target_slug(str(link)) or "")
+        with open(live / "latest.json", encoding="utf-8") as fh:
+            pointer = json.loads(fh.read())
+        pointer["created"] = "2020-01-01T00:00:00Z"
+        pointer["project_slug"] = legacy.name
+        # A DISTINCT session, so the merge admits it into a free slot and the
+        # audit sees the pointer write. A copy of a session the target already
+        # holds is absorbed without writing anything, which would leave this
+        # recipe auditing no pointer path at all.
+        pointer["session_id"] = "S-legacy-only"
+        with open(legacy / "latest.json", "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(pointer))
+        with open(legacy / ".pointer.lock", "a", encoding="utf-8"):
+            pass
+        # A chain with room for the union of both buckets: overflow is a
+        # separate behavior with its own tests, and a recipe that hit it would
+        # audit a partial merge instead of a complete one.
+        history = (("DAIMON_CHECKPOINT_HISTORY", "9"),)
+        run(["bucket", "migrate", f"--project={link}"], 0, env=history)
+        # Idempotent by contract: the legacy bucket is gone, so the second run
+        # has nothing to move and writes nothing at all.
+        assert not legacy.exists(), "the merge left the legacy bucket standing"
+        run(["bucket", "migrate", f"--project={link}"], 0, env=history)
 
     def r_slug():
         # #913: drives the command so the audit proves it makes no
@@ -764,6 +832,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("recall",): r_recall,
         ("why",): r_why,
         ("projects",): r_projects,
+        ("bucket", "migrate"): r_bucket_migrate,
         ("slug",): r_slug,
         ("refute", "add"): r_refute_add,
         ("refute", "ratify"): r_refute_ratify,

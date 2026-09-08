@@ -890,6 +890,28 @@ def _checks_status_line(data: dict) -> str:
     return f"checks: {c['armed']} armed{proposed}, {live}{drift}"
 
 
+def _migrated_lines(ident: dict) -> list:
+    """#963: where this bucket came from, when it came from somewhere.
+
+    Provenance, not a warning: the migration already happened, and the line
+    exists so a person reading `status` after an upgrade can tell a bucket
+    that was moved from one that was always here. The unmigrated half of the
+    same fact is a health WARNING instead, because it names work still to do.
+    Silent when nothing migrated, the same quiet-by-default rule the team and
+    receipts lines follow."""
+    out = []
+    for entry in ident.get("migrated") or []:
+        stamp = str(entry.get("ts") or "")[:10]
+        on = f" on {stamp}" if stamp else ""
+        # #963: a migration somebody finished themselves is still a migration,
+        # and the row that closed it says so. A stored field with no renderer
+        # is a lie, so the qualifier is shown rather than folded away.
+        note = (" (finished outside daimon)"
+                if entry.get("observed") else "")
+        out.append(f"migrated: from {entry.get('slug')}{on}{note}")
+    return out
+
+
 def _plain_status(data: dict) -> None:
     alarm = data.get("capture_alarm")
     if alarm:
@@ -898,6 +920,8 @@ def _plain_status(data: dict) -> None:
     ident = data.get("identity")
     if ident:
         print(f"identity: {ident['cwd']}  →  git-root {ident['git_root']}  →  bucket {ident['slug']}")
+        for line in _migrated_lines(ident):
+            print(line)
     health = data.get("health")
     if health:
         print(health["verdict"])
@@ -1001,6 +1025,8 @@ def _rich_status(data: dict) -> None:
     ident = data.get("identity")
     if ident:
         console.print(f"identity: {ident['cwd']}  →  git-root {ident['git_root']}  →  bucket {ident['slug']}")
+        for line in _migrated_lines(ident):
+            console.print(line)
     health = data.get("health")
     if health:
         style = "green" if health["ok"] else "red"

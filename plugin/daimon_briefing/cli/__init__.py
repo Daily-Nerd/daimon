@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict
 
-from .. import amendments, anchor, briefing, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 from .. import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -1098,6 +1098,153 @@ def _cmd_slug(args) -> int:
     return 0
 
 
+def _raw_project(arg) -> str:
+    """The project value BEFORE resolution — the exact string a pre-0.42.0
+    write would have slugged (#963).
+
+    `_resolve_project` above collapses symlinks and walks to the git toplevel,
+    which is precisely the information the legacy bucket rule needs and the
+    resolved rule discards. Every surface that reports on a legacy bucket
+    reads this, and every surface that ROUTES still reads `_resolve_project`:
+    the two are deliberately not interchangeable. The fallback chain is the
+    same one `_resolve_project` uses, so both halves answer for one project.
+    """
+    return arg or config.project_dir() or os.getcwd()
+
+
+def _migrate_command(project_path) -> str:
+    """The runnable form of "migrate this bucket", for whichever mode the
+    home is in. Under DAIMON_TENANT_SCOPED an explicit --project is refused at
+    rc 2, so printing it hands the reader a command that cannot work."""
+    if config.tenant_scoped():
+        return ("run daimon bucket migrate with DAIMON_PROJECT_DIR set to "
+                f"{project_path}")
+    return f"run daimon bucket migrate --project {project_path}"
+
+
+def _cmd_bucket_migrate(args) -> int:
+    """Move this project's pre-0.42.0 bucket into the one daimon reads (#963).
+
+    `--project` is a PATH and is absolutized, never treated as a bucket name,
+    so it can never be a bare bucket slug (scar 0071).
+
+    That alone is NOT enough, and the earlier version of this docstring said
+    it was. The two slug rules differ in WHEN they resolve: the legacy rule
+    collapses `..` lexically before touching a symlink, the current one
+    resolves the symlink first. A path combining both therefore names two
+    different DIRECTORIES, and a migration would move a bucket the caller has
+    no claim on. `buckets.migrate` refuses any `..` component outright, which
+    is what makes the sentence above true; the refusal arrives here as a
+    MigrationError and leaves as rc 2, the same code every other refusal on
+    this surface uses.
+
+    rc 1 is a PARTIAL merge: something was left behind, unreadable or too big
+    for the pointer chain. The caller learns that from the exit code without
+    parsing the receipt.
+
+    On a TENANT-SCOPED home an explicit `--project` is refused outright, the
+    way `--slug` and `--all-projects` already are (#899). The path reach is
+    not what is new: `--project` could always name another directory. What
+    this verb adds is a PERMANENT row in the global migrations file, which
+    `recall.rebuild` and `requests.recipient_join` then honor for whichever
+    bucket it names. A caller who may not choose a read scope must not be
+    able to mint a durable alias between two of them, so the project comes
+    from the host (DAIMON_PROJECT_DIR, else cwd) and from nowhere else."""
+    if config.tenant_scoped() and args.project:
+        message = (
+            "this daimon home is tenant-scoped (DAIMON_TENANT_SCOPED): the "
+            "project is host-set, so `bucket migrate` takes it from "
+            "DAIMON_PROJECT_DIR (else the working directory) and refuses an "
+            "explicit --project. A migration writes a lasting alias between "
+            "two buckets, which is a scope choice.")
+        if args.json:
+            print(json.dumps({"refused": message}, indent=2,
+                             ensure_ascii=False))
+        else:
+            print(f"error: {message}", file=sys.stderr)
+        return 2
+    raw = _raw_project(args.project)
+    try:
+        record = buckets.migrate(raw, dry_run=args.dry_run)
+    except buckets.MigrationError as exc:
+        # Machine callers get the refusal in the format they asked for; they
+        # must never have to parse stderr to learn the verb said no.
+        if args.json:
+            print(json.dumps({"refused": str(exc)}, indent=2,
+                             ensure_ascii=False))
+        else:
+            print(f"bucket not migrated: {exc}", file=sys.stderr)
+        return 2
+    rc = 0 if record.get("complete", True) else 1
+    if args.json:
+        print(json.dumps(record, indent=2, ensure_ascii=False))
+        return rc
+    lines = _bucket_migrate_lines(record, raw, dry_run=args.dry_run)
+    render.render_ledger_lines(lines)
+    return rc
+
+
+def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
+    """The human render of one migration record. Pure, so the wording is
+    testable without a filesystem."""
+    mode = record["mode"]
+    if mode == "unknown":
+        return [f"nothing to migrate: no project resolves from {raw}"]
+    if mode == "stable":
+        return [f"nothing to migrate: {record['to_slug']} is stable under "
+                f"both rules"]
+    if mode == "absent":
+        return [f"nothing to migrate: no legacy bucket "
+                f"{record['from_slug']} for {raw}"]
+    verb = "would move" if dry_run else "moved"
+    lines = [f"{verb} {record['from_slug']} into {record['to_slug']} "
+             f"({mode})"]
+    for name, count in sorted(record["ledgers"].items()):
+        appended = "would append" if dry_run else "appended"
+        lines.append(f"  {name}: {appended} {count} line(s)")
+    if record["pointers"]:
+        landed = "would move" if dry_run else "moved"
+        lines.append(f"  pointers: {landed} {record['pointers']} into the "
+                     f"chain")
+    # Every remaining line names a CONCRETE remedy for one thing. The earlier
+    # wording said "remove or fix by hand" for all of them, which invited
+    # deleting a legacy bucket outright and left a migration nothing could
+    # ever finish.
+    stranded = record.get("stranded_pointers") or []
+    if stranded:
+        # Arithmetic on the slots the target ACTUALLY holds, which the record
+        # carries. Deriving it from DAIMON_CHECKPOINT_HISTORY assumes the
+        # target occupies exactly that many, and a bucket written while the
+        # knob was higher holds more: the message then names a value that
+        # strands the same pointer again.
+        need = record.get("target_slots", 0) + len(stranded)
+        lines.append(
+            f"  {len(stranded)} pointer(s) found no free slot and are still "
+            f"in {record['from_slug']}: {', '.join(stranded)}")
+        lines.append(f"  raise DAIMON_CHECKPOINT_HISTORY to at least {need} "
+                     f"and run again")
+    for name in record.get("target_unreadable") or []:
+        lines.append(f"  {name} in {record['to_slug']} could not be read, so "
+                     f"no pointer was moved: fix or move that file, then run "
+                     f"again")
+    unreadable = record.get("unreadable") or []
+    for name in unreadable:
+        lines.append(f"  {name} could not be read, so it was not moved: fix "
+                     f"or move that file, then run again")
+    for name in record["leftovers"]:
+        if name in unreadable:
+            continue  # already named above, with its remedy
+        if stranded and store._POINTER_RE.match(name):
+            continue  # named on the stranded line above, by session
+        # Never a claim about who wrote it: a dangling symlink named
+        # `prev-2.json` carries daimon's own naming, and an authorship claim
+        # here is one nobody can check. What is true is that this verb could
+        # not read it as anything it knows how to move.
+        lines.append(f"  {name} could not be read as anything this verb "
+                     f"moves: move it out of {record['from_slug']} to finish")
+    return lines
+
+
 def _cmd_projects(args) -> int:
     """Read-only orientation for context switching — the crossing itself
     stays explicit (`brief --slug` / `recall --slug`), the #94/#95 lesson."""
@@ -1805,7 +1952,9 @@ def _write_worldcheck_ledger(rows, route) -> None:
 
 def _status_health(proj, glob, outstanding, siblings, *, now,
                    disabled: bool = False,
-                   global_fallback: bool = False) -> dict:
+                   global_fallback: bool = False,
+                   legacy: tuple | None = None,
+                   incomplete: list | None = None) -> dict:
     """Objective health verdict for `status`. Pure — `now` is injected. Warns only
     on data-driven signals: a NEWER phantom-child bucket (the #74 split), a missing
     project checkpoint, outstanding serialize failures, or the kill switch being
@@ -1823,6 +1972,24 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
             "DAIMON_DISABLE is set — capture is OFF (no checkpoints are "
             "being written)"
         )
+
+    # #963: a bucket written before 0.42.0 from this same path, sitting
+    # unread beside the one daimon uses now. The sibling `split:` warning
+    # below is the same shape and the same class of fact — history this
+    # project produced that this project is not reading — so it is stated the
+    # same way, next to it. Injected, like `now` and `disabled`: a verdict
+    # that reads its own filesystem cannot be tested at the verdict level.
+    if legacy:
+        legacy_slug, legacy_path, holds = legacy
+        held = (f"; it still holds {', '.join(holds)}" if holds else "")
+        warnings.append(
+            f"legacy: bucket {legacy_slug} was written before 0.42.0 from "
+            f"this path and is not read{held}; "
+            f"{_migrate_command(legacy_path)}")
+    for from_slug in (incomplete or []):
+        warnings.append(
+            f"partial: the migration from {from_slug} did not finish, so "
+            f"that bucket is not read as part of this project's history")
 
     proj_mtime = (now - proj["age_seconds"]) if proj.get("exists") else None
     newer = [
@@ -2147,6 +2314,15 @@ def _status_world(project_arg=None) -> dict:
     """Every status fact, computed once — the single source for the plain
     render, `status --json`, and the MCP status tool (#261)."""
     project = _resolve_project(project_arg)
+    # #963: the value BEFORE resolution — resolution is exactly what collapses
+    # the difference the pre-0.42.0 bucket rule turns on, so the legacy facts
+    # below are derived from this and the routing facts from `project`.
+    raw_project = _raw_project(project_arg)
+    identity: dict = {
+        "cwd": str(Path(project_arg or ".").expanduser().resolve()),
+        "git_root": project,
+        "slug": store.project_slug(project),
+    }
     now = time.time()
     proj = _checkpoint_info(store.project_latest_path(project), now)
     glob = _checkpoint_info(store.global_latest_path(), now)
@@ -2203,9 +2379,40 @@ def _status_world(project_arg=None) -> dict:
     # `daimon stats` reports, so "no errors yet" here means the same thing
     # it means there.
     rescue_window_errors = _stats_capture()["window"]["errors"]
+    # #963: the pre-0.42.0 bucket for THIS path, and where this bucket came
+    # from if it was migrated. Read from the raw project value, never the
+    # resolved one: resolution is exactly what collapses the difference the
+    # legacy rule turns on. Fail-open like every other best-effort status
+    # fact — an unreadable checkpoint dir must not take `status` down.
+    try:
+        legacy_slug = buckets.legacy_bucket(raw_project)
+        legacy_holds = list(buckets.legacy_leftovers(raw_project))
+        aliases = buckets.alias_provenance(identity["slug"])
+        incomplete = buckets.incomplete_for(identity["slug"])
+    except Exception:
+        legacy_slug, legacy_holds, aliases, incomplete = None, [], (), ()
+    identity["legacy_slug"] = legacy_slug
+    identity["aliases"] = [a["slug"] for a in aliases]
+    # One line per (from, to) pair. A hand-edited receipt file, or an older
+    # daimon that appended a row per re-run, otherwise prints the same
+    # migration several times and reads as several migrations.
+    seen_pairs: set = set()
+    migrated: list[dict] = []
+    for entry in aliases:
+        pair = (entry["slug"], identity["slug"])
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        migrated.append(dict(entry))
+    identity["migrated"] = migrated
+    identity["incomplete"] = [str(r.get("from_slug") or "")
+                              for r in incomplete]
     health = _status_health(proj, glob, outstanding, siblings, now=now,
                             disabled=disabled,
-                            global_fallback=config.brief_global_fallback())
+                            global_fallback=config.brief_global_fallback(),
+                            legacy=((legacy_slug, raw_project, legacy_holds)
+                                    if legacy_slug else None),
+                            incomplete=identity["incomplete"])
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()
@@ -2242,11 +2449,6 @@ def _status_world(project_arg=None) -> dict:
         checks_fact = _status_checks(project, now)
     except Exception:
         checks_fact = None
-    identity = {
-        "cwd": str(Path(project_arg or ".").expanduser().resolve()),
-        "git_root": project,
-        "slug": store.project_slug(project),
-    }
     # 0 = some checkpoint would back a briefing; 1 = neither pointer exists
     # (cheap existence test for scripts / the FR #23 hook guard).
     rc = 0 if (proj["exists"] or glob["exists"]) else 1
@@ -2286,6 +2488,12 @@ def status_payload(project_arg=None) -> tuple:
         # #943 slice 5: appended at the tail — payload key order is
         # part of the --json contract.
         "checks": w["checks"],
+        # #963: the bucket identity, appended at the tail for the same
+        # reason. `project.slug` above already names the bucket in use; this
+        # adds the two facts a machine needs to act on a move — the
+        # unmigrated legacy bucket (null when there is none) and the slugs
+        # this bucket absorbed.
+        "identity": w["identity"],
     }
     return payload, w["rc"]
 
@@ -3545,6 +3753,39 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="machine-readable output"
     )
     p_projects.set_defaults(func=_cmd_projects)
+
+    p_bucket = sub.add_parser(
+        "bucket",
+        help="maintain the checkpoint bucket this project reads and writes",
+    )
+    bucket_sub = p_bucket.add_subparsers(dest="bucket_cmd", required=True)
+    bucket_sub.add_parser = functools.partial(  # type: ignore[method-assign]
+        bucket_sub.add_parser, formatter_class=fmt)
+
+    p_bucket_migrate = bucket_sub.add_parser(
+        "migrate",
+        help="move a bucket written before 0.42.0 into the one daimon reads",
+        description="Move the bucket a pre-0.42.0 daimon wrote for this "
+                    "project into the bucket this daimon reads. Affects a "
+                    "project whose path carries a symlink component, or one "
+                    "below a git toplevel: before 0.42.0 the library slugged "
+                    "the literal path. A pointer already in the current "
+                    "bucket is never removed or displaced. Safe to run twice: "
+                    "a second run over an unchanged state writes nothing new "
+                    "and returns the code matching the state it finds.",
+        epilog="Examples:\n"
+               "  daimon bucket migrate\n"
+               "  daimon bucket migrate --project /tmp/my-repo --dry-run\n",
+    )
+    p_bucket_migrate.add_argument(
+        "--project",
+        help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_bucket_migrate.add_argument(
+        "--dry-run", action="store_true",
+        help="print the plan and write nothing")
+    p_bucket_migrate.add_argument(
+        "--json", action="store_true", help="machine-readable output")
+    p_bucket_migrate.set_defaults(func=_cmd_bucket_migrate)
 
     p_slug = sub.add_parser(
         "slug",

@@ -45,6 +45,74 @@ called out in the "What it does" column.
 | `DAIMON_CHECKPOINT_HISTORY` | `3` | How many checkpoint pointers to retain per directory (`latest.json` plus `prev-1` … `prev-(N-1)`), so a failed serialize can fall back to a prior pointer. Minimum 1 (latest only). |
 | `DAIMON_GC_PIN_IMPORTANCE` | `9` | Item-importance threshold that pins a checkpoint file against GC: a file whose max item importance reaches this survives outside the newest-N window. `0` disables pinning (pure recency window); values above 10 are clamped to 10. |
 
+### Upgrading across 0.42.0
+
+Before 0.42.0 the library named a project's bucket from the literal path it
+was handed. Since 0.42.0 every entry point resolves the path first: made
+absolute, symlinks collapsed, then normalized to the git toplevel. Two path
+shapes therefore name a different bucket than they used to:
+
+- a path with a **symlink anywhere in it** — on macOS that includes anything
+  reached through `/tmp`, and any mount point that is itself a link;
+- a path **below a git toplevel**, when the write came through the library
+  rather than the command line.
+
+The CLI already resolved both of these before 0.42.0, so a bucket written by
+running `daimon` in a terminal is unaffected. A bucket written by a host
+process that called the library from such a path sits under the old name, and
+nothing reads it.
+
+`daimon status` says so. Whenever a bucket written under the old rule exists
+for the path you are standing in, the health block carries a `legacy:` line
+naming it. Move it once:
+
+```sh
+daimon bucket migrate                                # this project
+daimon bucket migrate --project /path/to/project
+daimon bucket migrate --project /path/to/project --dry-run
+```
+
+The move renames the old directory when the new one does not exist yet, and
+merges otherwise. A merge appends every ledger line the new bucket does not
+already hold, and adds the old bucket's pointers to the new bucket's chain.
+Pointers already in the new bucket are never removed and never displaced: they
+belong to the live project. Old pointers go into whatever slots
+`DAIMON_CHECKPOINT_HISTORY` leaves free, newest first, except that an old copy
+of a session the new bucket already points at simply replaces that one slot
+when it is the newer of the two. Anything else, an old pointer with no free
+slot or a file daimon does not write, is left exactly where it is and named in
+the report with what to do about it.
+
+Running it twice is safe: a second run over an unchanged state writes nothing
+new and returns the code that matches the state it finds. `--dry-run` prints
+the same plan and writes nothing.
+
+Exit 0 means the move finished and the old bucket is gone. Exit 1 means it did
+not, and stdout names each thing left with its own remedy: raise
+`DAIMON_CHECKPOINT_HISTORY` to the number it names and run again for pointers
+with no free slot; fix or move a file that could not be read; move a file
+daimon does not write out of the old bucket. A partial move does not count as
+migrated, so the old bucket's rows are not yet read as this project's history.
+If you finish the job yourself by clearing the old directory, the next run
+records that and the migration is complete.
+
+Exit 2 is a refusal. A `--project` containing a `..` component is refused
+because the old rule collapses `..` before following a symlink and the current
+one follows the symlink first, so the two name different directories; a bucket
+written before 0.42.0 was written under the literal slug of the collapsed path,
+so pass that path. On a tenant-scoped home (`DAIMON_TENANT_SCOPED`) an explicit
+`--project` is refused outright and the project comes from
+`DAIMON_PROJECT_DIR`, else the working directory: a migration writes a lasting
+alias between two buckets, and choosing which two is a scope choice.
+
+Every completed move appends one line to
+`~/.daimon/checkpoints/migrations.jsonl`. That file is what keeps `daimon
+recall` and the request inbox finding history under the old bucket name once
+the directory is gone: per-session checkpoint files keep the name they were
+stamped with, because their receipts bind their exact bytes. Once a bucket
+has absorbed another, `daimon status` shows a `migrated: from <old bucket> on
+<date>` line in place of the warning.
+
 ## Carry
 
 Deterministic cross-session carry-over of unresolved items.

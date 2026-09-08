@@ -44,6 +44,13 @@ NOT_AGENT_FACING = {
     "recall-inject": "internal: the per-prompt recall hook",
     "request-inject": ("internal: the per-prompt live-delivery hook (#756); "
                        "agents receive its output, never run it"),
+    "bucket": (
+        "human maintenance (#963): a one-shot move of the checkpoint bucket "
+        "a pre-0.42.0 daimon wrote for this project. It runs once per "
+        "machine after an upgrade, it moves a person's own history, and "
+        "`daimon status` already tells that person when it is needed — an "
+        "agent has nothing to decide with it"
+    ),
     "slug": (
         "internal: a host-integration primitive (#913) that names a "
         "checkpoint bucket before any checkpoint exists — a HOST process "
