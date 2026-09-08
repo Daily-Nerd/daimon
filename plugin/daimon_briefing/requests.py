@@ -414,19 +414,32 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             if current is not None:
                 # #961: a duplicate `opened` for an id that already has a
                 # founder is still first-writer-wins for every other field,
-                # but if the two rows DISAGREE about the approval
-                # requirement, that disagreement is free evidence that one
-                # of them is lying about it — the genuine row is still on
-                # disk right beside the forgery, this branch never deletes
-                # either. The authority gate in `_kind_of` already closes
-                # every case where the forger does not also claim a human
-                # channel; a forgery that claims `cli-tty` outright is the
-                # pre-existing forgery boundary this project has already
-                # reasoned about and accepted (see CHANNEL_AUTHORITY's own
-                # comment), and this is the cheap second layer for exactly
-                # that residual case: fail toward MORE scrutiny rather than
-                # trust whichever `opened` row happened to sort first.
-                if _kind_of(row) != current["kind"]:
+                # but if a row carrying HUMAN authority disagrees with the
+                # founder about the approval requirement, that disagreement
+                # is free evidence that one of them is lying about it — the
+                # genuine row is still on disk right beside the forgery,
+                # this branch never deletes either. Gated on `authority ==
+                # "human"`, not on the row's raw `kind` or on `_kind_of(row)`
+                # alone: `_kind_of` of ANY non-human row is already the
+                # constant `DEFAULT_KIND` after its own authority gate, so
+                # comparing it unconditionally would make every non-human
+                # duplicate "disagree" with an `info` founder BY
+                # CONSTRUCTION — an agent could then downgrade any `info`
+                # ask to `work` with one ordinary appended row, no forgery
+                # needed, which is a person's decision being overridden by a
+                # machine just as much as an upgrade would be (review pass 2
+                # finding). Restricting to human duplicates closes that
+                # without reopening anything: the authority gate in
+                # `_kind_of` already handles every case where the forger
+                # does not ALSO claim a human channel; a forgery that claims
+                # `cli-tty` outright is the pre-existing forgery boundary
+                # this project has already reasoned about and accepted (see
+                # CHANNEL_AUTHORITY's own comment), and this is the cheap
+                # second layer for exactly that residual case: a human-
+                # authority duplicate that disagrees fails toward MORE
+                # scrutiny rather than trusting whichever `opened` row
+                # happened to sort first.
+                if authority == "human" and _kind_of(row) != current["kind"]:
                     current["kind"] = DEFAULT_KIND
                 continue  # duplicate logical open, first writer wins otherwise
             # Read-boundary shape check (the write boundary is not the

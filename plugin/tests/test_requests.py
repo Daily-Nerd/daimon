@@ -301,6 +301,37 @@ def test_a_backdated_duplicate_claiming_a_human_channel_still_forced_to_work(
     assert requests.get(q_id, project_dir=project)["kind"] == "work"
 
 
+@pytest.mark.parametrize("channel,extra", [
+    ("cli-agent", {"kind": "work"}),
+    ("cli-agent", {"kind": "info"}),
+    ("cli-agent", {}),
+    ("mechanical", {"kind": "info"}),
+], ids=["agent-dup-kind-work", "agent-dup-kind-info", "agent-dup-no-kind-key",
+        "mechanical-dup-kind-info"])
+def test_a_non_human_duplicate_opened_row_cannot_downgrade_an_info_ask(
+        project, channel, extra):
+    """#961 review pass 2 (MEDIUM). The disagreement rule must fire ONLY on
+    a duplicate carrying HUMAN authority. Gated on `_kind_of(row)` alone (or
+    on the row's raw stored `kind`), it would fire on every non-human
+    duplicate no matter what, because `_kind_of` of any non-human row is
+    already the constant `work` after its OWN authority gate — an agent
+    could then downgrade any `info` ask back to `work` with one ordinary
+    appended row, no forgery and no back-dating needed, which overrides a
+    person's decision just as much as an upgrade would (the amendment does
+    not say "only a person raises the bar", it says only a person changes
+    it). None of these four ordinary duplicates — an agent copying the
+    founder's own `work`, an agent copying `info` verbatim, an agent
+    omitting `kind` entirely, or a mechanical row claiming `info` — may
+    move a human-opened `info` ask off `info`. Duplicate row appended
+    directly: a legitimate second `opened` for an id that already has a
+    founder is not something `open_request` produces."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    dup = requests._stamp("opened", q_id, channel)
+    dup.update({"to": RECIPIENT, "ask": ASK, "why": WHY, **extra})
+    assert requests.append(dup, project_dir=project)
+    assert requests.get(q_id, project_dir=project)["kind"] == "info"
+
+
 @pytest.mark.parametrize("bad_kind", [["info"], {"k": "info"}, 7, None,
                                       "informational"],
                          ids=["list", "dict", "int", "none", "bad-string"])
