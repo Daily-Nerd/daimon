@@ -12,8 +12,8 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import (buckets, checks, config, normalize, refutations, render,
-                store)
+from .. import (briefing, buckets, checks, config, normalize, refutations,
+                render, store)
 from ._ledger import (
     _check_args,
     _check_ceremony_lines,
@@ -249,21 +249,46 @@ def _cmd_ruling_list(args) -> int:
     # the wrong bucket looks like. stdout keeps its exact shape so parsers are
     # unaffected; the distinction rides on stderr and the exit code, the way
     # `daimon status` already reports "no checkpoint here".
+    #
+    # #962: two more causes read the same as an empty ledger. The bucket can
+    # be there with refutations.jsonl unreadable (permissions, a symlink
+    # loop, or replaced by a directory), or the ledger path itself can never
+    # get resolved at all (a config problem, not a project problem — see
+    # `briefing.rulings_read`). `rulings_read` is the shared reader that
+    # already tells all four states apart, so it settles every branch here
+    # from one probe instead of this command reaching for `bucket_exists` on
+    # its own (a second, independent read of the same fact is exactly the
+    # shape a TOCTOU takes).
     rc = 0
-    if not rows and not refutations.bucket_exists(project):
-        # #963: the same empty answer has a second cause worth naming — a
-        # bucket written from this path before 0.42.0, under the literal-path
-        # slug, still holding the rulings. Appended to the SAME stderr line;
-        # stdout and the exit code are untouched (scar 0057, the #948
-        # decision), so a parser sees exactly what it saw before.
-        raw = _cli._raw_project(args.project)
-        legacy = buckets.legacy_bucket(raw)
-        hint = (f"; a legacy bucket {legacy} exists, "
-                f"{_cli._migrate_command(raw)}") if legacy else ""
-        print(f"no bucket for {store.project_slug(project)} yet (resolved "
-              f"{project}): nothing has been written from this project{hint}",
-              file=sys.stderr)
-        rc = 1
+    if not rows:
+        read = briefing.rulings_read(project)
+        if read.state == "unresolved":
+            # No `path` to name — resolution never got that far, so this
+            # line never interpolates one.
+            print(f"cannot resolve a ledger path for {project}: check "
+                  f"DAIMON_CHECKPOINT_DIR and ~/.daimon/env for a bad value",
+                  file=sys.stderr)
+            rc = 1
+        elif read.state == "unreadable":
+            print(f"cannot read the ledger for {store.project_slug(project)} "
+                  f"(resolved {project}): {read.path} exists but could not "
+                  f"be read", file=sys.stderr)
+            rc = 1
+        elif read.state == "no-bucket":
+            # #963: the same empty answer has a second cause worth naming — a
+            # bucket written from this path before 0.42.0, under the
+            # literal-path slug, still holding the rulings. Appended to the
+            # SAME stderr line; stdout and the exit code are untouched (scar
+            # 0057, the #948 decision), so a parser sees exactly what it saw
+            # before.
+            raw = _cli._raw_project(args.project)
+            legacy = buckets.legacy_bucket(raw)
+            hint = (f"; a legacy bucket {legacy} exists, "
+                    f"{_cli._migrate_command(raw)}") if legacy else ""
+            print(f"no bucket for {store.project_slug(project)} yet (resolved "
+                  f"{project}): nothing has been written from this project{hint}",
+                  file=sys.stderr)
+            rc = 1
     if args.json:
         print(_refutation_json(rows))
         active_j = sum(1 for r in rows if r.get("state") == "active")

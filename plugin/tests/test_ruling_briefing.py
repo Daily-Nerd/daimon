@@ -110,12 +110,44 @@ def test_ruling_loader_fails_open(tmp_checkpoint_dir, sample_checkpoint,
                                   monkeypatch):
     _rule("this ruling will not load")
 
-    def boom(**kwargs):
+    def boom(*args, **kwargs):
         raise OSError("ledger unreadable")
 
-    monkeypatch.setattr(briefing.refutations, "listing", boom)
+    # #962: active_rulings now reads through briefing.rulings_read, which
+    # reads events() (strict) + fold() directly rather than
+    # refutations.listing() — this is the seam that must still fail open.
+    monkeypatch.setattr(briefing.refutations, "events", boom)
     out = briefing.render(sample_checkpoint, project_dir=PROJECT)
     assert out  # the briefing still renders
+    assert "Standing rulings" not in out
+
+
+def test_ruling_loader_fails_open_on_an_unreadable_ledger(
+        tmp_checkpoint_dir, sample_checkpoint):
+    """The real #962 shape, not a monkeypatch stand-in: a ledger replaced by
+    a directory must degrade the same way a raised OSError does."""
+    _rule("this ruling will not load either")
+    refutations._path(PROJECT).unlink()
+    refutations._path(PROJECT).mkdir()
+    out = briefing.render(sample_checkpoint, project_dir=PROJECT)
+    assert out
+    assert "Standing rulings" not in out
+
+
+def test_ruling_loader_fails_open_when_path_resolution_itself_raises(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    """#962 F1: `refutations._path` sits ABOVE the ledger read (it reaches
+    `config.checkpoint_dir()`, which can raise on a corrupt env file — a
+    `UnicodeDecodeError`, not an `OSError`). That seam must fail open too,
+    not just the read/fold path below it."""
+    _rule("this ruling will not load for a third reason")
+
+    def boom(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte")
+
+    monkeypatch.setattr(briefing.refutations, "_path", boom)
+    out = briefing.render(sample_checkpoint, project_dir=PROJECT)
+    assert out  # the briefing still renders, never a raised exception
     assert "Standing rulings" not in out
 
 

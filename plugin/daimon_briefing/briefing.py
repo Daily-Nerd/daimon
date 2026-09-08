@@ -15,6 +15,8 @@ import copy
 import logging
 import re
 import time
+from pathlib import Path
+from typing import NamedTuple
 
 # store/carry import graph checked (#103): neither store, carry, recall,
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
@@ -748,6 +750,70 @@ _DROP_ORDER = (("beliefs", "tail"), ("uncertainties", "tail"),
 _RULING_HEADER = "Standing rulings (human-ratified — honor these):"
 
 
+class RulingsRead(NamedTuple):
+    """The result of one attempt to read standing rulings (#962). `state` is
+    exactly one of "unresolved", "no-bucket", "unreadable", "read" — see
+    `rulings_read`. `rows` is `[]` for every state but "read". `path` is the
+    resolved refutations.jsonl path, or None exactly when `state` is
+    "unresolved" — no other combination occurs.
+
+    `rulings_read` never raises; it always returns one of the four states.
+    `active_rulings` never raises either, and returns a plain list — a host
+    that only wants "do I have anything to enforce" wraps that one, a host
+    that must react to WHY an answer came back empty reads this one."""
+    rows: list[dict]
+    state: str
+    path: Path | None
+
+
+def rulings_read(project_dir=None) -> RulingsRead:
+    """The pinned in-process read for standing rulings, sub-0.1ms against
+    100ms+ for a `daimon ruling list --json` subprocess (#962). Every row
+    matches `active_rulings`'s order: newest-activated first, ties broken on
+    refutation_id (the fold keeps no finer stamp).
+
+    `active_rulings` is reimplemented on top of this — the two cannot drift.
+    Where it collapsed four distinct facts into one empty list, this names
+    them:
+
+    - "unresolved": `refutations._path` returned None, or raised, before a
+      ledger path was ever produced — the project could not be identified at
+      all (an unrouted call, or `config` itself failing to resolve, e.g. a
+      corrupt `~/.daimon/env` file). `path` is None. Checked FIRST: nothing
+      downstream is attempted once this fires.
+    - "no-bucket": the path resolved, but the project's bucket directory
+      does not exist — a mis-resolved `--project`, never written from.
+    - "unreadable": the path resolved and the bucket exists, but the ledger
+      could not be read (permissions, a symlink loop, refutations.jsonl
+      replaced by a directory), or the fold/sort raised over hand-edited
+      rows (a stray non-list `anchors`/`evidence` on a hand-built row is one
+      way to land here — known, not fixed by this function). `rows` is [].
+    - "read": a successful read, including a bucket that simply carries no
+      ledger yet (a clean empty read per `bucket_exists`'s own docstring)
+      and a ledger whose malformed lines stay skipped and invisible, same
+      as always.
+    """
+    try:
+        path = refutations._path(project_dir)
+    except Exception:
+        return RulingsRead(rows=[], state="unresolved", path=None)
+    if path is None:
+        return RulingsRead(rows=[], state="unresolved", path=None)
+    try:
+        if not refutations.bucket_exists(project_dir):
+            return RulingsRead(rows=[], state="no-bucket", path=path)
+        records = refutations.fold(
+            refutations.events(project_dir, strict=True))
+        rows = [r for r in records.values()
+                if r.get("state") == "active" and r.get("polarity") == "ruling"]
+        rows.sort(key=lambda r: (str(r.get("activated_at") or ""),
+                                 str(r.get("refutation_id") or "")),
+                  reverse=True)
+    except Exception:
+        return RulingsRead(rows=[], state="unreadable", path=path)
+    return RulingsRead(rows=rows, state="read", path=path)
+
+
 def active_rulings(project_dir=None) -> list[dict]:
     """Every active ruling for the briefing section, newest-activated first
     (ties break on refutation_id — the fold keeps no finer stamp). This is
@@ -755,15 +821,15 @@ def active_rulings(project_dir=None) -> list[dict]:
     newest ratifications; `daimon ruling list` and the viewer lane keep
     refutations.listing's own presentation order.
 
-    Fail-open: ANY error — read, fold, or sort over hand-edited rows —
-    yields [] rather than costing the briefing."""
+    Fail-open: ANY error — path resolution, read, fold, or sort over
+    hand-edited rows, a missing bucket, an unreadable ledger — yields []
+    rather than costing the briefing. `rulings_read` already catches all of
+    these itself, but the guard here is repeated on purpose: this is the
+    pinned fail-open API (#940), and a future change to the strict sibling
+    must not be able to reintroduce a crash here by accident. A host that
+    needs to tell the failures apart reads `rulings_read` instead (#962)."""
     try:
-        rows = refutations.listing(states={"active"}, polarity="ruling",
-                                   project_dir=project_dir)
-        rows.sort(key=lambda r: (str(r.get("activated_at") or ""),
-                                 str(r.get("refutation_id") or "")),
-                  reverse=True)
-        return rows
+        return rulings_read(project_dir).rows
     except Exception:
         return []
 

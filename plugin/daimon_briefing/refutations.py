@@ -659,15 +659,36 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     return sorted(doomed)
 
 
-def events(project_dir=None) -> list[dict]:
-    """Read valid ledger rows best-effort; malformed lines never sink reads."""
+def events(project_dir=None, *, strict: bool = False) -> list[dict]:
+    """Read valid ledger rows best-effort; malformed lines never sink reads.
+
+    `strict` (#962, default False): every existing caller keeps today's
+    fail-open contract byte for byte — an unreadable ledger reads as no
+    events at all. Passing `strict=True` re-raises the `OSError` (or
+    `UnicodeDecodeError`) instead, for a caller that needs to tell "could not
+    read" apart from "genuinely has none" — `briefing.rulings_read` is the
+    one caller that does.
+
+    The read is attempted directly rather than gated behind `path.exists()`
+    first: `Path.exists()` swallows ENOENT, ENOTDIR, EBADF, *and* ELOOP alike
+    into a bare False, so a ledger stuck in a symlink loop used to read as
+    "genuinely has none" even under `strict=True` — the read never happened,
+    so there was nothing to re-raise. Only `FileNotFoundError` (a legitimately
+    absent ledger, ENOENT) stays unconditionally silent; every other OSError —
+    a directory in the ledger's place (`IsADirectoryError`), permissions
+    denied, a symlink loop — reaches the `strict` check below.
+    """
     path = _path(project_dir)
-    if path is None or not path.exists():
+    if path is None:
         return []
     rows = []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
     except (OSError, UnicodeDecodeError):
+        if strict:
+            raise
         return []
     for index, line in enumerate(lines):
         try:

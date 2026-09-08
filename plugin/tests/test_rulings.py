@@ -11,6 +11,7 @@ change what renders.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -923,6 +924,277 @@ def test_ruling_list_on_a_ledger_holding_only_refutations_is_exit_zero(
     assert "no rulings for this project" in capsys.readouterr().out
 
 
+# ---- #962: an unreadable ledger is a THIRD answer, never "no rulings" ----
+#
+# `bucket_exists` only proves the project's bucket DIRECTORY is there; it
+# never opens refutations.jsonl. A ledger replaced by a directory, with its
+# read permission pulled, or stuck in a symlink loop, used to degrade to the
+# same empty read as a project that genuinely has no active rulings — the
+# one case #948 left open. `briefing.rulings_read` is the shared reader that
+# must tell all four facts apart (a fourth, "unresolved", covers the ledger
+# path itself never getting worked out), and `active_rulings`/`ruling list`
+# both sit on it now.
+
+
+def _break_ledger_as_a_directory():
+    path = refutations._path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()
+
+
+def _break_ledger_by_permission():
+    _rule(channel="cli-tty", ratified=True)
+    refutations._path(PROJECT).chmod(0o000)
+
+
+def _break_ledger_with_a_symlink_loop():
+    """#962 F2: `Path.exists()` swallows ELOOP into a bare False the same
+    way it swallows ENOENT, so a ledger stuck in a symlink loop used to read
+    as "no ledger yet" even under `strict=True` — the read never happened,
+    so there was nothing to re-raise."""
+    path = refutations._path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.symlink_to(path)
+    except OSError:
+        pytest.skip("platform refuses a self-referential symlink")
+
+
+_LEDGER_BREAKERS = [
+    pytest.param(_break_ledger_as_a_directory, id="directory-in-its-place"),
+    pytest.param(
+        _break_ledger_by_permission, id="chmod-000",
+        marks=pytest.mark.skipif(
+            hasattr(os, "geteuid") and os.geteuid() == 0,
+            reason="root reads a 000 file, so the branch is unreachable")),
+    pytest.param(_break_ledger_with_a_symlink_loop, id="symlink-loop"),
+]
+
+
+@pytest.mark.parametrize("break_ledger", _LEDGER_BREAKERS)
+def test_rulings_read_reports_unreadable_never_no_bucket_or_a_clean_empty(
+        break_ledger, tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+
+    break_ledger()
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "unreadable"
+    assert read.rows == []
+    assert read.path == refutations._path(PROJECT)
+
+
+@pytest.mark.parametrize("break_ledger", _LEDGER_BREAKERS)
+def test_active_rulings_still_fails_open_on_an_unreadable_ledger(
+        break_ledger, tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+
+    break_ledger()
+    assert briefing.active_rulings(PROJECT) == []
+
+
+@pytest.mark.parametrize("break_ledger", _LEDGER_BREAKERS)
+def test_events_default_still_swallows_an_unreadable_ledger(
+        break_ledger, tmp_checkpoint_dir):
+    """#962 gives `events()` a `strict=True` escape hatch; every existing
+    caller that never asks for it keeps today's fail-open contract exactly,
+    byte for byte."""
+    break_ledger()
+    assert refutations.events(PROJECT) == []
+
+
+@pytest.mark.parametrize("break_ledger", _LEDGER_BREAKERS)
+def test_events_strict_reraises_instead_of_swallowing(
+        break_ledger, tmp_checkpoint_dir):
+    break_ledger()
+    with pytest.raises(OSError):
+        refutations.events(PROJECT, strict=True)
+
+
+# ---- #962 F1/F3: "unresolved" is its own fourth state, never "no-bucket" ----
+#
+# `bucket_exists` and the read below both need a resolved path FIRST.
+# `refutations._path` can come back None (no project identifies at all) or
+# RAISE (a `config` failure — a corrupt `~/.daimon/env` byte reaching
+# `config.checkpoint_dir()` is one real way in). Either must report
+# "unresolved" with `path=None`, never fall through to "no-bucket" (which
+# would name a path that was never actually produced) and never escape as a
+# bare exception out of `active_rulings`, the pinned fail-open API.
+
+
+@pytest.mark.parametrize("project_dir", [None, ""])
+def test_rulings_read_state_unresolved_when_no_project_identifies_at_all(
+        project_dir, tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+
+    read = briefing.rulings_read(project_dir)
+    assert read.state == "unresolved"
+    assert read.path is None
+    assert read.rows == []
+
+
+def test_rulings_read_state_unresolved_when_path_resolution_raises(
+        tmp_checkpoint_dir, monkeypatch):
+    """The real #962 F1 shape: a bad byte in `~/.daimon/env` reaches
+    `config.checkpoint_dir()` through `refutations._path`, as a
+    `UnicodeDecodeError`, not an `OSError` — `config._file_values` only
+    catches the latter. `_path` itself never catches anything."""
+    from daimon_briefing import briefing
+
+    def boom(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte")
+
+    monkeypatch.setattr(refutations, "_path", boom)
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "unresolved"
+    assert read.path is None
+    assert read.rows == []
+
+
+def test_rulings_read_path_is_none_iff_state_is_unresolved(
+        tmp_checkpoint_dir, monkeypatch):
+    """The four-state contract's own invariant, pinned directly: every other
+    state always carries a real path, and only "unresolved" ever carries
+    None."""
+    from daimon_briefing import briefing
+
+    cases = [briefing.rulings_read(None)]  # unresolved
+    cases.append(briefing.rulings_read(PROJECT))  # no-bucket
+    (tmp_checkpoint_dir / (store.project_slug(PROJECT) or "")).mkdir(
+        parents=True)
+    cases.append(briefing.rulings_read(PROJECT))  # read (empty)
+    _rule(channel="cli-tty", ratified=True)
+    cases.append(briefing.rulings_read(PROJECT))  # read (rows)
+    for read in cases:
+        assert (read.path is None) == (read.state == "unresolved"), read
+
+
+def test_active_rulings_fails_open_when_path_resolution_raises(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import briefing
+
+    def boom(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte")
+
+    monkeypatch.setattr(refutations, "_path", boom)
+    assert briefing.active_rulings(PROJECT) == []
+
+
+def test_active_rulings_fails_open_even_if_rulings_read_itself_forgets_to(
+        tmp_checkpoint_dir, monkeypatch):
+    """#962 F1: `active_rulings` carries its OWN guard, independent of
+    `rulings_read`'s, so a future bug in the strict sibling cannot silently
+    turn the pinned fail-open API into a crasher."""
+    from daimon_briefing import briefing
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("rulings_read itself broke")
+
+    monkeypatch.setattr(briefing, "rulings_read", boom)
+    assert briefing.active_rulings(PROJECT) == []
+
+
+def test_rulings_read_state_no_bucket_for_an_unwritten_project(
+        tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "no-bucket"
+    assert read.rows == []
+
+
+def test_rulings_read_state_read_for_a_bucket_with_no_ledger_yet(
+        tmp_checkpoint_dir):
+    """A bucket holding only checkpoints has been written from; it simply
+    carries no ledger, and that is a clean empty read, never "unreadable"."""
+    from daimon_briefing import briefing
+
+    (tmp_checkpoint_dir / (store.project_slug(PROJECT) or "")).mkdir(
+        parents=True)
+
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "read"
+    assert read.rows == []
+
+
+def test_rulings_read_state_read_matches_active_rulings(tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "read"
+    assert [r["refutation_id"] for r in read.rows] == [ruling_id]
+    assert read.rows == briefing.active_rulings(PROJECT)
+
+
+def test_rulings_read_skips_malformed_lines_and_keeps_the_good_rows(
+        tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    path = refutations._path(PROJECT)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("not json\n")
+        fh.write('"a json string, not a dict"\n')
+
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "read"
+    assert [r["refutation_id"] for r in read.rows] == [ruling_id]
+
+
+def test_cli_ruling_list_reports_an_unreadable_ledger_distinctly(
+        tmp_checkpoint_dir, capsys):
+    _break_ledger_as_a_directory()
+
+    rc = cli.main(["ruling", "list", "--project", PROJECT])
+    captured = capsys.readouterr()
+    assert rc == 1
+    # #948/scar 0057's contract holds: stdout is unchanged either way.
+    assert "no rulings for this project" in captured.out
+    assert str(refutations._path(PROJECT)) in captured.err
+
+
+def test_cli_ruling_list_json_still_prints_its_payload_on_an_unreadable_ledger(
+        tmp_checkpoint_dir, capsys):
+    _break_ledger_as_a_directory()
+
+    rc = cli.main(["ruling", "list", "--json", "--project", PROJECT])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert json.loads(captured.out) == []
+    assert str(refutations._path(PROJECT)) in captured.err
+
+
+def test_cli_ruling_list_no_bucket_case_is_unregressed(tmp_checkpoint_dir,
+                                                       capsys):
+    """The pre-existing #948 branch (no bucket at all) must still fire on
+    its own message, not fall through to the new #962 wording."""
+    rc = cli.main(["ruling", "list", "--project", PROJECT])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no bucket for" in captured.err
+    assert "cannot read" not in captured.err
+
+
+def test_cli_ruling_list_reports_unresolved_without_naming_a_path(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    """A `_path` raise is caught inside `rulings_read` itself and never
+    surfaces this far as an exception, so the CLI branch is proven directly
+    against the shared reader's own contract: "unresolved" has no path to
+    report, and the stderr line must not pretend otherwise."""
+    from daimon_briefing import briefing
+
+    monkeypatch.setattr(
+        briefing, "rulings_read",
+        lambda project_dir=None: briefing.RulingsRead(
+            rows=[], state="unresolved", path=None))
+    rc = cli.main(["ruling", "list", "--project", PROJECT])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no rulings for this project" in captured.out
+    assert "None" not in captured.err
+    assert "cannot resolve" in captured.err
+
+
 def test_cli_list_json_over_cap_goes_to_stderr(tmp_checkpoint_dir,
                                                monkeypatch, capsys):
     for n in range(2):
@@ -1154,6 +1426,24 @@ def test_the_reference_names_the_resolver_a_host_shares_with_the_cli(
         assert "resolve_project_dir" in text, \
             f"{page} stopped naming the shared resolver"
         assert "git" in text, f"{page} stopped saying where a path resolves to"
+
+
+def test_the_reference_names_all_four_rulings_read_states(tmp_checkpoint_dir):
+    """#962: `rulings_read`'s four states are pinned prose, not just code —
+    a host reading either language page must see every state name it can
+    get back, or one of them can drift silently out of the doc."""
+    root = Path(__file__).parent.parent.parent
+    pages = [
+        root / "website/docs/reference/cli.md",
+        root / ("website/i18n/es/docusaurus-plugin-content-docs"
+                "/current/reference/cli.md"),
+    ]
+    states = ('"unresolved"', '"no-bucket"', '"unreadable"', '"read"')
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        assert "rulings_read" in text, f"{page} dropped the sibling reader"
+        for state in states:
+            assert state in text, f"{page} is missing state {state}"
 
 
 def _check(**overrides):
