@@ -1048,6 +1048,206 @@ def test_cli_open_rejects_an_unknown_kind_choice(project, recipient, capsys):
     assert exc_info.value.code == 2
 
 
+# ---- #961 slice 2: render surfaces -----------------------------------------
+#
+# THE ONE RULE: every surface renders `kind` from the FOLDED record, never a
+# raw ledger row. `test_..._never_reads_kind_off_a_raw_row` below is the
+# fence for that rule on each surface: a raw `opened` row appended on a
+# non-human channel with `kind="info"` folds to `work` (`_kind_of`'s own
+# authority gate — #961 slice 1), and the render must show exactly what the
+# fold says. Appended directly with `requests.append` because `open_request`
+# already refuses this combination at the write boundary.
+
+
+def test_cli_request_list_detail_card_prints_kind_info(
+        project, recipient, monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                   "--why", WHY, "--kind", "info", "--project", project])
+    assert rc == 0
+    capsys.readouterr()
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Kind: info" in out
+
+
+def test_cli_request_list_detail_card_prints_kind_work_by_default(
+        project, recipient, capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    capsys.readouterr()
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Kind: work" in out
+    assert "Kind: info" not in out
+
+
+def test_cli_request_list_legacy_row_renders_kind_work(
+        project, recipient, capsys):
+    """A record minted before #961 carries no `kind` key at all; the render
+    surface must show it as `work`, the ledger's own default, never blank or
+    a crash."""
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    capsys.readouterr()
+    rows = _rows(project)
+    del rows[0]["kind"]
+    path = (config.checkpoint_dir() / store.project_slug(project)
+            / "requests.jsonl")
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Kind: work" in out
+
+
+def test_cli_request_list_never_reads_kind_off_a_raw_row(project, capsys):
+    from daimon_briefing import cli
+    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
+    row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "kind": "info"})
+    assert requests.append(row, project_dir=project)
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Kind: work" in out
+    assert "Kind: info" not in out
+
+
+def test_cli_request_list_json_carries_kind_from_the_fold(
+        project, recipient, capsys):
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    capsys.readouterr()
+    assert cli.main(["request", "list", "--project", project,
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["kind"] == "work"
+
+
+def test_cli_request_inbox_detail_card_prints_kind_info(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+    recipient_dir = "/p/inbox-961-recipient-a"
+    sender_dir = "/p/inbox-961-sender-a"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_dir)
+    assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
+    out = capsys.readouterr().out
+    assert q_id in out
+    assert "Kind: info" in out
+
+
+def test_cli_request_inbox_detail_card_prints_kind_work_by_default(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+    recipient_dir = "/p/inbox-961-recipient-b"
+    sender_dir = "/p/inbox-961-sender-b"
+    requests.open_request(
+        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=sender_dir)
+    assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
+    out = capsys.readouterr().out
+    assert "Kind: work" in out
+    assert "Kind: info" not in out
+
+
+def test_cli_request_inbox_legacy_row_renders_kind_work(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+    recipient_dir = "/p/inbox-961-recipient-c"
+    sender_dir = "/p/inbox-961-sender-c"
+    requests.open_request(
+        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_dir)
+    path = (config.checkpoint_dir() / store.project_slug(sender_dir)
+            / "requests.jsonl")
+    rows = [json.loads(ln) for ln in
+            path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    del rows[0]["kind"]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
+    out = capsys.readouterr().out
+    assert "Kind: work" in out
+
+
+def test_cli_request_inbox_never_reads_kind_off_a_raw_row(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+    recipient_dir = "/p/inbox-961-recipient-d"
+    sender_dir = "/p/inbox-961-sender-d"
+    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
+    row.update({"to": store.project_slug(recipient_dir), "ask": ASK,
+               "why": WHY, "kind": "info"})
+    assert requests.append(row, project_dir=sender_dir)
+    assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
+    out = capsys.readouterr().out
+    assert "Kind: work" in out
+    assert "Kind: info" not in out
+
+
+def test_cli_request_inbox_json_carries_kind_from_the_fold(
+        tmp_checkpoint_dir, capsys):
+    from daimon_briefing import cli
+    recipient_dir = "/p/inbox-961-json-recipient"
+    sender_dir = "/p/inbox-961-json-sender"
+    requests.open_request(
+        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_dir)
+    assert cli.main(["request", "inbox", "--project", recipient_dir,
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["kind"] == "info"
+
+
+def test_inject_lines_marks_an_info_ask(project):
+    from daimon_briefing.cli import request as cli_request
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    lines = cli_request._inject_lines(record)
+    assert "[info]" in lines[0]
+
+
+def test_inject_lines_no_marker_for_a_work_ask(project):
+    from daimon_briefing.cli import request as cli_request
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    lines = cli_request._inject_lines(record)
+    assert "[info]" not in lines[0]
+
+
+def test_owed_inject_lines_marks_an_info_ask(project):
+    from daimon_briefing.cli import request as cli_request
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    lines = cli_request._owed_inject_lines(record)
+    assert "[info]" in lines[0]
+
+
+def test_verdict_inject_lines_never_shows_a_kind_marker(project):
+    """Decision (#961 slice 2): the sender-side verdict notification reports
+    the OUTCOME of a request this project itself opened, and it already
+    assigned the kind at open time — re-surfacing it here tells the sender
+    something it already knows. Mirrors the same call made for
+    `briefing.verdict_panel_lines`. No marker is added to this surface."""
+    from daimon_briefing.cli import request as cli_request
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    lines = cli_request._verdict_inject_lines(record)
+    assert "[info]" not in "\n".join(lines)
+
+
 def test_cli_open_human_path_requires_a_terminal(project, recipient,
                                                  monkeypatch, capsys):
     from daimon_briefing import cli
