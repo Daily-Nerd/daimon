@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 75
 type: fence
 title: "`daimon ruling list` still reads the ledger twice: `rulings_read` only settles no-bucket/unreadable, `listing()` still does the actual row fetch"
 severity: low
 confidence: 0.8
 created: 2026-09-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/cli/ruling.py
   - path: plugin/daimon_briefing/briefing.py
   - pattern: "briefing\.rulings_read"
 evidence:
-  - note: "#962: briefing.rulings_read(project_dir) reads standing rulings only (state==\"active\", polarity==\"ruling\"), but `daimon ruling list` supports --state candidate/overturned and is a general listing, so `_cmd_ruling_list` still has to call refutations.listing() separately for `rows`. It calls rulings_read() a second time, only when rows is empty, purely to learn which of the four states (unresolved/no-bucket/unreadable/read) applies."
+  - note: #962: briefing.rulings_read(project_dir) reads standing rulings only (state==\"active\", polarity==\"ruling\"), but `daimon ruling list` supports --state candidate/overturned and is a general listing, so `_cmd_ruling_list` still has to call refutations.listing() separately for `rows`. It calls rulings_read() a second time, only when rows is empty, purely to learn which of the four states (unresolved/no-bucket/unreadable/read) applies.
 expires:
   condition: "listing()/records() gain their own strict= parameter so one call produces both the rows and the read-state, closing the second read"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 `rulings_read` is scoped to active rulings only, by design (#962's own contract:
