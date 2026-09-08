@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 76
 type: landmine
 title: In a worktree the guard blocks git outside it but not file edits, so a docs change lands in the shared checkout and the gates still pass
 severity: medium
 confidence: 0.9
 created: 2026-09-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: docs/
   - path: website/docs/
-  - pattern: "cd /Users/[a-z]+/Documents/Daily-Nerd/daimon &&"
+violation: "cd /Users/[a-z]+/Documents/Daily-Nerd/daimon &&"
 evidence:
-  - note: "#963, fix/963-bucket-migration: five doc files were edited from the shared checkout path while the branch lived in a worktree. git status in the worktree showed no docs change, and the reader-vocabulary and website gates ran green against the worktree's unedited copies."
+  - note: #963, fix/963-bucket-migration: five doc files were edited from the shared checkout path while the branch lived in a worktree. git status in the worktree showed no docs change, and the reader-vocabulary and website gates ran green against the worktree's unedited copies.
 expires:
   condition: "the worktree isolation guard refuses non-git writes to the shared checkout too"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 An agent working in `.claude/worktrees/<id>` is stopped by the isolation guard

@@ -14,6 +14,7 @@ evidence:
   - note: serializer.py:1652 refuses every chunk-cache write once fallback_used() is true, citing the #28/#343 poisoning lesson inline.
   - note: serializer.py:1577 builds the cache key from configure.resolved_backend() — the CONFIGURED backend, which is not the backend that served the call when a fallback fired.
   - commit: 856cc9c
+  - note: "firing-review 2026-09-08: 27 fires since the last revision, 25 of them on serializer.py directly; anchors reviewed and confirmed on-target, hazard still live"
 expires:
   condition: "_chunk_cache_key stamps the backend that actually SERVED the call (e.g. from llm.served_models()) instead of the configured one, making the key self-distinguishing"
   review_after: 2027-02-04

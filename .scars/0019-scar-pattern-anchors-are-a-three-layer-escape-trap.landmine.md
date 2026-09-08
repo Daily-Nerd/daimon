@@ -13,6 +13,7 @@ evidence:
   - note: 2026-07-02, promote refusal: \"briefing\\\\.build\\\\(\" (reflexive YAML double-backslash) reaches the regex engine RAW — '\\\\(' = literal backslash + bare group-open: 'missing ), unterminated subpattern'. scar promote refused.
   - note: 2026-07-02, rot round-trip on scar #16: double-backslash form reported dead (raw '\\\\.' never matches a plain dot); single-QUOTED form kept the quotes as pattern chars (echoed /'briefing\\.build\\b'/) — still dead; double-quoted single-backslash \"briefing\\.build\\b\" went live. Parser strips double quotes only, processes NO escapes.
   - note: 2026-07-02, scar #9 false rot: its pattern matches cli.py:538, but liveness reads only READ_HEAD_BYTES (8KB) per file (scar/orphan.py) — deep matches report as dead anchors.
+  - note: "firing-review 2026-09-08: 14 fires since the last revision, all from editing .scars/candidates and active .scars/*.md files; path .scars/ is the correct and complete risk surface for this quoting/escaping trap, left unchanged"
 expires:
   condition: "scar lint parses patterns with documented quoting/escaping semantics matching the injector AND liveness scans full file contents (or distinguishes 'beyond scan head' from dead)"
   review_after: 2027-01-02

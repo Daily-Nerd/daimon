@@ -12,7 +12,6 @@ anchors:
   - path: plugin/daimon_briefing/cli/
   - path: plugin/daimon_briefing/recall.py
   - path: plugin/daimon_briefing/briefing.py
-  - path: plugin/tests/
   - pattern: "append_event[(][^)]{0,200}kind="
 violation: "append_event\([^)]{0,200}kind=(?!["'](tombstone|corroboration|handoff)["']|args\.kind)"
 evidence:

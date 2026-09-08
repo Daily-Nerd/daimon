@@ -14,6 +14,7 @@ evidence:
   - commit: a5f3a64
   - pr: 661
   - note: "2026-08-10, #660/#661 — added `from . import normalize` to redact.py; it is copied verbatim next to the standalone Windsurf hook scripts, which run with a sys.path insert and cannot resolve the package"
+  - note: "firing-review 2026-09-08: 39 fires since the last revision, mostly test_cli.py and other test files edited alongside the field_table/mcp_tools/requests work; anchors reviewed and confirmed on-target, hazard still live"
 expires:
   condition: "redact.py stops being shipped standalone beside the hook scripts, or the hook copies become real imports of the installed package"
   review_after: 2027-02-01
