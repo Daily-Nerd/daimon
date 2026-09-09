@@ -64,6 +64,58 @@ def test_propose_with_a_keyvalue_shaped_wrong_flag_is_refused(
     assert "KEY=VALUE" in capsys.readouterr().out
 
 
+def test_propose_with_a_repeated_policy_key_is_refused(
+        tmp_checkpoint_dir, capsys):
+    """#961 slice 4 review round 2 (M5a): a repeated KEY used to win
+    silently (plain dict assignment, last one in wins) — the same shape
+    every other malformed `--request-policy` input already refuses at the
+    parse boundary, now including this one."""
+    rc = cli.main(["ruling", "propose", "--subject", "x", "--verdict", "y",
+                   "--scope", "z", "--evidence", "issue:961", "--by", "agent",
+                   "--project", PROJECT,
+                   "--request-policy", "sender=p-sender",
+                   "--request-policy", "sender=p-other",
+                   "--request-policy", "kind=work",
+                   "--request-policy", "verb=accept",
+                   "--request-policy", "by=agent"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "sender" in out
+    assert "more than once" in out
+
+
+def test_revise_shows_the_new_policys_pinned_sha_before_confirming(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    """#961 slice 4 review round 2 (M5b): the pre-write ceremony used to
+    print the raw, unhashed `--request-policy` KEY=VALUE dict — a human
+    confirming `New policy: {'sender': ...}` had no way to check it against
+    what actually lands, unlike every other pin this codebase discloses
+    before a write. It now shows the SAME formatted line, with the sha the
+    write will pin, that `ruling ratify` already shows for a stored one."""
+    # The pre-confirm ceremony only fires on an ACTIVE ruling's revise —
+    # propose+ratify first, the same setup `test_revise_no_request_policy_
+    # clears_an_active_grant` above uses.
+    assert _propose(_POLICY_FLAGS) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT]) == 0
+    capsys.readouterr()
+    rc = cli.main(["ruling", "revise", ruling_id, "--evidence", "issue:961",
+                   "--project", PROJECT,
+                   "--request-policy", "sender=p-other",
+                   "--request-policy", "kind=work",
+                   "--request-policy", "verb=accept",
+                   "--request-policy", "by=agent"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "New policy: sender=p-other kind=work verb=accept by=agent" in out
+    assert "sha " in out
+    assert "{'sender'" not in out  # never the raw, unhashed dict repr
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    expected_sha = record["request_policy"]["sha256"]
+    assert expected_sha[:12] in out
+
+
 def test_ratify_shows_and_pins_the_policy(tmp_checkpoint_dir, _tty,
                                           monkeypatch, capsys):
     assert _propose(_POLICY_FLAGS) == 0

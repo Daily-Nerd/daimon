@@ -207,7 +207,17 @@ def _policy_args(args) -> dict | None:
 
     Answers only what was SET — `--no-request-policy` (revise only) is a
     separate bool the caller reads for itself, on the same terms
-    `_check_args` has no "clear" equivalent for a check."""
+    `_check_args` has no "clear" equivalent for a check.
+
+    #961 slice 4 review round 2 (M5a): a repeated KEY used to win silently
+    (plain dict assignment, last one in wins) — the same "malformed input
+    reaches a write" shape every OTHER refusal here exists to stop, just at
+    the parse boundary instead of `_policy`'s own shape check. Refused
+    here, before any write, naming the key: a caller who typed
+    `--request-policy sender=a --request-policy sender=b` almost certainly
+    meant to change something else, and a silent last-wins would apply the
+    WRONG half of a copy-pasted command with no visible sign anything
+    happened."""
     raw = getattr(args, "request_policy", None) or []
     if not raw:
         return None
@@ -217,7 +227,11 @@ def _policy_args(args) -> dict | None:
         if not separator:
             raise refutations.RefutationError(
                 f"--request-policy expects KEY=VALUE, got {item!r}")
-        out[key.strip()] = value.strip()
+        key = key.strip()
+        if key in out:
+            raise refutations.RefutationError(
+                f"--request-policy names {key!r} more than once")
+        out[key] = value.strip()
     return out
 
 
@@ -265,13 +279,23 @@ def _check_ceremony_lines(check: dict, *, label: str, verb: str) -> list[str]:
     ]
 
 
-def _policy_ceremony_lines(request_policy: dict, *, verb: str) -> list[str]:
+def _policy_ceremony_lines(request_policy: dict, *, verb: str,
+                           label: str = "Policy") -> list[str]:
     """#961 slice 4: the disclosure line a ceremony prints before a human
     arms a request-accept policy. Mirrors `_check_ceremony_lines`: the hash
-    is computed by `refutations._policy`, this only renders what came back."""
+    is computed by `refutations._policy`, this only renders what came back.
+
+    `label` (#961 slice 4 review round 2, M5b): ratify's own call reads the
+    STORED shape off an already-written record and keeps the default
+    "Policy"; revise's pre-write ceremony passes "New policy" for a value
+    that has been VALIDATED (`refutations._policy`) but not yet written —
+    the same "New check"/"Check" label split `_check_ceremony_lines`
+    already uses, so a revise ceremony discloses the sha it is ABOUT to pin
+    on the SAME terms ratify discloses one it already pinned, instead of
+    the raw, unhashed KEY=VALUE dict it showed before this."""
     sha = str(request_policy.get("sha256") or "")
     return [
-        f"  Policy: sender={request_policy.get('sender')} "
+        f"  {label}: sender={request_policy.get('sender')} "
         f"kind={request_policy.get('kind')} verb={request_policy.get('verb')} "
         f"by={request_policy.get('by')} · sha {sha[:12]}",
         f"  {verb} lets that sender's agent record this verdict on this "

@@ -113,7 +113,8 @@ def _cmd_ruling_ratify(args) -> int:
     displayed_policy_sha = ""
     if request_policy:
         displayed_policy_sha = str(request_policy.get("sha256") or "")
-        for line in _policy_ceremony_lines(request_policy, verb="Ratifying"):
+        for line in _policy_ceremony_lines(request_policy, verb="Ratifying",
+                                           label="Policy"):
             print(line, file=ceremony)
     displayed_key = normalize.content_key(record.get("verdict") or "")
     answer = input("Ratify? [y/N]: ").strip().casefold()
@@ -201,11 +202,33 @@ def _cmd_ruling_revise(args) -> int:
                                               verb="Applying"):
                 print(line)
         if request_policy is not None:
-            # Not yet the STORED shape (no sha256 until `_policy` validates
-            # it inside `revise`): shown here in the same KEY=VALUE terms
-            # the flags were given in, so a rejected value never prints as
-            # if it were already accepted.
-            print(f"  New policy: {request_policy}")
+            # #961 slice 4 review round 2 (M5b): validated (never written)
+            # here so the ceremony can disclose the SAME sha the write, if
+            # confirmed, will pin — the pin discipline ratify's own
+            # ceremony already applies to an already-active policy, now
+            # applied before the fact too, on the same terms
+            # `_check_ceremony_lines` already hashes a check's raw body for
+            # display before a check has ever been stored. A value that
+            # fails validation falls back to the raw KEY=VALUE terms it was
+            # given in — `revise` itself refuses it at the write boundary
+            # with the real reason, and a hash for a shape that will never
+            # be stored would disclose a fact that never comes to exist.
+            try:
+                validated_policy = refutations._policy(request_policy)
+            except refutations.RefutationError:
+                validated_policy = None
+            if validated_policy is None:
+                # `request_policy` is not None here, and `_policy` returns
+                # None only for a None input — so this is either the
+                # RefutationError fallback above (a value that will not be
+                # stored) or, in principle, unreachable; either way the raw
+                # KEY=VALUE terms are the honest thing to show.
+                print(f"  New policy: {request_policy}")
+            else:
+                for line in _policy_ceremony_lines(
+                        validated_policy, verb="Applying",
+                        label="New policy"):
+                    print(line)
         if clear_request_policy:
             print("  Policy will be CLEARED — no ruling will cover an "
                   "agent accept for this project after this change.")
