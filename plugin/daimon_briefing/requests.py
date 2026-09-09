@@ -1133,14 +1133,21 @@ def _require(request_id: str, project_dir) -> dict:
 
 
 def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
-                       project_dir, **stamp) -> None:
+                       project_dir, row: dict | None = None, **stamp) -> None:
     """`stamp` (#961 slice 4) carries `under_ruling`/`policy_sha256` for a
     ruling-covered agent accept — a truthy extra becomes a row field, an
     absent or falsy one is never written at all, the same "only what the
     caller actually set" contract `revise` already holds this ledger to
     elsewhere (an empty string on the row would be indistinguishable from
-    one a hand-edited row lost)."""
-    row = _stamp(event, request_id, channel)
+    one a hand-edited row lost).
+
+    `row` (#961 slice 4 review round 2, H2): the EXACT already-stamped row a
+    caller dry-ran through the fold before deciding to write, so the row
+    that lands carries the identical `order` the dry run checked coverage
+    against — never a second `_stamp()` call minting a fresh order after
+    the decision was already made on a different one. `None` (every other
+    caller) stamps fresh here, unchanged."""
+    row = dict(row) if row is not None else _stamp(event, request_id, channel)
     note = _text("note", note, required=False)
     if note:
         row["note"] = note
@@ -1212,6 +1219,20 @@ def accept(request_id: str, *, channel: str, note: str = "",
     accept while doing nothing for a forged local one, exactly backwards.
     Paid only on the non-human path — the in-process human writer's cost is
     unchanged.
+
+    #961 slice 4 review round 2 (H2): the `work` branch no longer trusts
+    `_resolve_covering_ruling`'s CURRENT-STATE answer on its own. It stamps
+    the row it is about to write, then dry-runs the identical predicate the
+    fold will apply later — `_covered_by_policy` against `request_policy_
+    history`'s order-aware intervals — before ever calling `append`. A
+    current-state grant that would not actually cover THIS row's own order
+    is refused HERE, with a message, instead of landing a row the fold goes
+    on to silently treat as inert forever. The one way this fires in
+    practice is clock skew: this machine's `time.time_ns()` behind the
+    machine that ratified the ruling, so the accept's own stamped `order`
+    falls before the interval's `active_from`. The row that finally lands
+    is the SAME stamped row the dry run checked — never re-stamped with a
+    fresh order after the decision, which would reopen the identical gap.
     """
     authority = CHANNEL_AUTHORITY.get(channel)
     if authority != "human":
@@ -1230,32 +1251,52 @@ def accept(request_id: str, *, channel: str, note: str = "",
         if current is None:
             current = recipient_join(project_dir=project_dir).get(
                 request_id)
-        under_ruling = None
-        policy_sha = None
         covered = False
+        stamp = {}
+        synthetic = None
+        skew = False
         if current is not None and current.get("state") in _SENDER_MOVABLE:
             if current.get("kind") == "info":
                 covered = True  # slice 3's own case: no ruling involved
             elif (current.get("kind") == "work"
                   and not current.get("to_human")):
-                covering = _resolve_covering_ruling(
-                    str(current.get("from_slug") or ""), project_dir)
+                origin_slug = str(current.get("from_slug") or "")
+                covering = _resolve_covering_ruling(origin_slug, project_dir)
                 if covering is not None:
-                    under_ruling, policy_sha = covering
-                    covered = True
+                    ruling_id, sha = covering
+                    # The dry run: the EXACT row about to land, checked
+                    # against the EXACT predicate (`_covered_by_policy`) and
+                    # the EXACT order-aware history (`request_policy_
+                    # history`) the fold will apply on every later re-fold —
+                    # never `active_request_policies` alone again.
+                    synthetic = _stamp("accepted", request_id, channel)
+                    synthetic["under_ruling"] = ruling_id
+                    synthetic["policy_sha256"] = sha
+                    history = refutations.request_policy_history(
+                        project_dir=project_dir)
+                    if _covered_by_policy(synthetic, origin_slug, history):
+                        covered = True
+                        stamp = {"under_ruling": ruling_id,
+                                "policy_sha256": sha}
+                    else:
+                        skew = True
         if not covered:
+            detail = (
+                " — an active ruling grants this sender coverage right "
+                "now, but the write would land outside the interval that "
+                "ruling has been active for (commonly a clock skew between "
+                "this machine and the one that ratified it); retry once "
+                "the clocks agree, or"
+                if skew else "; an agent may accept only an addressed "
+                "`info` ask that is still open or needs-info, or a `work` "
+                "ask an active ruling covers for this sender, so")
             raise RequestError(
                 "an accepted verdict requires a human channel; this call "
-                f"arrived through {channel!r} — an agent may accept only "
-                "an addressed `info` ask that is still open or "
-                "needs-info, or a `work` ask an active ruling covers for "
-                "this sender; this ask needs "
+                f"arrived through {channel!r}{detail} this ask needs "
                 f"`daimon request accept {request_id}` from a human "
                 "channel")
-        stamp = ({"under_ruling": under_ruling, "policy_sha256": policy_sha}
-                if under_ruling is not None else {})
         _write_verdict_row("accepted", request_id, channel, note,
-                           project_dir, **stamp)
+                           project_dir, row=synthetic, **stamp)
         return
     _verdict("accepted", request_id, channel=channel, note=note,
              project_dir=project_dir)

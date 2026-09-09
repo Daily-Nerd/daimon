@@ -8,6 +8,7 @@ is the object, its fold, and its deletion contract.
 """
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -858,6 +859,69 @@ def test_agent_accept_on_a_candidate_ruling_is_refused(project):
         project_dir=sender_slug)
     with pytest.raises(requests.RequestError):
         requests.accept(q_id, channel="cli-agent", project_dir=project)
+
+
+def test_agent_accept_refuses_when_the_ratifying_machines_clock_leads_this_ones(
+        project, monkeypatch):
+    """#961 slice 4 review round 2 (H2): `accept()` no longer trusts
+    `active_request_policies`'s current-state answer alone — it dry-runs the
+    stamped row it is about to write through the SAME order-aware predicate
+    (`_covered_by_policy` against `request_policy_history`) the fold applies
+    on every later re-fold. A ruling ratified on a machine whose clock runs
+    AHEAD of this one stamps its `order` (and so the interval's own
+    `active_from`) into what is, from here, still the future — an ordinary
+    accept stamped with THIS machine's real, current `time.time_ns()`
+    therefore falls BEFORE the interval the fold will look for, and must be
+    refused here rather than land a row the fold treats as inert forever.
+    Simulated by advancing `refutations.time.time_ns` only for the ratify
+    call, then restoring it before `accept()` stamps its own row with the
+    real, unskewed clock."""
+    sender_slug = _seed_bucket("/p/req-skew-sender")
+    real_time_ns = time.time_ns
+    future_ns = real_time_ns() + 3600 * 10 ** 9  # an hour ahead
+    monkeypatch.setattr(refutations.time, "time_ns", lambda: future_ns)
+    _cover(project, sender_slug)
+    monkeypatch.setattr(refutations.time, "time_ns", real_time_ns)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+    message = str(exc_info.value)
+    assert "clock skew" in message
+    assert f"daimon request accept {q_id}" in message
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_agent_accept_refuses_a_work_ask_whose_founder_a_planted_duplicate_stole_coverage_from(
+        project):
+    """#961 slice 4 review round 2 (H2): boundary-level companion to C1's
+    fold-level plant test, proving `accept()` itself (not only raw `fold`)
+    refuses this — a stranger plants a shape-invalid `opened` duplicate (an
+    empty `ask`) in a bucket a ruling covers, ordered EARLIER than the
+    genuine founder. C1 already keeps the record's `from_slug` on the
+    genuine sender; this proves the write boundary's OWN dry run agrees and
+    refuses rather than silently writing a row the fold would drop."""
+    ruling_id, sha = _cover(project, "p-planted-partner")
+    genuine_slug = _seed_bucket("/p/req-h2-genuine-sender")
+    before = time.time_ns()
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=genuine_slug)
+    # Plant an earlier-ordered, shape-invalid duplicate `opened` row for the
+    # SAME id in the covered partner's own bucket — forged via `append`,
+    # since `open_request` would refuse an empty ask at the write boundary.
+    planted = requests._stamp("opened", q_id, "cli-tty", now_ns=before - 1)
+    planted.update({"to": store.project_slug(project), "ask": "", "why": ""})
+    assert requests.append(planted, project_dir="p-planted-partner")
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["from_slug"] == genuine_slug
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
 
 
 def test_a_ruling_overturned_after_landing_an_accept_refuses_a_new_one_but_the_old_one_stands(
