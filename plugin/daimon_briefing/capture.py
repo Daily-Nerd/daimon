@@ -245,9 +245,27 @@ def _origin_on_disk(origin_session: str, project) -> bool:
 
     Absent, unreadable, torn, GC'd, or foreign all answer the same way — no.
     store.read_checkpoint is total (it swallows the bad-path/torn-file cases
-    itself), so there is nothing here to catch."""
+    itself), so there is nothing here to catch.
+
+    #983 containment: a provisional (`/daimon-end`'s introspection
+    checkpoint) is never a valid origin, full stop — same predicate
+    (`source == "introspection"`) store.sessions_since_count already uses to
+    exclude provisionals from baton/session counting, reused rather than
+    invented a second time. This is the second line of defense behind the
+    write-time fix (write-checkpoint now stamps the live session's REAL id,
+    #983 change 1, so carry.py's G2 same-session guard fires directly): even
+    if a stale skill install still invents a session id, or a future bug
+    reopens the gap G2 closes, a provisional origin can never mint a
+    corroboration. Blunter than strictly necessary — it also refuses the rare
+    case where the origin session crashed before its own SessionEnd
+    reconstruction ran and a genuinely DIFFERENT, later session independently
+    agreed with the provisional's claim (accepted loss, tested) — but it
+    refuses in the direction carry's own doctrine asks for: a missed
+    observation costs one boost, a forged one costs the axis."""
     cp = store.read_checkpoint(origin_session)
     if not isinstance(cp, dict):
+        return False
+    if cp.get("source") == "introspection":
         return False
     return cp.get("project_slug") == store.project_slug(project)
 

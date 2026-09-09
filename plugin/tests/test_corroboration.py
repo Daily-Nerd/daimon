@@ -30,6 +30,7 @@ import ast
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -366,6 +367,54 @@ def test_an_origin_from_another_project_emits_nothing(tmp_checkpoint_dir):
     item_id = _seed_origin()
     _seed_origin(project="/p/elsewhere", session="S-foreign")
     assert _emit([(item_id, "S-foreign", "ada")]) == 0
+    assert _rows(tmp_checkpoint_dir) == []
+
+
+def _seed_provisional_origin(project=PROJECT, session=ORIGIN, text=_TEXT):
+    """Same shipping writer as _seed_origin, except the origin checkpoint is
+    a provisional (a `/daimon-end` introspection checkpoint) that was never
+    superseded — e.g. the session crashed before its own SessionEnd
+    reconstruction ran. #983 G7 addition."""
+    store.write_checkpoint(session, {
+        "session_id": session,
+        "source": "introspection",
+        "working_context": {
+            "active_topic": {"text": "seed", "trust": "inferred"},
+            "open_questions": [{"text": text, "trust": "inferred"}],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }, project_dir=project)
+    stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
+                                    admit=store.Admit.ANY)
+    return stored["working_context"]["open_questions"][0]["id"]
+
+
+def test_an_origin_that_is_still_a_provisional_emits_nothing(tmp_checkpoint_dir):
+    # #983 change 2 (containment): a provisional is never a valid origin,
+    # full stop — reuses store.sessions_since_count's exact predicate
+    # (source == "introspection"), never a second detector. This is the
+    # SELF-corroboration case: the introspection checkpoint's own author is
+    # doing the observing (as it would be moments later, once #983 change 1
+    # stamps the SAME real session id on both halves — but this guard does
+    # not need that fix to fire, since it never inspects the observer at all).
+    item_id = _seed_provisional_origin()
+    assert _emit([(item_id, ORIGIN, "ada")]) == 0
+    assert _rows(tmp_checkpoint_dir) == []
+
+
+def test_an_origin_that_is_still_a_provisional_of_a_DIFFERENT_session_also_emits_nothing(
+        tmp_checkpoint_dir):
+    # ACCEPTED LOSS (documented in the #983 issue and _origin_on_disk's
+    # docstring): the origin session here crashed before its own SessionEnd
+    # reconstruction ran, so its per-session file is still the provisional.
+    # A genuinely DIFFERENT, later session's real agreement is discounted
+    # anyway — the guard cannot distinguish "this provisional is still
+    # standing in for its own crashed session" from "this provisional is
+    # itself corroborating", so it refuses both. A missed observation costs
+    # one boost; a forged one costs the axis (carry's own doctrine).
+    item_id = _seed_provisional_origin()
+    assert _emit([(item_id, ORIGIN, "ada")], observer="S-genuinely-later") == 0
     assert _rows(tmp_checkpoint_dir) == []
 
 
@@ -713,6 +762,206 @@ def test_carry_merge_still_runs_when_corroboration_emission_explodes(
 
 
 # ---------------------------------------------------------------------------
+# #983: a session never corroborates itself, even across the /daimon-end
+# provisional / SessionEnd-reconstruction split.
+#
+# Before this fix, `/daimon-end` (skills/daimon-end/SKILL.md) told the model
+# to INVENT a session id (`introspection-<short-unique-id>`) for its
+# provisional checkpoint. Seconds to minutes later the SAME session's
+# SessionEnd hook reconstructs it under its REAL id, restating the same
+# claim as its own verified verbatim. The two ids differed, so carry.py's G2
+# same-session guard (origin_session == observing session) never fired, and
+# the reconstruction was recorded as an independent witness of its own
+# provisional — a session corroborating itself.
+#
+# Two independent fixes close this, both exercised through the SHIPPING
+# writers (the `write-checkpoint` CLI path for the provisional, `daimon
+# serialize` for the reconstruction — never a hand-shaped checkpoint):
+#
+#   1. Root cause: `write-checkpoint --session <real id>` stamps the live
+#      session's REAL id onto the provisional, so G2 sees both halves as one
+#      session and refuses directly.
+#   2. Containment: `capture._origin_on_disk` refuses ANY provisional
+#      (source == "introspection") as an origin, so even an unpatched skill
+#      install (still inventing an id) or a future bug in G2 cannot mint a
+#      self-corroboration.
+# ---------------------------------------------------------------------------
+
+_REAL_SESSION = "S-real-983"
+_LATER_SESSION = "S-later-983-witness"
+
+
+def _future_transcript(tmp_path, session, quote_text, start):
+    """Same 3-row alternating shape as `_transcript_for`, but stamped
+    strictly AFTER `start` (a datetime) rather than a hardcoded past date —
+    the provisional this session writes first gets `created` = REAL wall-clock
+    time (store.write_checkpoint's setdefault-now; the introspection path has
+    no transcript to backdate it from), so the reconstruction's own `created`
+    (derived from the transcript's last timestamp) must be provably later or
+    store's pointer-regress guard silently no-ops the latest-pointer write
+    (see store._pointer_regresses). Returns (path, the last row's timestamp)."""
+    rows = []
+    for i, (body, offset) in enumerate([
+            (quote_text, 0), ("noted, that matches what we saw", 1),
+            ("same failure again", 2)]):
+        role = "user" if i % 2 == 0 else "assistant"
+        ts = (start + timedelta(minutes=offset)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows.append({"type": role, "message": {"role": role, "content": body},
+                     "timestamp": ts})
+    p = tmp_path / f"{session}.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    return p, rows[-1]["timestamp"]
+
+
+def _write_provisional(monkeypatch, project, real_session, text,
+                       invented_label=None, source="introspection"):
+    """The #23 introspection path's OWN shipping writer (cli write-checkpoint),
+    exactly as `/daimon-end` runs it: a JSON body on stdin, `source` defaulted
+    to "introspection", and — the #983 fix — `--session` naming the live
+    session's real id. `invented_label` reproduces the PRE-#983 skill
+    behavior (a placeholder session_id in the JSON body) so the ablation
+    tests below can turn `--session` on and off independently of the JSON
+    body's own claim."""
+    import io
+
+    cp = {
+        "session_id": invented_label or real_session,
+        "working_context": {
+            "active_topic": {"text": "seed", "trust": "inferred"},
+            "open_questions": [{"text": text, "trust": "inferred"}],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(json.dumps(cp)))
+    args = ["write-checkpoint", "--project", project, "--source", source]
+    if real_session:
+        args += ["--session", real_session]
+    assert cli.main(args) == 0
+
+
+def test_a_provisional_and_its_own_reconstruction_never_corroborate(
+        tmp_path, fake_chat_factory, monkeypatch):
+    """The exact #983 field scenario, both changes active. Act 1: the live
+    session writes its own provisional via `/daimon-end`. Act 2: SessionEnd
+    reconstructs the SAME session and independently restates the identical
+    claim as its own verified verbatim — the self-corroboration pattern.
+    Act 3: a genuinely DIFFERENT, later session also restates it — this MUST
+    still corroborate, proving change 2's containment does not outlive the
+    provisional it was refusing (the reconstruction overwrote that
+    session's per-session file, so it no longer reads as a provisional)."""
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", E2E_PROJECT)
+    now = datetime.now(timezone.utc)
+
+    # Act 1: the provisional. The JSON body carries the PRE-#983 invented
+    # placeholder, exactly as an unpatched skill would author it — --session
+    # is what corrects it to the real id, which is the whole point of change
+    # 1: without it this reproduces the bug precondition exactly.
+    _write_provisional(monkeypatch, E2E_PROJECT, _REAL_SESSION, _PREV_TEXT,
+                       invented_label="introspection-preexisting-label")
+    provisional = store.read_checkpoint(_REAL_SESSION)
+    assert provisional["source"] == "introspection"
+    assert provisional["session_id"] == _REAL_SESSION
+
+    # Act 2: the SAME session's SessionEnd reconstruction, independently
+    # restating the identical claim as verified verbatim.
+    recon_start = now + timedelta(minutes=5)
+    tpath, recon_ts = _future_transcript(tmp_path, _REAL_SESSION, _QUOTE,
+                                         recon_start)
+    monkeypatch.setattr(cli, "_chat",
+                        fake_chat_factory(_extraction(_REAL_SESSION, _PREV_TEXT)))
+    assert cli.main(["serialize", str(tpath)]) == 0
+
+    home = tmp_path / ".daimon"
+    assert _corroboration_rows(home) == [], (
+        "a session's own provisional corroborated its own reconstruction")
+    reconstructed = store.read_checkpoint(_REAL_SESSION)
+    assert reconstructed.get("source") != "introspection"  # overwritten
+    item_id = reconstructed["working_context"]["open_questions"][0]["id"]
+    fold = store.corroborations(project_dir=E2E_PROJECT)
+    assert item_id not in fold or fold[item_id]["origins"] == set()
+
+    # Act 3: control — a genuinely different, LATER session restates the
+    # same claim. This is real, independent agreement and must still count,
+    # proving the fix does not blanket-refuse the item forever.
+    later_start = datetime.strptime(recon_ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc) + timedelta(minutes=5)
+    tpath2, _ = _future_transcript(tmp_path, _LATER_SESSION, _QUOTE, later_start)
+    monkeypatch.setattr(
+        cli, "_chat",
+        fake_chat_factory(_extraction(_LATER_SESSION, _PREV_TEXT)))
+    assert cli.main(["serialize", str(tpath2)]) == 0
+
+    rows = _corroboration_rows(home)
+    assert len(rows) == 1, f"expected exactly one genuine witness, got {rows}"
+    assert rows[0]["status"] == f"corroborated-by:{_LATER_SESSION}"
+    fold = store.corroborations(project_dir=E2E_PROJECT)
+    assert fold[item_id]["origins"] == {_LATER_SESSION}
+
+
+def test_self_corroboration_is_blocked_by_change_1_alone(
+        tmp_path, fake_chat_factory, monkeypatch):
+    """Ablation: with change 2's containment DISABLED (monkeypatched back to
+    the pre-#983 project-slug-only check), change 1 alone (the --session
+    override, which lets G2 fire directly) is still enough to block the
+    self-corroboration. The JSON body still carries the pre-#983 invented
+    placeholder — only --session names the real session — so this actually
+    exercises the override rather than a body that already happened to
+    agree with it."""
+
+    def _pre_983_origin_on_disk(origin_session, project):
+        cp = store.read_checkpoint(origin_session)
+        if not isinstance(cp, dict):
+            return False
+        return cp.get("project_slug") == store.project_slug(project)
+
+    monkeypatch.setattr(capture, "_origin_on_disk", _pre_983_origin_on_disk)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", E2E_PROJECT)
+    now = datetime.now(timezone.utc)
+
+    _write_provisional(monkeypatch, E2E_PROJECT, _REAL_SESSION, _PREV_TEXT,
+                       invented_label="introspection-preexisting-label")  # --session corrects it
+    tpath, _ = _future_transcript(tmp_path, _REAL_SESSION, _QUOTE,
+                                  now + timedelta(minutes=5))
+    monkeypatch.setattr(cli, "_chat",
+                        fake_chat_factory(_extraction(_REAL_SESSION, _PREV_TEXT)))
+    assert cli.main(["serialize", str(tpath)]) == 0
+
+    assert _corroboration_rows(tmp_path / ".daimon") == []
+
+
+def test_self_corroboration_is_blocked_by_change_2_alone(
+        tmp_path, fake_chat_factory, monkeypatch):
+    """Ablation: with change 1 DISABLED (the provisional keeps the pre-#983
+    invented session_id — no `--session` passed, exactly what an unpatched
+    `/daimon-end` skill install still does), change 2's containment alone
+    (any provisional origin is refused) is still enough to block the
+    self-corroboration, even though G2 cannot fire (the two halves carry
+    different ids)."""
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", E2E_PROJECT)
+    now = datetime.now(timezone.utc)
+
+    # Change 1 disabled: no real_session passed to --session (None), the
+    # JSON body keeps the old invented placeholder.
+    _write_provisional(monkeypatch, E2E_PROJECT, real_session=None,
+                       text=_PREV_TEXT,
+                       invented_label="introspection-preexisting-label")
+    provisional = store.read_checkpoint("introspection-preexisting-label")
+    assert provisional["source"] == "introspection"
+
+    tpath, _ = _future_transcript(tmp_path, _REAL_SESSION, _QUOTE,
+                                  now + timedelta(minutes=5))
+    monkeypatch.setattr(cli, "_chat",
+                        fake_chat_factory(_extraction(_REAL_SESSION, _PREV_TEXT)))
+    assert cli.main(["serialize", str(tpath)]) == 0
+
+    assert _corroboration_rows(tmp_path / ".daimon") == []
+
+
+# ---------------------------------------------------------------------------
 # Slice 4: the RENDER — the corroboration badge.
 #
 # The badge is a SEPARATE axis from the trust class, and the separation is the
@@ -821,6 +1070,43 @@ def test_a_worldcheck_contradiction_suppresses_the_badge():
         {ITEM: _entry({OBSERVER, "S-b"})})
     assert "corroborated" not in out
     assert "state changed since capture: #60 merged" in out
+
+
+def test_a_provisional_born_item_never_shows_the_badge():
+    # #983 change 3: read-time exclusion. The item's OWN origin_session
+    # carries the introspection- prefix forever (bind_origin's setdefault,
+    # never re-bound) — this is what pre-#983 rows AND #983 B1's fallback ids
+    # both leave behind, so a ledger row recorded before this fix shipped is
+    # discounted exactly like a fresh one would be.
+    out = _rendered(
+        _render_checkpoint(origin_session="introspection-preexisting-abc123"),
+        {ITEM: _entry({OBSERVER})})
+    assert "corroborated" not in out
+
+
+def test_a_real_origin_session_with_the_same_row_still_shows_the_badge():
+    # Control: an item whose first writer was a REAL session (not a
+    # provisional) corroborates normally against the identical ledger row —
+    # change 3 must not blanket-suppress every badge.
+    out = _rendered(_render_checkpoint(origin_session="S-real-983"),
+                    {ITEM: _entry({OBSERVER})})
+    assert BADGE_2 in out
+
+
+def test_corroboration_origins_for_is_total_over_a_missing_entry_and_a_non_dict_item():
+    # #983 change 3: the read-time exclusion is called from the render path
+    # and from `daimon why`, both fail-open surfaces. It must be total over
+    # the shapes those callers can hand it: no ledger entry at all (None),
+    # an entry that is not a dict (a torn fold), and an item that is not a
+    # dict. Every such call answers the empty set, never raises, and the
+    # happy path still returns the fold's origins unchanged.
+    assert store.corroboration_origins_for({"origin_session": "S"}, None) == set()
+    assert store.corroboration_origins_for({"origin_session": "S"}, "torn") == set()
+    assert store.corroboration_origins_for("not-a-dict", {"origins": {"O"}}) == {"O"}
+    assert store.corroboration_origins_for({"origin_session": "S"},
+                                           {"origins": {"O"}}) == {"O"}
+    assert store.corroboration_origins_for(
+        {"origin_session": "introspection-x"}, {"origins": {"O"}}) == set()
 
 
 def test_the_stamp_is_transient_and_never_reaches_disk(tmp_checkpoint_dir):

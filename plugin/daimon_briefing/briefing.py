@@ -605,7 +605,11 @@ def mark_corroborated(checkpoint, corroborations: dict):
             entry = corroborations.get(item.get("id"))
             if not isinstance(entry, dict):
                 continue
-            n = 1 + len(entry.get("origins") or ())
+            # #983 change 3: an item whose first writer was a provisional
+            # never accrues the badge, even against a ledger row that
+            # predates this fix — store.corroboration_origins_for reads the
+            # item's own origin_session, already in hand here, no extra I/O.
+            n = 1 + len(store.corroboration_origins_for(item, entry))
             if n >= CORROBORATION_MIN:
                 to_stamp.append((section, key, idx, n))
 

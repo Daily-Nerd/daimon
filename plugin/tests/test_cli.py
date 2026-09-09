@@ -1958,6 +1958,126 @@ def test_cli_write_checkpoint_source_override(tmp_checkpoint_dir, monkeypatch):
                                   admit=store.Admit.ANY)["source"] == "reconstruction"
 
 
+def test_cli_write_checkpoint_session_flag_overrides_the_json_body(
+        tmp_checkpoint_dir, monkeypatch):
+    # #983 change 1: the live session's REAL id, when the host can supply
+    # one, wins over whatever session_id the model invented in the JSON body
+    # — this is what lets a later reconstruction of the SAME session
+    # recognize this checkpoint as its own predecessor (carry.py's G2).
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("introspection-invented-label"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A",
+                   "--session", "S-real-983"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert ck["session_id"] == "S-real-983"
+
+
+def test_cli_write_checkpoint_without_session_flag_keeps_the_json_body(
+        tmp_checkpoint_dir, monkeypatch):
+    # Back-compat: a host that cannot tell the live session its own id omits
+    # --session, and write-checkpoint behaves exactly as before.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("introspection-invented-label"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert ck["session_id"] == "introspection-invented-label"
+
+
+def test_cli_write_checkpoint_blank_session_flag_keeps_the_json_body(
+        tmp_checkpoint_dir, monkeypatch):
+    # An empty/whitespace --session is the same as omitting it — never stamp
+    # an unnameable id over a real one the JSON body already carries.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("S-from-json"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A", "--session", "   "])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert ck["session_id"] == "S-from-json"
+
+
+def test_cli_write_checkpoint_literal_placeholder_body_gets_a_fresh_unique_id(
+        tmp_checkpoint_dir, monkeypatch):
+    # #983 B1 (blocker): a host with no live-session-id concept at all (no
+    # --session) combined with a model that pipes the skill's OWN JSON
+    # template through unfilled — the literal
+    # "introspection-<short-unique-id>" placeholder text, angle brackets and
+    # all — must never reach disk as a CONSTANT id. Before this fix it did:
+    # verified with the real CLI, it wrote
+    # .../introspection-<short-unique-id>.json, and every subsequent
+    # /daimon-end anywhere overwrote that same file.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    sid = ck["session_id"]
+    assert sid != "introspection-<short-unique-id>"
+    assert "<" not in sid and ">" not in sid
+    assert sid.startswith(store.ORIGIN_SESSION_INTROSPECTION_PREFIX)
+
+
+def test_cli_write_checkpoint_two_placeholder_bodies_get_different_ids(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # The fallback must be unique per call, or two /daimon-end writes on a
+    # host without a live id would collide on the SAME per-session file —
+    # exactly the failure this fix exists to prevent, just with a different
+    # constant. Both calls target the SAME project on purpose: two DIFFERENT
+    # projects would each get their own per-session file regardless of
+    # whether the fallback id is unique, so that shape never exercises the
+    # collision at all. Asserting on the PRINTED checkpoint path (not just
+    # the stored session_id) pins the thing that actually collided before
+    # this fix: the on-disk per-session FILE.
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    assert cli.main(["write-checkpoint", "--project", "/p/A"]) == 0
+    first_path = capsys.readouterr().out.strip().split("wrote checkpoint: ", 1)[1].split(" (source:", 1)[0]
+
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    assert cli.main(["write-checkpoint", "--project", "/p/A"]) == 0
+    second_path = capsys.readouterr().out.strip().split("wrote checkpoint: ", 1)[1].split(" (source:", 1)[0]
+
+    assert first_path != second_path
+
+
+def test_cli_write_checkpoint_blank_body_session_id_gets_a_fresh_unique_id(
+        tmp_checkpoint_dir, monkeypatch):
+    # Same fallback, the other trigger: an empty session_id in the body (no
+    # --session either) is exactly as unusable as the literal placeholder.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json(""))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert ck["session_id"].startswith(store.ORIGIN_SESSION_INTROSPECTION_PREFIX)
+    assert ck["session_id"] != store.ORIGIN_SESSION_INTROSPECTION_PREFIX  # a hex suffix was appended
+
+
+def test_cli_write_checkpoint_real_session_flag_wins_over_a_placeholder_body(
+        tmp_checkpoint_dir, monkeypatch):
+    # --session still takes priority over the B1 fallback: when the host CAN
+    # supply a real id, it is used even if the body is the unfilled template.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A",
+                   "--session", "S-real-983"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert ck["session_id"] == "S-real-983"
+
+
 def test_cli_write_checkpoint_invalid_json(tmp_checkpoint_dir, monkeypatch, capsys):
     _stdin(monkeypatch, "not json at all")
     rc = cli.main(["write-checkpoint"])

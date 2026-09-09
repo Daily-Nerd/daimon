@@ -335,7 +335,11 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
         verifier = "same-version" if recorded == current else "different-version"
 
     corroboration = store.corroborations(project_dir=project_dir).get(item_id, {})
-    references = sorted(corroboration.get("origins") or ())
+    # #983 change 3: `why` must show the SAME effective count the briefing
+    # badge does — an item whose first writer was a provisional never
+    # corroborates, ledger row or not (store.corroboration_origins_for reads
+    # `item["origin_session"]`, already loaded above).
+    references = sorted(store.corroboration_origins_for(item, corroboration))
     result = {
         "schema_version": SCHEMA_VERSION,
         "item": {

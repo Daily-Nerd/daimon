@@ -119,7 +119,15 @@ Qué gana la insignia:
   cita verbatim verificada contra el transcript de *esa* sesión.
 - El primer autor de la afirmación es **demostrablemente otro** — cada ítem
   registra la sesión que lo escribió originalmente, y una sesión no puede
-  corroborarse a sí misma.
+  corroborarse a sí misma. La reconstrucción automática de un checkpoint
+  provisional de `/daimon-end` nunca puede ganar la insignia sobre esa misma
+  afirmación. En un host que puede indicarle a la sesión viva su propio id,
+  esa es la única pérdida: una vez que la reconstrucción se asienta, una
+  sesión genuinamente posterior sigue pudiendo corroborar la afirmación con
+  normalidad. En un host que no puede, la pérdida es permanente: todo ítem
+  que el provisional escribió nunca gana la insignia, de ninguna sesión,
+  nunca — daimon no tiene forma de distinguir "esta sesión coincidió con su
+  propio provisional anterior" de "una sesión distinta coincidió".
 - El total llega a **dos** — el origen registrado más al menos un testigo
   independiente.
 

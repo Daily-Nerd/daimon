@@ -28,6 +28,7 @@ import os
 import sys
 import time
 import traceback
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict
@@ -438,6 +439,40 @@ def _cmd_write_checkpoint(args) -> int:
     except json.JSONDecodeError as exc:
         print(f"error: invalid checkpoint JSON on stdin: {exc}", file=sys.stderr)
         return 1
+    # #983: the live session's REAL id, when the host can supply one, always
+    # wins over whatever the model put in the JSON body — never trust a
+    # model-authored session_id for identity, the same discipline
+    # strip_code_owned_keys applies a few lines down to format_version/author/
+    # created. Before this flag existed, the daimon-end skill instructed the
+    # model to INVENT one (`introspection-<short-unique-id>`), so a
+    # provisional and the SessionEnd reconstruction of the very same session
+    # carried two different ids — the one thing that let carry.py's G2
+    # same-session guard (origin_session == observing session) miss every
+    # self-corroboration, since the guard never saw the two halves as one.
+    session_override = str(getattr(args, "session", "") or "").strip()
+    if isinstance(checkpoint, dict) and session_override:
+        checkpoint["session_id"] = session_override
+    elif isinstance(checkpoint, dict):
+        # #983 B1: no --session (a host with no live-session-id concept at
+        # all, e.g. Codex or Windsurf) leaves this branch as the ONLY guard
+        # against a PLACEHOLDER-shaped session_id ever reaching disk. The
+        # skill's own JSON template still shows "session_id":
+        # "introspection-<short-unique-id>" so a model can see the shape —
+        # but a model that pipes that literal text through unfilled (or
+        # leaves session_id blank/absent) writes a CONSTANT id, verified
+        # with the real CLI: it lands at .../introspection-<short-unique-
+        # id>.json, and every subsequent /daimon-end on that host — any
+        # project — overwrites that SAME file. That is strictly worse than
+        # the pre-#983 behavior (a model-invented, at least locally unique,
+        # id): it does not merely fail to link a provisional to its own
+        # reconstruction, it destroys the previous provisional outright.
+        # A body id that is present, non-blank, and free of angle brackets
+        # is left untouched — this only replaces something that could never
+        # have been a usable id.
+        body_sid = str(checkpoint.get("session_id") or "").strip()
+        if not body_sid or "<" in body_sid or ">" in body_sid:
+            checkpoint["session_id"] = (
+                f"{store.ORIGIN_SESSION_INTROSPECTION_PREFIX}{uuid.uuid4().hex}")
     if not isinstance(checkpoint, dict) or not str(checkpoint.get("session_id", "")).strip():
         print("error: checkpoint must be a JSON object with a non-empty session_id", file=sys.stderr)
         return 1
@@ -3612,6 +3647,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_wc.add_argument(
         "--source", default="introspection",
         help="provenance stamp for the checkpoint (default: introspection)",
+    )
+    p_wc.add_argument(
+        "--session",
+        help="the live session's REAL id (e.g. $CLAUDE_CODE_SESSION_ID), "
+        "stamped onto the checkpoint in place of whatever session_id the "
+        "JSON body carries (#983). This is what lets carry.py's same-session "
+        "guard recognize a later reconstruction of THIS session as its own "
+        "predecessor instead of an independent witness, so a provisional "
+        "can never corroborate itself. Omit only when the host has no way "
+        "to tell the live session its own id.",
     )
     p_wc.set_defaults(func=_cmd_write_checkpoint)
 
