@@ -412,6 +412,181 @@ def test_fold_rechecks_authority_on_a_forged_row(project, event):
     assert record["suppressed"] is False
 
 
+# ---- #961 slice 3: an agent may accept an addressed `info` ask ------------
+#
+# The one exception `_HUMAN_ONLY` carries: an `accepted` row from a non-human
+# channel lands when the record's own FOLDED `kind` is `info` and it is
+# still `open` or `needs-info` — never for `work`, and never for `to_human`
+# (already forced to `work` by `_kind_of`, so the same `kind == "info"`
+# check covers both without a second condition). `ratify`/`reject`/
+# `needs_info`/`suppress` are untouched; this is `accepted` only.
+
+
+def test_agent_accept_on_an_open_info_ask_lands_accepted(project):
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "agent"
+
+
+def test_agent_accept_on_a_needs_info_info_ask_lands_accepted(project):
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.needs_info(q_id, channel="cli-tty", note="says which project?",
+                        project_dir=project)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "agent"
+
+
+def test_human_accept_on_an_info_ask_reads_accepted_by_human(project):
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "human"
+
+
+def test_human_accept_on_a_work_ask_reads_accepted_by_human(project):
+    """The field is not `info`-only; a human accept on the ordinary `work`
+    ask (unchanged behaviour) still carries the field, so a reader can rely
+    on it being present whenever `state == "accepted"`."""
+    q_id = _open(project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["accepted_by"] == "human"
+
+
+def test_agent_accept_on_a_work_ask_is_refused_at_the_write_boundary(
+        project):
+    """`kind` defaults to `work`; an agent channel accepting it is refused
+    before anything is written, naming the human command as the remedy —
+    not the write path #895/#961 slice 1 already refuse categorically for
+    every OTHER verdict verb, but the one this slice carves an exception
+    into, so the refusal must say what an agent CAN do, not just that it
+    cannot."""
+    q_id = _open(project)
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+    message = str(exc_info.value)
+    assert "human channel" in message
+    assert f"daimon request accept {q_id}" in message
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_agent_accept_on_a_to_human_work_ask_is_refused(project):
+    """`to_human` is forced to `kind == "work"` by `_kind_of` regardless of
+    what the row claims, so this is refused by the very same `kind` check —
+    no second condition needed, and this is the fence proving it."""
+    q_id = _open(project, channel="cli-tty", to_human=True)
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+    assert requests.get(q_id, project_dir=project)["state"] == "open"
+
+
+def test_agent_accept_on_an_unknown_request_is_refused(project):
+    """Neither the local fold nor the cross-bucket join can find the id, so
+    there is nothing to check `kind` against — refuse rather than guess."""
+    with pytest.raises(requests.RequestError):
+        requests.accept("q-0123456789ab", channel="cli-agent",
+                        project_dir=project)
+
+
+def test_forged_agent_accepted_row_on_a_work_ask_is_inert_in_the_fold(
+        project):
+    """Proves the gate lives in the FOLD, not only in `accept()` — the same
+    lesson #961 slice 1 and #978 already learned for `kind` and `done`:
+    `requests.append` is public and validates no payload field, so a caller
+    skipping `accept()` must land in the same place the wrapper does."""
+    q_id = _open(project)  # kind defaults to work
+    row = requests._stamp("accepted", q_id, "cli-agent")
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_forged_agent_accepted_row_on_an_info_ask_lands_accepted_in_the_fold(
+        project):
+    """The mirror of the test above: the fold's own exception, exercised
+    with no call to `accept()` at all."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    row = requests._stamp("accepted", q_id, "cli-agent")
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "agent"
+
+
+def test_forged_agent_accepted_row_on_a_to_human_ask_is_inert_in_the_fold(
+        project):
+    row = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "to_human": True})
+    assert requests.append(row, project_dir=project)
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    assert requests.append(accepted, project_dir=project)
+    record = requests.get("q-0123456789ab", project_dir=project)
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_agent_accept_on_an_already_accepted_info_ask_is_refused(project):
+    """The write-boundary check reads the CURRENT state, not just the kind —
+    an already-decided record is not `open` or `needs-info` any more."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+
+
+def test_agent_accepted_info_ask_is_owed_and_agent_done_closes_it(project):
+    """#961 slice 3 rule 6, the full path: open (info, human) -> accept
+    --by agent -> done --by agent -> state done, done_claimed True. Proves
+    the owed lane (`_RECIPIENT_OWED`) and the existing `done` fold branch
+    (which never gates on kind == "info") already compose correctly with an
+    agent accept, with no further fold change needed.
+
+    A real cross-bucket ask, not a self-addressed one: `project` is the
+    RECIPIENT here, with no local `opened` row for it (the ordinary case
+    `accept()`'s `recipient_join` fallback exists for)."""
+    sender_slug = _seed_bucket("/p/req-info-owed-sender")
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        kind="info", project_dir=sender_slug)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "agent"
+    owed = requests.owed_renderable(project_dir=project)
+    assert q_id in [r["request_id"] for r in owed["rows"]]
+    requests.done(q_id, channel="cli-agent", evidence="answered from README",
+                 project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "done"
+    assert record["done_claimed"] is True
+    assert record["done_pending"] is False
+
+
+def test_an_info_record_can_never_reach_a_pending_agent_claim(project):
+    """#961 slice 3 rule 4: the `done_pending` branch in the fold requires
+    `kind == "work"`, so an `info` record cannot arise in a pending state —
+    an agent's `done` on an open `info` ask lands `done` directly, never
+    `done_pending`. Forged via `append`, bypassing `requests.done()`
+    entirely, so this pins the FOLD's own invariant rather than the
+    wrapper's."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    row = requests._stamp("done", q_id, "cli-agent")
+    row["evidence"] = "a forged completion claim on an info ask"
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is True
+
+
 def test_human_verdicts_move_the_record(project):
     q_id = _open(project)
     requests.needs_info(q_id, channel="cli-tty", note="which release?",
@@ -1536,6 +1711,94 @@ def test_cli_request_inbox_json_reads_kind_from_the_fold_not_the_raw_row(
     assert payload[0]["kind"] == "work"
 
 
+# ---- #961 slice 3: render `accepted_by` -------------------------------
+
+
+def test_cli_request_list_detail_card_shows_accepted_by_human(
+        project, recipient, monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    capsys.readouterr()
+    assert cli.main(["request", "accept", q_id, "--project", project]) == 0
+    capsys.readouterr()
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Accepted by: human" in out
+
+
+def test_cli_request_list_detail_card_shows_accepted_by_agent(
+        project, recipient, monkeypatch, capsys):
+    """The verdict row lands in the SENDER's own bucket (a human, or here an
+    agent, may record a verdict from whatever directory they stand in —
+    requests.py's own #895 doctrine), so `request list` from `project`
+    (the sender) sees the whole record with no cross-bucket join needed.
+    The genuinely cross-bucket path is exercised separately, on `inbox`,
+    below."""
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                   "--why", WHY, "--kind", "info", "--project", project])
+    assert rc == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    capsys.readouterr()
+    assert cli.main(["request", "accept", q_id, "--by", "agent",
+                     "--project", project]) == 0
+    capsys.readouterr()
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Accepted by: agent" in out
+
+
+def test_cli_request_list_detail_card_no_accepted_by_line_before_a_verdict(
+        project, recipient, capsys):
+    """Positive anchor: an undecided record renders no `Accepted by:` line
+    at all, not just a differently-worded one."""
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    capsys.readouterr()
+    from daimon_briefing import cli
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert q_id in out
+    assert "Accepted by" not in out
+
+
+def test_cli_request_inbox_detail_card_shows_accepted_by_agent(
+        tmp_checkpoint_dir, capsys):
+    """The cross-bucket `inbox` card — the ordinary path an agent accept
+    exists for, exercising `accept()`'s own `recipient_join` fallback."""
+    from daimon_briefing import cli
+    recipient_dir = "/p/accepted-by-961-recipient"
+    sender_dir = "/p/accepted-by-961-sender"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_dir)
+    requests.accept(q_id, channel="cli-agent", project_dir=recipient_dir)
+    assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
+    out = capsys.readouterr().out
+    assert "Accepted by: agent" in out
+
+
+def test_request_json_payload_carries_accepted_by(project, recipient,
+                                                   monkeypatch, capsys):
+    from daimon_briefing import cli
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
+                   "--why", WHY, "--kind", "info", "--project", project])
+    assert rc == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    capsys.readouterr()
+    assert cli.main(["request", "accept", q_id, "--by", "agent",
+                     "--project", project]) == 0
+    capsys.readouterr()
+    assert cli.main(["request", "list", "--project", project,
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["accepted_by"] == "agent"
+
+
 def test_inject_lines_marks_an_info_ask(project):
     from daimon_briefing.cli import request as cli_request
     q_id = requests.open_request(
@@ -1611,6 +1874,31 @@ def test_verdict_inject_lines_never_shows_a_kind_marker(project):
     record = requests.get(q_id, project_dir=project)
     lines = cli_request._verdict_inject_lines(record)
     assert "[info]" not in "\n".join(lines)
+
+
+def test_verdict_inject_lines_marks_an_agent_accept_distinctly(project):
+    """#961 slice 3: the live-delivery verdict nudge must not read an
+    agent-accepted `info` ask the same as an ordinary human accept."""
+    from daimon_briefing.cli import request as cli_request
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=project)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    lines = cli_request._verdict_inject_lines(record)
+    assert "accepted (by agent)" in lines[0]
+
+
+def test_verdict_inject_lines_plain_accepted_for_a_human_accept(project):
+    from daimon_briefing.cli import request as cli_request
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-tty", project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    lines = cli_request._verdict_inject_lines(record)
+    assert "(by agent)" not in lines[0]
+    assert "accepted" in lines[0]
 
 
 def test_cli_open_human_path_requires_a_terminal(project, recipient,

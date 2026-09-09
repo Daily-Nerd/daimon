@@ -271,10 +271,16 @@ daimon request open --to <dir> --ask "<what>" --why "<why>" --by agent
 `daimon request list` shows this project's asks and where each stands.
 `request revise` answers a needs-info (three per record, then a new one with
 `--supersedes <id>`). `request done --evidence "<quote>"` renders as an
-unverified claim until the quote is byte-checked. `accept`, `reject`,
-`needs-info`, `suppress` are human-only: print the command, never run it.
-`daimon decide` lists every such command still waiting on a person, across
-this project's ledgers, so say it lands there and stop repeating the ask.
+unverified claim until the quote is byte-checked. `reject`, `needs-info`,
+`suppress` are human-only: print the command, never run it. `accept` is
+the one exception — an agent may run `request accept <id> --by agent`
+directly for an addressed `info` ask still open or needs-info, and the
+record says so; a `work` ask still needs `accept` from a human channel
+like the rest. An `info` ask never reaches `daimon decide` in the first
+place — it owes no accept, so there is nothing there for a person to see.
+`daimon decide` lists every human-only command still waiting on a person,
+across this project's ledgers, so say it lands there and stop repeating
+the ask.
 `ask`, `why` and `evidence` cap at 2000 characters: long content belongs in
 an artifact the request points at (a file, an issue, a PR), with the
 request carrying the pointer, not the full text.

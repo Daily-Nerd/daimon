@@ -136,21 +136,38 @@ def test_a_decided_request_is_not_owed(project):
     assert pending.queue(project_dir=project)["rows"] == []
 
 
-def test_a_request_row_carries_its_approval_kind_from_the_fold(project):
-    """#961 slice 2: `approval` on the queue row comes from the FOLDED
-    record's `kind` — pending.py's own `kind` key on this same row is the
-    queue LANE (request/amendment/ruling/refutation), a different axis
-    entirely, and must stay untouched by this."""
-    q_id = requests.open_request(
+def test_an_info_request_never_enters_the_decide_queue(project):
+    """#961 slice 3 supersedes slice 2's own expectation here: an `info` ask
+    owes no accept and is not a decision a human owes, so it is excluded
+    from the request lane entirely — this queue is the DECISION surface,
+    and an `info` ask reaches the agent through `request inbox` and live
+    delivery instead (both untouched by this test)."""
+    requests.open_request(
         to=store.project_slug(project), ask="an info-only ask",
         why="the recipient can read this from its own artifacts",
         channel="cli-tty", kind="info", project_dir=project)
 
-    row = pending.queue(project_dir=project)["rows"][0]
+    assert pending.queue(project_dir=project)["rows"] == []
 
-    assert row["id"] == q_id
-    assert row["kind"] == "request"      # the LANE, untouched by this
-    assert row["approval"] == "info"     # the approval requirement
+
+def test_an_info_request_alongside_a_work_request_only_the_work_one_shows(
+        project):
+    """The exclusion is per-row, not all-or-nothing: a `work` ask from the
+    same bucket still owes a decision even when an `info` ask sits beside
+    it."""
+    requests.open_request(
+        to=store.project_slug(project), ask="an info-only ask",
+        why="the recipient can read this from its own artifacts",
+        channel="cli-tty", kind="info", project_dir=project)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent",
+        project_dir=project)
+
+    rows = pending.queue(project_dir=project)["rows"]
+
+    assert [row["id"] for row in rows] == [q_id]
+    assert rows[0]["approval"] == "work"
 
 
 def test_a_work_request_row_carries_approval_work(project):

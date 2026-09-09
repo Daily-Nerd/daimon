@@ -127,6 +127,16 @@ def _request_lines(record: dict, project_dir=None) -> list:
     # FOLDED record only (THE ONE RULE): `record.get("kind")` here is
     # whatever `requests.fold`'s `_kind_of` already decided, never a raw row.
     lines.append(f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}")
+    if record.get("state") == "accepted":
+        # #961 slice 3: who landed THIS accept — "agent" only for the one
+        # case the fold permits (an addressed `info` ask), "human" for
+        # every other accepted record, including every one that predates
+        # this field (see `requests.fold`'s own comment on `accepted_by`:
+        # derived fresh from the row's authority, never a legacy default).
+        # Absent entirely before a verdict lands — a positive line, not a
+        # blank one, so its absence on an undecided record is its own
+        # signal.
+        lines.append(f"  Accepted by: {record.get('accepted_by') or 'human'}")
     if record.get("from_label"):
         lines.append(f"  From: {record['from_label']}")
     lines.append(f"  Why: {record.get('why', '')}")
@@ -169,6 +179,9 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
     # #961 slice 2: same posture as `_request_lines` — always printed, read
     # from the folded record only.
     lines.append(f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}")
+    if record.get("state") == "accepted":
+        # #961 slice 3: same posture as `_request_lines` above.
+        lines.append(f"  Accepted by: {record.get('accepted_by') or 'human'}")
     lines.append(f"  Why: {record.get('why', '')}")
     if record.get("evidence"):
         lines.append(f"  Evidence: {record['evidence']}")
@@ -248,10 +261,17 @@ def _verdict_inject_lines(record: dict) -> list[str]:
     the kind at open time — the render surfaces that need the marker are the
     ones where a reader is deciding how much scrutiny an ask deserves, and
     that decision is already behind this one. Mirrors the same call made for
-    `briefing.verdict_panel_lines`."""
+    `briefing.verdict_panel_lines`.
+
+    #961 slice 3: DOES carry an agent-accept marker, on the same reasoning
+    `briefing.verdict_panel_lines` uses — who accepted is new information
+    the sender has not seen yet, unlike `kind`, which it already chose."""
     state = str(record.get("state") or "")
     mark = _INJECT_VERDICT_MARKS.get(state, "?")
-    lines = [f"daimon verdict: {mark} {state}  {record['request_id']} "
+    state_label = ("accepted (by agent)"
+                   if state == "accepted" and record.get("accepted_by") == "agent"
+                   else state)
+    lines = [f"daimon verdict: {mark} {state_label}  {record['request_id']} "
              f"(to {record.get('to') or '?'})"]
     lines.append(f"  Ask: {record.get('ask', '')}")
     note = str(record.get("note") or "").strip()
@@ -612,8 +632,23 @@ def register(sub, fmt) -> None:
     _common(rq_revise)
     rq_revise.set_defaults(func=_cli._cmd_request_revise)
 
+    # #961 slice 3: `accept` is the one verdict verb with a non-categorical
+    # `--by agent` story — permitted for an addressed `info` ask still open
+    # or needs-info, refused (naming the human command) for `work`. Every
+    # other verb stays categorically human-only, so only `accept`'s help
+    # text differs from the shared one below.
+    _BY_AGENT_HELP = {
+        "accept": (
+            "declare yourself an agent; permitted only for an addressed "
+            "`info` ask still open or needs-info — a `work` ask still "
+            "needs `daimon request accept` from a human channel"),
+    }
+    _BY_AGENT_HELP_DEFAULT = (
+        "declare yourself an agent; the call then refuses, because this "
+        "verb requires a human channel")
     for verb, blurb in (
-            ("accept", "accept an addressed request, as a human decision"),
+            ("accept", "accept an addressed request; a human decision, or "
+                       "an agent may accept an addressed `info` ask"),
             ("reject", "reject it with a reason; rejection is final for that "
                        "record, and the sender can open a new one citing it"),
             ("needs-info", "ask the sender for more before deciding"),
@@ -624,8 +659,7 @@ def register(sub, fmt) -> None:
         parser.add_argument("--note", help="kept on the record")
         parser.add_argument(
             "--by", choices=["agent"], default=None,
-            help="declare yourself an agent; the call then refuses, because "
-                 "this verb requires a human channel")
+            help=_BY_AGENT_HELP.get(verb, _BY_AGENT_HELP_DEFAULT))
         _common(parser)
         parser.add_argument("--slug", metavar="SLUG", help=_cli.SLUG_ROUTE_HELP)
         parser.set_defaults(func=_cli._cmd_request_verdict)

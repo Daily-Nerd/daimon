@@ -50,11 +50,24 @@ def test_panel_marks_blocking(tmp_checkpoint_dir):
     assert any("blocking" in ln.lower() for ln in lines)
 
 
-def test_panel_marks_an_info_ask(tmp_checkpoint_dir):
+def test_panel_excludes_an_info_ask_entirely(tmp_checkpoint_dir):
+    """#961 slice 3: this is the "waiting on you" DECISION panel, and an
+    `info` ask owes no accept — it is not one of those any more, so it does
+    not render here at all (not even with a marker). It still reaches
+    `request inbox` and live delivery, exercised elsewhere."""
     sender = _seed_sender()
     _ask(sender, channel="cli-tty", kind="info")
+    assert briefing.request_panel_lines(RECIPIENT) == []
+
+
+def test_panel_still_shows_a_work_ask_beside_an_excluded_info_one(
+        tmp_checkpoint_dir):
+    sender = _seed_sender()
+    _ask(sender, ask="an info-only ask", channel="cli-tty", kind="info")
+    _ask(sender, ask="bump the tag before Friday")
     lines = briefing.request_panel_lines(RECIPIENT)
-    assert any("[info]" in ln for ln in lines)
+    assert any("bump the tag before Friday" in ln for ln in lines)
+    assert not any("an info-only ask" in ln for ln in lines)
 
 
 def test_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
@@ -62,6 +75,33 @@ def test_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
     _ask(sender)
     lines = briefing.request_panel_lines(RECIPIENT)
     assert not any("[info]" in ln for ln in lines)
+
+
+def test_panel_excludes_info_before_the_cap_so_a_work_ask_is_not_hidden(
+        tmp_checkpoint_dir, monkeypatch):
+    """The exclusion must run BEFORE `RENDER_CAP`, not after: RENDER_CAP
+    newer `info` asks must never consume every slot and push a real `work`
+    ask out of the panel. Timestamps controlled directly so ordering is
+    deterministic — the sort is newest-first."""
+    sender = _seed_sender()
+    counter = [1_700_000_000 * 10 ** 9]
+
+    def _next_ns():
+        counter[0] += 10 ** 9
+        return counter[0]
+
+    monkeypatch.setattr(requests.time, "time_ns", _next_ns)
+    requests.open_request(
+        to=store.project_slug(RECIPIENT), ask="a real work ask",
+        why="the client needs it", channel="cli-agent", project_dir=sender)
+    for n in range(requests.RENDER_CAP):
+        requests.open_request(
+            to=store.project_slug(RECIPIENT), ask=f"info ask {n}",
+            why="the client needs it", channel="cli-tty", kind="info",
+            project_dir=sender)
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert any("a real work ask" in ln for ln in lines)
+    assert not any("info ask" in ln for ln in lines)
 
 
 def test_panel_marks_a_pending_completion_claim(tmp_checkpoint_dir):
@@ -150,9 +190,13 @@ def test_panel_empty_with_nothing_addressed(tmp_checkpoint_dir):
 
 
 def test_panel_fails_open_on_a_broken_composer(tmp_checkpoint_dir, monkeypatch):
+    """#961 slice 3: the panel reads through `decision_renderable`, not
+    `inbox_renderable` (that one still backs `request inbox` and the CLI's
+    own `surfaced`-stamping loop) — the failure fence has to target the
+    function this panel actually calls, or it stops proving anything."""
     def boom(project_dir=None):
         raise RuntimeError("boom")
-    monkeypatch.setattr(requests, "inbox_renderable", boom)
+    monkeypatch.setattr(requests, "decision_renderable", boom)
     sender = _seed_sender()
     _ask(sender)
     assert briefing.request_panel_lines(RECIPIENT) == []

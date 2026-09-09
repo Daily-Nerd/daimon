@@ -133,6 +133,15 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
     for rid, record in records.items():
         if record.get("state") not in requests._SENDER_MOVABLE:
             continue
+        # #961 slice 3: an `info` ask owes no accept and is not a decision a
+        # human owes — the contract's own words. Excluded from THIS lane
+        # only, before the render below ever builds a row for it: `request
+        # inbox`, live delivery, and `status_counts` still carry it (this
+        # queue is the one surface that narrows). Not counted toward
+        # `suppressed` — that count is a human's own "not now", a different
+        # fact than a `kind` this record was born with.
+        if record.get("kind") == "info":
+            continue
         if record.get("suppressed"):
             # `suppress` is human-only, so a suppressed ask is already the
             # owner's own "not now". Counted, never listed.

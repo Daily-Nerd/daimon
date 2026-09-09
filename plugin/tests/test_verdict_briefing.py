@@ -54,6 +54,28 @@ def test_panel_excludes_still_open_requests(tmp_checkpoint_dir):
     assert briefing.verdict_panel_lines(SENDER) == []
 
 
+def test_panel_marks_an_agent_accept_distinctly(tmp_checkpoint_dir):
+    """#961 slice 3: the sender's own verdict panel must not read an
+    agent-accepted `info` ask the same as an ordinary human accept."""
+    q_id = requests.open_request(
+        to=store.project_slug(RECIPIENT), ask="publish the schema",
+        why="the client needs it", channel="cli-tty", kind="info",
+        project_dir=SENDER)
+    requests.accept(q_id, channel="cli-agent", project_dir=RECIPIENT)
+    lines = briefing.verdict_panel_lines(SENDER)
+    assert any("accepted (by agent)" in ln for ln in lines)
+
+
+def test_panel_plain_accepted_for_a_human_accept(tmp_checkpoint_dir):
+    """Positive/negative pair with the test above: a human accept must never
+    pick up the agent marker."""
+    q_id = _ask()
+    requests.accept(q_id, channel="cli-tty", project_dir=RECIPIENT)
+    lines = briefing.verdict_panel_lines(SENDER)
+    assert any(f"accepted  {q_id}" in ln for ln in lines)
+    assert not any("(by agent)" in ln for ln in lines)
+
+
 def test_panel_never_silently_truncates_over_cap(tmp_checkpoint_dir):
     for n in range(requests.RENDER_CAP + 2):
         q_id = _ask(ask=f"ask number {n} about the release")

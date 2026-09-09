@@ -100,8 +100,11 @@ def test_an_amendment_id_gets_the_ledger_header_treatment(project):
     assert spans[1] == "a-0f1e2d3c4b5a"
 
 
-def test_decide_card_shows_the_info_marker_for_an_info_request(
-        project, capsys):
+def test_decide_never_lists_an_info_request(project, capsys):
+    """#961 slice 3 supersedes slice 2's own expectation here: an `info` ask
+    owes no accept, so it is excluded from `pending.queue`'s request lane
+    entirely (see test_pending.py) and never reaches this command's output
+    at all — not even with a marker."""
     requests.open_request(
         to=store.project_slug(project), ask="an info-only ask",
         why="the recipient can read this from its own artifacts",
@@ -109,7 +112,8 @@ def test_decide_card_shows_the_info_marker_for_an_info_request(
 
     assert cli.main(["decide"]) == 0
     out = capsys.readouterr().out
-    assert "[info]" in out
+    assert "an info-only ask" not in out
+    assert "nothing waiting on you" in out.lower()
 
 
 def test_decide_card_shows_no_marker_for_a_work_request(project, capsys):
@@ -122,18 +126,28 @@ def test_decide_card_shows_no_marker_for_a_work_request(project, capsys):
     assert "[info]" not in out
 
 
-def test_decide_card_lane_tag_is_never_overloaded_by_the_approval_kind(
-        project, capsys):
+def test_decide_card_lane_tag_is_never_overloaded_by_the_approval_kind():
     """THE LANDMINE: `pending._row`'s `kind` key is the queue LANE, never
     the approval requirement — a request-lane row that happens to be `info`
-    must still say `[request` in the tag, not `[info`."""
-    requests.open_request(
-        to=store.project_slug(project), ask="an info-only ask",
-        why="why", channel="cli-tty", kind="info", project_dir=project)
+    must still say `[request` in the tag, not `[info`.
 
-    assert cli.main(["decide"]) == 0
-    out = capsys.readouterr().out
-    assert "[request" in out
+    #961 slice 3 excludes `kind == "info"` from `pending.queue`'s request
+    lane entirely, so no REAL pipeline can produce this shape any more (see
+    `test_decide_cards_lane_guard_is_load_bearing_not_dead_code` below for
+    why a synthetic row is the right tool here, not a weaker test)."""
+    from daimon_briefing.cli import lifecycle
+    row = {
+        "kind": "request", "id": "q-0123456789ab", "slug": "-p-x",
+        "headline": "an info-only ask", "context": "", "waiting_since": "",
+        "blocking": False,
+        "commands": [("accept", "daimon request accept q-0123456789ab")],
+        "approval": "info",
+    }
+
+    card = lifecycle._decide_cards([row])[0]
+
+    assert card[0].startswith("[request")
+    assert not card[0].startswith("[info")
 
 
 def test_decide_card_a_ruling_row_never_shows_an_info_marker(project, capsys):
@@ -189,20 +203,29 @@ def test_decide_card_never_reads_the_approval_off_a_raw_row(
     assert "[info]" not in out
 
 
-def test_decide_card_with_the_info_marker_still_gets_ledger_header_spans(
-        project):
+def test_decide_card_with_the_info_marker_still_gets_ledger_header_spans():
     """The marker is inserted between the headline and the blocking suffix,
     so the two-space-after-id contract `render._ledger_header_spans` relies
-    on must still hold. Built through the REAL pipeline (`pending.queue` ->
-    `lifecycle._decide_cards`), not a hand-typed header string: a hand-typed
-    string proves the regex can parse a shape like this, never that
-    `_decide_cards` actually produces that shape."""
+    on must still hold.
+
+    #961 slice 3 excludes `kind == "info"` from `pending.queue`'s request
+    lane entirely, so this shape can no longer be driven through the REAL
+    pipeline (`pending.queue` -> `lifecycle._decide_cards`) the way it once
+    was — the same reason `test_decide_card_lane_tag_is_never_overloaded_
+    by_the_approval_kind` above switched to a synthetic row. `_decide_cards`
+    itself is still generic code with no idea the composer upstream of it
+    now refuses to produce this input, so it is still worth pinning that it
+    renders the shape correctly if handed one."""
     from daimon_briefing.cli import lifecycle
-    q_id = requests.open_request(
-        to=store.project_slug(project), ask="an info-only ask",
-        why="why", channel="cli-tty", kind="info", project_dir=project)
-    rows = pending.queue(project_dir=project)["rows"]
-    card = lifecycle._decide_cards(rows)[0]
+    q_id = "q-0123456789ab"
+    row = {
+        "kind": "request", "id": q_id, "slug": "-p-x",
+        "headline": "an info-only ask", "context": "", "waiting_since": "",
+        "blocking": False,
+        "commands": [("accept", f"daimon request accept {q_id}")],
+        "approval": "info",
+    }
+    card = lifecycle._decide_cards([row])[0]
 
     spans = render._ledger_header_spans(card[0])
 
