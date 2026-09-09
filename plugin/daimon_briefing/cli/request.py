@@ -136,7 +136,15 @@ def _request_lines(record: dict, project_dir=None) -> list:
         # Absent entirely before a verdict lands — a positive line, not a
         # blank one, so its absence on an undecided record is its own
         # signal.
-        lines.append(f"  Accepted by: {record.get('accepted_by') or 'human'}")
+        #
+        # #961 slice 4: "under r-..." only when `accepted_under` is set —
+        # the slice-3 `info` exception carries no ruling, and neither does a
+        # human accept, so most agent-accepted rows still print the bare
+        # slice-3 line.
+        under = record.get("accepted_under")
+        lines.append(
+            f"  Accepted by: {record.get('accepted_by') or 'human'}"
+            + (f" under {under}" if under else ""))
     if record.get("from_label"):
         lines.append(f"  From: {record['from_label']}")
     lines.append(f"  Why: {record.get('why', '')}")
@@ -180,8 +188,11 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
     # from the folded record only.
     lines.append(f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}")
     if record.get("state") == "accepted":
-        # #961 slice 3: same posture as `_request_lines` above.
-        lines.append(f"  Accepted by: {record.get('accepted_by') or 'human'}")
+        # #961 slice 3/4: same posture as `_request_lines` above.
+        under = record.get("accepted_under")
+        lines.append(
+            f"  Accepted by: {record.get('accepted_by') or 'human'}"
+            + (f" under {under}" if under else ""))
     lines.append(f"  Why: {record.get('why', '')}")
     if record.get("evidence"):
         lines.append(f"  Evidence: {record['evidence']}")

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daimon_briefing import config, normalize, redact, requests, store
+from daimon_briefing import config, normalize, redact, refutations, requests, store
 
 
 def _iso(offset_seconds=0):
@@ -741,6 +741,372 @@ def test_agent_accepted_info_ask_is_owed_and_agent_done_closes_it(project):
     assert record["state"] == "done"
     assert record["done_claimed"] is True
     assert record["done_pending"] is False
+
+
+# ---- #961 slice 4: an agent may accept a `work` ask a ruling covers ------
+#
+# The other half of the contract's own sentence: "or for work a ruling
+# covers". A SECOND, narrower fold exception beside the slice 3 `info` one —
+# gated on the injected `policies` set the three composers resolve from this
+# project's own active rulings, never read from inside `fold` itself.
+
+
+def _cover(recipient_project, sender_slug, *, kind="work"):
+    """Ratify (in-process, so it activates with no separate pin call) an
+    active ruling on `recipient_project` covering an agent accept from
+    `sender_slug`. Returns (ruling_id, policy_sha256)."""
+    ruling_id = refutations.assert_ruling(
+        subject=f"work asks from {sender_slug}",
+        verdict=f"agent may accept work asks from {sender_slug}",
+        scope="cross-project requests", evidence=["issue:961"],
+        channel="cli-tty", ratified=True,
+        request_policy={"sender": sender_slug, "kind": kind,
+                        "verb": "accept", "by": "agent"},
+        project_dir=recipient_project)
+    sha = refutations.get(
+        ruling_id, project_dir=recipient_project)["request_policy"]["sha256"]
+    return ruling_id, sha
+
+
+def test_agent_accept_on_a_covered_work_ask_lands_accepted(project):
+    sender_slug = _seed_bucket("/p/req-covered-sender")
+    _cover(project, sender_slug)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)  # kind defaults to work
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "agent"
+    assert record["accepted_under"] is not None
+
+
+def test_agent_accept_on_a_needs_info_covered_work_ask_lands_accepted(
+        project):
+    sender_slug = _seed_bucket("/p/req-covered-needs-info-sender")
+    _cover(project, sender_slug)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=project)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "accepted"
+
+
+def test_agent_accept_on_an_uncovered_work_ask_is_refused_at_the_write_boundary(
+        project):
+    """No ruling names this sender at all — the ordinary #961 slice 3
+    refusal, now naming both cases an agent CAN accept."""
+    sender_slug = _seed_bucket("/p/req-uncovered-sender")
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+    message = str(exc_info.value)
+    assert "human channel" in message
+    assert f"daimon request accept {q_id}" in message
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "open"
+
+
+def test_agent_accept_on_a_covered_to_human_ask_is_refused(project):
+    """`_kind_of` already forces `to_human` to `kind == "work"`, so a
+    covering ruling for `kind == "work"` would otherwise slip a to_human ask
+    through on the kind check alone — the design's own worked example. The
+    explicit `not current["to_human"]` guard is what stops it."""
+    sender_slug = _seed_bucket("/p/req-to-human-covered-sender")
+    _cover(project, sender_slug)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        to_human=True, project_dir=sender_slug)
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "open"
+
+
+def test_agent_accept_covered_for_a_different_sender_is_refused(project):
+    """A ruling naming ONE sender must not cover a different one — the
+    exact-slug binding, slice 4's own answer over `sender="*"`."""
+    covered_sender = _seed_bucket("/p/req-covered-b")
+    other_sender = _seed_bucket("/p/req-uncovered-b")
+    _cover(project, covered_sender)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=other_sender)
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+
+
+def test_agent_accept_on_a_candidate_ruling_is_refused(project):
+    """An UNRATIFIED ruling covers nothing — `active_request_policies` only
+    ever returns rulings in state `active`."""
+    sender_slug = _seed_bucket("/p/req-candidate-sender")
+    refutations.assert_ruling(
+        subject=f"work asks from {sender_slug}",
+        verdict=f"agent may accept work asks from {sender_slug}",
+        scope="cross-project requests", evidence=["issue:961"],
+        channel="cli-agent",  # never ratified
+        request_policy={"sender": sender_slug, "kind": "work",
+                        "verb": "accept", "by": "agent"},
+        project_dir=project)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+
+
+def test_a_ruling_overturned_after_landing_an_accept_refuses_a_new_one_but_the_old_one_stands(
+        project):
+    """Slice 4's binding answer 3: a past accept survives an overturn; only
+    a NEW accept is refused."""
+    sender_slug = _seed_bucket("/p/req-overturn-sender")
+    ruling_id, _sha = _cover(project, sender_slug)
+    first = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    requests.accept(first, channel="cli-agent", project_dir=project)
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=project)
+    record = requests.recipient_join(project_dir=project)[first]
+    assert record["state"] == "accepted"  # the past accept stands
+    second = requests.open_request(
+        to=store.project_slug(project), ask="a second, unrelated ask",
+        why=WHY, channel="cli-tty", project_dir=sender_slug)
+    with pytest.raises(requests.RequestError):
+        requests.accept(second, channel="cli-agent", project_dir=project)
+
+
+def test_a_ruling_revised_narrower_refuses_a_new_accept_but_the_landed_one_survives(
+        project):
+    """The pin holds under a re-fold: a ruling revised to name a different
+    sender must not retroactively invalidate what already landed under the
+    hash that was active when it did."""
+    sender_slug = _seed_bucket("/p/req-narrower-sender")
+    ruling_id, _sha = _cover(project, sender_slug)
+    first = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    requests.accept(first, channel="cli-agent", project_dir=project)
+    # Narrow the ruling to a different sender (in-process human edit, so it
+    # arms directly with no separate ratify call — the same posture #943's
+    # own in-process revise test uses for `check`).
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:961"],
+        request_policy={"sender": "p-some-other-project", "kind": "work",
+                        "verb": "accept", "by": "agent"},
+        project_dir=project)
+    record = requests.recipient_join(project_dir=project)[first]
+    assert record["state"] == "accepted"  # survives the re-fold
+    second = requests.open_request(
+        to=store.project_slug(project), ask="a second, unrelated ask",
+        why=WHY, channel="cli-tty", project_dir=sender_slug)
+    with pytest.raises(requests.RequestError):
+        requests.accept(second, channel="cli-agent", project_dir=project)
+
+
+def test_forged_agent_accepted_row_on_a_covered_work_ask_lands_in_the_fold(
+        project):
+    """Proves the gate lives in the fold, not only in `accept()` — built
+    directly against `fold`, with `_origin_slug` stamped by hand on the
+    founder row the way `recipient_join` stamps it at scan time, and the
+    resolved policy set injected the way the three composers inject it."""
+    ruling_id, sha = _cover(project, "p-forged-sender")
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = "p-forged-sender"
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    policies = refutations.active_request_policies(project_dir=project)
+    record = requests.fold([opened, accepted], policies=policies)["q-0123456789ab"]
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "agent"
+    assert record["accepted_under"] == ruling_id
+
+
+def test_forged_accepted_row_naming_a_ruling_the_policy_set_does_not_grant_is_inert(
+        project):
+    """The row's own `under_ruling`/`policy_sha256` stamp is never the gate
+    on its own — an agent claiming coverage the caller's own active rulings
+    do not currently grant must stay inert, the same reasoning the deleted
+    `--by human` flag was refused for."""
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = "p-forged-sender-2"
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = "r-000000000000"
+    accepted["policy_sha256"] = "0" * 64
+    record = requests.fold([opened, accepted], policies=frozenset())[
+        "q-0123456789ab"]
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_forged_accepted_row_on_a_covered_to_human_ask_is_inert_in_the_fold(
+        project):
+    """Fold-side boundary parity for `to_human`, built directly against
+    `fold` so it cannot be satisfied by `accept()`'s OWN independent
+    `to_human` refusal at the write boundary — `_kind_of` already forces
+    `to_human` to `kind == "work"`, so without the fold's own `not
+    current["to_human"]` guard a covering `work` ruling would land this row
+    on the kind check alone, the exact slip-through the design's own worked
+    example warns about."""
+    sender_slug = _seed_bucket("/p/req-forged-to-human-sender")
+    ruling_id, sha = _cover(project, sender_slug)
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY,
+                   "to_human": True})
+    opened["_origin_slug"] = sender_slug
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    policies = refutations.request_policy_history(project_dir=project)
+    record = requests.fold([opened, accepted], policies=policies)[
+        "q-0123456789ab"]
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_forged_accepted_row_citing_a_candidate_rulings_hash_is_inert_in_the_fold(
+        project):
+    """Fold-side boundary parity for the candidate case: a ruling that was
+    PROPOSED but never ratified never reaches `active_request_policies` or
+    `request_policy_history` (both require `state == "active"`), so a
+    forged row citing its hash is inert even though the hash is real and
+    well-formed."""
+    ruling_id = refutations.assert_ruling(
+        subject="candidate grant", verdict="never ratified",
+        scope="cross-project requests", evidence=["issue:961"],
+        channel="cli-agent",  # candidate: never ratified
+        request_policy={"sender": "p-candidate-sender", "kind": "work",
+                        "verb": "accept", "by": "agent"},
+        project_dir=project)
+    sha = refutations.get(ruling_id, project_dir=project)["request_policy"]["sha256"]
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = "p-candidate-sender"
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    policies = refutations.request_policy_history(project_dir=project)
+    record = requests.fold([opened, accepted], policies=policies)[
+        "q-0123456789ab"]
+    assert record["state"] == "open"
+
+
+def test_disclosed_gap_a_forged_row_can_cite_a_since_overturned_hash(project):
+    """DOCUMENTED LIMITATION, not a passing-by-accident test: `request_
+    policy_history` is MONOTONIC (a hash that was ever legitimately active
+    stays a member forever, which is what makes a genuinely landed accept
+    survive overturn — see the two tests above this one). The same
+    monotonicity means a FRESH row forged directly via `requests.append`
+    (never landed through `accept()`) that cites a ruling+hash pair which
+    was once legitimately active but has SINCE been overturned is ALSO
+    honored by the fold — full parity with `accept()`'s write boundary
+    (which correctly refuses a NEW accept post-overturn, proven above)
+    would need an order-aware interval check this slice does not build.
+    Pinned here so a future change to `request_policy_history` that
+    silently narrows or widens this is a visible diff, not a surprise."""
+    sender_slug = _seed_bucket("/p/req-disclosed-gap-sender")
+    ruling_id, sha = _cover(project, sender_slug)
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=project)
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = sender_slug
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    policies = refutations.request_policy_history(project_dir=project)
+    record = requests.fold([opened, accepted], policies=policies)[
+        "q-0123456789ab"]
+    assert record["state"] == "accepted"  # the disclosed gap, pinned
+
+
+def test_fold_with_no_policies_argument_leaves_every_covered_accept_inert(
+        project):
+    """NEGATIVE CONTROL (#961 slice 4's own minimum test list): `fold(rows)`
+    with the default empty `policies` leaves every agent accept under a
+    ruling stamp inert, even when the row carries a genuinely valid
+    `under_ruling`/`policy_sha256` pair — the injection is the enforcement,
+    a stamp alone proves nothing. This is the exact defect class slice 1 and
+    #978 already found once each: a rule enforced at one boundary and not
+    another."""
+    ruling_id, sha = _cover(project, "p-negative-control-sender")
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = "p-negative-control-sender"
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    record = requests.fold([opened, accepted])["q-0123456789ab"]  # no policies
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_an_empty_origin_slug_matches_no_policy(project):
+    """A self-addressed or otherwise unresolved origin (an empty
+    `_origin_slug`, the default `records()`/`sender_join()` give every
+    founder) must match nothing — no ruling's `sender` is ever the empty
+    string, so this is belt-and-suspenders, pinned directly."""
+    # No ruling can even name an empty sender (`_policy` refuses one), so
+    # this proves the fold side directly instead: a row with NO
+    # `_origin_slug` at all (the ordinary shape `records()`/`sender_join()`
+    # give every founder) against a policy set that DOES cover a real
+    # sender, and confirms the empty case still matches nothing.
+    other_ruling_id, other_sha = _cover(project, "p-empty-origin-sender")
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    # no _origin_slug stamped at all — the self-addressed / records()/
+    # sender_join() shape.
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = other_ruling_id
+    accepted["policy_sha256"] = other_sha
+    policies = refutations.active_request_policies(project_dir=project)
+    record = requests.fold([opened, accepted], policies=policies)[
+        "q-0123456789ab"]
+    assert record["state"] == "open"
+
+
+def test_fold_is_deterministic_under_reorder_for_a_covered_work_accept(
+        project):
+    ruling_id, sha = _cover(project, "p-reorder-sender")
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = "p-reorder-sender"
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    policies = refutations.active_request_policies(project_dir=project)
+    forward = requests.fold([opened, accepted], policies=policies)[
+        "q-0123456789ab"]
+    backward = requests.fold([accepted, opened], policies=policies)[
+        "q-0123456789ab"]
+    assert forward == backward
+    assert forward["state"] == "accepted"
+
+
+def test_a_policy_covered_accept_then_agent_done_lands_done(project):
+    """Full path (design section 8's own worked example): human opens a
+    work ask, the recipient's human ratifies a covering policy ruling, the
+    recipient's agent accepts, then closes it — `done` lands directly, the
+    same composition slice 3 already proved for `info`."""
+    sender_slug = _seed_bucket("/p/req-full-path-sender")
+    _cover(project, sender_slug)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    owed = requests.owed_renderable(project_dir=project)
+    assert q_id in [r["request_id"] for r in owed["rows"]]
+    requests.done(q_id, channel="cli-agent", evidence="handled per the ruling",
+                 project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["state"] == "done"
+    assert record["done_claimed"] is True
 
 
 def test_an_info_record_can_never_reach_a_pending_agent_claim(project):
@@ -1970,6 +2336,37 @@ def test_request_json_payload_carries_accepted_by(project, recipient,
                      "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["accepted_by"] == "agent"
+
+
+def test_cli_request_inbox_detail_card_shows_accepted_by_agent_under_the_ruling(
+        tmp_checkpoint_dir, capsys):
+    """#961 slice 4: the card line names the covering ruling for a `work`
+    ask, distinct from the bare slice-3 line an `info` accept still renders
+    (proven above by `test_cli_request_inbox_detail_card_shows_accepted_by_agent`,
+    unchanged by this slice)."""
+    from daimon_briefing import cli
+    recipient_dir = "/p/accepted-under-961-recipient"
+    sender_dir = "/p/accepted-under-961-sender"
+    ruling_id, _sha = _cover(recipient_dir, store.project_slug(sender_dir))
+    q_id = requests.open_request(
+        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
+        channel="cli-tty", project_dir=sender_dir)  # kind defaults to work
+    requests.accept(q_id, channel="cli-agent", project_dir=recipient_dir)
+    assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
+    out = capsys.readouterr().out
+    assert f"Accepted by: agent under {ruling_id}" in out
+
+
+def test_request_json_payload_carries_accepted_under(tmp_checkpoint_dir):
+    recipient_dir = "/p/accepted-under-json-recipient"
+    sender_dir = "/p/accepted-under-json-sender"
+    ruling_id, _sha = _cover(recipient_dir, store.project_slug(sender_dir))
+    q_id = requests.open_request(
+        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
+        channel="cli-tty", project_dir=sender_dir)
+    requests.accept(q_id, channel="cli-agent", project_dir=recipient_dir)
+    record = requests.recipient_join(project_dir=recipient_dir)[q_id]
+    assert record["accepted_under"] == ruling_id
 
 
 def test_inject_lines_marks_an_info_ask(project):

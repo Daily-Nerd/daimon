@@ -17,6 +17,8 @@ from .. import (briefing, buckets, checks, config, normalize, refutations,
 from ._ledger import (
     _check_args,
     _check_ceremony_lines,
+    _policy_args,
+    _policy_ceremony_lines,
     _warn_check_sync,
     _print_ruling,
     _refusal_message,
@@ -31,12 +33,13 @@ def _cmd_ruling_propose(args) -> int:
     project = _cli._resolve_project(args.project)
     try:
         check = _check_args(args)
+        request_policy = _policy_args(args)
         ruling_id = refutations.assert_ruling(
             subject=args.subject, verdict=args.verdict, scope=args.scope,
             evidence=args.evidence, channel=_refute_channel(args),
             anchors=args.anchor,
             revisit_when=args.revisit_when or "", ratified=args.ratify,
-            check=check, project_dir=project)
+            check=check, request_policy=request_policy, project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not recorded", exc))
         return 1
@@ -101,6 +104,17 @@ def _cmd_ruling_ratify(args) -> int:
         for line in _check_ceremony_lines(check, label="Check",
                                           verb="Ratifying"):
             print(line, file=ceremony)
+    # #961 slice 4: same pin discipline as `check` just above — the ceremony
+    # discloses the grant it is about to ratify and pins the append to the
+    # hash it displayed.
+    request_policy = (record.get("request_policy")
+                      if isinstance(record.get("request_policy"), dict)
+                      else None)
+    displayed_policy_sha = ""
+    if request_policy:
+        displayed_policy_sha = str(request_policy.get("sha256") or "")
+        for line in _policy_ceremony_lines(request_policy, verb="Ratifying"):
+            print(line, file=ceremony)
     displayed_key = normalize.content_key(record.get("verdict") or "")
     answer = input("Ratify? [y/N]: ").strip().casefold()
     if answer not in ("y", "yes"):
@@ -110,6 +124,7 @@ def _cmd_ruling_ratify(args) -> int:
         refutations.ratify(args.ruling_id, channel=channel,
                            note=args.note or "", verdict_key=displayed_key,
                            check_sha256=displayed_check_sha,
+                           policy_sha256=displayed_policy_sha,
                            project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not ratified", exc))
@@ -157,9 +172,22 @@ def _cmd_ruling_revise(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not revised", exc))
         return 1
+    try:
+        request_policy = _policy_args(args)
+    except refutations.RefutationError as exc:
+        print(_refusal_message("ruling not revised", exc))
+        return 1
+    clear_request_policy = bool(getattr(args, "no_request_policy", False))
+    if request_policy is not None and clear_request_policy:
+        print(_refusal_message(
+            "ruling not revised", refutations.RefutationError(
+                "--request-policy and --no-request-policy are mutually "
+                "exclusive")))
+        return 1
     if (record["state"] == "active" and channel == "cli-tty"
             and (args.verdict is not None or args.subject is not None
-                 or check is not None)):
+                 or check is not None or request_policy is not None
+                 or clear_request_policy)):
         # Rewriting what renders is the same power ratification has, and it
         # earns trust the same way: show the change, disclose, confirm.
         print("About to change the ACTIVE text of this ruling:")
@@ -172,6 +200,15 @@ def _cmd_ruling_revise(args) -> int:
             for line in _check_ceremony_lines(check, label="New check",
                                               verb="Applying"):
                 print(line)
+        if request_policy is not None:
+            # Not yet the STORED shape (no sha256 until `_policy` validates
+            # it inside `revise`): shown here in the same KEY=VALUE terms
+            # the flags were given in, so a rejected value never prints as
+            # if it were already accepted.
+            print(f"  New policy: {request_policy}")
+        if clear_request_policy:
+            print("  Policy will be CLEARED — no ruling will cover an "
+                  "agent accept for this project after this change.")
         print("  This text will render into every future session for this "
               "project.")
         answer = input("Apply? [y/N]: ").strip().casefold()
@@ -185,7 +222,8 @@ def _cmd_ruling_revise(args) -> int:
             evidence=args.evidence, subject=args.subject,
             verdict=args.verdict, scope=args.scope,
             anchors=anchors, revisit_when=args.revisit_when,
-            ratified=False, check=check, project_dir=project)
+            ratified=False, check=check, request_policy=request_policy,
+            clear_request_policy=clear_request_policy, project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not revised", exc))
         return 1
@@ -510,6 +548,11 @@ def register(sub, fmt) -> None:
         default=None,
         help="what the check asks each host for; the host delivers the "
              "strongest it supports (default warn)")
+    rl_propose.add_argument(
+        "--request-policy", action="append", default=None,
+        metavar="KEY=VALUE",
+        help="grant this ruling authorizes: sender=<slug> kind=work|info "
+             "verb=accept by=agent; repeatable, all four required (#961)")
     rl_propose.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_propose.add_argument("--json", action="store_true", help="machine-readable output")
     rl_propose.set_defaults(func=_cli._cmd_ruling_propose)
@@ -562,6 +605,15 @@ def register(sub, fmt) -> None:
         default=None,
         help="what the check asks each host for; the host delivers the "
              "strongest it supports (default warn)")
+    rl_revise.add_argument(
+        "--request-policy", action="append", default=None,
+        metavar="KEY=VALUE",
+        help="replacement grant: sender=<slug> kind=work|info verb=accept "
+             "by=agent; repeatable, all four required (#961)")
+    rl_revise.add_argument(
+        "--no-request-policy", action="store_true",
+        help="clear this ruling's request_policy; mutually exclusive with "
+             "--request-policy")
     rl_revise.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_revise.add_argument("--json", action="store_true", help="machine-readable output")
     rl_revise.set_defaults(func=_cli._cmd_ruling_revise)

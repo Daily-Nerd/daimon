@@ -276,8 +276,9 @@ unverified claim until the quote is byte-checked. `reject`, `needs-info`,
 the one exception — an agent may run `request accept <id> --by agent`
 directly for an addressed `info` ask still open or needs-info, and the
 record says so; a `work` ask still needs `accept` from a human channel
-like the rest. An `info` ask never reaches `daimon decide` in the first
-place — it owes no accept, so there is nothing there for a person to see.
+like the rest, unless a ruling grants that sender one. An `info` ask never
+reaches `daimon decide` in the first place — it owes no accept, so there
+is nothing there for a person to see.
 `daimon decide` lists every human-only command still waiting on a person,
 across this project's ledgers, so say it lands there and stop repeating
 the ask.

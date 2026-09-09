@@ -201,6 +201,26 @@ def _check_args(args) -> dict | None:
     return {"match": match, "body": body, "intent": intent or "warn"}
 
 
+def _policy_args(args) -> dict | None:
+    """#961 slice 4: the repeatable `--request-policy KEY=VALUE` flags as the
+    dict `refutations._policy` takes, or None when none was given.
+
+    Answers only what was SET — `--no-request-policy` (revise only) is a
+    separate bool the caller reads for itself, on the same terms
+    `_check_args` has no "clear" equivalent for a check."""
+    raw = getattr(args, "request_policy", None) or []
+    if not raw:
+        return None
+    out: dict[str, str] = {}
+    for item in raw:
+        key, separator, value = str(item).partition("=")
+        if not separator:
+            raise refutations.RefutationError(
+                f"--request-policy expects KEY=VALUE, got {item!r}")
+        out[key.strip()] = value.strip()
+    return out
+
+
 def _check_sync_warning() -> str:
     """#943: the line to show when a write landed but the armed-check
     manifest did not, or "" when there is nothing to say.
@@ -242,6 +262,20 @@ def _check_ceremony_lines(check: dict, *, label: str, verb: str) -> list[str]:
         f"· {body.count(chr(10))} lines · sha {sha[:12]}",
         "  This check will run before matching actions on every host that "
         f"supports it. {verb} arms an executable.",
+    ]
+
+
+def _policy_ceremony_lines(request_policy: dict, *, verb: str) -> list[str]:
+    """#961 slice 4: the disclosure line a ceremony prints before a human
+    arms a request-accept policy. Mirrors `_check_ceremony_lines`: the hash
+    is computed by `refutations._policy`, this only renders what came back."""
+    sha = str(request_policy.get("sha256") or "")
+    return [
+        f"  Policy: sender={request_policy.get('sender')} "
+        f"kind={request_policy.get('kind')} verb={request_policy.get('verb')} "
+        f"by={request_policy.get('by')} · sha {sha[:12]}",
+        f"  {verb} lets that sender's agent record this verdict on this "
+        "project's behalf for asks it covers.",
     ]
 
 
@@ -306,6 +340,17 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
                     f"{fold['unresolved']} unresolved")
             else:
                 lines.append("  Fired: never")
+    # #961 slice 4: where `check` prints its line above, on the identical
+    # terms — a `request_policy` present on the record but the ruling not
+    # `active` is a candidate grant, authorizing nothing yet.
+    request_policy = record.get("request_policy")
+    if isinstance(request_policy, dict):
+        armed = "in force" if state == "active" else "not in force (candidate)"
+        lines.append(
+            f"  Policy: sender={request_policy.get('sender')} "
+            f"kind={request_policy.get('kind')} "
+            f"verb={request_policy.get('verb')} "
+            f"by={request_policy.get('by')} · {armed}")
     proposal = record.get("revision_proposed")
     if proposal:
         line = (f"  Pending revision proposal ({proposal.get('by', '?')}): "
@@ -315,6 +360,8 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
         # show — it would otherwise render as a bare colon.
         if isinstance(proposal.get("check"), dict):
             line += " (carries a check)"
+        if isinstance(proposal.get("request_policy"), dict):  # #961 slice 4
+            line += " (carries a request_policy)"
         lines.append(line)
     retirement = record.get("overturn_proposed")
     if retirement:

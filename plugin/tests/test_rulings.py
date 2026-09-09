@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import redact, refutations, store
+from daimon_briefing import config, redact, refutations, store
 
 
 PROJECT = "/p/rulings"
@@ -1801,3 +1801,284 @@ def test_the_single_token_path_refusal_still_says_what_it_always_said():
     bare path gets the message that explains what a body IS."""
     with pytest.raises(refutations.RefutationError, match="must be the script"):
         refutations._check(_check(body="~/.claude/voicegate.sh"))
+
+
+# ---- #961 slice 4: request_policy, the ruling hook ------------------------
+#
+# A ruling may carry a `request_policy`, permission for another project's
+# agent to record `accept` on a `work` ask this project owes it. Same
+# doctrine as `check` (#943): validated on the way in, stored on the
+# founding row, pinned at ratify by `policy_sha256`, gated in the fold
+# identically. The consuming side (requests.fold's widened exception,
+# requests.accept's write boundary) is covered in test_requests.py; this
+# section is the refutations-ledger half — validation, storage, the pin,
+# and refutations.active_request_policies.
+
+
+def _policy(**overrides):
+    values = {"sender": "p-sender", "kind": "work", "verb": "accept",
+             "by": "agent"}
+    values.update(overrides)
+    return values
+
+
+def test_policy_validator_accepts_the_documented_shape():
+    out = refutations._policy(_policy())
+    assert out["sender"] == "p-sender"
+    assert out["kind"] == "work"
+    assert out["verb"] == "accept"
+    assert out["by"] == "agent"
+    assert len(out["sha256"]) == 64
+
+
+def test_policy_validator_accepts_kind_info_as_a_no_op_shape():
+    """#961 slice 4 design decision: info is a genuine, if inert, policy —
+    refused nowhere, since it can never be the thing that authorizes an
+    accept (an info ask needs no ruling in the first place)."""
+    out = refutations._policy(_policy(kind="info"))
+    assert out["kind"] == "info"
+
+
+def test_policy_validator_returns_none_for_none():
+    assert refutations._policy(None) is None
+
+
+def test_policy_validator_refuses_a_non_object():
+    with pytest.raises(refutations.RefutationError, match="must be an object"):
+        refutations._policy("sender=p-sender")
+
+
+@pytest.mark.parametrize("missing", ["sender", "kind", "verb", "by"])
+def test_policy_validator_refuses_a_missing_key(missing):
+    values = _policy()
+    del values[missing]
+    with pytest.raises(refutations.RefutationError, match="missing"):
+        refutations._policy(values)
+
+
+def test_policy_validator_refuses_an_extra_key():
+    with pytest.raises(refutations.RefutationError, match="unexpected"):
+        refutations._policy(_policy(extra="nope"))
+
+
+def test_policy_validator_refuses_a_wildcard_sender():
+    """Slice 4's own binding answer: sender="*" is not permitted."""
+    with pytest.raises(refutations.RefutationError, match="wildcard"):
+        refutations._policy(_policy(sender="*"))
+
+
+def test_policy_validator_refuses_an_empty_sender():
+    with pytest.raises(refutations.RefutationError, match="bucket slug"):
+        refutations._policy(_policy(sender=""))
+
+
+def test_policy_validator_refuses_an_unknown_kind():
+    with pytest.raises(refutations.RefutationError, match="kind"):
+        refutations._policy(_policy(kind="everything"))
+
+
+def test_policy_validator_refuses_an_unknown_verb():
+    with pytest.raises(refutations.RefutationError, match="verb"):
+        refutations._policy(_policy(verb="reject"))
+
+
+def test_policy_validator_refuses_an_unknown_by():
+    with pytest.raises(refutations.RefutationError, match="by"):
+        refutations._policy(_policy(by="human"))
+
+
+def test_policy_validator_hash_is_stable_for_the_same_four_fields():
+    a = refutations._policy(_policy())
+    b = refutations._policy(_policy())
+    assert a["sha256"] == b["sha256"]
+
+
+def test_policy_validator_hash_changes_with_sender():
+    a = refutations._policy(_policy())
+    b = refutations._policy(_policy(sender="p-other"))
+    assert a["sha256"] != b["sha256"]
+
+
+def test_assert_ruling_stores_the_request_policy_on_the_founding_row(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"]["sender"] == "p-sender"
+    assert record["state"] == "candidate"
+
+
+def test_assert_refutation_never_carries_a_request_policy():
+    """Only `assert_ruling` takes the kwarg; `assert_refutation` has no
+    parameter for it at all, so passing one is a TypeError, not a silent
+    drop — the same posture `check` already holds for refutations."""
+    with pytest.raises(TypeError):
+        refutations.assert_refutation(
+            subject="x", verdict="y", scope="z", evidence=["issue:961"],
+            channel="cli-agent", request_policy=_policy(),
+            project_dir=PROJECT)
+
+
+def test_revise_refuses_a_request_policy_on_a_refutation(tmp_checkpoint_dir):
+    ref_id = _refute()
+    before = refutations.get(ref_id, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="only a ruling"):
+        refutations.revise(
+            ref_id, channel="cli-agent", evidence=["issue:961"],
+            request_policy=_policy(), project_dir=PROJECT)
+    after = refutations.get(ref_id, project_dir=PROJECT)
+    assert after["revision"] == before["revision"]
+    assert "request_policy" not in after
+
+
+def test_revise_with_only_a_request_policy_is_a_change(tmp_checkpoint_dir):
+    ruling_id = _rule()
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:961"],
+        request_policy=_policy(), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"]["sender"] == "p-sender"
+
+
+def test_revise_refuses_both_setting_and_clearing_request_policy(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    with pytest.raises(refutations.RefutationError, match="cannot both"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:961"],
+            request_policy=_policy(sender="p-other"),
+            clear_request_policy=True, project_dir=PROJECT)
+
+
+def test_clear_request_policy_writes_an_explicit_null(tmp_checkpoint_dir):
+    """#961 slice 4: presence, not truthiness — the fold must be able to
+    tell "revised, policy removed" apart from "revised, policy untouched"."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="cli-tty", evidence=["issue:961"],
+        clear_request_policy=True, project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"] is None
+
+
+def test_an_ordinary_revise_leaves_request_policy_untouched(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="cli-tty", evidence=["issue:961"],
+        verdict="a different verdict text", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"]["sender"] == "p-sender"
+
+
+def test_ratify_pinned_to_the_current_policy_hash_activates(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    refutations.ratify(ruling_id, channel="cli-tty", policy_sha256=sha,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+
+
+def test_ratify_pinned_to_a_stale_policy_hash_is_inert(tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    stale = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:961"],
+        request_policy=_policy(sender="p-other"), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", policy_sha256=stale,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+
+
+def test_ratify_without_a_pin_is_inert_when_the_record_carries_a_policy(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+
+
+def test_ratify_without_a_pin_still_activates_a_ruling_with_no_policy(
+        tmp_checkpoint_dir):
+    ruling_id = _rule()
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"
+
+
+def test_human_in_process_revise_arms_the_supplied_policy_without_a_pin(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:961"],
+        request_policy=_policy(sender="p-other"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["request_policy"]["sender"] == "p-other"
+
+
+def test_policy_carrying_proposal_is_visible_on_the_record(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:961"],
+        request_policy=_policy(), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["revision_proposed"]["request_policy"]["sender"] == "p-sender"
+    # The active record's own policy is untouched by an agent proposal.
+    assert record.get("request_policy") is None
+
+
+def test_a_policy_ruling_counts_against_the_ruling_cap(tmp_checkpoint_dir,
+                                                        monkeypatch):
+    monkeypatch.setattr(config, "ruling_cap", lambda: 1)
+    _rule(channel="cli-tty", ratified=True, request_policy=_policy(),
+         subject="first")
+    with pytest.raises(refutations.RefutationError, match="cap"):
+        _rule(channel="cli-tty", ratified=True, subject="second",
+             verdict="a different verdict")
+
+
+# ---- refutations.active_request_policies -----------------------------------
+
+
+def test_active_request_policies_returns_empty_with_no_rulings(
+        tmp_checkpoint_dir):
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_returns_an_active_pinned_grant(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    out = refutations.active_request_policies(project_dir=PROJECT)
+    assert ("p-sender", "work", "accept", "agent", ruling_id, sha) in out
+
+
+def test_active_request_policies_excludes_a_candidate_ruling(
+        tmp_checkpoint_dir):
+    _rule(request_policy=_policy())  # never ratified
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_excludes_an_overturned_ruling(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_excludes_a_ruling_with_no_policy(
+        tmp_checkpoint_dir):
+    _rule(channel="cli-tty", ratified=True)
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_is_fail_open_on_an_unreadable_ledger(
+        tmp_checkpoint_dir, monkeypatch):
+    """Mirrors briefing.active_rulings' own fail-open posture (#940): an
+    unreadable ruling ledger must read as NO policy, never raise."""
+    monkeypatch.setattr(refutations, "records",
+                        lambda project_dir=None: (_ for _ in ()).throw(
+                            OSError("simulated ledger failure")))
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
