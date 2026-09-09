@@ -2082,3 +2082,85 @@ def test_active_request_policies_is_fail_open_on_an_unreadable_ledger(
                         lambda project_dir=None: (_ for _ in ()).throw(
                             OSError("simulated ledger failure")))
     assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+# ---- refutations.request_policy_history: order-aware intervals -----------
+#
+# `active_request_policies` answers "what is granted right now" (the write
+# boundary's question). `request_policy_history` answers a different one:
+# "was this grant active AT A GIVEN ORDER" — the question requests.fold's
+# own re-check of an already-landed accepted row asks, so a decision that
+# already landed while a ruling was active survives that ruling's later
+# overturn, while a row forged AFTER the fact with a CURRENT order cannot
+# reach back into a window that already closed.
+
+
+def test_request_policy_history_returns_an_open_interval_for_an_active_grant(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(out) == 1
+    entry = next(iter(out))
+    sender, kind, verb, by, rid, entry_sha, since, until = entry
+    assert (sender, kind, verb, by, rid, entry_sha) == (
+        "p-sender", "work", "accept", "agent", ruling_id, sha)
+    assert since is not None
+    assert until is None  # still open
+
+
+def test_request_policy_history_closes_the_interval_on_overturn(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(out) == 1
+    entry = next(iter(out))
+    assert entry[6] is not None and entry[7] is not None  # since, until
+    assert entry[6] < entry[7]
+
+
+def test_request_policy_history_opens_a_second_interval_on_a_narrower_revise(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:961"],
+        request_policy=_policy(sender="p-other"), project_dir=PROJECT)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    senders_and_until = {(e[0], e[7]) for e in out}
+    # The original grant's interval CLOSED (until is not None); the new
+    # grant's interval is OPEN (until is None) — two distinct facts, both
+    # kept, neither erased.
+    assert ("p-sender", None) not in senders_and_until
+    closed = [e for e in out if e[0] == "p-sender"]
+    assert len(closed) == 1 and closed[0][7] is not None
+    opened = [e for e in out if e[0] == "p-other"]
+    assert len(opened) == 1 and opened[0][7] is None
+
+
+def test_request_policy_history_a_candidate_ruling_contributes_no_interval(
+        tmp_checkpoint_dir):
+    _rule(request_policy=_policy())  # never ratified
+    assert refutations.request_policy_history(project_dir=PROJECT) == frozenset()
+
+
+def test_request_policy_history_is_fail_open_on_an_unreadable_ledger(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(refutations, "events",
+                        lambda project_dir=None, **kw: (_ for _ in ()).throw(
+                            OSError("simulated ledger failure")))
+    assert refutations.request_policy_history(project_dir=PROJECT) == frozenset()
+
+
+def test_request_policy_history_and_order_share_one_clock(tmp_checkpoint_dir):
+    """The interval check's own precondition: both ledgers stamp `order`
+    from `time.time_ns()` (or an explicit `now_ns` in the same unit), so a
+    request row's `order` is directly comparable against a ruling's
+    activation window with no conversion. Pinned as a fact, not assumed."""
+    import time as _time
+    before = _time.time_ns()
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    after = _time.time_ns()
+    row = next(r for r in refutations.events(project_dir=PROJECT)
+              if r.get("refutation_id") == ruling_id and r.get("event") == "ruled")
+    assert before <= row["order"] <= after

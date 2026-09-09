@@ -311,6 +311,20 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
     lane can never drift from the transitions `queue`'s own request lane
     already trusts (suppression, rejection terminality, the human-only
     verdict re-check).
+
+    #961 slice 4: without an injected policy history, an agent's `work`
+    accept landed under a covering ruling folds here exactly like a bare,
+    still-open ask — `fold`'s own widened exception is gated on the SAME
+    injected set every other caller resolves, and this composer calls
+    `fold` directly, so it owes it the same injection. That would over-count
+    a decided ask as "waiting" in the fleet tally and send a person to a
+    project with nothing to decide, the exact defect #961 slice 3 review
+    finding 2 already fixed for `info` asks. Resolved per RECIPIENT project
+    (each group's `to`, read off its raw founder row before any fold — the
+    same shape `_founder_kind_by_id`/`_founder_origin_by_id` already read
+    raw fields for) and cached, since a fleet with many asks addressed to
+    the same project must not re-read that project's ruling ledger once per
+    ask.
     """
     by_id: dict[str, list] = {}
     for bucket in requests._bucket_slugs():
@@ -323,11 +337,33 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
             # (requests.py:285-288), so the id is present and well-formed
             # here — no second guard, which would be unreachable.
             rid = str(row.get("request_id") or "")
-            by_id.setdefault(rid, []).append(_strip_plaintext(row))
+            stripped = _strip_plaintext(row)
+            # #961 slice 4: the same transient, in-memory-only stamp
+            # `recipient_join` gives a foreign-bucket row before folding —
+            # `fold`'s own `_founder_origin_by_id` pre-pass reads it off the
+            # founder row to resolve which sender a covering ruling must
+            # name. `_strip_plaintext` already returns a fresh dict, so this
+            # never touches anything the original `events()` list holds.
+            stripped["_origin_slug"] = bucket
+            by_id.setdefault(rid, []).append(stripped)
     counts: dict[str, int] = {}
+    policies_by_recipient: dict[str, frozenset] = {}
     for rows in by_id.values():
+        to = ""
+        for row in rows:
+            if row.get("event") == "opened":
+                to = str(row.get("to") or "")
+                break
+        policies = policies_by_recipient.get(to)
+        if policies is None:
+            try:
+                policies = (refutations.request_policy_history(project_dir=to)
+                           if to else frozenset())
+            except Exception:
+                policies = frozenset()
+            policies_by_recipient[to] = policies
         try:
-            folded = requests.fold(rows)
+            folded = requests.fold(rows, policies=policies)
         except Exception:
             continue
         for record in folded.values():

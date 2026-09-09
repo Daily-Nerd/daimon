@@ -457,17 +457,22 @@ def _founder_origin_by_id(ordered: list[dict]) -> dict[str, str]:
 def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
     """#961 slice 4: whether `row` (an `accepted` event landing on a `work`
     ask) is authorized by one of the `(sender, kind, verb, by, ruling_id,
-    sha256)` tuples in `policy` — the set `refutations.active_request_
-    policies` resolved from THIS project's own active rulings and the
-    caller (one of `fold`'s three composers) injected.
+    sha256, active_from, active_until)` INTERVALS in `policies` — the set
+    `refutations.request_policy_history` resolved from THIS project's own
+    ruling ledger and the caller (one of `fold`'s three composers)
+    injected.
 
     The row's own `under_ruling`/`policy_sha256` are a STAMP a non-human
     channel wrote about itself, never the gate on their own — the same
     reasoning the deleted `--by human` flag was refused for (#512). This
-    only lands when the INJECTED policy set independently names the same
-    ruling id and the same hash, so a row claiming coverage the caller's own
-    rulings do not currently grant is inert regardless of what it says about
-    itself.
+    only lands when the INJECTED history independently names the same
+    ruling id and hash AND the ROW's own `order` falls inside the interval
+    during which that exact grant was active — never merely "was ever
+    active at some point" — so a row claiming coverage the caller's own
+    ruling ledger never granted AT THAT TIME is inert regardless of what it
+    says about itself. `active_until` of `None` means the interval is (or,
+    at the end of the ruling ledger's own history, was) still open: any row
+    order at or after `active_from` matches.
 
     An empty `origin_slug` — a self-addressed ask, or one folded through a
     composer that never resolves cross-bucket origin (`records()`,
@@ -481,7 +486,18 @@ def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
     sha = str(row.get("policy_sha256") or "")
     if not ruling_id or not sha:
         return False
-    return (origin_slug, "work", "accept", "agent", ruling_id, sha) in policies
+    try:
+        row_order = int(row.get("order") or 0)
+    except (TypeError, ValueError):
+        return False
+    for entry in policies:
+        sender, kind, verb, by, entry_ruling, entry_sha, since, until = entry
+        if (sender == origin_slug and kind == "work" and verb == "accept"
+                and by == "agent" and entry_ruling == ruling_id
+                and entry_sha == sha and row_order >= since
+                and (until is None or row_order < until)):
+            return True
+    return False
 
 
 def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
@@ -914,12 +930,14 @@ def _request_policy_history(project_dir):
 
     `refutations.request_policy_history`, NOT `active_request_policies` —
     the fold's own re-check of an ALREADY-LANDED `accepted` row asks "was
-    this ever validly granted", not "is it granted right now": binding
-    answer 3 (a past accept survives an overturn) means a re-fold must not
-    make a landed decision depend on the ruling's CURRENT state.
-    `requests.accept()`'s write boundary asks the other question
-    (`_resolve_covering_ruling`, current-state only) so overturn still
-    refuses every NEW accept regardless."""
+    this granted AT THE ROW'S OWN ORDER", not "is it granted right now":
+    binding answer 3 (a past accept survives an overturn) means a re-fold
+    must not make a landed decision depend on the ruling's CURRENT state,
+    while a row forged AFTER the fact must still be checked against the
+    window that was actually open when it claims to have landed.
+    `requests.accept()`'s write boundary asks the current-state question
+    instead (`_resolve_covering_ruling`, via `active_request_policies`) so
+    overturn still refuses every NEW accept regardless."""
     return refutations.request_policy_history(project_dir=project_dir)
 
 

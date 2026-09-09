@@ -1095,11 +1095,20 @@ def active_request_policies(project_dir=None) -> frozenset:
 
 def request_policy_history(project_dir=None) -> frozenset:
     """#961 slice 4: every request-accept grant this project's ruling ledger
-    has EVER activated, at any point in its history — the question
+    has EVER activated, as `(sender, kind, verb, by, ruling_id, sha256,
+    active_from, active_until)` INTERVALS in `order` units — the question
     `requests.fold`'s own re-check of an ALREADY-LANDED `accepted` row asks,
     injected by the same three composers that inject `active_request_
     policies` (a DIFFERENT question, resolved separately and passed as a
     DIFFERENT set — `requests.fold` never reads a ruling ledger itself).
+    `active_until` is `None` while the grant is (or was, at the end of this
+    ledger's history) still active — an open interval, not "forever".
+
+    Both `refutations._stamp` and `requests._stamp` compute `order =
+    time.time_ns()` (or the caller's own `now_ns`, still nanosecond-epoch)
+    — ONE clock, ONE unit, verified here rather than assumed, so an
+    `accepted` row's own `order` is directly comparable against a ruling's
+    activation window with no conversion at the boundary.
 
     Binding answer 3 ("a past accept survives an overturn... each read
     computes the same past") means the fold's re-check of a row that
@@ -1108,27 +1117,41 @@ def request_policy_history(project_dir=None) -> frozenset:
     make a legitimately-landed accept flip back to inert the moment the
     ruling that authorized it is later overturned or revised narrower,
     which is exactly the "one ledger's state depending on another ledger's
-    current value" the design's own words refuse. This set is therefore
-    MONOTONIC — once a hash was ever legitimately activated it stays a
-    member forever, even past the ruling's later overturn or a revision
-    that supersedes it — built by folding every PREFIX of the project's
-    ordered ruling-ledger rows through `fold()` ITSELF (never a duplicated
-    state machine, so this can never diverge from what `fold` would say was
-    active at that moment) and collecting every active-ruling snapshot's
-    grant along the way.
+    current value" the design's own words refuse. A first build answered
+    this with a MONOTONIC set (once a hash was ever active it counted
+    forever); that read a forged row's OWN order as irrelevant, so a row
+    forged directly via `requests.append` — the exact door #961's own
+    doctrine and #978 both closed for every other verdict — citing a
+    once-active, since-overturned ruling id/hash landed unconditionally.
+    This is the fix: the ROW's own `order` must fall inside the interval
+    during which that exact grant was active, so a forged row with a
+    CURRENT order citing an overturned hash is inert (its order postdates
+    every interval that hash ever held), while a genuine accept made while
+    the ruling was active keeps the order it was stamped with at write
+    time and still falls inside the interval that was open then.
 
-    Known residual gap, disclosed rather than hidden: a FRESH row forged
-    directly via `requests.append` (never landed through `accept()`) that
-    cites a ruling+hash pair which was ONCE legitimately active but has
-    SINCE been overturned or revised away is `covered` by this set too — a
-    true interval check (was the ruling active with this hash AT THE
-    ACCEPT ROW'S OWN ORDER, not merely at some point) would close it, at
-    the cost of a second, order-aware state machine mirroring `fold`'s
-    ruling branch. `requests.accept()`'s write boundary is unaffected (it
-    reads `active_request_policies`, current-state only, so overturn stops
-    every NEW accept regardless); only a row that bypasses `accept()`
-    entirely and is willing to name a specific past ruling id and its exact
-    historical hash can reach this gap.
+    Built by folding every PREFIX of the project's ordered ruling-ledger
+    rows through `fold()` ITSELF (never a duplicated state machine, so this
+    can never diverge from what `fold` would say was active at that
+    moment): each row can only move the ONE ruling id it names, so after
+    adding a row this only re-reads that id's own record and compares it
+    against what it was fingerprinted as before the row landed. A change
+    closes whatever interval was open (at THIS row's own order — the
+    ruling's state is understood to hold as of the row that set it) and
+    opens a new one when the new fingerprint grants something.
+
+    Residual, disclosed rather than hidden: a row that ALSO BACKDATES its
+    own `order` (via a forged `_stamp(..., now_ns=...)`, the same escape
+    hatch every `order`-sorted ledger in this codebase already accepts) to
+    fall inside an old, since-closed window is indistinguishable from a
+    genuine accept made then — `_line` (this file's own read-order tie
+    breaker) is a physical hint but never crosses ledgers, so it cannot
+    settle which of two DIFFERENT files' rows came first in wall-clock
+    time. Closing this needs a cross-ledger physical ordering primitive
+    this codebase does not have; see
+    `tests.test_requests.test_disclosed_gap_a_backdated_forged_row_inside_an_old_window_still_lands`
+    for what a caller who controls both `order` and the grant it names can
+    still do.
 
     O(n²) in this project's total refutations-ledger row count — read-time
     cost, paid by the three composers, not the write boundary; rulings are
@@ -1153,21 +1176,35 @@ def request_policy_history(project_dir=None) -> frozenset:
         _EVENT_RANK.get(str(row.get("event") or ""), 99),
         str(row.get("event_id") or ""),
         _integer(row, "_line")))
+    # Per ruling id: the grant tuple its currently-open interval covers (or
+    # None when nothing is open) and the order that interval started at.
+    open_grant: dict[str, tuple | None] = {}
+    open_since: dict[str, int] = {}
     out: set = set()
     prefix: list[dict] = []
     for row in ordered:
         prefix.append(row)
+        order = _integer(row, "order")
+        ref_id = str(row.get("refutation_id") or "")
         try:
-            snapshot = fold(prefix)
+            record = fold(prefix).get(ref_id)
         except Exception:
             continue
-        for record in snapshot.values():
-            if (record.get("polarity") != "ruling"
-                    or record.get("state") != "active"):
-                continue
-            tup = _policy_tuple(record)
-            if tup:
-                out.add(tup)
+        current = None
+        if (record is not None and record.get("polarity") == "ruling"
+                and record.get("state") == "active"):
+            current = _policy_tuple(record)
+        previous = open_grant.get(ref_id)
+        if current == previous:
+            continue  # this row did not change what (if anything) is open
+        if previous is not None:
+            out.add(previous + (open_since[ref_id], order))
+        if current is not None:
+            open_since[ref_id] = order
+        open_grant[ref_id] = current
+    for ref_id, current in open_grant.items():
+        if current is not None:
+            out.add(current + (open_since[ref_id], None))
     return frozenset(out)
 
 

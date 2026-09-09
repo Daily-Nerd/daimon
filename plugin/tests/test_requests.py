@@ -921,7 +921,7 @@ def test_forged_agent_accepted_row_on_a_covered_work_ask_lands_in_the_fold(
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
-    policies = refutations.active_request_policies(project_dir=project)
+    policies = refutations.request_policy_history(project_dir=project)
     record = requests.fold([opened, accepted], policies=policies)["q-0123456789ab"]
     assert record["state"] == "accepted"
     assert record["accepted_by"] == "agent"
@@ -998,20 +998,18 @@ def test_forged_accepted_row_citing_a_candidate_rulings_hash_is_inert_in_the_fol
     assert record["state"] == "open"
 
 
-def test_disclosed_gap_a_forged_row_can_cite_a_since_overturned_hash(project):
-    """DOCUMENTED LIMITATION, not a passing-by-accident test: `request_
-    policy_history` is MONOTONIC (a hash that was ever legitimately active
-    stays a member forever, which is what makes a genuinely landed accept
-    survive overturn — see the two tests above this one). The same
-    monotonicity means a FRESH row forged directly via `requests.append`
-    (never landed through `accept()`) that cites a ruling+hash pair which
-    was once legitimately active but has SINCE been overturned is ALSO
-    honored by the fold — full parity with `accept()`'s write boundary
-    (which correctly refuses a NEW accept post-overturn, proven above)
-    would need an order-aware interval check this slice does not build.
-    Pinned here so a future change to `request_policy_history` that
-    silently narrows or widens this is a visible diff, not a surprise."""
-    sender_slug = _seed_bucket("/p/req-disclosed-gap-sender")
+def test_a_forged_row_with_a_current_order_citing_an_overturned_hash_is_inert(
+        project):
+    """The interval fix's own point: a row forged directly via
+    `requests.append` (never landed through `accept()`) that cites a
+    ruling+hash pair which was once legitimately active but has SINCE been
+    overturned is now INERT, because its own `order` (stamped at forge
+    time, after the overturn) falls outside every interval that hash ever
+    held. This is the boundary-parity case `accept()`'s write boundary
+    already refused (proven above); the fold now refuses it too, closing
+    the gap the first, monotonic-set implementation of `request_policy_
+    history` left open."""
+    sender_slug = _seed_bucket("/p/req-forged-post-overturn-sender")
     ruling_id, sha = _cover(project, sender_slug)
     refutations.retire(ruling_id, channel="cli-tty", project_dir=project)
     opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
@@ -1019,11 +1017,50 @@ def test_disclosed_gap_a_forged_row_can_cite_a_since_overturned_hash(project):
     opened["_origin_slug"] = sender_slug
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
     accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha  # order: stamped NOW, after the retire
+    policies = refutations.request_policy_history(project_dir=project)
+    record = requests.fold([opened, accepted], policies=policies)[
+        "q-0123456789ab"]
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_disclosed_gap_a_backdated_forged_row_inside_an_old_window_still_lands(
+        project):
+    """DOCUMENTED LIMITATION, not a passing-by-accident test: the interval
+    check compares the accepted row's own `order` against the window a
+    grant was active for, and `order` is a value the row's OWN forger
+    controls (`_stamp(..., now_ns=...)`, the same escape hatch every
+    `order`-sorted ledger in this codebase already accepts — a caller with
+    `requests.append` access already stands inside the trust boundary that
+    assumes). A row that backdates its `order` into a window that WAS
+    legitimately open for that exact ruling id and hash is indistinguishable
+    from a genuine accept made then: nothing on either ledger's own row
+    carries a cross-ledger physical timestamp `order` cannot itself be told
+    apart from. Pinned here so a future change to `request_policy_history`
+    that silently narrows or widens this is a visible diff, not a surprise."""
+    sender_slug = _seed_bucket("/p/req-backdated-forged-sender")
+    ruling_id, sha = _cover(project, sender_slug)
+    # Two throwaway stamps capture two real `order` values while the ruling
+    # is genuinely active, opened-before-accepted (fold requires a founder
+    # to have the SMALLER order or the lifecycle row orphans) — both are
+    # what the backdated rows below will be forced to carry.
+    opened_order = requests._stamp("opened", "q-0000000000aa", "cli-tty")["order"]
+    accepted_order = requests._stamp("accepted", "q-0000000000ab",
+                                     "cli-agent")["order"]
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=project)
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty",
+                             now_ns=opened_order)
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = sender_slug
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent",
+                               now_ns=accepted_order)
+    accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
     policies = refutations.request_policy_history(project_dir=project)
     record = requests.fold([opened, accepted], policies=policies)[
         "q-0123456789ab"]
-    assert record["state"] == "accepted"  # the disclosed gap, pinned
+    assert record["state"] == "accepted"  # the disclosed residual, pinned
 
 
 def test_fold_with_no_policies_argument_leaves_every_covered_accept_inert(
@@ -1065,7 +1102,7 @@ def test_an_empty_origin_slug_matches_no_policy(project):
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
     accepted["under_ruling"] = other_ruling_id
     accepted["policy_sha256"] = other_sha
-    policies = refutations.active_request_policies(project_dir=project)
+    policies = refutations.request_policy_history(project_dir=project)
     record = requests.fold([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     assert record["state"] == "open"
@@ -1080,7 +1117,7 @@ def test_fold_is_deterministic_under_reorder_for_a_covered_work_accept(
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
-    policies = refutations.active_request_policies(project_dir=project)
+    policies = refutations.request_policy_history(project_dir=project)
     forward = requests.fold([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     backward = requests.fold([accepted, opened], policies=policies)[
