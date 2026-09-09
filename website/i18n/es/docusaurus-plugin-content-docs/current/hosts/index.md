@@ -1,3 +1,7 @@
+---
+description: "Que hosts soporta daimon y hasta donde llega cada uno: captura e inyeccion de briefings en Claude Code, Codex, Gemini CLI y Windsurf."
+---
+
 # Guías de configuración por host
 
 Daimon cierra un ciclo de captura -> inyección alrededor del host de agentes

@@ -1,5 +1,6 @@
 ---
 sidebar_position: 4
+description: "How a briefing item is born, carried, closed, revived or removed, and why daimon's three lifecycle commands never guess a transition on your behalf."
 ---
 
 # The item lifecycle

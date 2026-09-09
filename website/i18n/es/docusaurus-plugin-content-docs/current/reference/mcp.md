@@ -1,3 +1,7 @@
+---
+description: "daimon mcp serve expone la memoria a hosts MCP sobre stdio. Opt-in, solo lectura, cinco herramientas sin superficie de escritura y solo libreria estandar."
+---
+
 # Servidor MCP (solo lectura)
 
 `daimon mcp serve` expone la memoria de daimon como una superficie de

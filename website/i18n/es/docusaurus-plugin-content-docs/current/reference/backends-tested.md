@@ -1,3 +1,7 @@
+---
+description: "Que combinaciones de modelo y backend funcionan de verdad con el serializador, medidas por tasa de degradacion de citas en uso real y no autoreportadas."
+---
+
 # Backends y modelos probados en campo
 
 Qué combinaciones de modelo/backend funcionan de verdad con el serializador

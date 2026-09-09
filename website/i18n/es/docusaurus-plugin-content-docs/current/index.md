@@ -2,6 +2,7 @@
 sidebar_position: 0
 sidebar_label: Resumen
 slug: /
+description: "daimon escribe un checkpoint cuando termina una sesion y lo inyecta como briefing cuando arranca la siguiente, para que el agente retome el estado real en lugar de adivinar."
 ---
 
 # daimon

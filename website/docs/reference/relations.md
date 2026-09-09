@@ -1,3 +1,7 @@
+---
+description: "The typed relation ledger records claims between memory items in shadow mode. Machines may propose a link, and none may confirm it."
+---
+
 # Relations (typed, human-confirmed)
 
 The relation ledger records typed claims between memory items — "this decision

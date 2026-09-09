@@ -1,3 +1,7 @@
+---
+description: "Set up daimon on Claude Code with the plugin or manual hooks: full capture and inject loop, live-validated in daily use, with proactive recall on each prompt."
+---
+
 # Claude Code
 
 Claude Code is the most deeply supported host: the full loop (serialize ->

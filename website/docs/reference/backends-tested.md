@@ -1,3 +1,7 @@
+---
+description: "Which model and backend combinations actually work with daimon's serializer, measured by verbatim downgrade rate in real use rather than self-reported."
+---
+
 # Field-tested backends and models
 
 Which model/backend combinations actually work with daimon's serializer — measured

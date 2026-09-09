@@ -1,5 +1,6 @@
 ---
 sidebar_position: 3
+description: "How to prove a memory file was not edited after it was written. Receipts, signed hashes, and offline verification of every quoted item."
 ---
 
 # Receipts and offline verification

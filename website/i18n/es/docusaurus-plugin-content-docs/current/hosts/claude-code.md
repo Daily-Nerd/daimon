@@ -1,3 +1,7 @@
+---
+description: "Configura daimon en Claude Code con el plugin o con hooks manuales: el loop completo de captura e inyeccion, validado en uso diario, con recall proactivo."
+---
+
 # Claude Code
 
 Claude Code es el host con soporte más profundo: el ciclo completo

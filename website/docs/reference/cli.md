@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: "Every daimon command grouped by task: capture, brief, recall, resolve, forget, team sync, and the audit verbs that check your own store."
 ---
 
 # CLI reference

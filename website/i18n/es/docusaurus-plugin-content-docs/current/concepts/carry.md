@@ -1,5 +1,6 @@
 ---
 sidebar_position: 2
+description: "Como sobreviven los items abiertos entre sesiones, que significa el sufijo carried, y cuando un item arrastrado queda viejo y se marca como no verificado."
 ---
 
 # Arrastre y desactualización

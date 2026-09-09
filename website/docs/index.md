@@ -2,6 +2,7 @@
 sidebar_position: 0
 sidebar_label: Overview
 slug: /
+description: "daimon writes a checkpoint when a session ends and injects a briefing when the next one starts, so your coding agent resumes from real prior state instead of guessing."
 ---
 
 # daimon

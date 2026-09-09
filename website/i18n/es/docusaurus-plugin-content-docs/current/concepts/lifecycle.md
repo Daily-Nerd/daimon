@@ -1,5 +1,6 @@
 ---
 sidebar_position: 4
+description: "Como nace, se arrastra, se cierra, se reabre o se elimina un item del briefing, y por que los tres comandos de ciclo de vida nunca adivinan una transicion por vos."
 ---
 
 # El ciclo de vida de los ítems

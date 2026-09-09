@@ -1,3 +1,7 @@
+---
+description: "El ledger de relaciones registra vinculos tipados entre items en modo sombra. Las maquinas pueden proponer un vinculo y ninguna puede confirmarlo."
+---
+
 # Relaciones (tipadas, confirmadas por humanos)
 
 El ledger de relaciones registra afirmaciones tipadas entre items de memoria —

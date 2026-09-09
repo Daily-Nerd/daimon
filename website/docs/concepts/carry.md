@@ -1,5 +1,6 @@
 ---
 sidebar_position: 2
+description: "How open items survive across sessions in daimon, what the carried suffix means, and when a carried item goes stale and gets flagged as unverified."
 ---
 
 # Carry and staleness

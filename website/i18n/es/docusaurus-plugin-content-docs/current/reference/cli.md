@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: "Todos los comandos de daimon agrupados por tarea: captura, brief, recall, resolve, forget, sincronizacion de equipo y los verbos de auditoria."
 ---
 
 # Referencia CLI

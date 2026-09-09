@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: "Instala daimon y obtene tu primer briefing en cinco pasos, desde uv tool install hasta un checkpoint que la proxima sesion realmente lee."
 ---
 
 # Inicio rápido

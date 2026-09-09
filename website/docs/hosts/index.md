@@ -1,3 +1,7 @@
+---
+description: "Which agent hosts daimon supports and how deep each goes: capture and briefing injection on Claude Code, Codex, Gemini CLI and Windsurf."
+---
+
 # Host setup guides
 
 Daimon closes a capture -> inject loop around whatever agent host you use: a

@@ -1,3 +1,7 @@
+---
+description: "daimon serve abre una vista local de solo lectura de la memoria de un proyecto en tu navegador. Todo renderiza salida existente del motor y nada escribe."
+---
+
 # Visor (solo lectura)
 
 `daimon serve` abre en tu navegador una vista local, de solo lectura, de la

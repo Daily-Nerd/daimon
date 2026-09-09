@@ -1,3 +1,7 @@
+---
+description: "daimon mcp serve exposes memory to MCP hosts over stdio. Opt-in, read-only, five tools and no write surface, standard library only."
+---
+
 # MCP server (read-only)
 
 `daimon mcp serve` exposes daimon's memory as an MCP tool surface over stdio —

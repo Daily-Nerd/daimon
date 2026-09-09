@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://daily-nerd.github.io/daimon/sitemap.xml

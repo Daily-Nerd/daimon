@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: "Cada item muestra si es una cita textual o una inferencia, y una comparacion byte a byte degrada cualquier cita que ya no coincida con el transcript."
 ---
 
 # Clases de confianza
