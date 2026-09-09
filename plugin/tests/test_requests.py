@@ -758,13 +758,39 @@ def test_needs_info_after_a_pending_claim_keeps_the_claim_pending(project):
     assert record["done_evidence"] == "shipped in abc123"
 
 
-def test_a_revise_after_a_pending_claim_keeps_it_pending(project):
-    """The claim answers the ask that was live when it was made; `revise`
-    sharpens the ask itself and is the sender's tool, not a repudiation of
-    what the recipient already reported. The human's own accept/reject that
-    follows is the checkpoint that would reject a claim the sharpened ask
-    makes stale — losing it silently here would hide that the recipient's
-    agent already acted at all."""
+def test_a_revise_of_the_ask_after_a_pending_claim_clears_the_claim(project):
+    """REVISED from `test_a_revise_after_a_pending_claim_keeps_it_pending`
+    (#978 review round 1, F1): the claim answers the ask that was live when
+    it was made. `revise` is the sender opening the record back up, and a
+    claim scoped to an ask the sender has since changed is stale by
+    construction — the reproduction that found this: open "bump the tag",
+    agent claims done "bumped in abc123", sender revises the ask to "delete
+    the tag instead", and the claim rode along onto a completely different
+    ask. A later accept must land `accepted`, not `done` with stale
+    evidence attached to unrelated work. Live delivery already re-nudges the
+    recipient on a revise (it opens a new revision epoch), so nothing here
+    is silently lost — the recipient sees the sharpened ask and can
+    re-answer it."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="bumped in abc123",
+                 project_dir=project)
+    requests.revise(q_id, channel="cli-agent", ask="delete the tag instead",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is False
+    assert record["done_evidence"] == ""
+    assert record["done_by"] is None
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    assert requests.get(q_id, project_dir=project)["state"] == "accepted"
+
+
+def test_a_revise_of_only_why_after_a_pending_claim_also_clears_the_claim(
+        project):
+    """The rule is on the EVENT (`revised`), not on which field it touches —
+    a revise that only softens `why` while the ask itself is untouched still
+    clears a pending claim, the same as a revise that changes the ask."""
     q_id = _open(project)
     requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
                  project_dir=project)
@@ -772,8 +798,10 @@ def test_a_revise_after_a_pending_claim_keeps_it_pending(project):
                     project_dir=project)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
-    assert record["done_pending"] is True
-    assert record["done_evidence"] == "shipped in abc123"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is False
+    assert record["done_evidence"] == ""
+    assert record["done_by"] is None
 
 
 def test_a_suppressed_ask_stays_suppressed_after_a_pending_claim(project):
@@ -1461,6 +1489,33 @@ def test_inject_lines_no_marker_for_a_work_ask(project):
     assert "[info]" not in lines[0]
 
 
+def test_inject_lines_marks_a_pending_completion_claim(project):
+    """#978 review round 1 (F3): live delivery must not nudge a fresh
+    session about an ask this project already claimed done without saying
+    so, or the session redoes work that is already claimed. Through
+    `deliverable` (the same composer `request-inject` reads), not a
+    hand-shaped record."""
+    from daimon_briefing.cli import request as cli_request
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="already answered",
+                 project_dir=project)
+    record = requests.deliverable("S-978", project_dir=project)["rows"][0]
+    lines = cli_request._inject_lines(record)
+    assert "[done claimed]" in lines[0]
+
+
+def test_inject_lines_no_claim_marker_for_an_undecided_ask(project):
+    from daimon_briefing.cli import request as cli_request
+    requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
+    record = requests.deliverable("S-978", project_dir=project)["rows"][0]
+    lines = cli_request._inject_lines(record)
+    assert "[done claimed]" not in lines[0]
+
+
 def test_owed_inject_lines_marks_an_info_ask(project):
     from daimon_briefing.cli import request as cli_request
     q_id = requests.open_request(
@@ -1546,6 +1601,25 @@ def test_cli_agent_done_on_an_open_work_ask_says_it_still_waits_on_a_person(
     assert f"daimon request accept {q_id}" in out
 
 
+def test_cli_agent_done_on_a_foreign_ask_says_it_still_waits_on_a_person(
+        project, recipient, capsys):
+    """#978 review round 1 (F2): the guidance above must fire on the
+    ORDINARY cross-bucket path too, not only the self-addressed one — the
+    ask's `opened` row lives in `project`'s bucket, and the recipient's own
+    `done` row is an orphan in ITS per-bucket fold, so a bucket-local read
+    (`requests.get`) finds nothing here and the guidance never printed
+    before this fix."""
+    from daimon_briefing import cli
+    assert _cli_open(project, recipient) == 0
+    q_id = next(iter(requests.records(project_dir=project)))
+    rc = cli.main(["request", "done", q_id, "--evidence", "shipped in abc123",
+                  "--by", "agent", "--project", OTHER])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "still waits on a person" in out
+    assert f"daimon request accept {q_id}" in out
+
+
 def test_cli_request_inbox_shows_the_pending_claim_line(project, capsys):
     from daimon_briefing import cli
     q_id = requests.open_request(
@@ -1555,7 +1629,7 @@ def test_cli_request_inbox_shows_the_pending_claim_line(project, capsys):
                  project_dir=project)
     assert cli.main(["request", "inbox", "--project", project]) == 0
     out = capsys.readouterr().out
-    assert "Done (claimed, awaiting your accept): shipped in abc123" in out
+    assert "Done (claimed, awaiting a human accept): shipped in abc123" in out
 
 
 def test_cli_request_list_shows_the_pending_claim_line(project, capsys):
@@ -1567,7 +1641,7 @@ def test_cli_request_list_shows_the_pending_claim_line(project, capsys):
                  project_dir=project)
     assert cli.main(["request", "list", "--project", project]) == 0
     out = capsys.readouterr().out
-    assert "Done (claimed, awaiting your accept): shipped in abc123" in out
+    assert "Done (claimed, awaiting a human accept): shipped in abc123" in out
 
 
 def test_cli_request_list_json_carries_done_pending(project, capsys):

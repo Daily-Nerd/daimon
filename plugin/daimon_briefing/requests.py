@@ -600,6 +600,23 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             current["state"] = "open"
             current["history_count"] += 1
             current["updated_at"] = row.get("ts") or current["updated_at"]
+            # #978 review round 1 (F1): a `revised` row on a record with a
+            # pending completion claim CLEARS the claim, on every revise,
+            # not only one that touches `ask`. The event is the sender
+            # opening the record back up, and the recipient's claim was
+            # scoped to the ask that was live when it was made — a sender
+            # revising the ask (a `bump the tag` claim under a since-revised
+            # `delete the tag instead` ask), or only softening `why` while
+            # the same claim rides along regardless, is the same act from
+            # this side of the fold: the ask the claim answered no longer
+            # stands as it was. Live delivery already re-nudges the
+            # recipient on a revise (it opens a new revision epoch, so
+            # `delivered`/`surfaced` restart), so the recipient is told
+            # again and can re-answer if the claim still holds.
+            current["done_pending"] = False
+            current["done_claimed"] = False
+            current["done_evidence"] = ""
+            current["done_by"] = None
             continue
         if event == "done" and not str(row.get("evidence") or "").strip():
             # D8: `done` is the one either-channel state move, and its price

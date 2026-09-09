@@ -146,7 +146,7 @@ def _request_lines(record: dict, project_dir=None) -> list:
     if record.get("done_pending"):
         # #978: the state glyph above stays the open one — a claim is not a
         # verdict — so this line is the only place the claim itself shows.
-        lines.append("  Done (claimed, awaiting your accept): "
+        lines.append("  Done (claimed, awaiting a human accept): "
                      f"{record.get('done_evidence', '')}")
     elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
@@ -184,7 +184,7 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
     if record.get("done_pending"):
         # #978: the state glyph above stays the open one — a claim is not a
         # verdict — so this line is the only place the claim itself shows.
-        lines.append("  Done (claimed, awaiting your accept): "
+        lines.append("  Done (claimed, awaiting a human accept): "
                      f"{record.get('done_evidence', '')}")
     elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
@@ -221,7 +221,12 @@ def _inject_lines(record: dict) -> list[str]:
              # would be noise on a surface built to be thin.
              + (" [info]" if record.get("kind") == "info" else "")
              + (" [blocking: the sender is waiting]"
-                if record.get("blocking") else "")]
+                if record.get("blocking") else "")
+             # #978 review round 1 (F3): without this, a fresh session gets
+             # nudged mid-turn about an ask this project already answered
+             # and redoes the work — same placement rule as the two markers
+             # above, read from the folded record only.
+             + ("  [done claimed]" if record.get("done_pending") else "")]
     lines.append(f"  Ask: {record.get('ask', '')}")
     if record.get("why"):
         lines.append(f"  Why: {record['why']}")
@@ -479,7 +484,14 @@ def _cmd_request_done(args) -> int:
         return 1
     _cli._note_usage("request:done")
     _report(args.request_id, project, "done")
-    record = requests.get(args.request_id, project_dir=project)
+    # #978 review round 1 (F2): `requests.get()` is the bucket-LOCAL fold —
+    # on the ordinary cross-bucket path (this project answering a FOREIGN
+    # ask), the `opened` row lives in the sender's bucket and this project's
+    # own `done` row is an orphan in its own per-bucket fold, so `get()`
+    # returns None here and this guidance never printed. `recipient_join` is
+    # the same composer `daimon request inbox` reads through, and finds the
+    # record regardless of which bucket founded it.
+    record = requests.recipient_join(project_dir=project).get(args.request_id)
     if record is not None and record.get("done_pending"):
         # #978: the record card above already renders the claim; this line
         # is the plain-language answer to the question an agent just asked

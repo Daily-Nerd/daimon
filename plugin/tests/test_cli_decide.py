@@ -235,13 +235,40 @@ def test_decide_still_lists_a_work_request_after_an_agent_done_claim(
 
 def test_decide_card_never_shows_the_claim_line_for_a_plain_open_request(
         project, capsys):
-    requests.open_request(
+    q_id = requests.open_request(
         to=store.project_slug(project), ask="bump before the docs change",
         why="the tag is referenced", channel="cli-agent", project_dir=project)
 
     assert cli.main(["decide"]) == 0
     out = capsys.readouterr().out
+    # Positive anchor (#978 review round 1, F5): empty output would also
+    # satisfy "no claim line", so pin that the record is actually rendered.
+    assert q_id in out
     assert "completion claimed" not in out
+
+
+def test_decide_card_claim_line_is_state_aware_on_needs_info(
+        project, capsys):
+    """#978 review round 1 (F4): a claim under a needs-info predates the
+    person asking for more, so the card says that instead of offering the
+    same accept/reject framing a plain open claim gets — and, since #978's
+    own F1 fix, a sender revise is what actually clears the claim from
+    here, not a decision on this surface."""
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent",
+                 evidence="bumped in commit abc123", project_dir=project)
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=project)
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+
+    assert q_id in out
+    assert "completion claimed by the agent before you asked for more" in out
+    assert "a sender revise clears the claim" in out
+    assert "accept lands it as done, reject sends it back" not in out
 
 
 def test_decide_cards_claim_marker_guard_is_load_bearing_not_dead_code():
