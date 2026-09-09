@@ -180,7 +180,7 @@ proyecto.
 | --- | --- |
 | `daimon request open --to <dir> --ask "…" --why "…"` | Pide algo a otro proyecto. `--to` toma el **directorio** del proyecto destinatario, no su slug (un slug real empieza con `-`, que argparse lee como una opción — `--to=<slug>` también funciona). Se valida contra `daimon projects`, con sugerencias por parecido ante un typo; `--anyway` registra el pedido igual contra un proyecto que nunca serializó en esta máquina. `--blocking` y `--to-human` son flags del registro. `--kind work\|info` fija el requisito de aprobación: `work` (el default) espera una decisión de una persona, `info` se puede responder con los propios artefactos del destinatario y no debe un accept. Solo un canal humano puede abrirla como `info`. El resto, cualquier canal. |
 | `daimon request revise <id> [--ask] [--why] [--evidence]` | Responde un needs-info, o afina una solicitud abierta. Cualquier canal; tope de 3 revisiones por registro — superado el tope, se abre una nueva solicitud con `--supersedes <id>` para mantener visible el linaje. |
-| `daimon request accept\|reject\|needs-info <id> [--note]` | Registra una decisión. Solo humano — requiere una terminal interactiva. `reject` es definitivo para ese registro; el remitente reemplaza con una nueva solicitud en vez de volver a pedir. |
+| `daimon request accept\|reject\|needs-info <id> [--note]` | Registra una decisión. Solo humano — requiere una terminal interactiva. Un agente puede correr `accept --by agent` directamente para una solicitud `info` dirigida que sigue abierta o en needs-info, y el registro lo indica; una solicitud `work` sigue necesitando una persona. `reject` es definitivo para ese registro; el remitente reemplaza con una nueva solicitud en vez de volver a pedir. |
 | `daimon request suppress <id> [--note]` | Saca una solicitud del panel de briefing propio del destinatario. Solo humano; el registro sigue en `list`/`inbox`, y cualquier decisión posterior lo revierte. |
 | `daimon request done <id> --evidence "<cita>"` | Reporta la solicitud como satisfecha. Cualquier canal; el reclamo de un agente se renderiza como `done (claimed, unverified)` hasta que el próximo fin de sesión del destinatario verifica byte a byte la cita de evidencia contra su transcripción. Un `done` humano se renderiza sin más. En una solicitud `work` que nadie aceptó todavía, el `done` de un agente registra el reclamo y deja la solicitud en la cola de decisión, a la espera de `accept` o `reject`, en lugar de cerrarla. |
 | `daimon request list` | Las solicitudes enviadas por este proyecto, primero las que siguen sin decidir. `--json` para máquinas. |
@@ -199,10 +199,13 @@ remitente después de 2 sesiones del remitente. La atención decae — los
 registros nunca se eliminan, y ambos siguen totalmente visibles en
 `list`/`inbox`.
 
-Una solicitud abierta con `--kind info` lleva una marca `[info]` en los
-paneles del destinatario de arriba, en la tarjeta de `daimon decide`, y en
-la línea de entrega en vivo que la inyecta a mitad de sesión. Una solicitud
-`work`, el default, no lleva marca en ninguna de esas superficies.
+Una solicitud abierta con `--kind info` no debe un accept, así que nunca
+aparece en `daimon decide` ni en el panel "Requests waiting on you" del
+destinatario de arriba: no hay nada ahí para que una persona decida.
+Sigue llevando una marca `[info]` en el panel "Requests you accepted and
+still owe" del destinatario y en la línea de entrega en vivo que la
+inyecta a mitad de sesión. Una solicitud `work`, el default, no lleva
+marca en ninguna de las dos.
 
 `daimon status` agrega un resumen de una línea, `requests: N open sent, M
 awaiting you`, silencioso cuando los dos son cero.

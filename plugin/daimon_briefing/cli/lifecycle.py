@@ -896,29 +896,29 @@ def _decide_cards(rows: list) -> list:
         tag = row["kind"] + (f" · {age}" if age else "")
         blocking = " [blocking: the sender says it is waiting]" if row.get(
             "blocking") else ""
-        # #961 slice 2: `row["approval"]` is the request lane's
-        # approval-requirement kind (info/work) from the folded record — a
-        # DIFFERENT axis from `row["kind"]` above, which is the queue LANE
-        # this card's tag already names. THE LANDMINE this file's own
-        # queue-row builder warns about: overloading `kind` here would make
-        # a request-lane row that happens to be `info` say `[info]` in the
-        # tag instead of `[request]`, silently hiding which lane it is.
-        # Marked only for `info`, same reasoning as the panels: `work` is
-        # the default and the legacy reading.
-        info_marker = (" [info]" if row.get("kind") == "request"
-                       and row.get("approval") == "info" else "")
+        # #961 slice 2 gave the request lane's approval-requirement kind
+        # (info/work) its own queue-row field, `approval`, split from
+        # `row["kind"]` (the queue LANE this card's tag already names) for
+        # exactly the reason `pending.py`'s own queue-row builder still
+        # documents: overloading `kind` would make a request-lane row that
+        # happens to be `info` say `[info]` in the tag instead of
+        # `[request]`, silently hiding which lane it is. Slice 3 excluded
+        # `kind == "info"` from `pending._request_rows` before it ever
+        # built a row, which made `approval` unreadable as an `info` value
+        # through the shipped pipeline (review round 1 removed the marker
+        # this card once rendered from it); review round 2 removed the
+        # field itself, since nothing anywhere read it any more.
         # Two spaces after the id: `render._LEDGER_HEADER_RE` reads that shape
         # to give the id its own span, because it is what a human copies.
-        card = [f"[{tag}] {row['id']}  {row['headline']}{info_marker}"
-               f"{blocking}"]
+        card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
         if row.get("context"):
             card.append(f"  {row['context']}")
         # #978: `row["claimed"]` is the request lane's `done_pending`, from
-        # the FOLDED record — same guard shape as `info_marker` above (a
-        # non-request lane never carries this), and a separate CARD LINE
-        # rather than a header addition, so `render._ledger_header_spans`
-        # keeps isolating the id the way it already does around the info
-        # marker.
+        # the FOLDED record — same guard shape the LANE split above already
+        # established (a non-request lane never carries this), and a
+        # separate CARD LINE rather than a header addition, so
+        # `render._ledger_header_spans` keeps isolating the id the way it
+        # already does around the `blocking` suffix.
         if row.get("kind") == "request" and row.get("claimed"):
             # #978 review round 1 (F4): a claim under a needs-info reads
             # differently from one under a plain open ask — the person

@@ -100,8 +100,11 @@ def test_an_amendment_id_gets_the_ledger_header_treatment(project):
     assert spans[1] == "a-0f1e2d3c4b5a"
 
 
-def test_decide_card_shows_the_info_marker_for_an_info_request(
-        project, capsys):
+def test_decide_never_lists_an_info_request(project, capsys):
+    """#961 slice 3 supersedes slice 2's own expectation here: an `info` ask
+    owes no accept, so it is excluded from `pending.queue`'s request lane
+    entirely (see test_pending.py) and never reaches this command's output
+    at all — not even with a marker."""
     requests.open_request(
         to=store.project_slug(project), ask="an info-only ask",
         why="the recipient can read this from its own artifacts",
@@ -109,66 +112,32 @@ def test_decide_card_shows_the_info_marker_for_an_info_request(
 
     assert cli.main(["decide"]) == 0
     out = capsys.readouterr().out
-    assert "[info]" in out
+    assert "an info-only ask" not in out
+    assert "nothing waiting on you" in out.lower()
 
 
-def test_decide_card_shows_no_marker_for_a_work_request(project, capsys):
-    requests.open_request(
-        to=store.project_slug(project), ask="bump before the docs change",
-        why="the tag is referenced", channel="cli-agent", project_dir=project)
-
-    assert cli.main(["decide"]) == 0
-    out = capsys.readouterr().out
-    assert "[info]" not in out
-
-
-def test_decide_card_lane_tag_is_never_overloaded_by_the_approval_kind(
-        project, capsys):
-    """THE LANDMINE: `pending._row`'s `kind` key is the queue LANE, never
-    the approval requirement — a request-lane row that happens to be `info`
-    must still say `[request` in the tag, not `[info`."""
-    requests.open_request(
-        to=store.project_slug(project), ask="an info-only ask",
-        why="why", channel="cli-tty", kind="info", project_dir=project)
-
-    assert cli.main(["decide"]) == 0
-    out = capsys.readouterr().out
-    assert "[request" in out
-
-
-def test_decide_card_a_ruling_row_never_shows_an_info_marker(project, capsys):
-    """A non-request lane never carries an approval kind at all, so it must
-    never render the marker even incidentally."""
-    _ruling(project)
-
-    assert cli.main(["decide"]) == 0
-    out = capsys.readouterr().out
-    assert "[info]" not in out
-
-
-def test_decide_cards_lane_guard_is_load_bearing_not_dead_code():
-    """No REAL composer ever produces a non-request row with `approval`
-    set: `pending._request_rows` is the only caller that passes anything but
-    the default `None`. That makes the `row.get("kind") == "request"` half
-    of `_decide_cards`'s guard unreachable through the shipped pipeline, so a
-    test that only ever drives real rows through `pending.queue` can pass
-    whether or not that half of the guard exists. This test hands
-    `_decide_cards` a synthetic row directly, shaped the way a future bug
-    elsewhere in `pending.py` could actually produce one (a non-request lane
-    that leaks an `approval` value it was never supposed to carry), and
-    checks the guard catches it anyway."""
-    from daimon_briefing.cli import lifecycle
-    row = {
-        "kind": "ruling", "id": "r-0123456789ab", "slug": "-p-x",
-        "headline": "never bump to 1.0 without a human call",
-        "context": "", "waiting_since": "", "blocking": False,
-        "commands": [("ratify", "daimon ruling ratify r-0123456789ab")],
-        "approval": "info",
-    }
-
-    card = lifecycle._decide_cards([row])[0]
-
-    assert "[info]" not in card[0]
+# ---- #961 slice 3 review item 5 --------------------------------------------
+#
+# The decide card's own `[info]` marker is REMOVED, not merely unreachable:
+# `pending._request_rows` excludes `kind == "info"` before it ever builds a
+# row (slice 3's own exclusion), so `_decide_cards` computing a marker from
+# `row.get("approval") == "info"` was dead code — the four tests slice 2 and
+# the first pass of slice 3 built for it are removed with it, rather than
+# repointed at hand-built dicts to keep exercising a branch nothing upstream
+# can ever produce again (review's own naming: that repointing is the shape
+# of scar 0074). `test_decide_never_lists_an_info_request` above already
+# covers the exclusion itself; `test_decide_card_never_reads_the_approval_
+# off_a_raw_row` below is kept because its real subject — the decide card
+# reads `kind` from the FOLD, never a raw row — still holds regardless of
+# the marker.
+#
+# Review round 2 removed the `approval` FIELD too (`pending._row` and
+# `pending.py`'s own queue-row builder): once round 1 deleted the one reader
+# (this card's own marker), nothing anywhere read it again — `daimon decide`
+# has no `--json`. `test_decide_request_card_tag_reads_request_not_the_
+# approval_kind` below re-pins the one thing the four removed tests used to
+# cover and nothing did any more: the request lane's own TAG, `[request`,
+# never overloaded by the approval axis, through the real pipeline.
 
 
 def test_decide_card_never_reads_the_approval_off_a_raw_row(
@@ -189,26 +158,23 @@ def test_decide_card_never_reads_the_approval_off_a_raw_row(
     assert "[info]" not in out
 
 
-def test_decide_card_with_the_info_marker_still_gets_ledger_header_spans(
-        project):
-    """The marker is inserted between the headline and the blocking suffix,
-    so the two-space-after-id contract `render._ledger_header_spans` relies
-    on must still hold. Built through the REAL pipeline (`pending.queue` ->
-    `lifecycle._decide_cards`), not a hand-typed header string: a hand-typed
-    string proves the regex can parse a shape like this, never that
-    `_decide_cards` actually produces that shape."""
-    from daimon_briefing.cli import lifecycle
+def test_decide_request_card_tag_reads_request_not_the_approval_kind(
+        project, capsys):
+    """#961 slice 3 review round 2 item 5: `pending._row`'s own `approval`
+    field is gone (nothing read it once the marker above was removed), but
+    the LANDMINE it once guarded against is still real — a request-lane
+    card's tag must read `[request`, never overloaded by anything about the
+    kind/approval axis. Driven through the real pipeline (`pending.queue`
+    -> `lifecycle._decide_cards`), with a positive anchor on the id so an
+    empty or wrong-shaped card cannot pass by accident."""
     q_id = requests.open_request(
-        to=store.project_slug(project), ask="an info-only ask",
-        why="why", channel="cli-tty", kind="info", project_dir=project)
-    rows = pending.queue(project_dir=project)["rows"]
-    card = lifecycle._decide_cards(rows)[0]
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
 
-    spans = render._ledger_header_spans(card[0])
-
-    assert spans is not None
-    assert spans[1] == q_id
-    assert "[info]" in card[0]
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+    assert q_id in out
+    assert "[request" in out
 
 
 # ---- #978: a pending completion claim must not clear the queue ------------

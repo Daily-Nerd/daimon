@@ -53,7 +53,7 @@ _KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2}
 
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
-         commands, context="", blocking=False, approval=None,
+         commands, context="", blocking=False,
          claimed=False, request_state=None) -> dict:
     return {
         "kind": kind,
@@ -67,19 +67,25 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         "waiting_since": waiting_since,
         "blocking": blocking,
         "commands": commands,
-        # #961 slice 2: the request lane's approval-requirement kind
-        # (info/work), from the FOLDED record — a DIFFERENT axis from
-        # `kind` above, which is the queue LANE (request/amendment/ruling/
-        # refutation). None for every lane but `request`, which never
-        # assigns one.
-        "approval": approval,
         # #978: whether the request lane's record carries an agent's
         # completion claim the record has not yet settled (`done_pending`
         # on the FOLDED record) — False for every lane but `request`, which
-        # never assigns it. A distinct field from `approval` for the exact
-        # reason `approval` is distinct from the queue-lane `kind` above:
-        # THE LANDMINE `_decide_cards`'s own comment warns about is real for
-        # any field that overloads a name two axes could each want.
+        # never assigns it. #961 slice 2 first gave this its own field for
+        # the exact reason its own comment (now removed with the field
+        # below) warned about: `_decide_cards`'s tag already owns `kind`
+        # above (the queue LANE), so a second axis needs a name of its own
+        # rather than overloading that one.
+        #
+        # #961 slice 2 also added `approval`, the request lane's
+        # approval-requirement kind (info/work) from the folded record, on
+        # the same reasoning. Slice 3 excluded `kind == "info"` from
+        # `_request_rows` below before it ever builds a row, which made
+        # `approval` read "work" on every real request-lane row and
+        # nothing ever read it again outside this function (review round 1
+        # already deleted the one reader, `_decide_cards`'s marker). Review
+        # round 2 removed the field itself, rather than leave a value
+        # nothing consumes: a field with no reader is a field a future
+        # editor has to reason about anyway, for no return.
         "claimed": claimed,
         # #978 review round 1 (F4): the request lane's own `state`
         # (open/needs-info), from the FOLDED record, so a claim line can
@@ -133,6 +139,15 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
     for rid, record in records.items():
         if record.get("state") not in requests._SENDER_MOVABLE:
             continue
+        # #961 slice 3: an `info` ask owes no accept and is not a decision a
+        # human owes — the contract's own words. Excluded from THIS lane
+        # only, before the render below ever builds a row for it: `request
+        # inbox`, live delivery, and `status_counts` still carry it (this
+        # queue is the one surface that narrows). Not counted toward
+        # `suppressed` — that count is a human's own "not now", a different
+        # fact than a `kind` this record was born with.
+        if record.get("kind") == "info":
+            continue
         if record.get("suppressed"):
             # `suppress` is human-only, so a suppressed ask is already the
             # owner's own "not now". Counted, never listed.
@@ -145,10 +160,8 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
                      if record.get("from_label") else ""),
             waiting_since=record.get("created_at") or "",
             blocking=bool(record.get("blocking")),
-            # #961 slice 2 / #978: both read from THIS folded record only —
-            # `record` is already `requests.recipient_join`'s output, never
-            # a raw row.
-            approval=record.get("kind"),
+            # #978: reads from THIS folded record only — `record` is
+            # already `requests.recipient_join`'s output, never a raw row.
             claimed=bool(record.get("done_pending")),
             request_state=record.get("state"),
             commands=[
@@ -322,6 +335,14 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
             if not to or to == slug:
                 continue  # this project's own inbox is `queue`'s, not ours
             if record.get("state") not in requests._SENDER_MOVABLE:
+                continue
+            # #961 slice 3 review item 2: the same exclusion `queue`'s own
+            # request lane applies (`_request_rows` above) — an `info` ask
+            # owes no accept, so counting it here would make this count
+            # disagree with what `pending.queue` actually returns when run
+            # FROM that project, sending a person to a bucket with nothing
+            # waiting.
+            if record.get("kind") == "info":
                 continue
             if record.get("suppressed"):
                 continue

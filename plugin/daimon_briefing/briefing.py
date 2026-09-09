@@ -969,11 +969,26 @@ def request_panel_lines(project_dir=None) -> list[str]:
     `worldcheck_project` — the caller (render.render_brief /
     cli._render_briefing_body) is the ONE place that decides whether this
     request is same-project (D2's CLI-only gate); this function never
-    inspects route or surface on its own."""
+    inspects route or surface on its own.
+
+    #961 slice 3: sourced from `requests.decision_renderable`, not
+    `inbox_renderable` — this panel's own header calls it "Requests waiting
+    on you", and a `kind == "info"` ask owes no accept, so it is not one of
+    those any more. `decision_renderable` does the exclusion before its own
+    cap, so a `work` ask never goes missing behind a newer `info` one; see
+    its docstring for why. `inbox_renderable` itself has no production
+    caller left as of review round 1: `request inbox` reads
+    `requests.inbox_listing`, and the CLI's own `surfaced`-stamping loop
+    reads `decision_renderable` too, for the identical reason this panel
+    does (stamping `surfaced` for a card that was never actually shown
+    would give `is_stale` a phantom anchor). `inbox_renderable` is kept as
+    the unfiltered, every-kind composer several tests still exercise
+    directly, and for a future consumer that wants every kind capped
+    without the decision-only narrowing."""
     if project_dir is None:
         return []
     try:
-        entry = requests.inbox_renderable(project_dir=project_dir)
+        entry = requests.decision_renderable(project_dir=project_dir)
     except Exception:
         return []
     rows = entry.get("rows") or []
@@ -981,19 +996,18 @@ def request_panel_lines(project_dir=None) -> list[str]:
         return []
     lines = [_REQUEST_PANEL_HEADER]
     for row in rows:
-        # #961 slice 2: marked only for `info` — `work` is the default and
-        # the legacy reading, so marking it too would be noise on every
-        # line. Read from the folded row only (THE ONE RULE): `row` here is
-        # already a `requests.inbox_renderable` record, never a raw event.
-        kind_marker = "  [info]" if row.get("kind") == "info" else ""
+        # #961 slice 3: no `[info]` marker here any more — `decision_
+        # renderable` already excludes `kind == "info"`, so every row this
+        # loop sees is `work` by construction; the marker lives on
+        # `owed_panel_lines` and the live-delivery lines below, which still
+        # carry `info` rows and still need it.
         marker = "  [blocking]" if row.get("blocking") else ""
-        # #978: same posture as the two markers above — read from the
-        # folded row only, placed after the truncated ask so the id stays
-        # in its own span.
+        # #978: read from the folded row only, placed after the truncated
+        # ask so the id stays in its own span.
         claim_marker = "  [done claimed]" if row.get("done_pending") else ""
         lines.append(f"→ {row['request_id']}  "
                      f"{_truncate_request_ask(row.get('ask', ''))}"
-                     f"{kind_marker}{marker}{claim_marker}")
+                     f"{marker}{claim_marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
     if overflow:
@@ -1083,7 +1097,16 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
     for row in rows:
         state = str(row.get("state") or "")
         mark = _VERDICT_MARKS.get(state, "?")
-        lines.append(f"{mark} {state}  {row['request_id']}  "
+        # #961 slice 3: an agent-landed accept reads distinctly from a human
+        # one on the surface that reports the OUTCOME of an ask this
+        # project sent — unlike the `kind` marker slice 2 deliberately left
+        # off this panel (the sender already chose the kind), WHO accepted
+        # is new information the sender has not seen yet. Read from the
+        # folded row's own `accepted_by`, never derived here.
+        state_label = ("accepted (by agent)"
+                       if state == "accepted" and row.get("accepted_by") == "agent"
+                       else state)
+        lines.append(f"{mark} {state_label}  {row['request_id']}  "
                      f"{_truncate_request_ask(row.get('ask', ''))}")
         lines.append(f"  To: {row.get('to') or '?'}")
         note = str(row.get("note") or "").strip()

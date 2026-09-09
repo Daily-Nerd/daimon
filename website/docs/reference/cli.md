@@ -178,7 +178,7 @@ nobody ever writes into another project's ledger.
 | --- | --- |
 | `daimon request open --to <dir> --ask "…" --why "…"` | Ask another project for something. `--to` takes the recipient's project **directory**, not its slug (a real slug starts with `-`, which argparse reads as an option — `--to=<slug>` also works). Validated against `daimon projects`, with near-match suggestions on a typo; `--anyway` records the ask against a project that has never serialized on this machine. `--blocking` and `--to-human` are flags on the record. `--kind work\|info` sets the approval requirement: `work` (the default) waits on a person, `info` is answerable from the recipient's own artifacts and owes no accept. Only a human channel may open one as `info`. Either channel otherwise. |
 | `daimon request revise <id> [--ask] [--why] [--evidence]` | Answer a needs-info, or sharpen an open ask. Either channel; capped at 3 revisions per record lifetime — past the cap, open a new request with `--supersedes <id>` to keep the lineage visible. |
-| `daimon request accept\|reject\|needs-info <id> [--note]` | Land a decision. Human-only — requires an interactive terminal. `reject` is final for that record; the sender supersedes with a new request rather than asking again. |
+| `daimon request accept\|reject\|needs-info <id> [--note]` | Land a decision. Human-only — requires an interactive terminal. An agent may run `accept --by agent` directly for an addressed `info` ask still open or needs-info, and the record says so; a `work` ask still needs a person. `reject` is final for that record; the sender supersedes with a new request rather than asking again. |
 | `daimon request suppress <id> [--note]` | Drop a request out of the recipient's own briefing panel. Human-only; the record stays in `list`/`inbox`, and any later decision reverses it. |
 | `daimon request done <id> --evidence "<quote>"` | Report the ask as satisfied. Either channel; an agent's claim renders `done (claimed, unverified)` until the recipient's next session-end byte-checks the evidence quote against its transcript. A human `done` renders plainly. On a `work` request no person has accepted yet, an agent's `done` records the claim and leaves the request in the decision queue, awaiting `accept` or `reject`, instead of closing it. |
 | `daimon request list` | This project's own sent requests, undecided first. `--json` for machines. |
@@ -195,10 +195,12 @@ sessions pass with no decision; a decided one leaves the sender's panel
 after 2 sender sessions. Attention decays — records never delete, and both
 stay fully visible in `list`/`inbox`.
 
-A request opened with `--kind info` carries an `[info]` marker on the
-recipient's panels above, on the `daimon decide` card, and on the
-live-delivery line that injects it mid session. A `work` request, the
-default, carries no marker on any of those surfaces.
+A request opened with `--kind info` owes no accept, so it never appears in
+`daimon decide` or the recipient's "Requests waiting on you" panel above —
+there is nothing there for a person to decide. It still carries an `[info]`
+marker on the recipient's "Requests you accepted and still owe" panel and
+on the live-delivery line that injects it mid session. A `work` request,
+the default, carries no marker on either.
 
 `daimon status` adds a one-line summary, `requests: N open sent, M
 awaiting you`, silent when both are zero.

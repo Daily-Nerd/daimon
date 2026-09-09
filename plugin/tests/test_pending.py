@@ -136,53 +136,53 @@ def test_a_decided_request_is_not_owed(project):
     assert pending.queue(project_dir=project)["rows"] == []
 
 
-def test_a_request_row_carries_its_approval_kind_from_the_fold(project):
-    """#961 slice 2: `approval` on the queue row comes from the FOLDED
-    record's `kind` — pending.py's own `kind` key on this same row is the
-    queue LANE (request/amendment/ruling/refutation), a different axis
-    entirely, and must stay untouched by this."""
-    q_id = requests.open_request(
+def test_an_info_request_never_enters_the_decide_queue(project):
+    """#961 slice 3 supersedes slice 2's own expectation here: an `info` ask
+    owes no accept and is not a decision a human owes, so it is excluded
+    from the request lane entirely — this queue is the DECISION surface,
+    and an `info` ask reaches the agent through `request inbox` and live
+    delivery instead (both untouched by this test)."""
+    requests.open_request(
         to=store.project_slug(project), ask="an info-only ask",
         why="the recipient can read this from its own artifacts",
         channel="cli-tty", kind="info", project_dir=project)
 
-    row = pending.queue(project_dir=project)["rows"][0]
-
-    assert row["id"] == q_id
-    assert row["kind"] == "request"      # the LANE, untouched by this
-    assert row["approval"] == "info"     # the approval requirement
+    assert pending.queue(project_dir=project)["rows"] == []
 
 
-def test_a_work_request_row_carries_approval_work(project):
+def test_an_info_request_alongside_a_work_request_only_the_work_one_shows(
+        project):
+    """The exclusion is per-row, not all-or-nothing: a `work` ask from the
+    same bucket still owes a decision even when an `info` ask sits beside
+    it."""
+    requests.open_request(
+        to=store.project_slug(project), ask="an info-only ask",
+        why="the recipient can read this from its own artifacts",
+        channel="cli-tty", kind="info", project_dir=project)
     q_id = requests.open_request(
         to=store.project_slug(project), ask="bump before the docs change",
-        why="the tag is referenced", channel="cli-agent", project_dir=project)
-
-    row = pending.queue(project_dir=project)["rows"][0]
-
-    assert row["id"] == q_id
-    assert row["approval"] == "work"
-
-
-def test_a_non_request_row_carries_no_approval(project):
-    """The ruling/refutation/amendment lanes never assign an approval kind:
-    `approval` stays absent for them, and the render surface reads that as
-    no marker."""
-    refutations.assert_ruling(
-        subject="release", verdict="never bump to 1.0 without a human call",
-        scope="repo", evidence=["issue:766"], channel="cli-agent",
+        why="the tag is referenced", channel="cli-agent",
         project_dir=project)
 
-    row = pending.queue(project_dir=project)["rows"][0]
+    rows = pending.queue(project_dir=project)["rows"]
 
-    assert row["kind"] == "ruling"
-    assert row.get("approval") is None
+    assert [row["id"] for row in rows] == [q_id]
 
 
-def test_a_legacy_request_row_carries_approval_work(project):
+# ---- #961 slice 3 review round 2 item 5 ------------------------------------
+#
+# `pending._row`'s `approval` field (added #961 slice 2) is REMOVED: slice 3
+# excluded `kind == "info"` from `_request_rows` before it ever builds a row,
+# review round 1 removed the one thing that read `approval` (the decide
+# card's own marker), and nothing else in the shipped pipeline ever read it —
+# `daimon decide` has no `--json`. The tests below that pinned its value are
+# removed with it, rather than kept passing against a field nobody consumes.
+
+
+def test_a_legacy_request_row_still_appears_in_the_queue(project):
     """A record minted before #961 has no `kind` field at all; the fold
     already defaults it to `work` (#961 slice 1), and this queue row must
-    carry that default, never blank or a crash."""
+    still render it, never crash or drop it silently."""
     q_id = requests.open_request(
         to=store.project_slug(project), ask="an info-only ask",
         why="why", channel="cli-tty", kind="info", project_dir=project)
@@ -197,23 +197,6 @@ def test_a_legacy_request_row_carries_approval_work(project):
     row = pending.queue(project_dir=project)["rows"][0]
 
     assert row["id"] == q_id
-    assert row["approval"] == "work"
-
-
-def test_a_request_row_never_reads_approval_off_a_raw_row(project):
-    """THE FOLD RULE THROUGH THE SURFACE: a raw `opened` row appended on a
-    non-human channel with `kind="info"` folds to `work`, and the queue row
-    must carry exactly that, never the forged raw value. Appended directly
-    because `open_request` refuses this combination at the write
-    boundary."""
-    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
-    row.update({"to": store.project_slug(project), "ask": "an ask",
-               "why": "why", "kind": "info"})
-    assert requests.append(row, project_dir=project)
-
-    result_row = pending.queue(project_dir=project)["rows"][0]
-
-    assert result_row["approval"] == "work"
 
 
 def test_a_foreign_addressed_request_is_owed_but_our_own_outgoing_ask_is_not(
@@ -404,6 +387,40 @@ def test_a_decided_foreign_request_is_not_counted(project):
     counts = pending.foreign_counts(project_dir="/p/C")
 
     assert counts.get(b, 0) == 0
+
+
+def test_an_info_foreign_request_is_not_counted(project):
+    """#961 slice 3 review item 2: an `info` ask owes no accept and never
+    enters `queue`'s own request lane — the foreign count must agree, or
+    `daimon decide`'s footer sends a person to a project with nothing
+    actually waiting."""
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask="an info-only ask", why="the recipient can read this",
+        channel="cli-tty", kind="info", project_dir="/p/A")
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts.get(b, 0) == 0
+
+
+def test_foreign_counts_matches_the_foreign_projects_own_queue_length(
+        project):
+    """The count `daimon decide`'s footer names for project B must equal
+    what `pending.queue` actually returns when run FROM B: one `info` ask
+    (excluded) and one `work` ask (counted) land on exactly 1, not 2."""
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask="an info-only ask", why="the recipient can read this",
+        channel="cli-tty", kind="info", project_dir="/p/A")
+    requests.open_request(
+        to=b, ask="please review the PR", why="ready to merge",
+        channel="cli-agent", project_dir="/p/A")
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+    own_queue_len = len(pending.queue(project_dir="/p/B")["rows"])
+
+    assert counts.get(b, 0) == own_queue_len == 1
 
 
 def test_a_rejected_foreign_request_is_not_counted(project):
