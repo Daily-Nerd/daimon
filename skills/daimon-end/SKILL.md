@@ -80,9 +80,12 @@ a `prev` pointer. So it does not need to be perfect to be useful.
    }
    ```
 
-   `session_id` above is a placeholder only — step 5's `--session` flag is what
-   actually names this session, and it overrides whatever goes here. Leave it
-   as shown; do not spend effort inventing a better one.
+   `session_id` above is a placeholder only. Step 5's `--session` flag, when
+   your host can supply one, replaces it with this session's real id; when it
+   cannot, the CLI itself replaces the placeholder with a fresh generated id
+   rather than ever writing the literal text above. Leave it exactly as shown
+   — do not spend effort inventing a better one, and never invent a
+   `session_id` here as a substitute for `--session`.
 
    Every item needs `text` + `trust`. `external_state: true` marks items whose
    state may have changed *outside* the AI session (a PR you'll merge, a deploy) —
@@ -99,21 +102,28 @@ a `prev` pointer. So it does not need to be perfect to be useful.
 
 5. **Write it** via the CLI (reads JSON on stdin, validates the schema, routes to
    this project + global + a per-session file, atomically, with rotation). Write
-   the JSON to a temp file and pipe it, passing THIS session's real id with
-   `--session` (Claude Code exposes it as the `CLAUDE_CODE_SESSION_ID`
-   environment variable — the same id the SessionEnd hook will use to
-   reconstruct this session later):
+   the JSON to a temp file, then check whether your host exposes the live
+   session's own id (Claude Code does, as the `CLAUDE_CODE_SESSION_ID`
+   environment variable) and pass it with `--session` when it does:
 
    ```bash
-   daimon write-checkpoint --project "$PWD" --session "$CLAUDE_CODE_SESSION_ID" < /tmp/daimon-end.json
+   if [ -n "$CLAUDE_CODE_SESSION_ID" ]; then
+     daimon write-checkpoint --project "$PWD" --session "$CLAUDE_CODE_SESSION_ID" < /tmp/daimon-end.json
+   else
+     daimon write-checkpoint --project "$PWD" < /tmp/daimon-end.json
+   fi
    ```
 
-   `--session` is what lets the later reconstruction recognize this checkpoint
-   as its OWN earlier state rather than a distinct witness — without it, this
-   checkpoint and its own reconstruction can misread as two independent
-   sessions agreeing with each other (#983). If your host cannot tell you the
-   live session's own id, omit `--session` — the checkpoint still writes, it
-   just loses that recognition.
+   `--session` is what lets the later SessionEnd reconstruction recognize this
+   checkpoint as its OWN earlier state rather than a distinct witness — without
+   it, this checkpoint and its own reconstruction could misread as two
+   independent sessions agreeing with each other (#983). On a host with no live
+   session id to give it, the CLI still writes the checkpoint (falling back to
+   its own generated id, never a placeholder), but this provisional cannot be
+   linked to its own reconstruction — accept that any item born here will
+   never accrue a corroboration badge, on that host, and move on; that is a
+   known and permanent limit of a host with no live session id, not a bug to
+   work around.
 
    It prints `wrote checkpoint: <path> (source: introspection)`. If it reports a
    schema-validation error, fix the JSON and retry — do not store garbage.

@@ -2003,6 +2003,82 @@ def test_cli_write_checkpoint_blank_session_flag_keeps_the_json_body(
     assert ck["session_id"] == "S-from-json"
 
 
+def test_cli_write_checkpoint_literal_placeholder_body_gets_a_fresh_unique_id(
+        tmp_checkpoint_dir, monkeypatch):
+    # #983 B1 (blocker): a host with no live-session-id concept at all (no
+    # --session) combined with a model that pipes the skill's OWN JSON
+    # template through unfilled — the literal
+    # "introspection-<short-unique-id>" placeholder text, angle brackets and
+    # all — must never reach disk as a CONSTANT id. Before this fix it did:
+    # verified with the real CLI, it wrote
+    # .../introspection-<short-unique-id>.json, and every subsequent
+    # /daimon-end anywhere overwrote that same file.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    sid = ck["session_id"]
+    assert sid != "introspection-<short-unique-id>"
+    assert "<" not in sid and ">" not in sid
+    assert sid.startswith(store.ORIGIN_SESSION_INTROSPECTION_PREFIX)
+
+
+def test_cli_write_checkpoint_two_placeholder_bodies_get_different_ids(
+        tmp_checkpoint_dir, monkeypatch):
+    # The fallback must be unique per call, or two /daimon-end writes on a
+    # host without a live id would collide on the SAME per-session file —
+    # exactly the failure this fix exists to prevent, just with a different
+    # constant.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    assert cli.main(["write-checkpoint", "--project", "/p/A"]) == 0
+    first = store.read_latest_body(
+        project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+        admit=store.Admit.ANY)["session_id"]
+
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    assert cli.main(["write-checkpoint", "--project", "/p/B"]) == 0
+    second = store.read_latest_body(
+        project_dir="/p/B", route=store.Route.OWN_ELSE_GLOBAL,
+        admit=store.Admit.ANY)["session_id"]
+
+    assert first != second
+
+
+def test_cli_write_checkpoint_blank_body_session_id_gets_a_fresh_unique_id(
+        tmp_checkpoint_dir, monkeypatch):
+    # Same fallback, the other trigger: an empty session_id in the body (no
+    # --session either) is exactly as unusable as the literal placeholder.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json(""))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert ck["session_id"].startswith(store.ORIGIN_SESSION_INTROSPECTION_PREFIX)
+    assert ck["session_id"] != store.ORIGIN_SESSION_INTROSPECTION_PREFIX  # a hex suffix was appended
+
+
+def test_cli_write_checkpoint_real_session_flag_wins_over_a_placeholder_body(
+        tmp_checkpoint_dir, monkeypatch):
+    # --session still takes priority over the B1 fallback: when the host CAN
+    # supply a real id, it is used even if the body is the unfilled template.
+    from daimon_briefing import store
+
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A",
+                   "--session", "S-real-983"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert ck["session_id"] == "S-real-983"
+
+
 def test_cli_write_checkpoint_invalid_json(tmp_checkpoint_dir, monkeypatch, capsys):
     _stdin(monkeypatch, "not json at all")
     rc = cli.main(["write-checkpoint"])

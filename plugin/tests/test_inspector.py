@@ -410,6 +410,31 @@ def test_lifecycle_and_corroboration_fold_without_mutating_evidence(
     }
 
 
+def test_why_never_shows_corroboration_for_a_provisional_born_item(
+    tmp_checkpoint_dir, monkeypatch
+):
+    # #983 change 3: `why` must read the same effective count the briefing
+    # badge does. The item's own origin_session carries the introspection-
+    # prefix forever, so a ledger row recorded before this fix shipped is
+    # discounted here too, not only in the briefing.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-containing", [
+        _item(receipt=_receipt(_source(), "a" * 64),
+             origin_session="introspection-preexisting-abc123"),
+    ])
+    slug = store.project_slug(_PROJECT)
+    events = tmp_checkpoint_dir / slug / "events.jsonl"
+    events.write_text(json.dumps(
+        {"ts": "2026-08-05T10:01:00Z", "kind": "resolution",
+         "item_ref": store.corroboration_ref(_ITEM_ID),
+         "status": "corroborated-by:S-witness-1", "source": "capture"},
+    ) + "\n", encoding="utf-8")
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result["corroboration"] == {"count": 0, "references": []}
+
+
 @pytest.mark.parametrize("status, expected", [
     ("resolved", "resolved"),
     ("superseded-by:o-fedcba", "superseded"),

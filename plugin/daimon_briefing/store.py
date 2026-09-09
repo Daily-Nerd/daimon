@@ -2598,6 +2598,50 @@ def corroborations(project_dir=None) -> dict:
     return out
 
 
+# #983 change 3: `write-checkpoint` stamps this EXACT prefix on a provisional
+# checkpoint's session_id — the pre-#983 skill's own invented labels, and the
+# CLI's fallback (cli._cmd_write_checkpoint, #983 B1) whenever neither the
+# host nor the model can name the live session — so it survives forever on an
+# item's `origin_session` field (policy.bind_origin's setdefault, never
+# re-bound by a later carry). This is a DIFFERENT signal from
+# sessions_since_count's `source == "introspection"` check: that reads a
+# CHECKPOINT's own provenance stamp, live only while the checkpoint's
+# per-session file has not yet been overwritten by its own reconstruction
+# (see the #983 scar candidate on that). This reads an ITEM's permanent,
+# never-overwritten claim about who first wrote it — durable exactly where
+# the checkpoint-level check is not.
+ORIGIN_SESSION_INTROSPECTION_PREFIX = "introspection-"
+
+
+def corroboration_origins_for(item: dict, entry: dict | None) -> set:
+    """#983 change 3: the EFFECTIVE corroboration origins for `item`, given
+    its `corroborations()` fold `entry` — read-time exclusion of an item
+    whose first writer was a provisional, with NO extra I/O and NO ledger
+    scan: the exclusion reads only `item["origin_session"]`, a field already
+    in hand at every call site (the checkpoint being rendered, or the item
+    `inspector.inspect_item` already loaded).
+
+    A provisional never accrues a badge, PERIOD — not "until its origin
+    session's real reconstruction lands" (that nuance lives at the WRITE
+    boundary, capture._origin_on_disk, and is time-sensitive by construction,
+    see the #983 scar candidate). This is a stronger, permanent read-time
+    rule: once an item's `origin_session` is stamped with the introspection
+    prefix, it keeps that stamp forever (setdefault, never re-bound), so ANY
+    row ever recorded against it — before or after this fix shipped, from any
+    observing session — is discounted. Accepted loss, same doctrine as change
+    2: a missed observation costs one boost, a forged one costs the axis.
+
+    Absent/non-dict `entry` (no corroboration row at all) -> empty set, the
+    same as the caller would get from `entry.get("origins")` directly."""
+    if not isinstance(entry, dict):
+        return set()
+    origin_session = str(item.get("origin_session") or "") if isinstance(
+        item, dict) else ""
+    if origin_session.startswith(ORIGIN_SESSION_INTROSPECTION_PREFIX):
+        return set()
+    return set(entry.get("origins") or ())
+
+
 # ---- #402: value-keyed forget suppression ----
 
 # `forgotten:` status prefix -> canonical content key. The forget command

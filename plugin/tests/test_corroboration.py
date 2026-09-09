@@ -1072,6 +1072,27 @@ def test_a_worldcheck_contradiction_suppresses_the_badge():
     assert "state changed since capture: #60 merged" in out
 
 
+def test_a_provisional_born_item_never_shows_the_badge():
+    # #983 change 3: read-time exclusion. The item's OWN origin_session
+    # carries the introspection- prefix forever (bind_origin's setdefault,
+    # never re-bound) — this is what pre-#983 rows AND #983 B1's fallback ids
+    # both leave behind, so a ledger row recorded before this fix shipped is
+    # discounted exactly like a fresh one would be.
+    out = _rendered(
+        _render_checkpoint(origin_session="introspection-preexisting-abc123"),
+        {ITEM: _entry({OBSERVER})})
+    assert "corroborated" not in out
+
+
+def test_a_real_origin_session_with_the_same_row_still_shows_the_badge():
+    # Control: an item whose first writer was a REAL session (not a
+    # provisional) corroborates normally against the identical ledger row —
+    # change 3 must not blanket-suppress every badge.
+    out = _rendered(_render_checkpoint(origin_session="S-real-983"),
+                    {ITEM: _entry({OBSERVER})})
+    assert BADGE_2 in out
+
+
 def test_the_stamp_is_transient_and_never_reaches_disk(tmp_checkpoint_dir):
     # The badge is derived at render time from events.jsonl, exactly like
     # withhold's candidate stamps. A `_corroborated` key on a stored

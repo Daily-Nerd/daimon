@@ -109,9 +109,14 @@ What earns the badge:
   *that* session's transcript.
 - The claim's **first writer is provably someone else** — every item records
   the session that originally wrote it, and a session cannot corroborate
-  itself. A `/daimon-end` checkpoint and the automatic reconstruction of that
-  same session count as one session, not two, so restating a provisional
-  checkpoint's own claim never earns the badge.
+  itself. A `/daimon-end` provisional checkpoint's own automatic
+  reconstruction can never earn the badge on that claim. On a host that can
+  tell the live session its own id, that is the only loss: once the
+  reconstruction lands, a genuinely later session can still corroborate the
+  claim normally. On a host that cannot, the loss is permanent: every item
+  the provisional wrote never earns the badge, from any session, ever —
+  daimon has no way to tell "this session agreed with its own earlier
+  provisional" apart from "a different session agreed."
 - The total reaches **two** — the origin of record plus at least one
   independent witness.
 
