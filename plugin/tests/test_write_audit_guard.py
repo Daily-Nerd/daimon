@@ -805,6 +805,13 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_hooks_install():
         run(["hooks", "install", "windsurf"], 0)  # HOME is tmp-isolated
 
+    def r_hooks_remove():
+        # #988: exercised against a HOME with no Kimi config at all, which is
+        # the no-op branch. It still has to be under the guard: the branch
+        # that DOES write backs up and rewrites config.toml, and this recipe
+        # is what proves the verb declares its write shape either way.
+        run(["hooks", "remove", "kimi"], 0)  # HOME is tmp-isolated
+
     def r_hooks_status():
         run(["hooks", "status"], 0)
 
@@ -890,6 +897,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("check", "sync"): r_check_sync,
         ("hooks", "list"): r_hooks_list,
         ("hooks", "install"): r_hooks_install,
+        ("hooks", "remove"): r_hooks_remove,
         ("hooks", "status"): r_hooks_status,
         ("skill", "list"): r_skill_list,
         ("skill", "show"): r_skill_show,

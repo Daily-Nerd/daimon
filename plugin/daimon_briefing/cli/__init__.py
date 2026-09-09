@@ -274,7 +274,7 @@ def _print_error(msg: str) -> None:
 
 
 def _run_serialize(transcript_path: Path, project: str | None,
-                   escalate: bool = False) -> int:
+                   escalate: bool = False, session: str | None = None) -> int:
     """Serialize one transcript to a checkpoint routed to `project` (used AS-IS;
     None => global pointer only, NO cwd fallback). The caller decides routing —
     this never calls _resolve_project, so `heal` can route to the FAILED
@@ -299,7 +299,16 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # the checkpoint can bind to its exact source content. None when unreadable —
     # stamped only when present; readers tolerate its absence (old checkpoints).
     transcript_sha = transcript.file_sha256(path)
-    session_id = path.stem
+    # #988: the filename names the session on every host adapted before Kimi
+    # Code, and on Kimi it does not — the session id is a DIRECTORY and the
+    # file inside it is always `wire.jsonl`. Without the override every Kimi
+    # session on the machine would serialize under the id "wire": one
+    # per-session checkpoint overwritten by each new session, and a heartbeat
+    # under a constant name that makes any live serialize look like every
+    # other session's (scar 0061). Same rule #983 set for `write-checkpoint`:
+    # when the host can supply a real session id, that id wins over an
+    # inferred one.
+    session_id = (session or "").strip() or path.stem
 
     # Identical-bytes guard (#185): a `claude --resume` fork leaves the ORIGINAL
     # session's transcript on disk unchanged, but a SessionEnd can still fire for
@@ -421,7 +430,8 @@ _session_end_stamp = capture._session_end_stamp
 
 
 def _cmd_serialize(args) -> int:
-    return _run_serialize(Path(args.transcript), _resolve_project(args.project))
+    return _run_serialize(Path(args.transcript), _resolve_project(args.project),
+                          session=getattr(args, "session", None))
 
 
 def _cmd_write_checkpoint(args) -> int:
@@ -3392,6 +3402,23 @@ _HOOK_HOSTS: dict[str, _HookHostSpec] = {
         "events": ("SessionStart", "Stop", "SessionEnd", "PreToolUse"),
         "register": "codex",
     },
+    # #988. Like Codex, Kimi Code needs several scripts under several events
+    # and a real registration written for it, so it carries `register: "kimi"`
+    # and the install command delegates to kimi_hooks.install. Unlike every
+    # other host, that registration is TOML in a file the host's own login
+    # flow owns, which is why the installer edits text blocks rather than
+    # re-serializing (see kimi_hooks).
+    #
+    # No SessionStart: measured, its stdout is dropped by the host, so the
+    # briefing rides UserPromptSubmit instead. No PreToolUse: the deny channel
+    # is unmeasured, so no check profile ships (see checks_host.PROFILES).
+    "kimi": {
+        "files": ("daimon-kimi-user-prompt-submit.py",
+                  "daimon-kimi-session-end.py", "daimon-kimi-stop.py",
+                  "_daimon_hook_lib.py"),
+        "events": ("UserPromptSubmit", "SessionEnd", "Stop"),
+        "register": "kimi",
+    },
 }
 
 
@@ -3416,11 +3443,16 @@ def _host_scripts(spec) -> str:
 
 
 def _host_install_dir(spec, home: Path) -> Path:
-    """Where a host's hook files live. Codex owns ~/.codex/hooks/ (it registers
-    the scripts there itself); everyone else shares the stable ~/.daimon/hooks/
-    that `hooks install` writes to."""
+    """Where a host's hook files live. A host that registers its own scripts
+    keeps them inside its own config tree (Codex: ~/.codex/hooks/; Kimi Code:
+    ~/.kimi-code/hooks/, or under KIMI_CODE_HOME); everyone else shares the
+    stable ~/.daimon/hooks/ that `hooks install` writes to."""
     if spec.get("register") == "codex":
         return home / ".codex" / "hooks"
+    if spec.get("register") == "kimi":
+        from .. import kimi_hooks
+
+        return kimi_hooks.hooks_dir(home)
     return home / ".daimon" / "hooks"
 
 
@@ -3460,13 +3492,30 @@ def _codex_registration_status(home: Path) -> str:
     return "REGISTERED" if found == len(codex_hooks.HOOKS) else "PARTIAL"
 
 
+def _registration_status(spec, home: Path) -> str | None:
+    """REGISTERED / PARTIAL / UNREGISTERED for a host that writes its own
+    registration, or None for one that only prints a snippet.
+
+    Each host's verdict comes from that host's own installer module, so it can
+    never drift from what `hooks install` actually writes."""
+    kind = spec.get("register")
+    if kind == "codex":
+        return _codex_registration_status(home)
+    if kind == "kimi":
+        from .. import kimi_hooks
+
+        return kimi_hooks.registration_status(home)
+    return None
+
+
 def _host_status_entry(host: str, spec, pkg, home: Path) -> dict:
     install_dir = _host_install_dir(spec, home)
-    reg = _codex_registration_status(home) if spec.get("register") == "codex" else None
+    reg = _registration_status(spec, home)
     installed = any((install_dir / n).exists() for n in spec["files"])
-    if spec.get("register") == "codex":
-        # Codex counts as installed if its hooks dir OR any of our registration
-        # entries exist — either alone is a setup we must audit, not ignore.
+    if reg is not None:
+        # A self-registering host counts as installed if its hooks dir OR any
+        # of our registration entries exist — either alone is a setup we must
+        # audit, not ignore.
         installed = installed or install_dir.exists() or reg != "UNREGISTERED"
     entry: dict = {"host": host, "dir": str(install_dir),
                    "installed": installed, "registration": reg,
@@ -3641,6 +3690,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--project",
         help="project directory to route the checkpoint to "
         "(default: DAIMON_PROJECT_DIR, then cwd)",
+    )
+    p_ser.add_argument(
+        "--session",
+        help="session id for this transcript, overriding the filename (#988: "
+             "a host whose transcript is not named for its session, such as "
+             "Kimi Code, where every file is `wire.jsonl`)",
     )
     p_ser.set_defaults(func=_cmd_serialize)
 

@@ -1,7 +1,7 @@
 """Canonical agent-skill content, two densities (#66).
 
 FULL renders the lazily-loaded SKILL.md (Claude Code; Windsurf global since
-#88) — description-gated, so the frontmatter description carries triggering
+#88; Kimi Code since #988) — description-gated, so the frontmatter description carries triggering
 conditions ONLY (a workflow summary there makes agents skip the body).
 COMPACT renders the always-injected rules block for Codex/Gemini/Cursor and
 Windsurf --project — those hosts concatenate the whole file into every

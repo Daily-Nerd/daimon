@@ -40,6 +40,14 @@ SYNC_PAIRS = (
     ("hook/daimon-codex-stop.py", "plugin/daimon_briefing/_hooks/daimon-codex-stop.py"),
     ("hook/daimon-codex-session-end.py", "plugin/daimon_briefing/_hooks/daimon-codex-session-end.py"),
     ("hook/daimon-codex-pre-action.py", "plugin/daimon_briefing/_hooks/daimon-codex-pre-action.py"),
+    # #988: the Kimi Code adapter. Same direction as the Codex scripts —
+    # hook/ is canonical, the packaged copy is the derivative.
+    ("hook/daimon-kimi-user-prompt-submit.py",
+     "plugin/daimon_briefing/_hooks/daimon-kimi-user-prompt-submit.py"),
+    ("hook/daimon-kimi-session-end.py",
+     "plugin/daimon_briefing/_hooks/daimon-kimi-session-end.py"),
+    ("hook/daimon-kimi-stop.py",
+     "plugin/daimon_briefing/_hooks/daimon-kimi-stop.py"),
     ("hook/_daimon_hook_lib.py", "plugin/daimon_briefing/_hooks/_daimon_hook_lib.py"),
 )
 

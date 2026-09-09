@@ -318,14 +318,92 @@ def _in_flight_stems() -> set:
     return stems
 
 
-def _serialize_in_flight(transcript_path) -> bool:
+def _serialize_in_flight(transcript_path, session_id=None) -> bool:
     """True when a LIVE serialize is already running for this transcript
     (#813). Fails OPEN — an unreadable heartbeat dir must never block a
-    genuine capture, which is the same direction `_in_flight_stems` takes."""
+    genuine capture, which is the same direction `_in_flight_stems` takes.
+
+    `session_id` overrides the stem for a host whose transcripts are not named
+    for their session (#988: every Kimi Code transcript on the machine is
+    called `wire.jsonl`, so the stem is a CONSTANT and this guard would report
+    every Kimi session as in flight while any one of them was running). It is
+    correct only because the same id rides the spawn as `--session`, so the
+    heartbeat the guard reads is stamped with exactly this string. Passing an
+    id here WITHOUT passing it to the CLI would rebuild the no-op that scar
+    0061 records."""
     try:
-        return Path(transcript_path).stem in _in_flight_stems()
+        key = str(session_id).strip() if session_id else Path(transcript_path).stem
+        return key in _in_flight_stems()
     except Exception:  # noqa: BLE001 — a broken guard must not cost a capture
         return False
+
+
+# ---- #988: Kimi Code ----
+#
+# Kimi is the first adapted host that hands a hook a session id and NO
+# transcript path, and exposes no session id in the environment either. The
+# payload is the only source, and the path has to be resolved from it.
+
+
+def kimi_home(home=None, env=None) -> Path:
+    """Kimi's config directory: `KIMI_CODE_HOME` when set, else `~/.kimi-code`.
+
+    Kept in sync with daimon_briefing.kimi_hooks.config_home — the hooks are
+    standalone and cannot import the package. `home` is the base for the
+    default, injectable so a test never reaches a real `~/.kimi-code`; the env
+    override still wins over it, exactly as it does in the installer.
+    """
+    source = os.environ if env is None else env
+    override = str(source.get("KIMI_CODE_HOME") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return (Path(home) if home is not None else Path.home()) / ".kimi-code"
+
+
+def kimi_transcript(session_id, home=None, env=None):
+    """The `wire.jsonl` for `session_id`, or None when nothing resolves.
+
+    Measured layout (0.42.0, 2026-09-09):
+        <kimi home>/sessions/wd_<dirname>_<12hex>/<session_id>/agents/main/wire.jsonl
+    The payload's `session_id` IS the session directory name; the workspace
+    directory above it carries a hash daimon cannot predict, hence the glob.
+
+    The id lands in a filesystem path, so it is checked before use. Nothing in
+    the measured payloads suggests a hostile id, and that is exactly the
+    assumption worth enforcing rather than trusting: a single path segment,
+    no separators, no traversal.
+
+    Subagents get sibling `agents/<id>/` directories. This resolves `main`
+    only; merging a subagent's own reasoning into the parent's checkpoint is a
+    question for a real multi-agent session, not an assumption (see the
+    transcript.py note).
+    """
+    sid = str(session_id or "").strip()
+    if not sid or sid in (".", "..") or any(c in sid for c in "/\\"):
+        return None
+    root = kimi_home(home, env)
+    try:
+        matches = sorted(root.glob(f"sessions/*/{sid}/agents/main/wire.jsonl"))
+    except OSError:
+        return None
+    return matches[0] if matches else None
+
+
+def kimi_prompt_text(prompt) -> str:
+    """Kimi's `prompt` payload field flattened to plain text.
+
+    Every other host sends a string; Kimi sends a LIST of content parts. Handed
+    to `recall-inject` unflattened it would arrive as a Python repr and every
+    match would be against punctuation. A bare string is passed through so a
+    later host version that simplifies the field keeps working.
+    """
+    if isinstance(prompt, str):
+        return prompt
+    if not isinstance(prompt, list):
+        return ""
+    parts = [p.get("text", "") for p in prompt
+             if isinstance(p, dict) and p.get("type") == "text"]
+    return "\n".join(t for t in parts if t)
 
 
 
@@ -559,10 +637,16 @@ def trim_crash_log(path) -> None:
         pass
 
 
-def spawn_serialize(cli, transcript_path, env):
+def spawn_serialize(cli, transcript_path, env, session_id=None):
     """Spawn `daimon serialize <transcript>` DETACHED so the hook returns
     immediately (serialization is a 30s+ LLM call). Raises OSError on spawn
     failure so the caller can log its own host-tagged diagnostic.
+
+    `session_id` (#988) forwards the host's real session id as `--session`,
+    for a host whose transcript filename does not name its session. It is
+    keyword-only in practice: no existing caller passes it, which matters
+    because the suite replaces this function in roughly sixteen places with
+    three-argument fakes (see scar 0062).
 
     Returns False when the spawn was SKIPPED because a serialize for this same
     transcript is already in flight (#813); any other return means it spawned.
@@ -597,14 +681,24 @@ def spawn_serialize(cli, transcript_path, env):
     hung-after ceiling. The observed race is minutes wide; this narrows it to
     seconds, and `heal` remains the answer for the rest.
     """
-    if _serialize_in_flight(transcript_path):
+    # Called with ONE argument unless there is a session id to widen it with.
+    # The suite monkeypatches this seam with fixed-arity lambdas (`lambda _p:
+    # False`), so an unconditional second argument raises TypeError inside the
+    # spawn path in every one of them — the same fixed-arity fake trap scar
+    # 0062 records one function up.
+    in_flight = (_serialize_in_flight(transcript_path, session_id) if session_id
+                 else _serialize_in_flight(transcript_path))
+    if in_flight:
         return False
     crash = crash_log_path()
     crash.parent.mkdir(parents=True, exist_ok=True)
     trim_crash_log(crash)
+    argv = [cli, "serialize", transcript_path]
+    if session_id:
+        argv += ["--session", str(session_id)]
     with crash.open("a", encoding="utf-8") as crashf:
         subprocess.Popen(
-            [cli, "serialize", transcript_path],
+            argv,
             stdin=subprocess.DEVNULL,
             # #939: a container host's only observable surface is the stream
             # its runtime captures, so a result line in serialize.log alone is
