@@ -15,6 +15,7 @@ hook events each host actually exposes.
 | [Codex](./codex.md) | `daimon hooks install codex` | `SessionEnd` hook serializes on graceful end; throttled `Stop` hook covers everything else | `SessionStart` hook injects via `additionalContext` | live-validated capture (since 2026-08-06) |
 | [Gemini CLI](./gemini.md) | Manual `hook/gemini-hooks.py install` (from a clone) | Blocked upstream (`gemini-cli#14715` — `transcript_path` is an empty stub) | `SessionStart` hook injects via `additionalContext` | blocked upstream (`gemini-cli#14715`) |
 | [Windsurf (Cascade)](./windsurf.md) | `daimon hooks install windsurf` | Throttled serialize on `pre_user_prompt` / `post_cascade_response(_with_transcript)` | None — Cascade has no session-start-equivalent event; the skill instructs the agent to run `daimon brief --team` in the terminal at session start | live-validated |
+| [Kimi Code](./kimi.md) | `daimon hooks install kimi` | `SessionEnd` hook serializes on interactive exit; throttled `Stop` hook is the only path in print mode | `UserPromptSubmit` hook injects with your first prompt (no session-start channel) | measured on one live session (2026-09-09) |
 
 ## Three moving parts
 
@@ -23,7 +24,7 @@ Every host setup combines up to three pieces, installed independently:
 - **Hooks** capture your sessions and (where the host supports it) inject the
   briefing as context. Claude Code gets a packaged plugin; other hosts install
   standalone hook scripts via `daimon hooks install <host>` (Windsurf,
-  Codex) or the manual lifecycle scripts under `hook/` (Gemini, and
+  Codex, Kimi Code) or the manual lifecycle scripts under `hook/` (Gemini, and
   Claude Code without the plugin).
 - **The skill** (`daimon skill install <host>`) teaches the agent on the other
   side of the hook how to use what the hooks capture — read the briefing at

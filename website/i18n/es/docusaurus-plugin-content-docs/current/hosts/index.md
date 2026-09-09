@@ -15,6 +15,7 @@ profundidad del soporte varía según los eventos de hook que cada host expone.
 | [Codex](./codex.md) | `daimon hooks install codex` | El hook `SessionEnd` serializa al cierre ordenado; el hook `Stop` con throttle cubre el resto | El hook `SessionStart` inyecta vía `additionalContext` | captura validada en uso real (desde 2026-08-06) |
 | [Gemini CLI](./gemini.md) | Manual `hook/gemini-hooks.py install` (desde un clon) | Bloqueado upstream (`gemini-cli#14715` — `transcript_path` es un stub vacío) | El hook `SessionStart` inyecta vía `additionalContext` | bloqueado upstream (`gemini-cli#14715`) |
 | [Windsurf (Cascade)](./windsurf.md) | `daimon hooks install windsurf` | Serialización con throttle en `pre_user_prompt` / `post_cascade_response(_with_transcript)` | Ninguna — Cascade no tiene evento equivalente a inicio de sesión; la skill instruye al agente a ejecutar `daimon brief --team` en la terminal al empezar | validado en uso real |
+| [Kimi Code](./kimi.md) | `daimon hooks install kimi` | El hook `SessionEnd` serializa al cerrar la sesión interactiva; el hook `Stop` con throttle es la única vía en modo print | El hook `UserPromptSubmit` inyecta con tu primer prompt (sin canal de inicio de sesión) | medido en una sola sesión en vivo (2026-09-09) |
 
 ## Tres piezas móviles
 
@@ -24,8 +25,9 @@ independiente:
 - **Los hooks** capturan tus sesiones y (donde el host lo permite) inyectan el
   briefing como contexto. Claude Code tiene un plugin empaquetado; los demás
   hosts instalan scripts de hook independientes vía
-  `daimon hooks install <host>` (Windsurf, Codex) o los scripts manuales
-  de ciclo de vida bajo `hook/` (Gemini, y Claude Code sin el plugin).
+  `daimon hooks install <host>` (Windsurf, Codex, Kimi Code) o los scripts
+  manuales de ciclo de vida bajo `hook/` (Gemini, y Claude Code sin el
+  plugin).
 - **La skill** (`daimon skill install <host>`) le enseña al agente del otro
   lado del hook cómo usar lo que los hooks capturan — leer el briefing al
   inicio de sesión (obteniéndolo con `daimon brief --team` cuando el host no

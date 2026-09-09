@@ -53,6 +53,7 @@ PAGES = {
     "codex.md": "codex.md",
     "gemini.md": "gemini.md",
     "windsurf.md": "windsurf.md",
+    "kimi.md": "kimi.md",
 }
 
 MAIN_LINK = re.compile(r"https://daily-nerd\.github\.io/daimon/docs/hosts/")
