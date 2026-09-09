@@ -804,6 +804,73 @@ def test_a_revise_of_only_why_after_a_pending_claim_also_clears_the_claim(
     assert record["done_by"] is None
 
 
+def test_a_revise_after_a_verified_pending_claim_also_resets_done_verified_at(
+        project):
+    """#978 review round 2 (B1, N1): `done_verified_at` certifies the
+    byte-check on evidence that a revise then erases — left standing, it
+    would assert "byte-checked" over a claim that no longer exists on the
+    record."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    assert requests.verify_done(q_id, role="assistant", project_dir=project)
+    assert requests.get(q_id, project_dir=project)["done_verified_at"]
+    requests.revise(q_id, channel="cli-agent", why="the client changed scope",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["done_pending"] is False
+    assert record["done_verified_at"] is None
+
+
+def test_a_revise_after_needs_info_on_a_human_done_record_keeps_it_intact(
+        project):
+    """#978 review round 2 (B1): the F1 clear must gate on `done_pending`
+    (a PENDING AGENT CLAIM), never on the `revised` event alone. A settled
+    HUMAN completion is reachable at a `revised` row through an unrelated
+    path: `done` (human) lands `done`, then `needs_info` (human) is allowed
+    from ANY prior state but `rejected` (`_verdict`'s own check,
+    requests.py's `_answering`/`_verdict`), reopening the state into
+    `_SENDER_MOVABLE`. An unconditional clear on the `revise` that follows
+    erased the human's own `done_by`/`done_evidence` — a real defect this
+    branch's own comment now names explicitly."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-tty", evidence="shipped it myself",
+                 project_dir=project)
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=project)
+    requests.revise(q_id, channel="cli-agent", why="the client changed scope",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is False
+    assert record["done_by"] == "human"
+    assert record["done_evidence"] == "shipped it myself"
+
+
+def test_a_forged_revised_row_after_needs_info_leaves_a_human_done_intact(
+        project):
+    """`requests.append` is public and validates no payload field (#961's
+    own lesson), so a `revised` row that skips `revise()`'s own checks must
+    land in the same safe place the checked path does. A large `order`
+    (the pattern `test_attention_rows_never_move_the_records_age` already
+    uses) makes this the LAST row processed regardless of append order,
+    proving the gate holds under reorder too."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-tty", evidence="shipped it myself",
+                 project_dir=project)
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=project)
+    row = requests._stamp("revised", q_id, "cli-agent", now_ns=9 * 10**18)
+    row["why"] = "forged revise, large order"
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is False
+    assert record["done_by"] == "human"
+    assert record["done_evidence"] == "shipped it myself"
+
+
 def test_a_suppressed_ask_stays_suppressed_after_a_pending_claim(project):
     """Suppression is the human's own 'not now'; an agent's unverified claim
     is not the verdict that reverses it (D5's reversal path is a verdict or a
@@ -1508,11 +1575,14 @@ def test_inject_lines_marks_a_pending_completion_claim(project):
 
 def test_inject_lines_no_claim_marker_for_an_undecided_ask(project):
     from daimon_briefing.cli import request as cli_request
-    requests.open_request(
+    q_id = requests.open_request(
         to=store.project_slug(project), ask=ASK, why=WHY,
         channel="cli-agent", project_dir=project)
     record = requests.deliverable("S-978", project_dir=project)["rows"][0]
     lines = cli_request._inject_lines(record)
+    # Positive anchor (#978 review round 2, N3): empty output would also
+    # satisfy "no marker", so pin that the record is actually rendered.
+    assert q_id in lines[0]
     assert "[done claimed]" not in lines[0]
 
 
@@ -1608,7 +1678,15 @@ def test_cli_agent_done_on_a_foreign_ask_says_it_still_waits_on_a_person(
     ask's `opened` row lives in `project`'s bucket, and the recipient's own
     `done` row is an orphan in ITS per-bucket fold, so a bucket-local read
     (`requests.get`) finds nothing here and the guidance never printed
-    before this fix."""
+    before this fix.
+
+    #978 review round 2 (B2): `_report` (called just before this guidance)
+    had the SAME bucket-local blind spot, so the record card itself, with
+    its own "Done (claimed" line, never rendered on this path either — the
+    comment claiming it "already renders the claim" was false here until
+    `_report` got its own `recipient_join` fallback. Asserted here too, not
+    only in a `_report`-focused test, because this is the reproduction that
+    found the gap."""
     from daimon_briefing import cli
     assert _cli_open(project, recipient) == 0
     q_id = next(iter(requests.records(project_dir=project)))
@@ -1616,6 +1694,7 @@ def test_cli_agent_done_on_a_foreign_ask_says_it_still_waits_on_a_person(
                   "--by", "agent", "--project", OTHER])
     assert rc == 0
     out = capsys.readouterr().out
+    assert "Done (claimed" in out
     assert "still waits on a person" in out
     assert f"daimon request accept {q_id}" in out
 

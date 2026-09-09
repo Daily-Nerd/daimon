@@ -226,7 +226,7 @@ def _inject_lines(record: dict) -> list[str]:
              # nudged mid-turn about an ask this project already answered
              # and redoes the work — same placement rule as the two markers
              # above, read from the folded record only.
-             + ("  [done claimed]" if record.get("done_pending") else "")]
+             + (" [done claimed]" if record.get("done_pending") else "")]
     lines.append(f"  Ask: {record.get('ask', '')}")
     if record.get("why"):
         lines.append(f"  Why: {record['why']}")
@@ -460,17 +460,32 @@ def _cmd_request_verdict(args) -> int:
 def _report(request_id: str, project, verb: str) -> None:
     """Print the answered record, or say plainly that this bucket cannot see
     it. A recipient's answer to a foreign ask is written here and pairs with
-    its origin only at the read-time join (PR 2) — until then the row is real
-    and the record is not, and printing an empty card would hide that."""
+    its origin only at the read-time join (PR 2).
+
+    #978 review round 2 (B2): the LOCAL per-bucket fold (`requests.get`)
+    misses on the ORDINARY cross-bucket path, not only the truly-orphaned
+    one — a recipient answering a foreign ask has no local `opened` row for
+    it by construction, so `get()` returning None there was never "the
+    record is not resolvable yet", it was "this fold cannot see it". Before
+    printing the fallback line, `recipient_join` (the composer `request
+    inbox` reads through) gets a second look; a hit renders through
+    `_inbox_lines`, the recipient-facing card shape, since this bucket is
+    answering someone else's ask rather than reading its own `to`. Only a
+    request neither fold can resolve at all (a foreign id whose origin
+    bucket is itself unreadable or gone) still prints the plain line below."""
     record = requests.get(request_id, project_dir=project)
-    if record is None:
-        render.render_ledger_lines(
-            [f"{request_id}: {verb} recorded in this project's ledger",
-             "  no matching request in this bucket — an answer to another "
-             "project's ask joins its origin at read time, and until then "
-             "it renders nowhere"])
+    if record is not None:
+        render.render_ledger_lines(_request_lines(record, project_dir=project))
         return
-    render.render_ledger_lines(_request_lines(record, project_dir=project))
+    record = requests.recipient_join(project_dir=project).get(request_id)
+    if record is not None:
+        render.render_ledger_lines(_inbox_lines(record, project_dir=project))
+        return
+    render.render_ledger_lines(
+        [f"{request_id}: {verb} recorded in this project's ledger",
+         "  no matching request in this bucket — an answer to another "
+         "project's ask joins its origin at read time, and until then "
+         "it renders nowhere"])
 
 
 def _cmd_request_done(args) -> int:
@@ -493,7 +508,9 @@ def _cmd_request_done(args) -> int:
     # record regardless of which bucket founded it.
     record = requests.recipient_join(project_dir=project).get(args.request_id)
     if record is not None and record.get("done_pending"):
-        # #978: the record card above already renders the claim; this line
+        # #978: the record card `_report` just printed already renders the
+        # claim (on the cross-bucket path too, since review round 2's B2
+        # fix gave `_report` its own `recipient_join` fallback) — this line
         # is the plain-language answer to the question an agent just asked
         # by running `done` at all — did that close it? — named in the
         # voice a script reads rather than left to infer from the state
