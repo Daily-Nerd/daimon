@@ -502,7 +502,12 @@ def test_revise_needs_something_to_change(project):
 # ---- done -----------------------------------------------------------------
 
 
-def test_done_requires_evidence_on_either_channel(project):
+def test_done_requires_evidence_and_an_agents_claim_on_an_open_ask_stays_pending(
+        project):
+    """RENAMED from `test_done_requires_evidence_on_either_channel` (#978):
+    this used to also pin the pre-#978 behaviour of an agent `done` landing
+    an OPEN work ask straight to `done`. It no longer does — see the #978
+    section above for the full behaviour this test used to half-cover."""
     q_id = _open(project)
     with pytest.raises(requests.RequestError):
         requests.done(q_id, channel="cli-agent", evidence="",
@@ -510,7 +515,10 @@ def test_done_requires_evidence_on_either_channel(project):
     requests.done(q_id, channel="cli-agent", evidence="merged in PR #712",
                   project_dir=project)
     record = requests.get(q_id, project_dir=project)
-    assert record["state"] == "done"
+    # #978: a work ask nobody has accepted is not settled by an agent's own
+    # claim — the record stays open, awaiting a person's accept or reject.
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
     # D8: an agent's completion claim is labeled until the byte-check.
     assert record["done_by"] == "agent"
     assert record["done_claimed"] is True
@@ -536,7 +544,15 @@ def test_done_without_evidence_is_inert_in_the_fold(project):
 # ---- #694 PR 3: done_verified — the session-end byte-check ----------------
 
 
-def test_verify_done_writes_a_mechanical_channel_row(project):
+def test_verify_done_clears_the_claim_while_the_ask_stays_pending(project):
+    """RENAMED from `test_verify_done_writes_a_mechanical_channel_row`
+    (#978): the fixture (an agent `done` on a still-open work ask) no
+    longer lands `state == "done"` — the byte-check still runs and clears
+    `done_claimed`, but it does so without moving `state`. Coverage for the
+    ORIGINAL "verify_done writes a mechanical-channel row and lands on a
+    genuinely-done record" claim moved to
+    `test_done_verified_still_clears_the_claim_on_a_genuinely_done_record`
+    above."""
     q_id = _open(project)
     requests.done(q_id, channel="cli-agent", evidence="merged in PR #712",
                  project_dir=project)
@@ -544,7 +560,8 @@ def test_verify_done_writes_a_mechanical_channel_row(project):
     assert requests.verify_done(q_id, role="assistant",
                                 project_dir=project) is True
     record = requests.get(q_id, project_dir=project)
-    assert record["state"] == "done"
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
     assert record["done_claimed"] is False
     assert record["done_verified_at"]
 
@@ -604,6 +621,214 @@ def test_done_verified_is_deterministic_under_reorder(project):
     backward = requests.fold(list(reversed(rows)))[q_id]
     assert forward == backward
     assert forward["done_claimed"] is False
+
+
+# ---- #978: an agent's completion claim on a work ask is not a verdict -----
+#
+# The #961 amendment's own sentence: an agent answering a `work` ask uses
+# `done --evidence` as today, and the ask stays owed until a person accepts,
+# rejects, or ratifies a reclassification. `done` never enforced that — it
+# refused only `rejected` — so an agent could clear a human's decision queue
+# with one row. Gated in the FOLD (`done_pending`), the same posture #972
+# gave `kind` itself, because `requests.append` is public and validates no
+# payload field.
+
+
+def test_agent_done_on_an_open_work_ask_claims_completion_without_moving_state(
+        project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
+    assert record["done_claimed"] is True
+    assert record["done_by"] == "agent"
+    assert record["done_evidence"] == "shipped in abc123"
+
+
+def test_agent_done_on_a_needs_info_work_ask_also_stays_pending(project):
+    q_id = _open(project)
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "needs-info"
+    assert record["done_pending"] is True
+
+
+def test_a_forged_done_row_via_append_lands_pending_too(project):
+    """`requests.append` is public and validates no payload field — the same
+    lesson #961 already learned for `kind` — so a caller that skips
+    `requests.done()` and appends the row directly must land in the same
+    place the wrapper does. Proves the gate lives in the FOLD, not only in
+    the `done()` wrapper."""
+    q_id = _open(project)
+    row = requests._stamp("done", q_id, "cli-agent")
+    row["evidence"] = "a forged completion claim"
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
+
+
+def test_human_done_on_an_open_work_ask_still_lands_as_done(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-tty", evidence="shipped it myself",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is False
+
+
+def test_agent_done_on_an_info_ask_still_lands_as_done(project):
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.done(q_id, channel="cli-agent", evidence="we use project_dir",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is True
+
+
+def test_agent_done_on_an_accepted_work_ask_still_lands_as_done(project):
+    q_id = _open(project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is True
+
+
+def test_a_second_agent_claim_replaces_the_first(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="first pass",
+                 project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="second, corrected pass",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
+    assert record["done_evidence"] == "second, corrected pass"
+
+
+def test_human_accept_after_a_pending_claim_lands_it_as_done(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", note="looks right",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is True
+    assert record["done_evidence"] == "shipped in abc123"
+    assert record["done_by"] == "agent"
+    assert record["verdict_by"] == "human"
+    assert record["note"] == "looks right"
+
+
+def test_human_reject_after_a_pending_claim_lands_rejected_with_evidence_kept(
+        project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.reject(q_id, channel="cli-tty", note="not actually shipped",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "rejected"
+    assert record["done_pending"] is False
+    assert record["done_evidence"] == "shipped in abc123"
+
+
+def test_needs_info_after_a_pending_claim_keeps_the_claim_pending(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.needs_info(q_id, channel="cli-tty", note="which environment?",
+                        project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "needs-info"
+    assert record["done_pending"] is True
+    assert record["done_claimed"] is True
+    assert record["done_evidence"] == "shipped in abc123"
+
+
+def test_a_revise_after_a_pending_claim_keeps_it_pending(project):
+    """The claim answers the ask that was live when it was made; `revise`
+    sharpens the ask itself and is the sender's tool, not a repudiation of
+    what the recipient already reported. The human's own accept/reject that
+    follows is the checkpoint that would reject a claim the sharpened ask
+    makes stale — losing it silently here would hide that the recipient's
+    agent already acted at all."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.revise(q_id, channel="cli-agent", why="the client changed scope",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
+    assert record["done_evidence"] == "shipped in abc123"
+
+
+def test_a_suppressed_ask_stays_suppressed_after_a_pending_claim(project):
+    """Suppression is the human's own 'not now'; an agent's unverified claim
+    is not the verdict that reverses it (D5's reversal path is a verdict or a
+    genuine completion, and this lands neither)."""
+    q_id = _open(project)
+    requests.suppress(q_id, channel="cli-tty", project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["suppressed"] is True
+    assert record["done_pending"] is True
+
+
+def test_done_verified_clears_the_claim_while_pending_and_open(project):
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    assert requests.verify_done(q_id, role="assistant", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
+    assert record["done_claimed"] is False
+    assert record["done_verified_at"]
+
+
+def test_done_verified_still_clears_the_claim_on_a_genuinely_done_record(
+        project):
+    q_id = _open(project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    assert requests.verify_done(q_id, role="assistant", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is False
+    assert record["done_verified_at"]
+
+
+def test_is_stale_never_applies_to_a_pending_claim(project):
+    """The recipient's agent already answered — the staleness clock exists
+    to catch an ask nobody looked at, and forcing THIS one to decay while it
+    waits on a person rather than the recipient going quiet would mislabel
+    exactly the record that most needs a look."""
+    q_id = _open(project)
+    requests.stamp_surfaced(q_id, project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(project, f"S-978-{n}", _iso(n + 1))
+    record = requests.get(q_id, project_dir=project)
+    assert requests.is_stale(record, project_dir=project) is False
+    assert requests.render_state(record, project_dir=project) == "open"
 
 
 # ---- #694 PR 3: _verify_agent_request_done() — the session-end pass -------
@@ -1302,6 +1527,59 @@ def test_cli_human_verdicts_and_done(project, recipient, monkeypatch, capsys):
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "done" and record["done_claimed"] is True
     assert "claimed, unverified" in capsys.readouterr().out
+
+
+# ---- #978: the CLI surfaces for a pending completion claim -----------------
+
+
+def test_cli_agent_done_on_an_open_work_ask_says_it_still_waits_on_a_person(
+        project, capsys):
+    from daimon_briefing import cli
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
+    rc = cli.main(["request", "done", q_id, "--evidence", "shipped in abc123",
+                  "--by", "agent", "--project", project])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "still waits on a person" in out
+    assert f"daimon request accept {q_id}" in out
+
+
+def test_cli_request_inbox_shows_the_pending_claim_line(project, capsys):
+    from daimon_briefing import cli
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    assert cli.main(["request", "inbox", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Done (claimed, awaiting your accept): shipped in abc123" in out
+
+
+def test_cli_request_list_shows_the_pending_claim_line(project, capsys):
+    from daimon_briefing import cli
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    assert cli.main(["request", "list", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert "Done (claimed, awaiting your accept): shipped in abc123" in out
+
+
+def test_cli_request_list_json_carries_done_pending(project, capsys):
+    from daimon_briefing import cli
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    assert cli.main(["request", "list", "--json", "--project", project]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["done_pending"] is True
 
 
 def test_cli_revise_refuses_past_the_cap(project, recipient, capsys):
@@ -2821,14 +3099,33 @@ def _listed(project, q_id):
     return {r["request_id"]: r for r in requests.listing(project_dir=project)}[q_id]
 
 
-def test_listing_reports_the_recipients_verdict(project):
-    """#798: the surface the verdict panel's overflow line points at
-    ("+N more decided — daimon request list") must be able to show them."""
+def test_listing_reports_the_recipients_human_done_verdict(project):
+    """RENAMED from `test_listing_reports_the_recipients_verdict` (#978):
+    the fixture used an agent channel, which pre-#978 was indistinguishable
+    from a genuine verdict for a work ask. Switched to a human channel so
+    this test keeps proving its ORIGINAL point — #798: the surface the
+    verdict panel's overflow line points at ("+N more decided — daimon
+    request list") must be able to show a decided record joined across
+    buckets. The agent-claim case gets its own test below."""
     recipient_slug = _seed_bucket("/p/req-list-verdict")
+    q_id = _open(project, to=recipient_slug)
+    requests.done(q_id, channel="cli-tty", evidence="shipped in abc1234",
+                  project_dir=recipient_slug)
+    assert _listed(project, q_id)["state"] == "done"
+
+
+def test_listing_reports_the_recipients_pending_claim_not_done(project):
+    """#978: an agent's completion claim on a work ask must reach `request
+    list` too — joined across buckets exactly like a genuine verdict — but
+    it renders as still open, with the claim visible on the record."""
+    recipient_slug = _seed_bucket("/p/req-list-claim")
     q_id = _open(project, to=recipient_slug)
     requests.done(q_id, channel="cli-agent", evidence="shipped in abc1234",
                   project_dir=recipient_slug)
-    assert _listed(project, q_id)["state"] == "done"
+    record = _listed(project, q_id)
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
+    assert record["done_evidence"] == "shipped in abc1234"
 
 
 def test_listing_reports_a_rejection_too(project):

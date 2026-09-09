@@ -913,6 +913,15 @@ def _decide_cards(rows: list) -> list:
                f"{blocking}"]
         if row.get("context"):
             card.append(f"  {row['context']}")
+        # #978: `row["claimed"]` is the request lane's `done_pending`, from
+        # the FOLDED record — same guard shape as `info_marker` above (a
+        # non-request lane never carries this), and a separate CARD LINE
+        # rather than a header addition, so `render._ledger_header_spans`
+        # keeps isolating the id the way it already does around the info
+        # marker.
+        if row.get("kind") == "request" and row.get("claimed"):
+            card.append("  completion claimed by the agent; accept lands "
+                        "it as done, reject sends it back")
         card += [f"    {label}: {command}"
                  for label, command in row.get("commands") or []]
         cards.append(card)

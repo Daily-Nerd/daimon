@@ -64,6 +64,26 @@ def test_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
     assert not any("[info]" in ln for ln in lines)
 
 
+def test_panel_marks_a_pending_completion_claim(tmp_checkpoint_dir):
+    """#978: an agent's completion claim on a work ask nobody accepted must
+    still surface in the recipient's own panel — placed after the truncated
+    ask like the info/blocking markers, id untouched."""
+    sender = _seed_sender()
+    q_id = _ask(sender)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                  project_dir=RECIPIENT)
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert any("[done claimed]" in ln for ln in lines)
+    assert any(q_id in ln for ln in lines)
+
+
+def test_panel_no_claim_marker_for_an_undecided_ask(tmp_checkpoint_dir):
+    sender = _seed_sender()
+    _ask(sender)
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert not any("[done claimed]" in ln for ln in lines)
+
+
 def test_panel_legacy_row_renders_without_a_kind_marker(tmp_checkpoint_dir):
     """A record minted before #961 carries no `kind` field at all; the panel
     must render it exactly like an ordinary `work` ask — no marker, no

@@ -143,7 +143,12 @@ def _request_lines(record: dict, project_dir=None) -> list:
                      "here, and any verdict reverses it")
     if record.get("note"):
         lines.append(f"  Note: {record['note']}")
-    if record.get("done_evidence"):
+    if record.get("done_pending"):
+        # #978: the state glyph above stays the open one — a claim is not a
+        # verdict — so this line is the only place the claim itself shows.
+        lines.append("  Done (claimed, awaiting your accept): "
+                     f"{record.get('done_evidence', '')}")
+    elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
     if record.get("revision"):
         lines.append(f"  Revisions: {record['revision']} of "
@@ -176,7 +181,12 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
                      "here, and any verdict reverses it")
     if record.get("note"):
         lines.append(f"  Note: {record['note']}")
-    if record.get("done_evidence"):
+    if record.get("done_pending"):
+        # #978: the state glyph above stays the open one — a claim is not a
+        # verdict — so this line is the only place the claim itself shows.
+        lines.append("  Done (claimed, awaiting your accept): "
+                     f"{record.get('done_evidence', '')}")
+    elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
     if record.get("revision"):
         lines.append(f"  Revisions: {record['revision']} of "
@@ -469,6 +479,18 @@ def _cmd_request_done(args) -> int:
         return 1
     _cli._note_usage("request:done")
     _report(args.request_id, project, "done")
+    record = requests.get(args.request_id, project_dir=project)
+    if record is not None and record.get("done_pending"):
+        # #978: the record card above already renders the claim; this line
+        # is the plain-language answer to the question an agent just asked
+        # by running `done` at all — did that close it? — named in the
+        # voice a script reads rather than left to infer from the state
+        # glyph staying `open`.
+        render.render_ledger_lines(
+            [f"{args.request_id}: completion claimed, and still waits on a "
+             f"person — `daimon request accept {args.request_id}` lands it "
+             "as done, `daimon request reject "
+             f"{args.request_id} --note \"<why>\"` sends it back"])
     return 0
 
 

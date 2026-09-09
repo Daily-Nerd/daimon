@@ -983,9 +983,13 @@ def request_panel_lines(project_dir=None) -> list[str]:
         # already a `requests.inbox_renderable` record, never a raw event.
         kind_marker = "  [info]" if row.get("kind") == "info" else ""
         marker = "  [blocking]" if row.get("blocking") else ""
+        # #978: same posture as the two markers above — read from the
+        # folded row only, placed after the truncated ask so the id stays
+        # in its own span.
+        claim_marker = "  [done claimed]" if row.get("done_pending") else ""
         lines.append(f"→ {row['request_id']}  "
                      f"{_truncate_request_ask(row.get('ask', ''))}"
-                     f"{kind_marker}{marker}")
+                     f"{kind_marker}{marker}{claim_marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
     if overflow:
