@@ -2027,26 +2027,25 @@ def test_cli_write_checkpoint_literal_placeholder_body_gets_a_fresh_unique_id(
 
 
 def test_cli_write_checkpoint_two_placeholder_bodies_get_different_ids(
-        tmp_checkpoint_dir, monkeypatch):
+        tmp_checkpoint_dir, monkeypatch, capsys):
     # The fallback must be unique per call, or two /daimon-end writes on a
     # host without a live id would collide on the SAME per-session file —
     # exactly the failure this fix exists to prevent, just with a different
-    # constant.
-    from daimon_briefing import store
+    # constant. Both calls target the SAME project on purpose: two DIFFERENT
+    # projects would each get their own per-session file regardless of
+    # whether the fallback id is unique, so that shape never exercises the
+    # collision at all. Asserting on the PRINTED checkpoint path (not just
+    # the stored session_id) pins the thing that actually collided before
+    # this fix: the on-disk per-session FILE.
+    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
+    assert cli.main(["write-checkpoint", "--project", "/p/A"]) == 0
+    first_path = capsys.readouterr().out.strip().split("wrote checkpoint: ", 1)[1].split(" (source:", 1)[0]
 
     _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
     assert cli.main(["write-checkpoint", "--project", "/p/A"]) == 0
-    first = store.read_latest_body(
-        project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
-        admit=store.Admit.ANY)["session_id"]
+    second_path = capsys.readouterr().out.strip().split("wrote checkpoint: ", 1)[1].split(" (source:", 1)[0]
 
-    _stdin(monkeypatch, _valid_json("introspection-<short-unique-id>"))
-    assert cli.main(["write-checkpoint", "--project", "/p/B"]) == 0
-    second = store.read_latest_body(
-        project_dir="/p/B", route=store.Route.OWN_ELSE_GLOBAL,
-        admit=store.Admit.ANY)["session_id"]
-
-    assert first != second
+    assert first_path != second_path
 
 
 def test_cli_write_checkpoint_blank_body_session_id_gets_a_fresh_unique_id(
