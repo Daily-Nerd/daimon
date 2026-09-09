@@ -455,11 +455,6 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     # `_founder_kind_by_id`'s own docstring for why a kind resolved
     # mid-stream let a later duplicate revoke it out from under an
     # already-landed `accepted` row.
-    # #961 slice 3 review item 3: resolved BEFORE the main pass below touches
-    # a single lifecycle event, from the COMPLETE set of `opened` rows — see
-    # `_founder_kind_by_id`'s own docstring for why a kind resolved
-    # mid-stream let a later duplicate revoke it out from under an
-    # already-landed `accepted` row.
     founder_kind = _founder_kind_by_id(ordered)
     out: dict[str, dict] = {}
     for row in ordered:

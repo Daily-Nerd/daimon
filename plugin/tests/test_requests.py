@@ -381,6 +381,48 @@ def test_a_later_duplicate_opened_row_cannot_revoke_the_kind_an_earlier_agent_ac
     assert record["accepted_by"] is None
 
 
+def test_founder_kind_pre_pass_skips_a_shape_invalid_row_the_same_way_the_main_pass_does(
+        project):
+    """#961 slice 3 review round 2 item 3: the pre-pass's own read-boundary
+    shape check (`_SLUG_RE` on `to`, a non-empty `ask`) is load-bearing on
+    its own, not merely a copy of the main pass's check for symmetry.
+    Row 1 (`to=""`, shape-invalid) cannot come from `open_request` — its
+    own `_SLUG_RE.fullmatch` check refuses an empty recipient slug at the
+    write boundary before anything is written. Row 2 is an ordinary valid
+    agent-channel open, exactly what `open_request` produces every day.
+    Both forged via `requests.append` so the pre-pass sees the invalid row
+    at all (`open_request` never lets one reach disk).
+
+    Without the shape check, the pre-pass would treat row 1 as this id's
+    founder anyway (`founders[q_id] = _kind_of(row1)`, `"info"` — a human
+    channel with a syntactically readable `kind` field, shape entirely
+    aside), and row 2 would then look like an ordinary AGENT duplicate — the
+    disagreement rule fires only for `authority == "human"` (#961's own
+    review pass 2 finding, requests.py's own comment on that branch), so an
+    agent duplicate can never correct it. The record would found on `info`,
+    diverging toward LESS scrutiny than the main pass, which already skips
+    row 1 for the identical reason and founds on row 2's own `work`
+    instead. Shape-checking the pre-pass keeps the two passes in
+    agreement."""
+    q_id = "q-0123456789ab"
+    base = 1_700_000_001 * 10 ** 9
+    shape_invalid_founder = requests._stamp("opened", q_id, "cli-tty",
+                                            now_ns=base)
+    shape_invalid_founder.update({"to": "", "ask": "a forged claim",
+                                  "why": "forged", "kind": "info"})
+    assert requests.append(shape_invalid_founder, project_dir=project)
+    valid_open = requests._stamp("opened", q_id, "cli-agent",
+                                 now_ns=base + 1_000_000_000)
+    valid_open.update({"to": RECIPIENT, "ask": "the real ask",
+                       "why": "the real why"})
+    assert requests.append(valid_open, project_dir=project)
+
+    record = requests.get(q_id, project_dir=project)
+
+    assert record["kind"] == "work"
+    assert record["ask"] == "the real ask"  # row 2 founds it, row 1 is inert
+
+
 @pytest.mark.parametrize("bad_kind", [["info"], {"k": "info"}, 7, None,
                                       "informational"],
                          ids=["list", "dict", "int", "none", "bad-string"])
@@ -3148,6 +3190,72 @@ def test_is_stale_work_ask_ignores_a_delivered_stamp(project):
         _serialize(recipient, f"S-work-a{n}", _iso(n + 1))
     record = requests.recipient_join(project_dir=recipient)[q_id]
     assert requests.is_stale(record, project_dir=recipient) is False
+
+
+def test_is_stale_info_ask_resets_after_a_revise_to_the_new_revisions_own_delivery(
+        project):
+    """#961 slice 3 review round 2 item 4: `delivered` is keyed by REVISION
+    epoch, the same shape `surfaced` already uses for a `work` ask (#803's
+    own lesson: a revise opens a new epoch, so stale-ness measured against
+    an old one must not carry over). A `revise` bumps the revision, and the
+    new epoch's own `delivered` dict starts empty — the record must read as
+    NOT stale right after the revise even though three sessions already
+    passed the OLD revision's delivery, and must go stale again only once
+    the NEW revision has itself been delivered and aged past three
+    sessions.
+
+    Every fold-relevant row (the `opened` row's own real `order` aside, read
+    back rather than assumed) is forged with an explicit `now_ns`, INCLUDING
+    the `revised` row — `requests.revise()`'s own wrapper has no timestamp
+    override, and mixing its live "now" with a fictional future `base` for
+    the `delivered` rows put `revise` numerically BEFORE both deliveries
+    (real "now" sorts before a `base` chosen further in the future than real
+    time), so every forged delivery landed under the POST-revise revision
+    regardless of which one it was meant to be — a test-only ordering bug,
+    not a production one, caught by running this exact test first. Forging
+    `revised` too (the same technique `test_surfaced_rows_fold_per_revision_
+    epoch` already uses) keeps every relevant row on one fully controlled
+    timeline."""
+    sender_slug = _seed_bucket("/p/req-sender-stale-info-e")
+    recipient = "/p/req-recipient-stale-info-e"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_slug)
+    base = requests.events(project_dir=sender_slug)[0]["order"]
+
+    def _at(event, channel, seconds, bucket, **extra):
+        row = requests._stamp(event, q_id, channel,
+                              now_ns=base + seconds * 10 ** 9)
+        row.update(extra)
+        assert requests.append(row, project_dir=bucket)
+
+    # `delivered` is a RECIPIENT-side stamp (live delivery writes it into
+    # its own bucket); `revised` is a SENDER-side event (the same bucket
+    # `opened` lives in) — each forged into the bucket the real writer
+    # would use, only the timestamp is controlled.
+    _at("delivered", "mechanical", 1, recipient, session="S-info-e-session")
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(recipient, f"S-info-e{n}", requests._ts(
+            base + (n + 2) * 10 ** 9))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is True  # sanity
+
+    _at("revised", "cli-agent", 10, sender_slug, why="a sharper why")
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert record["revision"] == 1
+    # Not stale: revision 1's own `delivered` dict is still empty, and the
+    # revision-0 delivery three sessions ago must not carry over.
+    assert requests.is_stale(record, project_dir=recipient) is False
+
+    _at("delivered", "mechanical", 11, recipient,
+       session="S-info-e-new-session")
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False  # just delivered
+    for n in range(requests.STALE_AFTER_SESSIONS):
+        _serialize(recipient, f"S-info-e-post{n}", requests._ts(
+            base + (12 + n) * 10 ** 9))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is True
 
 
 def test_inbox_renderable_drops_stale_but_inbox_listing_keeps_it(project):

@@ -976,9 +976,15 @@ def request_panel_lines(project_dir=None) -> list[str]:
     on you", and a `kind == "info"` ask owes no accept, so it is not one of
     those any more. `decision_renderable` does the exclusion before its own
     cap, so a `work` ask never goes missing behind a newer `info` one; see
-    its docstring for why. `inbox_renderable` still backs `request inbox`
-    and the CLI's own `surfaced`-stamping loop, both of which still owe an
-    `info` ask a look."""
+    its docstring for why. `inbox_renderable` itself has no production
+    caller left as of review round 1: `request inbox` reads
+    `requests.inbox_listing`, and the CLI's own `surfaced`-stamping loop
+    reads `decision_renderable` too, for the identical reason this panel
+    does (stamping `surfaced` for a card that was never actually shown
+    would give `is_stale` a phantom anchor). `inbox_renderable` is kept as
+    the unfiltered, every-kind composer several tests still exercise
+    directly, and for a future consumer that wants every kind capped
+    without the decision-only narrowing."""
     if project_dir is None:
         return []
     try:

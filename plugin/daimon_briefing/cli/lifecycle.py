@@ -896,22 +896,18 @@ def _decide_cards(rows: list) -> list:
         tag = row["kind"] + (f" · {age}" if age else "")
         blocking = " [blocking: the sender says it is waiting]" if row.get(
             "blocking") else ""
-        # #961 slice 2 gave `row["approval"]` its own field here, split from
+        # #961 slice 2 gave the request lane's approval-requirement kind
+        # (info/work) its own queue-row field, `approval`, split from
         # `row["kind"]` (the queue LANE this card's tag already names) for
         # exactly the reason `pending.py`'s own queue-row builder still
         # documents: overloading `kind` would make a request-lane row that
         # happens to be `info` say `[info]` in the tag instead of
-        # `[request]`, silently hiding which lane it is. #961 slice 3 review
-        # item 5 removed the marker THIS CARD once rendered from `approval`:
-        # `pending._request_rows` now excludes `kind == "info"` before it
-        # ever builds a row, so `row.get("approval") == "info"` is
-        # unreachable through the shipped pipeline (`row["approval"]` is
-        # `None` for every non-request lane, and always `"work"` for a
-        # request-lane row — the same reasoning slice 3 already applied to
-        # `briefing.request_panel_lines`'s own marker). The field itself
-        # stays on the queue row (`--json` and other future callers may
-        # still want it); only this card's own use of it as a marker is
-        # gone.
+        # `[request]`, silently hiding which lane it is. Slice 3 excluded
+        # `kind == "info"` from `pending._request_rows` before it ever
+        # built a row, which made `approval` unreadable as an `info` value
+        # through the shipped pipeline (review round 1 removed the marker
+        # this card once rendered from it); review round 2 removed the
+        # field itself, since nothing anywhere read it any more.
         # Two spaces after the id: `render._LEDGER_HEADER_RE` reads that shape
         # to give the id its own span, because it is what a human copies.
         card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]

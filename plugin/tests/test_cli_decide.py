@@ -130,6 +130,14 @@ def test_decide_never_lists_an_info_request(project, capsys):
 # off_a_raw_row` below is kept because its real subject — the decide card
 # reads `kind` from the FOLD, never a raw row — still holds regardless of
 # the marker.
+#
+# Review round 2 removed the `approval` FIELD too (`pending._row` and
+# `pending.py`'s own queue-row builder): once round 1 deleted the one reader
+# (this card's own marker), nothing anywhere read it again — `daimon decide`
+# has no `--json`. `test_decide_request_card_tag_reads_request_not_the_
+# approval_kind` below re-pins the one thing the four removed tests used to
+# cover and nothing did any more: the request lane's own TAG, `[request`,
+# never overloaded by the approval axis, through the real pipeline.
 
 
 def test_decide_card_never_reads_the_approval_off_a_raw_row(
@@ -148,6 +156,25 @@ def test_decide_card_never_reads_the_approval_off_a_raw_row(
     # Positive anchor: empty output would also satisfy "no marker".
     assert "q-0123456789ab" in out
     assert "[info]" not in out
+
+
+def test_decide_request_card_tag_reads_request_not_the_approval_kind(
+        project, capsys):
+    """#961 slice 3 review round 2 item 5: `pending._row`'s own `approval`
+    field is gone (nothing read it once the marker above was removed), but
+    the LANDMINE it once guarded against is still real — a request-lane
+    card's tag must read `[request`, never overloaded by anything about the
+    kind/approval axis. Driven through the real pipeline (`pending.queue`
+    -> `lifecycle._decide_cards`), with a positive anchor on the id so an
+    empty or wrong-shaped card cannot pass by accident."""
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+    assert q_id in out
+    assert "[request" in out
 
 
 # ---- #978: a pending completion claim must not clear the queue ------------

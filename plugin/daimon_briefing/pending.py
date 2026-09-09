@@ -53,7 +53,7 @@ _KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2}
 
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
-         commands, context="", blocking=False, approval=None,
+         commands, context="", blocking=False,
          claimed=False, request_state=None) -> dict:
     return {
         "kind": kind,
@@ -67,25 +67,25 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         "waiting_since": waiting_since,
         "blocking": blocking,
         "commands": commands,
-        # #961 slice 2: the request lane's approval-requirement kind
-        # (info/work), from the FOLDED record — a DIFFERENT axis from
-        # `kind` above, which is the queue LANE (request/amendment/ruling/
-        # refutation). None for every lane but `request`, which never
-        # assigns one. #961 slice 3: `_request_rows` below now excludes
-        # `kind == "info"` before it ever builds a row, so through the
-        # shipped pipeline this reads "work" on every real request-lane
-        # row — kept on the row (not removed) for `--json` and any other
-        # future consumer, even though `_decide_cards` stopped rendering
-        # it as a marker (review item 5; the marker was unreachable once
-        # the exclusion landed).
-        "approval": approval,
         # #978: whether the request lane's record carries an agent's
         # completion claim the record has not yet settled (`done_pending`
         # on the FOLDED record) — False for every lane but `request`, which
-        # never assigns it. A distinct field from `approval` for the exact
-        # reason `approval` is distinct from the queue-lane `kind` above:
-        # THE LANDMINE `_decide_cards`'s own comment warns about is real for
-        # any field that overloads a name two axes could each want.
+        # never assigns it. #961 slice 2 first gave this its own field for
+        # the exact reason its own comment (now removed with the field
+        # below) warned about: `_decide_cards`'s tag already owns `kind`
+        # above (the queue LANE), so a second axis needs a name of its own
+        # rather than overloading that one.
+        #
+        # #961 slice 2 also added `approval`, the request lane's
+        # approval-requirement kind (info/work) from the folded record, on
+        # the same reasoning. Slice 3 excluded `kind == "info"` from
+        # `_request_rows` below before it ever builds a row, which made
+        # `approval` read "work" on every real request-lane row and
+        # nothing ever read it again outside this function (review round 1
+        # already deleted the one reader, `_decide_cards`'s marker). Review
+        # round 2 removed the field itself, rather than leave a value
+        # nothing consumes: a field with no reader is a field a future
+        # editor has to reason about anyway, for no return.
         "claimed": claimed,
         # #978 review round 1 (F4): the request lane's own `state`
         # (open/needs-info), from the FOLDED record, so a claim line can
@@ -160,10 +160,8 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
                      if record.get("from_label") else ""),
             waiting_since=record.get("created_at") or "",
             blocking=bool(record.get("blocking")),
-            # #961 slice 2 / #978: both read from THIS folded record only —
-            # `record` is already `requests.recipient_join`'s output, never
-            # a raw row.
-            approval=record.get("kind"),
+            # #978: reads from THIS folded record only — `record` is
+            # already `requests.recipient_join`'s output, never a raw row.
             claimed=bool(record.get("done_pending")),
             request_state=record.get("state"),
             commands=[
