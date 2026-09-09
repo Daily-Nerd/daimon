@@ -1,3 +1,7 @@
+---
+description: "Compartir memoria de agentes en un equipo a traves de un repo sidecar de git. Los checkpoints quedan inmutables y atribuidos, y el repo es el limite de privacidad."
+---
+
 # Memoria de equipo
 
 La memoria de equipo refleja cada uno de tus checkpoints de sesión —

@@ -1,5 +1,6 @@
 ---
 sidebar_position: 4
+description: "Cada numero que daimon publica sobre si mismo viene con el comando para reproducirlo en tu propio store. Un dato que no podes correr de nuevo es un testimonio."
 ---
 
 # Afirmaciones, con método para re-ejecutarlas

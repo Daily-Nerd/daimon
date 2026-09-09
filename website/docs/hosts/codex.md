@@ -1,3 +1,7 @@
+---
+description: "Set up daimon on Codex. SessionEnd capture, throttled Stop coverage, rollout transcript parsing, and an honest note on how far validation goes."
+---
+
 # Codex
 
 Codex is code-verified, unit-tested (`test_codex_hooks.py`), and live-validated

@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: "Every daimon item shows whether it is a verbatim quote or an inferred guess, and a byte check downgrades any quote that no longer matches the transcript."
 ---
 
 # Trust classes

@@ -1,3 +1,7 @@
+---
+description: "Set up daimon on Windsurf Cascade. Native transcript capture, probe hardened, and tested end to end in real Windsurf sessions."
+---
+
 # Windsurf (Cascade)
 
 Windsurf's adapter is shipped and live-validated: the capture loop

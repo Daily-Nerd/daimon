@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: "Install daimon and get your first agent briefing in five steps, from uv tool install to a checkpoint your next session actually reads."
 ---
 
 # Quickstart

@@ -1,3 +1,7 @@
+---
+description: "Configura daimon en Gemini CLI. La inyeccion del briefing ya funciona; la captura esta bloqueada upstream por gemini-cli#14715, asi que corre medio loop."
+---
+
 # Gemini CLI
 
 El soporte de Gemini replica la forma de Claude Code, dividido en dos

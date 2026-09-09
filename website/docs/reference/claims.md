@@ -1,5 +1,6 @@
 ---
 sidebar_position: 4
+description: "Every number daimon publishes about itself ships with the command to reproduce it on your own store. A claim you cannot re-run is a testimonial."
 ---
 
 # Claims, with re-run methods

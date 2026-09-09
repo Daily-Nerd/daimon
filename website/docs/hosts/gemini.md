@@ -1,3 +1,7 @@
+---
+description: "Set up daimon on Gemini CLI. Briefing injection ships today; capture is blocked upstream on gemini-cli#14715, so this host runs half the loop."
+---
+
 # Gemini CLI
 
 Gemini support mirrors the Claude Code shape, split across two scripts. The

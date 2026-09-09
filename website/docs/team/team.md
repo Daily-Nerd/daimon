@@ -1,3 +1,7 @@
+---
+description: "Share agent memory across a team through a git sidecar repo. Checkpoints stay immutable and attributed, and the shared repo is the privacy boundary."
+---
+
 # Team memory
 
 Team memory mirrors each of your session checkpoints — immutable, one file per

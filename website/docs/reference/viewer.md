@@ -1,3 +1,7 @@
+---
+description: "daimon serve opens a local read-only view of one project's memory in your browser. Every surface renders existing engine output, and nothing writes."
+---
+
 # Viewer (read-only)
 
 `daimon serve` opens a local, read-only view of one project's memory in your

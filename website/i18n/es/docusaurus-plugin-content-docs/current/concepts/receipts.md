@@ -1,5 +1,6 @@
 ---
 sidebar_position: 3
+description: "Como probar que un archivo de memoria no fue editado despues de escribirse. Recibos, hashes firmados y verificacion offline de cada item citado."
 ---
 
 # Receipts y verificación offline

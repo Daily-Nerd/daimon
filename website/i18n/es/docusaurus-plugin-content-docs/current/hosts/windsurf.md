@@ -1,3 +1,7 @@
+---
+description: "Configura daimon en Windsurf Cascade. Captura sobre el transcript nativo, endurecida con probes y probada de punta a punta en sesiones reales."
+---
+
 # Windsurf (Cascade)
 
 El adaptador de Windsurf está publicado y validado en uso real: el ciclo de

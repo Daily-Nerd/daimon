@@ -1,3 +1,7 @@
+---
+description: "Configura daimon en Codex. Captura en SessionEnd, cobertura con Stop throttled, parseo del rollout, y una nota honesta sobre el alcance real de la validacion."
+---
+
 # Codex
 
 Codex está verificado a nivel de código, con tests unitarios
