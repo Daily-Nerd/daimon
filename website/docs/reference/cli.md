@@ -195,10 +195,12 @@ sessions pass with no decision; a decided one leaves the sender's panel
 after 2 sender sessions. Attention decays — records never delete, and both
 stay fully visible in `list`/`inbox`.
 
-A request opened with `--kind info` carries an `[info]` marker on the
-recipient's panels above, on the `daimon decide` card, and on the
-live-delivery line that injects it mid session. A `work` request, the
-default, carries no marker on any of those surfaces.
+A request opened with `--kind info` owes no accept, so it never appears in
+`daimon decide` or the recipient's "Requests waiting on you" panel above —
+there is nothing there for a person to decide. It still carries an `[info]`
+marker on the recipient's "Requests you accepted and still owe" panel and
+on the live-delivery line that injects it mid session. A `work` request,
+the default, carries no marker on either.
 
 `daimon status` adds a one-line summary, `requests: N open sent, M
 awaiting you`, silent when both are zero.

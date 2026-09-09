@@ -423,6 +423,40 @@ def test_a_decided_foreign_request_is_not_counted(project):
     assert counts.get(b, 0) == 0
 
 
+def test_an_info_foreign_request_is_not_counted(project):
+    """#961 slice 3 review item 2: an `info` ask owes no accept and never
+    enters `queue`'s own request lane — the foreign count must agree, or
+    `daimon decide`'s footer sends a person to a project with nothing
+    actually waiting."""
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask="an info-only ask", why="the recipient can read this",
+        channel="cli-tty", kind="info", project_dir="/p/A")
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts.get(b, 0) == 0
+
+
+def test_foreign_counts_matches_the_foreign_projects_own_queue_length(
+        project):
+    """The count `daimon decide`'s footer names for project B must equal
+    what `pending.queue` actually returns when run FROM B: one `info` ask
+    (excluded) and one `work` ask (counted) land on exactly 1, not 2."""
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask="an info-only ask", why="the recipient can read this",
+        channel="cli-tty", kind="info", project_dir="/p/A")
+    requests.open_request(
+        to=b, ask="please review the PR", why="ready to merge",
+        channel="cli-agent", project_dir="/p/A")
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+    own_queue_len = len(pending.queue(project_dir="/p/B")["rows"])
+
+    assert counts.get(b, 0) == own_queue_len == 1
+
+
 def test_a_rejected_foreign_request_is_not_counted(project):
     b = store.project_slug("/p/B")
     q_id = requests.open_request(

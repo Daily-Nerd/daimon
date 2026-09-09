@@ -58,6 +58,32 @@ def test_cli_brief_stamps_surfaced_after_the_print(tmp_checkpoint_dir,
     assert set(record["surfaced"]) == {0}
 
 
+def test_cli_brief_stamps_surfaced_only_for_a_work_ask(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """#961 slice 3 review item 1: the panel (`decision_renderable`) never
+    renders an `info` ask, so the stamping loop must not stamp `surfaced`
+    for one either — that would give `is_stale` a phantom anchor for a
+    card that was never shown, decaying the ask before anyone (human or
+    agent) ever saw it."""
+    recipient = "/p/cbr-recipient-h"
+    sender_slug = _seed_checkpoint("/p/cbr-sender-h", "S-cbr-sender-h")
+    _seed_checkpoint(recipient, "S-cbr-recipient-h")
+    work_id = requests.open_request(
+        to=store.project_slug(recipient), ask="a real work ask",
+        why="because", channel="cli-agent", project_dir=sender_slug)
+    info_id = requests.open_request(
+        to=store.project_slug(recipient), ask="an info-only ask",
+        why="because", channel="cli-tty", kind="info",
+        project_dir=sender_slug)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", recipient)
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    work_record = requests.recipient_join(project_dir=recipient)[work_id]
+    info_record = requests.recipient_join(project_dir=recipient)[info_id]
+    assert requests.needs_surfaced_stamp(work_record) is False
+    assert requests.needs_surfaced_stamp(info_record) is True
+
+
 def test_cli_brief_stamp_is_write_once_across_repeated_briefs(
         tmp_checkpoint_dir, monkeypatch, capsys):
     recipient = "/p/cbr-recipient-c"
@@ -79,7 +105,11 @@ def test_cli_brief_slug_path_never_stamps_or_shows_the_panel(
     def _boom(*a, **k):
         raise AssertionError("--slug briefs must never touch the composer")
 
-    monkeypatch.setattr(requests, "inbox_renderable", _boom)
+    # #961 slice 3: the stamping loop (and the panel) read through
+    # `decision_renderable`, not `inbox_renderable` — patching the function
+    # this path no longer calls would prove nothing (landmine: moving a
+    # function off a call graph silently shrinks a monkeypatch-based test).
+    monkeypatch.setattr(requests, "decision_renderable", _boom)
     monkeypatch.setattr(requests, "stamp_surfaced", _boom)
     rc = cli.main(["brief", "--slug", slug])
     assert rc == 0
@@ -106,7 +136,11 @@ def test_cli_brief_global_fallback_never_stamps_or_shows_the_panel(
         raise AssertionError("global-fallback briefs must never touch the "
                              "composer")
 
-    monkeypatch.setattr(requests, "inbox_renderable", _boom)
+    # #961 slice 3: the stamping loop (and the panel) read through
+    # `decision_renderable`, not `inbox_renderable` — patching the function
+    # this path no longer calls would prove nothing (landmine: moving a
+    # function off a call graph silently shrinks a monkeypatch-based test).
+    monkeypatch.setattr(requests, "decision_renderable", _boom)
     monkeypatch.setattr(requests, "stamp_surfaced", _boom)
     rc = cli.main(["brief"])
     assert rc == 0

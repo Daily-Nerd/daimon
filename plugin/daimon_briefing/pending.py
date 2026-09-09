@@ -71,7 +71,13 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         # (info/work), from the FOLDED record — a DIFFERENT axis from
         # `kind` above, which is the queue LANE (request/amendment/ruling/
         # refutation). None for every lane but `request`, which never
-        # assigns one.
+        # assigns one. #961 slice 3: `_request_rows` below now excludes
+        # `kind == "info"` before it ever builds a row, so through the
+        # shipped pipeline this reads "work" on every real request-lane
+        # row — kept on the row (not removed) for `--json` and any other
+        # future consumer, even though `_decide_cards` stopped rendering
+        # it as a marker (review item 5; the marker was unreachable once
+        # the exclusion landed).
         "approval": approval,
         # #978: whether the request lane's record carries an agent's
         # completion claim the record has not yet settled (`done_pending`
@@ -331,6 +337,14 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
             if not to or to == slug:
                 continue  # this project's own inbox is `queue`'s, not ours
             if record.get("state") not in requests._SENDER_MOVABLE:
+                continue
+            # #961 slice 3 review item 2: the same exclusion `queue`'s own
+            # request lane applies (`_request_rows` above) — an `info` ask
+            # owes no accept, so counting it here would make this count
+            # disagree with what `pending.queue` actually returns when run
+            # FROM that project, sending a person to a bucket with nothing
+            # waiting.
+            if record.get("kind") == "info":
                 continue
             if record.get("suppressed"):
                 continue

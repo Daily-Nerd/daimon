@@ -332,6 +332,55 @@ def test_a_non_human_duplicate_opened_row_cannot_downgrade_an_info_ask(
     assert requests.get(q_id, project_dir=project)["kind"] == "info"
 
 
+def test_a_later_duplicate_opened_row_cannot_revoke_the_kind_an_earlier_agent_accept_relied_on(
+        project):
+    """#961 slice 3 review item 3: the exact three-row attack. Row 1 (a
+    back-dated `ui`-channel founder claiming `info`) cannot come from
+    `open_request` — it always stamps the live `time.time_ns()`, and `ui`
+    is reachable only from an in-process writer no test can invoke. Row 3
+    (the genuine human `opened`, disagreeing about `kind`) cannot come from
+    `open_request` either — its own id-collision guard (`make_id` ties the
+    id to sender+ask+why+timestamp) refuses reusing an id it did not
+    derive for this exact ask. Both forged via `requests.append` with an
+    explicit `now_ns`. Row 2 (the agent `accepted`) genuinely COULD come
+    from the shipping `accept()` writer AT THAT HISTORICAL MOMENT — the
+    fold really does read `kind == "info"`, `state == "open"` right then,
+    which is exactly what #961's own exception permits — forged here only
+    so its `order` lands deterministically between the other two rather
+    than at whatever `time.time_ns()` happens to return.
+
+    Without a pre-pass, the single-pass fold read `current["kind"]` as
+    `"info"` when it reached row 2 (row 3, which would force it to `work`,
+    had not been processed yet), permitted the accept, and only THEN
+    processed row 3, disagreed, and forced `kind` to `work` — landing
+    `kind: work, state: accepted, accepted_by: agent`, exactly the
+    assertion #961's own exception exists to forbid. Resolving every id's
+    kind from the FULL set of `opened` rows before any lifecycle event
+    runs closes the window: by the time the accept is processed, `kind`
+    already reflects row 3, so the exception's own `kind == "info"` check
+    fails and the row is inert."""
+    q_id = "q-0123456789ab"
+    base = 1_700_000_000 * 10 ** 9
+    forged_founder = requests._stamp("opened", q_id, "ui", now_ns=base)
+    forged_founder.update({"to": RECIPIENT, "ask": "a forged info ask",
+                          "why": "forged", "kind": "info"})
+    assert requests.append(forged_founder, project_dir=project)
+    agent_accept = requests._stamp("accepted", q_id, "cli-agent",
+                                   now_ns=base + 1_000_000_000)
+    assert requests.append(agent_accept, project_dir=project)
+    genuine_open = requests._stamp("opened", q_id, "cli-tty",
+                                   now_ns=base + 2_000_000_000)
+    genuine_open.update({"to": RECIPIENT, "ask": "the real ask",
+                        "why": "the real why"})  # no `kind` -> DEFAULT_KIND
+    assert requests.append(genuine_open, project_dir=project)
+
+    record = requests.get(q_id, project_dir=project)
+
+    assert record["kind"] == "work"
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
 @pytest.mark.parametrize("bad_kind", [["info"], {"k": "info"}, 7, None,
                                       "informational"],
                          ids=["list", "dict", "int", "none", "bad-string"])
@@ -519,6 +568,88 @@ def test_forged_agent_accepted_row_on_an_info_ask_lands_accepted_in_the_fold(
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "accepted"
     assert record["accepted_by"] == "agent"
+
+
+def test_forged_mechanical_accepted_row_on_an_info_ask_is_inert_in_the_fold(
+        project):
+    """#961 slice 3 review item 6: the exception must gate on `authority ==
+    "agent"` specifically, not merely `!= "human"` — a `mechanical` channel
+    (a real, valid channel, just not the one #961's own contract permits
+    to accept) must stay inert even on an `info` ask still open."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    row = requests._stamp("accepted", q_id, "mechanical")
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_forged_unknown_channel_accepted_row_on_an_info_ask_is_inert_in_the_fold(
+        project):
+    """The residual case `!= "human"` alone would miss: a channel string
+    `CHANNEL_AUTHORITY` has never heard of resolves to `authority = None`,
+    which is also `!= "human"` — but it is not `"agent"` either, and must
+    stay inert too. `_stamp` refuses an unknown channel outright (it
+    validates `channel in CHANNEL_AUTHORITY`), so this row is built from a
+    valid stamp with the channel swapped afterward — `requests.append`
+    itself validates no field, the same gap every other forged-row test in
+    this file exploits."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    row = requests._stamp("accepted", q_id, "cli-agent")
+    row["channel"] = "totally-unrecognized"
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
+def test_accept_refuses_a_mechanical_channel_on_an_info_ask_at_the_write_boundary(
+        project):
+    q_id = _open(project, channel="cli-tty", kind="info")
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="mechanical", project_dir=project)
+    assert requests.get(q_id, project_dir=project)["state"] == "open"
+
+
+def test_forged_agent_accepted_row_cannot_reclaim_an_already_human_accepted_info_ask(
+        project):
+    """#961 slice 3 review item 4: the exception's `current["state"] in
+    _SENDER_MOVABLE` clause is what stops this. Without it, a SECOND
+    `accepted` row from an agent channel landing on an info record a
+    HUMAN already accepted would pass straight through — the record is
+    still `kind == "info"` and the event is still `accepted` — flip
+    `accepted_by`/`verdict_by` from "human" to "agent", and silently
+    reassign credit for the person's own decision to the agent. Forged via
+    `requests.append`, never `accept()` (which the write boundary already
+    refuses on a decided record via `_SENDER_MOVABLE` too, so this pins
+    the FOLD's own re-check, not the wrapper's)."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    row = requests._stamp("accepted", q_id, "cli-agent")
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "accepted"
+    assert record["accepted_by"] == "human"
+    assert record["verdict_by"] == "human"
+
+
+def test_forged_agent_accepted_row_cannot_reverse_a_done_info_ask(project):
+    """#961 slice 3 review item 4, the other half: without the
+    `_SENDER_MOVABLE` clause, a forged `accepted` row on a `done` info
+    record falls through to the generic verdict landing (the `done_pending`
+    merge-to-`done` branch does not apply — `done_pending` is always False
+    for `info` — so it lands on the ordinary `_STATE_BY_EVENT["accepted"]`
+    path) and REVERSES a closed ask back to `accepted`, losing the
+    completion fact from the rendered state."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    requests.done(q_id, channel="cli-agent", evidence="answered from README",
+                 project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"  # sanity: info done lands directly
+    row = requests._stamp("accepted", q_id, "cli-agent")
+    assert requests.append(row, project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
 
 
 def test_forged_agent_accepted_row_on_a_to_human_ask_is_inert_in_the_fold(
@@ -2939,6 +3070,84 @@ def test_render_state_labels_stale_without_writing_it(project):
     assert requests.render_state(record, project_dir=recipient) == "stale"
     assert record["state"] == "open"  # never written to disk
     assert requests.events(project_dir=recipient) == before  # no new row
+
+
+# ---- #961 slice 3 review item 1: an info ask's staleness anchors on
+# DELIVERY, never SURFACED -----------------------------------------------
+#
+# `decision_renderable` (the panel) never renders an `info` ask at all, so a
+# `surfaced` stamp for one measures staleness against a card that was never
+# shown. Attention for an `info` ask is the AGENT's, measured by delivery
+# into a live session; attention for a `work` ask is the PERSON's, measured
+# by the panel. `is_stale` anchors a `kind == "info"` record on the
+# EARLIEST `delivered` stamp of its CURRENT revision instead.
+
+
+def test_is_stale_info_ask_ignores_a_surfaced_stamp(project):
+    """Even with a `surfaced` row on file (the brief loop no longer writes
+    one for an `info` ask, but nothing stops a direct call), an `info`
+    record must not anchor on it."""
+    sender_slug = _seed_bucket("/p/req-sender-stale-info-a")
+    recipient = "/p/req-recipient-stale-info-a"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_slug)
+    requests.stamp_surfaced(q_id, project_dir=recipient)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(recipient, f"S-info-a{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
+
+
+def test_is_stale_info_ask_never_delivered_never_decays(project):
+    sender_slug = _seed_bucket("/p/req-sender-stale-info-b")
+    recipient = "/p/req-recipient-stale-info-b"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_slug)
+    for n in range(5):
+        _serialize(recipient, f"S-info-b{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
+
+
+def test_is_stale_info_ask_after_three_recipient_sessions_past_delivery(
+        project):
+    """Mirrors `test_is_stale_after_three_recipient_sessions_past_the_
+    anchor` exactly, `stamp_delivered` in place of `stamp_surfaced`: not
+    stale at 2 of 3 sessions past the anchor, stale at 3."""
+    sender_slug = _seed_bucket("/p/req-sender-stale-info-c")
+    recipient = "/p/req-recipient-stale-info-c"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_slug)
+    requests.stamp_delivered(q_id, "S-info-c-session", project_dir=recipient)
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
+    for n in range(requests.STALE_AFTER_SESSIONS - 1):
+        _serialize(recipient, f"S-info-c{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False  # 2 of 3
+    _serialize(recipient, "S-info-c-last",
+              _iso(requests.STALE_AFTER_SESSIONS + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is True
+
+
+def test_is_stale_work_ask_ignores_a_delivered_stamp(project):
+    """The mirror case: a `work` ask's staleness stays anchored on
+    `surfaced`, never `delivered` — a live-delivery stamp alone, with no
+    brief ever rendering the card, must not decay it."""
+    sender_slug = _seed_bucket("/p/req-sender-stale-work-a")
+    recipient = "/p/req-recipient-stale-work-a"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=sender_slug)
+    requests.stamp_delivered(q_id, "S-work-a-session", project_dir=recipient)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(recipient, f"S-work-a{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
 
 
 def test_inbox_renderable_drops_stale_but_inbox_listing_keeps_it(project):

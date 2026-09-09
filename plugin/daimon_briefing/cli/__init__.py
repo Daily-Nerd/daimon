@@ -718,7 +718,16 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     # composer must never take the briefing down.
     if worldcheck_project is not None:
         try:
-            for row in requests.inbox_renderable(
+            # #961 slice 3 review item 1: `decision_renderable`, not
+            # `inbox_renderable` — the panel this stamp records as "shown"
+            # is the one `request_panel_lines` actually reads
+            # (briefing.py), and that one excludes `kind == "info"`. An
+            # `info` ask stamped `surfaced` here would give `is_stale` an
+            # anchor for a card that was never printed, decaying the ask
+            # before anyone saw it (`is_stale`'s own `kind == "info"`
+            # branch anchors on `delivered` instead, precisely because this
+            # loop no longer stamps `surfaced` for one).
+            for row in requests.decision_renderable(
                     project_dir=worldcheck_project).get("rows") or []:
                 if requests.needs_surfaced_stamp(row):
                     requests.stamp_surfaced(row["request_id"],

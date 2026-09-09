@@ -199,10 +199,13 @@ remitente después de 2 sesiones del remitente. La atención decae — los
 registros nunca se eliminan, y ambos siguen totalmente visibles en
 `list`/`inbox`.
 
-Una solicitud abierta con `--kind info` lleva una marca `[info]` en los
-paneles del destinatario de arriba, en la tarjeta de `daimon decide`, y en
-la línea de entrega en vivo que la inyecta a mitad de sesión. Una solicitud
-`work`, el default, no lleva marca en ninguna de esas superficies.
+Una solicitud abierta con `--kind info` no debe un accept, así que nunca
+aparece en `daimon decide` ni en el panel "Requests waiting on you" del
+destinatario de arriba: no hay nada ahí para que una persona decida.
+Sigue llevando una marca `[info]` en el panel "Requests you accepted and
+still owe" del destinatario y en la línea de entrega en vivo que la
+inyecta a mitad de sesión. Una solicitud `work`, el default, no lleva
+marca en ninguna de las dos.
 
 `daimon status` agrega un resumen de una línea, `requests: N open sent, M
 awaiting you`, silencioso cuando los dos son cero.

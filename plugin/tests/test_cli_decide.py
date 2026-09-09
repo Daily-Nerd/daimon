@@ -116,73 +116,20 @@ def test_decide_never_lists_an_info_request(project, capsys):
     assert "nothing waiting on you" in out.lower()
 
 
-def test_decide_card_shows_no_marker_for_a_work_request(project, capsys):
-    requests.open_request(
-        to=store.project_slug(project), ask="bump before the docs change",
-        why="the tag is referenced", channel="cli-agent", project_dir=project)
-
-    assert cli.main(["decide"]) == 0
-    out = capsys.readouterr().out
-    assert "[info]" not in out
-
-
-def test_decide_card_lane_tag_is_never_overloaded_by_the_approval_kind():
-    """THE LANDMINE: `pending._row`'s `kind` key is the queue LANE, never
-    the approval requirement — a request-lane row that happens to be `info`
-    must still say `[request` in the tag, not `[info`.
-
-    #961 slice 3 excludes `kind == "info"` from `pending.queue`'s request
-    lane entirely, so no REAL pipeline can produce this shape any more (see
-    `test_decide_cards_lane_guard_is_load_bearing_not_dead_code` below for
-    why a synthetic row is the right tool here, not a weaker test)."""
-    from daimon_briefing.cli import lifecycle
-    row = {
-        "kind": "request", "id": "q-0123456789ab", "slug": "-p-x",
-        "headline": "an info-only ask", "context": "", "waiting_since": "",
-        "blocking": False,
-        "commands": [("accept", "daimon request accept q-0123456789ab")],
-        "approval": "info",
-    }
-
-    card = lifecycle._decide_cards([row])[0]
-
-    assert card[0].startswith("[request")
-    assert not card[0].startswith("[info")
-
-
-def test_decide_card_a_ruling_row_never_shows_an_info_marker(project, capsys):
-    """A non-request lane never carries an approval kind at all, so it must
-    never render the marker even incidentally."""
-    _ruling(project)
-
-    assert cli.main(["decide"]) == 0
-    out = capsys.readouterr().out
-    assert "[info]" not in out
-
-
-def test_decide_cards_lane_guard_is_load_bearing_not_dead_code():
-    """No REAL composer ever produces a non-request row with `approval`
-    set: `pending._request_rows` is the only caller that passes anything but
-    the default `None`. That makes the `row.get("kind") == "request"` half
-    of `_decide_cards`'s guard unreachable through the shipped pipeline, so a
-    test that only ever drives real rows through `pending.queue` can pass
-    whether or not that half of the guard exists. This test hands
-    `_decide_cards` a synthetic row directly, shaped the way a future bug
-    elsewhere in `pending.py` could actually produce one (a non-request lane
-    that leaks an `approval` value it was never supposed to carry), and
-    checks the guard catches it anyway."""
-    from daimon_briefing.cli import lifecycle
-    row = {
-        "kind": "ruling", "id": "r-0123456789ab", "slug": "-p-x",
-        "headline": "never bump to 1.0 without a human call",
-        "context": "", "waiting_since": "", "blocking": False,
-        "commands": [("ratify", "daimon ruling ratify r-0123456789ab")],
-        "approval": "info",
-    }
-
-    card = lifecycle._decide_cards([row])[0]
-
-    assert "[info]" not in card[0]
+# ---- #961 slice 3 review item 5 --------------------------------------------
+#
+# The decide card's own `[info]` marker is REMOVED, not merely unreachable:
+# `pending._request_rows` excludes `kind == "info"` before it ever builds a
+# row (slice 3's own exclusion), so `_decide_cards` computing a marker from
+# `row.get("approval") == "info"` was dead code — the four tests slice 2 and
+# the first pass of slice 3 built for it are removed with it, rather than
+# repointed at hand-built dicts to keep exercising a branch nothing upstream
+# can ever produce again (review's own naming: that repointing is the shape
+# of scar 0074). `test_decide_never_lists_an_info_request` above already
+# covers the exclusion itself; `test_decide_card_never_reads_the_approval_
+# off_a_raw_row` below is kept because its real subject — the decide card
+# reads `kind` from the FOLD, never a raw row — still holds regardless of
+# the marker.
 
 
 def test_decide_card_never_reads_the_approval_off_a_raw_row(
@@ -201,37 +148,6 @@ def test_decide_card_never_reads_the_approval_off_a_raw_row(
     # Positive anchor: empty output would also satisfy "no marker".
     assert "q-0123456789ab" in out
     assert "[info]" not in out
-
-
-def test_decide_card_with_the_info_marker_still_gets_ledger_header_spans():
-    """The marker is inserted between the headline and the blocking suffix,
-    so the two-space-after-id contract `render._ledger_header_spans` relies
-    on must still hold.
-
-    #961 slice 3 excludes `kind == "info"` from `pending.queue`'s request
-    lane entirely, so this shape can no longer be driven through the REAL
-    pipeline (`pending.queue` -> `lifecycle._decide_cards`) the way it once
-    was — the same reason `test_decide_card_lane_tag_is_never_overloaded_
-    by_the_approval_kind` above switched to a synthetic row. `_decide_cards`
-    itself is still generic code with no idea the composer upstream of it
-    now refuses to produce this input, so it is still worth pinning that it
-    renders the shape correctly if handed one."""
-    from daimon_briefing.cli import lifecycle
-    q_id = "q-0123456789ab"
-    row = {
-        "kind": "request", "id": q_id, "slug": "-p-x",
-        "headline": "an info-only ask", "context": "", "waiting_since": "",
-        "blocking": False,
-        "commands": [("accept", f"daimon request accept {q_id}")],
-        "approval": "info",
-    }
-    card = lifecycle._decide_cards([row])[0]
-
-    spans = render._ledger_header_spans(card[0])
-
-    assert spans is not None
-    assert spans[1] == q_id
-    assert "[info]" in card[0]
 
 
 # ---- #978: a pending completion claim must not clear the queue ------------

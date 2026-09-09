@@ -379,6 +379,52 @@ def _kind_of(row: dict) -> str:
     return kind
 
 
+def _founder_kind_by_id(ordered: list[dict]) -> dict[str, str]:
+    """#961 slice 3 review item 3: every request id's FINAL `kind`, resolved
+    in a PRE-PASS over every `opened` row before `fold`'s main pass applies
+    any lifecycle event against it.
+
+    The founder-plus-disagreement rule itself is unchanged from slice 1
+    (`fold`'s own inline comment on the founder branch has the full
+    reasoning) — only WHEN it runs moves. Under the single-pass version, a
+    lifecycle event (an `accepted` row, say) processed BEFORE a later
+    `opened` duplicate saw `current["kind"]` as whatever the founder alone
+    said, even when that later duplicate would go on to disagree and force
+    it to `work`. That let an agent `accepted` row on a back-dated forged
+    `info` founder land while the founder still stood, and only afterward
+    get its `kind` pulled out from under it by the genuine human `opened`
+    row arriving later in the SAME stream — `kind: work, state: accepted,
+    accepted_by: agent`, the exact assertion #961's `_HUMAN_ONLY` exception
+    exists to forbid. Resolving every id's kind from the COMPLETE set of
+    `opened` rows first means no lifecycle event can ever see a kind a
+    later row in the same fold will go on to revoke.
+
+    `ordered` is `fold`'s own sorted list, passed in rather than re-sorted
+    here, so this stays exactly as deterministic under reorder as `fold`
+    already is — the two passes share one sort, not two that could drift
+    apart."""
+    founders: dict[str, str] = {}
+    for row in ordered:
+        if row.get("event") != "opened":
+            continue
+        q_id = str(row.get("request_id") or "")
+        if q_id not in founders:
+            # Same read-boundary shape check `fold`'s founder branch makes:
+            # a row failing it is never a founder, and the NEXT valid
+            # `opened` row for this id (if any) is the one that founds it —
+            # in both passes alike, since both apply the identical check.
+            if not _SLUG_RE.fullmatch(str(row.get("to") or "")):
+                continue
+            if not str(row.get("ask") or "").strip():
+                continue
+            founders[q_id] = _kind_of(row)
+            continue
+        authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+        if authority == "human" and _kind_of(row) != founders[q_id]:
+            founders[q_id] = DEFAULT_KIND
+    return founders
+
+
 def fold(rows: list[dict]) -> dict[str, dict]:
     """Fold this bucket's rows into current records, deterministic under
     reorder.
@@ -404,6 +450,17 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         str(row.get("event_id") or ""),
         _integer(row, "_line"),
     ))
+    # #961 slice 3 review item 3: resolved BEFORE the main pass below touches
+    # a single lifecycle event, from the COMPLETE set of `opened` rows — see
+    # `_founder_kind_by_id`'s own docstring for why a kind resolved
+    # mid-stream let a later duplicate revoke it out from under an
+    # already-landed `accepted` row.
+    # #961 slice 3 review item 3: resolved BEFORE the main pass below touches
+    # a single lifecycle event, from the COMPLETE set of `opened` rows — see
+    # `_founder_kind_by_id`'s own docstring for why a kind resolved
+    # mid-stream let a later duplicate revoke it out from under an
+    # already-landed `accepted` row.
+    founder_kind = _founder_kind_by_id(ordered)
     out: dict[str, dict] = {}
     for row in ordered:
         q_id = row["request_id"]
@@ -412,36 +469,10 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         current = out.get(q_id)
         if event == "opened":
             if current is not None:
-                # #961: a duplicate `opened` for an id that already has a
-                # founder is still first-writer-wins for every other field,
-                # but if a row carrying HUMAN authority disagrees with the
-                # founder about the approval requirement, that disagreement
-                # is free evidence that one of them is lying about it — the
-                # genuine row is still on disk right beside the forgery,
-                # this branch never deletes either. Gated on `authority ==
-                # "human"`, not on the row's raw `kind` or on `_kind_of(row)`
-                # alone: `_kind_of` of ANY non-human row is already the
-                # constant `DEFAULT_KIND` after its own authority gate, so
-                # comparing it unconditionally would make every non-human
-                # duplicate "disagree" with an `info` founder BY
-                # CONSTRUCTION — an agent could then downgrade any `info`
-                # ask to `work` with one ordinary appended row, no forgery
-                # needed, which is a person's decision being overridden by a
-                # machine just as much as an upgrade would be (review pass 2
-                # finding). Restricting to human duplicates closes that
-                # without reopening anything: the authority gate in
-                # `_kind_of` already handles every case where the forger
-                # does not ALSO claim a human channel; a forgery that claims
-                # `cli-tty` outright is the pre-existing forgery boundary
-                # this project has already reasoned about and accepted (see
-                # CHANNEL_AUTHORITY's own comment), and this is the cheap
-                # second layer for exactly that residual case: a human-
-                # authority duplicate that disagrees fails toward MORE
-                # scrutiny rather than trusting whichever `opened` row
-                # happened to sort first.
-                if authority == "human" and _kind_of(row) != current["kind"]:
-                    current["kind"] = DEFAULT_KIND
-                continue  # duplicate logical open, first writer wins otherwise
+                continue  # duplicate logical open, first writer wins
+                # otherwise; `kind` itself is already resolved for every id
+                # by `founder_kind` above, so there is nothing left for this
+                # branch to reconcile (#961 review item 3 moved that here).
             # Read-boundary shape check (the write boundary is not the
             # boundary that matters — events() is deliberately tolerant, and
             # a row edited on disk must not ride into the render).
@@ -455,7 +486,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "to": str(row.get("to") or ""),
                 "to_human": row.get("to_human") is True,
                 "blocking": row.get("blocking") is True,
-                "kind": _kind_of(row),
+                "kind": founder_kind.get(q_id, DEFAULT_KIND),
                 "ask": str(row.get("ask") or ""),
                 "why": str(row.get("why") or ""),
                 "evidence": str(row.get("evidence") or ""),
@@ -558,7 +589,20 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # never read `info` for one. Every other event, and `accepted`
             # on a `work` record, are unaffected — this narrows one cell of
             # the table, not the table.
-            if not (event == "accepted" and current["kind"] == "info"
+            #
+            # #961 slice 3 review item 6: gated on `authority == "agent"`
+            # explicitly, never on `authority != "human"` alone — that
+            # looser test also passes for `mechanical` (a real, valid
+            # channel this contract never named) and for any channel
+            # string `CHANNEL_AUTHORITY` does not recognize at all (which
+            # resolves to `authority is None`, also `!= "human"`). Either
+            # would otherwise land an accept and then mislabel it
+            # `accepted_by: "agent"` in the generic verdict landing below,
+            # which derives `accepted_by` from the same `authority` this
+            # check reads — a channel this contract never named must never
+            # be able to claim the one it did.
+            if not (event == "accepted" and authority == "agent"
+                    and current["kind"] == "info"
                     and current["state"] in _SENDER_MOVABLE):
                 continue
         if event in _STATE_BY_EVENT and current["state"] == "rejected":
@@ -1001,7 +1045,20 @@ def accept(request_id: str, *, channel: str, note: str = "",
     Paid only on the non-human path — the in-process human writer's cost is
     unchanged.
     """
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    authority = CHANNEL_AUTHORITY.get(channel)
+    if authority != "human":
+        # #961 slice 3 review item 6: `authority == "agent"` explicitly,
+        # never `!= "human"` alone — that looser test also lets a
+        # `mechanical` channel (real, valid, just never named by this
+        # contract) or an unrecognized channel string (`authority is
+        # None`, also `!= "human"`) through to the info/state check below,
+        # and a caller reaching THAT point can land the accept. A channel
+        # this contract never named must never be able to claim the one it
+        # did.
+        if authority != "agent":
+            raise RequestError(
+                "an accepted verdict requires a human channel; this call "
+                f"arrived through {channel!r}")
         current = _answering(request_id, project_dir)
         if current is None:
             current = recipient_join(project_dir=project_dir).get(
@@ -1344,9 +1401,10 @@ def inbox_listing(project_dir=None) -> list[dict]:
 def _deserves_attention(record: dict, project_dir=None) -> bool:
     """The one predicate deciding whether an addressed ask still deserves
     AMBIENT attention: undecided, unsuppressed, not stale. Named once
-    because it now has two consumers — the brief panel (`inbox_renderable`)
-    and live delivery (`deliverable`, #756) — and the design's whole claim
-    is that delivery is a second door onto the record the brief would have
+    because it has two consumers — the decision panel (`decision_
+    renderable`, #961 slice 3 narrowed this from `inbox_renderable`) and
+    live delivery (`deliverable`, #756) — and the design's whole claim is
+    that delivery is a second door onto the record the panel would have
     rendered. The day the two filters disagree, one of them is nudging
     about an ask the other already decided was not worth attention."""
     return (record["state"] in _SENDER_MOVABLE and not record["suppressed"]
@@ -1428,13 +1486,20 @@ def owed_deliverable(session: str, project_dir=None) -> dict:
 
 
 def inbox_renderable(project_dir=None) -> dict:
-    """The recipient-side panel data: {"rows": [...], "overflow": N} —
-    requests addressed to this project still awaiting a decision, newest
-    first, capped at RENDER_CAP with the remainder COUNTED. Suppressed AND
-    stale records are filtered here and only here (mirrors `renderable`
-    above, extended by D3): that is the entire effect suppress/staleness is
-    allowed to have on the ambient panel — both stay fully visible in
-    `inbox_listing`."""
+    """Every kind of recipient-side attention data: {"rows": [...],
+    "overflow": N} — requests addressed to this project still awaiting a
+    decision, newest first, capped at RENDER_CAP with the remainder
+    COUNTED. Suppressed AND stale records are filtered here and only here
+    (mirrors `renderable` above, extended by D3): that is the entire effect
+    suppress/staleness is allowed to have on this data — both stay fully
+    visible in `inbox_listing`.
+
+    #961 slice 3: no longer the decision panel's own composer — that is
+    `decision_renderable`, which narrows this same `_deserves_attention`
+    filter by excluding `kind == "info"` before its cap. This function has
+    no production caller left as of that slice; kept because it is still
+    the correct "every kind, capped, unfiltered by approval requirement"
+    shape, and several tests exercise it directly."""
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
@@ -1532,14 +1597,36 @@ def is_stale(record: dict, project_dir=None) -> bool:
     catch an ask nobody looked at, and this one WAS looked at: the
     recipient's agent already answered with a completion claim, and what it
     is waiting on now is a person's accept or reject, not the recipient
-    going quiet."""
+    going quiet.
+
+    #961 slice 3 review item 1: a `kind == "info"` record anchors on its
+    EARLIEST `delivered` stamp of the CURRENT revision instead of
+    `surfaced`, never both. `decision_renderable` (the human decision
+    panel) never renders an `info` ask at all — it owes no accept, so it
+    is not a decision — which means the brief's own `surfaced`-stamping
+    loop no longer stamps one for it either (it now iterates
+    `decision_renderable`'s own rows). Anchoring an `info` record on
+    `surfaced` would therefore measure staleness against a card that was
+    never shown and never will be, decaying the ask before anyone — human
+    or agent — ever saw it. Attention for an `info` ask is the AGENT's,
+    measured by DELIVERY into a live session (live delivery already writes
+    one `delivered` stamp per session, unaffected by this slice); attention
+    for a `work` ask stays the PERSON's, measured by the panel. Never
+    delivered -> no anchor -> never decays, the same posture `surfaced`
+    already has for a `work` ask."""
     if record.get("state") not in _SENDER_MOVABLE:
         return False
     if record.get("done_pending"):
         return False
-    anchor = (record.get("surfaced") or {}).get(record.get("revision"))
-    if not anchor:
-        return False
+    if record.get("kind") == "info":
+        epoch = (record.get("delivered") or {}).get(record.get("revision")) or {}
+        if not epoch:
+            return False
+        anchor = min(epoch.values())
+    else:
+        anchor = (record.get("surfaced") or {}).get(record.get("revision"))
+        if not anchor:
+            return False
     return store.sessions_since_count(anchor, project_dir) >= STALE_AFTER_SESSIONS
 
 
