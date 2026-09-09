@@ -1113,11 +1113,20 @@ def test_cli_request_list_never_reads_kind_off_a_raw_row(project, capsys):
     assert "Kind: info" not in out
 
 
-def test_cli_request_list_json_carries_kind_from_the_fold(
-        project, recipient, capsys):
+def test_cli_request_list_json_reads_kind_from_the_fold_not_the_raw_row(
+        project, capsys):
+    """A stored `work` value and its folded value are the same string, so
+    asserting `kind == "work"` off a plain `--by agent` open (the stored
+    value) proves nothing about which one `--json` actually reads. Forge a
+    row where the two disagree instead: `kind: "info"` on a non-human
+    channel folds to `work` (#961 slice 1's own authority gate), so a
+    payload reading `work` here can only have come from the fold. Appended
+    directly because `open_request` refuses this combination at the write
+    boundary."""
     from daimon_briefing import cli
-    assert _cli_open(project, recipient) == 0
-    capsys.readouterr()
+    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
+    row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "kind": "info"})
+    assert requests.append(row, project_dir=project)
     assert cli.main(["request", "list", "--project", project,
                      "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1187,18 +1196,24 @@ def test_cli_request_inbox_never_reads_kind_off_a_raw_row(
     assert "Kind: info" not in out
 
 
-def test_cli_request_inbox_json_carries_kind_from_the_fold(
+def test_cli_request_inbox_json_reads_kind_from_the_fold_not_the_raw_row(
         tmp_checkpoint_dir, capsys):
+    """Same fold-vs-raw distinction as the `list` variant above, for the
+    cross-bucket `inbox` composer. A legitimate `info` ask would make the
+    stored and folded values agree and prove nothing; forging `kind: "info"`
+    on a non-human channel is the one case where they diverge, so a payload
+    reading `work` can only have come from the fold."""
     from daimon_briefing import cli
     recipient_dir = "/p/inbox-961-json-recipient"
     sender_dir = "/p/inbox-961-json-sender"
-    requests.open_request(
-        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
-        channel="cli-tty", kind="info", project_dir=sender_dir)
+    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
+    row.update({"to": store.project_slug(recipient_dir), "ask": ASK,
+               "why": WHY, "kind": "info"})
+    assert requests.append(row, project_dir=sender_dir)
     assert cli.main(["request", "inbox", "--project", recipient_dir,
                      "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload[0]["kind"] == "info"
+    assert payload[0]["kind"] == "work"
 
 
 def test_inject_lines_marks_an_info_ask(project):

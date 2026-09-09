@@ -146,6 +146,31 @@ def test_decide_card_a_ruling_row_never_shows_an_info_marker(project, capsys):
     assert "[info]" not in out
 
 
+def test_decide_cards_lane_guard_is_load_bearing_not_dead_code():
+    """No REAL composer ever produces a non-request row with `approval`
+    set: `pending._request_rows` is the only caller that passes anything but
+    the default `None`. That makes the `row.get("kind") == "request"` half
+    of `_decide_cards`'s guard unreachable through the shipped pipeline, so a
+    test that only ever drives real rows through `pending.queue` can pass
+    whether or not that half of the guard exists. This test hands
+    `_decide_cards` a synthetic row directly, shaped the way a future bug
+    elsewhere in `pending.py` could actually produce one (a non-request lane
+    that leaks an `approval` value it was never supposed to carry), and
+    checks the guard catches it anyway."""
+    from daimon_briefing.cli import lifecycle
+    row = {
+        "kind": "ruling", "id": "r-0123456789ab", "slug": "-p-x",
+        "headline": "never bump to 1.0 without a human call",
+        "context": "", "waiting_since": "", "blocking": False,
+        "commands": [("ratify", "daimon ruling ratify r-0123456789ab")],
+        "approval": "info",
+    }
+
+    card = lifecycle._decide_cards([row])[0]
+
+    assert "[info]" not in card[0]
+
+
 def test_decide_card_never_reads_the_approval_off_a_raw_row(
         project, capsys):
     """THE FOLD RULE THROUGH THE SURFACE: a raw `opened` row appended on a
@@ -159,6 +184,8 @@ def test_decide_card_never_reads_the_approval_off_a_raw_row(
 
     assert cli.main(["decide"]) == 0
     out = capsys.readouterr().out
+    # Positive anchor: empty output would also satisfy "no marker".
+    assert "q-0123456789ab" in out
     assert "[info]" not in out
 
 
@@ -166,12 +193,22 @@ def test_decide_card_with_the_info_marker_still_gets_ledger_header_spans(
         project):
     """The marker is inserted between the headline and the blocking suffix,
     so the two-space-after-id contract `render._ledger_header_spans` relies
-    on must still hold."""
-    spans = render._ledger_header_spans(
-        "[request] q-0f1e2d3c4b5a  an info-only ask [info]")
+    on must still hold. Built through the REAL pipeline (`pending.queue` ->
+    `lifecycle._decide_cards`), not a hand-typed header string: a hand-typed
+    string proves the regex can parse a shape like this, never that
+    `_decide_cards` actually produces that shape."""
+    from daimon_briefing.cli import lifecycle
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="an info-only ask",
+        why="why", channel="cli-tty", kind="info", project_dir=project)
+    rows = pending.queue(project_dir=project)["rows"]
+    card = lifecycle._decide_cards(rows)[0]
+
+    spans = render._ledger_header_spans(card[0])
 
     assert spans is not None
-    assert spans[1] == "q-0f1e2d3c4b5a"
+    assert spans[1] == q_id
+    assert "[info]" in card[0]
 
 
 def test_a_verified_amendment_reaches_the_queue(project, capsys):

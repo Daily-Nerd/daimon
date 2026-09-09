@@ -181,6 +181,8 @@ def test_owed_panel_legacy_row_renders_without_a_kind_marker(
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
                     encoding="utf-8")
     lines = briefing.owed_panel_lines(recipient)
+    # Positive anchor: an empty line list would also satisfy "no marker".
+    assert any(q_id in ln for ln in lines)
     assert not any("[info]" in ln for ln in lines)
 
 
@@ -199,4 +201,5 @@ def test_owed_panel_never_reads_kind_off_a_raw_row(tmp_checkpoint_dir):
     requests.accept("q-0123456789ab", channel="cli-tty",
                     project_dir=recipient)
     lines = briefing.owed_panel_lines(recipient)
+    assert any("q-0123456789ab" in ln for ln in lines)
     assert not any("[info]" in ln for ln in lines)

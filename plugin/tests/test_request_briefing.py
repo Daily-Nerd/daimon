@@ -69,7 +69,7 @@ def test_panel_legacy_row_renders_without_a_kind_marker(tmp_checkpoint_dir):
     must render it exactly like an ordinary `work` ask — no marker, no
     crash."""
     sender = _seed_sender()
-    _ask(sender, channel="cli-tty", kind="info")
+    q_id = _ask(sender, channel="cli-tty", kind="info")
     path = (config.checkpoint_dir() / store.project_slug(sender)
             / "requests.jsonl")
     rows = [json.loads(ln) for ln in
@@ -78,6 +78,9 @@ def test_panel_legacy_row_renders_without_a_kind_marker(tmp_checkpoint_dir):
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
                     encoding="utf-8")
     lines = briefing.request_panel_lines(RECIPIENT)
+    # Positive anchor: the record is actually rendered here, not just absent
+    # from a panel that happens to have nothing in it.
+    assert any(q_id in ln for ln in lines)
     assert not any("[info]" in ln for ln in lines)
 
 
@@ -94,6 +97,8 @@ def test_panel_never_reads_kind_off_a_raw_row(tmp_checkpoint_dir):
                "kind": "info"})
     assert requests.append(row, project_dir=sender)
     lines = briefing.request_panel_lines(RECIPIENT)
+    # Positive anchor: an empty line list would also satisfy "no marker".
+    assert any("q-0123456789ab" in ln for ln in lines)
     assert not any("[info]" in ln for ln in lines)
 
 
