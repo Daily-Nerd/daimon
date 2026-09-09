@@ -1093,6 +1093,22 @@ def test_a_real_origin_session_with_the_same_row_still_shows_the_badge():
     assert BADGE_2 in out
 
 
+def test_corroboration_origins_for_is_total_over_a_missing_entry_and_a_non_dict_item():
+    # #983 change 3: the read-time exclusion is called from the render path
+    # and from `daimon why`, both fail-open surfaces. It must be total over
+    # the shapes those callers can hand it: no ledger entry at all (None),
+    # an entry that is not a dict (a torn fold), and an item that is not a
+    # dict. Every such call answers the empty set, never raises, and the
+    # happy path still returns the fold's origins unchanged.
+    assert store.corroboration_origins_for({"origin_session": "S"}, None) == set()
+    assert store.corroboration_origins_for({"origin_session": "S"}, "torn") == set()
+    assert store.corroboration_origins_for("not-a-dict", {"origins": {"O"}}) == {"O"}
+    assert store.corroboration_origins_for({"origin_session": "S"},
+                                           {"origins": {"O"}}) == {"O"}
+    assert store.corroboration_origins_for(
+        {"origin_session": "introspection-x"}, {"origins": {"O"}}) == set()
+
+
 def test_the_stamp_is_transient_and_never_reaches_disk(tmp_checkpoint_dir):
     # The badge is derived at render time from events.jsonl, exactly like
     # withhold's candidate stamps. A `_corroborated` key on a stored
