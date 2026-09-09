@@ -474,12 +474,15 @@ def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
 
     An empty `origin_slug` — a self-addressed ask, or one folded through a
     composer that never resolves cross-bucket origin (`records()`,
-    `sender_join()`) — matches nothing: no ruling's `sender` is ever the
-    empty string (`refutations._policy` refuses one), so this is
-    belt-and-suspenders, not the actual enforcement.
+    `sender_join()`) — matches nothing STRUCTURALLY, with no explicit guard
+    needed for it here: no ruling's `sender` is ever the empty string
+    (`refutations._policy` refuses one at the write boundary), so the loop
+    below can never find an entry whose `sender == ""`. #961 slice 4 review
+    round 2 (M4): an earlier `if not origin_slug: return False` early exit
+    here was provably dead — its own test passed identically with the line
+    removed, since the loop's own exhaustion already produces the same
+    answer for every input that guard could ever see.
     """
-    if not origin_slug:
-        return False
     ruling_id = str(row.get("under_ruling") or "")
     sha = str(row.get("policy_sha256") or "")
     if not ruling_id or not sha:

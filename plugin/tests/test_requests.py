@@ -992,6 +992,29 @@ def test_forged_agent_accepted_row_on_a_covered_work_ask_lands_in_the_fold(
     assert record["accepted_under"] == ruling_id
 
 
+def test_forged_accepted_row_with_the_right_ruling_id_but_a_wrong_sha_is_inert(
+        project):
+    """#961 slice 4 review round 2 (M4): the RIGHT `under_ruling` id alone
+    proves nothing — the hash binds the row to the SPECIFIC policy grant the
+    ruling displayed when it activated, the same reasoning `check_sha256`
+    already enforces for #943's own check binding. A forged row citing the
+    genuine, currently-covering ruling's id but a DIFFERENT, well-formed
+    (truthy) sha256 must stay inert exactly like an unrelated ruling id
+    would."""
+    ruling_id, _sha = _cover(project, "p-wrong-sha-sender")
+    opened = requests._stamp("opened", "q-0123456789ab", "cli-tty")
+    opened.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = "p-wrong-sha-sender"
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = "f" * 64  # well-formed, but not the real hash
+    policies = refutations.request_policy_history(project_dir=project)
+    record = requests.fold([opened, accepted], policies=policies)[
+        "q-0123456789ab"]
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+
+
 def test_forged_accepted_row_naming_a_ruling_the_policy_set_does_not_grant_is_inert(
         project):
     """The row's own `under_ruling`/`policy_sha256` stamp is never the gate
