@@ -109,7 +109,9 @@ What earns the badge:
   *that* session's transcript.
 - The claim's **first writer is provably someone else** — every item records
   the session that originally wrote it, and a session cannot corroborate
-  itself.
+  itself. A `/daimon-end` checkpoint and the automatic reconstruction of that
+  same session count as one session, not two, so restating a provisional
+  checkpoint's own claim never earns the badge.
 - The total reaches **two** — the origin of record plus at least one
   independent witness.
 

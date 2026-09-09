@@ -438,6 +438,19 @@ def _cmd_write_checkpoint(args) -> int:
     except json.JSONDecodeError as exc:
         print(f"error: invalid checkpoint JSON on stdin: {exc}", file=sys.stderr)
         return 1
+    # #983: the live session's REAL id, when the host can supply one, always
+    # wins over whatever the model put in the JSON body — never trust a
+    # model-authored session_id for identity, the same discipline
+    # strip_code_owned_keys applies a few lines down to format_version/author/
+    # created. Before this flag existed, the daimon-end skill instructed the
+    # model to INVENT one (`introspection-<short-unique-id>`), so a
+    # provisional and the SessionEnd reconstruction of the very same session
+    # carried two different ids — the one thing that let carry.py's G2
+    # same-session guard (origin_session == observing session) miss every
+    # self-corroboration, since the guard never saw the two halves as one.
+    session_override = str(getattr(args, "session", "") or "").strip()
+    if isinstance(checkpoint, dict) and session_override:
+        checkpoint["session_id"] = session_override
     if not isinstance(checkpoint, dict) or not str(checkpoint.get("session_id", "")).strip():
         print("error: checkpoint must be a JSON object with a non-empty session_id", file=sys.stderr)
         return 1
@@ -3612,6 +3625,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_wc.add_argument(
         "--source", default="introspection",
         help="provenance stamp for the checkpoint (default: introspection)",
+    )
+    p_wc.add_argument(
+        "--session",
+        help="the live session's REAL id (e.g. $CLAUDE_CODE_SESSION_ID), "
+        "stamped onto the checkpoint in place of whatever session_id the "
+        "JSON body carries (#983). This is what lets carry.py's same-session "
+        "guard recognize a later reconstruction of THIS session as its own "
+        "predecessor instead of an independent witness, so a provisional "
+        "can never corroborate itself. Omit only when the host has no way "
+        "to tell the live session its own id.",
     )
     p_wc.set_defaults(func=_cmd_write_checkpoint)
 

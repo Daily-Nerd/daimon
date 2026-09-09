@@ -80,6 +80,10 @@ a `prev` pointer. So it does not need to be perfect to be useful.
    }
    ```
 
+   `session_id` above is a placeholder only — step 5's `--session` flag is what
+   actually names this session, and it overrides whatever goes here. Leave it
+   as shown; do not spend effort inventing a better one.
+
    Every item needs `text` + `trust`. `external_state: true` marks items whose
    state may have changed *outside* the AI session (a PR you'll merge, a deploy) —
    these surface first in the briefing.
@@ -95,11 +99,21 @@ a `prev` pointer. So it does not need to be perfect to be useful.
 
 5. **Write it** via the CLI (reads JSON on stdin, validates the schema, routes to
    this project + global + a per-session file, atomically, with rotation). Write
-   the JSON to a temp file and pipe it:
+   the JSON to a temp file and pipe it, passing THIS session's real id with
+   `--session` (Claude Code exposes it as the `CLAUDE_CODE_SESSION_ID`
+   environment variable — the same id the SessionEnd hook will use to
+   reconstruct this session later):
 
    ```bash
-   daimon write-checkpoint --project "$PWD" < /tmp/daimon-end.json
+   daimon write-checkpoint --project "$PWD" --session "$CLAUDE_CODE_SESSION_ID" < /tmp/daimon-end.json
    ```
+
+   `--session` is what lets the later reconstruction recognize this checkpoint
+   as its OWN earlier state rather than a distinct witness — without it, this
+   checkpoint and its own reconstruction can misread as two independent
+   sessions agreeing with each other (#983). If your host cannot tell you the
+   live session's own id, omit `--session` — the checkpoint still writes, it
+   just loses that recognition.
 
    It prints `wrote checkpoint: <path> (source: introspection)`. If it reports a
    schema-validation error, fix the JSON and retry — do not store garbage.
