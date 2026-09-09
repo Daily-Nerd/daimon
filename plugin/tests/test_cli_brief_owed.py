@@ -10,7 +10,9 @@ Mirrors test_cli_brief_requests.py and test_cli_brief_verdicts.py: same D2
 same-project gate, same post-print stamp timing.
 """
 
-from daimon_briefing import briefing, cli, requests, store
+import json
+
+from daimon_briefing import briefing, cli, config, requests, store
 
 
 def _seed_checkpoint(project_dir, session):
@@ -23,14 +25,14 @@ def _seed_checkpoint(project_dir, session):
 
 
 def _owed_ask(recipient_dir, ask="port the corroboration model",
-              sender_dir="/p/cbo-sender"):
+              sender_dir="/p/cbo-sender", channel="cli-agent", **kw):
     """An ask addressed to `recipient_dir` and accepted by it — the state in
     which the recipient owes work and nothing surfaced it."""
     _seed_checkpoint(recipient_dir, "S-cbo-recipient")
     sender_slug = _seed_checkpoint(sender_dir, "S-cbo-sender")
     q_id = requests.open_request(to=store.project_slug(recipient_dir), ask=ask,
-                                 why="because", channel="cli-agent",
-                                 project_dir=sender_slug)
+                                 why="because", channel=channel,
+                                 project_dir=sender_slug, **kw)
     requests.accept(q_id, channel="cli-tty", project_dir=recipient_dir)
     return q_id
 
@@ -144,3 +146,60 @@ def test_cli_rich_brief_carries_the_owed_panel(
     out = capsys.readouterr().out
     assert "rich brief carries this" in out
     assert "Requests you accepted" in out
+
+
+def test_owed_panel_marks_an_info_ask(tmp_checkpoint_dir):
+    recipient = "/p/cbo-recipient-info"
+    _owed_ask(recipient, sender_dir="/p/cbo-sender-info",
+              channel="cli-tty", kind="info")
+    lines = briefing.owed_panel_lines(recipient)
+    assert any("[info]" in ln for ln in lines)
+
+
+def test_owed_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
+    recipient = "/p/cbo-recipient-work"
+    _owed_ask(recipient, sender_dir="/p/cbo-sender-work")
+    lines = briefing.owed_panel_lines(recipient)
+    assert not any("[info]" in ln for ln in lines)
+
+
+def test_owed_panel_legacy_row_renders_without_a_kind_marker(
+        tmp_checkpoint_dir):
+    """A record minted before #961 carries no `kind` field at all; the owed
+    panel must render it exactly like an ordinary `work` ask."""
+    recipient = "/p/cbo-recipient-legacy"
+    sender = "/p/cbo-sender-legacy"
+    q_id = _owed_ask(recipient, sender_dir=sender, channel="cli-tty",
+                     kind="info")
+    path = (config.checkpoint_dir() / store.project_slug(sender)
+            / "requests.jsonl")
+    rows = [json.loads(ln) for ln in
+            path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    for row in rows:
+        if row.get("request_id") == q_id and row.get("event") == "opened":
+            del row["kind"]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    lines = briefing.owed_panel_lines(recipient)
+    # Positive anchor: an empty line list would also satisfy "no marker".
+    assert any(q_id in ln for ln in lines)
+    assert not any("[info]" in ln for ln in lines)
+
+
+def test_owed_panel_never_reads_kind_off_a_raw_row(tmp_checkpoint_dir):
+    """THE FOLD RULE THROUGH THE SURFACE: a raw `opened` row appended on a
+    non-human channel with `kind="info"` folds to `work`, and the owed panel
+    must show exactly what the fold says."""
+    recipient = "/p/cbo-recipient-forged"
+    sender = "/p/cbo-sender-forged"
+    _seed_checkpoint(recipient, "S-cbo-recipient-forged")
+    sender_slug = _seed_checkpoint(sender, "S-cbo-sender-forged")
+    row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
+    row.update({"to": store.project_slug(recipient), "ask": "port it",
+               "why": "because", "kind": "info"})
+    assert requests.append(row, project_dir=sender_slug)
+    requests.accept("q-0123456789ab", channel="cli-tty",
+                    project_dir=recipient)
+    lines = briefing.owed_panel_lines(recipient)
+    assert any("q-0123456789ab" in ln for ln in lines)
+    assert not any("[info]" in ln for ln in lines)

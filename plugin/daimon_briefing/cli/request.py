@@ -121,6 +121,12 @@ def _request_lines(record: dict, project_dir=None) -> list:
     to = record.get("to", "")
     lines.append(f"  To: {to}" + (" (for a human)" if record.get("to_human")
                                   else ""))
+    # #961 slice 2: the approval requirement, always printed on the detail
+    # card — this is a record view, not the compact one-liners below, which
+    # mark `info` only to keep the common `work` case quiet. Read from the
+    # FOLDED record only (THE ONE RULE): `record.get("kind")` here is
+    # whatever `requests.fold`'s `_kind_of` already decided, never a raw row.
+    lines.append(f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}")
     if record.get("from_label"):
         lines.append(f"  From: {record['from_label']}")
     lines.append(f"  Why: {record.get('why', '')}")
@@ -155,6 +161,9 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
              f"{record['request_id']}  {record.get('ask', '')}"]
     lines.append(f"  From: {record.get('from_label') or '?'}"
                  + (" (for a human)" if record.get("to_human") else ""))
+    # #961 slice 2: same posture as `_request_lines` — always printed, read
+    # from the folded record only.
+    lines.append(f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}")
     lines.append(f"  Why: {record.get('why', '')}")
     if record.get("evidence"):
         lines.append(f"  Evidence: {record['evidence']}")
@@ -197,6 +206,10 @@ def _inject_lines(record: dict) -> list[str]:
     lines = [f"daimon request: {record['request_id']} from "
              f"{record.get('from_label') or '?'}"
              + (" (for a human)" if record.get("to_human") else "")
+             # #961 slice 2: marked only for `info`, since `work` is the
+             # default and the legacy reading — printing it on every line
+             # would be noise on a surface built to be thin.
+             + (" [info]" if record.get("kind") == "info" else "")
              + (" [blocking: the sender is waiting]"
                 if record.get("blocking") else "")]
     lines.append(f"  Ask: {record.get('ask', '')}")
@@ -213,7 +226,14 @@ def _verdict_inject_lines(record: dict) -> list[str]:
     """One delivered verdict, compressed to what the sender acts on. Same
     posture as `_inject_lines`: this lands mid-session on the agent's context
     budget. The note is the recipient's answer to THIS project's own ask, so
-    it is this project's mail rather than a foreign record being rendered."""
+    it is this project's mail rather than a foreign record being rendered.
+
+    #961 slice 2: deliberately carries no `kind` marker. This is the sender
+    reading the OUTCOME of a request it opened itself, and it already chose
+    the kind at open time — the render surfaces that need the marker are the
+    ones where a reader is deciding how much scrutiny an ask deserves, and
+    that decision is already behind this one. Mirrors the same call made for
+    `briefing.verdict_panel_lines`."""
     state = str(record.get("state") or "")
     mark = _INJECT_VERDICT_MARKS.get(state, "?")
     lines = [f"daimon verdict: {mark} {state}  {record['request_id']} "
@@ -236,6 +256,8 @@ def _owed_inject_lines(record: dict) -> list[str]:
     reading this can actually close it."""
     lines = [f"daimon owed: {record['request_id']} to "
              f"{record.get('from_label') or '?'}"
+             # #961 slice 2: same marker, same posture as `_inject_lines`.
+             + (" [info]" if record.get("kind") == "info" else "")
              + (" [blocking: the sender is waiting]"
                 if record.get("blocking") else "")]
     lines.append(f"  Ask: {record.get('ask', '')}")

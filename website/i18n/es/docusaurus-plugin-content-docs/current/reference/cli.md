@@ -178,7 +178,7 @@ proyecto.
 
 | comando | qué hace |
 | --- | --- |
-| `daimon request open --to <dir> --ask "…" --why "…"` | Pide algo a otro proyecto. `--to` toma el **directorio** del proyecto destinatario, no su slug (un slug real empieza con `-`, que argparse lee como una opción — `--to=<slug>` también funciona). Se valida contra `daimon projects`, con sugerencias por parecido ante un typo; `--anyway` registra el pedido igual contra un proyecto que nunca serializó en esta máquina. `--blocking` y `--to-human` son flags del registro. Cualquier canal. |
+| `daimon request open --to <dir> --ask "…" --why "…"` | Pide algo a otro proyecto. `--to` toma el **directorio** del proyecto destinatario, no su slug (un slug real empieza con `-`, que argparse lee como una opción — `--to=<slug>` también funciona). Se valida contra `daimon projects`, con sugerencias por parecido ante un typo; `--anyway` registra el pedido igual contra un proyecto que nunca serializó en esta máquina. `--blocking` y `--to-human` son flags del registro. `--kind work\|info` fija el requisito de aprobación: `work` (el default) espera una decisión de una persona, `info` se puede responder con los propios artefactos del destinatario y no debe un accept. Solo un canal humano puede abrirla como `info`. El resto, cualquier canal. |
 | `daimon request revise <id> [--ask] [--why] [--evidence]` | Responde un needs-info, o afina una solicitud abierta. Cualquier canal; tope de 3 revisiones por registro — superado el tope, se abre una nueva solicitud con `--supersedes <id>` para mantener visible el linaje. |
 | `daimon request accept\|reject\|needs-info <id> [--note]` | Registra una decisión. Solo humano — requiere una terminal interactiva. `reject` es definitivo para ese registro; el remitente reemplaza con una nueva solicitud en vez de volver a pedir. |
 | `daimon request suppress <id> [--note]` | Saca una solicitud del panel de briefing propio del destinatario. Solo humano; el registro sigue en `list`/`inbox`, y cualquier decisión posterior lo revierte. |
@@ -198,6 +198,11 @@ sesiones del destinatario sin decisión; una ya decidida sale del panel del
 remitente después de 2 sesiones del remitente. La atención decae — los
 registros nunca se eliminan, y ambos siguen totalmente visibles en
 `list`/`inbox`.
+
+Una solicitud abierta con `--kind info` lleva una marca `[info]` en los
+paneles del destinatario de arriba, en la tarjeta de `daimon decide`, y en
+la línea de entrega en vivo que la inyecta a mitad de sesión. Una solicitud
+`work`, el default, no lleva marca en ninguna de esas superficies.
 
 `daimon status` agrega un resumen de una línea, `requests: N open sent, M
 awaiting you`, silencioso cuando los dos son cero.
