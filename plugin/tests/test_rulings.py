@@ -2164,3 +2164,42 @@ def test_request_policy_history_and_order_share_one_clock(tmp_checkpoint_dir):
     row = next(r for r in refutations.events(project_dir=PROJECT)
               if r.get("refutation_id") == ruling_id and r.get("event") == "ruled")
     assert before <= row["order"] <= after
+
+
+# ---- #961 slice 4 review round 2 (H3): request_policy_history scan cost --
+#
+# A first build called `fold(prefix)` — a fresh re-fold of every row seen so
+# far — once per row: O(n^2) in the ledger's own row count. Measured at
+# 425ms for 200 rows across 25 buckets on the fleet read path
+# (`pending.foreign_counts`, see test_requests_scan_cost.py's own budget
+# test) against a 150ms budget. `_fold_row` factored out of `fold` lets this
+# maintain ONE running fold across the ordered pass instead, O(n).
+
+
+_POLICY_ROWS = 199  # + the founding `ruled` row itself = 200 total rows
+_POLICY_BUDGET_MS = 150.0
+
+
+def test_request_policy_history_time_cost_stays_within_budget(
+        tmp_checkpoint_dir, capsys):
+    import time as _time
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    for i in range(_POLICY_ROWS):
+        sender = "p-scan-a" if i % 2 == 0 else "p-scan-b"
+        refutations.revise(
+            ruling_id, channel="signed", evidence=["issue:961"],
+            request_policy=_policy(sender=sender), ratified=True,
+            project_dir=PROJECT)
+    assert len(refutations.events(project_dir=PROJECT)) == _POLICY_ROWS + 1
+    start = _time.perf_counter()
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    elapsed_ms = (_time.perf_counter() - start) * 1000
+
+    assert out, "measurement is void if the ledger granted nothing"
+    with capsys.disabled():
+        print(f"\n#961 slice 4 review round 2 (H3) request_policy_history "
+             f"scan cost: {elapsed_ms:.2f}ms over {_POLICY_ROWS + 1} rows "
+             f"— budget {_POLICY_BUDGET_MS}ms")
+    assert elapsed_ms <= _POLICY_BUDGET_MS, (
+        f"request_policy_history cost {elapsed_ms:.2f}ms exceeds the "
+        f"{_POLICY_BUDGET_MS}ms budget over {_POLICY_ROWS + 1} rows")

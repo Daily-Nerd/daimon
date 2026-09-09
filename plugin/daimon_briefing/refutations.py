@@ -800,8 +800,242 @@ def events(project_dir=None, *, strict: bool = False) -> list[dict]:
     return rows
 
 
+def _fold_row(out: dict, row: dict) -> None:
+    """Apply ONE lifecycle row's transition onto a running fold state `out`
+    (keyed by refutation_id), mutating it in place — factored out of `fold`
+    itself (#961 slice 4 review round 2, H3) so a caller that needs the
+    fold's own state AT EVERY POINT along an ordered pass (`request_policy_
+    history` below) can maintain ONE running `out` across that pass, rather
+    than re-folding every PREFIX of the ledger from scratch on every row —
+    the O(n^2) `fold(prefix)`-per-row shape the first build of that resolver
+    used. This function IS the state machine both `fold` and
+    `request_policy_history` now call, never a second copy that could
+    silently drift out of sync with it: the identical transition rules
+    apply either way, only how many times each is invoked differs.
+
+    The caller owns iteration ORDER — this trusts `row` arrives in the
+    caller's own deterministic sort and applies exactly one transition,
+    nothing more. Also trusts `row` carries `refutation_id`/`event` (every
+    caller reads these off an already-ordered, already-shaped row; a row
+    missing either is a caller bug, not a data condition to tolerate here)."""
+    ref_id = row["refutation_id"]
+    event = row["event"]
+    current = out.get(ref_id)
+    if event in ("asserted", "ruled"):
+        if current is not None:
+            return  # duplicate logical assertion, first writer wins
+        state = (
+            "active" if row.get("ratified") is True
+            and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
+        out[ref_id] = {
+            "refutation_id": ref_id,
+            # #693: polarity is DERIVED from the founding event name at
+            # fold time, never read from a caller-supplied field.
+            "polarity": "ruling" if event == "ruled" else "refutation",
+            "state": state,
+            "subject": str(row.get("subject") or ""),
+            "verdict": str(row.get("verdict") or ""),
+            "scope": str(row.get("scope") or ""),
+            "anchors": list(row.get("anchors") or []),
+            "revisit_when": str(row.get("revisit_when") or ""),
+            "evidence": list(row.get("evidence") or []),
+            "asserted_by": row.get("authority"),
+            "asserted_author": row.get("author"),
+            # Who authored the CURRENT text — distinct from asserted_by
+            # so human-ratified agent prose renders as exactly that.
+            # DERIVED from the channel, never read from the row's own
+            # authority claim: this is a rendered authority label.
+            "text_authored_by": CHANNEL_AUTHORITY.get(_channel_of(row)),
+            "activation": (CHANNEL_LABEL.get(_channel_of(row))
+                           if state == "active" else None),
+            "activation_channel": (row.get("channel")
+                                   if state == "active" else None),
+            "activation_author": (
+                row.get("author") if state == "active" else None),
+            "activated_at": row.get("ts") if state == "active" else None,
+            "created_at": row.get("ts"),
+            "updated_at": row.get("ts"),
+            "revision": 1,
+            "history_count": 1,
+        }
+        if isinstance(row.get("check"), dict):  # #943
+            out[ref_id]["check"] = dict(row["check"])
+        if isinstance(row.get("request_policy"), dict):  # #961 slice 4
+            out[ref_id]["request_policy"] = dict(row["request_policy"])
+        return
+    if current is None:
+        return  # orphan lifecycle event: visible in raw audit, inert here
+    is_ruling = current.get("polarity") == "ruling"
+    # #693: fold-enforced, not CLI convention — no agent path changes
+    # what a ruling renders. An agent-authority `revised` row on an
+    # active ruling is fully inert, and a retired ruling cannot be
+    # resurrected by revise; both stay visible in the raw audit.
+    if is_ruling and event == "revised" and (
+            (current["state"] == "active"
+             and CHANNEL_AUTHORITY.get(_channel_of(row)) != "human")
+            or current["state"] == "overturned"):
+        return
+    # #693: a content-bound ratify whose displayed text no longer matches
+    # is fully inert — refused BEFORE the bump, consistent with the other
+    # pre-bump gates, so a rejected activation moves nothing rendered.
+    if (event == "ratified"
+            and str(row.get("verdict_key") or "")
+            and str(row.get("verdict_key"))
+            != normalize.content_key(current.get("verdict") or "")):
+        return
+    # #943: check binding: a ratify row carrying check_sha256 activates
+    # only the body it displayed; a mismatch is inert, the same rule
+    # verdict_key already applies to the rule text.
+    if (event == "ratified"
+            and str(row.get("check_sha256") or "")
+            and str(row.get("check_sha256"))
+            != str((current.get("check") or {}).get("sha256") or "")):
+        return
+    # #943: the other half of that binding. A check is an executable, and
+    # an UNBOUND ratify may not arm one: the human who confirmed a row
+    # carrying no pin was shown no check, so a check that arrived during
+    # the confirm window would be armed unseen. No pre-#943 row can carry
+    # a check, so every old unbound ratify still activates.
+    if (event == "ratified"
+            and not str(row.get("check_sha256") or "")
+            and isinstance(current.get("check"), dict)):
+        return
+    # #961 slice 4: request_policy binding, same doctrine as check_sha256
+    # just above — a policy is consumed as an authorization at another
+    # project's write boundary, so an UNBOUND ratify may not arm one the
+    # human never saw pinned.
+    if (event == "ratified"
+            and str(row.get("policy_sha256") or "")
+            and str(row.get("policy_sha256"))
+            != str((current.get("request_policy") or {}).get("sha256") or "")):
+        return
+    if (event == "ratified"
+            and not str(row.get("policy_sha256") or "")
+            and isinstance(current.get("request_policy"), dict)):
+        return
+    current["history_count"] += 1
+    # #693: an agent proposal must not move a ruling's rendered age or
+    # its list/search order. Ruling polarity only — changing the shipped
+    # refutation ordering is its own decision.
+    if not (is_ruling and event in ("revision-proposed",
+                                    "overturn-proposed")):
+        current["updated_at"] = row.get("ts") or current["updated_at"]
+    if event == "ratified":
+        # Content binding (#693) is checked pre-bump above: a ratify row
+        # carrying a verdict_key activates only the text it displayed; a
+        # row with NO key is unbound and activates normally (every
+        # pre-existing ledger row is absent-key).
+        if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
+            current["state"] = "active"
+            current["activation"] = CHANNEL_LABEL.get(_channel_of(row))
+            current["activation_channel"] = row.get("channel")
+            current["activation_author"] = row.get("author")
+            current["activated_at"] = row.get("ts")
+    elif event == "activated":
+        # #693: mechanical activation is a refutation concept (#581);
+        # a mechanical row on a ruling stays in the raw audit, inert.
+        if (current["state"] != "overturned"
+                and current.get("polarity") != "ruling"
+                and CHANNEL_AUTHORITY.get(_channel_of(row)) == "mechanical"):
+            current["state"] = "active"
+            current["activation"] = "mechanically-activated"
+            current["activation_channel"] = "mechanical"
+            current["activation_author"] = row.get("author")
+            current["activated_at"] = row.get("ts")
+    elif event == "revised":
+        for key in ("subject", "verdict", "scope", "revisit_when"):
+            if key in row:
+                current[key] = str(row.get(key) or "")
+        if "anchors" in row:
+            current["anchors"] = list(row.get("anchors") or [])
+        if "evidence" in row:
+            # Replacement, not accrual.  A folded record states what is
+            # believed NOW, so `evidence` names the citations backing the
+            # CURRENT verdict; the founding citation is not lost, it is
+            # in the append-only stream that `events()` returns.
+            # Accrual shipped first and was wrong twice over: reviving an
+            # overturned record carried forward the very citation whose
+            # invalidity justified the overturn, and merging across
+            # revisions walked straight through the per-row _MAX_EVIDENCE
+            # cap (74 sources against a limit of 24).
+            current["evidence"] = list(row.get("evidence") or [])
+        if isinstance(row.get("check"), dict):  # #943
+            current["check"] = dict(row["check"])
+        # #961 slice 4: presence, not truthiness — `--no-request-policy`
+        # writes the key with a JSON `null` to CLEAR it, and the absence
+        # of the key (an ordinary revise that never touched policy) must
+        # leave whatever the record already carries untouched. Reading
+        # truthiness here would treat that clearing `null` exactly like
+        # an absent key and silently keep the retired grant alive.
+        if "request_policy" in row:
+            current["request_policy"] = (
+                dict(row["request_policy"])
+                if isinstance(row.get("request_policy"), dict) else None)
+        # #693: re-stamped ONLY when the row carries a text key — the
+        # replace-by-key-presence contract above means a human revising
+        # only scope must not relabel agent-authored text as human.
+        if "verdict" in row or "subject" in row:
+            current["text_authored_by"] = CHANNEL_AUTHORITY.get(
+                _channel_of(row))
+        was_active = current["state"] == "active"
+        current["state"] = (
+            "active" if row.get("ratified") is True
+            and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
+        current["activation"] = (
+            CHANNEL_LABEL.get(_channel_of(row))
+            if current["state"] == "active" else None)
+        current["activation_channel"] = (
+            row.get("channel") if current["state"] == "active" else None)
+        current["activation_author"] = (
+            row.get("author") if current["state"] == "active" else None)
+        if current["state"] == "active" and not was_active:
+            current["activated_at"] = row.get("ts")
+        elif current["state"] != "active":
+            current["activated_at"] = None
+        current["revision"] += 1
+        current.pop("overturn_proposed", None)
+        current.pop("revision_proposed", None)
+    elif event == "revision-proposed":
+        # #693: latest-wins; the active text and its render are untouched.
+        if current["state"] == "active":
+            current["revision_proposed"] = {
+                "by": row.get("authority"),
+                "evidence": list(row.get("evidence") or []),
+                "note": str(row.get("note") or ""),
+                "subject": str(row.get("subject") or ""),
+                "verdict": str(row.get("verdict") or ""),
+            }
+            if isinstance(row.get("check"), dict):  # #943
+                current["revision_proposed"]["check"] = dict(row["check"])
+            if isinstance(row.get("request_policy"), dict):  # #961 slice 4
+                current["revision_proposed"]["request_policy"] = dict(
+                    row["request_policy"])
+    elif event == "overturn-proposed":
+        if current["state"] == "active":
+            current["overturn_proposed"] = {
+                "by": row.get("authority"),
+                "evidence": list(row.get("evidence") or []),
+                "note": str(row.get("note") or ""),
+            }
+    elif event == "overturned":
+        if CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
+            current["state"] = "overturned"
+            current["activation"] = None
+            current["activation_channel"] = None
+            current["activation_author"] = None
+            current["overturned_by"] = "human"
+            current["overturned_author"] = row.get("author")
+            current["overturn_evidence"] = list(row.get("evidence") or [])
+            current["overturn_note"] = str(row.get("note") or "")
+            current.pop("overturn_proposed", None)
+
+
 def fold(rows: list[dict]) -> dict[str, dict]:
-    """Fold lifecycle facts into current records, deterministic under reorder."""
+    """Fold lifecycle facts into current records, deterministic under
+    reorder. The state machine itself lives in `_fold_row` (#961 slice 4
+    review round 2, H3) — this sorts once and applies it row by row, then
+    derives the render-only `check_lifecycle` field from each record's
+    final state."""
     def _integer(row, key, default=0):
         try:
             return int(row.get(key) or default)
@@ -816,216 +1050,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     ))
     out: dict[str, dict] = {}
     for row in ordered:
-        ref_id = row["refutation_id"]
-        event = row["event"]
-        current = out.get(ref_id)
-        if event in ("asserted", "ruled"):
-            if current is not None:
-                continue  # duplicate logical assertion, first writer wins
-            state = (
-                "active" if row.get("ratified") is True
-                and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
-            out[ref_id] = {
-                "refutation_id": ref_id,
-                # #693: polarity is DERIVED from the founding event name at
-                # fold time, never read from a caller-supplied field.
-                "polarity": "ruling" if event == "ruled" else "refutation",
-                "state": state,
-                "subject": str(row.get("subject") or ""),
-                "verdict": str(row.get("verdict") or ""),
-                "scope": str(row.get("scope") or ""),
-                "anchors": list(row.get("anchors") or []),
-                "revisit_when": str(row.get("revisit_when") or ""),
-                "evidence": list(row.get("evidence") or []),
-                "asserted_by": row.get("authority"),
-                "asserted_author": row.get("author"),
-                # Who authored the CURRENT text — distinct from asserted_by
-                # so human-ratified agent prose renders as exactly that.
-                # DERIVED from the channel, never read from the row's own
-                # authority claim: this is a rendered authority label.
-                "text_authored_by": CHANNEL_AUTHORITY.get(_channel_of(row)),
-                "activation": (CHANNEL_LABEL.get(_channel_of(row))
-                               if state == "active" else None),
-                "activation_channel": (row.get("channel")
-                                       if state == "active" else None),
-                "activation_author": (
-                    row.get("author") if state == "active" else None),
-                "activated_at": row.get("ts") if state == "active" else None,
-                "created_at": row.get("ts"),
-                "updated_at": row.get("ts"),
-                "revision": 1,
-                "history_count": 1,
-            }
-            if isinstance(row.get("check"), dict):  # #943
-                out[ref_id]["check"] = dict(row["check"])
-            if isinstance(row.get("request_policy"), dict):  # #961 slice 4
-                out[ref_id]["request_policy"] = dict(row["request_policy"])
-            continue
-        if current is None:
-            continue  # orphan lifecycle event: visible in raw audit, inert here
-        is_ruling = current.get("polarity") == "ruling"
-        # #693: fold-enforced, not CLI convention — no agent path changes
-        # what a ruling renders. An agent-authority `revised` row on an
-        # active ruling is fully inert, and a retired ruling cannot be
-        # resurrected by revise; both stay visible in the raw audit.
-        if is_ruling and event == "revised" and (
-                (current["state"] == "active"
-                 and CHANNEL_AUTHORITY.get(_channel_of(row)) != "human")
-                or current["state"] == "overturned"):
-            continue
-        # #693: a content-bound ratify whose displayed text no longer matches
-        # is fully inert — refused BEFORE the bump, consistent with the other
-        # pre-bump gates, so a rejected activation moves nothing rendered.
-        if (event == "ratified"
-                and str(row.get("verdict_key") or "")
-                and str(row.get("verdict_key"))
-                != normalize.content_key(current.get("verdict") or "")):
-            continue
-        # #943: check binding: a ratify row carrying check_sha256 activates
-        # only the body it displayed; a mismatch is inert, the same rule
-        # verdict_key already applies to the rule text.
-        if (event == "ratified"
-                and str(row.get("check_sha256") or "")
-                and str(row.get("check_sha256"))
-                != str((current.get("check") or {}).get("sha256") or "")):
-            continue
-        # #943: the other half of that binding. A check is an executable, and
-        # an UNBOUND ratify may not arm one: the human who confirmed a row
-        # carrying no pin was shown no check, so a check that arrived during
-        # the confirm window would be armed unseen. No pre-#943 row can carry
-        # a check, so every old unbound ratify still activates.
-        if (event == "ratified"
-                and not str(row.get("check_sha256") or "")
-                and isinstance(current.get("check"), dict)):
-            continue
-        # #961 slice 4: request_policy binding, same doctrine as check_sha256
-        # just above — a policy is consumed as an authorization at another
-        # project's write boundary, so an UNBOUND ratify may not arm one the
-        # human never saw pinned.
-        if (event == "ratified"
-                and str(row.get("policy_sha256") or "")
-                and str(row.get("policy_sha256"))
-                != str((current.get("request_policy") or {}).get("sha256") or "")):
-            continue
-        if (event == "ratified"
-                and not str(row.get("policy_sha256") or "")
-                and isinstance(current.get("request_policy"), dict)):
-            continue
-        current["history_count"] += 1
-        # #693: an agent proposal must not move a ruling's rendered age or
-        # its list/search order. Ruling polarity only — changing the shipped
-        # refutation ordering is its own decision.
-        if not (is_ruling and event in ("revision-proposed",
-                                        "overturn-proposed")):
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-        if event == "ratified":
-            # Content binding (#693) is checked pre-bump above: a ratify row
-            # carrying a verdict_key activates only the text it displayed; a
-            # row with NO key is unbound and activates normally (every
-            # pre-existing ledger row is absent-key).
-            if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
-                current["state"] = "active"
-                current["activation"] = CHANNEL_LABEL.get(_channel_of(row))
-                current["activation_channel"] = row.get("channel")
-                current["activation_author"] = row.get("author")
-                current["activated_at"] = row.get("ts")
-        elif event == "activated":
-            # #693: mechanical activation is a refutation concept (#581);
-            # a mechanical row on a ruling stays in the raw audit, inert.
-            if (current["state"] != "overturned"
-                    and current.get("polarity") != "ruling"
-                    and CHANNEL_AUTHORITY.get(_channel_of(row)) == "mechanical"):
-                current["state"] = "active"
-                current["activation"] = "mechanically-activated"
-                current["activation_channel"] = "mechanical"
-                current["activation_author"] = row.get("author")
-                current["activated_at"] = row.get("ts")
-        elif event == "revised":
-            for key in ("subject", "verdict", "scope", "revisit_when"):
-                if key in row:
-                    current[key] = str(row.get(key) or "")
-            if "anchors" in row:
-                current["anchors"] = list(row.get("anchors") or [])
-            if "evidence" in row:
-                # Replacement, not accrual.  A folded record states what is
-                # believed NOW, so `evidence` names the citations backing the
-                # CURRENT verdict; the founding citation is not lost, it is
-                # in the append-only stream that `events()` returns.
-                # Accrual shipped first and was wrong twice over: reviving an
-                # overturned record carried forward the very citation whose
-                # invalidity justified the overturn, and merging across
-                # revisions walked straight through the per-row _MAX_EVIDENCE
-                # cap (74 sources against a limit of 24).
-                current["evidence"] = list(row.get("evidence") or [])
-            if isinstance(row.get("check"), dict):  # #943
-                current["check"] = dict(row["check"])
-            # #961 slice 4: presence, not truthiness — `--no-request-policy`
-            # writes the key with a JSON `null` to CLEAR it, and the absence
-            # of the key (an ordinary revise that never touched policy) must
-            # leave whatever the record already carries untouched. Reading
-            # truthiness here would treat that clearing `null` exactly like
-            # an absent key and silently keep the retired grant alive.
-            if "request_policy" in row:
-                current["request_policy"] = (
-                    dict(row["request_policy"])
-                    if isinstance(row.get("request_policy"), dict) else None)
-            # #693: re-stamped ONLY when the row carries a text key — the
-            # replace-by-key-presence contract above means a human revising
-            # only scope must not relabel agent-authored text as human.
-            if "verdict" in row or "subject" in row:
-                current["text_authored_by"] = CHANNEL_AUTHORITY.get(
-                    _channel_of(row))
-            was_active = current["state"] == "active"
-            current["state"] = (
-                "active" if row.get("ratified") is True
-                and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
-            current["activation"] = (
-                CHANNEL_LABEL.get(_channel_of(row))
-                if current["state"] == "active" else None)
-            current["activation_channel"] = (
-                row.get("channel") if current["state"] == "active" else None)
-            current["activation_author"] = (
-                row.get("author") if current["state"] == "active" else None)
-            if current["state"] == "active" and not was_active:
-                current["activated_at"] = row.get("ts")
-            elif current["state"] != "active":
-                current["activated_at"] = None
-            current["revision"] += 1
-            current.pop("overturn_proposed", None)
-            current.pop("revision_proposed", None)
-        elif event == "revision-proposed":
-            # #693: latest-wins; the active text and its render are untouched.
-            if current["state"] == "active":
-                current["revision_proposed"] = {
-                    "by": row.get("authority"),
-                    "evidence": list(row.get("evidence") or []),
-                    "note": str(row.get("note") or ""),
-                    "subject": str(row.get("subject") or ""),
-                    "verdict": str(row.get("verdict") or ""),
-                }
-                if isinstance(row.get("check"), dict):  # #943
-                    current["revision_proposed"]["check"] = dict(row["check"])
-                if isinstance(row.get("request_policy"), dict):  # #961 slice 4
-                    current["revision_proposed"]["request_policy"] = dict(
-                        row["request_policy"])
-        elif event == "overturn-proposed":
-            if current["state"] == "active":
-                current["overturn_proposed"] = {
-                    "by": row.get("authority"),
-                    "evidence": list(row.get("evidence") or []),
-                    "note": str(row.get("note") or ""),
-                }
-        elif event == "overturned":
-            if CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
-                current["state"] = "overturned"
-                current["activation"] = None
-                current["activation_channel"] = None
-                current["activation_author"] = None
-                current["overturned_by"] = "human"
-                current["overturned_author"] = row.get("author")
-                current["overturn_evidence"] = list(row.get("evidence") or [])
-                current["overturn_note"] = str(row.get("note") or "")
-                current.pop("overturn_proposed", None)
+        _fold_row(out, row)
     # #943: lifecycle is DERIVED from state, never stored. `proposed` is not
     # a mode: a candidate's check never reaches a host.
     for current in out.values():
@@ -1130,15 +1155,29 @@ def request_policy_history(project_dir=None) -> frozenset:
     the ruling was active keeps the order it was stamped with at write
     time and still falls inside the interval that was open then.
 
-    Built by folding every PREFIX of the project's ordered ruling-ledger
-    rows through `fold()` ITSELF (never a duplicated state machine, so this
-    can never diverge from what `fold` would say was active at that
-    moment): each row can only move the ONE ruling id it names, so after
-    adding a row this only re-reads that id's own record and compares it
-    against what it was fingerprinted as before the row landed. A change
-    closes whatever interval was open (at THIS row's own order — the
-    ruling's state is understood to hold as of the row that set it) and
-    opens a new one when the new fingerprint grants something.
+    Built by folding the project's ordered ruling-ledger rows through
+    `_fold_row` ITSELF, ONE RUNNING PASS (never a duplicated state machine,
+    so this can never diverge from what `fold` would say was active at any
+    given moment — `fold` and this both call the identical transition
+    function, `fold` once per row over a fresh `out`, this the same, once
+    per row, over the SAME running `out` carried across the whole ordered
+    list): after applying a row this only re-reads that row's OWN ruling
+    id's record and compares it against what it was fingerprinted as before
+    the row landed. A change closes whatever interval was open (at THIS
+    row's own order — the ruling's state is understood to hold as of the
+    row that set it) and opens a new one when the new fingerprint grants
+    something.
+
+    #961 slice 4 review round 2 (H3): a first build called `fold(prefix)` —
+    a FRESH re-fold of every row seen so far — once per row, which re-walked
+    the entire growing prefix on every iteration: O(n^2) in this ledger's
+    own row count, measured at 425ms at 200 rows x 25 buckets on the fleet
+    read path against a 150ms budget (`tests/test_requests_scan_cost.py`
+    pins the linear bound this replaced it with). `_fold_row` mutating ONE
+    running `out` in place is what makes the single ordered pass sufficient
+    — each row's effect on `out` is already permanent once applied, so
+    there is nothing a fresh re-fold of the growing prefix would ever tell
+    this that the running `out` does not already reflect.
 
     Residual, disclosed rather than hidden: a row that ALSO BACKDATES its
     own `order` (via a forged `_stamp(..., now_ns=...)`, the same escape
@@ -1153,59 +1192,56 @@ def request_policy_history(project_dir=None) -> frozenset:
     for what a caller who controls both `order` and the grant it names can
     still do.
 
-    O(n²) in this project's total refutations-ledger row count — read-time
-    cost, paid by the three composers, not the write boundary; rulings are
-    capped (`DAIMON_RULING_CAP`) and this ledger is not expected to grow
-    without bound the way most append-only logs here are, so this is not
-    the scan-cost budget #694/#766 measure. Fail-open to the empty set on
-    any read error, same posture as `active_request_policies`.
+    O(n) in this project's total refutations-ledger row count — read-time
+    cost, paid by the three composers, not the write boundary. Fail-open to
+    the empty set on any read error (including one raised mid-pass by a
+    malformed row reaching `_fold_row`), same posture as
+    `active_request_policies`.
     """
-    try:
-        rows = events(project_dir=project_dir, strict=True)
-    except Exception:
-        return frozenset()
-
     def _integer(row, key, default=0):
         try:
             return int(row.get(key) or default)
         except (TypeError, ValueError):
             return default
 
-    ordered = sorted(rows, key=lambda row: (
-        _integer(row, "order"),
-        _EVENT_RANK.get(str(row.get("event") or ""), 99),
-        str(row.get("event_id") or ""),
-        _integer(row, "_line")))
-    # Per ruling id: the grant tuple its currently-open interval covers (or
-    # None when nothing is open) and the order that interval started at.
-    open_grant: dict[str, tuple | None] = {}
-    open_since: dict[str, int] = {}
-    out: set = set()
-    prefix: list[dict] = []
-    for row in ordered:
-        prefix.append(row)
-        order = _integer(row, "order")
-        ref_id = str(row.get("refutation_id") or "")
-        try:
-            record = fold(prefix).get(ref_id)
-        except Exception:
-            continue
-        current = None
-        if (record is not None and record.get("polarity") == "ruling"
-                and record.get("state") == "active"):
-            current = _policy_tuple(record)
-        previous = open_grant.get(ref_id)
-        if current == previous:
-            continue  # this row did not change what (if anything) is open
-        if previous is not None:
-            out.add(previous + (open_since[ref_id], order))
-        if current is not None:
-            open_since[ref_id] = order
-        open_grant[ref_id] = current
-    for ref_id, current in open_grant.items():
-        if current is not None:
-            out.add(current + (open_since[ref_id], None))
-    return frozenset(out)
+    try:
+        rows = events(project_dir=project_dir, strict=True)
+        ordered = sorted(rows, key=lambda row: (
+            _integer(row, "order"),
+            _EVENT_RANK.get(str(row.get("event") or ""), 99),
+            str(row.get("event_id") or ""),
+            _integer(row, "_line")))
+        # Per ruling id: the grant tuple its currently-open interval covers
+        # (or None when nothing is open) and the order that interval
+        # started at. `state` is the ONE running fold, mutated in place by
+        # `_fold_row` across the whole ordered pass — never rebuilt.
+        state: dict[str, dict] = {}
+        open_grant: dict[str, tuple | None] = {}
+        open_since: dict[str, int] = {}
+        out: set = set()
+        for row in ordered:
+            order = _integer(row, "order")
+            ref_id = str(row.get("refutation_id") or "")
+            _fold_row(state, row)
+            record = state.get(ref_id)
+            current = None
+            if (record is not None and record.get("polarity") == "ruling"
+                    and record.get("state") == "active"):
+                current = _policy_tuple(record)
+            previous = open_grant.get(ref_id)
+            if current == previous:
+                continue  # this row did not change what (if anything) is open
+            if previous is not None:
+                out.add(previous + (open_since[ref_id], order))
+            if current is not None:
+                open_since[ref_id] = order
+            open_grant[ref_id] = current
+        for ref_id, current in open_grant.items():
+            if current is not None:
+                out.add(current + (open_since[ref_id], None))
+        return frozenset(out)
+    except Exception:
+        return frozenset()
 
 
 def assert_refutation(*, subject: str, verdict: str, scope: str,
