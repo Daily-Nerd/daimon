@@ -1126,6 +1126,73 @@ def test_fold_is_deterministic_under_reorder_for_a_covered_work_accept(
     assert forward["state"] == "accepted"
 
 
+def test_a_shape_invalid_duplicate_opened_in_an_earlier_order_bucket_cannot_steal_the_origin(
+        project):
+    """#961 slice 4 review round 2 (C1): the exact plant the blind review
+    found reproduced directly against `fold`. A stranger who controls a
+    foreign bucket writes an INVALID `opened` row (an empty `ask`, so it can
+    never found anything on its own) for the SAME request id the genuine
+    sender minted, stamped with `_origin_slug` naming a PARTNER project a
+    ruling actually covers, ordered EARLIER than the genuine founder.
+
+    Before this fix the fold's coverage check read origin from a separate,
+    shape-blind pre-pass (`_founder_origin_by_id`) that returned whichever
+    `opened` row was first by order with no shape check at all, so the
+    invalid row's bucket won the origin race even though it could never
+    found the record's `kind`/`ask`/`to` — a stranger's work ask landed
+    agent-accepted under a grant that named the partner, never the actual
+    sender. `_founder_by_id` closes it by construction: the identical shape
+    check applies before EITHER field is read off a row, so an invalid row
+    cannot win origin any more than it could win kind."""
+    ruling_id, sha = _cover(project, "p-partner")
+    base = 1_700_000_001 * 10 ** 9
+    genuine = requests._stamp("opened", "q-0123456789ab", "cli-tty",
+                              now_ns=base + 1_000_000_000)
+    genuine.update({"to": store.project_slug(project), "ask": ASK, "why": WHY})
+    genuine["_origin_slug"] = "p-stranger"
+    planted = requests._stamp("opened", "q-0123456789ab", "cli-tty",
+                              now_ns=base)  # earlier order than the genuine row
+    planted.update({"to": store.project_slug(project), "ask": "", "why": ""})
+    planted["_origin_slug"] = "p-partner"
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    policies = refutations.request_policy_history(project_dir=project)
+    record = requests.fold([planted, genuine, accepted],
+                           policies=policies)["q-0123456789ab"]
+    assert record["from_slug"] == "p-stranger"
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+    assert record["accepted_under"] is None
+
+
+def test_a_valid_duplicate_opened_in_a_third_bucket_at_an_earlier_order_does_not_move_origin_or_kind(
+        project):
+    """The other half of C1's own test list: a VALID duplicate `opened` row
+    (shape-legal, a real `to`/`ask`) planted in a THIRD bucket at an earlier
+    order must still lose to first-writer-wins — the founder-plus-
+    disagreement rule the docstring describes is unchanged, only WHEN it
+    runs moved. Both rows agree on `kind` (`work`), so this isolates
+    first-writer-wins on ORIGIN alone from the separate kind-disagreement
+    rule (covered by its own tests elsewhere): the earlier VALID row founds
+    both fields; the later, genuine duplicate changes neither."""
+    base = 1_700_000_002 * 10 ** 9
+    earlier_valid = requests._stamp("opened", "q-0123456789ab", "cli-tty",
+                                    now_ns=base)
+    earlier_valid.update({"to": store.project_slug(project),
+                          "ask": "the first, valid ask", "why": WHY})
+    earlier_valid["_origin_slug"] = "p-first-writer"
+    later_duplicate = requests._stamp("opened", "q-0123456789ab", "cli-tty",
+                                      now_ns=base + 1_000_000_000)
+    later_duplicate.update({"to": store.project_slug(project), "ask": ASK,
+                            "why": WHY})
+    later_duplicate["_origin_slug"] = "p-second-writer"
+    record = requests.fold([earlier_valid, later_duplicate],
+                           policies=frozenset())["q-0123456789ab"]
+    assert record["from_slug"] == "p-first-writer"
+    assert record["kind"] == "work"
+
+
 def test_a_policy_covered_accept_then_agent_done_lands_done(project):
     """Full path (design section 8's own worked example): human opens a
     work ask, the recipient's human ratifies a covering policy ruling, the

@@ -379,79 +379,77 @@ def _kind_of(row: dict) -> str:
     return kind
 
 
-def _founder_kind_by_id(ordered: list[dict]) -> dict[str, str]:
-    """#961 slice 3 review item 3: every request id's FINAL `kind`, resolved
-    in a PRE-PASS over every `opened` row before `fold`'s main pass applies
-    any lifecycle event against it.
+def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
+    """#961 slice 4 review round 2 (C1): the ONE founder resolution for
+    every request id, resolved in a PRE-PASS over every `opened` row before
+    `fold`'s main pass applies any lifecycle event against it — replacing
+    two separate pre-passes (`_founder_kind_by_id`, identity's `kind` only;
+    `_founder_origin_by_id`, origin only) that used to answer "who sent
+    this" independently and could disagree.
 
-    The founder-plus-disagreement rule itself is unchanged from slice 1
-    (`fold`'s own inline comment on the founder branch has the full
-    reasoning) — only WHEN it runs moves. Under the single-pass version, a
-    lifecycle event (an `accepted` row, say) processed BEFORE a later
-    `opened` duplicate saw `current["kind"]` as whatever the founder alone
-    said, even when that later duplicate would go on to disagree and force
-    it to `work`. That let an agent `accepted` row on a back-dated forged
-    `info` founder land while the founder still stood, and only afterward
-    get its `kind` pulled out from under it by the genuine human `opened`
-    row arriving later in the SAME stream — `kind: work, state: accepted,
-    accepted_by: agent`, the exact assertion #961's `_HUMAN_ONLY` exception
-    exists to forbid. Resolving every id's kind from the COMPLETE set of
-    `opened` rows first means no lifecycle event can ever see a kind a
-    later row in the same fold will go on to revoke.
+    That disagreement was reachable: the origin-only pass had NO
+    read-boundary shape check, so a shape-invalid `opened` row (an empty
+    `ask`, say) planted in a stranger's bucket at an earlier `order` than
+    the genuine founder could never actually FOUND the record — `fold`'s
+    own founder branch below re-applies the identical shape check and
+    would skip it, and the identity-only pass already skipped it too — but
+    the origin-only pass read `_origin_slug` off it anyway, since it never
+    checked shape at all. A request could therefore fold with `kind` and
+    `to`/`ask` from the genuine founder while its ORIGIN (`from_slug`, and
+    every policy match keyed on it) came from an entirely different,
+    invalid row a stranger controlled. One pre-pass, one shape check, one
+    row decides both fields, closes the gap by construction: the two
+    answers cannot drift apart because there is only one answer now.
+
+    The founder-plus-disagreement rule for `kind` itself is unchanged from
+    slice 1 (`fold`'s own inline comment on the founder branch has the full
+    reasoning) — only WHEN it runs moves, and only `kind` disagrees; a
+    valid duplicate `opened` row can force `kind` to `DEFAULT_KIND` but
+    never moves `origin_slug` off whatever the FIRST valid row set, the
+    same "first writer wins" identity rule the record's `to`/`ask` already
+    follow. Under the single-pass version a lifecycle event (an `accepted`
+    row, say) processed BEFORE a later `opened` duplicate saw
+    `current["kind"]` as whatever the founder alone said, even when that
+    later duplicate would go on to disagree and force it to `work` — see
+    #961 slice 3 review item 3's own history for the exploit this closed.
+
+    Returns `{request_id: (kind, origin_slug)}`. `origin_slug` reads
+    `_origin_slug`, a transient field a row never persists (`append` never
+    writes it, `events()` never reads it off disk) — `recipient_join` is
+    the one caller that knows which bucket a foreign row came from and
+    stamps it before the merged, multi-bucket row set reaches `fold`, the
+    same in-memory-only posture `events()` already gives `_line`.
+    `records()` and `sender_join()` never stamp it, so every founder they
+    fold reads back `""` here: empty, never a real slug, which is exactly
+    what `_covered_by_policy` needs — an unstamped context must cover
+    NOTHING, not accidentally match a policy whose sender happens to be the
+    reader's own project.
 
     `ordered` is `fold`'s own sorted list, passed in rather than re-sorted
     here, so this stays exactly as deterministic under reorder as `fold`
-    already is — the two passes share one sort, not two that could drift
-    apart."""
-    founders: dict[str, str] = {}
+    already is — the pre-pass and the main pass share one sort, not two
+    that could drift apart."""
+    founders: dict[str, tuple[str, str]] = {}
     for row in ordered:
         if row.get("event") != "opened":
             continue
         q_id = str(row.get("request_id") or "")
         if q_id not in founders:
             # Same read-boundary shape check `fold`'s founder branch makes:
-            # a row failing it is never a founder, and the NEXT valid
-            # `opened` row for this id (if any) is the one that founds it —
-            # in both passes alike, since both apply the identical check.
+            # a row failing it is never a founder — for kind OR origin, now
+            # that one row decides both — and the NEXT valid `opened` row
+            # for this id (if any) is the one that founds it, in every
+            # pass alike.
             if not _SLUG_RE.fullmatch(str(row.get("to") or "")):
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
-            founders[q_id] = _kind_of(row)
+            founders[q_id] = (_kind_of(row), str(row.get("_origin_slug") or ""))
             continue
         authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
-        if authority == "human" and _kind_of(row) != founders[q_id]:
-            founders[q_id] = DEFAULT_KIND
+        if authority == "human" and _kind_of(row) != founders[q_id][0]:
+            founders[q_id] = (DEFAULT_KIND, founders[q_id][1])
     return founders
-
-
-def _founder_origin_by_id(ordered: list[dict]) -> dict[str, str]:
-    """#961 slice 4: every request id's origin bucket slug, read off the
-    FOUNDER `opened` row — a pre-pass on the same terms as
-    `_founder_kind_by_id` just above.
-
-    A row's own JSON never carries this: the origin is which BUCKET FILE the
-    row was read out of, not a field a writer stamps. `recipient_join` is the
-    one caller that knows that at scan time (it iterates buckets by name), so
-    it stamps a transient `_origin_slug` onto every row belonging to a
-    foreign sender BEFORE the merged, multi-bucket row set reaches `fold` —
-    a key that is never part of the persisted row (`append` never writes it;
-    `events()` never carries it off disk), the same in-memory-only posture
-    `events()` already gives `_line`. `records()` and `sender_join()` never
-    stamp it, so every founder they fold reads back "" here — empty, never
-    a real slug, which is exactly what the policy gate below needs: an
-    unstamped context must cover NOTHING, not accidentally match a policy
-    whose sender happens to be the reader's own project.
-    """
-    origins: dict[str, str] = {}
-    for row in ordered:
-        if row.get("event") != "opened":
-            continue
-        q_id = str(row.get("request_id") or "")
-        if q_id in origins:
-            continue
-        origins[q_id] = str(row.get("_origin_slug") or "")
-    return origins
 
 
 def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
@@ -525,15 +523,14 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
         str(row.get("event_id") or ""),
         _integer(row, "_line"),
     ))
-    # #961 slice 3 review item 3: resolved BEFORE the main pass below touches
-    # a single lifecycle event, from the COMPLETE set of `opened` rows — see
-    # `_founder_kind_by_id`'s own docstring for why a kind resolved
-    # mid-stream let a later duplicate revoke it out from under an
-    # already-landed `accepted` row.
-    founder_kind = _founder_kind_by_id(ordered)
-    # #961 slice 4: the same pre-pass shape, for the origin bucket the
-    # `accepted`-under-ruling exception below matches against.
-    founder_origin = _founder_origin_by_id(ordered)
+    # #961 slice 3 review item 3, merged with #961 slice 4 review round 2
+    # (C1): resolved BEFORE the main pass below touches a single lifecycle
+    # event, from the COMPLETE set of `opened` rows — see `_founder_by_id`'s
+    # own docstring for why a kind (or an origin) resolved mid-stream let a
+    # later duplicate revoke it out from under an already-landed row, and
+    # why `kind` and `origin_slug` are resolved from the SAME founder row
+    # rather than two independent passes that could disagree.
+    founders = _founder_by_id(ordered)
     out: dict[str, dict] = {}
     for row in ordered:
         q_id = row["request_id"]
@@ -543,9 +540,10 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
         if event == "opened":
             if current is not None:
                 continue  # duplicate logical open, first writer wins
-                # otherwise; `kind` itself is already resolved for every id
-                # by `founder_kind` above, so there is nothing left for this
-                # branch to reconcile (#961 review item 3 moved that here).
+                # otherwise; `kind`/`from_slug` are already resolved for
+                # every id by `founders` above, so there is nothing left
+                # for this branch to reconcile (#961 review item 3 moved
+                # that here; round 2 C1 merged origin into the same pass).
             # Read-boundary shape check (the write boundary is not the
             # boundary that matters — events() is deliberately tolerant, and
             # a row edited on disk must not ride into the render).
@@ -553,13 +551,22 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
+            founder_kind, founder_origin = founders.get(
+                q_id, (DEFAULT_KIND, ""))
             out[q_id] = {
                 "request_id": q_id,
                 "state": "open",
                 "to": str(row.get("to") or ""),
                 "to_human": row.get("to_human") is True,
                 "blocking": row.get("blocking") is True,
-                "kind": founder_kind.get(q_id, DEFAULT_KIND),
+                "kind": founder_kind,
+                # #961 slice 4 review round 2 (C1): the SAME founder
+                # resolution `_covered_by_policy` matches against, so a
+                # composer that reads this off the record (`recipient_join`)
+                # can never disagree with what the fold itself already
+                # decided. "" for `records()`/`sender_join()`, which never
+                # stamp `_origin_slug` on any row — see `_founder_by_id`.
+                "from_slug": founder_origin,
                 "ask": str(row.get("ask") or ""),
                 "why": str(row.get("why") or ""),
                 "evidence": str(row.get("evidence") or ""),
@@ -693,13 +700,17 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
             # design's own worked example), still undecided, and the row's
             # own ruling stamp independently confirmed by the INJECTED
             # `policies` set (`_covered_by_policy`'s own docstring: the
-            # stamp is never the gate on its own).
+            # stamp is never the gate on its own). `current["from_slug"]`,
+            # never a second lookup into `founders` — #961 slice 4 review
+            # round 2 (C1): one founder resolution, read off the record the
+            # SAME pre-pass already wrote it onto, so this cannot drift
+            # from what `recipient_join` renders as the record's origin.
             covered_work = (event == "accepted" and authority == "agent"
                            and current["kind"] == "work"
                            and not current["to_human"]
                            and current["state"] in _SENDER_MOVABLE
                            and _covered_by_policy(
-                               row, founder_origin.get(q_id, ""), policies))
+                               row, current["from_slug"], policies))
             if not (covered_info or covered_work):
                 continue
         if event in _STATE_BY_EVENT and current["state"] == "rejected":
@@ -1561,10 +1572,22 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
         if rid in origin_of:
             by_id[rid].extend(rows)
     all_rows = [row for group in by_id.values() for row in group]
-    out = fold(all_rows, policies=_request_policy_history(project_dir))
-    for rid, record in out.items():
-        record["from_slug"] = origin_of.get(rid, "")
-    return out
+    # #961 slice 4 review round 2 (C1): `from_slug` is no longer set here
+    # from `origin_of` — that dict is keyed by whichever bucket LAST
+    # satisfied "has an opened row addressed to mine" while iterating
+    # `_bucket_slugs()`, an order with no relationship to which `opened`
+    # row is the genuine, shape-valid founder (or even to `order` at all).
+    # `fold` itself now resolves origin from the SAME shape-checked,
+    # order-sorted founder pre-pass it uses for `kind` (`_founder_by_id`)
+    # and writes it onto the record as `from_slug` directly, so this
+    # composer reads it back rather than computing a second, disagreeing
+    # answer. `origin_of` still does its original, narrower job just above:
+    # deciding whether an id is addressed to `mine` at all, so a verdict
+    # recorded in a THIRD bucket with no local `opened` row (#895) still
+    # gets included — a stray match there can add at most an inert orphan
+    # row to the merged set, never mislabel who a record is from, now that
+    # only the founder resolution decides that.
+    return fold(all_rows, policies=_request_policy_history(project_dir))
 
 
 def inbox_listing(project_dir=None) -> list[dict]:
