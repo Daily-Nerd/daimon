@@ -143,7 +143,12 @@ def _request_lines(record: dict, project_dir=None) -> list:
                      "here, and any verdict reverses it")
     if record.get("note"):
         lines.append(f"  Note: {record['note']}")
-    if record.get("done_evidence"):
+    if record.get("done_pending"):
+        # #978: the state glyph above stays the open one — a claim is not a
+        # verdict — so this line is the only place the claim itself shows.
+        lines.append("  Done (claimed, awaiting a human accept): "
+                     f"{record.get('done_evidence', '')}")
+    elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
     if record.get("revision"):
         lines.append(f"  Revisions: {record['revision']} of "
@@ -176,7 +181,12 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
                      "here, and any verdict reverses it")
     if record.get("note"):
         lines.append(f"  Note: {record['note']}")
-    if record.get("done_evidence"):
+    if record.get("done_pending"):
+        # #978: the state glyph above stays the open one — a claim is not a
+        # verdict — so this line is the only place the claim itself shows.
+        lines.append("  Done (claimed, awaiting a human accept): "
+                     f"{record.get('done_evidence', '')}")
+    elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
     if record.get("revision"):
         lines.append(f"  Revisions: {record['revision']} of "
@@ -211,7 +221,12 @@ def _inject_lines(record: dict) -> list[str]:
              # would be noise on a surface built to be thin.
              + (" [info]" if record.get("kind") == "info" else "")
              + (" [blocking: the sender is waiting]"
-                if record.get("blocking") else "")]
+                if record.get("blocking") else "")
+             # #978 review round 1 (F3): without this, a fresh session gets
+             # nudged mid-turn about an ask this project already answered
+             # and redoes the work — same placement rule as the two markers
+             # above, read from the folded record only.
+             + (" [done claimed]" if record.get("done_pending") else "")]
     lines.append(f"  Ask: {record.get('ask', '')}")
     if record.get("why"):
         lines.append(f"  Why: {record['why']}")
@@ -445,17 +460,32 @@ def _cmd_request_verdict(args) -> int:
 def _report(request_id: str, project, verb: str) -> None:
     """Print the answered record, or say plainly that this bucket cannot see
     it. A recipient's answer to a foreign ask is written here and pairs with
-    its origin only at the read-time join (PR 2) — until then the row is real
-    and the record is not, and printing an empty card would hide that."""
+    its origin only at the read-time join (PR 2).
+
+    #978 review round 2 (B2): the LOCAL per-bucket fold (`requests.get`)
+    misses on the ORDINARY cross-bucket path, not only the truly-orphaned
+    one — a recipient answering a foreign ask has no local `opened` row for
+    it by construction, so `get()` returning None there was never "the
+    record is not resolvable yet", it was "this fold cannot see it". Before
+    printing the fallback line, `recipient_join` (the composer `request
+    inbox` reads through) gets a second look; a hit renders through
+    `_inbox_lines`, the recipient-facing card shape, since this bucket is
+    answering someone else's ask rather than reading its own `to`. Only a
+    request neither fold can resolve at all (a foreign id whose origin
+    bucket is itself unreadable or gone) still prints the plain line below."""
     record = requests.get(request_id, project_dir=project)
-    if record is None:
-        render.render_ledger_lines(
-            [f"{request_id}: {verb} recorded in this project's ledger",
-             "  no matching request in this bucket — an answer to another "
-             "project's ask joins its origin at read time, and until then "
-             "it renders nowhere"])
+    if record is not None:
+        render.render_ledger_lines(_request_lines(record, project_dir=project))
         return
-    render.render_ledger_lines(_request_lines(record, project_dir=project))
+    record = requests.recipient_join(project_dir=project).get(request_id)
+    if record is not None:
+        render.render_ledger_lines(_inbox_lines(record, project_dir=project))
+        return
+    render.render_ledger_lines(
+        [f"{request_id}: {verb} recorded in this project's ledger",
+         "  no matching request in this bucket — an answer to another "
+         "project's ask joins its origin at read time, and until then "
+         "it renders nowhere"])
 
 
 def _cmd_request_done(args) -> int:
@@ -469,6 +499,27 @@ def _cmd_request_done(args) -> int:
         return 1
     _cli._note_usage("request:done")
     _report(args.request_id, project, "done")
+    # #978 review round 1 (F2): `requests.get()` is the bucket-LOCAL fold —
+    # on the ordinary cross-bucket path (this project answering a FOREIGN
+    # ask), the `opened` row lives in the sender's bucket and this project's
+    # own `done` row is an orphan in its own per-bucket fold, so `get()`
+    # returns None here and this guidance never printed. `recipient_join` is
+    # the same composer `daimon request inbox` reads through, and finds the
+    # record regardless of which bucket founded it.
+    record = requests.recipient_join(project_dir=project).get(args.request_id)
+    if record is not None and record.get("done_pending"):
+        # #978: the record card `_report` just printed already renders the
+        # claim (on the cross-bucket path too, since review round 2's B2
+        # fix gave `_report` its own `recipient_join` fallback) — this line
+        # is the plain-language answer to the question an agent just asked
+        # by running `done` at all — did that close it? — named in the
+        # voice a script reads rather than left to infer from the state
+        # glyph staying `open`.
+        render.render_ledger_lines(
+            [f"{args.request_id}: completion claimed, and still waits on a "
+             f"person — `daimon request accept {args.request_id}` lands it "
+             "as done, `daimon request reject "
+             f"{args.request_id} --note \"<why>\"` sends it back"])
     return 0
 
 

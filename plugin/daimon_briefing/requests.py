@@ -471,6 +471,13 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "done_by": None,
                 "done_claimed": False,
                 "done_evidence": "",
+                # #978: a completion CLAIMED by a non-human channel on a
+                # `work` record no person has accepted yet — the ask stays
+                # owed, `done_claimed`/`done_evidence`/`done_by` carry the
+                # claim, but `state` does not move to `done`. See the `done`
+                # event branch below for the write side and `is_stale` for
+                # why a pending claim never decays.
+                "done_pending": False,
                 # #694 PR 3 (D8): set only by a `done_verified` row landing
                 # on a currently-claimed completion — never on disk, the
                 # session-end byte-check's own timestamp.
@@ -593,10 +600,73 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             current["state"] = "open"
             current["history_count"] += 1
             current["updated_at"] = row.get("ts") or current["updated_at"]
+            if current["done_pending"]:
+                # #978 review round 1 (F1), gated per review round 2 (B1): a
+                # `revised` row on a record with a PENDING AGENT claim clears
+                # the claim, on every revise, not only one that touches
+                # `ask`. The event is the sender opening the record back up,
+                # and the recipient's claim was scoped to the ask that was
+                # live when it was made — a sender revising the ask (a
+                # `bump the tag` claim under a since-revised `delete the tag
+                # instead` ask), or only softening `why` while the same
+                # claim rides along regardless, is the same act from this
+                # side of the fold: the ask the claim answered no longer
+                # stands as it was. Live delivery already re-nudges the
+                # recipient on a revise (it opens a new revision epoch, so
+                # `delivered`/`surfaced` restart), so the recipient is told
+                # again and can re-answer if the claim still holds.
+                #
+                # The gate on `done_pending` (not on the event alone) is
+                # load-bearing: a human completion is never a claim
+                # (`done_pending` is always False for one, set only by the
+                # non-human landing branch above), yet a record can reach a
+                # `revised` row from a state that carries a human `done`'s
+                # evidence — `done` (human) -> `needs_info` (human, allowed
+                # from ANY prior state but `rejected`) re-opens the state
+                # into `_SENDER_MOVABLE`, and an unconditional clear here
+                # erased that human's `done_by`/`done_evidence` on the
+                # revise that followed. `done_verified_at` resets alongside
+                # the claim it verified (N1): left standing, it would assert
+                # "byte-checked" over evidence that no longer exists.
+                current["done_pending"] = False
+                current["done_claimed"] = False
+                current["done_evidence"] = ""
+                current["done_by"] = None
+                current["done_verified_at"] = None
             continue
         if event == "done" and not str(row.get("evidence") or "").strip():
             # D8: `done` is the one either-channel state move, and its price
             # is evidence. A row without it never lands.
+            continue
+        if (event == "done" and authority != "human"
+                and current["kind"] == "work"
+                and current["state"] in _SENDER_MOVABLE):
+            # #978: the #961 amendment's own sentence — an agent answering a
+            # `work` ask stays owed until a person accepts, rejects, or
+            # ratifies a reclassification — was never wired into this fold.
+            # Without this branch the row below falls straight through to
+            # the generic `_STATE_BY_EVENT` landing and moves `open` (or
+            # `needs-info`) directly to `done`, the same one-row escape #972
+            # closed for `kind` itself. `info` records and an already-
+            # `accepted` `work` record are UNCHANGED (both conditions above
+            # exclude them): this branch only narrows what a bare `done`
+            # event does for a `work` ask nobody has decided yet.
+            #
+            # `history_count`/`updated_at` still bump — a claim is real
+            # activity on the record — but `state` does not move, and
+            # `suppressed` is left untouched rather than cleared the way a
+            # genuine landing below does: a human muted this ask on
+            # purpose, and an agent's own unverified claim is not the
+            # verdict that reverses it (see `is_stale` for the matching call
+            # on staleness — a pending claim never decays either). A second
+            # claim overwrites the first, the same latest-wins posture the
+            # generic `done` landing already gives `done_evidence`.
+            current["history_count"] += 1
+            current["updated_at"] = row.get("ts") or current["updated_at"]
+            current["done_by"] = authority
+            current["done_claimed"] = True
+            current["done_evidence"] = str(row.get("evidence") or "")
+            current["done_pending"] = True
             continue
         if event == "done_verified":
             # #694 PR 3 (D8): the session-end byte-check confirmed the
@@ -606,14 +676,30 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # CURRENTLY a claimed completion: a stray/duplicate row, one
             # answering a human `done` (never claimed), or one that arrived
             # before any `done` at all changes nothing.
-            if current["state"] == "done" and current["done_claimed"]:
+            #
+            # #978: a completion claim the fold has not yet landed as
+            # `done` (`done_pending`) is exactly as verifiable as one that
+            # has — the byte-check runs against the evidence quote, not
+            # against whether a person has accepted it — so it qualifies
+            # here too, on the same terms, without moving `state` or
+            # `done_pending` itself.
+            if current["done_claimed"] and (
+                    current["state"] == "done" or current["done_pending"]):
                 current["history_count"] += 1
                 current["done_claimed"] = False
                 current["done_verified_at"] = row.get("ts")
             continue
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
-        current["state"] = _STATE_BY_EVENT[event]
+        if event == "accepted" and current["done_pending"]:
+            # #978: an accept landing on a completion claim ratifies the
+            # claim itself, not a to-do still to be started — the record
+            # settles as `done`, not `accepted`, carrying both the claim
+            # fields (already on the record, untouched below) and this
+            # verdict's own fields (set in the `else` branch beneath).
+            current["state"] = "done"
+        else:
+            current["state"] = _STATE_BY_EVENT[event]
         # D5: a verdict (or a completion) supersedes a suppression — that IS
         # the reversal path, which is why no `unsuppress` verb exists.
         current["suppressed"] = False
@@ -623,6 +709,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # until the session-end byte-check confirms the quote (PR 3).
             current["done_claimed"] = authority != "human"
             current["done_evidence"] = str(row.get("evidence") or "")
+            current["done_pending"] = False
         else:
             current["verdict_by"] = authority
             current["verdict_label"] = CHANNEL_LABEL.get(
@@ -630,6 +717,13 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             current["verdict_at"] = row.get("ts")
             if "note" in row:
                 current["note"] = str(row.get("note") or "")
+            # #978: `accepted`/`rejected` settle the claim along with the
+            # ask — `done_pending` clears either way, the record is no
+            # longer awaiting THIS decision. `needs_info` is deliberately
+            # exempt: the person asked for more before deciding, and the
+            # claim already on file still stands until they do.
+            if event != "needs_info":
+                current["done_pending"] = False
     return out
 
 
@@ -1314,8 +1408,17 @@ def is_stale(record: dict, project_dir=None) -> bool:
     past STALE_AFTER_SESSIONS distinct non-introspection sessions serialized
     for `project_dir` (the RECIPIENT's own bucket) with no verdict landing
     in between. Never surfaced -> no anchor -> never decays. Every other
-    state is a permanent fact — a verdict or a completion never goes stale."""
+    state is a permanent fact — a verdict or a completion never goes stale.
+
+    #978: a `done_pending` record never decays either, even though its
+    `state` is still `open`/`needs-info` — the staleness clock exists to
+    catch an ask nobody looked at, and this one WAS looked at: the
+    recipient's agent already answered with a completion claim, and what it
+    is waiting on now is a person's accept or reject, not the recipient
+    going quiet."""
     if record.get("state") not in _SENDER_MOVABLE:
+        return False
+    if record.get("done_pending"):
         return False
     anchor = (record.get("surfaced") or {}).get(record.get("revision"))
     if not anchor:

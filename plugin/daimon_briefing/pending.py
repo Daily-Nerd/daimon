@@ -53,7 +53,8 @@ _KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2}
 
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
-         commands, context="", blocking=False, approval=None) -> dict:
+         commands, context="", blocking=False, approval=None,
+         claimed=False, request_state=None) -> dict:
     return {
         "kind": kind,
         "id": record_id,
@@ -72,6 +73,20 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         # refutation). None for every lane but `request`, which never
         # assigns one.
         "approval": approval,
+        # #978: whether the request lane's record carries an agent's
+        # completion claim the record has not yet settled (`done_pending`
+        # on the FOLDED record) — False for every lane but `request`, which
+        # never assigns it. A distinct field from `approval` for the exact
+        # reason `approval` is distinct from the queue-lane `kind` above:
+        # THE LANDMINE `_decide_cards`'s own comment warns about is real for
+        # any field that overloads a name two axes could each want.
+        "claimed": claimed,
+        # #978 review round 1 (F4): the request lane's own `state`
+        # (open/needs-info), from the FOLDED record, so a claim line can
+        # read differently on needs-info (the claim predates the person
+        # asking for more) than on a plain open ask. None for every lane
+        # but `request`.
+        "request_state": request_state,
     }
 
 
@@ -130,9 +145,12 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
                      if record.get("from_label") else ""),
             waiting_since=record.get("created_at") or "",
             blocking=bool(record.get("blocking")),
-            # #961 slice 2: read from THIS folded record only — `record` is
-            # already `requests.recipient_join`'s output, never a raw row.
+            # #961 slice 2 / #978: both read from THIS folded record only —
+            # `record` is already `requests.recipient_join`'s output, never
+            # a raw row.
             approval=record.get("kind"),
+            claimed=bool(record.get("done_pending")),
+            request_state=record.get("state"),
             commands=[
                 ("accept", f"daimon request accept {rid}"),
                 ("reject", f"daimon request reject {rid} --note \"<why>\""),

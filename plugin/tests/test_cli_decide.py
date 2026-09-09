@@ -211,6 +211,108 @@ def test_decide_card_with_the_info_marker_still_gets_ledger_header_spans(
     assert "[info]" in card[0]
 
 
+# ---- #978: a pending completion claim must not clear the queue ------------
+
+
+def test_decide_still_lists_a_work_request_after_an_agent_done_claim(
+        project, capsys):
+    """THE test for #978: an agent's completion claim on a work ask nobody
+    accepted must not clear the human's decision queue — before this fix
+    `daimon decide` dropped the request the moment the agent's `done` row
+    landed, and the person addressed never saw it again."""
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent",
+                 evidence="bumped in commit abc123", project_dir=project)
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+
+    assert q_id in out
+    assert "completion claimed by the agent" in out
+
+
+def test_decide_card_never_shows_the_claim_line_for_a_plain_open_request(
+        project, capsys):
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+    # Positive anchor (#978 review round 1, F5): empty output would also
+    # satisfy "no claim line", so pin that the record is actually rendered.
+    assert q_id in out
+    assert "completion claimed" not in out
+
+
+def test_decide_card_claim_line_is_state_aware_on_needs_info(
+        project, capsys):
+    """#978 review round 1 (F4): a claim under a needs-info predates the
+    person asking for more, so the card says that instead of offering the
+    same accept/reject framing a plain open claim gets — and, since #978's
+    own F1 fix, a sender revise is what actually clears the claim from
+    here, not a decision on this surface."""
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent",
+                 evidence="bumped in commit abc123", project_dir=project)
+    requests.needs_info(q_id, channel="cli-tty", note="which release?",
+                        project_dir=project)
+
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+
+    assert q_id in out
+    assert "completion claimed by the agent before you asked for more" in out
+    assert "a sender revise clears the claim" in out
+    assert "accept lands it as done, reject sends it back" not in out
+
+
+def test_decide_cards_claim_marker_guard_is_load_bearing_not_dead_code():
+    """Mirrors `test_decide_cards_lane_guard_is_load_bearing_not_dead_code`
+    for the `claimed` field: no REAL composer ever sets `claimed` on a
+    non-request lane, so this hands `_decide_cards` a synthetic row shaped
+    the way a future bug elsewhere in `pending.py` could actually produce
+    one, and checks the guard catches it anyway."""
+    from daimon_briefing.cli import lifecycle
+    row = {
+        "kind": "ruling", "id": "r-0123456789ab", "slug": "-p-x",
+        "headline": "never bump to 1.0 without a human call",
+        "context": "", "waiting_since": "", "blocking": False,
+        "commands": [("ratify", "daimon ruling ratify r-0123456789ab")],
+        "approval": None, "claimed": True,
+    }
+
+    card = lifecycle._decide_cards([row])[0]
+
+    assert "completion claimed" not in "\n".join(card)
+
+
+def test_decide_card_with_the_claim_line_still_gets_ledger_header_spans(
+        project):
+    """Built through the REAL pipeline (`pending.queue` ->
+    `lifecycle._decide_cards`), not a hand-typed header string — mirrors
+    `test_decide_card_with_the_info_marker_still_gets_ledger_header_spans`.
+    The claim line is a separate card line, not part of the header, so this
+    also pins that the header itself is untouched."""
+    from daimon_briefing.cli import lifecycle
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask="bump before the docs change",
+        why="the tag is referenced", channel="cli-agent", project_dir=project)
+    requests.done(q_id, channel="cli-agent",
+                 evidence="bumped in commit abc123", project_dir=project)
+    rows = pending.queue(project_dir=project)["rows"]
+    card = lifecycle._decide_cards(rows)[0]
+
+    spans = render._ledger_header_spans(card[0])
+
+    assert spans is not None
+    assert spans[1] == q_id
+
+
 def test_a_verified_amendment_reaches_the_queue(project, capsys):
     a_id = amendments.propose(
         item_id="o-1234567890ab", change="progressed",

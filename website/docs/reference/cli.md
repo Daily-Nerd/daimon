@@ -180,7 +180,7 @@ nobody ever writes into another project's ledger.
 | `daimon request revise <id> [--ask] [--why] [--evidence]` | Answer a needs-info, or sharpen an open ask. Either channel; capped at 3 revisions per record lifetime — past the cap, open a new request with `--supersedes <id>` to keep the lineage visible. |
 | `daimon request accept\|reject\|needs-info <id> [--note]` | Land a decision. Human-only — requires an interactive terminal. `reject` is final for that record; the sender supersedes with a new request rather than asking again. |
 | `daimon request suppress <id> [--note]` | Drop a request out of the recipient's own briefing panel. Human-only; the record stays in `list`/`inbox`, and any later decision reverses it. |
-| `daimon request done <id> --evidence "<quote>"` | Report the ask as satisfied. Either channel; an agent's claim renders `done (claimed, unverified)` until the recipient's next session-end byte-checks the evidence quote against its transcript. A human `done` renders plainly. |
+| `daimon request done <id> --evidence "<quote>"` | Report the ask as satisfied. Either channel; an agent's claim renders `done (claimed, unverified)` until the recipient's next session-end byte-checks the evidence quote against its transcript. A human `done` renders plainly. On a `work` request no person has accepted yet, an agent's `done` records the claim and leaves the request in the decision queue, awaiting `accept` or `reject`, instead of closing it. |
 | `daimon request list` | This project's own sent requests, undecided first. `--json` for machines. |
 | `daimon request inbox` | Requests addressed TO this project, from every sender, undecided first — including ones the briefing panel dropped for attention. `--json` for machines. |
 

@@ -913,6 +913,26 @@ def _decide_cards(rows: list) -> list:
                f"{blocking}"]
         if row.get("context"):
             card.append(f"  {row['context']}")
+        # #978: `row["claimed"]` is the request lane's `done_pending`, from
+        # the FOLDED record — same guard shape as `info_marker` above (a
+        # non-request lane never carries this), and a separate CARD LINE
+        # rather than a header addition, so `render._ledger_header_spans`
+        # keeps isolating the id the way it already does around the info
+        # marker.
+        if row.get("kind") == "request" and row.get("claimed"):
+            # #978 review round 1 (F4): a claim under a needs-info reads
+            # differently from one under a plain open ask — the person
+            # already asked the sender for more, so the wording says the
+            # claim predates that and that a sender revise (not a decision
+            # here) is what clears it, rather than offering the same
+            # accept/reject framing twice.
+            if row.get("request_state") == "needs-info":
+                card.append(
+                    "  completion claimed by the agent before you asked "
+                    "for more; a sender revise clears the claim")
+            else:
+                card.append("  completion claimed by the agent; accept "
+                            "lands it as done, reject sends it back")
         card += [f"    {label}: {command}"
                  for label, command in row.get("commands") or []]
         cards.append(card)
