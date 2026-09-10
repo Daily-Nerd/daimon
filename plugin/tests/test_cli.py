@@ -1,4 +1,5 @@
 import inspect
+import copy
 import json
 import logging
 import os
@@ -3904,6 +3905,192 @@ def test_cli_brief_team_respects_decision_cap(tmp_checkpoint_dir, sample_checkpo
     assert rc == 0
     out = capsys.readouterr().out
     assert "earlier decision" in out  # overflow marker: cap dropped 1 of grace's 2
+
+
+# --- #981: the Teammates section folds the READER's resolution ledger, the
+# same fold every other briefing surface applies, with the same fail-open. ---
+
+def _teammate_decision_ids(proj):
+    from daimon_briefing import store
+
+    cp = dict(store.read_team(project_dir=proj))["grace"]
+    decisions = cp["working_context"]["recent_decisions"]
+    assert all(d.get("id") for d in decisions), "the mirrored copy must carry ids"
+    return {d["text"]: d["id"] for d in decisions}
+
+
+def test_cli_brief_team_withholds_a_teammate_item_the_reader_resolved(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path):
+    """The reader's OWN ledger governs what the reader sees of a teammate:
+    a decision the reader resolved is withheld from the Teammates section,
+    the way every other surface withholds it. Both authors share one project
+    bucket here, so the reader's own body is grace's checkpoint too and the
+    same content-derived id resolves in both places."""
+    from daimon_briefing import store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    ids = _teammate_decision_ids(proj)
+    store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
+                       project_dir=proj)
+
+    assert cli.main(["brief", "--team", "--project", proj]) == 0
+    out = capsys.readouterr().out
+    assert "Teammates" in out
+    assert "Adopt the D-007 prompt" in out, "the live teammate decision still renders"
+    assert "Single-pass for Slice 1, chunking is Slice 2" not in out
+    assert "2 resolved item(s) withheld (1 a teammate's)" in out
+
+
+def test_cli_brief_team_header_only_path_withholds_and_says_so(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    """The reader has NO checkpoint of their own (the new-teammate case that
+    #223 kept --team alive for): the Teammates section still folds the
+    reader's ledger, and a note names the withheld count on this path too."""
+    import json as _json
+
+    from daimon_briefing import config, store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    # Another project's checkpoint makes the global pointer point elsewhere:
+    # that is the branch that prints "No briefing for this project yet" and
+    # keeps --team alive (#223), as opposed to a machine with no checkpoint.
+    store.write_checkpoint("e-1", {
+        "session_id": "e-1", "working_context": {
+            "active_topic": {"text": "elsewhere", "trust": "inferred"},
+            "open_questions": [], "recent_decisions": []},
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []}},
+        project_dir=str((tmp_path / "elsewhere").resolve()))
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
+    remote = config.team_dir() / "team-a"
+    (remote / ".git").mkdir(parents=True, exist_ok=True)
+    d = remote / "projects" / "core" / "x" / "authors" / "grace"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "S-g.json").write_text(_json.dumps({
+        "session_id": "S-g", "author": "grace", "team_project": "core/x",
+        "working_context": {
+            "active_topic": {"text": "Hardening the ingest gate", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [
+                {"text": "Keep the ingest gate", "trust": "inferred",
+                 "id": "r-0000000000aa"},
+                {"text": "Ship the ingest gate tomorrow", "trust": "inferred",
+                 "id": "r-0000000000bb"},
+            ],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    }), encoding="utf-8")
+    store.append_event("r-0000000000bb", "resolved", project_dir=proj)
+
+    assert cli.main(["brief", "--team", "--project", proj]) == 0
+    out = capsys.readouterr().out
+    assert "No briefing for this project yet" in out
+    assert "[grace]" in out
+    assert "Keep the ingest gate" in out
+    assert "Ship the ingest gate tomorrow" not in out
+    assert "1 resolved item(s) withheld (a teammate's)" in out
+
+
+def test_team_briefings_fail_open_when_the_ledger_or_the_fold_raises(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch, tmp_path):
+    """Same posture as the main path: an unreadable resolution ledger, or a
+    fold that raises, withholds nothing rather than dropping the section.
+    Exercised on the team builder itself, since the main brief path has
+    readers of its own for the same ledger."""
+    from daimon_briefing import briefing, store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    ids = _teammate_decision_ids(proj)
+    store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
+                       project_dir=proj)
+
+    def failing_once(real):
+        # The team builder reads the ledger FIRST, before the fan-in, whose
+        # own tombstone reader calls the same function and is not this
+        # test's subject: raise on that first call only, then behave.
+        calls = [0]
+
+        def wrapper(*a, **k):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise RuntimeError("hand-edited ledger")
+            return real(*a, **k)
+        return wrapper
+
+    for target, name in ((store, "resolutions"), (briefing, "withhold")):
+        with monkeypatch.context() as m:
+            m.setattr(target, name, failing_once(getattr(target, name)))
+            withheld: list = []
+            sections = cli._team_briefings(proj, withheld)
+        assert [a for a, _ in sections] == ["grace"], name
+        texts = [d["text"] for d in sections[0][1]["decisions"]]
+        assert "Single-pass for Slice 1, chunking is Slice 2" in texts, (
+            f"{name} raising must fail open to showing the item")
+        assert withheld == [], name
+
+
+def test_cli_brief_team_withheld_note_counts_the_teammates_item(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path):
+    """Full path: the reader has a checkpoint too. The note that already
+    names the reader's withheld items covers the teammate's, and says so,
+    since `status --suppressed` lists only the reader's own."""
+    from daimon_briefing import store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    # Two fresh dicts: write_checkpoint stamps `author` INTO the checkpoint
+    # it is handed, and read_team reports that stamp rather than the
+    # directory, so a fixture object written twice mirrors the second file
+    # under the first author's name and the teammate renders twice.
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-1", copy.deepcopy(sample_checkpoint), project_dir=proj)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("a-1", copy.deepcopy(sample_checkpoint), project_dir=proj)
+    ids = _teammate_decision_ids(proj)
+    store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
+                       project_dir=proj)
+
+    assert cli.main(["brief", "--team", "--project", proj]) == 0
+    out = capsys.readouterr().out
+    assert out.count("[grace]") == 1
+    team = out.split("Teammates")[1]
+    assert "Single-pass for Slice 1, chunking is Slice 2" not in team
+    # Two, not one: item ids are content-derived, so the reader's own copy
+    # of the same decision carries the same id and resolves with it.
+    assert "2 resolved item(s) withheld (1 a teammate's)" in out
+
+
+def test_cli_brief_team_resolved_item_does_not_take_a_capped_slot(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path):
+    """With the cap at 1, the resolved (newer) decision must not occupy the
+    slot and push the live (older) one into the overflow count."""
+    from daimon_briefing import store
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    ids = _teammate_decision_ids(proj)
+    store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
+                       project_dir=proj)
+
+    assert cli.main(["brief", "--team", "--project", proj]) == 0
+    out = capsys.readouterr().out
+    assert "Adopt the D-007 prompt" in out
+    assert "Single-pass for Slice 1, chunking is Slice 2" not in out
+    assert "earlier decision" not in out, (
+        "a withheld item must not count against the cap")
 
 
 def test_cli_brief_team_labels_foreign_verbatim_claim(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path):
