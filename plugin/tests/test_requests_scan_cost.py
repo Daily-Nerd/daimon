@@ -198,7 +198,22 @@ def test_foreign_counts_time_cost_stays_within_budget(tmp_checkpoint_dir,
 
 _N_POLICY_RECIPIENTS = 25
 _POLICY_ROWS_PER_RECIPIENT = 199  # + the founding row each = 200 total
-_POLICY_FOREIGN_BUDGET_MS = 150.0
+
+# The linear bound is pinned by COUNTING fold steps, not by the clock.
+# `foreign_counts` folds each recipient's ruling ledger through
+# `refutations._fold_row` exactly TWICE: once in `request_policy_history`
+# (this slice's resolver, one running state over one ordered pass) and once
+# in `refutations.records` inside `_foreign_ledger_counts` (#766 slice 3's
+# candidate-ruling tally over every other bucket, a separate lane that
+# predates this slice). Two passes over 5,000 rows is 10,000 steps; the
+# quadratic build re-folded every prefix of each ledger, n(n+1)/2 = 20,100
+# steps per ledger, 502,500 across the fleet plus the tally's 5,000 — a gap
+# no runner speed can blur. A THIRD pass would trip this too, and should:
+# every linear read of a ruling ledger has to be accounted for here by name.
+# The wall clock stays only as a loose sanity ceiling: the first cut of this
+# test asserted 150ms and tripped on CI at 159ms and 280ms (55-80ms locally).
+_POLICY_FOLD_PASSES = 2
+_POLICY_FOREIGN_CEILING_MS = 1500.0
 
 
 def _seed_policy_recipients(n=_N_POLICY_RECIPIENTS,
@@ -237,23 +252,39 @@ def _seed_policy_recipients(n=_N_POLICY_RECIPIENTS,
                 ratified=True, project_dir=recipient_dir)
 
 
-def test_foreign_counts_time_cost_at_deep_ruling_ledgers_stays_within_budget(
-        tmp_checkpoint_dir, capsys):
+def test_foreign_counts_at_deep_ruling_ledgers_folds_each_row_once(
+        tmp_checkpoint_dir, monkeypatch, capsys):
     _seed_policy_recipients()
+    real_fold_row = refutations._fold_row
+    steps = {"n": 0}
+
+    def counting_fold_row(out, row):
+        steps["n"] += 1
+        return real_fold_row(out, row)
+
+    monkeypatch.setattr(refutations, "_fold_row", counting_fold_row)
     start = time.perf_counter()
     result = pending.foreign_counts(project_dir="/p/policy-scan-viewer")
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     assert len(result) == _N_POLICY_RECIPIENTS, (
         "measurement is void unless every recipient's ask was counted")
+    rows_total = _N_POLICY_RECIPIENTS * (_POLICY_ROWS_PER_RECIPIENT + 1)
+    quadratic = _N_POLICY_RECIPIENTS * (
+        (_POLICY_ROWS_PER_RECIPIENT + 1) * (_POLICY_ROWS_PER_RECIPIENT + 2) // 2)
     with capsys.disabled():
-        print(f"\n#961 slice 4 review round 2 (H3) foreign-counts scan cost "
-             f"at deep ruling ledgers: {elapsed_ms:.2f}ms over "
-             f"{_N_POLICY_RECIPIENTS} recipients x "
-             f"{_POLICY_ROWS_PER_RECIPIENT + 1} rows each — budget "
-             f"{_POLICY_FOREIGN_BUDGET_MS}ms")
-    assert elapsed_ms <= _POLICY_FOREIGN_BUDGET_MS, (
+        print(f"\n#961 slice 4 review round 2 (H3) foreign-counts at deep "
+              f"ruling ledgers: {steps['n']} fold steps over "
+              f"{_N_POLICY_RECIPIENTS} recipients x "
+              f"{_POLICY_ROWS_PER_RECIPIENT + 1} rows each (linear = "
+              f"{_POLICY_FOLD_PASSES} x {rows_total}, quadratic adds "
+              f"{quadratic}), {elapsed_ms:.2f}ms")
+    assert steps["n"] == _POLICY_FOLD_PASSES * rows_total, (
+        f"foreign_counts applied _fold_row {steps['n']} times over "
+        f"{rows_total} ledger rows; {_POLICY_FOLD_PASSES} passes (the policy "
+        f"history and the candidate tally) is the linear bound, and "
+        f"{quadratic} is what the prefix re-fold this test guards against "
+        f"would add")
+    assert elapsed_ms <= _POLICY_FOREIGN_CEILING_MS, (
         f"pending.foreign_counts cost {elapsed_ms:.2f}ms exceeds the "
-        f"{_POLICY_FOREIGN_BUDGET_MS}ms budget over "
-        f"{_N_POLICY_RECIPIENTS} recipients x "
-        f"{_POLICY_ROWS_PER_RECIPIENT + 1} rows each")
+        f"{_POLICY_FOREIGN_CEILING_MS}ms sanity ceiling")
