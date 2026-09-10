@@ -13,8 +13,8 @@ Every daimon verb, grouped by what you are trying to do. Each command's
 | command | what it does |
 | --- | --- |
 | `daimon configure` | Detect the resolved LLM backend and fill gaps in `~/.daimon/env`. `--test` runs a live round-trip. |
-| `daimon hooks install <host>` | Ship the host hook scripts (Windsurf, Codex) from the package. `list` / `status` inspect; `status` also audits this project's check manifest against its ledger, and exits non-zero on either kind of drift. |
-| `daimon skill install <host>` | Install the daimon agent skill into a host's skill directory. Re-run after upgrades. |
+| `daimon hooks install [host]` | Ship the host hook scripts (Windsurf, Codex, Kimi) from the package. With no host, daimon detects what this machine runs, prints one line per host with the channel that serves it, and installs: silently for a single host, after one confirmation for several, and never without a terminal unless `--all` is passed. `remove [host]` unregisters what daimon registered, and `--all` covers every detected host. `list` / `status` inspect; `status` also audits this project's check manifest against its ledger, and exits non-zero on either kind of drift. |
+| `daimon skill install [host]` | Install the daimon agent skill into a host's skill directory. Same detection as `hooks install` when no host is named, and the same `--all`. Re-run after upgrades. |
 | `daimon check sync` | Rebuild `~/.daimon/checks` — the manifest of armed checks a host hook reads, and one file per check body — from this project's ledger. Every ratify, revise, retire and forget already does this, so run it only when the manifest was damaged out of band. Safe to repeat: an unchanged manifest is not rewritten. Prints how many checks are armed, zero included. `--check` audits instead of rebuilding and writes nothing: exit 0 in step, 1 drifted, 3 when the manifest exists and cannot be read. `--json` for machines. |
 | `daimon heal` | Re-serialize the most recent failed session when it is safe to do so. |
 | `daimon mcp serve` | Serve the daimon tools over MCP (stdio). |

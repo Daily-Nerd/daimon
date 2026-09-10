@@ -74,7 +74,8 @@ antes de repetirlas:
 daimon skill install claude
 ```
 
-`daimon skill list` muestra los destinos de instalación para otros hosts.
+`daimon skill list` muestra los destinos de instalación para otros hosts. Corré `daimon skill install` sin host para que daimon detecte qué corre esta máquina, o `daimon skill install --all` para cablear todos los hosts que encuentre sin preguntarte.
+
 
 ## 5. Termina una sesión, inicia la siguiente
 
