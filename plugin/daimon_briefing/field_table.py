@@ -186,6 +186,14 @@ ITEM_RULES: tuple[FieldRule, ...] = (
         "Session id of the LAST carry hop (#33); absent on native items. "
         "Model-emitted values are stripped (#725)."),
     FieldRule(
+        "item", "restated_after_resolve", "boolean", True, False, "code", "strip",
+        _c(stripped_at_serialize=True),
+        "#980: carry handed this native item a RESOLVED prev item's id on a "
+        "strong restatement match (>=4 shared salient terms, or >=0.75 of the "
+        "shorter list); the item keeps its own wording and `status "
+        "--suppressed` names the inheritance. Model-emitted values are "
+        "stripped."),
+    FieldRule(
         "item", "quote_verified", "boolean", True, False, "code", "strip",
         _c(stripped_at_serialize=True),
         "verify_quotes verdict (#125): true on a byte-verified quote, false "

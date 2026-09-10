@@ -27,6 +27,13 @@ _CARRIED_KINDS = schema.CARRIED_KINDS
 
 _MIN_SHARED = 3     # shared salient terms for same-item
 _MIN_RATIO = 0.6    # or this fraction of the shorter term list
+# #980: the bar for a native twin to INHERIT A RESOLVED prev item's identity.
+# Higher than the twin bar on purpose: that bar is tuned for rewording and
+# admits two different statements about one subject at its floor (the
+# issue's pair shares 3 of 5 terms), and on a closed item a false twin does
+# not cost a duplicate, it withholds a live memory under a closed id.
+_INHERIT_SHARED = 4
+_INHERIT_RATIO = 0.75
 # Which rail a same-item match came in on (#268). Dedup treats them alike;
 # corroboration does not — see _match_path and _record_corroboration's G4.
 _MATCH_EXACT = "exact"
@@ -167,6 +174,22 @@ def _match_path(a_text: str, b_text: str, generic=frozenset()) -> str:
     if shared / min(len(a), len(b)) >= _MIN_RATIO:
         return _MATCH_RATIO
     return ""
+
+
+def _restates(a_text: str, b_text: str, generic=frozenset()) -> bool:
+    """#980: is `b_text` a RESTATEMENT of `a_text`, strongly enough to inherit
+    a closed item's identity? Same term algebra as `_match_path`, higher
+    thresholds (`_INHERIT_SHARED`, `_INHERIT_RATIO`). Only consulted after
+    `_same_item` already matched on the SAME `generic`, so the quantity-
+    conflict guard has run and both filtered sets hold at least two terms
+    (that floor lives in `_match_path`; repeating it here would be dead
+    code). A threshold shift, not a proof: a pair at five shared terms and a
+    low ratio still passes, which is why the caller also stamps the record."""
+    a = set(recall.salient_terms(a_text)) - generic
+    b = set(recall.salient_terms(b_text)) - generic
+    shared = len(a & b)
+    return (shared >= _INHERIT_SHARED
+            or shared / min(len(a), len(b)) >= _INHERIT_RATIO)
 
 
 def _same_item(a_text: str, b_text: str, generic=frozenset()) -> bool:
@@ -389,6 +412,19 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                          and not _is_reversal_of(n, text, item.get("id"),
                                                  generic)),
                         None)
+            # #980: a RESOLVED prev item inherits its identity onto a twin only
+            # on a strong restatement. On the twin floor two different claims
+            # about one subject match; for a live prev item that costs one
+            # merged wording, but for a closed one it withholds the live item
+            # under the closed id, in the same words a real resolution
+            # produces. Below the bar the pair is not a twin here: the prev
+            # item is closed, so it falls through to the resolved check and is
+            # not carried, and the native keeps its own identity and text.
+            closed = item.get("id") in resolved
+            if (twin is not None and closed
+                    and not _restates(text, str(twin.get("text") or ""),
+                                      generic)):
+                twin = None
             if twin is not None:
                 # #268: the corroboration verdict runs FIRST — BEFORE the
                 # freeze below, which overwrites the native twin's trust and
@@ -416,7 +452,12 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 #     to reconsolidate; that is correct).
                 # AGE never resets either way (run-01: 8-12 resets/20 cycles
                 # killed the #128 overdue boost) — keep the older birth stamp.
-                if item.get("trust") == "verbatim":
+                # #980: on a closed prev item the freeze is skipped. Its text
+                # renders nowhere but the suppressed listing, and there the
+                # honest wording is the one this session actually produced;
+                # a reopen (`reverify`) then surfaces what the session said,
+                # under the session's own trust class, not a closed pin.
+                if item.get("trust") == "verbatim" and not closed:
                     twin["text"] = item["text"]
                     # F4 (#527): `because` explains ITS text. The freeze
                     # restores prev's wording, so prev's reasoning rides
@@ -498,6 +539,11 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                 # recorded against the old id still binds after re-extraction.
                 if item.get("id"):
                     twin.setdefault("id", item["id"])
+                    if closed:
+                        # #980: the gate is a threshold shift, not a proof;
+                        # the stamp is what lets `status --suppressed` say
+                        # "identity inherited" instead of "resolved".
+                        twin["restated_after_resolve"] = True
                 # Origin (#268) rides that same rail, and the twin path is the
                 # ONLY place it needs a line: plain carry deep-copies the whole
                 # prev item, binding included. A reworded twin is not a copy —

@@ -5682,6 +5682,67 @@ def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, samp
     assert item_id in out
 
 
+def _q_checkpoint(sid, text, **item):
+    return {"session_id": sid, "created": "2026-09-09T00:00:00Z",
+            "working_context": {"active_topic": {"text": "exporter", "trust": "inferred"},
+                                "open_questions": [{"text": text, "trust": "inferred",
+                                                    "importance": 7, **item}],
+                                "recent_decisions": []},
+            "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                                   "contradictions_flagged": []}}
+
+
+def test_a_live_question_sharing_a_resolved_ones_vocabulary_survives_the_brief(
+        tmp_checkpoint_dir, capsys):
+    """#980 through the shipping path: write, resolve, carry_forward, write,
+    brief. Two different questions sharing three salient terms: the closed
+    one is withheld, the live one is printed, and nothing says withheld."""
+    from daimon_briefing import capture, store
+    P = "/repo/x"
+    closed = "should the exporter batch rows before writing the archive"
+    live = "should the exporter compress the archive before writing it to disk"
+    store.write_checkpoint("S1", _q_checkpoint("S1", closed, quote=closed,
+                                               trust="verbatim"), project_dir=P)
+    first = store.read_latest_body(project_dir=P, route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
+    closed_id = first["working_context"]["open_questions"][0]["id"]
+    store.append_event(closed_id, "resolved", project_dir=P)
+    merged = capture.carry_forward(_q_checkpoint("S2", live), P)
+    store.write_checkpoint("S2", merged, project_dir=P)
+    assert cli.main(["brief", "--project", P]) == 0
+    out = capsys.readouterr().out
+    assert live in out
+    assert closed not in out
+    assert "withheld" not in out
+    assert cli.main(["status", "--suppressed", "--project", P]) == 0
+    assert "no suppressed items" in capsys.readouterr().out
+
+
+def test_status_suppressed_names_an_inherited_identity_with_the_live_wording(
+        tmp_checkpoint_dir, capsys):
+    """#980: when a fresh item DOES inherit a closed identity (a rewording),
+    the suppressed listing shows the fresh wording and says the identity was
+    inherited, so a person can tell a real resolution from a match."""
+    from daimon_briefing import capture, store
+    P = "/repo/x"
+    closed = "dead loop no longer relevant"
+    reworded = "dead loop is no longer relevant now"
+    store.write_checkpoint("S1", _q_checkpoint("S1", closed, quote=closed,
+                                               trust="verbatim"), project_dir=P)
+    first = store.read_latest_body(project_dir=P, route=store.Route.OWN,
+                                   admit=store.Admit.ANY)
+    closed_id = first["working_context"]["open_questions"][0]["id"]
+    store.append_event(closed_id, "resolved", project_dir=P)
+    merged = capture.carry_forward(_q_checkpoint("S2", reworded), P)
+    store.write_checkpoint("S2", merged, project_dir=P)
+    assert cli.main(["status", "--suppressed", "--project", P]) == 0
+    out = capsys.readouterr().out
+    assert closed_id in out
+    assert reworded in out
+    assert closed not in out
+    assert "identity inherited from a resolved item" in out
+
+
 def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
