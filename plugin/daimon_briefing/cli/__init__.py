@@ -2290,6 +2290,13 @@ def _print_suppressed(project) -> int:
             paren = f"{status} {ts}"
             if note:
                 paren += f", {note}"
+            if item.get("restated_after_resolve") is True:
+                # #980: carry matched this session's item to a closed one and
+                # handed it the closed id; the wording shown is this
+                # session's own, so a person can tell a match from a
+                # resolution they recorded.
+                paren += ("; identity inherited from a resolved item, "
+                          "wording is this session's own")
             print(f"  {item_id}  [{key}] {text}  ({paren})")
     if candidates:
         # #14: machine SUGGESTIONS, not resolutions — a separate subsection

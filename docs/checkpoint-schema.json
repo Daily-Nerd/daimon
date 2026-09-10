@@ -599,6 +599,18 @@
       "notes": "Session id of the LAST carry hop (#33); absent on native items. Model-emitted values are stripped (#725)."
     },
     {
+      "field": "restated_after_resolve",
+      "type": "boolean",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "#980: carry handed this native item a RESOLVED prev item's id on a strong restatement match (>=4 shared salient terms, or >=0.75 of the shorter list); the item keeps its own wording and `status --suppressed` names the inheritance. Model-emitted values are stripped."
+    },
+    {
       "field": "quote_verified",
       "type": "boolean",
       "optional": true,

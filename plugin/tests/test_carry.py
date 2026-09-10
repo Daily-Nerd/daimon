@@ -554,6 +554,81 @@ def test_resolved_prev_with_native_twin_still_inherits_id_and_native_survives():
     assert qs[0]["id"] == "o-dead01"
 
 
+# --- #980: a resolved prev item inherits its identity onto a native twin
+# only when the match is STRONG. The twin bar (3 shared terms, or 60%) is
+# tuned for rewording and admits two different statements about one subject
+# at its floor; a closed item must not extinguish a live one on that floor.
+
+# The issue's own pair: 5 salient terms each, 3 shared (exporter, archive,
+# writing), ratio 0.6 — clears today's twin bar, not the inheritance gate.
+_CLOSED_Q = "should the exporter batch rows before writing the archive"
+_LIVE_Q = "should the exporter compress the archive before writing it to disk"
+
+
+def test_a_different_item_on_the_twin_floor_does_not_inherit_a_resolved_identity():
+    prev = _cp("S-prev", 1, questions=[
+        _item(_CLOSED_Q, id="o-dead01", trust="verbatim", quote=_CLOSED_Q)])
+    new = _cp("S-new", 0, questions=[_item(_LIVE_Q, days=0)])
+    out = carry.merge(new, prev, NOW, resolved=frozenset({"o-dead01"}))
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1, "the closed item is not carried and the live one stays"
+    live = qs[0]
+    assert live["text"] == _LIVE_Q
+    assert "id" not in live, "the live item keeps its own identity"
+    assert live["trust"] == "inferred" and "quote" not in live, (
+        "the closed item's frozen text and quote must not overwrite the live one")
+    assert "restated_after_resolve" not in live
+
+
+def test_the_same_pair_still_twins_when_the_prev_item_is_live():
+    """Negative control for the gate: the gate applies to RESOLVED prev items
+    only. A live prev item on the same pair keeps today's behaviour, twin
+    identity and the verbatim freeze included."""
+    prev = _cp("S-prev", 1, questions=[
+        _item(_CLOSED_Q, id="o-live01", trust="verbatim", quote=_CLOSED_Q)])
+    new = _cp("S-new", 0, questions=[_item(_LIVE_Q, days=0)])
+    out = carry.merge(new, prev, NOW)
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["id"] == "o-live01"
+    assert qs[0]["text"] == _CLOSED_Q
+    assert "restated_after_resolve" not in qs[0]
+
+
+def test_a_rewording_of_a_resolved_item_inherits_its_identity_and_is_stamped():
+    """The case the inheritance exists for: 4 shared terms, a rewording. The
+    id lands so withhold keeps it closed; the stamp names the inheritance;
+    and the fresh wording survives, since the closed item's text renders
+    nowhere but the suppressed listing, where the live wording is the
+    honest one to show."""
+    prev = _cp("S-prev", 1, questions=[
+        _item("dead loop no longer relevant", id="o-dead01",
+              trust="verbatim", quote="dead loop no longer relevant")])
+    new = _cp("S-new", 0, questions=[
+        _item("dead loop is no longer relevant now", days=0)])
+    out = carry.merge(new, prev, NOW, resolved=frozenset({"o-dead01"}))
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["id"] == "o-dead01"
+    assert qs[0]["restated_after_resolve"] is True
+    assert qs[0]["text"] == "dead loop is no longer relevant now"
+    assert "quote" not in qs[0] and qs[0]["trust"] == "inferred"
+
+
+def test_a_resolved_identity_is_inherited_on_the_ratio_rail():
+    """3 shared of 4 is 0.75: a short rewording that cannot reach four
+    shared terms still inherits, on the ratio side of the gate."""
+    prev = _cp("S-prev", 1, questions=[
+        _item("exporter archive writer batching", id="o-dead02")])
+    new = _cp("S-new", 0, questions=[
+        _item("exporter archive writer compression", days=0)])
+    out = carry.merge(new, prev, NOW, resolved=frozenset({"o-dead02"}))
+    qs = out["working_context"]["open_questions"]
+    assert len(qs) == 1
+    assert qs[0]["id"] == "o-dead02"
+    assert qs[0]["restated_after_resolve"] is True
+
+
 def test_merge_without_resolved_kwarg_unchanged():
     prev = _cp("S-prev", 1, questions=[_item("zephyr ledger drop unresolved")])
     new = _cp("S-new")
