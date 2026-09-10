@@ -338,3 +338,49 @@ def test_llm_render_gets_deterministic_section_prepended(
     assert "§ prepend me to the llm narrative" in out
     assert (out.index("prepend me to the llm narrative")
             < out.index("LLM NARRATIVE BODY"))
+
+
+# ---- #961 slice 4: a policy-carrying ruling is an ORDINARY ruling here ----
+#
+# Design decision 4: a policy ruling counts against DAIMON_RULING_CAP and
+# renders in the standing-rulings section like any other — a policy
+# invisible to the briefing would be the config-flag alternative the issue
+# rejected. No production change was needed for this: the section already
+# renders any active ruling's human-authored verdict TEXT, and the
+# structured `request_policy` field rides beside it, not instead of it.
+# These two tests exist to VERIFY that claim, not to exercise new code.
+
+
+def test_a_policy_ruling_renders_in_the_standing_rulings_section(
+        tmp_checkpoint_dir, sample_checkpoint):
+    refutations.assert_ruling(
+        subject="requests from p-sender",
+        verdict="agent may accept work asks from p-sender",
+        scope="cross-project requests", evidence=["issue:961"],
+        channel="cli-tty", ratified=True,
+        request_policy={"sender": "p-sender", "kind": "work",
+                        "verb": "accept", "by": "agent"},
+        project_dir=PROJECT)
+    out = briefing.render(sample_checkpoint, project_dir=PROJECT)
+    assert "§ agent may accept work asks from p-sender" in out
+
+
+def test_a_policy_ruling_counts_toward_the_rendered_cap(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # Both activate under the DEFAULT cap (`_guard_ruling_cap` refuses at
+    # activation, never at render, so there is no way to over-activate
+    # directly) — the cap is then LOWERED, the render-side backstop's own
+    # documented trigger ("a hand-edited ledger, or simply LOWERING the cap
+    # after activations", `ruling_lines`'s own docstring).
+    refutations.assert_ruling(
+        subject="requests from p-sender",
+        verdict="agent may accept work asks from p-sender",
+        scope="cross-project requests", evidence=["issue:961"],
+        channel="cli-tty", ratified=True,
+        request_policy={"sender": "p-sender", "kind": "work",
+                        "verb": "accept", "by": "agent"},
+        project_dir=PROJECT)
+    _rule("an ordinary prose ruling, over the cap")
+    monkeypatch.setattr(config, "ruling_cap", lambda: 1)
+    out = briefing.render(sample_checkpoint, project_dir=PROJECT)
+    assert "+1 active ruling over cap" in out

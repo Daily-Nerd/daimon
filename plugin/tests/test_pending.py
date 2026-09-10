@@ -404,6 +404,39 @@ def test_an_info_foreign_request_is_not_counted(project):
     assert counts.get(b, 0) == 0
 
 
+def test_a_ruling_covered_work_ask_accepted_by_the_recipients_agent_is_not_counted(
+        project):
+    """#961 slice 4: `_foreign_request_counts` calls `requests.fold`
+    directly, the same as the three composers `fold`'s own widened accept
+    exception depends on — without injecting THIS RECIPIENT's own policy
+    history, an agent accept landed under a covering ruling folds here
+    exactly like a still-open ask, over-counting a decided ask as
+    "waiting" and sending a person to a project with nothing to decide
+    (the #961 slice 3 review finding 2 defect class, this time for `work`
+    instead of `info`). An uncovered `work` ask beside it, from a project
+    the ruling never named, still counts."""
+    a = store.project_slug("/p/A")
+    b = store.project_slug("/p/B")
+    refutations.assert_ruling(
+        subject=f"work asks from {a}", verdict=f"agent may accept work asks from {a}",
+        scope="cross-project requests", evidence=["issue:961"],
+        channel="cli-tty", ratified=True,
+        request_policy={"sender": a, "kind": "work", "verb": "accept",
+                        "by": "agent"},
+        project_dir="/p/B")
+    covered = requests.open_request(
+        to=b, ask="please review the PR", why="ready to merge",
+        channel="cli-tty", project_dir="/p/A")
+    requests.accept(covered, channel="cli-agent", project_dir="/p/B")
+    requests.open_request(
+        to=b, ask="a second, uncovered ask", why="a different sender",
+        channel="cli-agent", project_dir="/p/A2")
+
+    counts = pending.foreign_counts(project_dir="/p/C")
+
+    assert counts.get(b, 0) == 1
+
+
 def test_foreign_counts_matches_the_foreign_projects_own_queue_length(
         project):
     """The count `daimon decide`'s footer names for project B must equal
@@ -671,3 +704,25 @@ def test_foreign_queues_skip_a_bucket_whose_queue_raises(project, monkeypatch):
     queues = dict(pending.foreign_queues(project_dir=project))
     assert b not in queues
     assert c in queues
+
+
+def test_foreign_counts_survive_a_policy_resolver_that_raises(project,
+                                                              monkeypatch):
+    """`request_policy_history` fails open to the empty set on its own read
+    errors, but the caller cannot know every exception a hand-edited ledger
+    can raise through it. A recipient whose resolver blows up is counted as
+    if it had no grants: the work ask stays a foreign decision, and the
+    other recipients are unaffected."""
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask="please review the PR", why="ready to merge",
+        channel="cli-agent", project_dir="/p/A")
+
+    from daimon_briefing import refutations
+
+    def boom(project_dir=None):
+        raise RuntimeError("hand-edited ledger")
+
+    monkeypatch.setattr(refutations, "request_policy_history", boom)
+    counts = pending.foreign_counts(project_dir="/p/C")
+    assert counts.get(b, 0) == 1

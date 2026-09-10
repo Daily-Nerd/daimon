@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import redact, refutations, store
+from daimon_briefing import config, redact, refutations, store
 
 
 PROJECT = "/p/rulings"
@@ -1801,3 +1801,466 @@ def test_the_single_token_path_refusal_still_says_what_it_always_said():
     bare path gets the message that explains what a body IS."""
     with pytest.raises(refutations.RefutationError, match="must be the script"):
         refutations._check(_check(body="~/.claude/voicegate.sh"))
+
+
+# ---- #961 slice 4: request_policy, the ruling hook ------------------------
+#
+# A ruling may carry a `request_policy`, permission for another project's
+# agent to record `accept` on a `work` ask this project owes it. Same
+# doctrine as `check` (#943): validated on the way in, stored on the
+# founding row, pinned at ratify by `policy_sha256`, gated in the fold
+# identically. The consuming side (requests.fold's widened exception,
+# requests.accept's write boundary) is covered in test_requests.py; this
+# section is the refutations-ledger half — validation, storage, the pin,
+# and refutations.active_request_policies.
+
+
+def _policy(**overrides):
+    values = {"sender": "p-sender", "kind": "work", "verb": "accept",
+             "by": "agent"}
+    values.update(overrides)
+    return values
+
+
+def test_policy_validator_accepts_the_documented_shape():
+    out = refutations._policy(_policy())
+    assert out["sender"] == "p-sender"
+    assert out["kind"] == "work"
+    assert out["verb"] == "accept"
+    assert out["by"] == "agent"
+    assert len(out["sha256"]) == 64
+
+
+def test_policy_validator_accepts_kind_info_as_a_no_op_shape():
+    """#961 slice 4 design decision: info is a genuine, if inert, policy —
+    refused nowhere, since it can never be the thing that authorizes an
+    accept (an info ask needs no ruling in the first place)."""
+    out = refutations._policy(_policy(kind="info"))
+    assert out["kind"] == "info"
+
+
+def test_policy_validator_returns_none_for_none():
+    assert refutations._policy(None) is None
+
+
+def test_policy_validator_refuses_a_non_object():
+    with pytest.raises(refutations.RefutationError, match="must be an object"):
+        refutations._policy("sender=p-sender")
+
+
+@pytest.mark.parametrize("missing", ["sender", "kind", "verb", "by"])
+def test_policy_validator_refuses_a_missing_key(missing):
+    values = _policy()
+    del values[missing]
+    with pytest.raises(refutations.RefutationError, match="missing"):
+        refutations._policy(values)
+
+
+def test_policy_validator_refuses_an_extra_key():
+    with pytest.raises(refutations.RefutationError, match="unexpected"):
+        refutations._policy(_policy(extra="nope"))
+
+
+def test_policy_validator_refuses_a_wildcard_sender():
+    """Slice 4's own binding answer: sender="*" is not permitted."""
+    with pytest.raises(refutations.RefutationError, match="wildcard"):
+        refutations._policy(_policy(sender="*"))
+
+
+def test_policy_validator_refuses_an_empty_sender():
+    with pytest.raises(refutations.RefutationError, match="bucket slug"):
+        refutations._policy(_policy(sender=""))
+
+
+def test_policy_validator_refuses_an_unknown_kind():
+    with pytest.raises(refutations.RefutationError, match="kind"):
+        refutations._policy(_policy(kind="everything"))
+
+
+def test_policy_validator_refuses_an_unknown_verb():
+    with pytest.raises(refutations.RefutationError, match="verb"):
+        refutations._policy(_policy(verb="reject"))
+
+
+def test_policy_validator_refuses_an_unknown_by():
+    with pytest.raises(refutations.RefutationError, match="by"):
+        refutations._policy(_policy(by="human"))
+
+
+def test_policy_validator_hash_is_stable_for_the_same_four_fields():
+    a = refutations._policy(_policy())
+    b = refutations._policy(_policy())
+    assert a["sha256"] == b["sha256"]
+
+
+def test_policy_validator_hash_changes_with_sender():
+    a = refutations._policy(_policy())
+    b = refutations._policy(_policy(sender="p-other"))
+    assert a["sha256"] != b["sha256"]
+
+
+def test_assert_ruling_stores_the_request_policy_on_the_founding_row(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"]["sender"] == "p-sender"
+    assert record["state"] == "candidate"
+
+
+def test_assert_refutation_never_carries_a_request_policy():
+    """Only `assert_ruling` takes the kwarg; `assert_refutation` has no
+    parameter for it at all, so passing one is a TypeError, not a silent
+    drop — the same posture `check` already holds for refutations."""
+    with pytest.raises(TypeError):
+        refutations.assert_refutation(
+            subject="x", verdict="y", scope="z", evidence=["issue:961"],
+            channel="cli-agent", request_policy=_policy(),
+            project_dir=PROJECT)
+
+
+def test_revise_refuses_a_request_policy_on_a_refutation(tmp_checkpoint_dir):
+    ref_id = _refute()
+    before = refutations.get(ref_id, project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError, match="only a ruling"):
+        refutations.revise(
+            ref_id, channel="cli-agent", evidence=["issue:961"],
+            request_policy=_policy(), project_dir=PROJECT)
+    after = refutations.get(ref_id, project_dir=PROJECT)
+    assert after["revision"] == before["revision"]
+    assert "request_policy" not in after
+
+
+def test_revise_with_only_a_request_policy_is_a_change(tmp_checkpoint_dir):
+    ruling_id = _rule()
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:961"],
+        request_policy=_policy(), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"]["sender"] == "p-sender"
+
+
+def test_revise_refuses_both_setting_and_clearing_request_policy(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    with pytest.raises(refutations.RefutationError, match="cannot both"):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:961"],
+            request_policy=_policy(sender="p-other"),
+            clear_request_policy=True, project_dir=PROJECT)
+
+
+def test_clear_request_policy_writes_an_explicit_null(tmp_checkpoint_dir):
+    """#961 slice 4: presence, not truthiness — the fold must be able to
+    tell "revised, policy removed" apart from "revised, policy untouched"."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="cli-tty", evidence=["issue:961"],
+        clear_request_policy=True, project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"] is None
+
+
+def test_an_ordinary_revise_leaves_request_policy_untouched(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="cli-tty", evidence=["issue:961"],
+        verdict="a different verdict text", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"]["sender"] == "p-sender"
+
+
+def test_ratify_pinned_to_the_current_policy_hash_activates(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    refutations.ratify(ruling_id, channel="cli-tty", policy_sha256=sha,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+
+
+def test_ratify_pinned_to_a_stale_policy_hash_is_inert(tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    stale = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:961"],
+        request_policy=_policy(sender="p-other"), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", policy_sha256=stale,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+
+
+def test_ratify_without_a_pin_is_inert_when_the_record_carries_a_policy(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(request_policy=_policy())
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "candidate"
+
+
+def test_ratify_without_a_pin_still_activates_a_ruling_with_no_policy(
+        tmp_checkpoint_dir):
+    ruling_id = _rule()
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert refutations.get(ruling_id, project_dir=PROJECT)["state"] == "active"
+
+
+def test_human_in_process_revise_arms_the_supplied_policy_without_a_pin(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:961"],
+        request_policy=_policy(sender="p-other"), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["request_policy"]["sender"] == "p-other"
+
+
+def test_policy_carrying_proposal_is_visible_on_the_record(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:961"],
+        request_policy=_policy(), project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["revision_proposed"]["request_policy"]["sender"] == "p-sender"
+    # The active record's own policy is untouched by an agent proposal.
+    assert record.get("request_policy") is None
+
+
+def test_a_policy_ruling_counts_against_the_ruling_cap(tmp_checkpoint_dir,
+                                                        monkeypatch):
+    monkeypatch.setattr(config, "ruling_cap", lambda: 1)
+    _rule(channel="cli-tty", ratified=True, request_policy=_policy(),
+         subject="first")
+    with pytest.raises(refutations.RefutationError, match="cap"):
+        _rule(channel="cli-tty", ratified=True, subject="second",
+             verdict="a different verdict")
+
+
+# ---- refutations.active_request_policies -----------------------------------
+
+
+def test_active_request_policies_returns_empty_with_no_rulings(
+        tmp_checkpoint_dir):
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_returns_an_active_pinned_grant(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    out = refutations.active_request_policies(project_dir=PROJECT)
+    assert ("p-sender", "work", "accept", "agent", ruling_id, sha) in out
+
+
+def test_active_request_policies_excludes_a_candidate_ruling(
+        tmp_checkpoint_dir):
+    _rule(request_policy=_policy())  # never ratified
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_excludes_an_overturned_ruling(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_excludes_a_ruling_with_no_policy(
+        tmp_checkpoint_dir):
+    _rule(channel="cli-tty", ratified=True)
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+def test_active_request_policies_is_fail_open_on_an_unreadable_ledger(
+        tmp_checkpoint_dir, monkeypatch):
+    """Mirrors briefing.active_rulings' own fail-open posture (#940): an
+    unreadable ruling ledger must read as NO policy, never raise."""
+    monkeypatch.setattr(refutations, "records",
+                        lambda project_dir=None: (_ for _ in ()).throw(
+                            OSError("simulated ledger failure")))
+    assert refutations.active_request_policies(project_dir=PROJECT) == frozenset()
+
+
+# ---- refutations.request_policy_history: order-aware intervals -----------
+#
+# `active_request_policies` answers "what is granted right now" (the write
+# boundary's question). `request_policy_history` answers a different one:
+# "was this grant active AT A GIVEN ORDER" — the question requests.fold's
+# own re-check of an already-landed accepted row asks, so a decision that
+# already landed while a ruling was active survives that ruling's later
+# overturn, while a row forged AFTER the fact with a CURRENT order cannot
+# reach back into a window that already closed.
+
+
+def test_request_policy_history_returns_an_open_interval_for_an_active_grant(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    sha = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(out) == 1
+    entry = next(iter(out))
+    sender, kind, verb, by, rid, entry_sha, since, until = entry
+    assert (sender, kind, verb, by, rid, entry_sha) == (
+        "p-sender", "work", "accept", "agent", ruling_id, sha)
+    assert since is not None
+    assert until is None  # still open
+
+
+def test_request_policy_history_closes_the_interval_on_overturn(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(out) == 1
+    entry = next(iter(out))
+    assert entry[6] is not None and entry[7] is not None  # since, until
+    assert entry[6] < entry[7]
+
+
+def test_request_policy_history_opens_a_second_interval_on_a_narrower_revise(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:961"],
+        request_policy=_policy(sender="p-other"), project_dir=PROJECT)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    senders_and_until = {(e[0], e[7]) for e in out}
+    # The original grant's interval CLOSED (until is not None); the new
+    # grant's interval is OPEN (until is None) — two distinct facts, both
+    # kept, neither erased.
+    assert ("p-sender", None) not in senders_and_until
+    closed = [e for e in out if e[0] == "p-sender"]
+    assert len(closed) == 1 and closed[0][7] is not None
+    opened = [e for e in out if e[0] == "p-other"]
+    assert len(opened) == 1 and opened[0][7] is None
+
+
+def test_request_policy_history_a_candidate_ruling_contributes_no_interval(
+        tmp_checkpoint_dir):
+    _rule(request_policy=_policy())  # never ratified
+    assert refutations.request_policy_history(project_dir=PROJECT) == frozenset()
+
+
+def test_request_policy_history_is_fail_open_on_an_unreadable_ledger(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(refutations, "events",
+                        lambda project_dir=None, **kw: (_ for _ in ()).throw(
+                            OSError("simulated ledger failure")))
+    assert refutations.request_policy_history(project_dir=PROJECT) == frozenset()
+
+
+def test_request_policy_history_and_order_share_one_clock(tmp_checkpoint_dir):
+    """The interval check's own precondition: both ledgers stamp `order`
+    from `time.time_ns()` (or an explicit `now_ns` in the same unit), so a
+    request row's `order` is directly comparable against a ruling's
+    activation window with no conversion. Pinned as a fact, not assumed."""
+    import time as _time
+    before = _time.time_ns()
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    after = _time.time_ns()
+    row = next(r for r in refutations.events(project_dir=PROJECT)
+              if r.get("refutation_id") == ruling_id and r.get("event") == "ruled")
+    assert before <= row["order"] <= after
+
+
+# ---- #961 slice 4 review round 2 (H3): request_policy_history scan cost --
+#
+# A first build called `fold(prefix)` — a fresh re-fold of every row seen so
+# far — once per row: O(n^2) in the ledger's own row count. Measured at
+# 425ms for 200 rows across 25 buckets on the fleet read path
+# (`pending.foreign_counts`, see test_requests_scan_cost.py's own budget
+# test) against a 150ms budget. `_fold_row` factored out of `fold` lets this
+# maintain ONE running fold across the ordered pass instead, O(n).
+
+
+_POLICY_ROWS = 199  # + the founding `ruled` row itself = 200 total rows
+_POLICY_BUDGET_MS = 150.0
+
+
+def test_request_policy_history_time_cost_stays_within_budget(
+        tmp_checkpoint_dir, capsys):
+    import time as _time
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    for i in range(_POLICY_ROWS):
+        sender = "p-scan-a" if i % 2 == 0 else "p-scan-b"
+        refutations.revise(
+            ruling_id, channel="signed", evidence=["issue:961"],
+            request_policy=_policy(sender=sender), ratified=True,
+            project_dir=PROJECT)
+    assert len(refutations.events(project_dir=PROJECT)) == _POLICY_ROWS + 1
+    start = _time.perf_counter()
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    elapsed_ms = (_time.perf_counter() - start) * 1000
+
+    assert out, "measurement is void if the ledger granted nothing"
+    with capsys.disabled():
+        print(f"\n#961 slice 4 review round 2 (H3) request_policy_history "
+             f"scan cost: {elapsed_ms:.2f}ms over {_POLICY_ROWS + 1} rows "
+             f"— budget {_POLICY_BUDGET_MS}ms")
+    assert elapsed_ms <= _POLICY_BUDGET_MS, (
+        f"request_policy_history cost {elapsed_ms:.2f}ms exceeds the "
+        f"{_POLICY_BUDGET_MS}ms budget over {_POLICY_ROWS + 1} rows")
+
+
+# ---- codecov round: the defensive branches of the policy resolvers ----
+
+def test_a_stored_policy_missing_its_sha_or_with_a_bad_kind_yields_no_grant(
+        tmp_checkpoint_dir):
+    """`_policy_tuple` reads a STORED record, which a hand-edited ledger can
+    shape however it likes. A policy with no sha, or a kind outside the
+    vocabulary, is not a grant, and neither resolver may raise on it."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert refutations._policy_tuple(record) is not None
+    no_sha = {**record, "request_policy": {k: v for k, v in
+                                           record["request_policy"].items()
+                                           if k != "sha256"}}
+    assert refutations._policy_tuple(no_sha) is None
+    bad_kind = {**record, "request_policy": {**record["request_policy"],
+                                             "kind": "everything"}}
+    assert refutations._policy_tuple(bad_kind) is None
+
+
+def test_a_forged_row_with_a_non_numeric_order_does_not_sink_the_history(
+        tmp_checkpoint_dir):
+    """`order` is `time.time_ns()` on every row the writers stamp, but the
+    resolver reads the ledger as written, and a hand-planted row can carry
+    anything. A non-integer order reads as 0, the earliest position there
+    is, and the row folds from there rather than raising. Planted as a
+    duplicate of the founding row, it therefore WINS the founder slot
+    (first writer wins) and the grant's interval opens at 0: the same
+    order-forgery boundary the ledger discloses everywhere else, since
+    `order` is the only ordering signal and a forger controls it. What this
+    pins is that the resolver keeps answering, with the grant intact."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    assert before, "the seed must produce an interval to compare against"
+    path = refutations._path(PROJECT)
+    last = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert last["event"] == "ruled" and last["refutation_id"] == ruling_id
+    forged = {**last, "order": "not a number", "event_id": "f" * 32}
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(forged) + "\n")
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    grant = lambda entry: entry[:6]  # noqa: E731 — (sender, kind, verb, by, id, sha)
+    assert {grant(e) for e in after} == {grant(e) for e in before}
+    (entry,) = after
+    active_from, active_until = entry[6], entry[7]
+    assert active_from == 0, "a non-numeric order reads as 0, not as an error"
+    assert active_until is None
+
+
+def test_clearing_a_request_policy_on_a_refutation_is_refused(
+        tmp_checkpoint_dir):
+    """The same polarity guard `revise(request_policy=...)` has, on the
+    clearing side: a refutation never carried a grant, so an explicit null
+    would write a field the polarity does not own."""
+    ref_id = _refute()
+    with pytest.raises(refutations.RefutationError,
+                       match="only a ruling carries a request_policy"):
+        refutations.revise(ref_id, channel="cli-agent",
+                           evidence=["measurement:again"],
+                           clear_request_policy=True, project_dir=PROJECT)

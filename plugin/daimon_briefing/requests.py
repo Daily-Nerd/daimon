@@ -46,7 +46,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import buckets, config, normalize, policy, redact, store
+from . import buckets, config, normalize, policy, redact, refutations, store
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. Importing the table keeps a
 # future channel tier ("ui", "signed") consistent across ledgers instead of
@@ -379,53 +379,129 @@ def _kind_of(row: dict) -> str:
     return kind
 
 
-def _founder_kind_by_id(ordered: list[dict]) -> dict[str, str]:
-    """#961 slice 3 review item 3: every request id's FINAL `kind`, resolved
-    in a PRE-PASS over every `opened` row before `fold`'s main pass applies
-    any lifecycle event against it.
+def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
+    """#961 slice 4 review round 2 (C1): the ONE founder resolution for
+    every request id, resolved in a PRE-PASS over every `opened` row before
+    `fold`'s main pass applies any lifecycle event against it — replacing
+    two separate pre-passes (`_founder_kind_by_id`, identity's `kind` only;
+    `_founder_origin_by_id`, origin only) that used to answer "who sent
+    this" independently and could disagree.
 
-    The founder-plus-disagreement rule itself is unchanged from slice 1
-    (`fold`'s own inline comment on the founder branch has the full
-    reasoning) — only WHEN it runs moves. Under the single-pass version, a
-    lifecycle event (an `accepted` row, say) processed BEFORE a later
-    `opened` duplicate saw `current["kind"]` as whatever the founder alone
-    said, even when that later duplicate would go on to disagree and force
-    it to `work`. That let an agent `accepted` row on a back-dated forged
-    `info` founder land while the founder still stood, and only afterward
-    get its `kind` pulled out from under it by the genuine human `opened`
-    row arriving later in the SAME stream — `kind: work, state: accepted,
-    accepted_by: agent`, the exact assertion #961's `_HUMAN_ONLY` exception
-    exists to forbid. Resolving every id's kind from the COMPLETE set of
-    `opened` rows first means no lifecycle event can ever see a kind a
-    later row in the same fold will go on to revoke.
+    That disagreement was reachable: the origin-only pass had NO
+    read-boundary shape check, so a shape-invalid `opened` row (an empty
+    `ask`, say) planted in a stranger's bucket at an earlier `order` than
+    the genuine founder could never actually FOUND the record — `fold`'s
+    own founder branch below re-applies the identical shape check and
+    would skip it, and the identity-only pass already skipped it too — but
+    the origin-only pass read `_origin_slug` off it anyway, since it never
+    checked shape at all. A request could therefore fold with `kind` and
+    `to`/`ask` from the genuine founder while its ORIGIN (`from_slug`, and
+    every policy match keyed on it) came from an entirely different,
+    invalid row a stranger controlled. One pre-pass, one shape check, one
+    row decides both fields, closes the gap by construction: the two
+    answers cannot drift apart because there is only one answer now.
+
+    The founder-plus-disagreement rule for `kind` itself is unchanged from
+    slice 1 (`fold`'s own inline comment on the founder branch has the full
+    reasoning) — only WHEN it runs moves, and only `kind` disagrees; a
+    valid duplicate `opened` row can force `kind` to `DEFAULT_KIND` but
+    never moves `origin_slug` off whatever the FIRST valid row set, the
+    same "first writer wins" identity rule the record's `to`/`ask` already
+    follow. Under the single-pass version a lifecycle event (an `accepted`
+    row, say) processed BEFORE a later `opened` duplicate saw
+    `current["kind"]` as whatever the founder alone said, even when that
+    later duplicate would go on to disagree and force it to `work` — see
+    #961 slice 3 review item 3's own history for the exploit this closed.
+
+    Returns `{request_id: (kind, origin_slug)}`. `origin_slug` reads
+    `_origin_slug`, a transient field a row never persists (`append` never
+    writes it, `events()` never reads it off disk) — `recipient_join` is
+    the one caller that knows which bucket a foreign row came from and
+    stamps it before the merged, multi-bucket row set reaches `fold`, the
+    same in-memory-only posture `events()` already gives `_line`.
+    `records()` and `sender_join()` never stamp it, so every founder they
+    fold reads back `""` here: empty, never a real slug, which is exactly
+    what `_covered_by_policy` needs — an unstamped context must cover
+    NOTHING, not accidentally match a policy whose sender happens to be the
+    reader's own project.
 
     `ordered` is `fold`'s own sorted list, passed in rather than re-sorted
     here, so this stays exactly as deterministic under reorder as `fold`
-    already is — the two passes share one sort, not two that could drift
-    apart."""
-    founders: dict[str, str] = {}
+    already is — the pre-pass and the main pass share one sort, not two
+    that could drift apart."""
+    founders: dict[str, tuple[str, str]] = {}
     for row in ordered:
         if row.get("event") != "opened":
             continue
         q_id = str(row.get("request_id") or "")
         if q_id not in founders:
             # Same read-boundary shape check `fold`'s founder branch makes:
-            # a row failing it is never a founder, and the NEXT valid
-            # `opened` row for this id (if any) is the one that founds it —
-            # in both passes alike, since both apply the identical check.
+            # a row failing it is never a founder — for kind OR origin, now
+            # that one row decides both — and the NEXT valid `opened` row
+            # for this id (if any) is the one that founds it, in every
+            # pass alike.
             if not _SLUG_RE.fullmatch(str(row.get("to") or "")):
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
-            founders[q_id] = _kind_of(row)
+            founders[q_id] = (_kind_of(row), str(row.get("_origin_slug") or ""))
             continue
         authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
-        if authority == "human" and _kind_of(row) != founders[q_id]:
-            founders[q_id] = DEFAULT_KIND
+        if authority == "human" and _kind_of(row) != founders[q_id][0]:
+            founders[q_id] = (DEFAULT_KIND, founders[q_id][1])
     return founders
 
 
-def fold(rows: list[dict]) -> dict[str, dict]:
+def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
+    """#961 slice 4: whether `row` (an `accepted` event landing on a `work`
+    ask) is authorized by one of the `(sender, kind, verb, by, ruling_id,
+    sha256, active_from, active_until)` INTERVALS in `policies` — the set
+    `refutations.request_policy_history` resolved from THIS project's own
+    ruling ledger and the caller (one of `fold`'s three composers)
+    injected.
+
+    The row's own `under_ruling`/`policy_sha256` are a STAMP a non-human
+    channel wrote about itself, never the gate on their own — the same
+    reasoning the deleted `--by human` flag was refused for (#512). This
+    only lands when the INJECTED history independently names the same
+    ruling id and hash AND the ROW's own `order` falls inside the interval
+    during which that exact grant was active — never merely "was ever
+    active at some point" — so a row claiming coverage the caller's own
+    ruling ledger never granted AT THAT TIME is inert regardless of what it
+    says about itself. `active_until` of `None` means the interval is (or,
+    at the end of the ruling ledger's own history, was) still open: any row
+    order at or after `active_from` matches.
+
+    An empty `origin_slug` — a self-addressed ask, or one folded through a
+    composer that never resolves cross-bucket origin (`records()`,
+    `sender_join()`) — matches nothing STRUCTURALLY, with no explicit guard
+    needed for it here: no ruling's `sender` is ever the empty string
+    (`refutations._policy` refuses one at the write boundary), so the loop
+    below can never find an entry whose `sender == ""`. #961 slice 4 review
+    round 2 (M4): an earlier `if not origin_slug: return False` early exit
+    here was provably dead — its own test passed identically with the line
+    removed, since the loop's own exhaustion already produces the same
+    answer for every input that guard could ever see.
+    """
+    ruling_id = str(row.get("under_ruling") or "")
+    sha = str(row.get("policy_sha256") or "")
+    if not ruling_id or not sha:
+        return False
+    try:
+        row_order = int(row.get("order") or 0)
+    except (TypeError, ValueError):
+        return False
+    for entry in policies:
+        sender, kind, verb, by, entry_ruling, entry_sha, since, until = entry
+        if (sender == origin_slug and kind == "work" and verb == "accept"
+                and by == "agent" and entry_ruling == ruling_id
+                and entry_sha == sha and row_order >= since
+                and (until is None or row_order < until)):
+            return True
+    return False
+
+
+def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
     """Fold this bucket's rows into current records, deterministic under
     reorder.
 
@@ -450,12 +526,14 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         str(row.get("event_id") or ""),
         _integer(row, "_line"),
     ))
-    # #961 slice 3 review item 3: resolved BEFORE the main pass below touches
-    # a single lifecycle event, from the COMPLETE set of `opened` rows — see
-    # `_founder_kind_by_id`'s own docstring for why a kind resolved
-    # mid-stream let a later duplicate revoke it out from under an
-    # already-landed `accepted` row.
-    founder_kind = _founder_kind_by_id(ordered)
+    # #961 slice 3 review item 3, merged with #961 slice 4 review round 2
+    # (C1): resolved BEFORE the main pass below touches a single lifecycle
+    # event, from the COMPLETE set of `opened` rows — see `_founder_by_id`'s
+    # own docstring for why a kind (or an origin) resolved mid-stream let a
+    # later duplicate revoke it out from under an already-landed row, and
+    # why `kind` and `origin_slug` are resolved from the SAME founder row
+    # rather than two independent passes that could disagree.
+    founders = _founder_by_id(ordered)
     out: dict[str, dict] = {}
     for row in ordered:
         q_id = row["request_id"]
@@ -465,9 +543,10 @@ def fold(rows: list[dict]) -> dict[str, dict]:
         if event == "opened":
             if current is not None:
                 continue  # duplicate logical open, first writer wins
-                # otherwise; `kind` itself is already resolved for every id
-                # by `founder_kind` above, so there is nothing left for this
-                # branch to reconcile (#961 review item 3 moved that here).
+                # otherwise; `kind`/`from_slug` are already resolved for
+                # every id by `founders` above, so there is nothing left
+                # for this branch to reconcile (#961 review item 3 moved
+                # that here; round 2 C1 merged origin into the same pass).
             # Read-boundary shape check (the write boundary is not the
             # boundary that matters — events() is deliberately tolerant, and
             # a row edited on disk must not ride into the render).
@@ -475,13 +554,22 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
+            founder_kind, founder_origin = founders.get(
+                q_id, (DEFAULT_KIND, ""))
             out[q_id] = {
                 "request_id": q_id,
                 "state": "open",
                 "to": str(row.get("to") or ""),
                 "to_human": row.get("to_human") is True,
                 "blocking": row.get("blocking") is True,
-                "kind": founder_kind.get(q_id, DEFAULT_KIND),
+                "kind": founder_kind,
+                # #961 slice 4 review round 2 (C1): the SAME founder
+                # resolution `_covered_by_policy` matches against, so a
+                # composer that reads this off the record (`recipient_join`)
+                # can never disagree with what the fold itself already
+                # decided. "" for `records()`/`sender_join()`, which never
+                # stamp `_origin_slug` on any row — see `_founder_by_id`.
+                "from_slug": founder_origin,
                 "ask": str(row.get("ask") or ""),
                 "why": str(row.get("why") or ""),
                 "evidence": str(row.get("evidence") or ""),
@@ -507,6 +595,12 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # state, and left stale (not cleared) if the record later
                 # moves past `accepted` the same way `verdict_at` is.
                 "accepted_by": None,
+                # #961 slice 4: which ruling authorized a non-human accept on
+                # a `work` record, or None — for a human accept, for the
+                # slice-3 `info` exception (no ruling involved), and until an
+                # `accepted` event lands at all. Left stale, not cleared, on
+                # the same terms as `accepted_by` above.
+                "accepted_under": None,
                 "done_by": None,
                 "done_claimed": False,
                 "done_evidence": "",
@@ -596,9 +690,31 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # which derives `accepted_by` from the same `authority` this
             # check reads — a channel this contract never named must never
             # be able to claim the one it did.
-            if not (event == "accepted" and authority == "agent"
-                    and current["kind"] == "info"
-                    and current["state"] in _SENDER_MOVABLE):
+            covered_info = (event == "accepted" and authority == "agent"
+                           and current["kind"] == "info"
+                           and current["state"] in _SENDER_MOVABLE)
+            # #961 slice 4: the other half of the contract's own sentence —
+            # "or for work a ruling covers". A SECOND, narrower exception,
+            # not a loosening of the one above: `current["kind"] == "work"`
+            # (never "info", already covered), `not current["to_human"]`
+            # (an audience marker `_kind_of` already forces to `work`, so
+            # without this an explicit to_human ask carrying `kind: work`
+            # would otherwise slip through on the kind check alone — see the
+            # design's own worked example), still undecided, and the row's
+            # own ruling stamp independently confirmed by the INJECTED
+            # `policies` set (`_covered_by_policy`'s own docstring: the
+            # stamp is never the gate on its own). `current["from_slug"]`,
+            # never a second lookup into `founders` — #961 slice 4 review
+            # round 2 (C1): one founder resolution, read off the record the
+            # SAME pre-pass already wrote it onto, so this cannot drift
+            # from what `recipient_join` renders as the record's origin.
+            covered_work = (event == "accepted" and authority == "agent"
+                           and current["kind"] == "work"
+                           and not current["to_human"]
+                           and current["state"] in _SENDER_MOVABLE
+                           and _covered_by_policy(
+                               row, current["from_slug"], policies))
+            if not (covered_info or covered_work):
                 continue
         if event in _STATE_BY_EVENT and current["state"] == "rejected":
             # D6: rejection is terminal for this id. Re-proposal is a NEW
@@ -795,6 +911,18 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # legacy branch needed.
                 current["accepted_by"] = "human" if authority == "human" \
                     else "agent"
+                # #961 slice 4: which ruling authorized THIS accept. Reached
+                # here only when the row already passed the fold's own
+                # coverage gate above, so an agent accept on a `work` record
+                # at this point can only be `covered_work` — there is no
+                # other way for the pair (authority == "agent", kind ==
+                # "work") to have survived to here. None for a human accept
+                # and for the slice-3 `info` exception, neither of which
+                # carries a ruling.
+                current["accepted_under"] = (
+                    str(row.get("under_ruling") or "") or None
+                    if authority == "agent" and current["kind"] == "work"
+                    else None)
             if "note" in row:
                 current["note"] = str(row.get("note") or "")
             # #978: `accepted`/`rejected` settle the claim along with the
@@ -807,8 +935,29 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
+def _request_policy_history(project_dir):
+    """#961 slice 4: resolved ONCE per composer call, from THIS project's
+    OWN ruling ledger — the fold itself never reads a ruling ledger
+    (design's own words: injected, never read from inside the fold), so
+    every one of the three composers below calls this exactly once, right
+    before it calls `fold`.
+
+    `refutations.request_policy_history`, NOT `active_request_policies` —
+    the fold's own re-check of an ALREADY-LANDED `accepted` row asks "was
+    this granted AT THE ROW'S OWN ORDER", not "is it granted right now":
+    binding answer 3 (a past accept survives an overturn) means a re-fold
+    must not make a landed decision depend on the ruling's CURRENT state,
+    while a row forged AFTER the fact must still be checked against the
+    window that was actually open when it claims to have landed.
+    `requests.accept()`'s write boundary asks the current-state question
+    instead (`_resolve_covering_ruling`, via `active_request_policies`) so
+    overturn still refuses every NEW accept regardless."""
+    return refutations.request_policy_history(project_dir=project_dir)
+
+
 def records(project_dir=None) -> dict[str, dict]:
-    return fold(events(project_dir=project_dir))
+    return fold(events(project_dir=project_dir),
+               policies=_request_policy_history(project_dir))
 
 
 def get(request_id: str, project_dir=None) -> dict | None:
@@ -987,11 +1136,27 @@ def _require(request_id: str, project_dir) -> dict:
 
 
 def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
-                       project_dir) -> None:
-    row = _stamp(event, request_id, channel)
+                       project_dir, row: dict | None = None, **stamp) -> None:
+    """`stamp` (#961 slice 4) carries `under_ruling`/`policy_sha256` for a
+    ruling-covered agent accept — a truthy extra becomes a row field, an
+    absent or falsy one is never written at all, the same "only what the
+    caller actually set" contract `revise` already holds this ledger to
+    elsewhere (an empty string on the row would be indistinguishable from
+    one a hand-edited row lost).
+
+    `row` (#961 slice 4 review round 2, H2): the EXACT already-stamped row a
+    caller dry-ran through the fold before deciding to write, so the row
+    that lands carries the identical `order` the dry run checked coverage
+    against — never a second `_stamp()` call minting a fresh order after
+    the decision was already made on a different one. `None` (every other
+    caller) stamps fresh here, unchanged."""
+    row = dict(row) if row is not None else _stamp(event, request_id, channel)
     note = _text("note", note, required=False)
     if note:
         row["note"] = note
+    for key, value in stamp.items():
+        if value:
+            row[key] = value
     if not append(row, project_dir=project_dir):
         raise RequestError("verdict not written")
 
@@ -1013,22 +1178,40 @@ def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
     _write_verdict_row(event, request_id, channel, note, project_dir)
 
 
+def _resolve_covering_ruling(sender: str, project_dir):
+    """#961 slice 4: the `(ruling_id, policy_sha256)` of an active ruling
+    that lets THIS project's agent accept a `work` ask from `sender`, or
+    None. Reads this project's OWN rulings — the write boundary and the
+    fold gate are asymmetric only in WHEN each runs, not in what each
+    checks: both resolve through `refutations.active_request_policies`, so a
+    ruling that stops covering (revised narrower, retired) refuses a NEW
+    accept at both boundaries the same way #943's check binding already
+    does for a hash mismatch."""
+    if not sender:
+        return None
+    for entry in refutations.active_request_policies(project_dir=project_dir):
+        entry_sender, kind, verb, by, ruling_id, sha = entry
+        if (entry_sender == sender and kind == "work" and verb == "accept"
+                and by == "agent"):
+            return ruling_id, sha
+    return None
+
+
 def accept(request_id: str, *, channel: str, note: str = "",
            project_dir=None) -> None:
     """Land the addressed request as accepted.
 
-    Human-only for a `work` ask, as every verdict verb has always been. An
-    agent channel may record THIS one verdict for exactly one case (#961
-    slice 3, the contract's own words): an addressed `info` ask still `open`
-    or `needs-info`. An `info` ask asserts nothing new and owes no accept in
-    the first place — the sender's queue still wants an explicit close, and
-    routing every such close through a human channel would defeat the whole
-    point of the `kind` split. Checked HERE, at the write boundary, so a
-    caller gets a clear refusal naming the human command instead of a
-    silently inert row; the fold (`_HUMAN_ONLY`'s own exception) re-checks
-    the identical rule independently, because `requests.append` is public
-    and a caller skipping this function could otherwise mint the row
-    directly.
+    Human-only for a `work` ask nothing covers, as every verdict verb has
+    always been. An agent channel may record THIS one verdict for two cases
+    the #961 contract's own words carve out: an addressed `info` ask still
+    `open` or `needs-info` (slice 3), or a `work` ask (not `to_human`, which
+    is always audience-for-a-person and never agent-acceptable regardless of
+    any ruling) an active ruling covers for the ask's own sender (slice 4).
+    Checked HERE, at the write boundary, so a caller gets a clear refusal
+    naming the human command instead of a silently inert row; the fold
+    (`_HUMAN_ONLY`'s own exception) re-checks the identical rule
+    independently, because `requests.append` is public and a caller skipping
+    this function could otherwise mint the row directly.
 
     Resolved through `recipient_join` when the local per-bucket fold misses,
     not only `_answering`'s bucket-local `get` — the ORDINARY case this
@@ -1039,6 +1222,20 @@ def accept(request_id: str, *, channel: str, note: str = "",
     accept while doing nothing for a forged local one, exactly backwards.
     Paid only on the non-human path — the in-process human writer's cost is
     unchanged.
+
+    #961 slice 4 review round 2 (H2): the `work` branch no longer trusts
+    `_resolve_covering_ruling`'s CURRENT-STATE answer on its own. It stamps
+    the row it is about to write, then dry-runs the identical predicate the
+    fold will apply later — `_covered_by_policy` against `request_policy_
+    history`'s order-aware intervals — before ever calling `append`. A
+    current-state grant that would not actually cover THIS row's own order
+    is refused HERE, with a message, instead of landing a row the fold goes
+    on to silently treat as inert forever. The one way this fires in
+    practice is clock skew: this machine's `time.time_ns()` behind the
+    machine that ratified the ruling, so the accept's own stamped `order`
+    falls before the interval's `active_from`. The row that finally lands
+    is the SAME stamped row the dry run checked — never re-stamped with a
+    fresh order after the decision, which would reopen the identical gap.
     """
     authority = CHANNEL_AUTHORITY.get(channel)
     if authority != "human":
@@ -1046,10 +1243,9 @@ def accept(request_id: str, *, channel: str, note: str = "",
         # never `!= "human"` alone — that looser test also lets a
         # `mechanical` channel (real, valid, just never named by this
         # contract) or an unrecognized channel string (`authority is
-        # None`, also `!= "human"`) through to the info/state check below,
-        # and a caller reaching THAT point can land the accept. A channel
-        # this contract never named must never be able to claim the one it
-        # did.
+        # None`, also `!= "human"`) through to the checks below, and a
+        # caller reaching THAT point can land the accept. A channel this
+        # contract never named must never be able to claim the one it did.
         if authority != "agent":
             raise RequestError(
                 "an accepted verdict requires a human channel; this call "
@@ -1058,17 +1254,52 @@ def accept(request_id: str, *, channel: str, note: str = "",
         if current is None:
             current = recipient_join(project_dir=project_dir).get(
                 request_id)
-        if (current is None or current.get("kind") != "info"
-                or current.get("state") not in _SENDER_MOVABLE):
+        covered = False
+        stamp = {}
+        synthetic = None
+        skew = False
+        if current is not None and current.get("state") in _SENDER_MOVABLE:
+            if current.get("kind") == "info":
+                covered = True  # slice 3's own case: no ruling involved
+            elif (current.get("kind") == "work"
+                  and not current.get("to_human")):
+                origin_slug = str(current.get("from_slug") or "")
+                covering = _resolve_covering_ruling(origin_slug, project_dir)
+                if covering is not None:
+                    ruling_id, sha = covering
+                    # The dry run: the EXACT row about to land, checked
+                    # against the EXACT predicate (`_covered_by_policy`) and
+                    # the EXACT order-aware history (`request_policy_
+                    # history`) the fold will apply on every later re-fold —
+                    # never `active_request_policies` alone again.
+                    synthetic = _stamp("accepted", request_id, channel)
+                    synthetic["under_ruling"] = ruling_id
+                    synthetic["policy_sha256"] = sha
+                    history = refutations.request_policy_history(
+                        project_dir=project_dir)
+                    if _covered_by_policy(synthetic, origin_slug, history):
+                        covered = True
+                        stamp = {"under_ruling": ruling_id,
+                                "policy_sha256": sha}
+                    else:
+                        skew = True
+        if not covered:
+            detail = (
+                " — an active ruling grants this sender coverage right "
+                "now, but the write would land outside the interval that "
+                "ruling has been active for (commonly a clock skew between "
+                "this machine and the one that ratified it); retry once "
+                "the clocks agree, or"
+                if skew else "; an agent may accept only an addressed "
+                "`info` ask that is still open or needs-info, or a `work` "
+                "ask an active ruling covers for this sender, so")
             raise RequestError(
                 "an accepted verdict requires a human channel; this call "
-                f"arrived through {channel!r} — an agent may accept only "
-                "an addressed `info` ask that is still open or "
-                "needs-info; a `work` ask needs "
+                f"arrived through {channel!r}{detail} this ask needs "
                 f"`daimon request accept {request_id}` from a human "
                 "channel")
         _write_verdict_row("accepted", request_id, channel, note,
-                           project_dir)
+                           project_dir, row=synthetic, **stamp)
         return
     _verdict("accepted", request_id, channel=channel, note=note,
              project_dir=project_dir)
@@ -1286,7 +1517,7 @@ def sender_join(project_dir=None) -> dict[str, dict]:
     this feeds the verdict PANEL, and suppression is exactly panel attention."""
     rows = _without_suppression(
         [row for group in _sender_rows(project_dir).values() for row in group])
-    return fold(rows)
+    return fold(rows, policies=_request_policy_history(project_dir))
 
 
 def _bucket_slugs() -> list[str]:
@@ -1371,16 +1602,36 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
             if opened is None:
                 orphans.append((rid, rows))  # decided elsewhere, maybe ours
             elif str(opened.get("to") or "") in mine:
+                # #961 slice 4: stamp the origin bucket onto every row for
+                # this id BEFORE it joins the merged, multi-bucket row set —
+                # `fold`'s own `_founder_by_id` pre-pass reads it back
+                # off the founder row. `_origin_slug` is transient, in-memory
+                # only (never part of what `append`/`events` persist or
+                # read), the same posture `events()` already gives `_line`.
+                for row in rows:
+                    row["_origin_slug"] = slug
                 by_id.setdefault(rid, []).extend(rows)
                 origin_of[rid] = slug
     for rid, rows in orphans:
         if rid in origin_of:
             by_id[rid].extend(rows)
     all_rows = [row for group in by_id.values() for row in group]
-    out = fold(all_rows)
-    for rid, record in out.items():
-        record["from_slug"] = origin_of.get(rid, "")
-    return out
+    # #961 slice 4 review round 2 (C1): `from_slug` is no longer set here
+    # from `origin_of` — that dict is keyed by whichever bucket LAST
+    # satisfied "has an opened row addressed to mine" while iterating
+    # `_bucket_slugs()`, an order with no relationship to which `opened`
+    # row is the genuine, shape-valid founder (or even to `order` at all).
+    # `fold` itself now resolves origin from the SAME shape-checked,
+    # order-sorted founder pre-pass it uses for `kind` (`_founder_by_id`)
+    # and writes it onto the record as `from_slug` directly, so this
+    # composer reads it back rather than computing a second, disagreeing
+    # answer. `origin_of` still does its original, narrower job just above:
+    # deciding whether an id is addressed to `mine` at all, so a verdict
+    # recorded in a THIRD bucket with no local `opened` row (#895) still
+    # gets included — a stray match there can add at most an inert orphan
+    # row to the merged set, never mislabel who a record is from, now that
+    # only the founder resolution decides that.
+    return fold(all_rows, policies=_request_policy_history(project_dir))
 
 
 def inbox_listing(project_dir=None) -> list[dict]:
