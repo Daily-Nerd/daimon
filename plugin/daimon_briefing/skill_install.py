@@ -332,7 +332,11 @@ def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
 # Rendering is deterministic and is already the source of truth; a stored
 # hash is a second one that can go stale or be lost on its own.
 
-_STATE_DRIFTED = ("STALE", "MISSING", "BROKEN", "UNREADABLE")
+# LEFTOVER drifts on purpose (#1008). Two copies of one skill arriving from
+# two channels is a real misconfiguration whose repair is a single command, so
+# a provisioning gate should catch it. PLUGIN on its own is a healthy machine
+# and stays out of the count.
+_STATE_DRIFTED = ("STALE", "MISSING", "BROKEN", "UNREADABLE", "LEFTOVER")
 
 
 def _despite_version(text: str) -> str:
@@ -354,9 +358,10 @@ def _installed_version(text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _row(host, scope, skill, path, state, version=None) -> dict:
+def _row(host, scope, skill, path, state, version=None,
+         channel="settings") -> dict:
     return {"host": host, "scope": scope, "skill": skill, "path": str(path),
-            "state": state, "version": version,
+            "state": state, "version": version, "channel": channel,
             "drift": state in _STATE_DRIFTED}
 
 
@@ -423,9 +428,29 @@ def _audit_bundled(host, scope, rel, base) -> list[dict]:
     return rows
 
 
+def _plugin_hosts(home: Path) -> set[str]:
+    """Hosts served through a channel daimon's own install verbs do not write.
+
+    ONE resolver, shared with `host_detect` (#1008). Detection learned the
+    plugin channel in #1001 and this audit shipped in #1006 without it, so the
+    two commands held different answers to "who serves this host" and the
+    audit handed out a repair the installer declines to perform.
+
+    User-level only: the plugin is a home-scoped install, so a repo-scoped
+    skill is daimon's own file wherever the plugin sits.
+    """
+    from . import host_detect
+
+    try:
+        return {"claude"} if host_detect.plugin_serves_claude(home) else set()
+    except Exception:  # noqa: BLE001 - an audit never crashes on a foreign file
+        return set()
+
+
 def audit(*, home: Path, cwd: Path) -> list[dict]:
     """Every host and scope daimon can write a skill to, and what is there."""
     report: list[dict] = []
+    plugin_hosts = _plugin_hosts(home)
     for host in sorted(HOSTS):
         for scope in ("global", "project"):
             entry = HOSTS[host].get(scope)
@@ -435,12 +460,23 @@ def audit(*, home: Path, cwd: Path) -> list[dict]:
             base = cwd if scope == "project" else home
             audit_one = _audit_owned if kind == "owned" else _audit_block
             main = audit_one(host, scope, rel, variant, base)
+            if host in plugin_hosts and scope == "global":
+                # Not a content verdict: the file's freshness is not the
+                # question when another channel owns the skill. Either the
+                # plugin serves it and there is nothing here, or an older CLI
+                # install left a copy behind that now duplicates it.
+                main["channel"] = "plugin"
+                main["state"] = ("PLUGIN" if main["state"] == "NOT INSTALLED"
+                                 else "LEFTOVER")
+                main["drift"] = main["state"] in _STATE_DRIFTED
             report.append(main)
             if _bundled_root(rel, variant) is None:
                 continue
-            if main["state"] == "NOT INSTALLED":
-                # Nothing was installed here, so the bundled skills are not
-                # missing, they were never written. One absent host, one row.
+            if main["state"] in ("NOT INSTALLED", "PLUGIN", "LEFTOVER"):
+                # Nothing daimon should be maintaining here, so the bundled
+                # skills are not missing. A `daimon-end MISSING` row conjured
+                # under a leftover sent the reader to create a SECOND copy
+                # beside whatever the plugin ships.
                 continue
             report.extend(_audit_bundled(host, scope, rel, base))
     return report
