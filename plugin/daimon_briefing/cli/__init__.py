@@ -910,7 +910,7 @@ def _cmd_brief(args) -> int:
             "behind; re-run `daimon brief` in a few minutes for the fresh one."])
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
-    team_withheld: list = []
+    team_withheld = []
     teammates = (_team_briefings(project, team_withheld)
                  if getattr(args, "team", False) else None)
     # #365: never worldcheck a fallback body — the global pointer may belong
