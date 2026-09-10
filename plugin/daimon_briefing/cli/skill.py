@@ -36,32 +36,69 @@ def _cmd_skill_show(args) -> int:
           else skill_content.render_full(), end="")
     return 0
 
-def _cmd_skill_install(args) -> int:
+def _install_one(host: str, *, project: bool, cwd: Path) -> int:
     from .. import skill_install
     try:
         lines = skill_install.install(
-            args.host, project=args.project, home=Path.home(),
-            cwd=_resolve_project_cwd())
+            host, project=project, home=Path.home(), cwd=cwd)
     except skill_install.SkillInstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     render.render_skill_lines(lines, footer=(
-        f"Re-run `daimon skill install {args.host}` after every "
+        f"Re-run `daimon skill install {host}` after every "
         "`uv tool upgrade daimon-briefing` to refresh the content.",
     ))
     return 0
 
-def _cmd_skill_uninstall(args) -> int:
+
+def _uninstall_one(host: str, *, project: bool, cwd: Path) -> int:
     from .. import skill_install
     try:
         lines = skill_install.uninstall(
-            args.host, project=args.project, home=Path.home(),
-            cwd=_resolve_project_cwd())
+            host, project=project, home=Path.home(), cwd=cwd)
     except skill_install.SkillInstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     render.render_skill_lines(lines)
     return 0
+
+
+def _command_words(verb: str, project: bool) -> str:
+    """What to print back at the operator so they can run one host by hand.
+    The scope flag rides along: a suggestion that silently changes scope is
+    worse than no suggestion."""
+    return f"skill {verb} --project" if project else f"skill {verb}"
+
+
+def _cmd_skill_install(args) -> int:
+    """A named host installs exactly that host, detected or not: provisioning
+    a machine before the agent is installed on it is a real workflow. With no
+    host, look at the machine and decide (#1001)."""
+    from . import _lifecycle
+
+    if (rc := _lifecycle.flag_guard(args)) is not None:
+        return rc
+    cwd = _resolve_project_cwd()
+    if args.host:
+        return _install_one(args.host, project=args.project, cwd=cwd)
+    return _lifecycle.run_detected(
+        kind="skill", command=_command_words("install", args.project),
+        args=args, cwd=cwd, project=args.project,
+        runner=lambda name: _install_one(name, project=args.project, cwd=cwd))
+
+
+def _cmd_skill_uninstall(args) -> int:
+    from . import _lifecycle
+
+    if (rc := _lifecycle.flag_guard(args)) is not None:
+        return rc
+    cwd = _resolve_project_cwd()
+    if args.host:
+        return _uninstall_one(args.host, project=args.project, cwd=cwd)
+    return _lifecycle.run_detected(
+        kind="skill", command=_command_words("uninstall", args.project),
+        args=args, cwd=cwd, project=args.project, removal=True,
+        runner=lambda name: _uninstall_one(name, project=args.project, cwd=cwd))
 
 
 def register(sub, fmt) -> None:
@@ -79,13 +116,21 @@ def register(sub, fmt) -> None:
                           help="print the rules-host variant instead of SKILL.md")
     ps_show.set_defaults(func=_cli._cmd_skill_show)
     ps_install = skill_sub.add_parser(
-        "install", help="write the skill for a host (global scope by default)")
-    ps_install.add_argument("host", help="host to install (see `daimon skill list`)")
+        "install", help="write the skill for a host (global scope by default); "
+                        "with no host, detect what this machine runs")
+    ps_install.add_argument("host", nargs="?",
+                            help="host to install (see `daimon skill list`); "
+                                 "omit to detect the hosts on this machine")
     ps_install.add_argument("--project", action="store_true",
                              help="write into the current repo instead of $HOME")
+    ps_install.add_argument("--all", action="store_true",
+                            help="install for every detected host without "
+                                 "asking (unattended provisioning)")
     ps_install.set_defaults(func=_cli._cmd_skill_install)
     ps_uninstall = skill_sub.add_parser(
         "uninstall", help="remove exactly what install wrote")
-    ps_uninstall.add_argument("host")
+    ps_uninstall.add_argument("host", nargs="?")
     ps_uninstall.add_argument("--project", action="store_true")
+    ps_uninstall.add_argument("--all", action="store_true",
+                              help="remove from every detected host daimon serves")
     ps_uninstall.set_defaults(func=_cli._cmd_skill_uninstall)

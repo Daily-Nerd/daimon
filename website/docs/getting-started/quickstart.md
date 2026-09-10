@@ -71,7 +71,8 @@ immutable quotes, verify stale-looking claims before repeating them:
 daimon skill install claude
 ```
 
-`daimon skill list` shows the install targets for other hosts.
+`daimon skill list` shows the install targets for other hosts. Run `daimon skill install` with no host to let daimon detect what this machine runs, or `daimon skill install --all` to wire every host it finds without being asked.
+
 
 ## 5. End a session, start the next
 

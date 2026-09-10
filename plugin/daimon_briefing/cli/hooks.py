@@ -46,17 +46,17 @@ def _checks_line() -> str:
     return f"checks: {report.reason}"
 
 
-def _cmd_hooks_install(args) -> int:
+def _install_one(host: str) -> int:
     """Copy the host's packaged hook script(s) to ~/.daimon/hooks/ — a STABLE
     path the host's hooks config points at once. Idempotent: re-running after
     `uv tool upgrade daimon-briefing` refreshes the scripts to match the
     installed CLI, which is the whole point (#43: a curl'd script drifts)."""
     from importlib import resources
 
-    spec = _cli._HOOK_HOSTS.get(args.host)
+    spec = _cli._HOOK_HOSTS.get(host)
     if spec is None:
         known = ", ".join(sorted(_cli._HOOK_HOSTS))
-        print(f"error: unknown host '{args.host}' (known: {known})", file=sys.stderr)
+        print(f"error: unknown host '{host}' (known: {known})", file=sys.stderr)
         return 2
     pkg = resources.files("daimon_briefing._hooks")
     if spec.get("register") == "codex":
@@ -100,13 +100,27 @@ def _cmd_hooks_install(args) -> int:
     for ev in spec["events"]:
         lines.append(f"  event:   {ev}")
     lines.append("")
-    lines.append("Re-run `daimon hooks install " + args.host +
+    lines.append("Re-run `daimon hooks install " + host +
                  "` after every `uv tool upgrade daimon-briefing`.")
     lines += ["", _checks_line()]
     render.render_hooks_install(lines)
     return 0
 
-def _cmd_hooks_remove(args) -> int:
+def _cmd_hooks_install(args) -> int:
+    """A named host installs exactly that host. With no host, look at the
+    machine first and decide from what is actually there (#1001)."""
+    from . import _lifecycle
+
+    if (rc := _lifecycle.flag_guard(args)) is not None:
+        return rc
+    if args.host:
+        return _install_one(args.host)
+    return _lifecycle.run_detected(
+        kind="hook", command="hooks install", args=args, cwd=Path.cwd(),
+        runner=_install_one)
+
+
+def _remove_one(host: str) -> int:
     """Unregister a self-registering host's hook entries (#988).
 
     Only hosts that daimon REGISTERED can be unregistered: for everyone else
@@ -117,16 +131,16 @@ def _cmd_hooks_remove(args) -> int:
     The installed scripts stay. They are inert once unregistered, and deleting
     them would break any other registration pointing at the same files.
     """
-    spec = _cli._HOOK_HOSTS.get(args.host)
+    spec = _cli._HOOK_HOSTS.get(host)
     if spec is None:
         known = ", ".join(sorted(_cli._HOOK_HOSTS))
-        print(f"error: unknown host '{args.host}' (known: {known})", file=sys.stderr)
+        print(f"error: unknown host '{host}' (known: {known})", file=sys.stderr)
         return 2
     if spec.get("register") != "kimi":
         removable = sorted(h for h, s in _cli._HOOK_HOSTS.items()
                            if s.get("register") == "kimi")
         print(f"error: daimon does not own the hook registration for "
-              f"'{args.host}', so it cannot remove it. Edit that host's hooks "
+              f"'{host}', so it cannot remove it. Edit that host's hooks "
               f"config by hand. Removable: {', '.join(removable)}",
               file=sys.stderr)
         return 2
@@ -140,6 +154,18 @@ def _cmd_hooks_remove(args) -> int:
         return 1
     render.render_hooks_install(lines)
     return 0
+
+
+def _cmd_hooks_remove(args) -> int:
+    from . import _lifecycle
+
+    if (rc := _lifecycle.flag_guard(args)) is not None:
+        return rc
+    if args.host:
+        return _remove_one(args.host)
+    return _lifecycle.run_detected(
+        kind="hook-remove", command="hooks remove", args=args, cwd=Path.cwd(),
+        removal=True, runner=_remove_one)
 
 
 def _cmd_hooks_status(args) -> int:
@@ -222,7 +248,12 @@ def register(sub, fmt) -> None:
         help="copy a host's hook script(s) to the stable path ~/.daimon/hooks/ "
              "and print the registration snippet — re-run after every upgrade",
     )
-    ph_install.add_argument("host", help="host to install (see `daimon hooks list`)")
+    ph_install.add_argument("host", nargs="?",
+                            help="host to install (see `daimon hooks list`); "
+                                 "omit to detect the hosts on this machine")
+    ph_install.add_argument("--all", action="store_true",
+                            help="install for every detected host without "
+                                 "asking (unattended provisioning)")
     ph_install.set_defaults(func=_cli._cmd_hooks_install)
     ph_remove = hooks_sub.add_parser(
         "remove",
@@ -230,5 +261,7 @@ def register(sub, fmt) -> None:
              "daimon wrote (kimi). The installed scripts are left in place; "
              "they are inert once unregistered",
     )
-    ph_remove.add_argument("host", help="host to unregister")
+    ph_remove.add_argument("host", nargs="?", help="host to unregister")
+    ph_remove.add_argument("--all", action="store_true",
+                           help="unregister every detected host daimon registered")
     ph_remove.set_defaults(func=_cmd_hooks_remove)
