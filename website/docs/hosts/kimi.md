@@ -43,9 +43,10 @@ uv tool install 'daimon-briefing[pretty]'
   Limitations below). The model sees the briefing as a user message wrapped
   in a `hook_result` tag, attached to your first prompt.
 - **`daimon-kimi-session-end.py`**: `SessionEnd` hook. Serializes the
-  finished session when an interactive Kimi session exits. It is
-  idempotent: a session the `Stop` hook already captured is not written a
-  second time.
+  finished session when an interactive Kimi session exits, including the
+  turns after the last `Stop` capture. Bytes `Stop` already captured are
+  not re-serialized: the CLI checks the transcript against the last
+  checkpoint before any model call.
 - **`daimon-kimi-stop.py`**: `Stop` hook. Runs a throttled capture after
   each turn. This is crash insurance for an interactive session, and it is
   the only capture path in print mode, where `SessionEnd` never fires (see
@@ -58,8 +59,15 @@ uv tool install 'daimon-briefing[pretty]'
   first prompt instead, through the `UserPromptSubmit` hook above.
 - **Print mode never closes.** `kimi -p` sessions stay resumable and never
   fire `SessionEnd`, measured twice on a live session. The `Stop` hook is
-  what captures them, and `SessionEnd`'s serialize stays idempotent, so a
-  session already captured there is not written twice.
+  what captures them. On an interactive exit `SessionEnd` runs its own
+  capture regardless of a recent `Stop`, so the turns after the last Stop
+  are not lost; the CLI compares the transcript against the last checkpoint
+  first, so bytes Stop already captured cost a file read, not a second
+  model call.
+- **A resumed session is not briefed again.** The briefing marker is keyed
+  on the session id, so `kimi -r` on a session that already received its
+  briefing gets the per-prompt recall injection but no second briefing.
+  Resume itself has not been measured on a live session.
 - **No pre-action checks yet.** Kimi's deny channel has not been measured on
   a live session, so this release ships no check profile for it.
 - **Hooks load at session start only.** Installing does not reach a session
@@ -91,10 +99,9 @@ daimon skill install kimi              # ~/.kimi-code/skills/daimon/SKILL.md
 daimon skill install kimi --project    # <repo>/.kimi-code/skills/daimon/SKILL.md
 ```
 
-Kimi scans both locations and injects the skill's name and description at
-session start, loading the body only when the skill is invoked. Project
-scope wins over user scope. Re-run install after upgrading `daimon` to
-refresh the content.
+Kimi scans both locations for skills. The probe measured where it looks,
+not how it ranks the two when both hold a daimon skill, so install to one
+scope. Re-run install after upgrading `daimon` to refresh the content.
 
 ## Remove
 
@@ -103,7 +110,9 @@ daimon hooks remove kimi
 ```
 
 This takes daimon's `[[hooks]]` entries back out of `config.toml` and leaves
-everything else in the file byte for byte as it was. The installed scripts
+everything else in the file as it was, line endings included. The one
+exception: a file whose last line had no newline gains one, and remove
+cannot tell it from one you wrote. The installed scripts
 stay where they are, inert once unregistered. Checkpoints under `~/.daimon/`
 are untouched.
 
@@ -113,6 +122,6 @@ are untouched.
 daimon status
 ```
 
-`daimon status` reports capture health for Kimi the same as any other host,
-including the print-mode gap above. A capture made through the `Stop`
-throttle counts the same as one made through `SessionEnd`.
+`daimon status` reports capture health for Kimi the same as any other host.
+A capture made through the `Stop` throttle counts the same as one made
+through `SessionEnd`; nothing in the report singles out print-mode sessions.

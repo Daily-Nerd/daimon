@@ -46,8 +46,10 @@ uv tool install 'daimon-briefing[pretty]'
   como un mensaje de usuario envuelto en una etiqueta `hook_result`,
   adjunto a tu primer prompt.
 - **`daimon-kimi-session-end.py`**: hook `SessionEnd`. Serializa la sesión
-  terminada cuando una sesión interactiva de Kimi se cierra. Es idempotente:
-  una sesión que el hook `Stop` ya capturó no se vuelve a escribir.
+  terminada cuando una sesión interactiva de Kimi se cierra, incluidos los
+  turnos posteriores a la última captura de `Stop`. Los bytes que `Stop` ya
+  capturó no se vuelven a serializar: la CLI compara la transcripción con el
+  último checkpoint antes de cualquier llamada al modelo.
 - **`daimon-kimi-stop.py`**: hook `Stop`. Corre una captura con throttle
   después de cada turno. Es un seguro contra crashes para una sesión
   interactiva, y es la única vía de captura en modo print, donde
@@ -60,9 +62,16 @@ uv tool install 'daimon-briefing[pretty]'
   tu primer prompt, a través del hook `UserPromptSubmit` de arriba.
 - **El modo print nunca cierra.** Las sesiones de `kimi -p` quedan
   resumibles y nunca disparan `SessionEnd`, medido dos veces en una sesión
-  en vivo. El hook `Stop` es lo que las captura, y la serialización de
-  `SessionEnd` sigue siendo idempotente, así que una sesión ya capturada
-  ahí no se escribe dos veces.
+  en vivo. El hook `Stop` es lo que las captura. En una salida interactiva,
+  `SessionEnd` corre su propia captura aunque haya un `Stop` reciente, así
+  que los turnos posteriores al último Stop no se pierden; la CLI compara la
+  transcripción con el último checkpoint antes de nada, así que los bytes que
+  Stop ya capturó cuestan una lectura de archivo, no una segunda llamada al
+  modelo.
+- **Una sesión resumida no recibe el briefing de nuevo.** El marcador del
+  briefing se indexa por id de sesión, así que `kimi -r` sobre una sesión
+  que ya lo recibió obtiene la inyección de recall por prompt pero no un
+  segundo briefing. El resume en sí no se midió en una sesión en vivo.
 - **Todavía sin checks de pre-acción.** El canal de rechazo de Kimi no se
   midió en una sesión en vivo, así que esta versión no trae un perfil de
   checks para este host.
@@ -95,9 +104,9 @@ daimon skill install kimi              # ~/.kimi-code/skills/daimon/SKILL.md
 daimon skill install kimi --project    # <repo>/.kimi-code/skills/daimon/SKILL.md
 ```
 
-Kimi escanea las dos ubicaciones e inyecta el nombre y la descripción de la
-skill al iniciar la sesión, y carga el cuerpo solo cuando se la invoca. El
-alcance de proyecto gana sobre el de usuario. Volvé a correr install después
+Kimi escanea las dos ubicaciones en busca de skills. La prueba midió dónde
+busca, no cómo prioriza entre las dos cuando ambas tienen una skill de
+daimon, así que instalá en un solo alcance. Volvé a correr install después
 de actualizar `daimon` para refrescar el contenido.
 
 ## Desinstalar
@@ -107,7 +116,9 @@ daimon hooks remove kimi
 ```
 
 Saca las entradas `[[hooks]]` de daimon del `config.toml` y deja el resto
-del archivo byte por byte como estaba. Los scripts instalados quedan donde
+del archivo como estaba, finales de línea incluidos. La única excepción: un
+archivo cuya última línea no tenía salto de línea gana uno, y remove no
+puede distinguirlo de uno que escribiste vos. Los scripts instalados quedan donde
 están, inertes una vez desregistrados. Los checkpoints en `~/.daimon/` no se
 tocan.
 
@@ -118,5 +129,5 @@ daimon status
 ```
 
 `daimon status` reporta la salud de captura de Kimi igual que en cualquier
-otro host, incluido el hueco del modo print de arriba. Una captura hecha por
-el throttle de `Stop` cuenta igual que una hecha por `SessionEnd`.
+otro host. Una captura hecha por el throttle de `Stop` cuenta igual que una
+hecha por `SessionEnd`; nada en el reporte distingue las sesiones en modo print.

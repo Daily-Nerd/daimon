@@ -168,6 +168,38 @@ def test_install_then_remove_restores_the_file_byte_for_byte(tmp_path):
         assert path.read_text(encoding="utf-8") == BASE_CONFIG
 
 
+def test_a_crlf_config_keeps_its_line_endings_across_install_and_remove(tmp_path):
+    """A config.toml that passed through a Windows editor ends every line in
+    CRLF. Reading it with universal newlines and writing LF back would rewrite
+    every line the installer does not own, which is the exact thing "never
+    re-serialize" exists to prevent. The installer's own lines follow the
+    file's convention so the result is not a mixed-ending file either."""
+    home = _home(tmp_path)
+    path = home / ".kimi-code" / "config.toml"
+    crlf = BASE_CONFIG.replace("\n", "\r\n").encode("utf-8")
+    path.write_bytes(crlf)
+    _install(home)
+    after = path.read_bytes()
+    assert after.startswith(crlf)
+    assert b"\n" not in after.replace(b"\r\n", b""), (
+        "the installer's own lines must match the file's line endings")
+    kimi_hooks.remove(home, env={})
+    assert path.read_bytes() == crlf
+
+
+def test_a_config_without_a_trailing_newline_gains_exactly_one(tmp_path):
+    """The one byte the round trip does not restore, pinned so the docs can
+    say exactly that instead of "byte for byte". A last line with no newline
+    needs one before a block can be appended, and remove has no way to tell
+    that newline from one the person wrote."""
+    home = _home(tmp_path)
+    bare = BASE_CONFIG.rstrip("\n")
+    path = _write_config(home, bare)
+    _install(home)
+    kimi_hooks.remove(home, env={})
+    assert path.read_text(encoding="utf-8") == bare + "\n"
+
+
 def test_a_foreign_hooks_entry_is_never_touched(tmp_path):
     """Someone else's `[[hooks]]` block is the case where "remove our entries"
     and "remove the hooks array" differ, and only one of them is correct."""

@@ -4,11 +4,15 @@
 Measured on Kimi Code 0.42.0 (2026-09-09): this fires on an interactive exit
 with `reason: "exit"`, and NEVER on `kimi -p` print mode (measured twice; a
 print session ends with "To resume this session" and stays resumable, so it
-never closes). `Stop` is what captures print mode, which makes double capture
-a real shape here rather than a theoretical one: a session captured by Stop
-and then closed interactively arrives at this hook already checkpointed. It
-shares the Stop hook's marker for exactly that reason, and the CLI's own
-identical-bytes guard is the second line of defence.
+never closes). `Stop` is what captures print mode, so an interactive session
+that ran turns and then exited reaches this hook with a Stop capture already
+behind it. This hook is deliberately NOT throttled against that capture, the
+same call Codex makes: Stop's throttle window is the interval between the last
+spawned Stop and `/exit`, so honouring its marker here would drop every turn
+inside that window, the session's tail, which is the part an end-of-session
+checkpoint exists to keep. The repeat is cheap instead: `daimon serialize`
+compares the transcript's sha against the last checkpoint before any LLM work,
+so bytes Stop already captured cost one file read, not a second model call.
 
 Unlike every host adapted before it, the payload carries NO transcript path
 and no environment variable holds one. The path is resolved from the session
@@ -23,7 +27,6 @@ Diagnostics land in ~/.daimon/logs/serialize.log.
 import json
 import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -61,56 +64,6 @@ def _enabled() -> bool:
     return val not in ("0", "false", "no", "off")
 
 
-def _safe_name(session_id: str) -> str:
-    return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
-
-
-def _marker_path(session_id: str) -> Path:
-    return STATE_DIR / f"{_safe_name(session_id)}.last-stop"
-
-
-def _already_captured(session_id: str) -> bool:
-    """True when the Stop hook already serialized this session inside its
-    throttle window.
-
-    On Codex this hook is deliberately unthrottled, because SessionEnd there is
-    the real end and Stop is only insurance. Here Stop is a genuine capture
-    path for print mode, so an interactive session that ran turns and then
-    exited reaches this hook seconds after a Stop already spawned. Repeating it
-    would burn a second full LLM call on the same bytes.
-    """
-    interval = _interval_seconds()
-    if interval <= 0:
-        return False
-    try:
-        marker = _marker_path(session_id)
-        return (marker.exists()
-                and time.time() - marker.stat().st_mtime < interval)
-    except OSError:
-        return False
-
-
-def _interval_seconds() -> int:
-    """Shared with the Stop hook so the two agree on what "just captured"
-    means. Reading it here rather than hard-coding a window is what keeps a
-    person who set the interval to 0 (serialize every turn) from also
-    silencing this hook."""
-    raw = os.environ.get("DAIMON_KIMI_MIN_SERIALIZE_INTERVAL", "300").strip()
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return 300
-
-
-def _mark_spawned(session_id: str) -> None:
-    try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        _marker_path(session_id).write_text(str(int(time.time())),
-                                            encoding="utf-8")
-    except OSError:
-        pass
-
-
 def main() -> int:
     if lib is None:
         _fallback_log(f"{TAG}: hook library missing (_daimon_hook_lib.py) - skipped")
@@ -142,11 +95,6 @@ def main() -> int:
                 f"(searched {lib.kimi_home()}/sessions) - skipped")
         return 0
 
-    if _already_captured(session_id):
-        lib.log(f"{TAG}: skipped serialize for {session_id} "
-                f"(already captured by the Stop hook)")
-        return 0
-
     cli = lib.resolve_cli()
     if cli is None:
         lib.log(f"{TAG}: `daimon` CLI not found - checkpoint skipped")
@@ -166,7 +114,6 @@ def main() -> int:
             lib.log(f"{TAG}: skipped serialize for {session_id} "
                     f"(already in flight) (transcript: {transcript_path})")
             return 0
-        _mark_spawned(session_id)
         lib.log(f"{TAG}: spawned serialize for {session_id} "
                 f"(project: {cwd or '?'}) (transcript: {transcript_path})")
     except OSError as exc:

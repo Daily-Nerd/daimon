@@ -153,6 +153,20 @@ def test_a_session_id_carrying_a_separator_is_refused(home):
     assert lib.kimi_transcript("", home=home, env={}) is None
 
 
+def test_the_resolver_refuses_glob_metacharacters_in_the_session_id(home):
+    """The id is interpolated into `root.glob(...)`, so to the resolver `*`
+    is not a name, it is a wildcard: an id of `*` resolves whichever real
+    session sorts first, and the hook would then serialize a stranger's
+    transcript under the attacker-supplied id. Traversal was already refused;
+    this is the other class the same interpolation admits, and the one the
+    guard's own docstring claimed to close."""
+    lib = _load_lib()
+    real = _wire(home)
+    assert lib.kimi_transcript(SESSION, home=home, env={}) == real
+    for hostile in ("*", "?", "session_*", f"[{SESSION[0]}]{SESSION[1:]}"):
+        assert lib.kimi_transcript(hostile, home=home, env={}) is None, hostile
+
+
 def test_the_resolver_honours_kimi_code_home(home, tmp_path):
     lib = _load_lib()
     relocated = tmp_path / "relocated"
@@ -208,10 +222,14 @@ def test_session_end_records_a_reason_when_no_transcript_resolves(home):
     assert SESSION in log
 
 
-def test_session_end_does_not_serialize_a_session_stop_just_captured(home):
-    """Print mode never fires SessionEnd, so a session captured by Stop and
-    then closed interactively is the double-capture case. The Stop marker is
-    shared on purpose, which is what makes the second write a no-op."""
+def test_session_end_serializes_even_when_stop_just_captured(home):
+    """The Stop throttle window is the interval between the LAST spawned Stop
+    and `/exit`, so a SessionEnd that honoured Stop's marker would drop up to
+    a whole window of the session tail: every turn after that Stop. Codex
+    leaves SessionEnd unthrottled for the same reason. The repeat is cheap:
+    the CLI compares the transcript's sha against the last checkpoint before
+    any LLM work, so bytes already captured cost one file read, not a second
+    model call."""
     _wire(home)
     bin_dir, capture = _fake_cli(home)
     env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
@@ -219,13 +237,15 @@ def test_session_end_does_not_serialize_a_session_stop_just_captured(home):
                "cwd": "/private/tmp/proj", "stop_hook_active": False}
     _run(STOP_HOOK, payload, home, env)
     _wait_for(capture, "serialize")
-    first = _spawns(capture)
-    assert first == 1
+    assert _spawns(capture) == 1
     _run(SESSION_END_HOOK, {**payload, "hook_event_name": "SessionEnd",
                             "reason": "exit"}, home, env)
-    time.sleep(1.0)  # long enough for a spawn to have landed, had one happened
-    assert _spawns(capture) == first
-    assert "already captured" in _log(home)
+    deadline = time.monotonic() + 10.0
+    while _spawns(capture) < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _spawns(capture) == 2, _log(home)
+    assert "already captured" not in _log(home)
+    assert "kimi-session-end: spawned serialize" in _log(home)
 
 
 def test_session_end_can_be_disabled(home):

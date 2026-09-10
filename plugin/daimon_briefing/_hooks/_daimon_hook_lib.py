@@ -368,10 +368,12 @@ def kimi_transcript(session_id, home=None, env=None):
     The payload's `session_id` IS the session directory name; the workspace
     directory above it carries a hash daimon cannot predict, hence the glob.
 
-    The id lands in a filesystem path, so it is checked before use. Nothing in
-    the measured payloads suggests a hostile id, and that is exactly the
-    assumption worth enforcing rather than trusting: a single path segment,
-    no separators, no traversal.
+    The id lands in a filesystem path AND inside a glob pattern, so it is
+    checked for both before use. Nothing in the measured payloads suggests a
+    hostile id, and that is exactly the assumption worth enforcing rather than
+    trusting: a single path segment, no separators, no traversal, and no glob
+    metacharacters, since an id of `*` would otherwise resolve whichever real
+    session sorts first and serialize a stranger's transcript under it.
 
     Subagents get sibling `agents/<id>/` directories. This resolves `main`
     only; merging a subagent's own reasoning into the parent's checkpoint is a
@@ -379,7 +381,7 @@ def kimi_transcript(session_id, home=None, env=None):
     transcript.py note).
     """
     sid = str(session_id or "").strip()
-    if not sid or sid in (".", "..") or any(c in sid for c in "/\\"):
+    if not sid or sid in (".", "..") or any(c in sid for c in "/\\*?[]"):
         return None
     root = kimi_home(home, env)
     try:

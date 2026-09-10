@@ -391,3 +391,19 @@ def test_a_claude_code_iso_stamp_still_wins_its_own_branch(tmp_path):
         {"type": "user", "uuid": "u1", "timestamp": "2026-07-01T10:05:30.500Z",
          "message": {"role": "user", "content": "hi"}}) + "\n")
     assert transcript.last_timestamp(path) == "2026-07-01T10:05:30Z"
+
+
+def test_a_boolean_time_is_not_a_1970_stamp(tmp_path):
+    """`bool` is an `int` in Python. `True / 1000` is 0.001 seconds past the
+    epoch: it never WINS the max against a real stamp, but in a log whose only
+    numeric `time` is a stray flag it is the only candidate, and the capture
+    would report a session that ended in 1970 instead of falling back to the
+    file's mtime."""
+    assert transcript._kimi_epoch(True) is None
+    assert transcript._kimi_epoch(False) is None
+    assert transcript._kimi_epoch(MS) == MS / 1000.0
+    path = tmp_path / "agents" / "main" / "wire.jsonl"
+    path.parent.mkdir(parents=True)
+    rows = [_metadata(), {**_append_message("hi"), "time": True}]
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    assert transcript.last_timestamp(path) is None

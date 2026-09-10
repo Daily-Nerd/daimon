@@ -727,8 +727,10 @@ def _stamp_epoch(stamp) -> float | None:
 def _kimi_epoch(stamp) -> float | None:
     """Epoch seconds for a Kimi wire event's `time`, which is epoch
     MILLISECONDS. None for anything that is not a number, and for a boolean:
-    `bool` is an `int` in Python, and a stray flag read as a 1970 timestamp
-    would silently win the max against every real stamp."""
+    `bool` is an `int` in Python, so `True / 1000` reads as 0.001 seconds past
+    the epoch. It never wins the max against a real stamp, but in a log whose
+    only numeric `time` is a stray flag it is the only candidate, and the
+    capture would report a 1970 end instead of falling back to the mtime."""
     if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
         return None
     return stamp / 1000.0

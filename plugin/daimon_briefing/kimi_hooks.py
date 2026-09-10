@@ -196,17 +196,32 @@ def _is_ours(block: Block) -> bool:
     return any(spec.script in command for spec in HOOKS)
 
 
-def _render(spec, hooks_target: Path) -> str:
+def _newline(text: str) -> str:
+    """The file's own line ending, so the lines daimon appends match the lines
+    already there. A config that passed through a Windows editor is CRLF
+    throughout; appending LF blocks to it would leave a mixed file, and
+    reading it with universal newlines would rewrite every line the installer
+    does not own on the way back out."""
+    return "\r\n" if "\r\n" in text else "\n"
+
+
+def _read(path: Path) -> str:
+    """Bytes, decoded, no newline translation: `read_text` folds CRLF to LF
+    and the round trip would then write LF back over a CRLF file."""
+    return path.read_bytes().decode("utf-8")
+
+
+def _render(spec, hooks_target: Path, nl: str = "\n") -> str:
     """One `[[hooks]]` entry as text. Exactly four fields, in the host's own
     documented order. `timeout` is written bare: it is an integer, and quoting
     it would make the host reject the entry's type."""
     command = f"python3 {hooks_target / spec.script}"
-    return (f"{MARKER}\n"
-            "[[hooks]]\n"
-            f'event = "{spec.event}"\n'
-            f'matcher = "{spec.matcher}"\n'
-            f'command = "{command}"\n'
-            f"timeout = {spec.timeout}\n")
+    return (f"{MARKER}{nl}"
+            f"[[hooks]]{nl}"
+            f'event = "{spec.event}"{nl}'
+            f'matcher = "{spec.matcher}"{nl}'
+            f'command = "{command}"{nl}'
+            f"timeout = {spec.timeout}{nl}")
 
 
 def _strip_ours(lines, blocks):
@@ -237,7 +252,7 @@ def _save(path: Path, text: str) -> str | None:
         backup = path.with_name(f"config.toml.daimon-backup-{int(time.time())}")
         shutil.copy2(path, backup)
         note = backup.name
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(text.encode("utf-8"))  # no newline translation, see _read
     return note
 
 
@@ -258,16 +273,19 @@ def install(pkg, home, env=None):
             dest.chmod(dest.stat().st_mode | 0o100)  # u+x
 
     path = config_path(home, env)
-    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    original = _read(path) if path.exists() else ""
     blocks = _hook_blocks(original)  # raises ConfigError before anything is written
     ours = [b for b in blocks if _is_ours(b)]
 
     lines = [f"installed {len(FILES)} file(s) to {target}"]
+    nl = _newline(original)
     kept = _strip_ours(original.splitlines(keepends=True), ours)
     body = "".join(kept)
     if body and not body.endswith("\n"):
-        body += "\n"
-    additions = "".join(f"\n{_render(spec, target)}" for spec in HOOKS)
+        # The one byte the round trip does not give back: remove cannot tell
+        # this newline from one the person wrote. The host page says so.
+        body += nl
+    additions = "".join(f"{nl}{_render(spec, target, nl)}" for spec in HOOKS)
     updated = body + additions
 
     if updated == original:
@@ -303,7 +321,7 @@ def remove(home, env=None):
     path = config_path(home, env)
     if not path.exists():
         return [f"{path} does not exist - nothing to remove"]
-    original = path.read_text(encoding="utf-8")
+    original = _read(path)
     ours = [b for b in _hook_blocks(original) if _is_ours(b)]
     if not ours:
         return [f"{path}: no daimon entries found"]
@@ -325,8 +343,8 @@ def registration_status(home, env=None) -> str:
     if not path.exists():
         return "UNREGISTERED"
     try:
-        blocks = _hook_blocks(path.read_text(encoding="utf-8"))
-    except (OSError, ConfigError):
+        blocks = _hook_blocks(_read(path))
+    except (OSError, UnicodeDecodeError, ConfigError):
         return "UNREGISTERED"
     found = sum(1 for spec in HOOKS
                 if any(spec.script in str(b.fields.get("command") or "")
