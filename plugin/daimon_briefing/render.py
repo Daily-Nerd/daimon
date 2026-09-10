@@ -2221,7 +2221,13 @@ def render_skill_status(report) -> None:
     nowhere to go. The fix line only appears when something actually drifted;
     a clean machine gets the table alone.
     """
-    drifted = sorted({r["host"] for r in report if r["drift"]})
+    # A leftover under a channel daimon does not write repairs by REMOVAL
+    # (#1008): the installer declines to serve a plugin-served host, so
+    # advising install hands the reader a command that will not run, and
+    # forcing it produces two copies of one skill from two channels.
+    repairs = sorted({(r["host"], "uninstall" if r["state"] == "LEFTOVER"
+                       else "install")
+                      for r in report if r["drift"]})
     rows = [(f"{r['host']}/{r['scope']}", r["skill"], r["state"],
              r["version"] or "", r["path"]) for r in report]
     if not supports_rich():
@@ -2237,11 +2243,12 @@ def render_skill_status(report) -> None:
         for col in ("host/scope", "skill", "state", "version", "path"):
             table.add_column(col)
         for scope, skill, state, version, path in rows:
-            style = {"CURRENT": "green", "NOT INSTALLED": "dim"}.get(state, "red")
+            style = {"CURRENT": "green", "PLUGIN": "green",
+                     "NOT INSTALLED": "dim"}.get(state, "red")
             table.add_row(scope, skill, f"[{style}]{state}[/{style}]",
                           version, path)
         console.print(table)
-    if drifted:
+    if repairs:
         print("")
-        for host in drifted:
-            print(f"fix: daimon skill install {host}")
+        for host, verb in repairs:
+            print(f"fix: daimon skill {verb} {host}")

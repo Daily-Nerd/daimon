@@ -366,3 +366,137 @@ def test_a_probe_that_cannot_read_the_machine_reports_no_drift(monkeypatch):
 
     monkeypatch.setattr(skill_install, "audit", boom)
     assert cli._skill_drift_present() is False
+
+
+# ---- the plugin channel (#1008) ----
+
+def _plugin_registry(home):
+    reg = home / ".claude" / "plugins"
+    reg.mkdir(parents=True, exist_ok=True)
+    (reg / "installed_plugins.json").write_text(
+        '{"plugins": {"daimon@daimon": [{"version": "0.43.0"}]}}',
+        encoding="utf-8")
+
+
+def test_a_plugin_served_host_with_no_file_is_not_missing(tmp_path):
+    """The plugin serves claude's skill through a different channel. Calling
+    that NOT INSTALLED is true of the path and false about the machine."""
+    home = _home(tmp_path)
+    _plugin_registry(home)
+    row = _rows(skill_install.audit(home=home, cwd=tmp_path), "claude")
+    assert row["state"] == "PLUGIN"
+    assert row["drift"] is False
+    assert row["channel"] == "plugin"
+
+
+def test_a_leftover_under_the_plugin_is_named_as_a_leftover(tmp_path):
+    """The regression this issue was filed for. An older CLI install leaves a
+    skill file behind, the plugin now serves the same skill, and the audit
+    called the leftover STALE and told the reader to reinstall it. Following
+    that advice produces two copies from two channels, where which one wins is
+    an accident of host resolution."""
+    home = _home(tmp_path)
+    skill_install.install("claude", project=False, home=home, cwd=tmp_path)
+    _plugin_registry(home)
+    row = _rows(skill_install.audit(home=home, cwd=tmp_path), "claude")
+    assert row["state"] == "LEFTOVER"
+    assert row["channel"] == "plugin"
+
+
+def test_a_leftover_repairs_by_removal_not_by_install(tmp_path, capsys):
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    skill_install.install("claude", project=False, home=home, cwd=tmp_path)
+    _plugin_registry(home)
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    assert "daimon skill uninstall claude" in out
+    assert "daimon skill install claude" not in out, (
+        "the installer refuses to serve a plugin-served host, so advising it "
+        "hands the reader a command that declines to run")
+
+
+def test_a_leftover_counts_as_drift(tmp_path):
+    """Two copies of one skill from two channels is a real misconfiguration
+    and the repair is a single command, so a provisioning gate should catch
+    it. PLUGIN on its own is a healthy machine and stays quiet."""
+    home = _home(tmp_path)
+    skill_install.install("claude", project=False, home=home, cwd=tmp_path)
+    _plugin_registry(home)
+    row = _rows(skill_install.audit(home=home, cwd=tmp_path), "claude")
+    assert row["drift"] is True
+
+
+def test_no_bundled_rows_are_conjured_under_a_leftover(tmp_path):
+    """`daimon-end MISSING` appeared only because the stale main row existed,
+    and the printed repair would have created a second copy beside whatever
+    the plugin ships."""
+    home = _home(tmp_path)
+    skill_install.install("claude", project=False, home=home, cwd=tmp_path)
+    (home / ".claude" / "skills" / "daimon-end" / "SKILL.md").unlink()
+    _plugin_registry(home)
+    report = skill_install.audit(home=home, cwd=tmp_path)
+    assert not [r for r in report
+                if r["host"] == "claude" and r["skill"] == "daimon-end"]
+
+
+def test_the_plugin_only_speaks_for_the_host_it_serves(tmp_path):
+    """One resolver, and it answers for claude alone today. A kimi row must
+    never inherit claude's channel."""
+    home = _home(tmp_path)
+    _plugin_registry(home)
+    skill_install.install("kimi", project=False, home=home, cwd=tmp_path)
+    row = _rows(skill_install.audit(home=home, cwd=tmp_path), "kimi")
+    assert row["state"] == "CURRENT"
+    assert row["channel"] == "settings"
+
+
+def test_the_audit_and_the_installer_agree_on_who_is_served(tmp_path):
+    """The whole point of the fix: two commands, one answer. `host_detect`
+    learned the plugin channel in #1001 and the audit shipped in #1006 without
+    it, so each had its own idea of who serves claude."""
+    from daimon_briefing import host_detect
+
+    home = _home(tmp_path)
+    _plugin_registry(home)
+    found = host_detect.detect(home, kind="skill", path_env="")
+    found = host_detect.resolve_channels(found, home=home, kind="skill",
+                                         cwd=tmp_path)
+    detected = {h.name: h.channel for h in found}
+    audited = {r["host"]: r["channel"] for r in skill_install.audit(
+        home=home, cwd=tmp_path) if r["skill"] == "daimon"
+        and r["scope"] == "global"}
+    assert detected["claude"] == audited["claude"] == "plugin"
+
+
+def test_project_scope_is_never_plugin_served(tmp_path):
+    """The plugin is a user-level install. A repo-scoped skill is daimon's own
+    file wherever the plugin sits."""
+    home = _home(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _plugin_registry(home)
+    skill_install.install("claude", project=True, home=home, cwd=repo)
+    row = _rows(skill_install.audit(home=home, cwd=repo), "claude",
+                scope="project")
+    assert row["state"] == "CURRENT"
+    assert row["channel"] == "settings"
+
+
+def test_a_channel_resolver_that_raises_leaves_the_audit_standing(tmp_path,
+                                                                  monkeypatch):
+    """An audit is what a person runs to find out what is wrong, so it may not
+    be the thing that crashes. A channel it cannot resolve degrades to the
+    content verdict rather than taking the whole report down."""
+    from daimon_briefing import host_detect
+
+    home = _home(tmp_path)
+    skill_install.install("kimi", project=False, home=home, cwd=tmp_path)
+
+    def boom(_home):
+        raise RuntimeError("unreadable registry")
+
+    monkeypatch.setattr(host_detect, "plugin_serves_claude", boom)
+    row = _rows(skill_install.audit(home=home, cwd=tmp_path), "kimi")
+    assert row["state"] == "CURRENT"
