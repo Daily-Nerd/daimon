@@ -456,3 +456,16 @@ def test_a_declined_removal_writes_nothing():
                                    ask=lambda _q: False, command="hooks remove")
     assert d.install == []
     assert any("declined" in line for line in d.lines)
+
+
+def test_gemini_hooks_point_at_the_standalone_lifecycle_manager():
+    """The one host whose hook scripts exist and are reached another way:
+    `hook/gemini-hooks.py` is a standalone manager a person runs directly.
+    Reporting "daimon ships no hooks for gemini" would be false, and false in
+    the direction that sends someone looking for an adapter that is in the
+    repo."""
+    for kind in ("hook", "hook-remove"):
+        gemini = _by_name(host_detect.detect(Path("/nonexistent"), kind=kind,
+                                             path_env=""))["gemini"]
+        assert not gemini.wirable
+        assert "gemini-hooks.py" in gemini.hint

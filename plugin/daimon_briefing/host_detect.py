@@ -56,6 +56,16 @@ HOST_SPECS: dict[str, tuple[str, str]] = {
 
 _CLAUDE_PLUGIN_HINT = (
     "claude hooks ship inside the daimon plugin, not through `hooks install`")
+# Gemini is the one host whose hook scripts exist and are reached another way:
+# `hook/gemini-hooks.py` is a standalone lifecycle manager a person runs
+# directly, the shape codex had before #262 folded it into this command. The
+# scripts are NOT packaged, so a wheel install cannot reach them at all. Saying
+# "daimon ships no hooks for gemini" would be false, and it is the kind of
+# false that sends someone looking for a host adapter that is right there in
+# the repo.
+_GEMINI_HOOK_HINT = (
+    "gemini hooks install through the standalone hook/gemini-hooks.py "
+    "lifecycle manager, not through this command; see the gemini host docs")
 
 
 def _hook_hosts() -> dict:
@@ -91,11 +101,15 @@ def _wirable(name: str, kind: str, project: bool) -> tuple[bool, str | None]:
             return True, None
         if name == "claude":
             return False, _CLAUDE_PLUGIN_HINT
+        if name == "gemini":
+            return False, _GEMINI_HOOK_HINT
         return False, f"daimon does not own the hook registration for {name}"
     if spec is not None:
         return True, None
     if name == "claude":
         return False, _CLAUDE_PLUGIN_HINT
+    if name == "gemini":
+        return False, _GEMINI_HOOK_HINT
     return False, f"daimon ships no hooks for {name}"
 
 
