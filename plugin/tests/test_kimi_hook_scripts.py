@@ -412,6 +412,114 @@ def test_recall_runs_on_a_later_prompt_and_not_on_a_slash_command(home):
     assert capture.read_text(encoding="utf-8").count("recall-inject") == before
 
 
+# ---- print mode: no briefing, no recall, no delivery (#999) ----
+#
+# `kimi -p` fires this event too, and the host injects hook stdout into the
+# one-shot call's context and echoes it to stdout. The guard reads the parent
+# process argv, so the tests below stand in for kimi with a shell wrapper
+# whose OWN argv carries (or omits) the flag. The wrapper must NOT exec the
+# hook: after exec the parent's argv is the interpreter's, and the flag that
+# the guard looks for would be gone.
+
+def _kimi_wrapper(home: Path) -> Path:
+    """A fake kimi parent: runs the hook named by env as a CHILD, keeping its
+    own argv (which is what the guard reads) intact for the child's lifetime.
+    The name matters: the guard requires the parent program to be the host
+    binary, so the wrapper is named exactly `kimi`."""
+    wrapper = home / "kimi"
+    wrapper.write_text('#!/bin/sh\npython3 "$KIMI_HOOK_UNDER_TEST"\n',
+                       encoding="utf-8")
+    wrapper.chmod(0o755)
+    return wrapper
+
+
+def _run_under_wrapper(home, wrapper, argv_tail, payload, extra_env=None):
+    env = {
+        **os.environ,
+        "PATH": f"{home / 'fakebin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(home),
+        "KIMI_HOOK_UNDER_TEST": str(PROMPT_HOOK),
+    }
+    env.pop("KIMI_CODE_HOME", None)
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run([str(wrapper), *argv_tail],
+                          input=json.dumps(payload), capture_output=True,
+                          text=True, env=env, timeout=30)
+
+
+def test_print_mode_is_detected_from_exact_parent_argv_tokens(home):
+    """The token table. `ps` space-joins argv, so only exact flag tokens may
+    match: an inexact check would fire on an unrelated argument, and an
+    unreadable argv must fail toward the interactive case (silently losing
+    the only channel into the model is the worse miss). The parent program
+    must also BE the host binary: `-p` is a common flag elsewhere (pytest's
+    `-p no:cacheprovider` is the measured case), and a bare flag match
+    would silence the briefing under any test runner."""
+    lib = _load_lib()
+    flag = ["kimi", "-p", "Reply with exactly: OK"]
+    assert lib.kimi_print_mode(flag)
+    assert lib.kimi_print_mode(["/usr/local/bin/kimi", "-p", "input"])
+    assert lib.kimi_print_mode(["kimi", "-m", "alias", "-p", "input"])
+    assert lib.kimi_print_mode(["kimi", "--prompt", "hi"])
+    assert lib.kimi_print_mode(["kimi", "--prompt=hi"])
+    joined = " ".join(flag)  # the `ps` fallback shape
+    assert lib.kimi_print_mode(joined.split())
+    assert not lib.kimi_print_mode(["kimi"])
+    assert not lib.kimi_print_mode(["kimi", "-m", "kimi-code/kimi-for-coding"])
+    assert not lib.kimi_print_mode(["kimi", "--print-mode-ish", "x"])
+    assert not lib.kimi_print_mode(["kimi", "path/that-mentions--prompt"])
+    assert not lib.kimi_print_mode([])
+    # A `-p` flag on a parent that never names the host binary is somebody
+    # else's flag (pytest, perl, ...); the briefing must still fire. A `#!`
+    # script parent shows its interpreter as argv[0] under `ps`, so the name
+    # may sit in any token.
+    assert not lib.kimi_print_mode(
+        ["pytest", "-p", "no:cacheprovider", "tests"])
+    assert not lib.kimi_print_mode(["python", "-m", "pytest", "-p", "x"])
+    assert not lib.kimi_print_mode(["/x/fake-kimi", "-p", "input"])
+    assert not lib.kimi_print_mode(["kimi2", "-p", "input"])
+    assert lib.kimi_print_mode(["/bin/sh", "/x/kimi", "-p", "input"])
+
+
+def test_print_mode_suppresses_the_briefing_and_every_cli_call(
+        home, tmp_checkpoint_dir, sample_checkpoint):
+    """The #999 repro end to end. The parent argv carries `-p`, so nothing may
+    reach stdout: the host would inject it into the model context and echo it,
+    and daimon's serializer backend would read the dump as part of the answer."""
+    _checkpoint(sample_checkpoint)
+    _fake_cli(home)  # a guard miss would record the `brief` call here
+    wrapper = _kimi_wrapper(home)
+    capture = home / "invocations.txt"
+    proc = _run_under_wrapper(
+        home, wrapper, ["-p", "Reply with exactly: OK"],
+        {"hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+         "cwd": PROJECT, "client_type": "kimi_code_cli",
+         "prompt": [{"type": "text", "text": "Reply with exactly: OK"}],
+         "is_steer": False})
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+    _quiet(capture)
+
+
+def test_the_same_wrapper_without_the_flag_still_briefs(
+        home, tmp_checkpoint_dir, sample_checkpoint):
+    """The other direction: detection must not misfire on an interactive
+    parent. Same wrapper, same payload, no `-p` in argv — the briefing has
+    to arrive, or the guard has silently disabled the only channel into the
+    model on this host."""
+    _checkpoint(sample_checkpoint)
+    wrapper = _kimi_wrapper(home)
+    proc = _run_under_wrapper(
+        home, wrapper, [],
+        {"hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+         "cwd": PROJECT, "client_type": "kimi_code_cli",
+         "prompt": [{"type": "text", "text": "where were we"}],
+         "is_steer": False})
+    assert proc.returncode == 0
+    assert "DAIMON BRIEFING" in proc.stdout
+
+
 # ---- every Kimi transcript is named wire.jsonl ----
 #
 # `_run_serialize` derives the session id as `path.stem`, which is true of
