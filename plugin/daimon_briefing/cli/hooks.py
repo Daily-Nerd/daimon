@@ -67,6 +67,21 @@ def _cmd_hooks_install(args) -> int:
         lines = codex_hooks.install(pkg, Path.home())
         render.render_hooks_install(lines + ["", _checks_line()])
         return 0
+    if spec.get("register") == "kimi":
+        # #988. Same self-registering shape as Codex, into TOML rather than
+        # JSON. The ConfigError is caught here and reported: that file holds
+        # the person's provider credentials, and a traceback out of an install
+        # verb reads as "daimon broke my config" when nothing was written.
+        from .. import kimi_hooks
+
+        try:
+            lines = kimi_hooks.install(pkg, Path.home())
+        except kimi_hooks.ConfigError as exc:
+            print(f"error: {kimi_hooks.config_path(Path.home())} could not be "
+                  f"read safely, so nothing was written: {exc}", file=sys.stderr)
+            return 1
+        render.render_hooks_install(lines + ["", _checks_line()])
+        return 0
     target = _cli._hooks_target_dir()
     target.mkdir(parents=True, exist_ok=True)
     for name in spec["files"]:
@@ -90,6 +105,42 @@ def _cmd_hooks_install(args) -> int:
     lines += ["", _checks_line()]
     render.render_hooks_install(lines)
     return 0
+
+def _cmd_hooks_remove(args) -> int:
+    """Unregister a self-registering host's hook entries (#988).
+
+    Only hosts that daimon REGISTERED can be unregistered: for everyone else
+    the registration is a snippet the person pasted into their own config, and
+    daimon has no idea where it landed. Saying so is better than a verb that
+    reports success having touched nothing.
+
+    The installed scripts stay. They are inert once unregistered, and deleting
+    them would break any other registration pointing at the same files.
+    """
+    spec = _cli._HOOK_HOSTS.get(args.host)
+    if spec is None:
+        known = ", ".join(sorted(_cli._HOOK_HOSTS))
+        print(f"error: unknown host '{args.host}' (known: {known})", file=sys.stderr)
+        return 2
+    if spec.get("register") != "kimi":
+        removable = sorted(h for h, s in _cli._HOOK_HOSTS.items()
+                           if s.get("register") == "kimi")
+        print(f"error: daimon does not own the hook registration for "
+              f"'{args.host}', so it cannot remove it. Edit that host's hooks "
+              f"config by hand. Removable: {', '.join(removable)}",
+              file=sys.stderr)
+        return 2
+    from .. import kimi_hooks
+
+    try:
+        lines = kimi_hooks.remove(Path.home())
+    except kimi_hooks.ConfigError as exc:
+        print(f"error: {kimi_hooks.config_path(Path.home())} could not be read "
+              f"safely, so nothing was written: {exc}", file=sys.stderr)
+        return 1
+    render.render_hooks_install(lines)
+    return 0
+
 
 def _cmd_hooks_status(args) -> int:
     """#943 slice 5: the scripts audit, plus the file those scripts READ.
@@ -173,3 +224,11 @@ def register(sub, fmt) -> None:
     )
     ph_install.add_argument("host", help="host to install (see `daimon hooks list`)")
     ph_install.set_defaults(func=_cli._cmd_hooks_install)
+    ph_remove = hooks_sub.add_parser(
+        "remove",
+        help="unregister daimon's hook entries from a host whose registration "
+             "daimon wrote (kimi). The installed scripts are left in place; "
+             "they are inert once unregistered",
+    )
+    ph_remove.add_argument("host", help="host to unregister")
+    ph_remove.set_defaults(func=_cmd_hooks_remove)

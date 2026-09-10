@@ -4,7 +4,8 @@
    import is guarded (hermes only available in-hermes); unavailable -> [] not raise.
 2. from_file(path) — CLI/dogfood fallback. `.jsonl` parses as an agent session
    transcript; anything else as plain text/markdown. Includes a dedicated
-   branch for Windsurf Cascade's native transcript (#70).
+   branch for Windsurf Cascade's native transcript (#70) and one for Kimi
+   Code's `wire.jsonl` event log (#988).
 
 All messages normalize to OpenAI-format dicts: {"role": str, "content": str},
 plus an optional "id" (#358) when the host row carries a stable per-message
@@ -270,15 +271,209 @@ def _split_speaker_line(content: str, delim: str) -> tuple[str | None, str, bool
     return who, rest, True
 
 
-def _from_jsonl(text: str, speaker_line: str | None = None) -> list[dict]:
-    """Parse a JSONL agent transcript into conversation messages.
+# ---- #988: Kimi Code `wire.jsonl` ----
+#
+# Kimi Code does not persist a message list. It appends an EVENT log per agent
+# at ~/.kimi-code/sessions/<workspace>/<session>/agents/<agent>/wire.jsonl and
+# folds it into messages when it reads it back. Two consequences shape this
+# branch, both measured on live 0.42.0 sessions (2026-09-09):
+#
+# 1. ONE prompt is written THREE times. `prompt.accepted`, `turn.prompt` and
+#    `context.append_message` carry byte-identical text for the same prompt
+#    (hash-compared across three real sessions, every prompt, no exceptions).
+#    `context.append_message` is the canonical record — it is literally the
+#    event that appends to context — so the other two are treated as mirrors
+#    and suppressed. They are not simply ignored: a log cut off mid-turn keeps
+#    the mirrors and loses the append, and losing the last prompt of a crashed
+#    session is the opposite of what a crash-insurance capture is for.
+#
+# 2. ONE assistant turn arrives as a run of fragments. `content.part` events
+#    carry `{"type": "text", "text": ...}` or `{"type": "think", "think": ...}`;
+#    consecutive text fragments are one message, and thinking is dropped for
+#    the same reason `_text_of` drops Claude Code's thinking blocks.
+#
+# Shapes relied on, redacted from real events:
+#   {"type":"context.append_message","agentId":"main","message":{"role":"user",
+#    "content":[{"type":"text","text":"..."}],"toolCalls":[],
+#    "origin":{"kind":"user"}},"time":1788971099794}
+#   {"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"..."}],
+#    "origin":{"kind":"user"},"promptId":"...","time":...}
+#   {"type":"context.append_loop_event","agentId":"main","event":{
+#    "type":"tool.call","toolCallId":"...","name":"Bash",
+#    "args":{"command":"..."},"display":{...}},"time":...}
+#   {"type":"context.append_loop_event","agentId":"main","event":{
+#    "type":"tool.result","parentUuid":"...","toolCallId":"...",
+#    "result":{"output":"...","isError":true}},"time":...}
+#
+# Subagent logs (`agents/<other>/wire.jsonl`) are NOT merged in this slice. A
+# parent's log holds only the Agent call and the returned result, so a
+# subagent's own reasoning is absent from the main transcript; whether that is
+# worth merging is a question for a real multi-agent session, not an
+# assumption. Handed a subagent file directly, this branch folds it normally.
+#
+# `time` is epoch MILLISECONDS (verified: 1788971099794 -> 2026-09-09T16:24:59Z).
 
-    Claude Code exposes stable-enough user/assistant rows today. Codex also
-    exposes a `transcript_path` to hooks, but its docs explicitly say the format
-    is not stable, so this parser accepts a small set of role/content shapes and
-    ignores everything else. A noise-only file returns [] — never the raw-blob
-    fallback.
-    """
+# Kimi's own scaffolding, appended to context by the host rather than by a
+# person: a date-change notice, a permission-mode notice. The direct analogue
+# of Claude Code's `isMeta` rows, which this parser has always dropped.
+_KIMI_NOISE_ORIGINS = ("injection",)
+
+# Lifecycle events that mirror a prompt already recorded by
+# `context.append_message`. See note 1 above.
+_KIMI_MIRROR_TYPES = ("prompt.accepted", "turn.prompt", "turn.steer")
+
+
+def _is_kimi_wire(objects: list[dict]) -> bool:
+    """True when the first object is a Kimi wire header. Keyed on the header
+    that opens every log Kimi writes, not on a key count, so a
+    protocol-widened header still selects the branch."""
+    for obj in objects:
+        return (obj.get("type") == "metadata"
+                and "protocol_version" in obj)
+    return False
+
+
+def _is_kimi_wire_path(path: Path) -> bool:
+    """True for `.../agents/<agentId>/wire.jsonl`. The header check above is
+    the primary signal; this covers a log whose head was rotated or truncated
+    away, which would otherwise fall through to the generic reader."""
+    return (path.name == "wire.jsonl"
+            and path.parent.parent.name == "agents")
+
+
+def _kimi_text(parts) -> str:
+    """Flatten a Kimi content-part list to plain text. Only `text` parts —
+    `think` parts are the model's reasoning, noise for the serializer."""
+    if not isinstance(parts, list):
+        return ""
+    out = [p.get("text", "") for p in parts
+           if isinstance(p, dict) and p.get("type") == "text"]
+    return "\n".join(t for t in out if t).strip()
+
+
+def _kimi_appended_texts(objects: list[dict]) -> dict[str, int]:
+    """Prepass: how many times each user text was recorded by the canonical
+    `context.append_message`. A mirror whose text is in here is a duplicate;
+    a mirror whose text is NOT is the only surviving copy of that prompt."""
+    counts: dict[str, int] = {}
+    for obj in objects:
+        if obj.get("type") != "context.append_message":
+            continue
+        msg = obj.get("message")
+        if not isinstance(msg, dict):
+            continue
+        text = _kimi_text(msg.get("content"))
+        if text:
+            counts[text] = counts.get(text, 0) + 1
+    return counts
+
+
+def _kimi_tool_message(event: dict, daimon_calls: set[str]) -> dict | None:
+    """A `tool.result` event as a #359 tool message, or None when it carries
+    no usable id. Grounding is pointer-based ([mN] marker -> host id), so an
+    id-less row cannot be cited and is dropped rather than half-kept. Kimi's
+    `toolCallId` is that id: it is stable, and it is what pairs the result
+    with the call that produced it."""
+    result = event.get("result")
+    if not isinstance(result, dict):
+        return None
+    call_id = str(event.get("toolCallId") or "").strip()
+    if not call_id:
+        return None
+    output = result.get("output")
+    text = (output.strip() if isinstance(output, str) else "")
+    msg: dict = {"role": "tool",
+                 "content": text[:_TOOL_RESULT_MAX_CHARS] or "(no output)",
+                 "id": call_id, "tool_result": True}
+    if result.get("isError"):
+        msg["tool_error"] = True
+    # #512, same provenance rule as the Claude Code branch: a result born from
+    # a daimon invocation is daimon's own output echoed back, never a witness.
+    if call_id in daimon_calls:
+        msg["daimon_output"] = True
+    return msg
+
+
+def _from_kimi_wire(objects: list[dict]) -> list[dict]:
+    """Fold a Kimi Code wire event log into conversation messages.
+
+    Total for this format: an unrecognized event type contributes nothing and
+    never raises, so a Kimi release that adds events keeps parsing. A log with
+    no message-bearing events yields [] — never the raw-blob fallback."""
+    messages: list[dict] = []
+    appended = _kimi_appended_texts(objects)
+    daimon_calls: set[str] = set()
+    mirrored: set[str] = set()
+    buf: list[str] = []
+
+    def flush() -> None:
+        text = "\n".join(buf).strip()
+        buf.clear()
+        if text:
+            messages.append({"role": "assistant", "content": text})
+
+    for obj in objects:
+        typ = obj.get("type")
+        if typ == "context.append_message":
+            msg = obj.get("message")
+            if not isinstance(msg, dict):
+                continue
+            origin = msg.get("origin")
+            kind = origin.get("kind") if isinstance(origin, dict) else None
+            if kind in _KIMI_NOISE_ORIGINS:
+                continue
+            role = str(msg.get("role") or "").lower()
+            if role not in ("user", "assistant"):
+                continue
+            text = _kimi_text(msg.get("content"))
+            if not text:
+                continue
+            flush()
+            messages.append({"role": role, "content": text})
+        elif typ in _KIMI_MIRROR_TYPES:
+            text = _kimi_text(obj.get("input") if "input" in obj
+                              else obj.get("content"))
+            if not text or appended.get(text):
+                continue
+            # `prompt.accepted` and `turn.prompt` mirror EACH OTHER too, so the
+            # fallback keys on the prompt id both carry (text alone would drop
+            # a prompt the user genuinely typed twice).
+            key = str(obj.get("promptId") or text)
+            if key in mirrored:
+                continue
+            mirrored.add(key)
+            flush()
+            messages.append({"role": "user", "content": text})
+        elif typ == "context.append_loop_event":
+            event = obj.get("event")
+            if not isinstance(event, dict):
+                continue
+            etype = event.get("type")
+            if etype == "content.part":
+                part = event.get("part")
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = str(part.get("text") or "").strip()
+                    if text:
+                        buf.append(text)
+            elif etype == "tool.call":
+                if _is_daimon_tool_use({"name": event.get("name"),
+                                        "input": event.get("args")}):
+                    call_id = str(event.get("toolCallId") or "").strip()
+                    if call_id:
+                        daimon_calls.add(call_id)
+            elif etype == "tool.result":
+                flush()
+                tool_msg = _kimi_tool_message(event, daimon_calls)
+                if tool_msg is not None:
+                    messages.append(tool_msg)
+    flush()
+    return messages
+
+
+def _objects_of(text: str) -> list[dict]:
+    """Every parseable JSON object in a JSONL blob, in file order. A malformed
+    line is skipped, never fatal: a log truncated mid-write by a crashed host
+    is exactly the transcript most worth reading."""
     objects: list[dict] = []
     for line in text.splitlines():
         line = line.strip()
@@ -291,6 +486,29 @@ def _from_jsonl(text: str, speaker_line: str | None = None) -> list[dict]:
         if not isinstance(obj, dict):
             continue
         objects.append(obj)
+    return objects
+
+
+def _from_jsonl(text: str, speaker_line: str | None = None,
+                kimi: bool = False) -> list[dict]:
+    """Parse a JSONL agent transcript into conversation messages.
+
+    Claude Code exposes stable-enough user/assistant rows today. Codex also
+    exposes a `transcript_path` to hooks, but its docs explicitly say the format
+    is not stable, so this parser accepts a small set of role/content shapes and
+    ignores everything else. A noise-only file returns [] — never the raw-blob
+    fallback.
+
+    `kimi` forces the Kimi Code branch for a file whose PATH says it is a wire
+    log even though its header is gone (see `_is_kimi_wire_path`).
+    """
+    objects = _objects_of(text)
+
+    # #988: Kimi Code writes an event log, not a message list, so its branch
+    # runs first and is total — a wire log must never fall through to the
+    # generic reader below, which would read its `type` keys as roles.
+    if kimi or _is_kimi_wire(objects):
+        return _from_kimi_wire(objects)
 
     # Current Codex rollouts emit each visible turn twice: once as an
     # `event_msg` and once as a nested `response_item`. Prefer the event stream
@@ -506,6 +724,18 @@ def _stamp_epoch(stamp) -> float | None:
     return dt.timestamp()
 
 
+def _kimi_epoch(stamp) -> float | None:
+    """Epoch seconds for a Kimi wire event's `time`, which is epoch
+    MILLISECONDS. None for anything that is not a number, and for a boolean:
+    `bool` is an `int` in Python, so `True / 1000` reads as 0.001 seconds past
+    the epoch. It never wins the max against a real stamp, but in a log whose
+    only numeric `time` is a stray flag it is the only candidate, and the
+    capture would report a 1970 end instead of falling back to the mtime."""
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return None
+    return stamp / 1000.0
+
+
 def last_timestamp(path) -> str | None:
     """Session-end stamp for a `.jsonl` transcript: the max top-level `timestamp`
     across rows, normalized to the checkpoint `created` format (#123). The max —
@@ -519,18 +749,15 @@ def last_timestamp(path) -> str | None:
         text = p.read_text(encoding="utf-8")
     except OSError:
         return None
+    objects = _objects_of(text)
+    # #988: Kimi stamps every event with `time` in epoch MILLISECONDS and has
+    # no `timestamp` key at all, so without this branch every Kimi capture
+    # reports no session-end stamp and the ledger falls back to file mtime.
+    kimi = _is_kimi_wire(objects) or _is_kimi_wire_path(p)
     best = None
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict):
-            continue
-        epoch = _stamp_epoch(obj.get("timestamp"))
+    for obj in objects:
+        epoch = (_kimi_epoch(obj.get("time")) if kimi
+                 else _stamp_epoch(obj.get("timestamp")))
         if epoch is not None and (best is None or epoch > best):
             best = epoch
     if best is None:
@@ -567,7 +794,7 @@ def from_file(path) -> list[dict]:
     text = p.read_text(encoding="utf-8")
 
     if p.suffix == ".jsonl":
-        return _from_jsonl(text)
+        return _from_jsonl(text, kimi=_is_kimi_wire_path(p))
 
     messages: list[dict] = []
     current_role = None

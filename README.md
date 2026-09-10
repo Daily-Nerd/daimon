@@ -72,7 +72,7 @@ npx skills add Daily-Nerd/daimon
 
 Adds `daimon-briefing` and `daimon-end` to whichever agent it detects. Use `--skill daimon-briefing` for one of them. Claude Code users who installed the plugin above already have both, so there is no need to run this as well.
 
-**Other hosts** (Windsurf, Codex, Gemini CLI): per-host guides at [daily-nerd.github.io/daimon/docs/hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
+**Other hosts** (Windsurf, Codex, Kimi Code, Gemini CLI): per-host guides at [daily-nerd.github.io/daimon/docs/hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
 
 That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status` — it reports capture health honestly, including failures, skips, and crashes; a failed capture self-heals on the next start.
 
@@ -93,7 +93,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 
 - **Trust-classed, quote-pinned memory:** every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, and no required daemon: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
 - **The briefing UX** — memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
-- **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06); other hosts are reachable via the same thin adapter shape.
+- **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06), Kimi Code (briefing and capture; the briefing arrives with the first prompt, since that host has no session-start injection channel); other hosts are reachable via the same thin adapter shape.
 
 ## An independent reading
 
@@ -111,6 +111,7 @@ It is not praise alone. The same summary names the weak half: "The retrieval hal
 | CLI (`brief`, `status`, `recall`, `why`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
 | Windsurf adapter | live-validated |
 | Codex adapter | live-validated capture (real sessions serialized since 2026-08-06) |
+| Kimi Code adapter | briefing and capture, probe-measured; no ruling checks yet |
 | Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
 | Team memory | shipped, opt-in, early |
 

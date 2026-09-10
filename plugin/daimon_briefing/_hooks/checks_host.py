@@ -167,6 +167,33 @@ PROFILES = {
         matcher="",
         install_timeout=10,
     ),
+    # #988: there is deliberately NO `kimi` row here yet, and the Kimi adapter
+    # ships its briefing and capture hooks without one.
+    #
+    # What a live probe of Kimi Code 0.42.0 (2026-09-09) DID measure:
+    #   - `PreToolUse` fires with `tool_name: "Bash"` and the command at
+    #     `tool_input.command`, so `command_path` and `matcher` would copy the
+    #     claude-code row unchanged.
+    #   - `cwd` is on the payload, resolved on macOS (`/private/tmp`).
+    #   - `PreToolUse` exit-0 stdout is DROPPED, not appended to context. Only
+    #     `UserPromptSubmit` stdout reaches the model. So the warn channel is
+    #     measured ABSENT, and `warn` would have to cap at `record-only` the
+    #     way the codex row does, rather than be left open.
+    #
+    # What it did NOT measure, and what runbook Part 4 has to prove before a
+    # row lands here: THE DENY CHANNEL. Neither exit code 2 with a reason on
+    # stderr nor the stdout JSON `hookSpecificOutput.permissionDecision: deny`
+    # was ever exercised against a real command. Both strings are present in
+    # the shipped binary and both are documented, and neither of those is a
+    # command observed being blocked.
+    #
+    # A row added on documentation alone would put `enforce` in the
+    # degradation ladder for an enforcement daimon has never watched land,
+    # which is the one direction this ladder must not fail in: a check that
+    # reports enforcing and silently allows is worse than no check, because it
+    # is byte-identical to a clean allow (scar 0072). The windsurf row above
+    # is the precedent, and it caps the whole column at `unsupported` for
+    # exactly this reason.
 }
 
 

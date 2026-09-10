@@ -62,6 +62,19 @@ HOSTS: dict[str, dict[str, tuple[str, str, str] | None]] = {
         "global": (".gemini/GEMINI.md", "block", "compact"),
         "project": ("GEMINI.md", "block", "compact"),
     },
+    # #988. Kimi Code's skill contract is Claude's, not the rules-file shape:
+    # a directory-form `<scope>/skills/<name>/SKILL.md` whose frontmatter
+    # `name` MUST equal the directory name, scanned from `~/.kimi-code/skills/`
+    # (user) and `<repo>/.kimi-code/skills/` (project). At session start the
+    # host injects only the LISTING (name plus description) and loads the body
+    # when the skill is invoked, so this is description-gated like Claude and
+    # takes `full` rather than the always-injected compact block. Project scope
+    # is the same relative path under the repo root, which is why both rows
+    # read the same and only the base directory differs.
+    "kimi": {
+        "global": (".kimi-code/skills/daimon/SKILL.md", "owned", "full"),
+        "project": (".kimi-code/skills/daimon/SKILL.md", "owned", "full"),
+    },
 }
 
 # Per-host read caps, in BYTES. Codex documents project_doc_max_bytes and
