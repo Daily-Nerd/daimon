@@ -2458,6 +2458,10 @@ def _status_world(project_arg=None) -> dict:
     # schedule. None on a machine with no plugin, so non-plugin users stay
     # silent.
     plugin_drift = _plugin_drift_present()
+    # #1006: the skill goes stale the same way the hooks do, and until now
+    # nothing said so. An out-of-date skill is instructions, so it fails
+    # silently and in the direction of the agent doing an older thing well.
+    skill_drift = _skill_drift_present()
     # #341/#475 part 2: whether a rescue path exists for the CURRENTLY
     # CONFIGURED primary. llm.rescue_posture() is the single resolver (it
     # calls resolve_backend(), the same decision chat() dispatches on) —
@@ -2557,6 +2561,7 @@ def _status_world(project_arg=None) -> dict:
         "recall_error": recall_error, "recall_index": recall_index,
         "receipts": receipts_line, "capture_alarm": capture_alarm,
         "hook_drift": hook_drift, "plugin_drift": plugin_drift,
+        "skill_drift": skill_drift,
         "rescue_gap": rescue_gap,
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
         "forget_hits": forget_hits, "requests": request_counts,
@@ -2577,6 +2582,7 @@ def status_payload(project_arg=None) -> tuple:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "plugin_drift": w.get("plugin_drift"),
+        "skill_drift": w.get("skill_drift"),
         "rescue_gap": w["rescue_gap"],
         "rescue_posture": w["rescue_posture"],
         "forget_hits": w["forget_hits"],
@@ -2612,6 +2618,7 @@ def _cmd_status(args) -> int:
         "recall_error": w["recall_error"], "recall_index": w["recall_index"],
         "receipts": w["receipts"], "capture_alarm": w["capture_alarm"],
         "hook_drift": w["hook_drift"], "plugin_drift": w.get("plugin_drift"),
+        "skill_drift": w.get("skill_drift"),
         "rescue_gap": w["rescue_gap"],
         "rescue_posture": w["rescue_posture"],
         "rescue_window_errors": w["rescue_window_errors"],
@@ -3662,6 +3669,22 @@ def _hook_drift_present() -> bool:
     try:
         return any(h["drift"] for h in _hooks_status_report(Path.home()))
     except Exception:
+        return False
+
+
+def _skill_drift_present() -> bool:
+    """Cheap yes/no for the `daimon status` pointer (#1006). Same
+    swallow-everything contract as _hook_drift_present: a stale skill teaches
+    an old protocol, but a status command that crashes teaches nothing at
+    all. Project-scope rows resolve against the repo root the same way
+    `skill install --project` writes."""
+    try:
+        from .. import config, skill_install
+
+        cwd = Path(config.resolve_project_root(str(Path.cwd())))
+        return any(r["drift"] for r in skill_install.audit(home=Path.home(),
+                                                           cwd=cwd))
+    except Exception:  # noqa: BLE001
         return False
 
 

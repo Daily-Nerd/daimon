@@ -101,6 +101,26 @@ def _cmd_skill_uninstall(args) -> int:
         runner=lambda name: _uninstall_one(name, project=args.project, cwd=cwd))
 
 
+def _cmd_skill_status(args) -> int:
+    """The audit the hooks half has had since #266 (#1006).
+
+    Every host page says to re-run install after an upgrade. Nothing could
+    tell a person whether they had, and on the three directory-form hosts the
+    artifact carried no version marker to check by eye either.
+
+    Non-zero exit on drift, so CI and a provisioning script can gate on it."""
+    import json
+
+    from .. import skill_install
+
+    report = skill_install.audit(home=Path.home(), cwd=_resolve_project_cwd())
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+    else:
+        render.render_skill_status(report)
+    return 1 if any(r["drift"] for r in report) else 0
+
+
 def register(sub, fmt) -> None:
     """Register the `skill` parser family on the top-level subparsers."""
     p_skill = sub.add_parser(
@@ -115,6 +135,14 @@ def register(sub, fmt) -> None:
     ps_show.add_argument("--compact", action="store_true",
                           help="print the rules-host variant instead of SKILL.md")
     ps_show.set_defaults(func=_cli._cmd_skill_show)
+    ps_status = skill_sub.add_parser(
+        "status",
+        help="audit each installed skill against what this CLI would write "
+             "now (CURRENT/STALE/MISSING/BROKEN/NOT INSTALLED); non-zero exit "
+             "on drift. --json for machines")
+    ps_status.add_argument("--json", action="store_true",
+                           help="machine-readable output")
+    ps_status.set_defaults(func=_cmd_skill_status)
     ps_install = skill_sub.add_parser(
         "install", help="write the skill for a host (global scope by default); "
                         "with no host, detect what this machine runs")

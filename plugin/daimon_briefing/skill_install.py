@@ -97,9 +97,34 @@ _BUNDLED_DIR = Path(__file__).resolve().parent / "_skills"
 # value rather than the membership.
 CHAR_CAPS: dict[str, int] = {"codex": 32768}
 
+_STAMP_RE = re.compile(r"<!-- daimon:skill v(\S+) -->")
+
+
+def _stamp(version: str = __version__) -> str:
+    return f"<!-- daimon:skill v{version} -->"
+
+
+def _stamp_full(body: str) -> str:
+    """Put the version marker AFTER the frontmatter block (#1006).
+
+    `full` shipped as `lambda body: body`, so the file written for claude,
+    windsurf global and kimi said nothing about which release wrote it, and a
+    stale skill was invisible even to a person reading the artifact.
+
+    Placement is load-bearing, not cosmetic. The directory-form hosts require
+    `name` and `description` in frontmatter, and Kimi skips a skill whose
+    `name` does not equal its directory: a marker landing inside or before
+    that block does not warn, it silently disables the skill.
+    """
+    head, sep, rest = body.partition("\n---\n")
+    if body.startswith("---\n") and sep:
+        return f"{head}{sep}{_stamp()}\n{rest}"
+    return f"{_stamp()}\n\n{body}"
+
+
 _OWNED_WRAPPERS = {
     # per (host, variant): callable(body) -> file text
-    ("claude", "full"): lambda body: body,  # render_full already has frontmatter
+    ("claude", "full"): _stamp_full,  # render_full already has frontmatter
     ("cursor", "compact"): lambda body: (
         "---\ndescription: Daimon cross-session memory protocol\n"
         f"alwaysApply: true\n---\n<!-- daimon:skill v{__version__} -->\n\n{body}"),
@@ -239,7 +264,8 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
     dest.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     if kind == "owned":
-        wrapper = _OWNED_WRAPPERS.get((host, variant), lambda b: b)
+        default = _stamp_full if variant == "full" else (lambda b: b)
+        wrapper = _OWNED_WRAPPERS.get((host, variant), default)
         dest.write_text(wrapper(_render(variant)), encoding="utf-8")
     else:
         old = dest.read_text(encoding="utf-8") if dest.exists() else ""
@@ -293,3 +319,128 @@ def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
     new = new.rstrip("\n")
     dest.write_text((new + "\n") if new else "", encoding="utf-8")
     return [f"removed daimon:skill block from {dest}"]
+
+
+# ---- drift audit (#1006) ----------------------------------------------------
+#
+# The hooks half of this shipped as #266: byte-hash what is installed against
+# what is packaged, report CURRENT/STALE/MISSING, exit non-zero on drift. The
+# skill half had nothing, while every host page said "re-run install after
+# every upgrade" with no way to find out whether anyone did.
+#
+# Compared against a FRESH RENDER rather than a hash recorded at install time.
+# Rendering is deterministic and is already the source of truth; a stored
+# hash is a second one that can go stale or be lost on its own.
+
+_STATE_DRIFTED = ("STALE", "MISSING", "BROKEN", "UNREADABLE")
+
+
+def _despite_version(text: str) -> str:
+    """Content with every version marker neutralized.
+
+    The stamp records which release wrote the file, so a byte comparison would
+    call every release a drift even when the protocol text did not move, and
+    an audit that cries wolf on each upgrade stops being read. The VERSION is
+    still reported on the row; it just does not decide the verdict.
+    """
+    text = _STAMP_RE.sub("<!-- daimon:skill -->", text)
+    text = _START_RE.sub("<!-- daimon:skill start -->", text)
+    return _END_RE.sub("<!-- daimon:skill end -->", text)
+
+
+def _installed_version(text: str) -> str | None:
+    m = _STAMP_RE.search(text) or re.search(r"<!-- daimon:skill v(\S+) start -->",
+                                            text)
+    return m.group(1) if m else None
+
+
+def _row(host, scope, skill, path, state, version=None) -> dict:
+    return {"host": host, "scope": scope, "skill": skill, "path": str(path),
+            "state": state, "version": version,
+            "drift": state in _STATE_DRIFTED}
+
+
+def _audit_owned(host, scope, rel, variant, base) -> dict:
+    dest = base / rel
+    expected = _OWNED_WRAPPERS.get(
+        (host, variant), _stamp_full if variant == "full" else (lambda b: b)
+    )(_render(variant))
+    if not dest.exists():
+        return _row(host, scope, "daimon", dest, "NOT INSTALLED")
+    try:
+        actual = dest.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return _row(host, scope, "daimon", dest, "UNREADABLE")
+    state = ("CURRENT" if _despite_version(actual) == _despite_version(expected)
+             else "STALE")
+    return _row(host, scope, "daimon", dest, state, _installed_version(actual))
+
+
+def _audit_block(host, scope, rel, variant, base) -> dict:
+    """A marker-block host writes into a file the USER owns. Only the region
+    between daimon's markers is audited: their own rules changing is not
+    daimon drift, and reporting it as such trains the reader to ignore this."""
+    dest = base / rel
+    if not dest.exists():
+        return _row(host, scope, "daimon", dest, "NOT INSTALLED")
+    try:
+        text = dest.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return _row(host, scope, "daimon", dest, "UNREADABLE")
+    found = _BLOCK_RE.search(text)
+    if not found:
+        # Half-broken markers are the state `install` REFUSES on rather than
+        # guess at the boundary. An audit must never raise: it is the command
+        # a person runs to find out what is wrong.
+        if _START_RE.search(text) or _END_RE.search(text):
+            return _row(host, scope, "daimon", dest, "BROKEN")
+        return _row(host, scope, "daimon", dest, "NOT INSTALLED")
+    state = ("CURRENT"
+             if _despite_version(found.group(0)) == _despite_version(_block(variant))
+             else "STALE")
+    return _row(host, scope, "daimon", dest, state, _installed_version(text))
+
+
+def _audit_bundled(host, scope, rel, base) -> list[dict]:
+    root = base / Path(rel).parent.parent
+    rows = []
+    for name in BUNDLED_SKILLS:
+        dest = root / name / "SKILL.md"
+        if not dest.exists():
+            # The host is installed and one of its skills is gone: a different
+            # repair from "never installed here", so a different word. The
+            # caller decides which applies by looking at the `daimon` row.
+            rows.append(_row(host, scope, name, dest, "MISSING"))
+            continue
+        try:
+            actual = dest.read_text(encoding="utf-8")
+            expected = (_BUNDLED_DIR / name / "SKILL.md").read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            rows.append(_row(host, scope, name, dest, "UNREADABLE"))
+            continue
+        rows.append(_row(host, scope, name, dest,
+                         "CURRENT" if actual == expected else "STALE"))
+    return rows
+
+
+def audit(*, home: Path, cwd: Path) -> list[dict]:
+    """Every host and scope daimon can write a skill to, and what is there."""
+    report: list[dict] = []
+    for host in sorted(HOSTS):
+        for scope in ("global", "project"):
+            entry = HOSTS[host].get(scope)
+            if entry is None:
+                continue
+            rel, kind, variant = entry
+            base = cwd if scope == "project" else home
+            audit_one = _audit_owned if kind == "owned" else _audit_block
+            main = audit_one(host, scope, rel, variant, base)
+            report.append(main)
+            if _bundled_root(rel, variant) is None:
+                continue
+            if main["state"] == "NOT INSTALLED":
+                # Nothing was installed here, so the bundled skills are not
+                # missing, they were never written. One absent host, one row.
+                continue
+            report.extend(_audit_bundled(host, scope, rel, base))
+    return report

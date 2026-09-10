@@ -795,7 +795,8 @@ def test_cli_status_json_shape(
                          "siblings", "health", "team", "crash", "disabled",
                          "skipped_recent", "recall_error", "recall_index",
                          "receipts", "capture_alarm", "hook_drift",
-                         "plugin_drift", "rescue_gap", "rescue_posture",
+                         "plugin_drift", "skill_drift", "rescue_gap",
+                         "rescue_posture",
                          "forget_hits", "requests", "handoff", "checks",
                          "identity"}
     # #694 PR 3: the requests summary — {open_sent, awaiting_you}, always

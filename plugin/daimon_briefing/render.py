@@ -929,6 +929,8 @@ def _plain_status(data: dict) -> None:
             print(f"  ⚠ {w}")
     if data.get("hook_drift"):
         print("⚠ installed hooks out of date — run daimon hooks status")
+    if data.get("skill_drift"):
+        print("⚠ installed skill out of date — run daimon skill status")
     if data.get("plugin_drift"):
         print(_plugin_drift_line(data["plugin_drift"]))
     if data.get("rescue_gap"):
@@ -1036,6 +1038,9 @@ def _rich_status(data: dict) -> None:
     if data.get("hook_drift"):
         console.print("[red]⚠ installed hooks out of date — "
                       "run daimon hooks status[/red]")
+    if data.get("skill_drift"):
+        console.print("[red]⚠ installed skill out of date — "
+                      "run daimon skill status[/red]")
     if data.get("plugin_drift"):
         console.print(f"[red]{_plugin_drift_line(data['plugin_drift'])}[/red]")
     if data.get("rescue_gap"):
@@ -2207,3 +2212,36 @@ def render_relation(record, texts) -> None:
         _rich_relation(record, texts)
     else:
         _plain_relation(record, texts, detailed=True)
+
+
+def render_skill_status(report) -> None:
+    """`daimon skill status` (#1006): one row per host, scope and skill.
+
+    An audit names its own repair, or the reader is left with a verdict and
+    nowhere to go. The fix line only appears when something actually drifted;
+    a clean machine gets the table alone.
+    """
+    drifted = sorted({r["host"] for r in report if r["drift"]})
+    rows = [(f"{r['host']}/{r['scope']}", r["skill"], r["state"],
+             r["version"] or "", r["path"]) for r in report]
+    if not supports_rich():
+        for scope, skill, state, version, path in rows:
+            stamp = f" v{version}" if version else ""
+            print(f"{scope:20} {skill:12} {state:14}{stamp}  {path}")
+    else:
+        from rich.console import Console
+        from rich.table import Table
+
+        console = Console()
+        table = Table(show_header=True, header_style="bold")
+        for col in ("host/scope", "skill", "state", "version", "path"):
+            table.add_column(col)
+        for scope, skill, state, version, path in rows:
+            style = {"CURRENT": "green", "NOT INSTALLED": "dim"}.get(state, "red")
+            table.add_row(scope, skill, f"[{style}]{state}[/{style}]",
+                          version, path)
+        console.print(table)
+    if drifted:
+        print("")
+        for host in drifted:
+            print(f"fix: daimon skill install {host}")

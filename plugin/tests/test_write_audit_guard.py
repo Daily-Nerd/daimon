@@ -821,6 +821,12 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_skill_show():
         run(["skill", "show"], 0)
 
+    def r_skill_status():
+        # #1006: an audit, so it writes nothing and its exit code reports what
+        # it found. Installed by the recipe above, so this machine is current.
+        run(["skill", "install", "claude"], 0)
+        run(["skill", "status"], 0)
+
     def r_skill_install():
         run(["skill", "install", "claude"], 0)
 
@@ -902,6 +908,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("skill", "list"): r_skill_list,
         ("skill", "show"): r_skill_show,
         ("skill", "install"): r_skill_install,
+        ("skill", "status"): r_skill_status,
         ("skill", "uninstall"): r_skill_uninstall,
         ("mcp", "serve"): r_mcp_serve,
     }
