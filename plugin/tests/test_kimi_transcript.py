@@ -407,3 +407,42 @@ def test_a_boolean_time_is_not_a_1970_stamp(tmp_path):
     rows = [_metadata(), {**_append_message("hi"), "time": True}]
     path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     assert transcript.last_timestamp(path) is None
+
+
+# ---- shapes a truncated or hand-edited log can present ----
+
+def test_an_empty_wire_log_at_the_wire_path_folds_to_nothing(tmp_path):
+    """No header to key on and no rows: the path still selects the branch,
+    and the header check itself answers False rather than raising on an
+    empty object list."""
+    assert transcript._is_kimi_wire([]) is False
+    path = _write(tmp_path, [])
+    assert transcript.from_file(path) == []
+
+
+def test_malformed_events_contribute_nothing_and_never_raise(tmp_path):
+    """One of each shape the fold has to step over: a message that is not an
+    object, a role that is neither user nor assistant, content that is not a
+    part list, an empty part list, a loop event that is not an object, a tool
+    result whose `result` is not an object, and one with no call id. The one
+    well-formed prompt beside them is the whole output."""
+    system = _append_message("host notice")
+    system["message"]["role"] = "system"
+    string_content = _append_message("ignored")
+    string_content["message"]["content"] = "a bare string, not a part list"
+    objs = [
+        _metadata(),
+        {"type": "context.append_message", "message": "not an object", "time": MS},
+        system,
+        string_content,
+        _append_message(""),
+        {"type": "context.append_loop_event", "event": "not an object", "time": MS},
+        {"type": "context.append_loop_event", "time": MS,
+         "event": {"type": "tool.result", "toolCallId": "call-1",
+                   "result": "not an object"}},
+        {"type": "context.append_loop_event", "time": MS,
+         "event": {"type": "tool.result", "result": {"output": "orphan"}}},
+        _append_message("the real prompt"),
+    ]
+    path = _write(tmp_path, objs)
+    assert _roles(transcript.from_file(path)) == [("user", "the real prompt")]

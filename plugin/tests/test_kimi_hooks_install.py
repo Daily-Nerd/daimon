@@ -416,7 +416,112 @@ def test_an_unreadable_config_reports_unregistered_not_a_crash(tmp_path):
     assert kimi_hooks.registration_status(home, env={}) == "UNREGISTERED"
 
 
+# A `[[hooks]]` entry daimon's locator cannot read: the line inside the block
+# is neither a comment nor `key = value`. `_hook_blocks` raises ConfigError on
+# it, which is the case every verb below has to survive without writing.
+BROKEN_CONFIG = BASE_CONFIG + "\n[[hooks]]\nthis line is not an assignment\n"
+
+
+def test_a_config_the_locator_cannot_read_reports_unregistered(tmp_path):
+    """Distinct from a config that merely holds no `[[hooks]]`: this one makes
+    the locator RAISE, and status has to swallow that into UNREGISTERED the
+    same way it swallows an unreadable file."""
+    home = _home(tmp_path)
+    _write_config(home, BROKEN_CONFIG)
+    with pytest.raises(kimi_hooks.ConfigError):
+        kimi_hooks._hook_blocks(BROKEN_CONFIG)
+    assert kimi_hooks.registration_status(home, env={}) == "UNREGISTERED"
+
+
 # ---- wiring into the shipped CLI ----
+
+def _cli_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
+    (tmp_path / ".kimi-code").mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+def test_cli_install_kimi_registers_and_reports(tmp_path, monkeypatch, capsys):
+    from daimon_briefing import cli
+
+    home = _cli_home(tmp_path, monkeypatch)
+    assert cli.main(["hooks", "install", "kimi"]) == 0
+    assert kimi_hooks.registration_status(home, env={}) == "REGISTERED"
+    out = capsys.readouterr().out
+    assert "registered daimon-kimi-user-prompt-submit.py" in out
+    assert "Start a NEW session" in out
+
+
+def test_cli_install_kimi_refuses_a_config_it_cannot_read(tmp_path, monkeypatch,
+                                                         capsys):
+    """The one place a traceback would read as "daimon broke my config": the
+    verb reports the file by name and exit 1, and writes nothing, not even a
+    backup, because there was nothing safe to write."""
+    from daimon_briefing import cli
+
+    home = _cli_home(tmp_path, monkeypatch)
+    path = _write_config(home, BROKEN_CONFIG)
+    before = path.read_bytes()
+    assert cli.main(["hooks", "install", "kimi"]) == 1
+    err = capsys.readouterr().err
+    assert "could not be read safely, so nothing was written" in err
+    assert str(path) in err
+    assert path.read_bytes() == before
+    assert not list(path.parent.glob("config.toml.daimon-backup-*"))
+
+
+def test_cli_remove_kimi_unregisters_and_leaves_the_scripts(tmp_path, monkeypatch,
+                                                            capsys):
+    from daimon_briefing import cli
+
+    home = _cli_home(tmp_path, monkeypatch)
+    assert cli.main(["hooks", "install", "kimi"]) == 0
+    capsys.readouterr()
+    assert cli.main(["hooks", "remove", "kimi"]) == 0
+    assert "removed 3 daimon entr" in capsys.readouterr().out
+    assert kimi_hooks.registration_status(home, env={}) == "UNREGISTERED"
+    for name in kimi_hooks.FILES:
+        assert (kimi_hooks.hooks_dir(home, env={}) / name).exists()
+
+
+def test_cli_remove_kimi_refuses_a_config_it_cannot_read(tmp_path, monkeypatch,
+                                                        capsys):
+    from daimon_briefing import cli
+
+    home = _cli_home(tmp_path, monkeypatch)
+    path = _write_config(home, BROKEN_CONFIG)
+    before = path.read_bytes()
+    assert cli.main(["hooks", "remove", "kimi"]) == 1
+    assert "could not be read safely" in capsys.readouterr().err
+    assert path.read_bytes() == before
+
+
+def test_cli_remove_refuses_a_host_daimon_did_not_register(tmp_path, monkeypatch,
+                                                          capsys):
+    """Codex is self-registering too, but through its own manager; Windsurf is
+    a pasted snippet. Neither is removable through this verb, and the error
+    names what is, so the person does not go looking for a flag."""
+    from daimon_briefing import cli
+
+    _cli_home(tmp_path, monkeypatch)
+    for host in ("codex", "windsurf"):
+        assert cli.main(["hooks", "remove", host]) == 2
+        err = capsys.readouterr().err
+        assert f"does not own the hook registration for '{host}'" in err
+        assert "Removable: kimi" in err
+
+
+def test_cli_remove_names_an_unknown_host(tmp_path, monkeypatch, capsys):
+    from daimon_briefing import cli
+
+    _cli_home(tmp_path, monkeypatch)
+    assert cli.main(["hooks", "remove", "nosuchhost"]) == 2
+    err = capsys.readouterr().err
+    assert "unknown host 'nosuchhost'" in err
+    assert "kimi" in err
+
+
 
 def test_kimi_is_a_known_hooks_host():
     from daimon_briefing import cli
