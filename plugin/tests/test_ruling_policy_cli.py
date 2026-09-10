@@ -190,3 +190,79 @@ def test_ruling_show_and_list_render_the_policy_line(tmp_checkpoint_dir,
     out = capsys.readouterr().out
     assert "Policy: sender=p-sender kind=work verb=accept by=agent" in out
     assert "not in force (candidate)" in out
+
+
+# ---- codecov round: the refusal and fallback branches of `revise` ----
+
+def test_revise_with_a_repeated_policy_key_is_refused_at_the_parse_boundary(
+        tmp_checkpoint_dir, capsys):
+    """Same parse-boundary rule `propose` already has (M5a): a repeated key
+    is refused before any ledger read, naming the verb that did not happen."""
+    assert _propose(_POLICY_FLAGS) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    rc = cli.main(["ruling", "revise", ruling_id, "--evidence", "issue:961",
+                   "--by", "agent", "--project", PROJECT,
+                   "--request-policy", "sender=p-a",
+                   "--request-policy", "sender=p-b",
+                   "--request-policy", "kind=work",
+                   "--request-policy", "verb=accept",
+                   "--request-policy", "by=agent"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "ruling not revised" in out
+    assert "sender" in out
+    assert refutations.get(ruling_id, project_dir=PROJECT)["request_policy"][
+        "sender"] == "p-sender", "a refused revise must not touch the ledger"
+
+
+def test_revise_ceremony_shows_raw_terms_when_the_policy_will_not_store(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    """The parse boundary checks KEY=VALUE shape and duplicate keys, not
+    values; `_policy` checks values at write time. A value it will reject
+    reaches the ceremony first, and the ceremony has no sha to show for a
+    shape that will never be stored, so it shows the raw terms, and the
+    write then refuses with the real reason."""
+    assert _propose(_POLICY_FLAGS) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT]) == 0
+    capsys.readouterr()
+    rc = cli.main(["ruling", "revise", ruling_id, "--evidence", "issue:961",
+                   "--project", PROJECT,
+                   "--request-policy", "sender=p-other",
+                   "--request-policy", "kind=everything",
+                   "--request-policy", "verb=accept",
+                   "--request-policy", "by=agent"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "New policy: {" in out, out
+    assert "everything" in out
+    assert "kind" in out
+    assert refutations.get(ruling_id, project_dir=PROJECT)["request_policy"][
+        "sender"] == "p-sender"
+
+
+def test_show_names_a_pending_proposal_that_carries_a_request_policy(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    """Mirror of the check line on `show`: an agent's revise of an active
+    ruling is a proposal, and one that would change the grant says so in
+    the proposal line, since that is the fact the human ratifying it has to
+    weigh."""
+    rc = cli.main(["ruling", "propose", "--subject", "requests from p-sender",
+                   "--verdict", "agent may accept work asks from p-sender",
+                   "--scope", "cross-project requests",
+                   "--evidence", "issue:961", "--ratify",
+                   "--project", PROJECT, "--json"] + _POLICY_FLAGS)
+    assert rc == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    assert cli.main(["ruling", "revise", ruling_id, "--evidence", "issue:961",
+                     "--by", "agent", "--project", PROJECT,
+                     "--request-policy", "sender=p-other",
+                     "--request-policy", "kind=work",
+                     "--request-policy", "verb=accept",
+                     "--request-policy", "by=agent"]) == 0
+    capsys.readouterr()
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "Pending revision proposal" in out
+    assert "(carries a request_policy)" in out

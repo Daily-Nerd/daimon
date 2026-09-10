@@ -704,3 +704,25 @@ def test_foreign_queues_skip_a_bucket_whose_queue_raises(project, monkeypatch):
     queues = dict(pending.foreign_queues(project_dir=project))
     assert b not in queues
     assert c in queues
+
+
+def test_foreign_counts_survive_a_policy_resolver_that_raises(project,
+                                                              monkeypatch):
+    """`request_policy_history` fails open to the empty set on its own read
+    errors, but the caller cannot know every exception a hand-edited ledger
+    can raise through it. A recipient whose resolver blows up is counted as
+    if it had no grants: the work ask stays a foreign decision, and the
+    other recipients are unaffected."""
+    b = store.project_slug("/p/B")
+    requests.open_request(
+        to=b, ask="please review the PR", why="ready to merge",
+        channel="cli-agent", project_dir="/p/A")
+
+    from daimon_briefing import refutations
+
+    def boom(project_dir=None):
+        raise RuntimeError("hand-edited ledger")
+
+    monkeypatch.setattr(refutations, "request_policy_history", boom)
+    counts = pending.foreign_counts(project_dir="/p/C")
+    assert counts.get(b, 0) == 1

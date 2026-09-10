@@ -5177,3 +5177,19 @@ def test_cli_verdict_refusal_without_a_terminal_names_no_dead_end(
     assert "--by agent" not in out
     assert "terminal" in out
     assert requests.get(q_id, project_dir=project)["state"] == "open"
+
+
+def test_coverage_check_treats_a_non_numeric_row_order_as_uncovered(project):
+    """`_covered_by_policy` compares the accepted row's own `order` against
+    the grant's interval. A row whose order is not an integer (a hand-planted
+    row; every writer stamps `time.time_ns()`) has no position on that axis
+    and is uncovered, never an error the fold has to catch."""
+    sender_slug = _seed_bucket("/p/req-non-numeric-order-sender")
+    ruling_id, sha = _cover(project, sender_slug)
+    policies = refutations.request_policy_history(project_dir=project)
+    accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    assert requests._covered_by_policy(accepted, sender_slug, policies) is True
+    accepted["order"] = "not a number"
+    assert requests._covered_by_policy(accepted, sender_slug, policies) is False

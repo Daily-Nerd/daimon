@@ -2203,3 +2203,64 @@ def test_request_policy_history_time_cost_stays_within_budget(
     assert elapsed_ms <= _POLICY_BUDGET_MS, (
         f"request_policy_history cost {elapsed_ms:.2f}ms exceeds the "
         f"{_POLICY_BUDGET_MS}ms budget over {_POLICY_ROWS + 1} rows")
+
+
+# ---- codecov round: the defensive branches of the policy resolvers ----
+
+def test_a_stored_policy_missing_its_sha_or_with_a_bad_kind_yields_no_grant(
+        tmp_checkpoint_dir):
+    """`_policy_tuple` reads a STORED record, which a hand-edited ledger can
+    shape however it likes. A policy with no sha, or a kind outside the
+    vocabulary, is not a grant, and neither resolver may raise on it."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert refutations._policy_tuple(record) is not None
+    no_sha = {**record, "request_policy": {k: v for k, v in
+                                           record["request_policy"].items()
+                                           if k != "sha256"}}
+    assert refutations._policy_tuple(no_sha) is None
+    bad_kind = {**record, "request_policy": {**record["request_policy"],
+                                             "kind": "everything"}}
+    assert refutations._policy_tuple(bad_kind) is None
+
+
+def test_a_forged_row_with_a_non_numeric_order_does_not_sink_the_history(
+        tmp_checkpoint_dir):
+    """`order` is `time.time_ns()` on every row the writers stamp, but the
+    resolver reads the ledger as written, and a hand-planted row can carry
+    anything. A non-integer order reads as 0, the earliest position there
+    is, and the row folds from there rather than raising. Planted as a
+    duplicate of the founding row, it therefore WINS the founder slot
+    (first writer wins) and the grant's interval opens at 0: the same
+    order-forgery boundary the ledger discloses everywhere else, since
+    `order` is the only ordering signal and a forger controls it. What this
+    pins is that the resolver keeps answering, with the grant intact."""
+    ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    assert before, "the seed must produce an interval to compare against"
+    path = refutations._path(PROJECT)
+    last = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert last["event"] == "ruled" and last["refutation_id"] == ruling_id
+    forged = {**last, "order": "not a number", "event_id": "f" * 32}
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(forged) + "\n")
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    grant = lambda entry: entry[:6]  # noqa: E731 — (sender, kind, verb, by, id, sha)
+    assert {grant(e) for e in after} == {grant(e) for e in before}
+    (entry,) = after
+    active_from, active_until = entry[6], entry[7]
+    assert active_from == 0, "a non-numeric order reads as 0, not as an error"
+    assert active_until is None
+
+
+def test_clearing_a_request_policy_on_a_refutation_is_refused(
+        tmp_checkpoint_dir):
+    """The same polarity guard `revise(request_policy=...)` has, on the
+    clearing side: a refutation never carried a grant, so an explicit null
+    would write a field the polarity does not own."""
+    ref_id = _refute()
+    with pytest.raises(refutations.RefutationError,
+                       match="only a ruling carries a request_policy"):
+        refutations.revise(ref_id, channel="cli-agent",
+                           evidence=["measurement:again"],
+                           clear_request_policy=True, project_dir=PROJECT)
