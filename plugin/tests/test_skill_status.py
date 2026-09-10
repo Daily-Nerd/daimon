@@ -318,3 +318,51 @@ def test_an_unreadable_block_host_is_reported_not_raised(tmp_path, monkeypatch):
     row = _rows(skill_install.audit(home=home, cwd=tmp_path), "codex")
     assert row["state"] == "UNREADABLE"
     assert row["drift"] is True
+
+
+# ---- rendering ----
+
+def test_the_rich_table_carries_every_row_and_the_repair(tmp_path, monkeypatch,
+                                                         capsys):
+    """The rich path is what a person actually sees on a terminal, and it is
+    a SEPARATE branch from the plain one. A table that silently loses a row
+    or a verdict fails exactly where the audit is supposed to speak."""
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    skill_install.install("kimi", project=False, home=home, cwd=tmp_path)
+    dest = home / ".kimi-code" / "skills" / "daimon" / "SKILL.md"
+    dest.write_text("drifted\n", encoding="utf-8")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    assert "kimi" in out
+    assert "STALE" in out
+    assert "fix: daimon skill install kimi" in out
+
+
+def test_the_status_pointer_reaches_the_rich_path_too(monkeypatch, capsys):
+    from daimon_briefing import render
+
+    data = {
+        "project": "/p/A",
+        "proj": {"exists": False},
+        "glob": {"exists": False},
+        "last": {"result": None, "spawn": None},
+        "skill_drift": True,
+    }
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_status(data)
+    assert "daimon skill status" in capsys.readouterr().out
+
+
+def test_a_probe_that_cannot_read_the_machine_reports_no_drift(monkeypatch):
+    """`daimon status` must never crash on a weird tree. A stale skill teaches
+    an old protocol; a status command that raises teaches nothing at all."""
+    import daimon_briefing.cli as cli
+
+    def boom(**kw):
+        raise RuntimeError("weird tree")
+
+    monkeypatch.setattr(skill_install, "audit", boom)
+    assert cli._skill_drift_present() is False
