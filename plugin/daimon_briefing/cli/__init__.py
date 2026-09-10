@@ -603,19 +603,44 @@ def _cmd_anchor(args) -> int:
     return 0
 
 
-def _team_briefings(project) -> list:
+def _team_briefings(project, withheld: list | None = None) -> list:
     """Per-teammate briefing sections for `brief --team`, EXCLUDING the current
     author. Returns [(author, sections), ...] newest-first, or [] when the team dir
     is empty (nothing was ever mirrored). Reuses briefing.build so the #77 decision
     cap applies to teammates identically. Self is matched by slug — the same dir
-    identity read_team fans in on."""
+    identity read_team fans in on.
+
+    #981: each teammate checkpoint is folded through `briefing.withhold` BEFORE
+    it is built, so a resolved item neither prints under Teammates nor takes a
+    capped slot — the same fold every other briefing surface applies. The
+    ledger that governs is the READER's own (`store.resolutions(project)`):
+    what the reader resolved is what the reader stops seeing, on every
+    surface including this one; a teammate's own ledger is theirs and is not
+    read here. Fail-open like the main path: an unreadable ledger withholds
+    nothing rather than dropping the section. `withheld` is an optional
+    out-list the caller can hand in to fold the count into its note.
+    """
     # project_slug munging, matching _dual_write_team's dir identity — _safe_name
     # would re-introduce the "a/b" == "a_b" collision on the self-match.
     self_slug = store.project_slug(config.author())
+    # Read once, before the fan-in: one ledger read for every teammate, and
+    # a failure here is this function's own to swallow (the fan-in's own
+    # tombstone read of the same ledger keeps its own contract).
+    try:
+        resolutions = store.resolutions(project_dir=project)
+    except Exception:
+        resolutions = {}
     out = []
     for author, checkpoint in store.read_team(project_dir=project):
         if store.project_slug(author) == self_slug:
             continue  # never surface your own state as a teammate
+        try:
+            checkpoint, dropped, _candidates = briefing.withhold(
+                checkpoint, resolutions)
+        except Exception:
+            dropped = []
+        if withheld is not None:
+            withheld.extend(dropped)
         b = briefing.build(checkpoint)
         if b is None:
             continue  # nothing worth surfacing for this teammate
@@ -624,7 +649,7 @@ def _team_briefings(project) -> list:
 
 
 def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
-                          worldcheck_project=None) -> int:
+                          worldcheck_project=None, team_withheld=()) -> int:
     """Shared tail of `brief` and `brief --slug`: withhold, worldcheck, drift,
     render, footnotes. `route` is whatever the events ledger should be keyed
     by — a project dir on the normal path, a bare slug on the --slug path (the
@@ -755,10 +780,14 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                         row["request_id"], project_dir=worldcheck_project)
         except Exception:
             pass
-    if withheld:
-        render.render_brief_note([
-            f"{len(withheld)} resolved item(s) withheld — "
-            "`daimon status --suppressed` to list"])
+    if withheld or team_withheld:
+        # #981: the count covers the Teammates section too, and says how
+        # many were a teammate's, since `status --suppressed` lists only the
+        # reader's own checkpoint.
+        note = f"{len(withheld) + len(team_withheld)} resolved item(s) withheld"
+        if team_withheld:
+            note += f" ({len(team_withheld)} a teammate's)"
+        render.render_brief_note([note + " — `daimon status --suppressed` to list"])
     # Staleness budget (#215): reuses the SAME resolutions fold `withhold`
     # already did above — no re-read of events.jsonl. Fail-open, same shape
     # as the withhold try/except; a broken stale_carried must never take the
@@ -856,7 +885,12 @@ def _cmd_brief(args) -> int:
         # (no new armor here); empty team -> render_teammates no-ops, so a
         # team-less machine's output stays byte-identical to today.
         if getattr(args, "team", False):
-            render.render_teammates(_team_briefings(project))
+            team_withheld: list = []
+            render.render_teammates(_team_briefings(project, team_withheld))
+            if team_withheld:
+                render.render_brief_note([
+                    f"{len(team_withheld)} resolved item(s) withheld "
+                    "(a teammate's)"])
         return 0
     # Label the global-pointer fallback (#29): status calls the same situation
     # "global checkpoint (fallback)"; brief must not present another project's
@@ -876,14 +910,16 @@ def _cmd_brief(args) -> int:
             "behind; re-run `daimon brief` in a few minutes for the fresh one."])
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
-    teammates = _team_briefings(project) if getattr(args, "team", False) else None
+    team_withheld: list = []
+    teammates = (_team_briefings(project, team_withheld)
+                 if getattr(args, "team", False) else None)
     # #365: never worldcheck a fallback body — the global pointer may belong
     # to ANOTHER project, and probing this cwd's repo against that
     # checkpoint's claims answers for the wrong repo.
     return _render_briefing_body(checkpoint, project,
                                  drift_project=project, teammates=teammates,
                                  worldcheck_project=None if fallback_used
-                                 else project)
+                                 else project, team_withheld=team_withheld)
 
 
 # ---- recall: FTS search over local + team checkpoint history (#112) ----
