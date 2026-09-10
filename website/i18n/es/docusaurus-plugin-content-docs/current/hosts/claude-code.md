@@ -144,6 +144,8 @@ Mira las secciones de instalación de arriba.
 daimon skill install claude      # ~/.claude/skills/daimon/SKILL.md
 ```
 
+Install entrega dos skills: `daimon` (el protocolo) y `daimon-end`, el flujo de checkpoint en sesión `/daimon-end`, escrita al lado como `~/.claude/skills/daimon-end/SKILL.md`.
+
 `daimon skill show` imprime el contenido de la skill; `daimon skill list`
 muestra qué alcances soporta cada host. Re-ejecuta install después de
 actualizar `daimon` para refrescar el contenido.

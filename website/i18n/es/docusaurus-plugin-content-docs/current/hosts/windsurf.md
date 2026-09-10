@@ -99,6 +99,9 @@ daimon skill install windsurf             # ~/.codeium/windsurf/skills/daimon/SK
 daimon skill install windsurf --project   # .windsurf/rules/daimon.md
 ```
 
+Install entrega dos skills: `daimon` (el protocolo) y `daimon-end`, el flujo de checkpoint en sesión `/daimon-end`, escrita al lado como `~/.codeium/windsurf/skills/daimon-end/SKILL.md`.
+El alcance de proyecto es un único archivo de reglas, así que lleva solo el protocolo.
+
 En Windsurf la skill no es solo etiqueta de protocolo — es la vía de entrega
 del briefing. Como Cascade no tiene evento de inicio de sesión donde
 inyectar, la skill instruye al agente a ejecutar `daimon brief --team` en la

@@ -49,6 +49,14 @@ SYNC_PAIRS = (
     ("hook/daimon-kimi-stop.py",
      "plugin/daimon_briefing/_hooks/daimon-kimi-stop.py"),
     ("hook/_daimon_hook_lib.py", "plugin/daimon_briefing/_hooks/_daimon_hook_lib.py"),
+    # #1000: the plugin-root skills/ tree is discoverable only from a source
+    # checkout — the wheel ships daimon_briefing/ alone. `daimon skill install`
+    # writes directory-form skills into the host's own skills dir, so it can
+    # only deliver what the PACKAGE holds. skills/ stays canonical (it is where
+    # the skill is authored and what Claude Code's plugin loader reads); the
+    # packaged copy is the derivative.
+    ("skills/daimon-end/SKILL.md",
+     "plugin/daimon_briefing/_skills/daimon-end/SKILL.md"),
 )
 
 
