@@ -2264,3 +2264,87 @@ def test_clearing_a_request_policy_on_a_refutation_is_refused(
         refutations.revise(ref_id, channel="cli-agent",
                            evidence=["measurement:again"],
                            clear_request_policy=True, project_dir=PROJECT)
+
+
+# ---- #970: a hand-edited anchors/evidence scalar is a malformed ROW, not an
+# unreadable LEDGER; #969: `ruling list` shares the reader's four-state
+# vocabulary instead of dying on the config fault the reader already names.
+
+def _hand_edit_first_row(field, value):
+    path = refutations._path(PROJECT)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[0])
+    row[field] = value
+    lines[0] = json.dumps(row)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("field", ["anchors", "evidence"])
+def test_a_row_with_a_scalar_anchors_or_evidence_is_skipped_not_fatal(
+        tmp_checkpoint_dir, field):
+    """`events` already drops rows that fail its `event`/`refutation_id`
+    checks without sinking the read; these two list fields are no
+    different. The other ruling survives and the reader reports `read`."""
+    from daimon_briefing import briefing
+
+    _rule(subject="first", verdict="first verdict", channel="cli-tty",
+          ratified=True)
+    kept = _rule(subject="second", verdict="second verdict", channel="cli-tty",
+                 ratified=True)
+    _hand_edit_first_row(field, 1)
+    rows = refutations.events(PROJECT, strict=True)
+    assert [r["refutation_id"] for r in rows] == [kept]
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "read"
+    assert [r["refutation_id"] for r in read.rows] == [kept]
+
+
+def test_ruling_list_survives_a_hand_edited_anchors_field(tmp_checkpoint_dir,
+                                                          capsys):
+    _rule(subject="first", verdict="first verdict", channel="cli-tty",
+          ratified=True)
+    _rule(subject="second", verdict="second verdict", channel="cli-tty",
+          ratified=True)
+    _hand_edit_first_row("anchors", 1)
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "second verdict" in out
+    assert "first verdict" not in out
+
+
+@pytest.fixture(params=["corrupt-env-file", "unexpandable-checkpoint-dir"])
+def _config_fault(request, monkeypatch, tmp_path):
+    """The two faults #969 names, both raised by `refutations._path` through
+    `config.checkpoint_dir()`. With the checkpoint dir unset, the corrupt env
+    file raises on the FIRST config read, before any store path exists to
+    touch; the tilde variant raises out of `expanduser` and touches nothing."""
+    if request.param == "corrupt-env-file":
+        bad = tmp_path / "env"
+        bad.write_bytes(b"DAIMON_NOTE=caf\xe9\n")
+        monkeypatch.setenv("DAIMON_ENV_FILE", str(bad))
+        monkeypatch.delenv("DAIMON_CHECKPOINT_DIR")
+    else:
+        monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", "~no-such-user-xyz/daimon")
+    return request.param
+
+
+def test_ruling_list_reports_an_unresolved_ledger_instead_of_a_traceback(
+        tmp_checkpoint_dir, _config_fault, capsys):
+    """The #969 shape: the fault `rulings_read` already reports as
+    `unresolved`. The CLI has to ask the reader BEFORE it asks `listing` for
+    rows, or it dies several statements before its own unresolved branch."""
+    rc = cli.main(["ruling", "list", "--project", PROJECT])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "cannot resolve a ledger path" in captured.err
+    assert "DAIMON_CHECKPOINT_DIR" in captured.err
+    assert "no rulings for this project" in captured.out
+
+
+def test_ruling_list_json_keeps_its_shape_on_an_unresolved_ledger(
+        tmp_checkpoint_dir, _config_fault, capsys):
+    rc = cli.main(["ruling", "list", "--project", PROJECT, "--json"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert json.loads(captured.out) == []
+    assert "cannot resolve a ledger path" in captured.err

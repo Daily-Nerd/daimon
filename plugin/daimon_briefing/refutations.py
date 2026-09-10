@@ -794,6 +794,17 @@ def events(project_dir=None, *, strict: bool = False) -> list[dict]:
                 or row.get("event") not in EVENTS
                 or not _REF_ID_RE.fullmatch(str(row.get("refutation_id") or ""))):
             continue
+        # #970: `fold` does `list(row.get("anchors") or [])` and the same for
+        # `evidence`; a hand-edited scalar there raised inside the fold and
+        # `rulings_read` reported the whole ledger as UNREADABLE, the one
+        # state a host is meant to refuse enforcement on, about a file it
+        # read fine. A malformed list field is a malformed ROW, dropped here
+        # like a bad `event` or `refutation_id`, so the read succeeds and the
+        # remaining rows are returned. Absent and null stay allowed: the fold
+        # reads both as an empty list.
+        if any(row.get(key) is not None and not isinstance(row.get(key), list)
+               for key in ("anchors", "evidence")):
+            continue
         copy = dict(row)
         copy["_line"] = index
         rows.append(copy)
