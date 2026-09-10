@@ -302,6 +302,30 @@ def _cmd_ruling_retire(args) -> int:
 
 def _cmd_ruling_list(args) -> int:
     project = _cli._resolve_project(args.project)
+    # #969: ask the shared reader for its STATE before asking `listing` for
+    # rows. `listing` reaches `_path` through `records` and `fold` with no
+    # guard of its own, so on a config fault (a bad byte in ~/.daimon/env,
+    # an unexpandable DAIMON_CHECKPOINT_DIR) it raised several statements
+    # before the `unresolved` branch below could name the fault. The library
+    # keeps raising for in-process callers, who have `rulings_read` for the
+    # honest answer; the CLI, which shares the reader's vocabulary, consults
+    # it first. One probe, reused by every branch below. `unresolved` returns
+    # HERE, before the usage counter or anything else that reads config: the
+    # fault is in config itself (a corrupt env file raises on every read), so
+    # every later config touch would die the same way. stdout keeps its
+    # empty-ledger shape, the way `no-bucket` and `unreadable` keep theirs.
+    read = briefing.rulings_read(project)
+    if read.state == "unresolved":
+        # No `path` to name — resolution never got that far, so this line
+        # never interpolates one.
+        print(f"cannot resolve a ledger path for {project}: check "
+              f"DAIMON_CHECKPOINT_DIR and ~/.daimon/env for a bad value",
+              file=sys.stderr)
+        if args.json:
+            print(_refutation_json([]))
+        else:
+            render.render_ledger_lines(["no rulings for this project"])
+        return 1
     rows = refutations.listing(states=set(args.state or refutations.STATES),
                                polarity="ruling", project_dir=project)
     _cli._note_usage("ruling:list")
@@ -322,15 +346,7 @@ def _cmd_ruling_list(args) -> int:
     # shape a TOCTOU takes).
     rc = 0
     if not rows:
-        read = briefing.rulings_read(project)
-        if read.state == "unresolved":
-            # No `path` to name — resolution never got that far, so this
-            # line never interpolates one.
-            print(f"cannot resolve a ledger path for {project}: check "
-                  f"DAIMON_CHECKPOINT_DIR and ~/.daimon/env for a bad value",
-                  file=sys.stderr)
-            rc = 1
-        elif read.state == "unreadable":
+        if read.state == "unreadable":
             print(f"cannot read the ledger for {store.project_slug(project)} "
                   f"(resolved {project}): {read.path} exists but could not "
                   f"be read", file=sys.stderr)
