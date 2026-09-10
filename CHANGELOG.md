@@ -5,6 +5,32 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.0](https://github.com/Daily-Nerd/daimon/compare/v0.42.0...v0.43.0) (2026-09-10)
+
+
+### Features
+
+* **gates:** a gate reports its margin and an all-exempt quote check says it proved nothing ([#960](https://github.com/Daily-Nerd/daimon/issues/960)) ([71b16d0](https://github.com/Daily-Nerd/daimon/commit/71b16d011c2b610d19717f1ca3245b9f8156ec51))
+* **hosts:** Kimi Code adapter, briefing through UserPromptSubmit, Stop and SessionEnd capture, wire.jsonl transcripts ([#988](https://github.com/Daily-Nerd/daimon/issues/988)) ([#994](https://github.com/Daily-Nerd/daimon/issues/994)) ([729a150](https://github.com/Daily-Nerd/daimon/commit/729a1504ef16aeafca17069feaa91ef123682477))
+* **requests:** a human-ratified ruling can let an agent accept a work ask ([#961](https://github.com/Daily-Nerd/daimon/issues/961) slice 4) ([#993](https://github.com/Daily-Nerd/daimon/issues/993)) ([e71ca40](https://github.com/Daily-Nerd/daimon/commit/e71ca40fec6e04316a8ce07180958925d044862c))
+* **requests:** an agent may accept an info ask, and an info ask leaves the human decision queue ([#986](https://github.com/Daily-Nerd/daimon/issues/986)) ([657c106](https://github.com/Daily-Nerd/daimon/commit/657c106de02ca39c782fdcc92fae18e12d3fb224))
+* **requests:** assign an approval-requirement kind at request open ([#972](https://github.com/Daily-Nerd/daimon/issues/972)) ([636a1b7](https://github.com/Daily-Nerd/daimon/commit/636a1b7769b58531983c585990818181432c5a1b))
+* **requests:** render the approval-requirement kind on every request surface ([#982](https://github.com/Daily-Nerd/daimon/issues/982)) ([d2881bd](https://github.com/Daily-Nerd/daimon/commit/d2881bd43c43d350127f450833e414bcea6bf9f9))
+
+
+### Bug Fixes
+
+* **briefing:** the pinned rulings reader tells an unreadable ledger from an empty one ([#971](https://github.com/Daily-Nerd/daimon/issues/971)) ([8d66b44](https://github.com/Daily-Nerd/daimon/commit/8d66b441bbb98db53f6d586f025af7fcaeb0a7fd))
+* **carry:** a session's own provisional checkpoint never corroborates its reconstruction ([#985](https://github.com/Daily-Nerd/daimon/issues/985)) ([9af0f0e](https://github.com/Daily-Nerd/daimon/commit/9af0f0e407866b6b123d71ca699ad44457206e83))
+* **requests:** an agent's completion claim on an unaccepted work ask stays pending instead of clearing the human queue ([#984](https://github.com/Daily-Nerd/daimon/issues/984)) ([a5b34a1](https://github.com/Daily-Nerd/daimon/commit/a5b34a1931a79dd4c065546a45e0455ac17a9337))
+* **store:** a bucket written before 0.42.0 from a symlinked or nested path can be migrated to the resolved bucket, and status says when one exists ([#967](https://github.com/Daily-Nerd/daimon/issues/967)) ([48eb704](https://github.com/Daily-Nerd/daimon/commit/48eb7047e3c39e557212b3a0aebf34e7f4df7018))
+
+
+### Documentation
+
+* **configuration:** document eight undocumented env vars ([#966](https://github.com/Daily-Nerd/daimon/issues/966)) ([fcb489f](https://github.com/Daily-Nerd/daimon/commit/fcb489f7ed494faeb8e480728b9ab826f0ff8100))
+* **website:** give every page its own description, fix the social card and add robots.txt ([#979](https://github.com/Daily-Nerd/daimon/issues/979)) ([0b22f8b](https://github.com/Daily-Nerd/daimon/commit/0b22f8bb2136f6855d43571d2baf2ccc992c1f3e))
+
 ## [0.42.0](https://github.com/Daily-Nerd/daimon/compare/v0.41.1...v0.42.0) (2026-09-07)
 
 
