@@ -408,6 +408,66 @@ def kimi_prompt_text(prompt) -> str:
     return "\n".join(t for t in parts if t)
 
 
+def _parent_argv(pid) -> list:
+    """argv of `pid` as best the platform exposes it, [] when unreadable.
+
+    Linux keeps the real argv bytes in /proc; every other platform daimon
+    ships on falls back to `ps`, which renders argv as one space-joined
+    string. Joining only ever SPLITS a value that contains spaces, so it can
+    invent tokens but can never hide one: an exact-flag check stays sound."""
+    proc = Path(f"/proc/{pid}/cmdline")
+    try:
+        if proc.exists():
+            raw = proc.read_bytes()
+            return [t.decode("utf-8", "replace") for t in raw.split(b"\0") if t]
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=2)
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    line = out.stdout.strip()
+    return line.split() if line else []
+
+
+def kimi_print_mode(argv=None) -> bool:
+    """True when the host process runs a print-mode invocation (`kimi -p`).
+
+    Measured on 0.42.0: UserPromptSubmit fires in print mode too, and the host
+    both injects whatever the hook prints into the one-shot call's context and
+    echoes it to stdout — so the full briefing lands inside a one-shot CLI
+    answer, and daimon's own serializer backend (which shells out to `kimi -p`)
+    reads the dump as part of the response (#999). The capture hooks still run
+    there (Stop is the ONLY capture path in print mode, since SessionEnd never
+    fires), so suppressing this event loses nothing.
+
+    Two guards keep this from misfiring. First, the parent argv must name the
+    host binary: `-p` is a common flag on other tools (pytest's
+    `-p no:cacheprovider` is the measured case — running the hook under a
+    test runner would otherwise silence the briefing), so a bare flag match
+    is not enough. Any argv token may be the name, because a `#!` script
+    parent shows its INTERPRETER as argv[0] under `ps`, pushing the script
+    path into a later token; only the basename is compared, so the flag's
+    own value cannot impersonate the binary unless it IS the binary.
+    Second, only exact flag tokens count: `ps` output is space-joined, and
+    an inexact match would fire on an unrelated argument. An unreadable
+    parent argv, or a parent that never names the host binary, yields False:
+    this hook is the ONLY channel into the model on this host, so a
+    detection miss must not silently disable the briefing — the failure
+    being fixed is noise, not silence.
+    """
+    if argv is None:
+        argv = _parent_argv(os.getppid())
+    if not argv:
+        return False
+    if not any(Path(str(t)).name.lower().removesuffix(".exe") == "kimi"
+               for t in argv):
+        return False
+    return any(t in ("-p", "--prompt") or t.startswith("--prompt=")
+               for t in argv)
+
+
 
 def _failed_session_stems() -> set:
     """Transcript stems (session ids) whose LATEST serialize.log outcome is a

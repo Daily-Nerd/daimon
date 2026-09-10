@@ -15,6 +15,13 @@ between two events:
 2. The per-prompt recall injection, on every prompt after that, shelling out
    to `daimon recall-inject` exactly as the Claude Code prompt hook does.
 
+Print mode (`kimi -p`) fires this event too, and the host injects whatever
+the hook prints into the one-shot call's context AND echoes it to stdout.
+There is no interactive session to brief, so the hook detects print mode
+from the parent argv and exits before printing anything (#999). Capture is
+untouched: Stop is the only capture path in print mode, since SessionEnd
+never fires there.
+
 Noise contract, copied deliberately from daimon-prompt-recall.py: this fires
 on EVERY prompt, so failures are SILENT (exit 0, no output). A diagnostic per
 prompt would be spam. Unlike on Claude Code there is no SessionStart hook to
@@ -135,6 +142,11 @@ def _recall(cli, cwd: str, session: str, prompt: str) -> None:
 
 def main() -> int:
     if lib is None or lib.disabled():
+        return 0
+    # Print mode has no session worth briefing and the host feeds hook output
+    # straight into the one-shot answer (#999). Everything after this point
+    # prints, so the guard runs before any of it.
+    if lib.kimi_print_mode():
         return 0
     data = lib.payload()
     cwd = str(data.get("cwd") or "").strip()
