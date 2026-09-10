@@ -77,6 +77,20 @@ HOSTS: dict[str, dict[str, tuple[str, str, str] | None]] = {
     },
 }
 
+# #1000. Skills daimon ships WHOLE, as their own directory, alongside the
+# generated `daimon` skill. `daimon-end` was packaged from the day it was
+# written and installed by nothing: Claude Code's plugin loader discovers it at
+# the plugin root, so a maintainer running from the checkout always had it,
+# while everyone who installed the wheel and ran `daimon skill install` got the
+# `daimon` skill alone and no way to learn `/daimon-end` exists.
+#
+# The wheel carries `daimon_briefing/` and nothing else, so the plugin-root
+# `skills/` tree cannot be the source here. `_skills/` is a byte-identical
+# mirror kept in scripts/sync_hooks.py's manifest and guarded in
+# tests/test_packaging.py.
+BUNDLED_SKILLS: tuple[str, ...] = ("daimon-end",)
+_BUNDLED_DIR = Path(__file__).resolve().parent / "_skills"
+
 # Per-host read caps, in BYTES. Codex documents project_doc_max_bytes and
 # stops reading past it, so a file over the cap is silently half-applied.
 # Absent host means no known cap, which is why the warning below tests the
@@ -169,6 +183,56 @@ def _replace_block(text: str, block: str) -> str:
         "manually, daimon will not guess at the boundary")
 
 
+def _bundled_root(rel: str, variant: str) -> Path | None:
+    """The host's skills directory for a directory-form row, or None.
+
+    `full` is the DIRECTORY-FORM contract, not a density: the host scans
+    `<root>/skills/<name>/SKILL.md` and loads a body only when the skill is
+    invoked. `compact` rows are single rules files concatenated into every
+    prompt — they have no directory to scan, so a second skill there is
+    content no host would ever load. test_skill_install.py pins the shape
+    these two lines derive the root from.
+    """
+    if variant != "full":
+        return None
+    return Path(rel).parent.parent
+
+
+def _install_bundled(root: Path) -> list[str]:
+    lines = []
+    for name in BUNDLED_SKILLS:
+        src = _BUNDLED_DIR / name / "SKILL.md"
+        try:
+            body = src.read_text(encoding="utf-8")
+        except OSError as exc:  # a build that lost its package data
+            raise SkillInstallError(
+                f"packaged skill '{name}' is missing from this install "
+                f"({src}) — reinstall daimon-briefing") from exc
+        dest = root / name / "SKILL.md"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(body, encoding="utf-8")
+        lines.append(f"installed daimon skill ({name}) -> {dest}")
+    return lines
+
+
+def _uninstall_bundled(root: Path) -> list[str]:
+    lines = []
+    for name in BUNDLED_SKILLS:
+        dest = root / name / "SKILL.md"
+        if not dest.exists():
+            continue
+        dest.unlink()
+        # daimon created this directory, so it takes it back — but only while
+        # it holds nothing else. Anything the user put beside the skill stays,
+        # and so does the directory holding it.
+        try:
+            dest.parent.rmdir()
+        except OSError:
+            pass
+        lines.append(f"removed {dest}")
+    return lines
+
+
 def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
     spec, (rel, kind, variant) = _spec(host, project)
     dest = (cwd if project else home) / rel
@@ -195,23 +259,30 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
         cleaned = _clean_windsurf_legacy(home)
         if cleaned:
             lines.append(cleaned)
+    bundled_root = _bundled_root(rel, variant)
+    if bundled_root is not None:
+        lines.extend(_install_bundled((cwd if project else home) / bundled_root))
     lines.insert(0, f"installed daimon skill ({variant}) -> {dest}")
     return lines
 
 
 def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
-    _spec_dict, (rel, kind, _variant) = _spec(host, project)
-    dest = (cwd if project else home) / rel
-    legacy_lines = []
+    _spec_dict, (rel, kind, variant) = _spec(host, project)
+    base = cwd if project else home
+    dest = base / rel
+    extra_lines = []
     if host == "windsurf" and not project:
         cleaned = _clean_windsurf_legacy(home)
         if cleaned:
-            legacy_lines.append(cleaned)
+            extra_lines.append(cleaned)
+    bundled_root = _bundled_root(rel, variant)
+    if bundled_root is not None:
+        extra_lines.extend(_uninstall_bundled(base / bundled_root))
     if not dest.exists():
-        return legacy_lines + [f"nothing installed at {dest}"]
+        return extra_lines + [f"nothing installed at {dest}"]
     if kind == "owned":
         dest.unlink()
-        return legacy_lines + [f"removed {dest}"]
+        return extra_lines + [f"removed {dest}"]
     text = dest.read_text(encoding="utf-8")
     if not _BLOCK_RE.search(text):
         return [f"no daimon:skill block in {dest} — left untouched"]

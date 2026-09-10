@@ -136,6 +136,8 @@ injections, two serialize LLM calls). See the install sections above.
 daimon skill install claude      # ~/.claude/skills/daimon/SKILL.md
 ```
 
+Install delivers two skills: `daimon` (the protocol) and `daimon-end`, the in-session `/daimon-end` checkpoint flow, written next to it as `~/.claude/skills/daimon-end/SKILL.md`.
+
 `daimon skill show` prints the skill content; `daimon skill list` shows which
 scopes each host supports. Re-run install after upgrading `daimon` to refresh
 the content.

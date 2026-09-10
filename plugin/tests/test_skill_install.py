@@ -175,3 +175,105 @@ def test_uninstall_block_removes_only_block(tmp_path):
 def test_unknown_host_refuses(tmp_path):
     with pytest.raises(SkillInstallError, match="unknown host"):
         _run("emacs", tmp_path)
+
+
+# ---- bundled directory-form skills (#1000) ----
+
+def _full_rows():
+    from daimon_briefing.skill_install import HOSTS
+
+    for host, scopes in sorted(HOSTS.items()):
+        for scope, entry in sorted(scopes.items()):
+            if entry is not None and entry[2] == "full":
+                yield host, scope, entry[0]
+
+
+def test_every_full_row_is_directory_form():
+    """`full` is not a density label, it is the DIRECTORY-FORM contract:
+    a lazily-loaded `<root>/skills/<name>/SKILL.md` the host scans by
+    directory. The bundled-skill writer derives its destination root from
+    that shape, so a `full` row that stops ending in `skills/daimon/SKILL.md`
+    would silently send `daimon-end` somewhere no host reads."""
+    rows = list(_full_rows())
+    assert rows
+    for host, scope, rel in rows:
+        assert rel.endswith("skills/daimon/SKILL.md"), f"{host}/{scope}: {rel}"
+
+
+def test_full_hosts_receive_the_bundled_end_skill(tmp_path):
+    """#1000: `daimon-end` was packaged but never installed outside the Claude
+    plugin layout, so a kimi (or plain-CLI claude, or windsurf global) user had
+    no `/daimon-end` and no way to learn it exists."""
+    from daimon_briefing.skill_install import BUNDLED_SKILLS
+
+    for host, scope, rel in _full_rows():
+        home = tmp_path / f"{host}-{scope}-home"
+        cwd = tmp_path / f"{host}-{scope}-repo"
+        home.mkdir()
+        cwd.mkdir()
+        project = scope == "project"
+        install(host, project=project, home=home, cwd=cwd)
+        root = (cwd if project else home) / rel
+        for name in BUNDLED_SKILLS:
+            dest = root.parent.parent / name / "SKILL.md"
+            text = dest.read_text(encoding="utf-8")
+            # Directory form: the host skips a skill whose frontmatter `name`
+            # does not equal its directory name.
+            assert text.startswith("---\n"), f"{host}/{scope}/{name}"
+            assert f"\nname: {name}\n" in text, f"{host}/{scope}/{name}"
+            assert "description:" in text
+
+
+def test_install_reports_every_file_it_wrote(tmp_path):
+    lines, home, _ = _run("kimi", tmp_path)
+    joined = "\n".join(lines)
+    assert str(home / ".kimi-code" / "skills" / "daimon" / "SKILL.md") in joined
+    assert str(home / ".kimi-code" / "skills" / "daimon-end" / "SKILL.md") in joined
+
+
+def test_compact_hosts_get_no_bundled_skill(tmp_path):
+    """The rules-file hosts concatenate one file into every prompt; they have
+    no directory to scan, so a second skill there is content nobody loads."""
+    _, _home, cwd = _run("cursor", tmp_path, project=True)
+    assert not list(cwd.rglob("daimon-end"))
+
+
+def test_uninstall_removes_the_bundled_skill(tmp_path):
+    _, home, _ = _run("kimi", tmp_path)
+    skills = home / ".kimi-code" / "skills"
+    assert (skills / "daimon-end" / "SKILL.md").exists()
+    uninstall("kimi", project=False, home=home, cwd=home)
+    assert not (skills / "daimon" / "SKILL.md").exists()
+    assert not (skills / "daimon-end" / "SKILL.md").exists()
+    # Owned-file semantics: daimon created the directory, daimon takes it back,
+    # but only while it holds nothing else.
+    assert not (skills / "daimon-end").exists()
+
+
+def test_uninstall_keeps_a_bundled_directory_holding_user_files(tmp_path):
+    _, home, _ = _run("kimi", tmp_path)
+    stray = home / ".kimi-code" / "skills" / "daimon-end" / "notes.md"
+    stray.write_text("mine\n", encoding="utf-8")
+    uninstall("kimi", project=False, home=home, cwd=home)
+    assert stray.read_text(encoding="utf-8") == "mine\n"
+
+
+def test_uninstall_without_an_install_does_not_raise(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    lines = uninstall("kimi", project=False, home=home, cwd=home)
+    assert any("nothing installed" in line for line in lines)
+
+
+def test_a_build_missing_its_packaged_skill_refuses_loudly(tmp_path, monkeypatch):
+    """Package data absent is a BUILD fault, not a user condition. Writing the
+    `daimon` skill and silently skipping the rest would reproduce #1000 with
+    the installer reporting success."""
+    from daimon_briefing import skill_install
+
+    monkeypatch.setattr(skill_install, "_BUNDLED_DIR", tmp_path / "gone")
+    home = tmp_path / "home"
+    home.mkdir()
+    with pytest.raises(SkillInstallError) as exc:
+        install("kimi", project=False, home=home, cwd=home)
+    assert "daimon-end" in str(exc.value)

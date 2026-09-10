@@ -108,3 +108,31 @@ def test_the_briefing_skill_closing_loops_names_the_request_close():
     closing = text.split("## Closing loops")[1].split("\n## ")[0]
     assert "daimon request done" in closing
     assert "daimon request inbox" in closing
+
+
+def test_every_sync_pair_is_byte_identical():
+    """`scripts/sync_hooks.py` is the one manifest of deliberately duplicated
+    files, but only the `_hooks/` slice of it had a guard — a mirror added
+    anywhere else drifted with nothing watching. Run
+    `uv run python scripts/sync_hooks.py` to repair."""
+    import sys
+
+    scripts = str(_REPO_ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from sync_hooks import SYNC_PAIRS
+
+    for src, dst in SYNC_PAIRS:
+        source = _REPO_ROOT / src
+        copy = _REPO_ROOT / dst
+        assert copy.exists(), f"{dst} is missing; sync_hooks.py never ran"
+        assert copy.read_bytes() == source.read_bytes(), (
+            f"{dst} drifted from {src}")
+
+
+def test_the_end_skill_ships_inside_the_wheel():
+    """#1000: the wheel carries `daimon_briefing/` alone, so the plugin-root
+    `skills/` tree reaches nobody who installed from PyPI. `daimon skill
+    install` can only write a skill the package itself holds."""
+    packaged = _PLUGIN / "daimon_briefing" / "_skills" / "daimon-end" / "SKILL.md"
+    assert packaged.is_file()

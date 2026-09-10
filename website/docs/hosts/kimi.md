@@ -99,6 +99,8 @@ daimon skill install kimi              # ~/.kimi-code/skills/daimon/SKILL.md
 daimon skill install kimi --project    # <repo>/.kimi-code/skills/daimon/SKILL.md
 ```
 
+Install delivers two skills: `daimon` (the protocol) and `daimon-end`, the in-session `/daimon-end` checkpoint flow, written next to it as `~/.kimi-code/skills/daimon-end/SKILL.md`.
+
 Kimi scans both locations for skills. The probe measured where it looks,
 not how it ranks the two when both hold a daimon skill, so install to one
 scope. Re-run install after upgrading `daimon` to refresh the content.

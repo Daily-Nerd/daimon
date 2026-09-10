@@ -104,6 +104,8 @@ daimon skill install kimi              # ~/.kimi-code/skills/daimon/SKILL.md
 daimon skill install kimi --project    # <repo>/.kimi-code/skills/daimon/SKILL.md
 ```
 
+Install entrega dos skills: `daimon` (el protocolo) y `daimon-end`, el flujo de checkpoint en sesión `/daimon-end`, escrita al lado como `~/.kimi-code/skills/daimon-end/SKILL.md`.
+
 Kimi escanea las dos ubicaciones en busca de skills. La prueba midió dónde
 busca, no cómo prioriza entre las dos cuando ambas tienen una skill de
 daimon, así que instalá en un solo alcance. Volvé a correr install después
