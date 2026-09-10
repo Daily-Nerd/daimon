@@ -154,6 +154,27 @@ def test_windsurf_global_uninstall_cleans_legacy_block_too(tmp_path):
     assert (mem / "global_rules.md").read_text(encoding="utf-8") == user
 
 
+def test_uninstall_cleans_a_legacy_block_when_nothing_was_installed(tmp_path):
+    """The pre-#88 block outlives the install that would have stripped it: a
+    person who upgraded and never re-installed still has skill content sitting
+    in their MEMORIES file, and `uninstall` is the verb they reach for. It has
+    to clean that even though it finds no skill of its own to remove.
+
+    The existing migrate/uninstall pair never reached this branch, because
+    installing first strips the block, so uninstall then saw a clean file."""
+    home = tmp_path / "home"
+    mem = home / ".codeium" / "windsurf" / "memories"
+    mem.mkdir(parents=True)
+    user = "# my real memories\n"
+    (mem / "global_rules.md").write_text(
+        f"{user}\n<!-- daimon:skill v0.7.0 start -->\nold\n"
+        "<!-- daimon:skill v0.7.0 end -->\n", encoding="utf-8")
+    lines = uninstall("windsurf", project=False, home=home, cwd=tmp_path)
+    assert (mem / "global_rules.md").read_text(encoding="utf-8") == user
+    assert any("legacy daimon:skill block" in line for line in lines)
+    assert any("nothing installed" in line for line in lines)
+
+
 # ---- uninstall ----
 
 def test_uninstall_owned_removes_file(tmp_path):
