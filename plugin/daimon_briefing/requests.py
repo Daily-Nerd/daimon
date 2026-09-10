@@ -1604,7 +1604,7 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
             elif str(opened.get("to") or "") in mine:
                 # #961 slice 4: stamp the origin bucket onto every row for
                 # this id BEFORE it joins the merged, multi-bucket row set —
-                # `fold`'s own `_founder_origin_by_id` pre-pass reads it back
+                # `fold`'s own `_founder_by_id` pre-pass reads it back
                 # off the founder row. `_origin_slug` is transient, in-memory
                 # only (never part of what `append`/`events` persist or
                 # read), the same posture `events()` already gives `_line`.

@@ -321,7 +321,7 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
     project with nothing to decide, the exact defect #961 slice 3 review
     finding 2 already fixed for `info` asks. Resolved per RECIPIENT project
     (each group's `to`, read off its raw founder row before any fold — the
-    same shape `_founder_kind_by_id`/`_founder_origin_by_id` already read
+    same shape `_founder_by_id` already reads
     raw fields for) and cached, since a fleet with many asks addressed to
     the same project must not re-read that project's ruling ledger once per
     ask.
@@ -340,7 +340,7 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
             stripped = _strip_plaintext(row)
             # #961 slice 4: the same transient, in-memory-only stamp
             # `recipient_join` gives a foreign-bucket row before folding —
-            # `fold`'s own `_founder_origin_by_id` pre-pass reads it off the
+            # `fold`'s own `_founder_by_id` pre-pass reads it off the
             # founder row to resolve which sender a covering ruling must
             # name. `_strip_plaintext` already returns a fresh dict, so this
             # never touches anything the original `events()` list holds.
