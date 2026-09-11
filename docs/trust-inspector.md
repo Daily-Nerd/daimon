@@ -33,6 +33,15 @@ The inspector reports independent axes because they can legitimately disagree:
 Corroboration is shown separately as a count and source-session references. It
 does not modify any evidence axis.
 
+`preceding_tool_context` is a separate audit section. Its `observed` state
+maps each verified assistant quote source to up to 20 preceding tool-result
+row IDs, ending at a recognized host user-input boundary. `unavailable` names
+why the host capture could not establish that window, and `not_recorded` is
+used for older checkpoints. An empty result list under `observed` means the
+bounded window contained no tool results. These IDs describe recorded order
+only and never prove that the model read or used a result; tool output and
+arguments are never stored.
+
 For example, these facts can coexist:
 
 ```text

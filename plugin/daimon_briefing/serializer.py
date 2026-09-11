@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from . import (config, configure, field_table, ledger, llm, normalize,
-               provenance, schema)
+               provenance, schema, tool_context)
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -2267,6 +2267,7 @@ _CODE_OWNED_ITEM_KEYS = ("origin_session", "origin_author",
                          "quote_verified", "last_verified",
                          "quote_provenance", "pinned", "id",
                          "carried_from", "restated_after_resolve", "first_seen",
+                         "preceding_tool_context",
                          # #890: a model naming who said something is an agent
                          # asserting an identity it cannot verify, and the
                          # field would carry more authority than any other
@@ -2434,7 +2435,7 @@ def conversation_message_count(messages) -> int:
 
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                      escalate=False, source_ref=None, transcript_hash=None,
-                     now=None) -> dict:
+                     now=None, coverage=None) -> dict:
     """Transcript -> validated checkpoint, or a named SerializeError.
 
     `chat` is an injectable callable (messages, **kwargs) -> str; defaults to the
@@ -2690,6 +2691,12 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # signal pointer are marked grounded; unwitnessed verbatim outcome
     # claims in a signal-bearing session store as inferred.
     ground_outcomes(checkpoint, sig_ids)
+    # #1010: this audit field is derived only after quote verification and
+    # grounding. It is code-owned and never enters extraction or merge prompts.
+    for item in iter_items(checkpoint):
+        item.pop("preceding_tool_context", None)
+        item["preceding_tool_context"] = tool_context.derive(
+            item, messages, coverage, source=source_ref)
     # #230: stamp provenance last, immediately before hand-off to store/write —
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.

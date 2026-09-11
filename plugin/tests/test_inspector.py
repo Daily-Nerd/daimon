@@ -781,7 +781,47 @@ def test_why_still_refuses_an_id_in_neither_surfaces_nor_index(
 
     assert inspector.inspect_item(_PROJECT, _ITEM_ID) is None
     assert cli.main(["why", _ITEM_ID, "--project", _PROJECT]) == 1
-    assert "no item" in capsys.readouterr().err
+
+
+def test_why_reports_observed_preceding_tool_context_without_source_read(
+        tmp_checkpoint_dir):
+    context = {
+        "version": 1,
+        "policy": "preceding-tools-v1",
+        "message_limit": 20,
+        "status": "observed",
+        "contexts": [{
+            "source_message_id": "u-1",
+            "preceding_tool_result_ids": ["t-1"],
+            "boundary": "host_user_input",
+            "messages_examined": 1,
+        }],
+    }
+    _write_checkpoint(_ITEM_ID, [
+        _item(receipt=_receipt(_source(), "a" * 64),
+              preceding_tool_context=context),
+    ])
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result["preceding_tool_context"] == context
+
+
+@pytest.mark.parametrize("bad, reason", [
+    ("not-an-object", "invalid_metadata"),
+    ({"version": 1, "policy": "old", "message_limit": 20,
+      "status": "observed", "contexts": []}, "unsupported_policy"),
+])
+def test_why_does_not_trust_malformed_preceding_tool_context(bad, reason):
+    _write_checkpoint(_ITEM_ID, [
+        _item(receipt=_receipt(_source(), "a" * 64),
+              preceding_tool_context=bad),
+    ])
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result["preceding_tool_context"] == {
+        "status": "unavailable", "reason": reason}
 
 
 def test_forgotten_team_only_item_is_not_resurrected(

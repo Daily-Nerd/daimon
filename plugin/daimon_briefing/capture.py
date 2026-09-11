@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 
 def run(session_id: str, messages, *, project, chat, deadline,
         transcript_path=None, transcript_sha=None,
-        escalate: bool = False, capture_host=None) -> Path | None:
+        escalate: bool = False, capture_host=None, coverage=None) -> Path | None:
     """Serialize `messages` into a checkpoint routed to `project` (used AS-IS;
     None => global pointer only — the caller decides routing, same contract
     as the old cli._run_serialize).
@@ -64,7 +64,7 @@ def run(session_id: str, messages, *, project, chat, deadline,
     checkpoint = serializer.serialize_strict(
         session_id, messages, chat=chat, deadline=deadline, escalate=escalate,
         source_ref=source_ref, transcript_hash=transcript_sha,
-        now=session_end)
+        now=session_end, coverage=coverage)
     # `created` = when the SESSION ended, not when this write happens (#123).
     # Stamped here — not left to store's setdefault-now — so a heal/re-serialize
     # of an old transcript carries its true age and store's pointer guard can

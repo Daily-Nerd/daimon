@@ -163,7 +163,7 @@ def scrub_forgotten_payload(checkpoint: dict,
 # trusts the receipt over the flat flag), and `trust=verbatim` with no quote
 # fails serializer revalidation ("trust=verbatim item has no quote").
 _QUOTE_CLAIM_KEYS = ("quote_provenance", "quote_verified", "last_verified",
-                     "source_message_ids")
+                     "source_message_ids", "preceding_tool_context")
 
 
 def scrub_forgotten_fields(item: dict, forgotten_keys: set) -> bool:

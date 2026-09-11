@@ -233,6 +233,12 @@ ITEM_RULES: tuple[FieldRule, ...] = (
         "verifier is an OBJECT {id, version}: consumers normalizing it as a "
         "string rendered every verified claim's verifier as absent."),
     FieldRule(
+        "item", "preceding_tool_context", "object", True, False, "code", "strip",
+        _c(stripped_at_serialize=True),
+        "#1010 code-derived temporal audit metadata. Stores bounded tool-row "
+        "ids and original source provenance only; it never proves reading, "
+        "use, understanding or human authorship."),
+    FieldRule(
         "item", "grounded", "boolean", True, False, "code", "pass",
         _c(),
         "#359 outcome-grounding verdict, re-derived every serialize: any "

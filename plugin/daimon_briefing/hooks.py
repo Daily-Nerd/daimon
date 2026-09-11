@@ -90,7 +90,30 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                     session_id,
                 )
                 return
-        messages = transcript.from_session(session_id)
+        coverage = None
+        session_messages = transcript.from_session(session_id)
+        if transcript_path:
+            try:
+                detailed = transcript.from_file_detailed(transcript_path)
+            except (OSError, UnicodeError, ValueError):
+                detailed = None
+            if detailed is None:
+                messages = session_messages
+            else:
+                file_messages = detailed["messages"]
+                if session_messages and file_messages == session_messages:
+                    messages = file_messages
+                    coverage = detailed["coverage"]
+                elif session_messages:
+                    # The path can be an auxiliary host artifact while the
+                    # host's authoritative transcript is SessionDB. Do not
+                    # attach metadata from a different message snapshot.
+                    messages = session_messages
+                else:
+                    messages = file_messages
+                    coverage = detailed["coverage"]
+        else:
+            messages = session_messages
         if not messages:
             # scar 0045: 0 parsed messages is the host-format-drift signature,
             # never a short session — the official skip line would legitimize
@@ -128,6 +151,7 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 session_id, messages, project=root, chat=_chat,
                 deadline=deadline, transcript_path=transcript_path,
                 transcript_sha=transcript_sha, capture_host=platform,
+                coverage=coverage,
             )
         except serializer.TooShortError:
             # Unreachable while both doors share conversation_message_count

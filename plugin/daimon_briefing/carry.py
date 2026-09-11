@@ -489,6 +489,15 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                                 item["source_message_ids"])
                         else:
                             twin.pop("source_message_ids", None)
+                        # #1010: temporal context is atomic with the quote and
+                        # receipt. A native twin's context describes its old
+                        # wording, so only a valid previous quote's context
+                        # may travel with the frozen quote.
+                        if item.get("preceding_tool_context"):
+                            twin["preceding_tool_context"] = copy.deepcopy(
+                                item["preceding_tool_context"])
+                        else:
+                            twin.pop("preceding_tool_context", None)
                         # quote_verified travels WITH the quote (#167): the
                         # native's verdict attested its own (now replaced)
                         # quote — keeping it would stamp "verified" on a quote
@@ -512,6 +521,7 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
                         twin.pop("quote_provenance", None)
                         twin.pop("source_message_ids", None)
                         twin.pop("quote_verified", None)
+                        twin.pop("preceding_tool_context", None)
                     twin["trust"] = "verbatim"
                 if item.get("first_seen") and not twin.get("first_seen"):
                     twin["first_seen"] = item["first_seen"]
