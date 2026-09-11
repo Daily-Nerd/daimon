@@ -526,6 +526,17 @@ def log_dir() -> Path:
     return Path.home() / ".daimon" / "logs"
 
 
+def recall_delivery_log() -> Path:
+    """The local structured ledger for items actually delivered by recall.
+
+    It is separate from ``usage.log`` because that file's stable contract is
+    one timestamp plus one counter name per line. Recall measurements need a
+    payload per delivered item and must not make the existing stats fold
+    ambiguous.
+    """
+    return log_dir() / "recall-delivery.jsonl"
+
+
 def project_dir() -> str | None:
     """Working directory of the session being briefed/serialized (per-project
     checkpoint routing). Hooks pass the host payload's cwd through this var;

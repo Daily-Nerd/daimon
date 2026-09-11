@@ -1791,6 +1791,17 @@ def _plain_stats(data: dict) -> None:
     if c["success"]:
         print(f"  serialize seconds: max {c['max_serialize_seconds']}, "
               f"avg {c['total_serialize_seconds'] // c['success']}")
+    recall_data = data.get("recall")
+    if recall_data:
+        window = recall_data["window"]
+        score = window["match_score"]
+        print(f"recall delivery (last {recall_data['window_days']}d):")
+        print(f"  items: {window['deliveries']}  scored: {window['scored']}  "
+              f"match score min {score['min']}  median {score['median']}  "
+              f"max {score['max']}")
+        print("  surfaces: " + (", ".join(
+            f"{k} {v}" for k, v in window["by_surface"].items())
+            or "none"))
     speaker_line = _speaker_lines_line(c)
     if speaker_line:
         print(f"  {speaker_line}")
@@ -1935,6 +1946,27 @@ def _rich_stats(data: dict) -> None:
         label, _, values = speaker_line.partition(": ")
         capture_table.add_row(label, values)
     console.print(capture_table)
+    recall_data = data.get("recall")
+    if recall_data:
+        window = recall_data["window"]
+        score = window["match_score"]
+        recall_table = Table(
+            title=f"recall delivery (last {recall_data['window_days']}d)",
+            title_justify="left", show_header=True, header_style="bold")
+        recall_table.add_column("metric")
+        recall_table.add_column("value")
+        recall_table.add_row("items delivered", str(window["deliveries"]))
+        recall_table.add_row("items scored", str(window["scored"]))
+        recall_table.add_row(
+            "match score",
+            f"min {score['min']}  median {score['median']}  max {score['max']}",
+        )
+        recall_table.add_row(
+            "surfaces",
+            ", ".join(f"{k} {v}" for k, v in window["by_surface"].items())
+            or "none",
+        )
+        console.print(recall_table)
     # The #364/#742 gate warnings when tripped, and #944's margin line when
     # not. Only a warning is coloured: a margin printed in yellow reads as a
     # problem, which is the opposite of what it says.
