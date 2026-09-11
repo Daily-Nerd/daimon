@@ -799,6 +799,20 @@ def test_suggest_surfaces_prior_work(tmp_checkpoint_dir, monkeypatch):
     assert out[0]["match_score"] >= 0
 
 
+def test_suggest_rows_carry_item_id_for_delivery_telemetry(
+        tmp_checkpoint_dir, monkeypatch):
+    # #1017: the recall-inject surface persists row["item_id"] per delivery,
+    # but the SELECT behind suggest() omitted i.item_id, so every recall-inject
+    # ledger row landed as null while recall-search rows carried a real id.
+    # This is the producer-side contract, exercised end to end: the telemetry
+    # writer tests feed hand-built dicts and could never catch a missing
+    # column here.
+    _seed_history()
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out and isinstance(out[0]["item_id"], str) and out[0]["item_id"]
+
+
 def test_suggest_excludes_current_session(tmp_checkpoint_dir, monkeypatch):
     _seed_history()
     out = recall.suggest("debugging the litellm gateway cache pinning again",
