@@ -116,8 +116,6 @@ def derive(item: dict, messages: list[dict], coverage: dict | None,
     ):
         return unavailable("coverage_incomplete", source=original_source)
     by_id = {cast(str, row["id"]) for row in rows}
-    if len(by_id) != len(rows):
-        return unavailable("coverage_incomplete", source=original_source)
     sources, reason = _find_bound_sources(item, by_id)
     if reason:
         return unavailable(reason, source=original_source)
@@ -126,10 +124,8 @@ def derive(item: dict, messages: list[dict], coverage: dict | None,
 
     contexts = []
     for source_id in sources:
-        index = next((i for i, row in enumerate(rows)
-                      if row.get("id") == source_id), None)
-        if index is None:
-            return unavailable("source_unresolved", source=original_source)
+        index = next(i for i, row in enumerate(rows)
+                     if row.get("id") == source_id)
         if rows[index].get("role") != "assistant" or rows[index].get("tool_result"):
             return unavailable("source_not_assistant", source=original_source)
         examined: list[dict[str, Any]] = []

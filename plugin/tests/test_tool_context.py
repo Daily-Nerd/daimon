@@ -187,6 +187,20 @@ def test_invalid_binding_and_unknown_reason_fail_closed():
     assert tool_context.derive(malformed, messages, coverage)["reason"] == "source_binding_unavailable"
     assert tool_context.unavailable("made-up")["reason"] == "coverage_unknown"
 
+    inferred = {"text": "claim", "trust": "inferred"}
+    assert tool_context.derive(inferred, messages, coverage)["reason"] == "source_binding_unavailable"
+    scan_bound = {**_item(), "quote_provenance": {
+        "binding": {"mode": "transcript-scan", "message_ids": []}}}
+    assert tool_context.derive(scan_bound, messages, coverage)["reason"] == "source_binding_unavailable"
+
+
+def test_binding_to_missing_message_is_unavailable():
+    messages = [{"role": "assistant", "id": "a-source", "content": "claim"}]
+    coverage = _coverage([{"id": "a-source", "role": "assistant",
+                           "tool_result": False, "host_user_input": False}])
+    missing = _item("missing")
+    assert tool_context.derive(missing, messages, coverage)["reason"] == "source_unresolved"
+
 
 def test_boundary_after_twenty_rows_takes_precedence():
     messages = [{"role": "user", "id": "u2", "content": "previous"}]

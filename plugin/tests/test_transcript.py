@@ -297,6 +297,50 @@ def test_from_file_claude_jsonl_binds_message_uuid_as_id(tmp_path):
     ]
 
 
+def test_detailed_loader_marks_mixed_and_mismatched_claude_rows_unavailable(tmp_path):
+    mixed = _write_jsonl(tmp_path / "mixed.jsonl", [{
+        "type": "user", "uuid": "u1", "message": {"role": "user", "content": [
+            {"type": "text", "text": "prompt"},
+            {"type": "tool_result", "content": "output"},
+        ]},
+    }])
+    assert transcript.from_file_detailed(mixed)["coverage"]["reason"] == "coverage_incomplete"
+
+    mismatched = _write_jsonl(tmp_path / "mismatched.jsonl", [{
+        "type": "user", "uuid": "u1", "message": {"role": "assistant", "content": "prompt"},
+    }])
+    assert transcript.from_file_detailed(mismatched)["coverage"]["reason"] == "coverage_incomplete"
+
+    irrelevant = _write_jsonl(tmp_path / "irrelevant.jsonl", [{"type": "system", "content": "noise"}])
+    assert transcript.from_file_detailed(irrelevant)["coverage"]["reason"] == "unsupported_adapter"
+
+
+def test_detailed_loader_rejects_unknown_role_and_invalid_uuid(tmp_path):
+    unknown_role = _write_jsonl(tmp_path / "unknown-role.jsonl", [
+        {"type": "system", "uuid": "s1",
+         "message": {"role": "system", "content": "noise"}},
+        {"type": "user", "uuid": "u1",
+         "message": {"role": "user", "content": "prompt"}},
+    ])
+    assert transcript.from_file_detailed(unknown_role)["coverage"]["available"] is True
+
+    invalid_uuid = _write_jsonl(tmp_path / "invalid-uuid.jsonl", [{
+        "type": "user", "uuid": " ",
+        "message": {"role": "user", "content": "prompt"},
+    }])
+    assert transcript.from_file_detailed(invalid_uuid)["coverage"]["reason"] == "coverage_incomplete"
+
+
+def test_detailed_loader_marks_kimi_wire_unavailable(tmp_path):
+    path = _write_jsonl(tmp_path / "wire.jsonl", [{
+        "type": "metadata", "protocol_version": 1,
+    }])
+    assert transcript.from_file_detailed(path)["coverage"] == {
+        "version": 1, "adapter": "kimi", "available": False,
+        "reason": "source_binding_unavailable", "rows": [],
+    }
+
+
 def test_from_file_rows_without_usable_uuid_get_no_id_key(tmp_path):
     # Hosts without a stable per-message id — and malformed uuid values — keep
     # today's exact {"role", "content"} shape: no id key, so downstream falls

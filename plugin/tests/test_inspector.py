@@ -807,6 +807,17 @@ def test_why_reports_observed_preceding_tool_context_without_source_read(
     assert result["preceding_tool_context"] == context
 
 
+def test_preceding_context_preserves_valid_source_reference():
+    receipt = _receipt(_source(), "a" * 64)
+    context = {
+        "version": 1, "policy": "preceding-tools-v1", "message_limit": 20,
+        "status": "unavailable", "reason": "coverage_incomplete",
+        "source": _source(),
+    }
+    checked = _item(receipt=receipt, preceding_tool_context=context)
+    assert inspector._preceding_tool_context(checked)["source"] == _source()
+
+
 @pytest.mark.parametrize("bad, reason", [
     ("not-an-object", "invalid_metadata"),
     ({"version": 1, "policy": "old", "message_limit": 20,
@@ -838,6 +849,7 @@ def test_preceding_context_validation_rejects_each_malformed_shape():
         ({**valid, "version": 2}),
         ({**valid, "status": "unavailable", "contexts": [], "reason": "bad"}),
         ({**valid, "contexts": "bad"}),
+        ({**valid, "contexts": ["bad"]}),
         ({**valid, "contexts": [{"source_message_id": "wrong",
                                   "preceding_tool_result_ids": [],
                                   "boundary": "host_user_input",
@@ -849,6 +861,7 @@ def test_preceding_context_validation_rejects_each_malformed_shape():
         ({**valid, "contexts": [{"source_message_id": "u-1",
                                   "preceding_tool_result_ids": [],
                                   "boundary": "bad", "messages_examined": 0}]}),
+        ({**valid, "contexts": []}),
         ({**valid, "source": {"version": 1}}),
         ({**valid, "status": "unknown"}),
     ]
@@ -856,6 +869,60 @@ def test_preceding_context_validation_rejects_each_malformed_shape():
         checked = {**item, "preceding_tool_context": raw}
         assert inspector._preceding_tool_context(checked) == {
             "status": "unavailable", "reason": "invalid_metadata"}
+
+    unavailable = {**valid, "status": "unavailable", "contexts": [],
+                   "reason": "coverage_incomplete"}
+    assert inspector._preceding_tool_context({
+        **item, "preceding_tool_context": unavailable,
+    }) == {
+        "status": "unavailable", "version": 1,
+        "reason": "coverage_incomplete", "policy": "preceding-tools-v1",
+        "message_limit": 20,
+    }
+
+    bad_receipt = {**receipt, "binding": {
+        "mode": "transcript-scan", "message_ids": []}}
+    assert inspector._preceding_tool_context({
+        **item, "quote_provenance": bad_receipt,
+        "preceding_tool_context": valid,
+    }) == {"status": "unavailable", "reason": "invalid_metadata"}
+
+
+def test_human_why_rendering_mentions_observed_temporal_context():
+    result = {
+        "item": {"item_id": "o-abcdef", "kind": "decision",
+                  "text": "claim"},
+        "axes": {"capture": "verified", "bytes": "unknown",
+                  "current_support": "not-checked", "provenance": "bound",
+                  "locator": "absent-local", "verifier_comparison": "same-version",
+                  "lifecycle": "active"},
+        "ranking": {"effective_weight": 0.1, "rules": "recent_decision",
+                    "inputs": {"importance": 5, "importance_source": "default",
+                               "age_days": None, "trust": "verbatim",
+                               "trust_ceiling": 3.0},},
+        "corroboration": {"count": 0, "references": []},
+        "preceding_tool_context": {"status": "observed", "contexts": [{}]},
+    }
+    assert any("Preceding tool results: observed" in line
+               for line in inspector.human_lines(result))
+
+
+def test_human_why_rendering_mentions_unavailable_temporal_context():
+    result = {
+        "item": {"item_id": "o-abcdef", "kind": "decision", "text": "claim"},
+        "axes": {"capture": "verified", "bytes": "unknown",
+                  "current_support": "not-checked", "provenance": "bound",
+                  "locator": "absent-local", "verifier_comparison": "same-version",
+                  "lifecycle": "active"},
+        "ranking": {"effective_weight": 0.1, "rules": "recent_decision",
+                    "inputs": {"importance": 5, "importance_source": "default",
+                               "age_days": None, "trust": "verbatim",
+                               "trust_ceiling": 3.0},},
+        "corroboration": {"count": 0, "references": []},
+        "preceding_tool_context": {"status": "unavailable", "reason": "coverage_incomplete"},
+    }
+    assert any("Preceding tool results: unavailable" in line
+               for line in inspector.human_lines(result))
 
 
 def test_forgotten_team_only_item_is_not_resurrected(

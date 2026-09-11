@@ -78,6 +78,20 @@ def test_pre_llm_call_never_raises(tmp_checkpoint_dir, monkeypatch):
     assert out is None
 
 
+def test_pre_llm_call_returns_none_when_briefing_is_empty(
+    tmp_checkpoint_dir, sample_checkpoint, monkeypatch
+):
+    from daimon_briefing import store
+
+    store.write_checkpoint("S-prev", sample_checkpoint)
+    monkeypatch.setattr(hooks.briefing, "render", lambda *args, **kwargs: "")
+    out = hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert out is None
+
+
 # ---- on_session_end gating + safety ----
 
 
@@ -336,6 +350,52 @@ def test_on_session_end_proceeds_when_no_transcript_path_given(
 
     hooks.on_session_end(
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
+    )
+    assert len(chat.calls) == 1
+
+
+def test_on_session_end_uses_detailed_coverage_for_matching_transcript(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    from daimon_briefing import transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text(
+        '{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}\n'
+        '{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":"done"}}\n',
+        encoding="utf-8",
+    )
+    messages = transcript_mod.from_file(tpath)
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: messages)
+    monkeypatch.setattr(hooks, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "1")
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
+    )
+    assert len(chat.calls) == 1
+
+
+def test_on_session_end_uses_file_messages_when_session_has_none(
+    tmp_checkpoint_dir, fake_chat_factory, monkeypatch, tmp_path
+):
+    from daimon_briefing import transcript as transcript_mod
+
+    tpath = tmp_path / "S-end.jsonl"
+    tpath.write_text(
+        '{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}\n',
+        encoding="utf-8",
+    )
+    chat = fake_chat_factory(_valid_json("S-end"))
+    monkeypatch.setattr(transcript_mod, "from_session", lambda sid: [])
+    monkeypatch.setattr(hooks, "_chat", chat)
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "1")
+
+    hooks.on_session_end(
+        session_id="S-end", completed=True, interrupted=False, model="m", platform="cli",
+        transcript_path=str(tpath),
     )
     assert len(chat.calls) == 1
 
