@@ -22,6 +22,42 @@ def test_record_writes_one_structured_row_per_delivery(tmp_path, monkeypatch):
     assert payload["query_term_count"] == 2
 
 
+def test_record_normalizes_invalid_values_and_accepts_naive_time(
+        tmp_path, monkeypatch):
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-invalid", "match_score": "not-a-score",
+          "term_hits": True}],
+        query_terms=["  ", "gateway"],
+        surface="recall-search",
+        now=datetime(2026, 9, 11),
+    )
+    payload = json.loads((log / "recall-delivery.jsonl").read_text())
+    assert payload["at"] == "2026-09-11T00:00:00Z"
+    assert payload["match_score"] is None
+    assert payload["term_hits"] is None
+    assert payload["query_term_count"] == 1
+
+
+def test_record_skips_empty_delivery_and_ignores_write_errors(
+        tmp_path, monkeypatch):
+    recall_telemetry.record([], query_terms=[], surface="recall-search")
+
+    blocked_parent = tmp_path / "blocked"
+    blocked_parent.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(
+        recall_telemetry.config,
+        "recall_delivery_log",
+        lambda: blocked_parent / "recall-delivery.jsonl",
+    )
+    recall_telemetry.record(
+        [{"item_id": "o-write-error"}],
+        query_terms=[],
+        surface="recall-search",
+    )
+
+
 def test_stats_ignores_malformed_rows_and_splits_recent_window(tmp_path, monkeypatch):
     log = tmp_path / "logs"
     monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
@@ -31,6 +67,7 @@ def test_stats_ignores_malformed_rows_and_splits_recent_window(tmp_path, monkeyp
     fresh = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     (log / "recall-delivery.jsonl").write_text(
         "not json\n"
+        "[]\n"
         + json.dumps({"at": old, "surface": "recall-inject",
                       "match_score": 0.1, "term_hits": 2}) + "\n"
         + json.dumps({"at": fresh, "surface": "recall-search",
@@ -42,3 +79,21 @@ def test_stats_ignores_malformed_rows_and_splits_recent_window(tmp_path, monkeyp
     assert out["window"]["deliveries"] == 1
     assert out["window"]["by_surface"] == {"recall-search": 1}
     assert out["window"]["match_score"]["median"] == 0.8
+
+
+def test_stats_handles_invalid_timestamp_and_missing_log(tmp_path, monkeypatch):
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    log.mkdir()
+    (log / "recall-delivery.jsonl").write_text(
+        json.dumps({"at": "not-a-timestamp", "surface": "recall-search"})
+        + "\n",
+        encoding="utf-8",
+    )
+    out = recall_telemetry.stats(now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+    assert out["lifetime"]["deliveries"] == 1
+    assert out["window"]["deliveries"] == 0
+
+    (log / "recall-delivery.jsonl").unlink()
+    out = recall_telemetry.stats()
+    assert out["lifetime"]["deliveries"] == 0
