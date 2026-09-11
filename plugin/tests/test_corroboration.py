@@ -446,13 +446,16 @@ def test_emits_nothing_when_the_corroboration_fold_cannot_be_read(
     # read: unable to prove this is not a duplicate -> write nothing. A missed
     # boost costs a count; a double-counted witness costs the axis.
     item_id = _seed_origin()
+    calls = []
 
     def _boom(*args, **kwargs):
+        calls.append(1)
         raise RuntimeError("ledger unreadable")
 
     monkeypatch.setattr(store, "corroborations", _boom)
     assert _emit([(item_id, ORIGIN, "ada")]) == 0
     assert _rows(tmp_checkpoint_dir) == []
+    assert calls, "the failure simulation never fired"
 
 
 # ---------------------------------------------------------------------------

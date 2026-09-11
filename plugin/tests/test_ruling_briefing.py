@@ -98,19 +98,24 @@ def test_renderer_backstops_count_and_text(tmp_checkpoint_dir, monkeypatch):
 def test_ruling_lines_fail_open_on_cap_read_error(tmp_checkpoint_dir,
                                                   monkeypatch):
     _rule("cap failure hides me safely")
+    calls = []
 
     def boom():
+        calls.append(1)
         raise ValueError("corrupt env")
 
     monkeypatch.setattr(briefing.config, "ruling_cap", boom)
     assert briefing.ruling_lines(PROJECT) == []
+    assert calls, "the failure simulation never fired"
 
 
 def test_ruling_loader_fails_open(tmp_checkpoint_dir, sample_checkpoint,
                                   monkeypatch):
     _rule("this ruling will not load")
+    calls = []
 
     def boom(*args, **kwargs):
+        calls.append(1)
         raise OSError("ledger unreadable")
 
     # #962: active_rulings now reads through briefing.rulings_read, which
@@ -120,6 +125,7 @@ def test_ruling_loader_fails_open(tmp_checkpoint_dir, sample_checkpoint,
     out = briefing.render(sample_checkpoint, project_dir=PROJECT)
     assert out  # the briefing still renders
     assert "Standing rulings" not in out
+    assert calls, "the failure simulation never fired"
 
 
 def test_ruling_loader_fails_open_on_an_unreadable_ledger(
@@ -141,14 +147,17 @@ def test_ruling_loader_fails_open_when_path_resolution_itself_raises(
     `UnicodeDecodeError`, not an `OSError`). That seam must fail open too,
     not just the read/fold path below it."""
     _rule("this ruling will not load for a third reason")
+    calls = []
 
     def boom(*args, **kwargs):
+        calls.append(1)
         raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte")
 
     monkeypatch.setattr(briefing.refutations, "_path", boom)
     out = briefing.render(sample_checkpoint, project_dir=PROJECT)
     assert out  # the briefing still renders, never a raised exception
     assert "Standing rulings" not in out
+    assert calls, "the failure simulation never fired"
 
 
 def test_no_rulings_render_is_byte_identical_to_legacy(tmp_checkpoint_dir,

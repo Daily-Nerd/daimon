@@ -211,8 +211,10 @@ def test_status_surfaces_echo_drops_when_nonzero(tmp_checkpoint_dir,
 def test_filter_fails_open_on_ledger_read_error(tmp_checkpoint_dir,
                                                 monkeypatch):
     _active_ruling()
+    calls = []
 
     def boom(**kwargs):
+        calls.append(1)
         raise OSError("ledger unreadable")
 
     monkeypatch.setattr(refutations, "listing", boom)
@@ -220,6 +222,7 @@ def test_filter_fails_open_on_ledger_read_error(tmp_checkpoint_dir,
                                  project_dir=PROJECT, admit=True)
     assert out is not None
     assert VERDICT in _beliefs(out)  # fail-open: the write goes through whole
+    assert calls, "the failure simulation never fired"
 
 
 def test_capture_path_admits(tmp_checkpoint_dir, monkeypatch):

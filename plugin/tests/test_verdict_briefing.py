@@ -97,12 +97,16 @@ def test_panel_empty_with_nothing_decided(tmp_checkpoint_dir):
 
 
 def test_panel_fails_open_on_a_broken_composer(tmp_checkpoint_dir, monkeypatch):
+    calls = []
+
     def boom(project_dir=None):
+        calls.append(1)
         raise RuntimeError("boom")
     monkeypatch.setattr(requests, "verdict_renderable", boom)
     q_id = _ask()
     requests.accept(q_id, channel="cli-tty", project_dir=RECIPIENT)
     assert briefing.verdict_panel_lines(SENDER) == []
+    assert calls, "the failure simulation never fired"
 
 
 def test_panel_and_incoming_panel_coexist(tmp_checkpoint_dir):
