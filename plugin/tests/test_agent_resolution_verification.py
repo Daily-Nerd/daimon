@@ -20,8 +20,15 @@ Three properties matter most here, each pinned by its own test:
 
 import json
 
+import pytest
+
 from daimon_briefing import capture, cli, store
 from tests.conftest import make_messages
+
+
+@pytest.fixture(autouse=True)
+def _interactive_human_cli(monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
 
 
 def _new_session_json(session_id="S-new", quote=""):

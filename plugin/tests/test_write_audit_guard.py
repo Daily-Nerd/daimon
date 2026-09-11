@@ -1046,6 +1046,7 @@ def test_guard_trips_when_admit_row_is_stubbed_out(
     # The mutation: ledger rows stop passing through the admission seam.
     monkeypatch.setattr(policy, "admit_row",
                         lambda row, redact_fields=(), redact_fn=None: row)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
     write_audit.command = "resolve"
     assert cli.main(["resolve", item_id, "--note", "done"]) == 0
 
