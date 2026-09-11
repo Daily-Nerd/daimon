@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from . import (config, provenance, recall, redact, schema, scoring,
-               serializer, store, transcript)
+               serializer, store, tool_context, transcript)
 
 
 SCHEMA_VERSION = 1
@@ -187,6 +187,79 @@ def _message_by_id(messages: list[dict]) -> dict[str, dict]:
     return out
 
 
+def _preceding_tool_context(item: dict) -> dict:
+    """Validate stored #1010 metadata before exposing it to an inspector."""
+    raw = item.get("preceding_tool_context")
+    if raw is None:
+        return {"status": "not_recorded", "reason": "not_recorded"}
+    if not isinstance(raw, dict):
+        return {"status": "unavailable", "reason": "invalid_metadata"}
+    if raw.get("policy") != tool_context.POLICY:
+        return {"status": "unavailable", "reason": "unsupported_policy"}
+    if raw.get("version") != tool_context.VERSION or raw.get("message_limit") != tool_context.MESSAGE_LIMIT:
+        return {"status": "unavailable", "reason": "invalid_metadata"}
+    status = raw.get("status")
+    if status == "unavailable":
+        reason = raw.get("reason")
+        if not isinstance(reason, str) or reason not in tool_context._REASONS:
+            return {"status": "unavailable", "reason": "invalid_metadata"}
+        result = {"status": status, "version": raw["version"], "reason": reason,
+                  "policy": raw["policy"], "message_limit": raw["message_limit"]}
+    elif status == "observed":
+        contexts = raw.get("contexts")
+        if not isinstance(contexts, list):
+            return {"status": "unavailable", "reason": "invalid_metadata"}
+        receipt = item.get("quote_provenance")
+        binding = receipt.get("binding") if isinstance(receipt, dict) else None
+        bound_ids = (binding.get("message_ids")
+                     if isinstance(binding, dict)
+                     and binding.get("mode") == "message-ids" else None)
+        if (not isinstance(bound_ids, list)
+                or not all(isinstance(value, str) and value for value in bound_ids)):
+            return {"status": "unavailable", "reason": "invalid_metadata"}
+        safe_contexts = []
+        context_sources = []
+        for context in contexts:
+            if not isinstance(context, dict):
+                return {"status": "unavailable", "reason": "invalid_metadata"}
+            source_id = context.get("source_message_id")
+            result_ids = context.get("preceding_tool_result_ids")
+            boundary = context.get("boundary")
+            examined = context.get("messages_examined")
+            if (not isinstance(source_id, str) or not source_id
+                    or not isinstance(result_ids, list)
+                    or not all(isinstance(value, str) and value for value in result_ids)
+                    or len(result_ids) > tool_context.MESSAGE_LIMIT
+                    or len(set(result_ids)) != len(result_ids)
+                    or boundary not in ("host_user_input", "message_limit")
+                    or isinstance(examined, bool)
+                    or not isinstance(examined, int)
+                    or not 0 <= examined <= tool_context.MESSAGE_LIMIT):
+                return {"status": "unavailable", "reason": "invalid_metadata"}
+            if source_id not in bound_ids or source_id in context_sources:
+                return {"status": "unavailable", "reason": "invalid_metadata"}
+            context_sources.append(source_id)
+            safe_contexts.append({
+                "source_message_id": source_id,
+                "preceding_tool_result_ids": list(result_ids),
+                "boundary": boundary,
+                "messages_examined": examined,
+            })
+        if set(context_sources) != set(bound_ids):
+            return {"status": "unavailable", "reason": "invalid_metadata"}
+        result = {"status": status, "version": raw["version"], "policy": raw["policy"],
+                  "message_limit": raw["message_limit"],
+                  "contexts": safe_contexts}
+    else:
+        return {"status": "unavailable", "reason": "invalid_metadata"}
+    source = raw.get("source")
+    if source is not None:
+        if not provenance.valid_source_ref(source):
+            return {"status": "unavailable", "reason": "invalid_metadata"}
+        result["source"] = source
+    return result
+
+
 def _cap_disclosed_source(value: str) -> tuple[str, bool]:
     """Cap display text without splitting a final-boundary redaction marker."""
     if len(value) <= _SOURCE_CHAR_LIMIT:
@@ -354,6 +427,7 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
             "origin_session": item.get("origin_session"),
             "occurrences": len(occurrences),
         },
+        "preceding_tool_context": _preceding_tool_context(item),
         "axes": {
             "capture": capture,
             "provenance": provenance_axis,
@@ -462,6 +536,18 @@ def human_lines(result: dict) -> list[str]:
     lines.append(
         f"Corroboration: {corroboration['count']}"
         + (f" ({refs})" if refs else ""))
+    temporal = result.get("preceding_tool_context")
+    if isinstance(temporal, dict):
+        status = temporal.get("status")
+        if status == "observed":
+            lines.append(
+                f"Preceding tool results: observed ({len(temporal.get('contexts', []))} source window(s)); "
+                "order does not prove use")
+        elif status == "not_recorded":
+            lines.append("Preceding tool results: not recorded")
+        else:
+            lines.append(
+                f"Preceding tool results: unavailable ({temporal.get('reason', 'unknown')})")
     source = result.get("source")
     if isinstance(source, dict):
         lines.append(

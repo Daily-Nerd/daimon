@@ -793,6 +793,12 @@ def from_file(path) -> list[dict]:
         raise FileNotFoundError(p)
     text = p.read_text(encoding="utf-8")
 
+    return _from_file_text(p, text)
+
+
+def _from_file_text(p: Path, text: str) -> list[dict]:
+    """Parse one already-read file snapshot."""
+
     if p.suffix == ".jsonl":
         return _from_jsonl(text, kimi=_is_kimi_wire_path(p))
 
@@ -821,3 +827,78 @@ def from_file(path) -> list[dict]:
         if blob:
             messages.append({"role": "user", "content": blob})
     return messages
+
+
+def _claude_coverage(text: str, messages: list[dict]) -> dict:
+    """Return conservative parser metadata for the validated Claude shape."""
+    objects = _objects_of(text)
+    nonempty_lines = [line for line in text.splitlines() if line.strip()]
+    malformed = len(objects) != len(nonempty_lines)
+    if not any(obj.get("type") in ("user", "assistant") for obj in objects):
+        return {"version": 1, "adapter": "claude-code", "available": False,
+                "reason": "unsupported_adapter", "rows": []}
+    rows = []
+    seen = set()
+    for obj in objects:
+        if obj.get("isSidechain") or obj.get("isMeta"):
+            continue
+        role = obj.get("type")
+        if role not in ("user", "assistant"):
+            continue
+        raw_uuid = obj.get("uuid")
+        message_id = raw_uuid.strip() if isinstance(raw_uuid, str) else ""
+        msg = obj.get("message")
+        content = msg.get("content") if isinstance(msg, dict) else None
+        tool = _tool_result_of(obj)
+        has_text = bool(_text_of(content))
+        if not message_id or message_id in seen or not isinstance(content, (str, list)):
+            return {"version": 1, "adapter": "claude-code", "available": False,
+                    "reason": "coverage_incomplete", "rows": []}
+        if tool is not None and has_text:
+            return {"version": 1, "adapter": "claude-code", "available": False,
+                    "reason": "coverage_incomplete", "rows": []}
+        # Claude emits assistant rows containing only tool_use blocks. The
+        # normalized parser intentionally drops those rows, so they do not
+        # consume a temporal position or make the sidecar disagree with it.
+        if role == "assistant" and isinstance(content, list) and not has_text and tool is None:
+            continue
+        if isinstance(msg, dict) and msg.get("role") not in (None, role):
+            return {"version": 1, "adapter": "claude-code", "available": False,
+                    "reason": "coverage_incomplete", "rows": []}
+        seen.add(message_id)
+        rows.append({"id": message_id, "role": role,
+                     "tool_result": tool is not None,
+                     "host_user_input": role == "user" and tool is None})
+    if malformed or len(rows) != len(messages):
+        return {"version": 1, "adapter": "claude-code", "available": False,
+                "reason": "coverage_incomplete", "rows": []}
+    return {"version": 1, "adapter": "claude-code", "available": True,
+            "reason": None, "rows": rows}
+
+
+def from_file_detailed(path) -> dict:
+    """Read messages and same-snapshot coverage metadata for capture."""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(p)
+    text = p.read_text(encoding="utf-8")
+    messages = _from_file_text(p, text)
+    if p.suffix != ".jsonl":
+        coverage = {"version": 1, "adapter": "generic", "available": False,
+                    "reason": "unsupported_adapter", "rows": []}
+    else:
+        objects = _objects_of(text)
+        if _is_kimi_wire(objects) or _is_kimi_wire_path(p):
+            reason = "source_binding_unavailable"
+            coverage = {"version": 1, "adapter": "kimi", "available": False,
+                        "reason": reason, "rows": []}
+        elif any(obj.get("type") == "event_msg" for obj in objects):
+            coverage = {"version": 1, "adapter": "codex", "available": False,
+                        "reason": "unsupported_adapter", "rows": []}
+        elif any(obj.get("status") is not None and obj.get("type") in
+                 ("user_input", "planner_response") for obj in objects):
+            coverage = {"version": 1, "adapter": "windsurf", "available": False,
+                        "reason": "unsupported_adapter", "rows": []}
+        else:
+            coverage = _claude_coverage(text, messages)
+    return {"messages": messages, "coverage": coverage}

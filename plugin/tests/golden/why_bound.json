@@ -21,6 +21,10 @@
     "verifier_comparison": "same-version",
     "lifecycle": "active"
   },
+  "preceding_tool_context": {
+    "status": "not_recorded",
+    "reason": "not_recorded"
+  },
   "corroboration": {
     "count": 0,
     "references": []

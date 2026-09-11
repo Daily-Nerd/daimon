@@ -658,6 +658,18 @@
       "notes": "Durable per-item evidence receipt (#594, provenance.quote_receipt). verifier is an OBJECT {id, version}: consumers normalizing it as a string rendered every verified claim's verifier as absent."
     },
     {
+      "field": "preceding_tool_context",
+      "type": "object",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "#1010 code-derived temporal audit metadata. Stores bounded tool-row ids and original source provenance only; it never proves reading, use, understanding or human authorship."
+    },
+    {
       "field": "grounded",
       "type": "boolean",
       "optional": true,

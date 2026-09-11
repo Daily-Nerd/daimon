@@ -324,7 +324,9 @@ def _run_serialize(transcript_path: Path, project: str | None,
         return 0
 
     try:
-        messages = transcript.from_file(path)
+        detailed = transcript.from_file_detailed(path)
+        messages = detailed["messages"]
+        coverage = detailed["coverage"]
     except FileNotFoundError:
         msg = f"error: transcript not found: {path}"
         _print_error(msg)
@@ -367,7 +369,8 @@ def _run_serialize(transcript_path: Path, project: str | None,
         # Error POSTURE stays here: capture raises, this door prints/exits.
         out = capture.run(session_id, messages, project=project, chat=_chat,
                           deadline=deadline, transcript_path=path,
-                          transcript_sha=transcript_sha, escalate=escalate)
+                          transcript_sha=transcript_sha, escalate=escalate,
+                          coverage=coverage)
     except serializer.TooShortError as exc:
         msg = f"skipped serialize for {session_id}: {exc}"
         print(msg)
