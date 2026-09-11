@@ -194,12 +194,16 @@ def test_panel_fails_open_on_a_broken_composer(tmp_checkpoint_dir, monkeypatch):
     `inbox_renderable` (that one still backs `request inbox` and the CLI's
     own `surfaced`-stamping loop) — the failure fence has to target the
     function this panel actually calls, or it stops proving anything."""
+    calls = []
+
     def boom(project_dir=None):
+        calls.append(1)
         raise RuntimeError("boom")
     monkeypatch.setattr(requests, "decision_renderable", boom)
     sender = _seed_sender()
     _ask(sender)
     assert briefing.request_panel_lines(RECIPIENT) == []
+    assert calls, "the failure simulation never fired"
 
 
 def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint,

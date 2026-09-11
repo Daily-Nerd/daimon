@@ -92,10 +92,14 @@ def test_owed_panel_lines_are_empty_without_a_project(tmp_checkpoint_dir):
 
 def test_owed_panel_lines_fail_open(tmp_checkpoint_dir, monkeypatch):
     """ANY composer error costs the panel, never the briefing."""
+    calls = []
+
     def _boom(*a, **k):
+        calls.append(1)
         raise RuntimeError("ledger unreadable")
     monkeypatch.setattr(requests, "owed_renderable", _boom)
     assert briefing.owed_panel_lines("/p/cbo-boom") == []
+    assert calls, "the failure simulation never fired"
 
 
 def test_owed_panel_names_the_verb_that_closes_it(
