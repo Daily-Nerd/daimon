@@ -824,6 +824,40 @@ def test_why_does_not_trust_malformed_preceding_tool_context(bad, reason):
         "status": "unavailable", "reason": reason}
 
 
+def test_preceding_context_validation_rejects_each_malformed_shape():
+    receipt = _receipt(_source(), "a" * 64)
+    item = _item(receipt=receipt)
+    valid = {
+        "version": 1, "policy": "preceding-tools-v1", "message_limit": 20,
+        "status": "observed", "contexts": [{
+            "source_message_id": "u-1", "preceding_tool_result_ids": [],
+            "boundary": "host_user_input", "messages_examined": 0,
+        }],
+    }
+    cases = [
+        ({**valid, "version": 2}),
+        ({**valid, "status": "unavailable", "contexts": [], "reason": "bad"}),
+        ({**valid, "contexts": "bad"}),
+        ({**valid, "contexts": [{"source_message_id": "wrong",
+                                  "preceding_tool_result_ids": [],
+                                  "boundary": "host_user_input",
+                                  "messages_examined": 0}]}),
+        ({**valid, "contexts": [{"source_message_id": "u-1",
+                                  "preceding_tool_result_ids": ["t-1", "t-1"],
+                                  "boundary": "host_user_input",
+                                  "messages_examined": 0}]}),
+        ({**valid, "contexts": [{"source_message_id": "u-1",
+                                  "preceding_tool_result_ids": [],
+                                  "boundary": "bad", "messages_examined": 0}]}),
+        ({**valid, "source": {"version": 1}}),
+        ({**valid, "status": "unknown"}),
+    ]
+    for raw in cases:
+        checked = {**item, "preceding_tool_context": raw}
+        assert inspector._preceding_tool_context(checked) == {
+            "status": "unavailable", "reason": "invalid_metadata"}
+
+
 def test_forgotten_team_only_item_is_not_resurrected(
     tmp_checkpoint_dir, monkeypatch
 ):
