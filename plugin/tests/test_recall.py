@@ -498,6 +498,18 @@ def test_empty_query_returns_empty(tmp_checkpoint_dir):
     assert recall.search("", all_projects=True) == []
 
 
+def test_search_names_and_normalizes_match_score(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": "osprey harrier combined rework", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    hits = recall.search("osprey harrier", all_projects=True)
+    assert hits
+    assert "rank" not in hits[0]
+    assert isinstance(hits[0]["match_score"], (int, float))
+    assert hits[0]["match_score"] >= 0
+
+
 # ---- #25: AND-then-OR fallback — a richer cue must never zero out recall ----
 
 
@@ -783,6 +795,8 @@ def test_suggest_surfaces_prior_work(tmp_checkpoint_dir, monkeypatch):
                          project_dir="/repo/x", current_session="S-now")
     assert out and out[0]["session_id"] == "S-old"
     assert "cache" in out[0]["text"]
+    assert isinstance(out[0]["match_score"], (int, float))
+    assert out[0]["match_score"] >= 0
 
 
 def test_suggest_excludes_current_session(tmp_checkpoint_dir, monkeypatch):

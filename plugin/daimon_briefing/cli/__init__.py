@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict
 
-from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 from .. import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -992,6 +992,11 @@ def _cmd_recall(args) -> int:
     except recall.RecallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    recall_telemetry.record(
+        results,
+        query_terms=recall.salient_terms(query),
+        surface="recall-search",
+    )
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
         return 0
@@ -1975,6 +1980,12 @@ def _cmd_recall_inject(args) -> int:
         for m in chosen:
             print(_suggest_line(m, terms, now,
                                 own_slug=store.project_slug(project)))
+        recall_telemetry.record(
+            chosen,
+            query_terms=terms,
+            surface="recall-inject",
+            now=datetime.fromtimestamp(now, tz=timezone.utc),
+        )
         if seen_file:
             # #500: count what each origin supplied instead of retiring it
             # outright, so a later, stronger row from the same session stays
@@ -3395,6 +3406,7 @@ def _cmd_stats(args) -> int:
             "verification": _stats_verification(project),
             "resolutions": _stats_resolutions(project, usage),
             "receipts": _stats_receipts(project, usage),
+            "recall": recall_telemetry.stats(),
             # #475 part 2: current-configuration posture, rendered next to
             # (never merged into) the historical fallback counts above.
             "rescue_posture": llm.rescue_posture(),

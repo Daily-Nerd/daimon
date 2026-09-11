@@ -4548,6 +4548,34 @@ def test_recall_inject_surfaces_prior_work(tmp_checkpoint_dir, capsys, monkeypat
     assert "daimon recall" in out  # points at the deep-dive command
 
 
+def test_recall_inject_records_delivery_score(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys,
+                      "debugging the litellm gateway cache pinning again")
+    assert rc == 0 and out
+    rows = [json.loads(line) for line in
+            (tmp_log_dir / "recall-delivery.jsonl").read_text().splitlines()]
+    assert rows and rows[0]["surface"] == "recall-inject"
+    assert rows[0]["match_score"] >= 0
+    assert rows[0]["term_hits"] == 3
+
+
+def test_stats_reports_recall_delivery_distribution(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys,
+                      "debugging the litellm gateway cache pinning again")
+    assert rc == 0 and out
+    capsys.readouterr()
+    assert cli.main(["stats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    window = data["recall"]["window"]
+    assert window["deliveries"] == 1
+    assert window["scored"] == 1
+    assert window["by_surface"] == {"recall-inject": 1}
+
+
 def test_recall_inject_excludes_latest_briefed_session(tmp_checkpoint_dir, capsys, monkeypatch):
     _seed_recall_history()
     # Prompt matching only the LATEST checkpoint's content: briefing covered it.

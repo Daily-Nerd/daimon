@@ -1029,7 +1029,8 @@ def _scope_clause(scopes: list[str], column: str = "i.project_slug") -> str:
 def search(query: str, project_dir=None, all_projects: bool = False,
            limit: int = 20, slug: str | None = None) -> list[dict]:
     """FTS5 MATCH over the (auto-refreshed) index. Live items first, then by
-    bm25 rank, newest checkpoint first within equal rank. Scope: project_dir's
+    descending ``match_score`` (the sign-normalized bm25 rank), newest
+    checkpoint first within equal score. Scope: project_dir's
     slug unless all_projects (or the project is unknown — no filter then,
     matching read_team's semantics). An explicit `slug` IS the scope (#243):
     it addresses a bucket by its stored identity — the slug is lossy, so this
@@ -1060,7 +1061,7 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         " i.session_id, i.created, i.superseded_by, i.superseded_source,"
         " i.invalidated_by, i.cured_by,"
         " i.importance, i.first_seen, i.item_id, i.frontier,"
-        " bm25(items_fts) AS rank"
+        " -bm25(items_fts) AS match_score"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"
     )
@@ -1080,7 +1081,7 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     sql += (" ORDER BY (i.invalidated_by IS NOT NULL) ASC,"
             " CASE WHEN i.superseded_by IS NULL THEN 0"
             " WHEN i.superseded_source = 'resolution' THEN 2"
-            " ELSE 1 END ASC, rank ASC,"
+            " ELSE 1 END ASC, match_score DESC,"
             " i.frontier DESC, i.created DESC LIMIT ?")
 
     want_n = max(1, int(limit))
@@ -1410,7 +1411,7 @@ _INVALIDATED_WEIGHT = 0.4
 
 
 def _suggest_weight(row, item_type: str, now: float) -> float:
-    """One row's suggest() rank weight: #78 effective_weight, then the
+    """One row's suggest() weight: #78 effective_weight, then the
     interval-slot demotions. Extracted so the penalties are testable at the
     weight level rather than only through a rigged end-to-end fixture."""
     weight = scoring.effective_weight(
@@ -1507,13 +1508,13 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         # pinned rides out for the #452 age gate (standing rules are
         # age-independent); it is NOT a rank input here.
         " i.pinned,"
-        " bm25(items_fts) AS rank"
+        " -bm25(items_fts) AS match_score"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         # Best-ranked candidates first (#31 item 4): without ORDER BY the LIMIT
         # window is arbitrary — on a busy project (>N matching rows) the
         # strongest rows could be truncated away, silencing prior work.
         " WHERE items_fts MATCH ?" + _scope_clause(scopes) +
-        " ORDER BY rank ASC LIMIT 256"
+        " ORDER BY match_score DESC LIMIT 256"
     )
     try:
         conn = sqlite3.connect(str(config.recall_db()))
@@ -1557,7 +1558,7 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         # a stronger match from stale items; nothing here ranks on it beyond
         # the existing len(hit) tiebreak below.
         r["term_hits"] = len(hit)
-        relevance = max(0.0, -float(r["rank"]))  # FTS5 bm25(): smaller = better
+        relevance = max(0.0, float(r["match_score"]))
         weight = _suggest_weight(
             r, _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
         scored.append((relevance * weight, len(hit), r))

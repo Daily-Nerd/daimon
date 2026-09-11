@@ -319,6 +319,11 @@ SURFACES: tuple[Surface, ...] = (
     #    left rather than calling its counts lifetime. --
     Surface("logs/checks.jsonl", "checks_runtime.log_firing",
             False, "exempt-no-plaintext", "none"),
+    # Recall delivery telemetry carries ids, scores, counts and a fixed
+    # surface label only. Query text is deliberately not persisted, so this
+    # is an auditable machine-local measurement surface without item prose.
+    Surface("logs/recall-delivery.jsonl", "recall_telemetry.record",
+            False, "exempt-no-plaintext", "none"),
     # #616 restored the glob's claim instead of widening it: serializer's
     # downgrade lines — the one writer that put item text under this shape —
     # now log a content hash (normalize.content_key, the same key a forget
