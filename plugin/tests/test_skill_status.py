@@ -338,6 +338,56 @@ def test_the_rich_table_carries_every_row_and_the_repair(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     assert "kimi" in out
     assert "STALE" in out
+    assert "1 drifted" in out
+    assert "fix: daimon skill install kimi" in out
+
+
+def test_the_rich_summary_counts_rows_not_just_drift(tmp_path, monkeypatch,
+                                                     capsys):
+    """#1012: the same compact summary shape the hooks table prints, naming
+    the table's own unit - one row per host/scope/skill."""
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    skill_install.install("kimi", project=False, home=home, cwd=tmp_path)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    report = skill_install.audit(home=home, cwd=tmp_path)
+    assert f"{len(report)} rows, 0 drifted" in out
+
+
+def test_the_plain_path_has_no_summary_line(tmp_path, capsys):
+    """The summary is a rich-path addition; plain output stays the
+    pre-#1012 contract pipes read."""
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    skill_install.install("kimi", project=False, home=home, cwd=tmp_path)
+    capsys.readouterr()
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    assert "kimi" in out
+    assert "rows," not in out
+
+
+def test_skill_status_cli_rich_summary(tmp_path, monkeypatch, capsys):
+    import daimon_briefing.cli as cli
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("PATH", "")
+    assert cli.main(["skill", "install", "kimi"]) == 0
+    (home / ".kimi-code" / "skills" / "daimon" / "SKILL.md").write_text(
+        "drifted\n", encoding="utf-8")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    assert cli.main(["skill", "status"]) == 1
+    out = capsys.readouterr().out
+    assert "1 drifted" in out
     assert "fix: daimon skill install kimi" in out
 
 

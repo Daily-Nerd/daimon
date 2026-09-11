@@ -366,3 +366,58 @@ def test_hooks_install_grows_no_slug_flag(capsys):
     #948)."""
     with pytest.raises(SystemExit):
         cli.main(["hooks", "install", "codex", "--slug", "somewhere"])
+
+
+# ---- #1012: the rich install summary -----------------------------------------
+#
+# Plain install output is pinned byte-for-byte by the tests above; rich
+# groups the same lines under Installed / Registration / Next steps so the
+# two lifecycle installs read as one product.
+
+
+def test_hooks_install_rich_groups_a_manual_registration_host(
+        tmp_path, monkeypatch, capsys):
+    from daimon_briefing import render
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    assert cli.main(["hooks", "install", "windsurf"]) == 0
+    out = capsys.readouterr().out
+    assert "daimon hooks install windsurf" in out
+    assert "Installed" in out
+    assert "Next steps" in out
+    # the manual registration snippet is content, not rewritten (#1012);
+    # assert the short anchors - the tmp paths fold under the 80-col test
+    # console, and the plain test above pins them byte for byte
+    assert "command: python3" in out
+    assert "pre_user_prompt" in out and "post_cascade_response" in out
+    assert "checks: " in out
+
+
+def test_hooks_install_rich_groups_a_self_registering_host(
+        tmp_path, monkeypatch, capsys):
+    from daimon_briefing import render
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    out = capsys.readouterr().out
+    assert "daimon hooks install codex" in out
+    assert "Installed" in out
+    assert "Registration" in out
+    assert "SessionStart: registered" in out
+    assert "trust" in out.lower()
+    assert "checks: " in out
+
+
+def test_hooks_install_plain_output_is_unchanged_by_the_summary(
+        tmp_path, monkeypatch, capsys):
+    """The grouping is rich-only: a pipe still reads the exact pre-#1012
+    lines, group headers included in nothing."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    capsys.readouterr()
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    out = capsys.readouterr().out
+    assert "installed" in out and "registered" in out
+    assert "Installed" not in out and "Registration" not in out
+    assert "Next steps" not in out

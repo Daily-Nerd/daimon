@@ -44,10 +44,12 @@ def _install_one(host: str, *, project: bool, cwd: Path) -> int:
     except skill_install.SkillInstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    render.render_skill_lines(lines, footer=(
-        f"Re-run `daimon skill install {host}` after every "
-        "`uv tool upgrade daimon-briefing` to refresh the content.",
-    ))
+    render.render_install_summary(
+        lines, title=f"daimon skill install {host}",
+        footer=(
+            f"Re-run `daimon skill install {host}` after every "
+            "`uv tool upgrade daimon-briefing` to refresh the content.",
+        ))
     return 0
 
 
