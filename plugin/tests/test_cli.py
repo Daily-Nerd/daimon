@@ -15,6 +15,16 @@ from daimon_briefing import cli
 from tests.conftest import FIXTURES
 
 
+@pytest.fixture(autouse=True)
+def _interactive_human_cli(monkeypatch):
+    """CLI lifecycle tests model a person at a terminal by default.
+
+    Tests for unattended behavior override this explicitly, matching the
+    observed-channel contract in the command implementation.
+    """
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+
 def _valid_json(session_id="sample_transcript"):
     return json.dumps(
         {
@@ -9039,10 +9049,9 @@ def test_resolve_by_agent_candidate_never_withholds_human_resolve_still_does(
     assert human_item["text"] not in out  # human resolve: withheld as always
 
 
-def test_resolve_human_path_unchanged_source_status_and_message(
+def test_resolve_human_path_records_observed_tty_source_and_status(
         tmp_checkpoint_dir, capsys, monkeypatch):
-    # Regression: the human path must remain byte-identical after the #480
-    # slice 2 agent branch is added.
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
@@ -9053,9 +9062,25 @@ def test_resolve_human_path_unchanged_source_status_and_message(
     text = cp["working_context"]["open_questions"][0]["text"]
     assert out == f"resolved {iid}: {text} [resolved]\n"
     evt = store.resolutions(project_dir="/p/A")[iid]
-    assert evt["source"] == "cli"
+    assert evt["source"] == "cli-tty"
     assert evt["status"] == "resolved"
     assert store.is_resolved(evt)
+
+
+def test_resolve_human_path_refuses_without_interactive_terminal(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    assert cli.main(["resolve", iid]) == 1
+    out = capsys.readouterr().out
+    assert "interactive terminal" in out
+    assert "--by agent --evidence" in out
+    assert store.resolutions(project_dir="/p/A") == {}
+    assert "resolve:noninteractive" in tmp_log_dir.joinpath(
+        "usage.log").read_text()
 
 
 def test_resolve_evidence_without_by_agent_is_rejected(
@@ -9243,6 +9268,28 @@ def test_reverify_not_found_exits_1(tmp_checkpoint_dir, capsys, monkeypatch):
     _write_cp_with_ids(store)
     assert cli.main(["reverify", "no-such-id"]) == 1
     assert store.resolutions(project_dir="/p/A") == {}
+
+
+def test_reverify_refuses_without_interactive_terminal(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    _write_cp_with_ids(store)
+    assert cli.main(["reverify", "no-such-id"]) == 1
+    assert "interactive terminal" in capsys.readouterr().out
+
+
+def test_reverify_human_path_records_observed_tty_source(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    cp = _write_cp_with_ids(store)
+    iid = cp["working_context"]["open_questions"][0]["id"]
+    store.append_event(iid, "resolved", project_dir="/p/A")
+    assert cli.main(["reverify", iid, "--evidence", "checked release page"]) == 0
+    assert store.resolutions(project_dir="/p/A")[iid]["source"] == "cli-tty"
 
 
 def test_reverify_refuses_without_evidence_when_no_anchor(tmp_checkpoint_dir, capsys, monkeypatch):

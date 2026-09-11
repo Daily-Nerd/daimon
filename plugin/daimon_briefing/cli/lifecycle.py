@@ -28,6 +28,22 @@ from .. import (
 from ._ledger import _check_sync_warning
 
 
+def _human_cli_channel(verb: str, *, agent_path: bool = False) -> str | None:
+    """Return the observed human channel, or refuse an unattended write."""
+    if not sys.stdin.isatty():
+        _cli._note_usage(f"{verb}:noninteractive")
+        recovery = (
+            "pass --by agent --evidence \"<verbatim transcript quote>\""
+            if agent_path else "run it from a terminal"
+        )
+        print(
+            f"{verb} is a human verdict and requires an interactive terminal; "
+            f"{recovery}"
+        )
+        return None
+    return "cli-tty"
+
+
 def _cmd_resolve(args) -> int:
     """Append a resolution event for ONE checkpoint item (#102). Exact id
     first; else a fuzzy query that must match uniquely — an ambiguous bind
@@ -72,6 +88,13 @@ def _cmd_resolve(args) -> int:
         print("--by agent requires --evidence \"<verbatim transcript quote>\" "
               "— refused, nothing written")
         return 1
+    if by_agent:
+        event_source = "agent"
+    else:
+        human_channel = _human_cli_channel("resolve", agent_path=True)
+        if human_channel is None:
+            return 1
+        event_source = human_channel
     project = _cli._resolve_project(args.project)
     checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                         admit=store.Admit.ANY)
@@ -105,8 +128,8 @@ def _cmd_resolve(args) -> int:
             print("resolve by exact id: daimon resolve <id>")
             return 1
     # #480 slice 2: the agent path writes a candidate status, credited to
-    # source="agent" — NOT args.status/"cli", which stay exactly what the
-    # human path has always written (byte-identical human behavior).
+    # source="agent" — NOT args.status/"cli". Human writes carry the observed
+    # "cli-tty" source; legacy "cli" rows remain human when folded.
     effective_status = "resolving-candidate" if by_agent else args.status
     if getattr(args, "dry_run", False):
         # A distinct tag, not "resolve": nothing was written, so folding this
@@ -121,7 +144,7 @@ def _cmd_resolve(args) -> int:
     ok = store.append_event(
         target["id"], effective_status,
         note=(evidence if by_agent else (args.note or "")),
-        source=("agent" if by_agent else "cli"),
+        source=event_source,
         project_dir=project, item_text=str(target.get("text") or ""))
     if not ok:
         print("event not written (daimon disabled or project unknown)")
@@ -728,6 +751,9 @@ def _cmd_reverify(args) -> int:
     (a machine guess that has never withheld anything), reopen is allowed
     with no evidence — rejecting a suggestion is not vouching for a claim.
     The reopened event is a human verdict, so re-detection stays silent."""
+    human_channel = _human_cli_channel("reverify")
+    if human_channel is None:
+        return 1
     project = _cli._resolve_project(args.project)
     checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                         admit=store.Admit.ANY)
@@ -764,6 +790,7 @@ def _cmd_reverify(args) -> int:
               "verified — supply --evidence, or fix the anchored code and retry")
         return 1
     ok = store.append_event(item["id"], "reopened", note=note,
+                            source=human_channel,
                             item_text=item.get("text", ""), project_dir=project)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
@@ -1053,8 +1080,8 @@ def register(sub, fmt) -> None:
     p_forget.set_defaults(func=_cli._cmd_forget)
 
     p_reverify = sub.add_parser(
-        "reverify", help="evidence-gated reopen of a resolved item (#103) — "
-        "refuses without proof, so a claim can't get re-verified for free",
+        "reverify", help="evidence-gated human reopen of a resolved item (#103) — "
+        "requires an interactive terminal and refuses without proof",
         epilog="Examples:\n"
                "  daimon reverify o-3f8a2c --evidence \"checked release page\"\n"
                "  daimon reverify o-3f8a2c   # reopens only if the anchor still checks live\n"
