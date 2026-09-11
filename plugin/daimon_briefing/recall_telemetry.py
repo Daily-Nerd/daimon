@@ -76,7 +76,12 @@ def _summary(rows: list[dict]) -> dict:
     hits = [r["term_hits"] for r in rows
             if isinstance(r.get("term_hits"), int)
             and not isinstance(r.get("term_hits"), bool)]
-    surfaces = sorted({r.get("surface") for r in rows if r.get("surface")})
+    surface_names: set[str] = set()
+    for row in rows:
+        surface = row.get("surface")
+        if isinstance(surface, str) and surface:
+            surface_names.add(surface)
+    surfaces = sorted(surface_names)
     return {
         "deliveries": len(rows),
         "scored": len(scores),
