@@ -1172,6 +1172,75 @@ def test_stale_carried_default_threshold_reads_config():
     assert len(stale) == 1  # default 7.0 days < 10 days old
 
 
+# ---- #977: a stale carried item renders as unverified, not as its stored tag ----
+#
+# stamp_stale_carried is the render-time half of the #215 budget: it stamps a
+# transient `_stale_carried_days` (the SAME effective-age number stale_carried
+# classifies on, one shared helper) on the in-memory item, and _line turns the
+# stamp into the `[? unverified]` mark plus the `(was <tag>, carried Nd)`
+# suffix. The stored trust value is never rewritten; a recent resolutions
+# event (the `daimon reverify` read path) makes the next brief render the
+# stored tag again with no extra machinery.
+
+
+def test_line_renders_stale_carried_as_unverified_with_suffix():
+    cp = _cp215([{"text": "old carried loop", "id": "o-old9",
+                  "trust": "verbatim", "carried_from": "S-prev",
+                  "first_seen": _ts215(10)}])
+    stamped, stale = briefing.stamp_stale_carried(
+        cp, {}, _NOW215, threshold_days=7.0)
+    assert len(stale) == 1
+    item = stamped["working_context"]["open_questions"][0]
+    line = briefing._line(item)
+    assert line.startswith("- [? unverified] old carried loop")
+    assert "(was verbatim, carried 10d)" in line
+    # Render-time rule only: the stored trust value is NOT rewritten, and the
+    # ORIGINAL checkpoint item never carries the transient stamp.
+    assert item["trust"] == "verbatim"
+    assert "_stale_carried_days" not in cp["working_context"]["open_questions"][0]
+
+
+def test_line_renders_fresh_carried_item_with_stored_tag():
+    cp = _cp215([{"text": "fresh carried loop", "id": "o-fresh9",
+                  "trust": "verbatim", "carried_from": "S-prev",
+                  "first_seen": _ts215(2)}])
+    stamped, stale = briefing.stamp_stale_carried(
+        cp, {}, _NOW215, threshold_days=7.0)
+    assert stale == []
+    assert stamped is cp  # nothing to stamp: returned UNCHANGED, no deep copy
+    line = briefing._line(stamped["working_context"]["open_questions"][0])
+    assert line.startswith("- [✓ verbatim] fresh carried loop")
+    assert "unverified" not in line
+
+
+def test_line_leaves_stale_native_item_untouched():
+    # Native (this-session) items were just re-extracted; the budget only
+    # questions carried claims, so an old native item keeps its stored tag.
+    cp = _cp215([{"text": "old native loop", "id": "o-native9",
+                  "trust": "verbatim", "first_seen": _ts215(30)}])
+    stamped, stale = briefing.stamp_stale_carried(
+        cp, {}, _NOW215, threshold_days=7.0)
+    assert stale == []
+    line = briefing._line(stamped["working_context"]["open_questions"][0])
+    assert line.startswith("- [✓ verbatim] old native loop")
+
+
+def test_reverify_event_restores_stored_tag_on_next_brief():
+    # `daimon reverify <id>` writes a resolutions event; the newest-candidate
+    # rule counts that event ts as the effective last-verified, so the item
+    # drops out of the stale set and the next brief renders the stored tag
+    # again. This is the existing #215 fold doing the work: no new machinery.
+    cp = _cp215([{"text": "old carried loop", "id": "o-rev9",
+                  "trust": "verbatim", "carried_from": "S-prev",
+                  "first_seen": _ts215(30)}])
+    resolutions = {"o-rev9": {"ts": _ts215(1), "status": "reopened"}}
+    stamped, stale = briefing.stamp_stale_carried(
+        cp, resolutions, _NOW215, threshold_days=7.0)
+    assert stale == []
+    line = briefing._line(stamped["working_context"]["open_questions"][0])
+    assert line.startswith("- [✓ verbatim] old carried loop")
+
+
 def test_render_never_prints_scene():
     # #317: scenes exist for retrieval, not display — the briefing must not
     # leak them into the rendered text

@@ -35,6 +35,13 @@ log = logging.getLogger("daimon.briefing")
 _VERBATIM_MARK = "✓ verbatim"
 _INFERRED_MARK = "~ inferred"
 _UNTAGGED_MARK = "? untagged"
+# #977: a carried item whose EFFECTIVE last-verified age exceeds the
+# staleness budget (#215) renders as unverified INSTEAD of its stored trust
+# tag; the tag and age ride in a trailing suffix. Render-time only: the
+# stored trust value is never rewritten, and `daimon reverify` restores the
+# tag on the next brief via the resolutions fold (a fresh event ts is the
+# newest age candidate, same rule stale_carried already applies).
+_STALE_CARRIED_MARK = "? unverified"
 # #204: when a receipt-era checkpoint's provenance can't be locally confirmed at
 # brief time, a `verbatim` label has NOT earned its checkmark — the stored bytes
 # may have been edited. Degrade it visibly rather than assert integrity we can't
@@ -69,6 +76,18 @@ def _mark(item, degraded: bool = False) -> str:
     if trust:
         return _INFERRED_MARK
     return _UNTAGGED_MARK
+
+
+def _trust_label(item) -> str:
+    # #977: the stored trust class as a plain word ("verbatim" / "inferred" /
+    # "untagged"), the same three-way vocabulary _mark and render._trust_key
+    # already agree on, without the mark glyphs. Used by the stale-carried
+    # suffix ("was verbatim") so the rendered line names what the tag was
+    # before the render-time substitution.
+    trust = item.get("trust")
+    if trust == "verbatim":
+        return "verbatim"
+    return "inferred" if trust else "untagged"
 
 
 # #268: how many independent sightings a claim needs before the render says
@@ -167,7 +186,17 @@ def _line(item, degraded: bool = False, briefable: bool = False) -> str:
     # (store.py, carry.py) — tolerant of null, same as iter_items' stance.
     text = str(item.get("text") or "").strip()
     quote = str(item.get("quote") or "").strip()
-    base = f'- [{_mark(item, degraded)}] {text}'
+    mark = _mark(item, degraded)
+    stale_days = item.get("_stale_carried_days")
+    was_label = None
+    if isinstance(stale_days, (int, float)) and not isinstance(stale_days, bool):
+        # #977: past the staleness budget, the stored tag must not read as
+        # fresh evidence: render unverified, name the stored tag and the
+        # age in a trailing suffix. The stamp is transient (stamp_stale_carried),
+        # so this never rewrites the stored trust value.
+        was_label = _trust_label(item)
+        mark = _STALE_CARRIED_MARK
+    base = f'- [{mark}] {text}'
     if item.get("carried_from"):
         # Epistemic honesty, same philosophy as trust marks: a loop carried
         # from an older session must not read as fresh context (#33 Phase 2).
@@ -192,6 +221,8 @@ def _line(item, degraded: bool = False, briefable: bool = False) -> str:
     if quote:
         base += f'  — "{quote}"'
     base += _handle_suffix(item, briefable)
+    if was_label is not None:
+        base += f" (was {was_label}, carried {stale_days:.0f}d)"
     candidate = item.get("_supersede_candidate")
     if candidate:
         # #14: a machine-suggested (unconfirmed) supersession — never
@@ -625,6 +656,33 @@ def mark_corroborated(checkpoint, corroborations: dict):
 # ---- #215: staleness budget — carried items nobody has world-checked ----
 
 
+def _carried_age_days(item, resolutions, now):
+    """#977: the EFFECTIVE last-verified age in days for a CARRIED item, or
+    None when the item is not carried or has no parseable stamp at all
+    (fail-open, same house rule as stale_carried). Single source for the
+    newest-of-candidates rule so the classification (stale_carried) and the
+    render stamp (stamp_stale_carried) can never disagree about an age.
+
+    `resolutions` is store.resolutions()'s {item_ref: latest_event} shape."""
+    if not isinstance(item, dict) or not item.get("carried_from"):
+        return None
+    candidates = []
+    lv = store._created_epoch(item.get("last_verified"))
+    if lv is not None:
+        candidates.append(lv)
+    evt = resolutions.get(item.get("id"))
+    if isinstance(evt, dict):
+        evt_ts = store._created_epoch(evt.get("ts"))
+        if evt_ts is not None:
+            candidates.append(evt_ts)
+    fs = store._created_epoch(item.get("first_seen"))
+    if fs is not None:
+        candidates.append(fs)
+    if not candidates:
+        return None  # no parseable stamp at all: fail open, not stale
+    return (now - max(candidates)) / 86400.0
+
+
 def stale_carried(checkpoint, resolutions: dict, now, threshold_days=None) -> list:
     """Carried items whose EFFECTIVE last-verified age exceeds
     `threshold_days`, or [] if none. Pure — `now` is injected (mirrors
@@ -665,26 +723,50 @@ def stale_carried(checkpoint, resolutions: dict, now, threshold_days=None) -> li
     resolutions = resolutions if isinstance(resolutions, dict) else {}
     stale = []
     for item in serializer.iter_items(checkpoint):
-        if not isinstance(item, dict) or not item.get("carried_from"):
-            continue
-        candidates = []
-        lv = store._created_epoch(item.get("last_verified"))
-        if lv is not None:
-            candidates.append(lv)
-        evt = resolutions.get(item.get("id"))
-        if isinstance(evt, dict):
-            evt_ts = store._created_epoch(evt.get("ts"))
-            if evt_ts is not None:
-                candidates.append(evt_ts)
-        fs = store._created_epoch(item.get("first_seen"))
-        if fs is not None:
-            candidates.append(fs)
-        if not candidates:
-            continue  # no parseable stamp at all — fail open, not stale
-        age_days = (now - max(candidates)) / 86400.0
-        if age_days > threshold_days:
+        age_days = _carried_age_days(item, resolutions, now)
+        if age_days is not None and age_days > threshold_days:
             stale.append(item)
     return stale
+
+
+def stamp_stale_carried(checkpoint, resolutions: dict, now, threshold_days=None):
+    """#977: the render-time half of the staleness budget. Returns
+    (checkpoint, stale_items) where every carried item past the threshold
+    carries a transient `_stale_carried_days` stamp (its effective age in
+    days) that `_line` / render._rich_brief turn into the `[? unverified]`
+    mark plus the `(was <tag>, carried Nd)` suffix.
+
+    Same classification as stale_carried (one shared `_carried_age_days`, so
+    the two can never disagree): callers that render should prefer this over
+    stale_carried plus a second pass. Transient like mark_corroborated's count:
+    the stamp rides the IN-MEMORY item only, deep-copied when something is
+    stamped and returned UNCHANGED otherwise, so the stored trust value is
+    never rewritten and a no-stale brief costs nothing."""
+    if threshold_days is None:
+        threshold_days = config.stale_days()
+    if not isinstance(checkpoint, dict):
+        return checkpoint, []
+    resolutions = resolutions if isinstance(resolutions, dict) else {}
+    to_stamp = []  # [(section, key, index, age_days)]
+    for section, key in store._ITEM_LISTS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            age_days = _carried_age_days(item, resolutions, now)
+            if age_days is not None and age_days > threshold_days:
+                to_stamp.append((section, key, idx, age_days))
+    if not to_stamp:
+        return checkpoint, []
+    out = copy.deepcopy(checkpoint)
+    stale = []
+    for section, key, idx, age_days in to_stamp:
+        item = out[section][key][idx]
+        item["_stale_carried_days"] = age_days
+        stale.append(item)
+    return out, stale
 
 
 # ---- #79: token budget — section-preserving truncation ----

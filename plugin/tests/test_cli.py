@@ -5791,6 +5791,8 @@ def test_brief_warns_on_stale_carried_item(
     # staleness budget gets a visible warning line — agreement between two
     # agent-written sources (the carried item + the fresh checkpoint restating
     # it) is not corroboration.
+    # #977: the item itself now renders as [? unverified] with the stored tag
+    # and age in a trailing suffix, instead of its stored trust tag.
     from daimon_briefing import store
     import time as _time
     monkeypatch.setenv("DAIMON_STALE_DAYS", "7")
@@ -5809,6 +5811,46 @@ def test_brief_warns_on_stale_carried_item(
     out = capsys.readouterr().out
     assert "carried item(s) unverified for >7 days" in out
     assert "world-check before repeating as true" in out
+    assert "[? unverified] an old carried loop nobody rechecked" in out
+    assert "(was inferred, carried 10d)" in out
+    # The render-time substitution never rewrites the stored trust value.
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
+    assert written["working_context"]["open_questions"][0]["trust"] == "inferred"
+
+
+def test_brief_reverify_restores_stored_tag_on_stale_carried_item(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #977: `daimon reverify <id>` writes a resolutions event (status
+    # "reopened", the real verb's shape); the next brief counts that event ts
+    # as the effective last-verified (#215's fold, no new machinery), so the
+    # item renders with its stored tag again and the staleness warning
+    # disappears.
+    from daimon_briefing import store
+    import time as _time
+    monkeypatch.setenv("DAIMON_STALE_DAYS", "7")
+    stale_iso = _time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_time.time() - 10 * 86400))
+    cp = dict(sample_checkpoint)
+    cp["working_context"] = dict(cp["working_context"])
+    cp["working_context"]["open_questions"] = [{
+        "text": "an old carried loop nobody rechecked",
+        "trust": "inferred", "carried_from": "S-prev",
+        "first_seen": stale_iso,
+    }]
+    store.write_checkpoint("S-mine", cp, project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
+    item_id = written["working_context"]["open_questions"][0]["id"]
+    store.append_event(item_id, "reopened", project_dir="/repo/x")
+    rc = cli.main(["brief", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[~ inferred] an old carried loop nobody rechecked" in out
+    assert "[? unverified]" not in out
+    assert "carried item(s) unverified for" not in out
 
 
 def test_brief_no_stale_note_when_nothing_stale(
@@ -5826,16 +5868,16 @@ def test_brief_no_stale_note_when_nothing_stale(
 
 def test_brief_fails_open_when_stale_carried_raises(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
-    # #215 fail-open: a broken stale_carried must never take the briefing
-    # down with it — the brief still renders and exits clean, just without
-    # the budget line.
+    # #215/#977 fail-open: a broken staleness classification must never take
+    # the briefing down with it: the brief still renders and exits clean,
+    # just without the budget line or the per-item unverified stamp.
     from daimon_briefing import briefing, store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(briefing, "stale_carried", _boom)
+    monkeypatch.setattr(briefing, "stamp_stale_carried", _boom)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out

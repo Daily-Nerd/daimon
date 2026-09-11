@@ -667,6 +667,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     the wrong repo context for those claims."""
     withheld: list = []
     events: dict = {}
+    stale_items: list = []
     if checkpoint:
         # Withhold (#103): render-time derivation, fail-open — a briefing
         # must never die over suppression machinery. #14: candidates ride
@@ -688,14 +689,27 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         # Corroboration (#268): a SEPARATE axis from the trust class — how many
         # independent sessions have witnessed the claim, never what kind of
         # evidence it is. Its own try: a failure here must cost the badge
-        # only, not the withheld list `events` still owes to stale_carried
-        # below. Transient stamps on the in-memory checkpoint, same posture as
+        # only, not the withheld list `events` still owes to the
+        # stamp_stale_carried pass below. Transient stamps on the in-memory checkpoint, same posture as
         # the candidate flags above and the worldcheck flags below.
         try:
             checkpoint = briefing.mark_corroborated(
                 checkpoint, store.corroborations(project_dir=route))
         except Exception:
             pass
+        # #977: a carried item past the staleness budget (#215) renders as
+        # [? unverified] with its age, not as its stored trust tag. The stamp
+        # must land BEFORE render_brief below; it is transient (in-memory
+        # only, like the corroboration count above), so the stored trust
+        # value is never rewritten. Same resolutions fold as withhold, same
+        # fail-open try as stale_carried had: a broken classification must
+        # never take the briefing down. The warning note after the render
+        # reuses THIS list, so the age computation runs once.
+        try:
+            checkpoint, stale_items = briefing.stamp_stale_carried(
+                checkpoint, events, time.time())
+        except Exception:
+            stale_items = []
     # Worldcheck (#365/#397/#439): opt-in, budget-bounded, read-only
     # spot-check of carried claims — repo state via `gh`, on-disk state via
     # the filesystem, and the origin checkpoint's signed receipt via the vitni
@@ -791,21 +805,16 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         if team_withheld:
             note += f" ({len(team_withheld)} a teammate's)"
         render.render_brief_note([note + " — `daimon status --suppressed` to list"])
-    # Staleness budget (#215): reuses the SAME resolutions fold `withhold`
-    # already did above — no re-read of events.jsonl. Fail-open, same shape
-    # as the withhold try/except; a broken stale_carried must never take the
-    # briefing down with it. House rule: zero stale items -> NO line at all,
-    # never a false alarm.
-    if checkpoint:
-        try:
-            stale_items = briefing.stale_carried(checkpoint, events, time.time())
-        except Exception:
-            stale_items = []
-        if stale_items:
-            render.render_brief_note([
-                f"⚠ {len(stale_items)} carried item(s) unverified for "
-                f">{config.stale_days():g} days — world-check before "
-                "repeating as true"])
+    # Staleness budget (#215): the classification already ran before the
+    # render (#977 stamps the stale items with their ages); this standing
+    # warning stays: the per-item substitution above is what makes it
+    # actionable, but the count orients the brief. House rule: zero stale
+    # items -> NO line at all, never a false alarm.
+    if stale_items:
+        render.render_brief_note([
+            f"⚠ {len(stale_items)} carried item(s) unverified for "
+            f">{config.stale_days():g} days — world-check before "
+            "repeating as true"])
     return 0
 
 
