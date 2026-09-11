@@ -722,13 +722,18 @@ def test_recall_exposes_item_id_in_json_and_human_output(
 
     assert cli.main(["recall", "quorint", "--project", _PROJECT]) == 0
     assert f"[{_ITEM_ID}]" in capsys.readouterr().out
-    # The proactive backend has its own SELECT/output contract; adding ids to
-    # deliberate recall must not leak them into injected suggestion rows.
+    # #597 kept ids out of proactive INJECTION; #1017 gives the suggestion ROW
+    # an item_id for delivery telemetry. The presentation contract belongs to
+    # the injected line, not the row dict: _suggest_line never renders the id,
+    # so what crosses into the prompt is unchanged.
     suggestions = recall.suggest(
         "review the quorint trust inspector decision again",
         project_dir=_PROJECT, current_session="S-now")
     assert suggestions
-    assert all("item_id" not in row for row in suggestions)
+    assert all(isinstance(row.get("item_id"), str) and row["item_id"]
+               for row in suggestions)
+    for row in suggestions:
+        assert row["item_id"] not in cli._suggest_line(row, [], 0.0)
 
 
 # ---- #674: why falls back to the recall index when its own walk misses ----

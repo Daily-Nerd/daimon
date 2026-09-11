@@ -1467,7 +1467,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
 
     Each returned row also carries `term_hits` (its own distinct-term match
     count) and `pinned` (the #369 standing-rule flag) — inputs to the cli
-    age gate (#452), not rank inputs here.
+    age gate (#452), not rank inputs here. It also carries `item_id`, the
+    minted id the delivery telemetry (#989) persists with the row: without it
+    a delivered row cannot be joined back to its ledger item, resolution or
+    superseded chain from stored state.
     """
     # #899: the auto-inject path fans across own + host-allowlisted scopes
     # too; a shared scope reached by `recall` but not here would exist when
@@ -1497,6 +1500,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
         " i.project_slug,"
         " i.session_id, i.created, i.importance, i.first_seen, i.superseded_by,"
+        # i.item_id rides out for the #989 delivery telemetry: the recall-
+        # inject surface persists it per delivered row, and a null means a
+        # delivered row can never be joined back to its ledger identity.
+        " i.item_id,"
         # #907: same rule for the writer column — without it every human
         # resolution reaches _suggest_weight as an unattributed row and
         # demotes at the model-link rate, on this same surface.
