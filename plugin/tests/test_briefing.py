@@ -1241,6 +1241,25 @@ def test_reverify_event_restores_stored_tag_on_next_brief():
     assert line.startswith("- [✓ verbatim] old carried loop")
 
 
+def test_stamp_stale_carried_tolerates_torn_shapes():
+    # Defensive seams in the stamp pass mirror iter_items' stance (#977): a
+    # non-dict checkpoint, and a list slot holding a non-dict row, must
+    # neither raise nor stamp. The torn checkpoint comes back unchanged; the
+    # torn row is skipped while its well-formed sibling still stamps.
+    out, stale = briefing.stamp_stale_carried("not a checkpoint", {}, _NOW215)
+    assert out == "not a checkpoint"
+    assert stale == []
+    cp = _cp215([{"text": "old carried loop", "id": "o-torn-sib",
+                  "trust": "verbatim", "carried_from": "S-prev",
+                  "first_seen": _ts215(10)}, "torn row"])
+    stamped, stale = briefing.stamp_stale_carried(
+        cp, {}, _NOW215, threshold_days=7.0)
+    assert len(stale) == 1
+    assert stamped["working_context"]["open_questions"][1] == "torn row"
+    line = briefing._line(stamped["working_context"]["open_questions"][0])
+    assert line.startswith("- [? unverified]")
+
+
 def test_render_never_prints_scene():
     # #317: scenes exist for retrieval, not display — the briefing must not
     # leak them into the rendered text
