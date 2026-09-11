@@ -5,6 +5,26 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.44.0](https://github.com/Daily-Nerd/daimon/compare/v0.43.0...v0.44.0) (2026-09-11)
+
+
+### Features
+
+* **hooks:** detect the hosts on this machine and wire them in one command ([#1004](https://github.com/Daily-Nerd/daimon/issues/1004)) ([11e4b81](https://github.com/Daily-Nerd/daimon/commit/11e4b818dfdd20164510c7e320f93135c797bb61))
+* **inspector:** retain preceding tool context ([#1011](https://github.com/Daily-Nerd/daimon/issues/1011)) ([61a8514](https://github.com/Daily-Nerd/daimon/commit/61a851496b31a52b98cbe5f79a17cf320ccba711)), closes [#1010](https://github.com/Daily-Nerd/daimon/issues/1010)
+* **skill:** audit the installed skill for drift, the way hooks status does ([#1007](https://github.com/Daily-Nerd/daimon/issues/1007)) ([a566fce](https://github.com/Daily-Nerd/daimon/commit/a566fce91fa2761b7246c92680e1700a64a87bd7))
+
+
+### Bug Fixes
+
+* **carry:** a resolved item inherits its identity onto a native twin only on a strong restatement ([#995](https://github.com/Daily-Nerd/daimon/issues/995)) ([179b094](https://github.com/Daily-Nerd/daimon/commit/179b094294e32bf9cc62c8fd8f5e962bdab7f363))
+* kimi hooks no longer inject the briefing into print-mode runs ([d777f56](https://github.com/Daily-Nerd/daimon/commit/d777f560d5032f87d83bbd01edf7a09dd01be5b2))
+* kimi hooks no longer inject the briefing into print-mode runs ([#1002](https://github.com/Daily-Nerd/daimon/issues/1002)) ([d777f56](https://github.com/Daily-Nerd/daimon/commit/d777f560d5032f87d83bbd01edf7a09dd01be5b2))
+* **refutations:** a malformed anchors or evidence row is skipped, and ruling list reports an unresolved ledger instead of a traceback ([#997](https://github.com/Daily-Nerd/daimon/issues/997)) ([6626f99](https://github.com/Daily-Nerd/daimon/commit/6626f99ebfe0728c6622e2d107323a486619a2a7))
+* **skill:** install ships daimon-end to every directory-form host ([#1003](https://github.com/Daily-Nerd/daimon/issues/1003)) ([6dd5a2c](https://github.com/Daily-Nerd/daimon/commit/6dd5a2cfd5bfd811f242c0edaebe13edfe6aea37))
+* **skill:** the audit and the installer agree on who serves a host ([#1009](https://github.com/Daily-Nerd/daimon/issues/1009)) ([72e5719](https://github.com/Daily-Nerd/daimon/commit/72e5719c72c8217836ae487f05e024d23c12e3d9))
+* **team:** the Teammates section withholds what the reader resolved, before the cap ([#996](https://github.com/Daily-Nerd/daimon/issues/996)) ([d60560f](https://github.com/Daily-Nerd/daimon/commit/d60560fc2fd5f0f4951d9c76dd87c502836f4da5))
+
 ## [0.43.0](https://github.com/Daily-Nerd/daimon/compare/v0.42.0...v0.43.0) (2026-09-10)
 
 
