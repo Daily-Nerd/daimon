@@ -334,16 +334,30 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
         briefable = key in briefing.BRIEFABLE_SECTIONS
         for i in items:
             trust = _trust_key(i)
-            # Degrade a verbatim item's confident green — its integrity is
-            # unverified (#204). Inferred/untagged never claimed it, so untouched.
-            item_style = "bold red" if (degraded and trust == "verbatim") \
-                else _TRUST_STYLE[trust]
-            # #268: the corroboration badge rides the text line here, the same
-            # position it holds on the plain path (after the annotations,
-            # before the quote) — one shared literal, so the two renders state
-            # the witness count in identical bytes.
-            body.append(f"• {i.get('text', '').strip()}"
-                        f"{briefing.corroboration_badge(i)}", style=item_style)
+            stale_days = i.get("_stale_carried_days")
+            if isinstance(stale_days, (int, float)) \
+                    and not isinstance(stale_days, bool):
+                # #977: parity with briefing._line: a carried item past the
+                # staleness budget renders as unverified instead of its
+                # stored trust color; yellow states "needs a world-check"
+                # without borrowing the verbatim green (the stored tag is
+                # named in the suffix instead).
+                body.append(f"• [? unverified] {i.get('text', '').strip()}"
+                            f"{briefing.corroboration_badge(i)}"
+                            f" (was {trust}, carried {stale_days:.0f}d)",
+                            style="yellow")
+                item_style = "yellow"
+            else:
+                # Degrade a verbatim item's confident green: its integrity is
+                # unverified (#204). Inferred/untagged never claimed it, so untouched.
+                item_style = "bold red" if (degraded and trust == "verbatim") \
+                    else _TRUST_STYLE[trust]
+                # #268: the corroboration badge rides the text line here, the same
+                # position it holds on the plain path (after the annotations,
+                # before the quote): one shared literal, so the two renders state
+                # the witness count in identical bytes.
+                body.append(f"• {i.get('text', '').strip()}"
+                            f"{briefing.corroboration_badge(i)}", style=item_style)
             # #480 slice 1: the id handle, dim like the quote below — it is
             # a supplementary resolve target, not part of the claim itself.
             handle = briefing._handle_suffix(i, briefable)

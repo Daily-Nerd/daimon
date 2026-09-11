@@ -74,6 +74,41 @@ def test_render_brief_rich_smoke(monkeypatch, sample_checkpoint, capsys):
     assert "PR #6" in out
 
 
+def test_render_brief_rich_stale_carried_renders_unverified(monkeypatch, capsys):
+    # #977: the rich path mirrors briefing._line's substitution: a carried
+    # item past the staleness budget shows [? unverified] plus the
+    # (was <tag>, carried Nd) suffix instead of its stored trust styling.
+    # The CLI stamps the checkpoint via briefing.stamp_stale_carried before
+    # render_brief; this test drives the same seam directly.
+    import time as _time
+    from daimon_briefing import briefing
+
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    now = 1_900_000_000  # whole seconds, round-trips through the ISO stamp format
+    stale_iso = _time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                               _time.gmtime(now - 10 * 86400))
+    cp = {
+        "session_id": "S-cur",
+        "working_context": {
+            "active_topic": {"text": "wiring", "trust": "inferred"},
+            "open_questions": [
+                {"text": "old carried loop", "trust": "verbatim",
+                 "carried_from": "S-prev", "first_seen": stale_iso},
+            ],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }
+    stamped, stale = briefing.stamp_stale_carried(
+        cp, {}, now, threshold_days=7.0)
+    assert len(stale) == 1
+    render.render_brief(stamped)
+    out = capsys.readouterr().out
+    assert "[? unverified]" in out
+    assert "(was verbatim, carried 10d)" in out
+
+
 def test_render_brief_rich_handoff_is_a_panel(monkeypatch, sample_checkpoint, capsys):
     # #566: the baton is the highest-priority block; on the rich path it must
     # render as a bordered panel like every ambient section, not bare stdout.
