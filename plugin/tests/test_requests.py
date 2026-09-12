@@ -1663,6 +1663,93 @@ def test_needs_info_after_a_pending_claim_keeps_the_claim_pending(project):
     assert record["done_evidence"] == "shipped in abc123"
 
 
+# ---- #1021: `done` is terminal for a verdict row --------------------------
+
+
+def test_a_duplicate_human_accept_on_a_done_record_keeps_it_done(project):
+    """#1021: a replayed decide (host restart, a second press) must not put
+    the work back on the owed list. The duplicate row is counted in history
+    and nothing else moves."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", note="looks right",
+                    project_dir=project)
+    landed = requests.get(q_id, project_dir=project)
+    assert landed["state"] == "done"
+    requests.accept(q_id, channel="cli-tty", note="looks right",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_pending"] is False
+    assert record["done_claimed"] is True
+    assert record["done_evidence"] == "shipped in abc123"
+    assert record["done_by"] == "agent"
+    assert record["verdict_by"] == "human"
+    assert record["history_count"] == landed["history_count"] + 1
+    assert record["updated_at"] == landed["updated_at"]
+
+
+def test_done_verified_still_lands_after_a_duplicate_accept(project):
+    """#1021: the session-end byte-check is thrown away today, because the
+    duplicate accept moved the record off `done` and the `done_verified`
+    guard requires `done` or a pending claim."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    assert requests.verify_done(q_id, role="assistant", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_claimed"] is False
+    assert record["done_verified_at"]
+
+
+def test_a_human_reject_on_a_done_record_is_inert(project):
+    """#1021: the same rule for the other verdict. A reject arriving after
+    the record settled must not overwrite the accept's own verdict fields."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", note="accepted note",
+                    project_dir=project)
+    landed = requests.get(q_id, project_dir=project)
+    requests.reject(q_id, channel="cli-tty", note="rejected note",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["verdict_by"] == "human"
+    assert record["note"] == "accepted note"
+    assert record["history_count"] == landed["history_count"] + 1
+
+
+def test_needs_info_on_a_done_record_still_reopens_it(project):
+    """Pins today's behavior so #1021's guard is not widened: a person
+    asking for more on a finished record is a deliberate reopen."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    requests.needs_info(q_id, channel="cli-tty", note="which environment?",
+                        project_dir=project)
+    assert requests.get(q_id, project_dir=project)["state"] == "needs-info"
+
+
+def test_a_human_done_then_duplicate_accept_stays_done(project):
+    """#1021, the non-claim path of the same guard: a human completion is
+    never `done_claimed`, and a duplicate accept over it is just as inert."""
+    q_id = _open(project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    requests.done(q_id, channel="cli-tty", evidence="shipped in abc123",
+                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_by"] == "human"
+    assert record["done_claimed"] is False
+
+
 def test_a_revise_of_the_ask_after_a_pending_claim_clears_the_claim(project):
     """REVISED from `test_a_revise_after_a_pending_claim_keeps_it_pending`
     (#978 review round 1, F1): the claim answers the ask that was live when
