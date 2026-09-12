@@ -330,6 +330,7 @@ def _public_entry_points(sub: str):
         ("scrub_event_fields",
          lambda: store.scrub_event_fields("deadbeef", project_dir=sub)),
         ("resolutions", lambda: store.resolutions(project_dir=sub)),
+        ("item_events", lambda: store.item_events("i-1", project_dir=sub)),
         ("corroborations", lambda: store.corroborations(project_dir=sub)),
         ("forgotten_content_keys",
          lambda: store.forgotten_content_keys(project_dir=sub)),

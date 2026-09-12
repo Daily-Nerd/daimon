@@ -1252,6 +1252,13 @@ def render_recall_lines(lines) -> None:
     _render_lines(lines)
 
 
+def render_history_lines(lines) -> None:
+    """`daimon diff` / `daimon blame` (#975). Same primitive as recall for the
+    same reason: every line carries literal `[item-id]` / `[trust]` brackets,
+    which only `_render_lines`'s `markup=False` keeps from being eaten."""
+    _render_lines(lines)
+
+
 # ---- hooks: `daimon hooks list|install|status` (#68) ------------------------
 
 

@@ -305,6 +305,8 @@ next session-end byte-checks the evidence quote; a `stale` label in
 | A past session failed to capture | `daimon heal` |
 | Usage and capture overview | `daimon stats` |
 | "Where did this claim come from?" | `daimon why <item-id>` |
+| "What changed since the last session?" | `daimon diff` |
+| "How did this item get here?" | `daimon blame <item-id>` |
 | A forgotten value may have survived | `daimon audit privacy` |
 | Stored quotes may have drifted | `daimon audit quotes` |
 | Is this checkpoint's receipt sound? | `daimon verify-receipt` |
@@ -317,6 +319,14 @@ quote-check outcome, lifecycle, corroboration — with `--source` adding one
 bounded, redacted window of the originating text. Reach for it before
 repeating a `[carried]` or `[~ inferred]` claim as true, or when the user asks
 where something came from; ids come from `daimon recall` or `daimon loops`.
+
+`daimon diff` reads the chain this project already keeps: which items were
+added, restated, re-tagged or stopped being carried between two sessions,
+with the reason the record gives. `--from N --to M` counts generations back;
+`--json` for rows. Pure reader, no restore — say a thing changed with
+`resolve`, `reverify` or `forget`. `daimon blame <item-id>` traces one item:
+origin session, every carry, every state change in order.
+
 The auditors are read-only: exit `0` proven clean, `1` residue found, `3`
 cannot prove — never read `3` as clean.
 
