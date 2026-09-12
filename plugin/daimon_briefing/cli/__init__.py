@@ -1458,6 +1458,9 @@ from .team import (  # noqa: E402
 from .check import (  # noqa: E402
     _cmd_check_sync,  # noqa: F401 — re-exported for compat
 )
+from .history import (  # noqa: E402
+    _cmd_diff,  # noqa: F401 — re-exported for compat
+)
 from .hooks import (  # noqa: E402
     _cmd_hooks_install,  # noqa: F401 — re-exported for compat
     _cmd_hooks_list,  # noqa: F401 — re-exported for compat
@@ -1474,6 +1477,7 @@ from . import (  # noqa: E402
     amend,
     audit,
     check,
+    history,
     hooks,
     lifecycle,
     refute,
@@ -3996,6 +4000,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--slug", metavar="SLUG",
         help="scope to a project bucket by its slug (see `daimon projects`)")
     p_why.set_defaults(func=_cmd_why)
+
+    history.register(sub, fmt)
 
     p_serve = sub.add_parser(
         "serve",

@@ -101,8 +101,18 @@ def test_full_fits_size_budget():
     # and named the per-host modes, which `ruling checks` prints anyway).
     # New deliberate-review size is 11,991 (2026-09-06). Nothing was added to
     # the compact body.
+    #
+    # RAISED 12,400 -> 12,900 on 2026-09-12 (#975). The addition is ~390
+    # chars in "When memory looks wrong": one table row and one paragraph for
+    # `daimon diff`, which reads the checkpoint chain that was already on
+    # disk and had no reader. The paragraph exists mostly to say what the
+    # verb is NOT: there is no restore, and an agent that reads "diff" and
+    # assumes a "revert" is exactly the misuse #975 settled against. Trimmed
+    # once before raising (the first draft was ~980 chars and listed the
+    # change classes, which the verb prints anyway). New deliberate-review
+    # size is 12,789 (2026-09-12). Nothing was added to the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 12400, f"full body is {len(full)} chars (cap 12400)"
+    assert len(full) <= 12900, f"full body is {len(full)} chars (cap 12900)"
 
 
 def test_full_has_trigger_only_frontmatter():

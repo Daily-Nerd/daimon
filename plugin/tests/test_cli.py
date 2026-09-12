@@ -11028,8 +11028,9 @@ def test_tenant_scope_projects_lists_only_the_callers_own(
 def test_exactly_the_read_verbs_and_the_human_only_verbs_take_a_slug():
     """No write path an AGENT can complete accepts a slug. Pinned
     structurally: walk the parser, nested families included, and name every
-    subcommand carrying --slug. The three read verbs take it as an address
-    (#243). The ten human-only decision verbs take it as a ROUTING flag
+    subcommand carrying --slug. The four read verbs take it as an address
+    (#243; `diff` joined them in #975, a pure reader that stamps nothing).
+    The ten human-only decision verbs take it as a ROUTING flag
     (#766 slice 4) so a command printed by `decide --all-projects` runs from
     wherever the person stands; their channel gate refuses an agent with or
     without it, and #899's tenant mode refuses the flag itself. `request
@@ -11049,7 +11050,7 @@ def test_exactly_the_read_verbs_and_the_human_only_verbs_take_a_slug():
         return found
 
     assert sorted(_walk(cli.build_parser())) == sorted([
-        "brief", "recall", "why",
+        "brief", "recall", "why", "diff",
         "request accept", "request reject", "request needs-info",
         "request suppress",
         "amend ratify", "amend reject",

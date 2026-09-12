@@ -423,6 +423,11 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # #502: trust inspection is read-only apart from usage telemetry.
         run(["why", ctx["ids"][_T_GATEWAY]], 0)
 
+    def r_diff():
+        # #975: the chain reader. Read-only apart from usage telemetry, and
+        # the recipe drives the DEFAULT pair so the pointer walk runs.
+        run(["diff"], 0)
+
     def r_projects():
         run(["projects"], 0)
 
@@ -844,6 +849,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("anchor",): r_anchor,
         ("recall",): r_recall,
         ("why",): r_why,
+        ("diff",): r_diff,
         ("projects",): r_projects,
         ("bucket", "migrate"): r_bucket_migrate,
         ("slug",): r_slug,
