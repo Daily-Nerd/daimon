@@ -254,7 +254,7 @@ def test_diff_notes_a_truncated_chain(tmp_checkpoint_dir, monkeypatch, capsys):
     _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("beta fact")])
     _write("S-3", "2026-09-01T12:00:00Z", decisions=[_item("gamma fact")])
     assert cli.main(["diff", "--project", _PROJECT]) == 0
-    assert "rotated out" in capsys.readouterr().out
+    assert "cannot be read here" in capsys.readouterr().out
 
 
 # ---- scope ------------------------------------------------------------------

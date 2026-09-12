@@ -232,7 +232,7 @@ def _chain_line(retained: int, history: int, oldest: str) -> str:
     way."""
     return (f"Chain: {retained} retained "
             f"(DAIMON_CHECKPOINT_HISTORY={history}) — anything before "
-            f"{oldest} has rotated out of this chain and cannot be read here.")
+            f"{oldest} is not in this chain and cannot be read here.")
 
 
 def _refuse(message: str, rc: int, as_json: bool) -> int:

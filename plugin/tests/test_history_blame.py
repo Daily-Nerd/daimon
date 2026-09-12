@@ -109,7 +109,7 @@ def test_blame_will_not_invent_an_origin_it_cannot_reach(tmp_checkpoint_dir,
     assert cli.main(["blame", item_id, "--project", _PROJECT]) == 0
     out = capsys.readouterr().out
     assert "origin beyond retained history" in out
-    assert "rotated out" in out
+    assert "cannot be read here" in out
 
 
 def test_blame_names_the_bound_origin_of_a_native_item(tmp_checkpoint_dir,
