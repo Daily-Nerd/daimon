@@ -288,6 +288,33 @@ def test_cli_team_sync_no_remotes_rc0(capsys):
     assert "nothing to sync" in out
 
 
+# ---- #620 item 1: --apply-forget's refusal precedes any sync side effect ---
+
+
+def test_apply_forget_refusal_precedes_commit_and_push(
+        bare_remote, monkeypatch, capsys):
+    """The gate used to be checked AFTER `teamsync.sync()` had already
+    committed and pushed this machine's own pending files, so a caller could
+    not tell "refused" from "applied, nothing new" — both looked like an
+    ordinary sync plus a stderr warning at rc 0. The refusal must now land
+    before sync runs at all: the pending own file stays uncommitted and
+    unpushed, and the CLI returns a distinct non-zero code."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    monkeypatch.delenv("DAIMON_TEAM_APPLY_FORGET", raising=False)
+    sidecar = teamsync.init(str(bare_remote))
+    _write_team_file(sidecar, "Ada", "S1.json")
+    rc = cli.main(["team", "sync", "--apply-forget"])
+    assert rc != 0, "a refusal must not report success"
+    err = capsys.readouterr().err
+    assert "DAIMON_TEAM_APPLY_FORGET" in err
+    status = _git(sidecar, "status", "--porcelain", "-uall").stdout
+    assert "authors/Ada/S1.json" in status, \
+        "the own pending file must still be uncommitted — sync must not " \
+        "have run at all"
+    assert "authors/Ada/S1.json" not in _bare_files(bare_remote), \
+        "nothing may have reached the remote before the refusal"
+
+
 # ---- two authors, one bare remote (the spike's clone topology) ----
 
 
@@ -616,6 +643,75 @@ def test_daimon_status_gains_team_line_when_remote_exists(bare_remote, monkeypat
     assert len(team_lines) == 1        # exactly ONE objective line
     assert "1 remote" in team_lines[0]
     assert "0 unpushed" in team_lines[0]
+
+
+# ---- #620 item 3: the standing --apply-forget consent is an armed, ---------
+# ---- irreversible, machine-wide state and appears in no status surface ----
+
+
+def test_status_line_silent_on_apply_forget_by_default(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    teamsync.init(str(bare_remote))
+    monkeypatch.delenv("DAIMON_TEAM_APPLY_FORGET", raising=False)
+    assert "APPLY_FORGET" not in teamsync.status_line()
+
+
+def test_status_line_flags_apply_forget_armed(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    teamsync.init(str(bare_remote))
+    monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
+    assert "DAIMON_TEAM_APPLY_FORGET" in teamsync.status_line()
+
+
+def test_daimon_status_team_line_flags_armed_apply_forget(
+        bare_remote, monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
+    teamsync.init(str(bare_remote))
+    cli.main(["status", "--project", str(tmp_path)])
+    out = capsys.readouterr().out
+    team_lines = [ln for ln in out.splitlines() if ln.startswith("team: ")]
+    assert len(team_lines) == 1
+    assert "DAIMON_TEAM_APPLY_FORGET" in team_lines[0]
+
+
+def test_cli_team_status_shows_armed_apply_forget(bare_remote, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
+    teamsync.init(str(bare_remote))
+    assert cli.main(["team", "status"]) == 0
+    assert "DAIMON_TEAM_APPLY_FORGET" in capsys.readouterr().out
+
+
+def test_cli_team_status_silent_when_apply_forget_not_armed(
+        bare_remote, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    monkeypatch.delenv("DAIMON_TEAM_APPLY_FORGET", raising=False)
+    teamsync.init(str(bare_remote))
+    assert cli.main(["team", "status"]) == 0
+    assert "DAIMON_TEAM_APPLY_FORGET" not in capsys.readouterr().out
+
+
+def test_cli_team_status_shows_armed_even_with_no_git(monkeypatch, capsys):
+    """The env var is machine-wide and does not depend on git being on
+    PATH, so this early-return branch must carry the armed line too."""
+    monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
+    monkeypatch.setattr(teamsync, "git_available", lambda: False)
+    assert cli.main(["team", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "git not found on PATH" in out
+    assert "DAIMON_TEAM_APPLY_FORGET" in out
+
+
+def test_cli_team_status_shows_armed_even_with_no_remote(monkeypatch, capsys):
+    """The consent is a machine-wide env var, independent of whether a
+    remote is configured yet — it stays dangerous even then, because
+    `apply_foreign_tombstones` reads whatever remotes show up later."""
+    monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
+    assert cli.main(["team", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "no team remote configured" in out
+    assert "DAIMON_TEAM_APPLY_FORGET" in out
 
 
 def test_daimon_status_silent_when_team_unused(tmp_path, capsys):

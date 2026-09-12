@@ -2269,6 +2269,16 @@ def render_privacy_audit(results: list[dict]) -> None:
         for f in r["informational"]:
             print(f"  stale [{f['surface']}] hash {f['content_hash']}"
                   f" in {f['path']} (deleted at next index rebuild)")
+        # #620 item 2: a teammate's forget, not this project's own — it
+        # suppresses reads by default but never rewrites this plaintext
+        # unless DAIMON_TEAM_APPLY_FORGET is on. A different contract than
+        # RESIDUE above, so it never changes the exit code.
+        for f in r.get("suppressed_present") or []:
+            print(f"  SUPPRESSED-PRESENT [{f['surface']}] hash "
+                  f"{f['content_hash']} item {f.get('item_id') or '?'} in "
+                  f"{f['path']} — a teammate's forget suppresses reads of "
+                  "this value but has not scrubbed it here (opt-in: "
+                  "DAIMON_TEAM_APPLY_FORGET)")
         for p in r["unscannable"]:
             print(f"  UNSCANNABLE {p}")
         cache = r.get("cache") or {}
@@ -2326,7 +2336,7 @@ def render_privacy_audit(results: list[dict]) -> None:
                   " carry transcript text (#616); value-level scan impossible"
                   " (substring vs hash); purge is wholesale on forget")
         if not (r["findings"] or r["informational"] or r["unscannable"]
-                or r.get("zero_surfaces")):
+                or r.get("zero_surfaces") or r.get("suppressed_present")):
             print("  clean — no tombstoned value found on any surface")
     print("note: a free-text event note merely CONTAINING a forgotten value"
           " is undetectable by hash; only verbatim notes are caught")

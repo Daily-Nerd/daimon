@@ -31,7 +31,22 @@ def _cmd_team_init(args) -> int:
 def _cmd_team_sync(args) -> int:
     """rc 0 for every sync-nothing-to-do shape (no git, no remotes, offline);
     warnings go to stderr but never change the rc — a degraded sync is not a
-    user error."""
+    user error. rc 2 refuses `--apply-forget` without the standing consent
+    (#620 item 1) — the same code every other precondition refusal on this
+    CLI uses (`bucket migrate`'s tenant-scope refusal, `hooks install`'s
+    unknown host; 2 is reserved for argparse and this house convention,
+    documented at privacy.exit_code)."""
+    apply_forget = getattr(args, "apply_forget", False)
+    # #620 item 1: checked BEFORE anything below runs a sync side effect.
+    # This used to sit after `teamsync.sync()`, so a refusal still let sync
+    # commit and push this machine's own pending files first, then printed a
+    # stderr warning and returned 0 — indistinguishable from "applied,
+    # nothing new" to any caller checking the exit code alone.
+    if apply_forget and not config.team_apply_forget():
+        print("daimon team: --apply-forget needs DAIMON_TEAM_APPLY_FORGET=1"
+              " — a teammate's forget rewriting your own checkpoints is"
+              " opt-in, and there is no undo", file=sys.stderr)
+        return 2
     if getattr(args, "project", None):
         # Accepted for CLI symmetry only — say so instead of silently running
         # a global sync the user thought was scoped (#29).
@@ -42,35 +57,30 @@ def _cmd_team_sync(args) -> int:
         return 0
     reports = teamsync.sync()
     # #600 slice B, opt-in: apply teammates' tombstones to THIS machine's own
-    # checkpoints. TWO gates, and the flag is the load-bearing one: bare
-    # `daimon team sync` is spawned DETACHED at SessionStart by
-    # lib.spawn_team_sync with stdout to DEVNULL, exactly like heal — so a
-    # setting alone would delete local belief state unattended and silently,
-    # which is the failure this design exists to prevent. The hook never
-    # passes --apply-forget, so only a typed command can reach this.
-    # Machine-wide, matching sync's own project-agnostic contract.
-    if getattr(args, "apply_forget", False):
-        if not config.team_apply_forget():
-            print("daimon team: --apply-forget needs DAIMON_TEAM_APPLY_FORGET=1"
-                  " — a teammate's forget rewriting your own checkpoints is"
-                  " opt-in, and there is no undo", file=sys.stderr)
-        else:
-            applied = store.apply_foreign_tombstones(all_projects=True)
-            # #620: this walk reaches the *.json checkpoint shapes and no
-            # others, so an unqualified success line claims a sweep it did
-            # not perform. The operation is irreversible and machine-wide:
-            # the user spends a one-way consent, and being told it worked
-            # when the value survives elsewhere is worse than a refusal.
-            # The gap is derived from the surface registry, so a plaintext
-            # class added later is reported as unreached rather than
-            # silently absorbed into the count.
-            gap = surfaces.foreign_apply_gap()
-            print(f"applied teammates' forget tombstones to {len(applied)} "
-                  "local surface(s) across all projects")
-            print(f"  not reached ({len(gap)} plaintext surface class(es)): "
-                  + ", ".join(gap))
-            print("  the value may survive there; full coverage lands with"
-                  " the read-through model (#752)")
+    # checkpoints. The flag alone is not enough to reach here — the gate
+    # above already refused an unconsented --apply-forget before sync ran —
+    # so this branch only runs with standing consent given. Bare `daimon team
+    # sync` (no flag) is spawned DETACHED at SessionStart by
+    # lib.spawn_team_sync with stdout to DEVNULL, exactly like heal, and the
+    # hook never passes --apply-forget, so only a typed command reaches here
+    # at all. Machine-wide, matching sync's own project-agnostic contract.
+    if apply_forget:
+        applied = store.apply_foreign_tombstones(all_projects=True)
+        # #620: this walk reaches the *.json checkpoint shapes and no
+        # others, so an unqualified success line claims a sweep it did
+        # not perform. The operation is irreversible and machine-wide:
+        # the user spends a one-way consent, and being told it worked
+        # when the value survives elsewhere is worse than a refusal.
+        # The gap is derived from the surface registry, so a plaintext
+        # class added later is reported as unreached rather than
+        # silently absorbed into the count.
+        gap = surfaces.foreign_apply_gap()
+        print(f"applied teammates' forget tombstones to {len(applied)} "
+              "local surface(s) across all projects")
+        print(f"  not reached ({len(gap)} plaintext surface class(es)): "
+              + ", ".join(gap))
+        print("  the value may survive there; full coverage lands with"
+              " the read-through model (#752)")
     # #246: fetched teammate files are fingerprint input — freshen here (the
     # SessionStart hook spawns sync detached, off the prompt path) so the
     # first recall after a fetch doesn't pay the rebuild. Unconditional on
@@ -100,14 +110,26 @@ def _cmd_team_sync(args) -> int:
     return 0
 
 def _cmd_team_status(args) -> int:
+    # #620 item 3: DAIMON_TEAM_APPLY_FORGET is standing consent for an
+    # irreversible, machine-wide rewrite of this machine's own checkpoints
+    # under a teammate's forget tombstone, and it appeared in no status
+    # surface before this. Machine-wide, like the setting itself — shown
+    # regardless of whether git is on PATH or a remote is configured yet,
+    # because the env var stays armed either way.
+    armed_lines = (
+        ["DAIMON_TEAM_APPLY_FORGET is armed — the next `daimon team sync "
+         "--apply-forget` rewrites this machine's own checkpoints under "
+         "teammates' forget tombstones, machine-wide, with no undo"]
+        if config.team_apply_forget() else [])
     if not teamsync.git_available():
-        render.render_team_status(["daimon team: git not found on PATH"])
+        render.render_team_status(
+            ["daimon team: git not found on PATH"] + armed_lines)
         return 0
     rows = teamsync.team_status()
     if not rows:
         render.render_team_status([
             "no team remote configured — run `daimon team init <remote-url>`",
-        ])
+        ] + armed_lines)
         return 0
     if args.json:
         print(json.dumps(rows, indent=2))
@@ -149,6 +171,7 @@ def _cmd_team_status(args) -> int:
         line += ("  (no remote grants it membership — add its repo URL to a "
                  "sidecar's daimon-team.toml [scope] repos)")
     lines.append(line)
+    lines.extend(armed_lines)
     render.render_team_status(lines)
     return 0
 
@@ -183,7 +206,8 @@ def register(sub, fmt) -> None:
         help="also rewrite THIS machine's checkpoints under teammates' forget "
              "tombstones (#600). Requires DAIMON_TEAM_APPLY_FORGET=1; typed "
              "only — the SessionStart hook spawns a bare sync, so this can "
-             "never delete your belief state unattended",
+             "never delete your belief state unattended. Without the "
+             "standing consent, refuses at rc 2 before syncing anything",
     )
     pt_sync.set_defaults(func=_cli._cmd_team_sync)
     pt_status = team_sub.add_parser(

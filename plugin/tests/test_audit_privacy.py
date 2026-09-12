@@ -918,3 +918,113 @@ def test_cli_audit_all_flag(tmp_checkpoint_dir):
     # reporting cannot-prove for a tree it fully scanned.
     _write("S1", KEEPER)
     assert cli.main(["audit", "privacy", "--all"]) == 0
+
+
+# ---- #620 item 2: suppressed-but-present (foreign tombstone, local plaintext) --
+#
+# A teammate's forget SUPPRESSES this machine's reads of the value by
+# default (admit_foreign) but never rewrites local plaintext unless
+# DAIMON_TEAM_APPLY_FORGET is on (store.apply_foreign_tombstones). Before
+# this class existed, that value audited exactly like a clean tree: it is
+# not in `forgotten_content_keys` (this project's OWN tombstone set), so
+# `findings` never saw it.
+
+
+def _publish_foreign_tombstone(key, remote="team-a", author="grace"):
+    """A teammate's sidecar as it lands here after a pull: a hash-only
+    tombstone row for `key`, published by someone who is not this machine's
+    own author (own-author dirs are excluded from the foreign set on
+    purpose — store.foreign_forgotten_content_keys) and under a REAL remote
+    name, never `local` (the machine-local mirror never syncs and is
+    excluded for the same reason)."""
+    adir = config.team_dir() / remote / "authors" / author
+    adir.mkdir(parents=True, exist_ok=True)
+    (adir / store._TOMBSTONE_NAME).write_text(
+        json.dumps({"ts": "2026-08-02T00:00:00Z", "key": key,
+                    "author": author}) + "\n", encoding="utf-8")
+
+
+def test_foreign_tombstone_plaintext_audits_clean_under_findings(
+        tmp_checkpoint_dir):
+    """Pins the gap this item exists to close: a value only a TEAMMATE
+    forgot answers a different question than "did this project's own
+    forget promise hold" — it must never land in `findings`, which is
+    reserved for THIS project's own tombstone set."""
+    _write("S1", CANARY, KEEPER)
+    _publish_foreign_tombstone(normalize.content_key(CANARY))
+    result = privacy.audit_project(project_dir=PROJECT)
+    key = normalize.content_key(CANARY)
+    assert not any(f["content_hash"] == key for f in result["findings"])
+
+
+def test_foreign_tombstone_in_active_topic_is_named_suppressed_present(
+        tmp_checkpoint_dir):
+    """The active_topic singleton sits outside _ITEM_LISTS (#599 class
+    finding) — a suppressed-but-present scan blind to it would miss exactly
+    the surface the residue scan above already had to be taught to see."""
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-08-01T00:00:00Z",
+        "working_context": {
+            "active_topic": {"text": KEEPER, "quote": CANARY,
+                             "trust": "verbatim"},
+            "recent_decisions": [{"text": KEEPER, "trust": "inferred"}]},
+    }, project_dir=PROJECT)
+    key = normalize.content_key(CANARY)
+    _publish_foreign_tombstone(key)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["content_hash"] == key for f in result["suppressed_present"])
+
+
+def test_foreign_tombstone_plaintext_is_named_suppressed_present(
+        tmp_checkpoint_dir):
+    _write("S1", CANARY, KEEPER)
+    key = normalize.content_key(CANARY)
+    _publish_foreign_tombstone(key)
+    result = privacy.audit_project(project_dir=PROJECT)
+    hits = [f for f in result["suppressed_present"] if f["content_hash"] == key]
+    assert hits, "a foreign-tombstoned plaintext survivor must be named"
+
+
+def test_suppressed_present_never_double_counts_a_local_tombstone(
+        tmp_checkpoint_dir):
+    """A value BOTH this project's own forget AND a teammate's forget named
+    is a genuine residue finding (this project's own contract failed) —
+    reporting it a second time as merely "suppressed" would understate it."""
+    _write("S1", CANARY, KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT)
+    _publish_foreign_tombstone(key)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["content_hash"] == key for f in result["findings"])
+    assert not any(f["content_hash"] == key
+                   for f in result["suppressed_present"])
+
+
+def test_suppressed_present_does_not_change_exit_code(tmp_checkpoint_dir):
+    """Opt-in scrub not having run yet is not a broken promise of THIS
+    project's own forget contract — it must not turn a clean audit into
+    residue (exit 1) or cannot-prove (exit 3)."""
+    _write("S1", CANARY, KEEPER)
+    _publish_foreign_tombstone(normalize.content_key(CANARY))
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert privacy.exit_code([result]) == 0
+
+
+def test_suppressed_present_is_absent_with_no_foreign_tombstone(
+        tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert result["suppressed_present"] == []
+
+
+def test_render_privacy_audit_names_suppressed_present(
+        tmp_checkpoint_dir, capsys):
+    _write("S1", CANARY, KEEPER)
+    key = normalize.content_key(CANARY)
+    _publish_foreign_tombstone(key)
+    result = privacy.audit_project(project_dir=PROJECT)
+    render.render_privacy_audit([result])
+    out = capsys.readouterr().out
+    assert "SUPPRESSED" in out
+    assert key in out

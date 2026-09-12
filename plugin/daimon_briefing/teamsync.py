@@ -601,5 +601,14 @@ def status_line() -> str | None:
         pending_part = f"{pending} pending, " if pending > 0 else ""
         parts.append(f"{sidecar.name}: {unpushed} unpushed, {pending_part}"
                      f"{authors} author{'s' if authors != 1 else ''} seen")
-    return f"team: {len(remotes)} remote{'s' if len(remotes) != 1 else ''} — " \
+    line = f"team: {len(remotes)} remote{'s' if len(remotes) != 1 else ''} — " \
            + "; ".join(parts)
+    # #620 item 3: DAIMON_TEAM_APPLY_FORGET is standing consent for an
+    # irreversible, machine-wide rewrite of this machine's own checkpoints
+    # under a teammate's forget tombstone, and appeared in no status surface
+    # before this. Same #84 posture as the rest of the line: silent unless
+    # armed, so a machine that never opted in reads byte-identical to today.
+    if config.team_apply_forget():
+        line += " — DAIMON_TEAM_APPLY_FORGET armed (next `sync --apply-forget`" \
+                " rewrites teammates' forgotten values here, no undo)"
+    return line

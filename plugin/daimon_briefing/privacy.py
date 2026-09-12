@@ -12,6 +12,13 @@ sidecars for a WAL-mode file. The recall public API is never touched
 (_ensure_fresh rebuilds). Findings carry hashes, never the text — audit
 output gets re-serialized into checkpoints, so printing the value would
 re-capture the thing the user deleted.
+
+#620 item 2: `suppressed_present` answers a SEPARATE question from
+`findings` — whether a value only a TEAMMATE forgot (store.
+foreign_forgotten_content_keys) still sits in plaintext here. That is not a
+broken promise of this project's own forget contract: a foreign tombstone
+suppresses reads by default and never rewrites local plaintext unless
+DAIMON_TEAM_APPLY_FORGET is on. It never changes exit_code.
 """
 import json
 import sqlite3
@@ -140,43 +147,72 @@ def _load_payload(path: Path) -> dict | None:
 
 
 def _payload_findings(payload: dict, path: Path, keys: set[str],
-                      surface: str) -> list[dict]:
+                      surface: str,
+                      suppressed_keys: frozenset = frozenset()
+                      ) -> tuple[list[dict], list[dict]]:
+    """(residue findings, suppressed-but-present findings).
+
+    `suppressed_keys` is a SEPARATE set from `keys`: a teammate's forget
+    (#620 item 2) suppresses this machine's reads by default but never
+    rewrites local plaintext unless DAIMON_TEAM_APPLY_FORGET is on
+    (store.apply_foreign_tombstones), so a value only a teammate forgot
+    answers a different question than "did THIS project's own forget
+    promise hold" (`keys`). Callers pass the foreign set with `keys`
+    already excluded, so a value both sides forgot is reported once, as
+    the real residue it is — reporting it twice would understate it."""
     findings: list[dict] = []
+    suppressed: list[dict] = []
     for section, key in store._ITEM_LISTS:
         for item in ((payload.get(section) or {}).get(key) or []):
             if not isinstance(item, dict):
                 continue
-            for h in _hashes(item) & keys:
+            hashes = _hashes(item)
+            for h in hashes & keys:
                 findings.append({"path": str(path),
                                  "item_id": item.get("id"),
                                  "content_hash": h,
                                  "surface": surface})
+            for h in hashes & suppressed_keys:
+                suppressed.append({"path": str(path),
+                                   "item_id": item.get("id"),
+                                   "content_hash": h,
+                                   "surface": surface})
     # The active_topic singleton sits outside _ITEM_LISTS (#599 class
     # finding): indexed for retrieval by schema.KIND_SOURCES, so an audit
     # walking only the list sections certifies exit 0 over live plaintext.
     topic = (payload.get("working_context") or {}).get("active_topic")
     if isinstance(topic, dict):
-        for h in _hashes(topic) & keys:
+        topic_hashes = _hashes(topic)
+        for h in topic_hashes & keys:
             findings.append({"path": str(path),
                              "item_id": topic.get("id"),
                              "content_hash": h,
                              "surface": surface})
-    return findings
+        for h in topic_hashes & suppressed_keys:
+            suppressed.append({"path": str(path),
+                               "item_id": topic.get("id"),
+                               "content_hash": h,
+                               "surface": surface})
+    return findings, suppressed
 
 
-def _scan_json_surface(path: Path, slug: str, keys: set[str],
-                       surface: str) -> tuple[list[dict], bool | None]:
-    """Findings + membership. None membership = unreadable (unscannable).
+def _scan_json_surface(path: Path, slug: str, keys: set[str], surface: str,
+                       suppressed_keys: frozenset = frozenset()
+                       ) -> tuple[list[dict], list[dict], bool | None]:
+    """Findings + suppressed-but-present + membership. None membership =
+    unreadable (unscannable).
 
     Membership mirrors store.project_surfaces: bucket location OR payload
     project_slug — but unreadable files are SURFACED here, not silently
     excluded, because "could not check" must never fold into "clean"."""
     payload = _load_payload(path)
     if payload is None:
-        return [], None
+        return [], [], None
     if path.parent.name != slug and payload.get("project_slug") != slug:
-        return [], False
-    return _payload_findings(payload, path, keys, surface), True
+        return [], [], False
+    findings, suppressed = _payload_findings(
+        payload, path, keys, surface, suppressed_keys)
+    return findings, suppressed, True
 
 
 def _team_segments(root: Path, path: Path) -> tuple[str, ...] | None:
@@ -309,7 +345,8 @@ def _scan_team_dir(slug: str, keys: set[str], project_dir,
     for path, payload, segs in loaded:
         if (segs in owned if segs else False) \
                 or payload.get("project_slug") == slug:
-            findings.extend(_payload_findings(payload, path, keys, "team-copy"))
+            f, _s = _payload_findings(payload, path, keys, "team-copy")
+            findings.extend(f)
     return findings
 
 
@@ -319,11 +356,19 @@ def audit_project(project_dir=None) -> dict:
     project_dir = config.resolve_project_dir(project_dir)
     slug = store.project_slug(project_dir)
     keys = store.forgotten_content_keys(project_dir=project_dir)
+    # #620 item 2: a teammate's forget is a SEPARATE contract from this
+    # project's own (keys, above) — it suppresses reads by default but never
+    # rewrites local plaintext unless the opt-in scrub has run
+    # (store.apply_foreign_tombstones). `- keys` so a value both sides
+    # forgot is reported once, as the real residue it already is via
+    # `findings`, not understated a second time as merely suppressed.
+    foreign_keys = frozenset(store.foreign_forgotten_content_keys() - keys)
     # Heterogeneous by design: the slug, two finding lists, a scan counter,
     # a flag, and a per-surface stats dict added for every surface below.
     # Unannotated it infers `int | list | str | None`, which every
     # `.append` and every stats assignment then contradicts.
     result: dict = {"slug": slug, "findings": [], "informational": [],
+                    "suppressed_present": [],
                     "unscannable": [], "surfaces_scanned": 0,
                     "zero_surfaces": False}
     if not slug:
@@ -342,12 +387,14 @@ def audit_project(project_dir=None) -> dict:
         str(p) for p, bucket in unknown if bucket in (None, slug))
     members = 0
     for path in known:
-        findings, member = _scan_json_surface(path, slug, keys, "checkpoint")
+        findings, suppressed, member = _scan_json_surface(
+            path, slug, keys, "checkpoint", foreign_keys)
         if member is None:
             result["unscannable"].append(str(path))
         elif member:
             members += 1
             result["findings"].extend(findings)
+            result["suppressed_present"].extend(suppressed)
     result["surfaces_scanned"] = members
     result["zero_surfaces"] = members == 0
     result["findings"].extend(_scan_team_dir(slug, keys, project_dir,
@@ -670,7 +717,15 @@ def audit_all() -> list[dict]:
 def exit_code(results: list[dict]) -> int:
     """0 proven clean / 1 residue / 3 cannot-prove. 2 belongs to argparse and
     the house hard-error convention. Cannot-prove NEVER folds to clean —
-    that is scripted false confidence, the exact thing #583 shipped."""
+    that is scripted false confidence, the exact thing #583 shipped.
+
+    `suppressed_present` (#620 item 2) never participates: it answers "did a
+    teammate's forget reach this machine's plaintext", not "did THIS
+    project's own forget promise hold" — the question these three codes
+    answer. Scrubbing that surface is opt-in (DAIMON_TEAM_APPLY_FORGET) and
+    the audit cannot tell "not yet synced with the flag on" from "the scrub
+    missed it", so folding it into residue would fail a default-configured
+    machine for exercising informed consent it never gave."""
     # Empty result set means nothing was audited (no buckets, or checkpoint_dir
     # inaccessible) — cannot distinguish from "clean", so must report cannot-prove.
     if not results:
