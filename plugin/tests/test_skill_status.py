@@ -338,6 +338,56 @@ def test_the_rich_table_carries_every_row_and_the_repair(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     assert "kimi" in out
     assert "STALE" in out
+    assert "1 drifted" in out
+    assert "fix: daimon skill install kimi" in out
+
+
+def test_the_rich_summary_counts_rows_not_just_drift(tmp_path, monkeypatch,
+                                                     capsys):
+    """#1012: the same compact summary shape the hooks table prints, naming
+    the table's own unit - one row per host/scope/skill."""
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    skill_install.install("kimi", project=False, home=home, cwd=tmp_path)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    report = skill_install.audit(home=home, cwd=tmp_path)
+    assert f"{len(report)} rows, 0 drifted" in out
+
+
+def test_the_plain_path_has_no_summary_line(tmp_path, capsys):
+    """The summary is a rich-path addition; plain output stays the
+    pre-#1012 contract pipes read."""
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    skill_install.install("kimi", project=False, home=home, cwd=tmp_path)
+    capsys.readouterr()
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    assert "kimi" in out
+    assert "rows," not in out
+
+
+def test_skill_status_cli_rich_summary(tmp_path, monkeypatch, capsys):
+    import daimon_briefing.cli as cli
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("PATH", "")
+    assert cli.main(["skill", "install", "kimi"]) == 0
+    (home / ".kimi-code" / "skills" / "daimon" / "SKILL.md").write_text(
+        "drifted\n", encoding="utf-8")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    assert cli.main(["skill", "status"]) == 1
+    out = capsys.readouterr().out
+    assert "1 drifted" in out
     assert "fix: daimon skill install kimi" in out
 
 
@@ -387,6 +437,27 @@ def test_a_plugin_served_host_with_no_file_is_not_missing(tmp_path):
     assert row["state"] == "PLUGIN"
     assert row["drift"] is False
     assert row["channel"] == "plugin"
+
+
+def test_a_plugin_served_row_renders_green_in_the_rich_table(
+        tmp_path, monkeypatch, capsys):
+    """#1012 follow-up: the shared style map dropped PLUGIN, and a healthy
+    plugin-channel machine rendered red - the drift fallback. FORCE_COLOR
+    makes rich emit the escapes so the colour is asserted, not implied;
+    NO_COLOR and TERM=dumb are cleared because the outer shell may set them
+    (the environment quirk behind the two known render-test failures)."""
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    _plugin_registry(home)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    assert "\x1b[32mPLUGIN\x1b[0m" in out
+    assert "\x1b[31mPLUGIN\x1b[0m" not in out
 
 
 def test_a_leftover_under_the_plugin_is_named_as_a_leftover(tmp_path):

@@ -296,6 +296,144 @@ def test_render_hooks_status_empty_report(capsys):
     assert "no packaged hook hosts" in capsys.readouterr().out
 
 
+# ---- #1012: the rich table presentation -------------------------------------
+#
+# Rich is a separate branch from the plain lines: it must carry the same
+# facts (hosts, file verdicts, registration, manifest block, fix commands)
+# or the audit speaks only to pipes.
+
+
+def _drift_windsurf(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "windsurf"]) == 0
+    target = tmp_path.joinpath(*_WINDSURF_DIR)
+    (target / "daimon-windsurf-hooks.py").write_text("# drifted copy")
+
+
+def test_status_rich_renders_table_summary_and_fix(tmp_path, monkeypatch,
+                                                   capsys):
+    _drift_windsurf(tmp_path, monkeypatch)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    rc = cli.main(["hooks", "status"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "windsurf" in out and "codex" in out and "kimi" in out
+    assert "STALE" in out and "CURRENT" in out
+    assert f"{len(cli._HOOK_HOSTS)} hosts, 1 drifted" in out
+    # repair commands stay visible below the table
+    assert "fix: daimon hooks install windsurf" in out
+
+
+def test_status_rich_clean_machine_says_zero_drift(tmp_path, monkeypatch,
+                                                   capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "windsurf"]) == 0
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    rc = cli.main(["hooks", "status"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert f"{len(cli._HOOK_HOSTS)} hosts, 0 drifted" in out
+
+
+def test_status_rich_marks_a_never_installed_host(tmp_path, monkeypatch,
+                                                  capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "windsurf"]) == 0
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    assert cli.main(["hooks", "status"]) == 0
+    out = capsys.readouterr().out
+    # the installed snippet host has no registration state to audit
+    assert "manual" in out
+    assert "NOT INSTALLED" in out
+
+
+def test_status_rich_carries_the_self_registration_verdict(tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    assert cli.main(["hooks", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "REGISTERED" in out
+
+
+def test_status_rich_keeps_the_manifest_block(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm_a_check(tmp_path)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    assert cli.main(["hooks", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "checks manifest (this project): in step, 1 armed" in out
+    assert "fix:" not in out, "an in-step manifest names no repair"
+
+
+def test_status_rich_reports_manifest_drift(tmp_path, monkeypatch, capsys):
+    from daimon_briefing import checks, config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    _arm_a_check(tmp_path)
+    checks.sync(str(tmp_path))
+    (config.checks_dir() / "manifest.json").write_text("[]\n",
+                                                       encoding="utf-8")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    rc = cli.main(["hooks", "status"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "checks manifest (this project): drifted" in out
+    assert "fix: daimon check sync" in out
+
+
+def test_status_rich_reports_an_unreadable_manifest(tmp_path, monkeypatch,
+                                                    capsys):
+    from daimon_briefing import config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    base = config.checks_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "manifest.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    capsys.readouterr()
+    rc = cli.main(["hooks", "status"])
+    out = capsys.readouterr().out
+    # an unreadable manifest is drift, the way checks.audit folds it
+    assert rc == 1
+    assert "checks manifest (this project): could not be read" in out
+    assert "fix: daimon check sync" in out
+
+
+def test_status_rich_says_no_manifest_when_absent(tmp_path, monkeypatch,
+                                                  capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    assert cli.main(["hooks", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "checks manifest (this project): no manifest" in out
+
+
+def test_status_plain_output_has_no_summary_line(tmp_path, monkeypatch,
+                                                 capsys):
+    """#1012 pins the plain surface byte-for-byte: the summary and the table
+    are rich-only, so pipes keep reading exactly the pre-#1012 lines."""
+    _drift_windsurf(tmp_path, monkeypatch)
+    capsys.readouterr()
+    rc = cli.main(["hooks", "status"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "hosts," not in out
+    assert "┌" not in out and "│" not in out
+
+
 # ---- #943 slice 5: the manifest the hooks read is audited here too ---------
 #
 # The scripts landing is half of "the gate is in place". The other half is

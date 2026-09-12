@@ -1252,7 +1252,7 @@ def render_recall_lines(lines) -> None:
     _render_lines(lines)
 
 
-# ---- hooks: `daimon hooks list|install` (#68) -------------------------------
+# ---- hooks: `daimon hooks list|install|status` (#68) ------------------------
 
 
 def render_hooks_list(lines) -> None:
@@ -1260,18 +1260,123 @@ def render_hooks_list(lines) -> None:
 
 
 def render_hooks_install(lines) -> None:
+    """`hooks remove` result lines (install itself renders through
+    render_install_summary since #1012)."""
     _render_lines(lines)
 
 
+# State styles shared by the hooks and skill audits (#1012): green for
+# CURRENT/REGISTERED/PLUGIN/healthy, dim for NOT INSTALLED, yellow for
+# partial or attention states, red for STALE/MISSING/BROKEN/drifted.
+# Anything a map does not name is drift by definition, so the fallback is
+# always red - PLUGIN is a healthy plugin-channel state (skill_install) and
+# must stay green, never the drift fallback.
+_STATE_STYLE = {
+    "CURRENT": "green",
+    "REGISTERED": "green",
+    "PLUGIN": "green",
+    "NOT INSTALLED": "dim",
+    "PARTIAL": "yellow",
+}
+
+
+def _rich_drift_summary(total: int, drifted: int, unit: str) -> None:
+    """The compact summary line under a status table (#1012): the audited
+    count plus the drift count, the drift number red when nonzero and green
+    when clean. Hooks counts hosts; skills counts rows - each names its own
+    table's unit."""
+    from rich.console import Console
+    from rich.text import Text
+
+    line = Text(f"{total} {unit}, ")
+    line.append(f"{drifted} drifted", style="red" if drifted else "green")
+    Console().print(line)
+
+
+def _checks_trailing_style(ln: str, first: bool) -> str | None:
+    """#1012: the manifest block keeps the shared wording `check sync --check`
+    prints (one source of truth, never rewritten here) and gains state colour
+    on the rich path. Only the header line carries a state; detail and fix
+    lines stay unstyled, same as the plain path."""
+    if not first:
+        return None
+    if "drifted" in ln or "could not be read" in ln:
+        return "red"
+    if "no manifest" in ln:
+        return "dim"
+    return "green"
+
+
+def _rich_hooks_status(report, trailing) -> None:
+    """The #1012 rich presentation of the hooks audit: one row per host
+    (host+dir, per-file verdicts, registration state), a drift summary, the
+    fix lines below the table, then the #943 manifest block. Same facts as
+    the plain lines; the layout mirrors render_skill_status so the two
+    lifecycle audits read as one product."""
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+
+    console = Console()
+    if not report:
+        console.print(Text("no packaged hook hosts", style="dim"))
+    else:
+        table = Table(show_header=True, header_style="bold")
+        for col in ("host", "files", "registration"):
+            table.add_column(col)
+        for h in report:
+            host_cell = Text()
+            host_cell.append(h["host"],
+                             style="dim" if not h["installed"] else "bold")
+            host_cell.append(f"\n{h['dir']}", style="dim")
+            if not h["installed"]:
+                files_cell = Text("NOT INSTALLED", style="dim")
+                reg_cell = Text("n/a", style="dim")
+            else:
+                files_cell = Text()
+                for i, f in enumerate(h["files"]):
+                    if i:
+                        files_cell.append("\n")
+                    files_cell.append(
+                        f"{f['status']:<8} {f['name']}",
+                        style=_STATE_STYLE.get(f["status"], "red"))
+                reg = h["registration"]
+                reg_cell = (Text("manual", style="dim") if reg is None
+                            else Text(reg,
+                                      style=_STATE_STYLE.get(reg, "red")))
+            if h["drift"]:
+                host_cell.append("\n⚠ drifted", style="yellow")
+            table.add_row(host_cell, files_cell, reg_cell)
+        console.print(table)
+        _rich_drift_summary(len(report),
+                            sum(1 for h in report if h["drift"]), "hosts")
+    repairs = sorted({h["host"] for h in report if h["drift"]})
+    if repairs:
+        print("")
+        for host in repairs:
+            print(f"fix: daimon hooks install {host}")
+    for i, ln in enumerate(trailing):
+        console.print(ln, style=_checks_trailing_style(ln, i == 0),
+                      markup=False)
+
+
 def render_hooks_status(report, trailing=()) -> None:
-    """Per-host, per-file drift audit (#266). NOT INSTALLED hosts get one line;
-    installed hosts list each file's verdict, the registration state where the
-    host uses one, and a single fix hint when anything drifted.
+    """Per-host, per-file drift audit (#266; rich table #1012). NOT INSTALLED
+    hosts get one line; installed hosts list each file's verdict, the
+    registration state where the host uses one, and a single fix hint when
+    anything drifted.
 
     `trailing` is the #943 manifest block: the file the installed scripts
     READ, audited against this project's ledger. It follows the per-host
     lines rather than joining them because it is not per host, and it is
-    empty on a machine where the audit could not run."""
+    empty on a machine where the audit could not run.
+
+    Rich renders a table plus summary and moves the fix hints below it;
+    plain stays the pre-#1012 line format, byte for byte - pipes and hooks
+    read that surface."""
+    if supports_rich():
+        _rich_hooks_status(report, trailing)
+        return
     lines: list[str] = []
     for h in report:
         if not h["installed"]:
@@ -1288,6 +1393,76 @@ def render_hooks_status(report, trailing=()) -> None:
         lines.append("no packaged hook hosts")
     lines.extend(trailing)
     _render_lines(lines)
+
+
+# ---- install summaries: `hooks install` / `skill install` (#1012) ------------
+
+
+_INSTALL_GROUP_HEADERS = (
+    ("installed", "Installed"),
+    ("registration", "Registration"),
+    ("attention", "Attention"),
+    ("next steps", "Next steps"),
+)
+
+
+def _install_group(ln: str) -> str:
+    """#1012 bucket for one install-output line, keying off the stable
+    prefixes and wordings the installers print (never rewriting them): the
+    artifact confirmations, the self-registering hosts' registration
+    verdicts, warnings, and everything a person must still do by hand."""
+    if ln.startswith("installed "):
+        return "installed"
+    if ln.startswith(("warning:", "⚠")):
+        return "attention"
+    if ("registered" in ln or ln.startswith("updated ")
+            or "already up to date" in ln):
+        return "registration"
+    return "next steps"
+
+
+def render_install_summary(lines, *, footer=None, title=None) -> None:
+    """Success summary for `hooks install` and `skill install` (#1012): the
+    same pre-formatted lines the plain path always printed, grouped under
+    Installed / Registration / Attention / Next steps in one panel on the
+    rich path. Manual-registration snippets and the re-run-after-upgrade
+    reminder stay in Next steps, unrewritten - an install report a person
+    acts on must not drift from the words the installers own. Plain path is
+    the bare print loop, byte-identical to the pre-#1012 output."""
+    if not supports_rich():
+        for ln in lines:
+            print(ln)
+        if footer:
+            print("")
+            for ln in footer:
+                print(ln)
+        return
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    grouped: dict[str, list[str]] = {
+        key: [] for key, _ in _INSTALL_GROUP_HEADERS}
+    for ln in lines:
+        if ln.strip():
+            grouped[_install_group(ln)].append(ln)
+    if footer:
+        grouped["next steps"].extend(footer)
+    entries: list[tuple[str, str | None]] = []
+    for key, header in _INSTALL_GROUP_HEADERS:
+        rows = grouped[key]
+        if not rows:
+            continue
+        entries.append((header, "bold yellow" if key == "attention" else "bold"))
+        entries.extend((f"  {ln}", "yellow" if key == "attention" else None)
+                       for ln in rows)
+    body = Text()
+    for i, (chunk, style) in enumerate(entries):
+        if i:
+            body.append("\n")
+        body.append(chunk, style=style)
+    Console().print(Panel(body, title=title, border_style="green",
+                          title_align="left"))
 
 
 # ---- team: `daimon team init|sync|status` (#68) -----------------------------
@@ -2265,7 +2440,7 @@ def render_skill_status(report) -> None:
 
     An audit names its own repair, or the reader is left with a verdict and
     nowhere to go. The fix line only appears when something actually drifted;
-    a clean machine gets the table alone.
+    a clean machine gets the table and the #1012 summary line alone.
     """
     # A leftover under a channel daimon does not write repairs by REMOVAL
     # (#1008): the installer declines to serve a plugin-served host, so
@@ -2289,11 +2464,12 @@ def render_skill_status(report) -> None:
         for col in ("host/scope", "skill", "state", "version", "path"):
             table.add_column(col)
         for scope, skill, state, version, path in rows:
-            style = {"CURRENT": "green", "PLUGIN": "green",
-                     "NOT INSTALLED": "dim"}.get(state, "red")
+            style = _STATE_STYLE.get(state, "red")
             table.add_row(scope, skill, f"[{style}]{state}[/{style}]",
                           version, path)
         console.print(table)
+        _rich_drift_summary(len(rows),
+                            sum(1 for r in report if r["drift"]), "rows")
     if repairs:
         print("")
         for host, verb in repairs:

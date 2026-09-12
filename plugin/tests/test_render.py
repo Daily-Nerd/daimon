@@ -1360,6 +1360,95 @@ def test_render_hooks_install_rich_smoke(monkeypatch, capsys):
     assert "installed" in out
 
 
+# ---- #1012: shared lifecycle presentation ------------------------------------
+
+
+def _hooks_report_sample():
+    return [
+        {"host": "codex", "dir": "/h/.codex/hooks", "installed": True,
+         "registration": "REGISTERED", "drift": False,
+         "files": [{"name": "daimon-codex-stop.py", "status": "CURRENT"}]},
+        {"host": "windsurf", "dir": "/h/.daimon/hooks", "installed": True,
+         "registration": None, "drift": True,
+         "files": [{"name": "redact.py", "status": "CURRENT"},
+                   {"name": "daimon-windsurf-hooks.py", "status": "STALE"}]},
+        {"host": "kimi", "dir": "/h/.kimi-code/hooks", "installed": False,
+         "registration": "UNREGISTERED", "drift": False, "files": []},
+    ]
+
+
+def test_render_hooks_status_rich_table_smoke(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_hooks_status(_hooks_report_sample())
+    out = capsys.readouterr().out
+    assert "codex" in out and "windsurf" in out and "kimi" in out
+    assert "CURRENT" in out and "STALE" in out and "NOT INSTALLED" in out
+    assert "REGISTERED" in out and "manual" in out
+    assert "3 hosts, 1 drifted" in out
+    assert "fix: daimon hooks install windsurf" in out
+
+
+def test_render_hooks_status_rich_empty_report(monkeypatch, capsys):
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_hooks_status([])
+    out = capsys.readouterr().out
+    assert "no packaged hook hosts" in out
+
+
+def test_render_hooks_status_rich_keeps_the_manifest_block(monkeypatch, capsys):
+    """Trailing lines are the shared manifest block; the rich path prints
+    them after the fixes, same position the plain lines hold."""
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_hooks_status(
+        _hooks_report_sample(),
+        trailing=["checks manifest (this project): in step, 1 armed"])
+    out = capsys.readouterr().out
+    assert "checks manifest (this project): in step, 1 armed" in out
+
+
+def test_render_install_summary_plain_exact_format(capsys):
+    render.render_install_summary(
+        ["installed 1 file(s) to /h/.daimon/hooks"],
+        footer=("Re-run `daimon hooks install windsurf`",))
+    out = capsys.readouterr().out
+    assert out == ("installed 1 file(s) to /h/.daimon/hooks\n"
+                   "\n"
+                   "Re-run `daimon hooks install windsurf`\n")
+
+
+def test_render_install_summary_rich_groups_every_line(monkeypatch, capsys):
+    """Every non-blank line lands in exactly one group and the panel keeps
+    the installers' own words."""
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_install_summary(
+        ["installed 2 file(s) to /h/.daimon/hooks",
+         "",
+         "  SessionStart: registered daimon-codex-session-start.py",
+         "updated /h/.codex/hooks.json",
+         "/h/.codex/hooks.json already up to date",
+         "warning: /d is 9,000 bytes, host truncates this file",
+         "Register this command for the events below:",
+         "  command: python3 /h/.daimon/hooks/entry.py",
+         "checks: 0 armed for slug"],
+        footer=("Re-run `daimon hooks install codex`",),
+        title="daimon hooks install codex")
+    out = capsys.readouterr().out
+    assert "Installed" in out
+    assert "installed 2 file(s) to /h/.daimon/hooks" in out
+    assert "Registration" in out
+    assert "SessionStart: registered daimon-codex-session-start.py" in out
+    assert "updated /h/.codex/hooks.json" in out
+    assert "/h/.codex/hooks.json already up to date" in out
+    assert "Attention" in out
+    assert "warning: /d is 9,000 bytes, host truncates this file" in out
+    assert "Next steps" in out
+    assert "Register this command for the events below:" in out
+    assert "command: python3 /h/.daimon/hooks/entry.py" in out
+    assert "checks: 0 armed for slug" in out
+    assert "Re-run `daimon hooks install codex`" in out
+    assert "daimon hooks install codex" in out
+
+
 # ---- team: `daimon team init|sync|status` (#68 rich parity) ----------------
 
 

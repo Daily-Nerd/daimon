@@ -65,7 +65,8 @@ def _install_one(host: str) -> int:
         from .. import codex_hooks
 
         lines = codex_hooks.install(pkg, Path.home())
-        render.render_hooks_install(lines + ["", _checks_line()])
+        render.render_install_summary(lines + ["", _checks_line()],
+                                      title=f"daimon hooks install {host}")
         return 0
     if spec.get("register") == "kimi":
         # #988. Same self-registering shape as Codex, into TOML rather than
@@ -80,7 +81,8 @@ def _install_one(host: str) -> int:
             print(f"error: {kimi_hooks.config_path(Path.home())} could not be "
                   f"read safely, so nothing was written: {exc}", file=sys.stderr)
             return 1
-        render.render_hooks_install(lines + ["", _checks_line()])
+        render.render_install_summary(lines + ["", _checks_line()],
+                                      title=f"daimon hooks install {host}")
         return 0
     target = _cli._hooks_target_dir()
     target.mkdir(parents=True, exist_ok=True)
@@ -103,7 +105,7 @@ def _install_one(host: str) -> int:
     lines.append("Re-run `daimon hooks install " + host +
                  "` after every `uv tool upgrade daimon-briefing`.")
     lines += ["", _checks_line()]
-    render.render_hooks_install(lines)
+    render.render_install_summary(lines, title=f"daimon hooks install {host}")
     return 0
 
 def _cmd_hooks_install(args) -> int:
