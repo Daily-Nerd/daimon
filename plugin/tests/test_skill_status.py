@@ -439,6 +439,27 @@ def test_a_plugin_served_host_with_no_file_is_not_missing(tmp_path):
     assert row["channel"] == "plugin"
 
 
+def test_a_plugin_served_row_renders_green_in_the_rich_table(
+        tmp_path, monkeypatch, capsys):
+    """#1012 follow-up: the shared style map dropped PLUGIN, and a healthy
+    plugin-channel machine rendered red - the drift fallback. FORCE_COLOR
+    makes rich emit the escapes so the colour is asserted, not implied;
+    NO_COLOR and TERM=dumb are cleared because the outer shell may set them
+    (the environment quirk behind the two known render-test failures)."""
+    from daimon_briefing import render
+
+    home = _home(tmp_path)
+    _plugin_registry(home)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    render.render_skill_status(skill_install.audit(home=home, cwd=tmp_path))
+    out = capsys.readouterr().out
+    assert "\x1b[32mPLUGIN\x1b[0m" in out
+    assert "\x1b[31mPLUGIN\x1b[0m" not in out
+
+
 def test_a_leftover_under_the_plugin_is_named_as_a_leftover(tmp_path):
     """The regression this issue was filed for. An older CLI install leaves a
     skill file behind, the plugin now serves the same skill, and the audit

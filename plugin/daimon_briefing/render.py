@@ -1266,12 +1266,15 @@ def render_hooks_install(lines) -> None:
 
 
 # State styles shared by the hooks and skill audits (#1012): green for
-# CURRENT/REGISTERED/healthy, dim for NOT INSTALLED, yellow for partial or
-# attention states, red for STALE/MISSING/BROKEN/drifted. Anything a map does
-# not name is drift by definition, so the fallback is always red.
+# CURRENT/REGISTERED/PLUGIN/healthy, dim for NOT INSTALLED, yellow for
+# partial or attention states, red for STALE/MISSING/BROKEN/drifted.
+# Anything a map does not name is drift by definition, so the fallback is
+# always red - PLUGIN is a healthy plugin-channel state (skill_install) and
+# must stay green, never the drift fallback.
 _STATE_STYLE = {
     "CURRENT": "green",
     "REGISTERED": "green",
+    "PLUGIN": "green",
     "NOT INSTALLED": "dim",
     "PARTIAL": "yellow",
 }
