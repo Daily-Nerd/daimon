@@ -111,8 +111,16 @@ def test_full_fits_size_budget():
     # once before raising (the first draft was ~980 chars and listed the
     # change classes, which the verb prints anyway). New deliberate-review
     # size is 12,789 (2026-09-12). Nothing was added to the compact body.
+    #
+    # RAISED 12,900 -> 13,400 on 2026-09-12 (#975, second verb). The addition
+    # is ~160 chars: one table row and one sentence for `daimon blame`. It
+    # earns its own line rather than folding into the `diff` paragraph because
+    # the two answer different questions — `diff` is a span, `blame` is one
+    # item's sequence — and an agent that reaches for the wrong one gets a
+    # correct answer to a question it did not ask. New deliberate-review size
+    # is 12,950 (2026-09-12). Nothing was added to the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 12900, f"full body is {len(full)} chars (cap 12900)"
+    assert len(full) <= 13400, f"full body is {len(full)} chars (cap 13400)"
 
 
 def test_full_has_trigger_only_frontmatter():

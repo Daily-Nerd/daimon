@@ -1459,6 +1459,7 @@ from .check import (  # noqa: E402
     _cmd_check_sync,  # noqa: F401 — re-exported for compat
 )
 from .history import (  # noqa: E402
+    _cmd_blame,  # noqa: F401 — re-exported for compat
     _cmd_diff,  # noqa: F401 — re-exported for compat
 )
 from .hooks import (  # noqa: E402

@@ -2460,6 +2460,47 @@ def resolutions(project_dir=None) -> dict:
     return out
 
 
+def item_events(item_ref: str, project_dir=None) -> list[dict]:
+    """Every events.jsonl row addressed to EXACTLY `item_ref`, oldest first
+    (#975).
+
+    The companion to `resolutions`, which folds to the latest row per ref: a
+    lineage reader needs the whole sequence, not the winner. Ordering is by
+    `ts` for the same reason the fold is — concurrent writers interleave, and
+    a rewritten or reordered log must read identically — with an unstamped
+    row sorting oldest and ties broken on file position, so the order is
+    total and deterministic rather than dependent on Python's sort landing
+    somewhere.
+
+    Exact ref equality is what keeps namespaced rows out. A corroboration row
+    lands on `corroboration:<id>` (#268) precisely so it can never address the
+    item, and this reader inherits that for free — never widen it to a prefix
+    match (scar 0025: any event kind on a bare ref hides its item).
+
+    Fails open to [] on a missing, unreadable or corrupt log; unparseable
+    lines are skipped best-effort, the posture every reader here takes."""
+    project_dir = _resolved(project_dir)
+    path = _events_path(project_dir)
+    if path is None or not item_ref:
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    found: list[tuple[float, int, dict]] = []
+    for position, line in enumerate(lines):
+        try:
+            evt = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(evt, dict) or evt.get("item_ref") != item_ref:
+            continue
+        epoch = _created_epoch(evt.get("ts"))
+        found.append((float("-inf") if epoch is None else epoch, position, evt))
+    found.sort(key=lambda row: (row[0], row[1]))
+    return [row[2] for row in found]
+
+
 def is_resolved(event) -> bool:
     """Liveness rule (#102, #14): latest event wins; three states — a status
     starting with 'reopen' returns the item to live; 'supersede-candidate',

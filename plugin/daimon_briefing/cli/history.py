@@ -1,4 +1,4 @@
-"""Read the checkpoint chain that is already on disk — `diff` (#975).
+"""Read the checkpoint chain that is already on disk — `diff`, `blame` (#975).
 
 A project bucket retains the last `DAIMON_CHECKPOINT_HISTORY` writes as
 `latest.json` plus `prev-1.json` .. `prev-(history-1).json`, and item identity
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import config, render, schema, store
+from .. import config, inspector, render, schema, store
 
 
 SCHEMA_VERSION = 1
@@ -348,6 +348,175 @@ def _diff_lines(payload: dict, oldest: str) -> list[str]:
     return lines
 
 
+def _appearances(entries: list[dict], item_id: str) -> list[dict]:
+    """Every readable generation that holds this item, OLDEST first, so a
+    reader walks the lineage forwards.
+
+    `carried_from` is the carry label, and two things about it are easy to get
+    wrong. It is stamped with `setdefault`, so it names the session an item
+    was FIRST copied from and is never re-stamped on later hops. And carry's
+    twin path never stamps it at all (scar 0077): a session restating a
+    carried claim in its own words wrote those words, so the copy label would
+    misname the author. Its absence therefore means "this session wrote this
+    wording", which is exactly what the line says — never "this is where the
+    claim began". That question is the `Origin:` line's, and only the bound
+    `origin_session` can answer it."""
+    out = []
+    for entry in entries:
+        checkpoint = entry["checkpoint"]
+        if checkpoint is None:
+            continue
+        found = _items_by_id(checkpoint).get(item_id)
+        if found is None:
+            continue
+        kind, item = found
+        out.append({
+            "index": entry["index"],
+            "pointer": entry["pointer"],
+            "session_id": entry["session_id"],
+            "created": entry["created"],
+            "trust": item.get("trust"),
+            "carried_from": item.get("carried_from") or None,
+            "native": not item.get("carried_from"),
+            "_kind": kind,
+            "_item": item,
+        })
+    out.sort(key=lambda a: a["index"], reverse=True)
+    return out
+
+
+def _origin(item: dict, retained_sessions: set) -> dict:
+    """Who FIRST stated this, from the write-time binding (#268) and nowhere
+    else. An absent binding reads as unknown rather than as the session the
+    item happens to sit in: substituting a carrier for an author is the
+    manufactured-corroboration failure the binding exists to prevent.
+
+    `retained` says whether the chain still holds that session. False is not
+    a defect — pointer-derived attribution EXPIRES after `history` writes —
+    but it must be visible, or a reader takes an unreachable origin for a
+    contradiction."""
+    session_id = item.get("origin_session") or None
+    return {
+        "session_id": session_id,
+        "author": item.get("origin_author") or None,
+        "first_seen": item.get("first_seen") or None,
+        "retained": bool(session_id) and session_id in retained_sessions,
+    }
+
+
+def _cmd_blame(args) -> int:
+    """How one item got here: origin, every carry, every state change (#975).
+
+    `why` answers "where did this come from" — the evidence axes behind one
+    claim. This answers "how did it get here" — the sequence.
+
+    Read-only, and rollback is the same non-goal it is for `diff`: this verb
+    shows how a state was reached and offers no way to put an earlier one
+    back. A forgotten item keeps its tombstone here and never its text; the
+    lifecycle is what survives deletion, the value is not.
+
+    rc 0 answered, 1 this project's chain and ledger hold no such item,
+    2 a malformed id or a refused address."""
+    _cli._note_usage("blame")
+    if not inspector.valid_item_id(args.item_id):
+        return _refuse(
+            "invalid item id — expected [a-z]-[0-9a-f]{6,40}(-N)?", 2,
+            args.json)
+    project, rc = _cli._slug_route(args)
+    if rc:
+        return rc
+    entries = chain(project)
+    found = _appearances(entries, args.item_id)
+    events = store.item_events(args.item_id, project_dir=project)
+    if not found and not events:
+        return _refuse(
+            f"no item {args.item_id!r} in this project's retained chain", 1,
+            args.json)
+    # The NEWEST retained appearance answers for the item's current text,
+    # trust and binding. An item with no appearance at all is one the ledger
+    # still names — a forget tombstone, most often — and has no content by
+    # construction, so nothing is substituted for it.
+    item: dict = found[-1]["_item"] if found else {}
+    kind: str = found[-1]["_kind"] if found else "unknown"
+    lifecycle = inspector._lifecycle(
+        store.resolutions(project_dir=project).get(args.item_id))
+    depth = config.checkpoint_history()
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "project_slug": store.project_slug(project),
+        "item_id": args.item_id,
+        "kind": kind,
+        "trust": item.get("trust"),
+        # A forget tombstone outranks whatever a surface still holds: the verb
+        # that reports a deletion must not be the one that undoes it.
+        "text": None if lifecycle == "forgotten" else (item.get("text") or None),
+        "lifecycle": lifecycle,
+        "origin": _origin(item, {e["session_id"] for e in entries
+                                 if e["session_id"]}),
+        "history": depth,
+        "retained": len(entries),
+        "truncated": len(entries) >= depth,
+        "appearances": [{key: value for key, value in row.items()
+                         if not key.startswith("_")} for row in found],
+        "events": [{"ts": evt.get("ts"), "kind": evt.get("kind"),
+                    "status": evt.get("status"), "source": evt.get("source"),
+                    "note": evt.get("note")} for evt in events],
+        "skipped": [{"index": e["index"], "pointer": e["pointer"],
+                     "reason": "unreadable"}
+                    for e in entries if e["checkpoint"] is None],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    render.render_history_lines(
+        _blame_lines(payload, entries[-1]["pointer"] if entries else ""))
+    return 0
+
+
+def _origin_line(origin: dict) -> str:
+    if not origin["session_id"]:
+        return "Origin: origin not recorded"
+    if not origin["retained"]:
+        return (f"Origin: {origin['session_id']} — origin beyond retained "
+                "history; this chain no longer holds that checkpoint")
+    author = f" ({origin['author']})" if origin["author"] else ""
+    seen = (f", first seen {origin['first_seen']}"
+            if origin["first_seen"] else "")
+    return f"Origin: first stated by {origin['session_id']}{author}{seen}"
+
+
+def _blame_lines(payload: dict, oldest: str) -> list[str]:
+    lines = [f"Project: {payload['project_slug']}"]
+    if payload["truncated"]:
+        lines.append(_chain_line(payload["retained"], payload["history"],
+                                 oldest))
+    for row in payload["skipped"]:
+        lines.append(f"skipped {row['pointer']} ({row['reason']})")
+    text = payload["text"] or (
+        "(forgotten — its text is not readable here)"
+        if payload["lifecycle"] == "forgotten" else "(content unavailable)")
+    lines.append(f"Item: [{payload['item_id']}] "
+                 f"[{payload['trust'] or 'untagged'}] [{payload['kind']}] {text}")
+    lines.append(_origin_line(payload["origin"]))
+    lines.append(f"Lifecycle: {payload['lifecycle']}")
+    lines.append("Lineage:")
+    if not payload["appearances"]:
+        lines.append("  no retained checkpoint holds this item")
+    for row in payload["appearances"]:
+        how = ("stated here" if row["native"]
+               else f"carried from {row['carried_from']}")
+        lines.append(f"  {row['pointer']} ({row['session_id']}, "
+                     f"{row['created']}) [{row['trust'] or 'untagged'}] {how}")
+    lines.append("Events:")
+    if not payload["events"]:
+        lines.append("  none recorded")
+    for evt in payload["events"]:
+        note = f" — {evt['note']}" if evt["note"] else ""
+        lines.append(f"  {evt['ts']} {evt['status']} "
+                     f"(via {evt['source'] or 'unknown'}){note}")
+    return lines
+
+
 def register(sub, fmt) -> None:
     """Register the chain-reading verbs on the top-level subparsers."""
     p_diff = sub.add_parser(
@@ -382,3 +551,30 @@ def register(sub, fmt) -> None:
         "--slug", metavar="SLUG",
         help="scope to a project bucket by its slug (see `daimon projects`)")
     p_diff.set_defaults(func=_cli._cmd_diff)
+
+    p_blame = sub.add_parser(
+        "blame",
+        help="how one item got here (#975) — the session that first stated "
+             "it, every carry since, and every event that changed its state, "
+             "in order",
+        description="Trace one item through this project's retained "
+                    "checkpoint chain. `daimon why` answers where a claim "
+                    "came from; this answers how it got here. Read-only, and "
+                    "there is no restore: a forgotten item keeps its "
+                    "tombstone here and never its text.",
+        epilog="Examples:\n"
+               "  daimon blame o-3f8a2c\n"
+               "  daimon blame o-3f8a2c --json\n",
+    )
+    p_blame.add_argument(
+        "item_id", help="exact item id shown by `daimon recall`, "
+                        "`daimon loops` or `daimon diff`")
+    p_blame.add_argument(
+        "--json", action="store_true", help="machine-readable lineage")
+    p_blame.add_argument(
+        "--project",
+        help="project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_blame.add_argument(
+        "--slug", metavar="SLUG",
+        help="scope to a project bucket by its slug (see `daimon projects`)")
+    p_blame.set_defaults(func=_cli._cmd_blame)
