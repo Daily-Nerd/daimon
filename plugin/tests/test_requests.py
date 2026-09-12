@@ -333,6 +333,211 @@ def test_a_non_human_duplicate_opened_row_cannot_downgrade_an_info_ask(
     assert requests.get(q_id, project_dir=project)["kind"] == "info"
 
 
+# ---- #1026: a per-act author on the in-process writer path ----------------
+
+
+def test_open_records_the_per_act_author_beside_the_process_identity(
+        project, monkeypatch):
+    """#1026: a host serving several people through the `ui` channel names
+    WHO acted, without losing the process identity the row has always
+    carried. DAIMON_AUTHOR is set to something the per-act name cannot be
+    confused with, so the two fields are proved distinct rather than
+    coincidentally equal."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "the-host-process")
+    q_id = _open(project, channel="ui", author="alice")
+    record = requests.get(q_id, project_dir=project)
+    assert record["opened_act_author"] == "alice"
+    assert record["opened_author"] == "the-host-process"
+    assert record["verdict_act_author"] is None
+    assert record["done_act_author"] is None
+
+
+def test_open_without_a_per_act_author_leaves_every_act_field_none(project):
+    """The CLI path is unchanged: no author named, no act fields on the
+    record, and the process identity still lands as it always did."""
+    q_id = _open(project, channel="cli-tty")
+    record = requests.get(q_id, project_dir=project)
+    assert record["opened_act_author"] is None
+    assert record["verdict_act_author"] is None
+    assert record["done_act_author"] is None
+    assert record["opened_author"] == config.author()
+
+
+def test_a_cli_channel_naming_a_per_act_author_writes_nothing(project):
+    """A shell-out must never be able to name someone else: `cli-tty` is a
+    human channel, but it derives its author from the environment, so the
+    keyword is refused there and the ledger stays empty."""
+    with pytest.raises(requests.RequestError) as exc_info:
+        _open(project, channel="cli-tty", author="alice")
+    assert "cli-tty" in str(exc_info.value)
+    assert _rows_or_empty(project) == []
+
+
+def test_an_agent_accept_naming_a_per_act_author_writes_nothing(project):
+    """The refusal fires BEFORE `accept`'s own side effects. This accept
+    would otherwise land: an agent channel may accept an addressed `info`
+    ask that is still open (#961 slice 3), so the only thing stopping it
+    here is the author gate."""
+    q_id = _open(project, channel="cli-tty", kind="info")
+    before = _rows(project)
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests.accept(q_id, channel="cli-agent", author="alice",
+                        project_dir=project)
+    assert "cli-agent" in str(exc_info.value)
+    assert _rows(project) == before
+
+
+def test_a_cli_done_naming_a_per_act_author_writes_nothing(project):
+    q_id = _open(project)
+    before = _rows(project)
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests.done(q_id, channel="cli-tty", author="alice",
+                      evidence="shipped in abc123", project_dir=project)
+    assert "cli-tty" in str(exc_info.value)
+    assert _rows(project) == before
+
+
+@pytest.mark.parametrize("verb,kwargs", [
+    ("reject", {"note": "no"}),
+    ("needs_info", {"note": "which release?"}),
+    ("suppress", {}),
+    ("revise", {"ask": "review it again, with the new numbers"}),
+], ids=["reject", "needs-info", "suppress", "revise"])
+def test_every_other_verb_refuses_a_per_act_author_from_a_cli_channel(
+        project, verb, kwargs):
+    """The gate sits in each verb ahead of its own checks, so every one of
+    them refuses rather than silently signing the act as the process. The
+    same call without an author succeeds, which is what makes this a test of
+    the author gate and not of the verb."""
+    q_id = _open(project, channel="cli-tty")
+    before = _rows(project)
+    with pytest.raises(requests.RequestError) as exc_info:
+        getattr(requests, verb)(q_id, channel="cli-tty", author="alice",
+                                project_dir=project, **kwargs)
+    assert "cli-tty" in str(exc_info.value)
+    assert _rows(project) == before
+    getattr(requests, verb)(q_id, channel="cli-tty", project_dir=project,
+                            **kwargs)
+    assert len(_rows(project)) == len(before) + 1
+
+
+def test_accept_lands_the_per_act_author_on_the_verdict(project):
+    q_id = _open(project, channel="ui", author="alice")
+    requests.accept(q_id, channel="ui", author="bob", note="go ahead",
+                    project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["verdict_act_author"] == "bob"
+    assert record["verdict_by"] == "human"
+    assert record["accepted_by"] == "human"
+    # The ask's own author is untouched by the verdict's.
+    assert record["opened_act_author"] == "alice"
+
+
+@pytest.mark.parametrize("verb,state", [
+    ("reject", "rejected"),
+    ("needs_info", "needs-info"),
+], ids=["reject", "needs-info"])
+def test_every_verdict_verb_lands_the_per_act_author(project, verb, state):
+    q_id = _open(project, channel="ui", author="alice")
+    getattr(requests, verb)(q_id, channel="ui", author="bob",
+                            note="a human note", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == state
+    assert record["verdict_act_author"] == "bob"
+    assert record["verdict_by"] == "human"
+
+
+def test_suppress_carries_the_per_act_author_on_its_row(project):
+    """Suppression is a marker, not a verdict: the fold sets `suppressed`
+    and lands no verdict field at all, so the raw row is where the per-act
+    author has to be proved."""
+    q_id = _open(project, channel="ui", author="alice")
+    requests.suppress(q_id, channel="ui", author="bob", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["suppressed"] is True
+    assert record["verdict_act_author"] is None
+    row = _rows(project)[-1]
+    assert row["event"] == "suppressed"
+    assert row["act_author"] == "bob"
+
+
+def test_done_lands_the_per_act_author(project):
+    q_id = _open(project, channel="ui", author="alice")
+    requests.done(q_id, channel="ui", author="carol",
+                  evidence="shipped in abc123", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["done_act_author"] == "carol"
+    assert record["done_by"] == "human"
+    assert record["done_claimed"] is False
+
+
+def test_revise_carries_the_per_act_author_on_its_row(project):
+    """`revise` writes no fold field for its author (the record has no
+    `revised_by` counterpart to sit beside), so the raw row carries it."""
+    q_id = _open(project, channel="ui", author="alice")
+    requests.revise(q_id, channel="ui", author="dana",
+                    ask="review it again, with the new numbers",
+                    project_dir=project)
+    row = _rows(project)[-1]
+    assert row["event"] == "revised"
+    assert row["act_author"] == "dana"
+
+
+def test_a_duplicate_verdict_on_a_done_record_keeps_the_first_act_author(
+        project):
+    """#1021's guard and #1026 together: the duplicate accept is inert, so
+    the person who actually decided the record stays named. Without the
+    guard reaching this field too, a replayed decide would re-sign somebody
+    else's verdict."""
+    q_id = _open(project)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                  project_dir=project)
+    requests.accept(q_id, channel="ui", author="dora", project_dir=project)
+    requests.accept(q_id, channel="ui", author="eve", project_dir=project)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "done"
+    assert record["verdict_act_author"] == "dora"
+
+
+def test_a_legacy_row_with_no_act_author_folds_to_none(project):
+    """Every row minted before this field existed. Appended through
+    `requests.append` with a stamp that names no author, so the key is
+    genuinely absent rather than present-and-empty."""
+    row = requests._stamp("opened", "q-0123456789ab", "ui")
+    row.update({"to": RECIPIENT, "ask": ASK, "why": WHY})
+    assert "act_author" not in row
+    assert requests.append(row, project_dir=project)
+    record = requests.get("q-0123456789ab", project_dir=project)
+    assert record["opened_act_author"] is None
+    assert record["verdict_act_author"] is None
+    assert record["done_act_author"] is None
+
+
+def test_the_per_act_author_is_redacted_on_the_way_to_disk(project):
+    """`append`'s own redaction tuple, not `_scrub`'s: a row built by hand
+    and appended directly never passes the writer's scrub, and a host
+    pasting a secret into a name field must not persist it."""
+    row = requests._stamp("opened", "q-0123456789ab", "ui")
+    row.update({"to": RECIPIENT, "ask": ASK, "why": WHY,
+                "act_author": "token=abcdefghijkl"})
+    assert requests.append(row, project_dir=project)
+    assert "abcdefghijkl" not in json.dumps(_rows(project))
+
+
+def test_the_per_act_author_is_a_plaintext_surface(project):
+    """#645 discipline: a host-supplied name is authored prose this project
+    never derived, so forget must reach it by value and the audit must hash
+    it. The process identity beside it stays out of the pool, for the reason
+    `_PLAINTEXT_FIELDS` already states."""
+    q_id = _open(project, channel="ui", author="alice")
+    row = next(r for r in requests.events(project_dir=project)
+               if r["request_id"] == q_id)
+    assert "alice" in requests.plaintext_values(row)
+    assert normalize.content_key("alice") in requests.row_content_keys(row)
+    assert row["author"] not in requests.plaintext_values(row)
+
+
 def test_a_later_duplicate_opened_row_cannot_revoke_the_kind_an_earlier_agent_accept_relied_on(
         project):
     """#961 slice 3 review item 3: the exact three-row attack. Row 1 (a
@@ -3221,6 +3426,52 @@ def test_stamp_refuses_a_malformed_id_and_an_unknown_channel(project):
     with pytest.raises(requests.RequestError):
         requests._stamp("opened", "q-0123456789ab", "cli-ui")
     assert not _rows_or_empty(project)
+
+
+def test_stamp_carries_a_per_act_author_beside_the_process_identity(
+        project, monkeypatch):
+    """#1026: two fields, never one. `author` stays exactly what it was so a
+    reader can tell a host-attributed name from an environment-derived one,
+    which is the whole point of recording both."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "the-host-process")
+    row = requests._stamp("opened", "q-0123456789ab", "ui", author="alice")
+    assert row["act_author"] == "alice"
+    assert row["author"] == config.author() == "the-host-process"
+
+
+@pytest.mark.parametrize("author", [None, "", "   "],
+                         ids=["absent", "empty", "whitespace"])
+def test_stamp_omits_the_act_author_key_when_nobody_is_named(project, author):
+    """Scar 0042's contract, applied to this field too: in an append-only
+    stream the ABSENCE of a key is data. An empty string or a null on the
+    row would be indistinguishable from a row that lost the value."""
+    row = requests._stamp("opened", "q-0123456789ab", "ui", author=author)
+    assert "act_author" not in row
+
+
+@pytest.mark.parametrize("channel", ["cli-tty", "cli-agent", "mechanical"],
+                         ids=["cli-tty", "cli-agent", "mechanical"])
+def test_stamp_refuses_a_per_act_author_on_a_derived_author_channel(
+        project, channel):
+    """`cli-tty` carries human authority and is still refused: the split is
+    not authority alone, it is whether the channel derives its author from
+    the environment. The message names the channel the call arrived through
+    so a caller learns which seam it hit."""
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests._stamp("opened", "q-0123456789ab", channel, author="alice")
+    assert channel in str(exc_info.value)
+    assert not _rows_or_empty(project)
+
+
+def test_stamp_caps_the_per_act_author_like_every_other_label(project):
+    """The shared `_scrub` helper at `_LABEL_MAX`, the same bound
+    `from_label` already takes — over-cap raises the length subclass
+    carrying its own field, never a silent truncation."""
+    with pytest.raises(requests.RequestTooLong) as exc_info:
+        requests._stamp("opened", "q-0123456789ab", "ui",
+                        author="x" * (requests._LABEL_MAX + 1))
+    assert exc_info.value.field == "act_author"
+    assert exc_info.value.limit == requests._LABEL_MAX
 
 
 def _rows_or_empty(project):

@@ -109,6 +109,14 @@ _STATE_BY_EVENT = {
 }
 # Verdicts and suppression: the human-only half of the verb table (D8).
 _HUMAN_ONLY = frozenset({"needs_info", "accepted", "rejected", "suppressed"})
+# #1026. Channels whose author is DERIVED from the environment this process
+# runs in (`config.author()`: DAIMON_AUTHOR, then git user.name, then the OS
+# user), so naming a different person per act is meaningless there — one
+# terminal, one person. The per-act author is refused on these, which is what
+# stops a shell-out from signing an act as somebody else: `cli-tty` carries
+# human authority and is still refused, so the split here is not authority,
+# it is whether the channel has an environment identity to derive from at all.
+_CLI_CHANNELS = frozenset({"cli-agent", "cli-tty"})
 # States a sender-side event may still move. Everything else is settled by a
 # human verdict or by a completion claim, and re-opening it from the sender
 # side would be exactly the assertion the wedge principle forbids.
@@ -174,7 +182,19 @@ _ROLE_MAX = 64
 # matching a tombstone against it would let one forgotten value delete every
 # record a given author ever wrote. `to` is absent for the same reason in
 # reverse — it is a filesystem-derived slug, not authored prose.
-_PLAINTEXT_FIELDS = ("ask", "why", "note", "evidence", "from_label")
+#
+# #1026: `act_author` IS here, and the difference from `author` above is the
+# reason, not an oversight. `author` is this process's own derived identity,
+# the same value on every row it writes, so a tombstone matching it would
+# empty the ledger of the one person who owns the machine. `act_author` is
+# free prose a multi-person host supplies per act, never derived here — it is
+# the one field on this surface that names a person who is NOT the operator,
+# so the audit must hash it, and reaching every act somebody signed is what a
+# forget aimed at that name is FOR on a surface that exists to serve several
+# people. `pending._strip_plaintext` reads this same declaration, so a
+# foreign bucket's names stop at the read boundary for free (scar 0055).
+_PLAINTEXT_FIELDS = ("ask", "why", "note", "evidence", "from_label",
+                     "act_author")
 
 
 class RequestError(ValueError):
@@ -254,8 +274,46 @@ def _ts(order: int) -> str:
         "%Y-%m-%dT%H:%M:%SZ")
 
 
+def _act_author(channel: str, author) -> str:
+    """#1026: the scrubbed per-act author, or "" when nobody was named.
+
+    The gate, not a formatter — it refuses before any row is built, so a
+    caller that names someone on a channel with no per-act identity gets a
+    refusal instead of a row that silently records the process instead of
+    the person. `None` short-circuits untouched: every existing caller
+    passes nothing, and the channel check must not start failing calls that
+    never mentioned an author (an unknown channel still reaches `_stamp`'s
+    own channel error, which names the right mistake).
+
+    Called from `_stamp`, which every writer on this module's public path
+    goes through, and from exactly one other place: `accept`, whose agent
+    branch writes a pre-stamped row and so never reaches `_stamp` at all.
+    Duplicating it into the other verbs buys nothing a test can tell apart
+    and is one more copy to drift.
+
+    Blank after scrubbing is the same as absent, so the caller cannot write
+    an empty `act_author` key: in an append-only stream the ABSENCE of a key
+    is data (scar 0042), and `""` on the row would be indistinguishable from
+    a row that lost the value.
+    """
+    if author is None:
+        return ""
+    value = _scrub("act_author", author, required=False, limit=_LABEL_MAX)
+    if not value:
+        return ""
+    if CHANNEL_AUTHORITY.get(channel) != "human" or channel in _CLI_CHANNELS:
+        raise RequestError(
+            "a per-act author names the person behind THIS act, and this "
+            "channel derives its author from the environment instead — one "
+            "terminal, one person; name the author only from an in-process "
+            f"human writer, or leave it unset: this call arrived through "
+            f"{channel!r}")
+    return value
+
+
 def _stamp(event: str, request_id: str, channel: str,
-           *, now_ns: int | None = None, event_id: str | None = None) -> dict:
+           *, now_ns: int | None = None, event_id: str | None = None,
+           author: str | None = None) -> dict:
     if event not in EVENTS:
         raise RequestError(f"unknown request event: {event}")
     if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
@@ -266,8 +324,11 @@ def _stamp(event: str, request_id: str, channel: str,
     # Derived, never accepted: no way to name one channel and claim another's
     # authority.
     authority = CHANNEL_AUTHORITY[channel]
+    # #1026: gated BEFORE the row exists, so a refusal leaves nothing for a
+    # caller to append by accident.
+    act_author = _act_author(channel, author)
     order = time.time_ns() if now_ns is None else int(now_ns)
-    return {
+    row = {
         "version": VERSION,
         "ts": _ts(order),
         "order": order,
@@ -276,8 +337,13 @@ def _stamp(event: str, request_id: str, channel: str,
         "request_id": request_id,
         "channel": channel,
         "authority": authority,
+        # The PROCESS identity, unchanged by #1026: the row records both, so
+        # a reader can tell a host-attributed name from a derived one.
         "author": config.author(),
     }
+    if act_author:
+        row["act_author"] = act_author
+    return row
 
 
 def _is_torn(path) -> bool:
@@ -301,7 +367,7 @@ def append(row: dict, project_dir=None) -> bool:
         return False
     admitted = policy.admit_row(
         row, redact_fields=("ask", "why", "note", "evidence", "from_label",
-                            "author"))
+                            "author", "act_author"))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
@@ -579,9 +645,21 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
                 "opened_by": authority,
                 "opened_channel": row.get("channel"),
                 "opened_author": row.get("author"),
+                # #1026: the person a multi-person host named for THIS act,
+                # or None for every row the CLI wrote and every row minted
+                # before the field existed. Read exactly as plainly as
+                # `opened_author` beside it, and for the same reason — both
+                # are attribution a forged row could equally claim, so
+                # gating one and not the other would only look like proof.
+                "opened_act_author": row.get("act_author"),
                 "verdict_by": None,
                 "verdict_label": None,
                 "verdict_at": None,
+                # #1026: who decided, when a host named them. Set beside
+                # `verdict_by` in the verdict landing below, so the #1021
+                # `done` guard and the sticky-`rejected` guard keep an inert
+                # duplicate from re-signing a verdict somebody else made.
+                "verdict_act_author": None,
                 # #961 slice 3: who landed the CURRENT `accepted` state,
                 # "human" or "agent" — never written to disk, recomputed on
                 # every fold pass from the authority of the row that landed
@@ -602,6 +680,9 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
                 # the same terms as `accepted_by` above.
                 "accepted_under": None,
                 "done_by": None,
+                # #1026: who reported it done, when a host named them. Set
+                # beside `done_by` in the `done` landing below.
+                "done_act_author": None,
                 "done_claimed": False,
                 "done_evidence": "",
                 # #978: a completion CLAIMED by a non-human channel on a
@@ -915,6 +996,7 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
         current["suppressed"] = False
         if event == "done":
             current["done_by"] = authority
+            current["done_act_author"] = row.get("act_author")
             # An agent's completion claim renders as claimed-and-unverified
             # until the session-end byte-check confirms the quote (PR 3).
             current["done_claimed"] = authority != "human"
@@ -922,6 +1004,7 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
             current["done_pending"] = False
         else:
             current["verdict_by"] = authority
+            current["verdict_act_author"] = row.get("act_author")
             current["verdict_label"] = CHANNEL_LABEL.get(
                 str(row.get("channel") or ""))
             current["verdict_at"] = row.get("ts")
@@ -1023,7 +1106,8 @@ def renderable(project_dir=None) -> dict:
 def open_request(*, to: str, ask: str, why: str, channel: str,
                  blocking: bool = False, to_human: bool = False,
                  evidence: str = "", supersedes: str = "",
-                 kind: str = DEFAULT_KIND, project_dir=None) -> str:
+                 kind: str = DEFAULT_KIND, author: str | None = None,
+                 project_dir=None) -> str:
     """Open a request addressed to another project's slug.
 
     Slug SHAPE is validated here; whether it names a bucket that exists is
@@ -1038,6 +1122,11 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     caller could otherwise route around. `--to-human` is audience, not
     approval requirement, and can never be paired with `info`: a person is
     always the one who reads it.
+
+    #1026: `author` names the person behind THIS act, for an in-process
+    writer serving several people through one channel. Refused on a channel
+    that derives its author from the environment (`_act_author`), so a
+    shell-out can never sign an ask as somebody else.
     """
     project_dir = config.resolve_project_dir(project_dir)
     if not _SLUG_RE.fullmatch(str(to or "")):
@@ -1079,7 +1168,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
         raise RequestError(
             f"{q_id} already exists — this exact ask was opened in the same "
             "second; revise it or wait a moment to open a second one")
-    row = _stamp("opened", q_id, channel, now_ns=order)
+    row = _stamp("opened", q_id, channel, now_ns=order, author=author)
     row.update({
         "to": to,
         "to_human": bool(to_human),
@@ -1102,7 +1191,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
 
 def revise(request_id: str, *, channel: str, ask: str | None = None,
            why: str | None = None, evidence: str | None = None,
-           project_dir=None) -> None:
+           author: str | None = None, project_dir=None) -> None:
     """Answer a needs-info, or sharpen an open ask. Capped at MAX_REVISIONS."""
     current = _require(request_id, project_dir)
     if current["state"] not in _SENDER_MOVABLE:
@@ -1114,7 +1203,7 @@ def revise(request_id: str, *, channel: str, ask: str | None = None,
             f"{request_id} has used all {MAX_REVISIONS} revisions; open a "
             f"new request with `--supersedes {request_id}` so the lineage "
             "stays visible")
-    row = _stamp("revised", request_id, channel)
+    row = _stamp("revised", request_id, channel, author=author)
     # Scar 0042: only the keys the caller SET. `None` means unchanged, and
     # the fold reads key presence as intent — forging a key here would clear
     # the field the caller never mentioned.
@@ -1158,7 +1247,8 @@ def _require(request_id: str, project_dir) -> dict:
 
 
 def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
-                       project_dir, row: dict | None = None, **stamp) -> None:
+                       project_dir, row: dict | None = None,
+                       author: str | None = None, **stamp) -> None:
     """`stamp` (#961 slice 4) carries `under_ruling`/`policy_sha256` for a
     ruling-covered agent accept — a truthy extra becomes a row field, an
     absent or falsy one is never written at all, the same "only what the
@@ -1171,8 +1261,14 @@ def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
     that lands carries the identical `order` the dry run checked coverage
     against — never a second `_stamp()` call minting a fresh order after
     the decision was already made on a different one. `None` (every other
-    caller) stamps fresh here, unchanged."""
-    row = dict(row) if row is not None else _stamp(event, request_id, channel)
+    caller) stamps fresh here, unchanged.
+
+    `author` (#1026) reaches the fresh stamp only. The one caller that hands
+    in a `row` is the agent ruling-coverage path in `accept`, whose channel
+    can never carry a per-act author in the first place — `_act_author`
+    refuses it there before `accept` does anything at all."""
+    row = dict(row) if row is not None else _stamp(event, request_id, channel,
+                                                   author=author)
     note = _text("note", note, required=False)
     if note:
         row["note"] = note
@@ -1184,7 +1280,7 @@ def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
 
 
 def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
-             project_dir=None) -> None:
+             author: str | None = None, project_dir=None) -> None:
     if CHANNEL_AUTHORITY.get(channel) != "human":
         state = _STATE_BY_EVENT.get(event, event)
         article = "an" if state[:1] in "aeiou" else "a"
@@ -1197,7 +1293,8 @@ def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
             f"{request_id} was rejected, and a rejection is final for that "
             "record; the sender can open a new request with "
             f"`--supersedes {request_id}`")
-    _write_verdict_row(event, request_id, channel, note, project_dir)
+    _write_verdict_row(event, request_id, channel, note, project_dir,
+                       author=author)
 
 
 def _resolve_covering_ruling(sender: str, project_dir):
@@ -1220,7 +1317,7 @@ def _resolve_covering_ruling(sender: str, project_dir):
 
 
 def accept(request_id: str, *, channel: str, note: str = "",
-           project_dir=None) -> None:
+           author: str | None = None, project_dir=None) -> None:
     """Land the addressed request as accepted.
 
     Human-only for a `work` ask nothing covers, as every verdict verb has
@@ -1258,7 +1355,20 @@ def accept(request_id: str, *, channel: str, note: str = "",
     falls before the interval's `active_from`. The row that finally lands
     is the SAME stamped row the dry run checked — never re-stamped with a
     fresh order after the decision, which would reopen the identical gap.
+
+    #1026: `author` is gated HERE, and this is the ONE verb that needs its
+    own gate. Every other writer reaches `_stamp`, which refuses a per-act
+    author on a channel that derives one — but the agent path below writes
+    through `_write_verdict_row(row=synthetic)`, which by construction never
+    stamps, so `_stamp` is not on that path at all. Without this line an
+    agent caller naming a person would land a row that silently drops the
+    name and records the process instead: no refusal, no error, a verdict
+    attributed to the wrong identity. Gated before the joins and the ruling
+    resolution too, so the refusal costs none of that work.
     """
+    # The gate, not the value: the human path hands `author` on to
+    # `_verdict` -> `_stamp`, which is what actually writes it.
+    _act_author(channel, author)
     authority = CHANNEL_AUTHORITY.get(channel)
     if authority != "human":
         # #961 slice 3 review item 6: `authority == "agent"` explicitly,
@@ -1324,23 +1434,23 @@ def accept(request_id: str, *, channel: str, note: str = "",
                            project_dir, row=synthetic, **stamp)
         return
     _verdict("accepted", request_id, channel=channel, note=note,
-             project_dir=project_dir)
+             author=author, project_dir=project_dir)
 
 
 def reject(request_id: str, *, channel: str, note: str = "",
-           project_dir=None) -> None:
+           author: str | None = None, project_dir=None) -> None:
     _verdict("rejected", request_id, channel=channel, note=note,
-             project_dir=project_dir)
+             author=author, project_dir=project_dir)
 
 
 def needs_info(request_id: str, *, channel: str, note: str = "",
-               project_dir=None) -> None:
+               author: str | None = None, project_dir=None) -> None:
     _verdict("needs_info", request_id, channel=channel, note=note,
-             project_dir=project_dir)
+             author=author, project_dir=project_dir)
 
 
 def suppress(request_id: str, *, channel: str, note: str = "",
-             project_dir=None) -> None:
+             author: str | None = None, project_dir=None) -> None:
     """Drop a record out of the briefing panel — human-only, panel-only.
 
     Not a verdict and not a state: the record stays in `request list`, and
@@ -1353,7 +1463,7 @@ def suppress(request_id: str, *, channel: str, note: str = "",
             "suppressing an addressed request requires a human channel; this "
             f"call arrived through {channel!r}")
     _answering(request_id, project_dir)
-    row = _stamp("suppressed", request_id, channel)
+    row = _stamp("suppressed", request_id, channel, author=author)
     note = _text("note", note, required=False)
     if note:
         row["note"] = note
@@ -1362,16 +1472,21 @@ def suppress(request_id: str, *, channel: str, note: str = "",
 
 
 def done(request_id: str, *, channel: str, evidence: str,
-         project_dir=None) -> None:
+         author: str | None = None, project_dir=None) -> None:
     """Report the ask as satisfied. Either channel, evidence required — an
     agent's claim renders as claimed-and-unverified until the session-end
-    byte-check confirms the quote (PR 3)."""
+    byte-check confirms the quote (PR 3).
+
+    #1026: `author` names the person who reported it, and only a channel
+    with a per-act identity may carry one — an agent's claim is signed by
+    the process that made it, as it always was. Refused by `_stamp` below,
+    which is the one chokepoint every row on this path passes through."""
     current = _answering(request_id, project_dir)
     if current is not None and current["state"] == "rejected":
         raise RequestError(
             f"{request_id} was rejected; a rejected request cannot be "
             "completed")
-    row = _stamp("done", request_id, channel)
+    row = _stamp("done", request_id, channel, author=author)
     row["evidence"] = _scrub("evidence", evidence)
     if not append(row, project_dir=project_dir):
         raise RequestError("completion not written")
