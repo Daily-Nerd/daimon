@@ -721,6 +721,28 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
             # record citing `supersedes`, so the rejected verdict stays on
             # the record instead of being overwritten by the next ask.
             continue
+        if event in ("accepted", "rejected") and current["state"] == "done":
+            # #1021: `done` is terminal for a VERDICT row, the same shape the
+            # rule above gives `rejected` — a finished record stays finished.
+            # Duplicate verdict rows are ordinary (a decide surface replayed
+            # after a host restart, a second press), and without this the
+            # second `accepted` finds `done_pending` already cleared, falls
+            # through to the generic landing and puts the record back on the
+            # recipient's owed list. Worse, it also discards the session-end
+            # byte-check: `done_verified` below requires `done` or a pending
+            # claim, so a record knocked off `done` renders claimed and
+            # unverified for good.
+            #
+            # Only the two verdict events, and deliberately NOT the whole of
+            # `_STATE_BY_EVENT`. `needs_info` on a `done` record is a person
+            # asking for more, the one deliberate reopen this contract has,
+            # and `revised` (handled above, gated on `_SENDER_MOVABLE`) is
+            # the sender's own reopen the wedge principle names. Counted in
+            # history because the row is real, but `updated_at` stays put for
+            # the same reason `surfaced` leaves it alone: a duplicate must
+            # not make a settled record sort as freshly updated.
+            current["history_count"] += 1
+            continue
         if event == "surfaced":
             # Attention rows never move the record's rendered age: a brief
             # that merely showed the card must not make an untouched ask
