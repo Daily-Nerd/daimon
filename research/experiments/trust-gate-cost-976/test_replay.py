@@ -47,17 +47,48 @@ def test_flip_predicate_still_targets_only_code_owned_downgrades():
     assert not should_flip({"trust": "verbatim", "quote_verified": True})
 
 
-# ---- item identity (privacy: never the text itself) ----
+# ---- item identity (privacy: never the text, never the stamped id) ----
 
-def test_item_key_prefers_the_stamped_id():
-    assert item_key({"id": "q-abc123", "text": "anything"}) == "q-abc123"
+def test_item_key_hashes_the_stamped_id_rather_than_publishing_it():
+    # A stamped id is the handle every local surface addresses the item by, so
+    # it is an internal identifier, not an anonymous label.
+    k = item_key({"id": "o-bdb0fd592ff3", "text": "anything"})
+    assert k != "o-bdb0fd592ff3"
+    assert "o-bdb0fd592ff3" not in k
+    assert k == item_key({"id": "o-bdb0fd592ff3"})
 
 
 def test_item_key_hashes_the_text_when_no_id_is_stamped():
     k = item_key({"text": "a bench item with no stamped id"})
-    assert k.startswith("h:")
-    assert len(k) == 14
     assert "bench" not in k
+
+
+def test_item_key_is_sixteen_hex_for_stamped_and_unstamped_items_alike():
+    # ONE shape across both substrates: a reader must not have to know which
+    # store a row came from to know whether its identifier is safe to quote.
+    for item in ({"id": "q-abc123", "text": "t"}, {"text": "t"}):
+        k = item_key(item)
+        assert len(k) == 16
+        assert set(k) <= set("0123456789abcdef")
+
+
+def test_item_key_never_returns_a_daimon_item_id_shape():
+    # The voice gate refuses `o-`/`q-`/`d-` prefixed handles in a public file.
+    # A hex digest carries no hyphen at all, which makes that true by
+    # construction rather than by luck.
+    for stamped in ("o-bdb0fd592ff3", "q-515dbfd4d77e", "d-bf54b43c19c1",
+                    "r-5f6ff1", "s-85df72", "u-58ea51"):
+        k = item_key({"id": stamped})
+        assert not k.startswith(("o-", "q-", "d-"))
+        assert "-" not in k
+        assert stamped not in k
+        assert stamped.split("-", 1)[1] not in k
+
+
+def test_item_key_separates_the_id_and_text_domains():
+    # Hashing a bare value would let an item whose TEXT is "x" collide with an
+    # item whose ID is "x", merging two different items onto one key.
+    assert item_key({"id": "x"}) != item_key({"text": "x"})
 
 
 def test_item_key_is_stable_and_distinguishes_items():

@@ -57,10 +57,13 @@ checkpoint in those stores plus the local `~/.daimon/checkpoints` store
 Copy-on-read: the originals are never written. Both arms run against copies in
 a scratch dir, under an env where every DAIMON_* variable is redirected there.
 
-Privacy: no item text, quote or prompt text is recorded. Items are identified
-by their stamped id, or by a sha256 prefix of their text when a legacy
-checkpoint stamped none; local-store checkpoints by a sha256 prefix of their
-store-relative path.
+Privacy: no item text, quote or prompt text is recorded, and no identifier is
+recorded in the clear. Every item is named by 16 hex of a sha256 over its
+stamped id, or over its text when a legacy checkpoint stamped none; a stamped
+id is itself an internal handle for a private store, so it is hashed like the
+text rather than published. Local-store checkpoints are named by a sha256
+prefix of their store-relative path. Bench question ids and bench session ids
+stay in the clear: that dataset is public and #754 committed them.
 
 Run from the repo root:
 
@@ -166,14 +169,26 @@ _KEY_FIELD = "_replay_key"   # our identity stamp, carried through render copies
 # ---------------------------------------------------------------- pure logic
 
 def item_key(item: dict) -> str:
-    """One item's identity in the record: its stamped id, else a sha256 prefix
-    of its text. Never the text — the bench corpus is public but the local
-    store is not, and one record must be safe to commit whole."""
+    """One item's identity in the record: 16 hex of a sha256, never the item.
+
+    Hashes the STAMPED ID as well as the text. A daimon item id is the handle
+    every local surface addresses that item by (`daimon resolve <id>`, the
+    amendment ledger, a supersedes link), so publishing one in a committed
+    file publishes an internal identifier for a private store, not an
+    anonymous label. An earlier pass of this record emitted 85 of them and the
+    voice gate refused the file.
+
+    Bench and local rows therefore share ONE shape, which is also what makes
+    the record readable: a 16-hex token means the same thing everywhere, and
+    no reader has to know which substrate a row came from to know whether the
+    identifier is safe to quote. The id and text domains are separated inside
+    the hash so the two namespaces cannot collide onto one key.
+    """
     stamped = item.get("id")
-    if stamped:
-        return str(stamped)
-    text = str(item.get("text") or "")
-    return "h:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    domain, raw = (("id", str(stamped)) if stamped
+                   else ("text", str(item.get("text") or "")))
+    payload = f"{domain}\0{raw}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 def uncapped_weight(item: dict, item_type: str, now: float) -> float:
