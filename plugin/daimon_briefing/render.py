@@ -1935,6 +1935,29 @@ def _checks_line(c: dict) -> str:
             f"{c['denied']} denied")
 
 
+def _stitching_line(s: dict) -> str:
+    """#974 step 1: the one quote-stitching line, shared by the plain and rich
+    renderers, in the three states the measurement has to tell apart.
+
+    Nothing verified yet is not zero percent. A corpus whose receipts all
+    predate D-019 is not zero percent either — absent stitching means
+    unknown, and a confident `0.0%` over unknowns is the exact reading rule
+    17's doctrine must never be given. Only the third state prints a rate,
+    and it names the unmeasured remainder beside it rather than folding the
+    two populations into one number (#477)."""
+    if not s.get("verified"):
+        return "quote stitching: no verified quotes yet"
+    if not s.get("measured"):
+        return (f"quote stitching: none of {s['verified']} verified quotes "
+                "carry a stitching verdict (pre-D-019 or transcript-less)")
+    line = (f"quote stitching: {s['stitched']} of {s['measured']} measured "
+            f"verified quotes stitched ({s['rate_pct']}%) — cross-message "
+            f"{s['cross_message']}, cross-role {s['cross_role']}")
+    if s.get("unmeasured"):
+        line += f"; {s['unmeasured']} unmeasured"
+    return line
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -2029,6 +2052,13 @@ def _plain_stats(data: dict) -> None:
         # the exact ambiguity the line exists to remove.
         print("checks (this project):")
         print(f"  {_checks_line(chk)}")
+    stitch = data.get("stitching")
+    if stitch:
+        # #974: always shown, same rule again — "no verified quotes yet" and
+        # "no receipt carries a verdict" are each an answer, and a rule with
+        # no visible measurement is how #829's record sat unread.
+        print("stitching (this project):")
+        print(f"  {_stitching_line(stitch)}")
     res = data.get("resolutions")
     if res:
         # #480 slice 5: the credit block — who is closing loops. Always shown
@@ -2225,6 +2255,17 @@ def _rich_stats(data: dict) -> None:
         chk_table.add_column("value")
         chk_table.add_row("status", _checks_line(chk))
         console.print(chk_table)
+
+    stitch = data.get("stitching")
+    if stitch:
+        # #974: mirrors the plain renderer, same always-shown rule.
+        stitch_table = Table(title="stitching (this project)",
+                             title_justify="left", show_header=True,
+                             header_style="bold")
+        stitch_table.add_column("metric")
+        stitch_table.add_column("value")
+        stitch_table.add_row("status", _stitching_line(stitch))
+        console.print(stitch_table)
 
     res = data.get("resolutions")
     if res:
