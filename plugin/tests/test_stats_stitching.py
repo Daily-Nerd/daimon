@@ -104,6 +104,22 @@ def test_stats_reports_the_stitching_rate_over_measured_receipts(project,
     assert s["rate_pct"] == 50.0
 
 
+def test_the_rate_survives_the_demotion_it_is_measured_to_justify(project,
+                                                                  capsys):
+    """#974 step 2 demotes a stitched quote to `inferred`. The rate reads the
+    RECEIPT, never the trust tag, so it keeps measuring after the demotion
+    lands. Keying it on `trust == "verbatim"` would have made the rate fall
+    to zero the moment enforcement shipped, and read as a fixed problem."""
+    cp = _write("S1", [_item("clean claim", _CLEAN_QUOTE),
+                       _item("stitched claim", _STITCHED_QUOTE)], project)
+    stitched = cp["working_context"]["open_questions"][1]
+    assert stitched["trust"] == "inferred"
+
+    s = _stats_json(capsys)["stitching"]
+    assert s["measured"] == 2
+    assert s["stitched"] == 1
+
+
 def test_the_plain_render_names_the_rate_and_the_two_flags(project, capsys):
     _write("S1", [_item("clean claim", _CLEAN_QUOTE),
                   _item("stitched claim", _STITCHED_QUOTE)], project)

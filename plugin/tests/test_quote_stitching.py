@@ -2,10 +2,15 @@
 
 SERIALIZE_SYS rule 17 forbids stitching a quote from different speakers or
 turns, but quote_matches scans one flattened haystack, so a stitched quote
-verifies and earns trust=verbatim. This slice is recording only, additive and
-behavior-preserving: the receipt says whether the matched fragments could have
-come from one message / one role, verification outcomes stay untouched, and
-the violation rate becomes measurable before any semantics change.
+verifies and earns trust=verbatim. The #829 slice was recording only: the
+receipt says whether the matched fragments could have come from one message /
+one role, and the violation rate became measurable before any semantics
+change.
+
+#974 acts on that record. A stitched quote is demoted from verbatim to
+inferred; the text, the quote, the binding and the receipt are all left
+exactly as recorded, and only the trust tag moves. The demotion tests live in
+the last section of this file.
 
 Necessity semantics (pinned here): a flag is True only when NO single message
 (or no single role's messages, joined in transcript order) can account for
@@ -93,9 +98,8 @@ def test_cross_message_same_role_stitch_is_recorded():
             "quote": "first constraint half ... second constraint half"}
     _verify(item, messages)
 
-    # Behavior preserved: the stitched quote still verifies (rule 17 stays
-    # doctrine; enforcement is the measured follow-up, not this slice).
-    assert item["trust"] == "verbatim"
+    # The quote's BYTES are still witnessed (#974 demotes the tag, never the
+    # verdict) — the recorded verdict is what the demotion section asserts on.
     assert item["quote_verified"] is True
     assert item["quote_provenance"]["stitching"] == {
         "cross_message": True, "cross_role": False}
@@ -372,3 +376,213 @@ def test_field_table_documents_the_stitching_shape():
     assert "stitching" in shape
     assert "cross_message" in shape
     assert "cross_role" in shape
+
+
+# ---- #974: a stitched quote is demoted from verbatim ----------------------
+#
+# Rule 17 says a verbatim quote is one contiguous span of one message. #829
+# made the violation measurable; this is where the product finally holds the
+# tag to the rule. Demote, never drop: the text and the receipt stay exactly
+# as recorded, and only `trust` moves.
+
+
+def test_cross_message_stitch_alone_demotes_to_inferred():
+    """Same role, two turns. `cross_message` on its own is a rule-17
+    violation, so it demotes without waiting for a speaker change."""
+    messages = [
+        {"role": "user", "content": "the first constraint half lives here",
+         "id": "u-1"},
+        {"role": "assistant", "content": "acknowledged, moving on", "id": "a-2"},
+        {"role": "user", "content": "the second constraint half arrives now",
+         "id": "u-3"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "first constraint half ... second constraint half"}
+    _verify(item, messages)
+
+    assert item["quote_provenance"]["stitching"] == {
+        "cross_message": True, "cross_role": False}
+    assert item["trust"] == "inferred"
+
+
+def test_cross_role_stitch_demotes_to_inferred():
+    messages = [
+        {"role": "user", "content": "the alpha premise stands firm", "id": "u-1"},
+        {"role": "assistant", "content": "the omega conclusion follows cleanly",
+         "id": "a-2"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "alpha premise stands ... omega conclusion follows"}
+    _verify(item, messages)
+
+    assert item["quote_provenance"]["stitching"]["cross_role"] is True
+    assert item["trust"] == "inferred"
+
+
+def test_an_unstitched_verified_quote_keeps_verbatim():
+    """The negative control. A demotion that fired on every verified quote
+    would satisfy both assertions above and destroy the trust class."""
+    messages = [
+        {"role": "user", "content": "the durable sentence we agreed on", "id": "u-1"},
+        {"role": "assistant", "content": "unrelated follow-up prose", "id": "a-2"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "the durable sentence we agreed on"}
+    _verify(item, messages)
+
+    assert item["quote_provenance"]["stitching"] == {
+        "cross_message": False, "cross_role": False}
+    assert item["trust"] == "verbatim"
+
+
+def test_a_receipt_with_no_stitching_member_never_demotes():
+    """Absent means UNKNOWN, and unknown never demotes. The legacy two-arg
+    call is the shipping path that produces this receipt: no `messages`, no
+    per-message view, no verdict."""
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "the durable sentence we agreed on"}
+    cp = _checkpoint(item)
+    serializer.verify_quotes(
+        cp, "user: the durable sentence we agreed on",
+        source_ref=_source(), transcript_hash=_HASH)
+
+    assert "stitching" not in item["quote_provenance"]
+    assert item["trust"] == "verbatim"
+
+
+def test_the_demotion_leaves_the_text_the_quote_and_the_receipt_intact():
+    """Demote rather than drop. Everything the receipt recorded is still
+    there afterwards, including the binding, and it still validates."""
+    messages = [
+        {"role": "user", "content": "the alpha premise stands firm", "id": "u-1"},
+        {"role": "assistant", "content": "the omega conclusion follows cleanly",
+         "id": "a-2"},
+    ]
+    quote = "alpha premise stands ... omega conclusion follows"
+    item = {"text": "claim", "trust": "verbatim", "quote": quote,
+            "source_message_ids": ["u-1", "a-2"]}
+    _verify(item, messages)
+
+    assert item["trust"] == "inferred"
+    assert item["text"] == "claim"
+    assert item["quote"] == quote
+    assert item["source_message_ids"] == ["u-1", "a-2"]
+    receipt = item["quote_provenance"]
+    assert receipt["outcome"] == "verified"
+    assert receipt["binding"] == {"mode": "message-ids",
+                                  "message_ids": ["u-1", "a-2"]}
+    assert provenance.valid_quote_receipt(receipt)
+
+
+def test_a_stitched_demotion_is_not_a_quote_rejection():
+    """`quote_verified: False` means the BYTES were not witnessed, and it is
+    what verification_rejections ledgers as `quote-not-in-transcript`. A
+    stitched quote's bytes WERE witnessed, so flipping that flag would file
+    the item under a reason code it does not belong to (#376/#440)."""
+    messages = [
+        {"role": "user", "content": "the alpha premise stands firm", "id": "u-1"},
+        {"role": "assistant", "content": "the omega conclusion follows cleanly",
+         "id": "a-2"},
+    ]
+    item = {"text": "claim", "trust": "verbatim", "id": "q-abc123",
+            "quote": "alpha premise stands ... omega conclusion follows"}
+    cp = _checkpoint(item)
+    serializer.verify_quotes(
+        cp, serializer._render_transcript(messages), messages,
+        source_ref=_source(), transcript_hash=_HASH)
+
+    assert item["trust"] == "inferred"
+    assert item["quote_verified"] is True
+    assert item["last_verified"]
+    assert serializer.verification_rejections(cp) == []
+
+
+def test_the_demotion_does_not_move_the_quote_miss_downgrade_count():
+    """`verify_quotes` returns the number of quotes that FAILED the byte
+    check. A stitched quote passed it, so folding it into that return would
+    make the echo-only breakdown logged beside it stop adding up."""
+    messages = [
+        {"role": "user", "content": "the alpha premise stands firm", "id": "u-1"},
+        {"role": "assistant", "content": "the omega conclusion follows cleanly",
+         "id": "a-2"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "alpha premise stands ... omega conclusion follows"}
+    cp = _checkpoint(item)
+    assert serializer.verify_quotes(
+        cp, serializer._render_transcript(messages), messages,
+        source_ref=_source(), transcript_hash=_HASH) == 0
+    assert item["trust"] == "inferred"
+
+
+def test_the_demotion_survives_a_receipt_that_could_not_be_built():
+    """The verdict, not the stored receipt, is what the demotion rests on. A
+    source_ref daimon cannot build a receipt from leaves the stitching fact
+    just as true, and keeping `verbatim` there would mint exactly the false
+    tag this change exists to stop."""
+    messages = [
+        {"role": "user", "content": "the alpha premise stands firm", "id": "u-1"},
+        {"role": "assistant", "content": "the omega conclusion follows cleanly",
+         "id": "a-2"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "alpha premise stands ... omega conclusion follows"}
+    cp = _checkpoint(item)
+    serializer.verify_quotes(
+        cp, serializer._render_transcript(messages), messages,
+        source_ref={"version": 1, "host": "nope"}, transcript_hash=_HASH)
+
+    assert "quote_provenance" not in item
+    assert item["trust"] == "inferred"
+
+
+def test_the_demotion_logs_the_content_hash_and_never_the_text(caplog):
+    """serialize.log is declared exempt-no-plaintext, so the diagnostic handle
+    is the content hash (#616), exactly as the quote-miss downgrade does it."""
+    import logging
+
+    from daimon_briefing import normalize
+
+    messages = [
+        {"role": "user", "content": "the alpha premise stands firm", "id": "u-1"},
+        {"role": "assistant", "content": "the omega conclusion follows cleanly",
+         "id": "a-2"},
+    ]
+    item = {"text": "a secret-bearing claim", "trust": "verbatim",
+            "quote": "alpha premise stands ... omega conclusion follows"}
+    with caplog.at_level(logging.INFO, logger="daimon_briefing.serializer"):
+        _verify(item, messages)
+
+    text = caplog.text
+    assert normalize.content_key("a secret-bearing claim") in text
+    assert "a secret-bearing claim" not in text
+    assert "alpha premise stands" not in text
+    assert "stitched" in text
+
+
+def test_the_briefing_renders_a_demoted_quote_as_inferred():
+    """The consumer that matters: a stitched quote must stop wearing the
+    checkmark. `_mark` reads the STORED tag, so the demotion is what moves
+    it and no render-time rule is needed."""
+    from daimon_briefing import briefing
+
+    messages = [
+        {"role": "user", "content": "the alpha premise stands firm", "id": "u-1"},
+        {"role": "assistant", "content": "the omega conclusion follows cleanly",
+         "id": "a-2"},
+    ]
+    item = {"text": "claim", "trust": "verbatim",
+            "quote": "alpha premise stands ... omega conclusion follows"}
+    _verify(item, messages)
+
+    assert briefing._mark(item) == "~ inferred"
+
+
+def test_the_field_table_documents_the_demotion():
+    """#827: the published contract is what an external consumer normalizes
+    against. A flag that now moves the trust class while the contract still
+    calls it a recording would leave every such consumer wrong."""
+    shape = " ".join(dict(
+        field_table.rule("item", "quote_provenance").constraints)["shape"])
+    assert "demote" in shape.lower()
+    assert "trust=inferred" in shape

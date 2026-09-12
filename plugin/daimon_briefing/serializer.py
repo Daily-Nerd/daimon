@@ -56,6 +56,10 @@ log = logging.getLogger(__name__)
 # shape per format_version, so two different receipt shapes must never
 # share the name D-018. Recording only; EXTRACTION_VERSION stays at 3 —
 # what a chunk pass extracts is unchanged, only what verification records.)
+# #974 acts on that record: a stitched verdict now DEMOTES the item's trust
+# class to "inferred". No bump — the persisted SHAPE is unchanged, and the
+# trust field has always been one verify_quotes may downgrade. Only the value
+# a stitched item stores moves, which is a behavior change, not a format one.
 # Checkpoints are only comparable across runs sharing this version (scar
 # landmine #4); pre-bump checkpoints firing the #93 format_version mismatch
 # warning is desired, not a bug.
@@ -1236,7 +1240,9 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     already trust="inferred" are left untouched — no stamp, either field.
     Runs ONCE at serialize, PRE-redaction, so the quote is still the raw text
     (a quote whose secret redaction will later mask still verifies here
-    against the raw rendered text). Returns the downgrade count.
+    against the raw rendered text). Returns the count of quotes that FAILED
+    the byte check — never the #974 stitching demotions, which passed it (see
+    stamp_receipt) and are logged on their own line.
 
     #358: when `messages` is given, an item bound to source message id(s) is
     checked against JUST those messages first — resolve id, compare bytes. A
@@ -1269,9 +1275,15 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     #829: every verified receipt additionally records a `stitching` verdict —
     whether the matched fragments could have come from one message / one role
     (_stitching_flags' necessity semantics) — when `messages` provides a
-    per-message view. Recording only, never an outcome change: rule 17's
-    no-stitching doctrine (SERIALIZE_SYS) gains a measurement, not an
-    enforcement; the follow-up enforcement is gated on the measured rate."""
+    per-message view.
+
+    #974 is the enforcement that record was gated on. A verified quote whose
+    verdict carries either flag is DEMOTED to trust="inferred": rule 17's
+    no-stitching doctrine (SERIALIZE_SYS) now binds the tag. The outcome is
+    untouched — the receipt still says `verified`, `quote_verified` stays
+    True, the quote and its binding survive — because the bytes WERE
+    witnessed and only the one-contiguous-span claim was not. An absent
+    verdict is unknown and never demotes."""
     # #440: the RAW pair survives alongside the stripped haystacks, read on
     # the failure path only — to tell an echoed quote from an absent one.
     # #512: daimon-output tool rows are blanked in the STRIPPED map (their
@@ -1289,7 +1301,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     # quote-source claims — they never scope the quote check, and a scoped
     # MISS must not execute them for the quote-id's crime.
     signals = signal_message_ids(messages) if messages else set()
-    downgraded = echoed = 0
+    downgraded = echoed = stitched = 0
     digest = provenance.source_digest(transcript_hash, transcript_text)
     # #604: ONE stamp for the whole pass, threaded from the caller's clock —
     # the session-end stamp `created` also uses. Reading the wall clock per
@@ -1334,6 +1346,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
         # denominator by forgetting an argument. The re-parse is a few regex
         # splits on one short quote, once per verified receipt; the costly
         # haystack normalization is what the attribution caches hold.
+        nonlocal stitched
         stitching = None
         if outcome == "verified" and messages:
             fragments = _quote_fragments(item.get("quote") or "")
@@ -1347,6 +1360,34 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
             stitching=stitching)
         if receipt is not None:
             item["quote_provenance"] = receipt
+        # #974: rule 17 says a verbatim quote is ONE contiguous span of ONE
+        # message. #829 measured the violation and left the tag alone; this
+        # is where the tag finally answers to the rule.
+        #
+        # Demote, never drop: the text, the quote, the binding and the
+        # receipt are all left exactly as recorded, and `quote_verified`
+        # stays True — the BYTES were witnessed, and only the contiguity
+        # claim `verbatim` carries was not. Flipping quote_verified would
+        # file this under `quote-not-in-transcript` in the rejection ledger
+        # (verification_rejections), a fabrication reason code a witnessed
+        # quote does not belong to. Same shape as ground_outcomes' downgrade,
+        # which also keeps the quote and moves only the class.
+        #
+        # Keyed on the VERDICT, not on the stored receipt: a source_ref
+        # quote_receipt refuses leaves the stitching fact just as true, and
+        # keeping `verbatim` there would mint the false tag this exists to
+        # stop. Absent stitching (pre-D-019, transcript-less, attribution
+        # impossible) is UNKNOWN and never demotes.
+        if stitching and (stitching["cross_message"]
+                          or stitching["cross_role"]):
+            item["trust"] = "inferred"
+            stitched += 1
+            # Content hash, never the text (#616): this line lands in
+            # serialize.log, which is declared exempt-no-plaintext.
+            log.warning("quote verification: downgraded verbatim->inferred "
+                        "(stitched across %s) (content hash %s)",
+                        "speakers" if stitching["cross_role"] else "turns",
+                        normalize.content_key(item.get("text") or ""))
     # The model never gets a vote on the echo verdict (#292 discipline, same
     # as `grounded`/`pinned`): any model-emitted value is dropped before the
     # checker re-derives it.
@@ -1443,6 +1484,12 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     if downgraded:
         log.info("quote verification: %d verbatim item(s) downgraded to inferred"
                  " (%d echo-only)", downgraded, echoed)
+    if stitched:
+        # #974: counted and reported APART from the line above. Those items
+        # failed the byte check; these passed it and failed rule 17, and one
+        # summed number would make the echo-only breakdown stop adding up.
+        log.info("quote verification: %d verified item(s) downgraded to "
+                 "inferred (stitched across turns or speakers)", stitched)
     return downgraded
 
 
