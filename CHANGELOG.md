@@ -5,6 +5,21 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.0](https://github.com/Daily-Nerd/daimon/compare/v0.44.0...v0.45.0) (2026-09-12)
+
+
+### Features
+
+* **briefing:** render a stale carried item as unverified, not its stored tag ([#1019](https://github.com/Daily-Nerd/daimon/issues/1019)) ([7d158e4](https://github.com/Daily-Nerd/daimon/commit/7d158e42346e05f8971ffc1ee05948f8aa8c8a8e))
+* **cli:** unify rich rendering for hooks and skill lifecycle commands ([#1020](https://github.com/Daily-Nerd/daimon/issues/1020)) ([e580141](https://github.com/Daily-Nerd/daimon/commit/e5801418f4a6b90af0f57ff54f00577f96aab442))
+* **recall:** measure delivered match scores ([#1013](https://github.com/Daily-Nerd/daimon/issues/1013)) ([930f67a](https://github.com/Daily-Nerd/daimon/commit/930f67ad1273902c614100c5368e06813a7fd9c0))
+
+
+### Bug Fixes
+
+* **cli:** require human terminal for lifecycle verdicts ([#1015](https://github.com/Daily-Nerd/daimon/issues/1015)) ([4736da4](https://github.com/Daily-Nerd/daimon/commit/4736da4a447702a7efe7fc52028fd891fedc87ba))
+* **recall:** persist item_id in recall-inject delivery telemetry ([#1018](https://github.com/Daily-Nerd/daimon/issues/1018)) ([d68e5f2](https://github.com/Daily-Nerd/daimon/commit/d68e5f2dd89f5081899166cddc5437b531ab94d9))
+
 ## [0.44.0](https://github.com/Daily-Nerd/daimon/compare/v0.43.0...v0.44.0) (2026-09-11)
 
 
