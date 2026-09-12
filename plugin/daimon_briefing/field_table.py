@@ -197,8 +197,10 @@ ITEM_RULES: tuple[FieldRule, ...] = (
         "item", "quote_verified", "boolean", True, False, "code", "strip",
         _c(stripped_at_serialize=True),
         "verify_quotes verdict (#125): true on a byte-verified quote, false "
-        "only where a verbatim claim was downgraded. Inferred items carry "
-        "neither this nor last_verified."),
+        "only where a verbatim claim was downgraded. An item extracted as "
+        "inferred carries neither this nor last_verified; one DEMOTED to "
+        "inferred does keep them, because the verdict is about the bytes and "
+        "outlives the trust class (#359 grounding, #974 stitching)."),
     FieldRule(
         "item", "last_verified", "string", True, False, "code", "strip",
         _c(format=_TIMESTAMP, stripped_at_serialize=True),
@@ -228,7 +230,11 @@ ITEM_RULES: tuple[FieldRule, ...] = (
                   "role) can account for all matched quote fragments, i.e. "
                   "the quote was stitched across turns or speakers; absent "
                   "= unknown (pre-D-019 receipts, transcript-less "
-                  "captures)")),
+                  "captures). Since #974 either flag being true DEMOTES the "
+                  "item to trust=inferred at verification: outcome, "
+                  "quote_verified and binding are untouched, so a verified "
+                  "receipt on an inferred item is the expected shape of a "
+                  "stitched quote, not a contradiction")),
         "Durable per-item evidence receipt (#594, provenance.quote_receipt). "
         "verifier is an OBJECT {id, version}: consumers normalizing it as a "
         "string rendered every verified claim's verifier as absent."),

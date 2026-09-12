@@ -3213,6 +3213,84 @@ def _stats_verification(project_dir) -> dict:
     return {"total": sum(by_check.values()), "by_check": by_check}
 
 
+def _stats_stitching(project_dir) -> dict:
+    """Quote-stitching rate over this project's stored receipts (#974).
+
+    #829 records, per VERIFIED receipt, whether the matched fragments could
+    have come from one message / one role
+    (`quote_provenance.stitching.{cross_message, cross_role}`). Nothing read
+    it back, so rule 17's no-stitching doctrine had a measurement nobody
+    could see. This is that read.
+
+    Three decisions, each of which changes what the number means:
+
+    * DENOMINATOR = receipts that CARRY a stitching verdict, never all
+      verified receipts. A pre-D-019 receipt, or one stamped by a
+      transcript-less capture, is absent-means-unknown — folding it in as a
+      clean verdict would report `0%` where the honest answer is "daimon
+      cannot tell you". The unknowns are counted as `unmeasured` and
+      reported beside the rate, the #477 two-populations rule.
+
+    * ONE ITEM COUNTS ONCE, keyed on the stable item id. A carried item
+      rides into every later checkpoint with the same id and the same frozen
+      receipt, so counting occurrences would let a single stitched quote
+      inflate the rate once per session it survived (#562's epoch-artifact
+      class). An item with no id — `active_topic` never carries one — counts
+      as its own occurrence, which is the conservative reading: it cannot be
+      proven to be a duplicate of anything.
+
+    * ITS OWN WALK, not a rider on `_stats_store`'s. That block is
+      machine-wide by contract and this number is per project (audit.py's
+      `project_slug` filter, reused). Stats is a diagnostic verb run by
+      hand; a second pass over the checkpoint dir is cheaper than a
+      per-project count living inside a machine-wide section.
+
+    Never raises: an unreadable checkpoint is skipped, the same posture the
+    other stats folds take."""
+    want_slug = store.project_slug(project_dir)
+    out: dict = {"verified": 0, "measured": 0, "stitched": 0,
+                 "cross_message": 0, "cross_role": 0, "unmeasured": 0,
+                 "rate_pct": None}
+    try:
+        files = store._session_files(config.checkpoint_dir())
+    except OSError:
+        return out
+    seen: set = set()
+    for f in sorted(files):
+        try:
+            cp = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(cp, dict):
+            continue
+        if want_slug is not None and cp.get("project_slug") != want_slug:
+            continue
+        for item in serializer.iter_items(cp):
+            receipt = item.get("quote_provenance")
+            if (not isinstance(receipt, dict)
+                    or receipt.get("outcome") != "verified"):
+                continue
+            item_id = item.get("id")
+            if isinstance(item_id, str) and item_id:
+                if item_id in seen:
+                    continue
+                seen.add(item_id)
+            out["verified"] += 1
+            stitching = receipt.get("stitching")
+            if not isinstance(stitching, dict):
+                out["unmeasured"] += 1
+                continue
+            out["measured"] += 1
+            cross_message = stitching.get("cross_message") is True
+            cross_role = stitching.get("cross_role") is True
+            out["cross_message"] += int(cross_message)
+            out["cross_role"] += int(cross_role)
+            out["stitched"] += int(cross_message or cross_role)
+    if out["measured"]:
+        out["rate_pct"] = round(100.0 * out["stitched"] / out["measured"], 1)
+    return out
+
+
 def _earlier(current: str | None, ts: str) -> str | None:
     """Earliest of two event stamps, ignoring empties. Stamps are written by
     one helper in a single UTC format, so lexicographic order is chronological
@@ -3421,7 +3499,9 @@ def _cmd_stats(args) -> int:
             "rescue_posture": llm.rescue_posture(),
             # #943 slice 5: appended at the tail — `stats --json` key order is
             # the same contract `status --json` documents.
-            "checks": _stats_checks(project)}
+            "checks": _stats_checks(project),
+            # #974 step 1: same rule, same tail.
+            "stitching": _stats_stitching(project)}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0
