@@ -277,9 +277,12 @@ def test_the_typed_flag_applies_it(tmp_checkpoint_dir, monkeypatch, capsys):
 
 def test_the_flag_refuses_without_the_standing_consent(
         tmp_checkpoint_dir, monkeypatch, capsys):
+    """#620 item 1: the refusal is a distinct non-zero rc, not 0 — a script
+    checking the exit code alone must be able to tell "refused" from
+    "applied, nothing new"."""
     _seed_for_apply(monkeypatch)
     monkeypatch.delenv("DAIMON_TEAM_APPLY_FORGET")
-    assert cli.main(["team", "sync", "--apply-forget"]) == 0
+    assert cli.main(["team", "sync", "--apply-forget"]) == 2
     assert _local_plaintext_present()
     assert "DAIMON_TEAM_APPLY_FORGET" in capsys.readouterr().err
 
