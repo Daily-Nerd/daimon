@@ -5,6 +5,21 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.0](https://github.com/Daily-Nerd/daimon/compare/v0.45.0...v0.46.0) (2026-09-13)
+
+
+### Features
+
+* **cli:** read the checkpoint chain with diff and blame ([#1025](https://github.com/Daily-Nerd/daimon/issues/1025)) ([6f5b99c](https://github.com/Daily-Nerd/daimon/commit/6f5b99cb1cbb03876a46951f7c4eeee3ba23f334))
+* **requests:** accept a per-act author on the in-process ui writer path ([#1028](https://github.com/Daily-Nerd/daimon/issues/1028)) ([d65fbf6](https://github.com/Daily-Nerd/daimon/commit/d65fbf6a06d807140a87d97a2da12a28cff24a88))
+* **serializer:** demote a stitched quote from verbatim and report the stitching rate ([#1024](https://github.com/Daily-Nerd/daimon/issues/1024)) ([6877ae8](https://github.com/Daily-Nerd/daimon/commit/6877ae859e1b04f1ee300d85207fc4be3e8a21ed))
+
+
+### Bug Fixes
+
+* **requests:** keep a done request done under a duplicate verdict row ([#1027](https://github.com/Daily-Nerd/daimon/issues/1027)) ([d23e965](https://github.com/Daily-Nerd/daimon/commit/d23e965f69ff086c85f240aeb1d92b53c975a1a6))
+* **team:** refuse an unconsented --apply-forget before sync, audit suppressed-present, show armed state ([#1022](https://github.com/Daily-Nerd/daimon/issues/1022)) ([ba6a6e2](https://github.com/Daily-Nerd/daimon/commit/ba6a6e2c91a3a42f30310de24820c869f44e2de7))
+
 ## [0.45.0](https://github.com/Daily-Nerd/daimon/compare/v0.44.0...v0.45.0) (2026-09-12)
 
 
