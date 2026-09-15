@@ -353,13 +353,30 @@ def test_the_plugin_registers_the_shim_behind_the_pre_action_hook():
     assert entry["matcher"] == "Bash"
     hook = entry["hooks"][0]
     assert hook["type"] == "command"
+    # #1036: the plugin also declares the read-only MCP server in
+    # .claude-plugin/plugin.json, so a claude-code session always has
+    # `daimon_recall` listed. DAIMON_MCP_TOOL_AVAILABLE=1 tells the recall
+    # hint to name that tool instead of the shell command — a shell env-var
+    # prefix, because "command" (no "args") runs through a shell and a hook
+    # entry has no separate "env" field.
     assert hook["command"] == (
-        'python3 "${CLAUDE_PLUGIN_ROOT}"/hook/daimon-action-recall.py '
-        'claude-code')
+        'DAIMON_MCP_TOOL_AVAILABLE=1 python3 "${CLAUDE_PLUGIN_ROOT}"/hook/'
+        'daimon-action-recall.py claude-code')
     # Five against the shim's own 1.5s subprocess budget: the shim decides
     # well before the host gives up, and a recall is never worth a stall.
     assert hook["timeout"] == 5
     assert "statusMessage" not in hook
+
+
+def test_the_plugin_flags_mcp_tool_availability_on_the_prompt_recall_hook():
+    # #1036: same flag, same reasoning, on the surface that actually delivers
+    # today (action-recall ships `unsupported` for claude-code — see CAPS).
+    cfg = json.loads((REPO / "hooks" / "hooks.json").read_text(
+        encoding="utf-8"))["hooks"]
+    hook = cfg["UserPromptSubmit"][0]["hooks"][0]
+    assert hook["command"] == (
+        'DAIMON_MCP_TOOL_AVAILABLE=1 python3 "${CLAUDE_PLUGIN_ROOT}"/hook/'
+        'daimon-prompt-recall.py')
 
 
 @pytest.mark.parametrize("rel", ["hook/codex-hooks.py",
