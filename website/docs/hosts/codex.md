@@ -98,6 +98,15 @@ format is not a stable interface. Daimon's JSONL parser is intentionally
 best-effort and ignores unknown rows rather than treating raw JSON as
 transcript text.
 
+## MCP
+
+`daimon hooks install codex` also registers the read-only
+[MCP server](../reference/mcp) in `~/.codex/config.toml`'s
+`[mcp_servers.daimon]`, alongside the hook registration above.
+`daimon hooks remove codex` takes only that table back. Codex has no
+per-prompt recall hook, so the recall hint has nowhere to render here yet —
+the tool is still worth having, since Codex's own agent can call it directly.
+
 ## Teach the agent the protocol
 
 ```sh
