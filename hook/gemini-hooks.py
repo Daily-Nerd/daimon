@@ -32,6 +32,15 @@ SETTINGS = GEMINI_DIR / "settings.json"
 # alongside them on install; removed on uninstall once no daimon hook remains.
 LIB = "_daimon_hook_lib.py"
 
+# #1036 parity: the read-only MCP server registration. Gemini has no
+# per-prompt recall hook (SessionStart-only host, see the module docstring),
+# so this never carries a --mcp-tool flag anywhere — there is no hint hook to
+# flag. The wrapper is the same resolver script Claude Code's plugin manifest,
+# the Codex installer, and the Kimi installer all run: one resolve_cli(), one
+# script, five consumers (this one, Claude Code's plugin manifest, and the
+# Codex/Kimi/Windsurf installers).
+MCP_SCRIPT = "daimon-mcp-serve.py"
+
 HOOKS = [
     {
         "script": "daimon-gemini-session-start.py",
@@ -111,6 +120,45 @@ def uninstall_lib(dry):
         dst.unlink()
 
 
+def _install_mcp(settings, dry) -> bool:
+    """Fold the MCP server registration into `settings` (mcpServers.daimon)
+    and copy the resolver wrapper. Returns whether anything changed, so the
+    caller's single save_settings covers both hooks and this together."""
+    src, dst = SRC_DIR / MCP_SCRIPT, HOOKS_DIR / MCP_SCRIPT
+    action = "update" if dst.exists() else "copy"
+    same = dst.exists() and src.read_bytes() == dst.read_bytes()
+    print(f"[{MCP_SCRIPT}] script: {'up-to-date' if same else action}")
+    if not same and not dry:
+        shutil.copy2(src, dst)
+        dst.chmod(0o755)
+    servers = settings.setdefault("mcpServers", {})
+    entry = {"command": "python3", "args": [str(dst)]}
+    if servers.get("daimon") == entry:
+        print("[mcpServers.daimon] settings: already registered")
+        return False
+    print("[mcpServers.daimon] settings: register")
+    servers["daimon"] = entry
+    return True
+
+
+def _uninstall_mcp(settings, dry) -> bool:
+    """Reverse of `_install_mcp`. Returns whether `settings` changed."""
+    changed = False
+    servers = settings.get("mcpServers", {})
+    if "daimon" in servers:
+        print("[mcpServers.daimon] settings: removing")
+        del servers["daimon"]
+        if not servers:
+            settings.pop("mcpServers", None)
+        changed = True
+    dst = HOOKS_DIR / MCP_SCRIPT
+    if dst.exists():
+        print(f"[{MCP_SCRIPT}] script: remove {dst}")
+        if not dry:
+            dst.unlink()
+    return changed
+
+
 def install(dry):
     settings = load_settings()
     hooks_cfg = settings.setdefault("hooks", {})
@@ -133,6 +181,8 @@ def install(dry):
             groups.append(spec["entry"])
             changed = True
     install_lib(dry)
+    # #1036 parity: same install verb also gets the MCP server.
+    changed = _install_mcp(settings, dry) or changed
     if changed:
         save_settings(settings, dry)
     print("install: done" + (" (dry-run, nothing written)" if dry else
@@ -157,6 +207,10 @@ def uninstall(dry):
             print(f"[{spec['script']}] script: remove {dst}")
             if not dry:
                 dst.unlink()
+    # MCP script removed BEFORE uninstall_lib: that check counts remaining
+    # daimon-*.py files in the hooks dir to decide whether the shared lib is
+    # still needed, and daimon-mcp-serve.py matches that glob too.
+    changed = _uninstall_mcp(settings, dry) or changed
     uninstall_lib(dry)
     if changed:
         save_settings(settings, dry)
@@ -182,6 +236,12 @@ def status():
         (SRC_DIR / LIB).read_bytes() == (HOOKS_DIR / LIB).read_bytes()
     lib_extra = "" if not lib_ok else (" (current)" if lib_same else " (outdated copy)")
     print(f"{LIB:34} {'(shared)':13} {'installed' if lib_ok else 'not installed'}{lib_extra}")
+
+    mcp_script_ok = (HOOKS_DIR / MCP_SCRIPT).exists()
+    mcp_reg = "daimon" in settings.get("mcpServers", {})
+    mcp_state = ("installed" if mcp_script_ok and mcp_reg else
+                "partial" if mcp_script_ok or mcp_reg else "not installed")
+    print(f"mcpServers.daimon                 {'(mcp)':13} {mcp_state}")
 
 
 if __name__ == "__main__":
