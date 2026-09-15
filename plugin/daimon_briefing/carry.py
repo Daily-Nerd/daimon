@@ -316,10 +316,16 @@ def _record_corroboration(observed: list, prev_item: dict, native_item: dict,
 
 
 def merge(new_cp: dict, prev_cp: dict | None, now: float,
-          floor: float = 0.05, cap: int = 8,
+          floor: float = 0.05, cap: int = 24,
           resolved: frozenset = frozenset(),
           observed: list | None = None) -> dict:
     """Fold prev_cp's carry-eligible items into a COPY of new_cp.
+
+    `floor` and `cap` default to the shipping config defaults (carry_floor /
+    carry_max, 0.05 and 24 as of #1035) so a caller that injects neither gets
+    product behaviour; every production caller passes config's values anyway.
+    Keep the two in step — a stale default here is invisible, because the one
+    path it governs is the one nobody configures.
 
     Native items are never dropped or reordered — carry only appends, and (on
     a dedup hit) copies the older first_seen onto the native twin so decay age

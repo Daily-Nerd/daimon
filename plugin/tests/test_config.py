@@ -762,10 +762,17 @@ def test_carry_floor_default_and_malformed(monkeypatch):
 
 
 def test_carry_max_default_clamp_malformed(monkeypatch):
+    # #1035: the default is 24. The cap is a STORAGE cut in the checkpoint
+    # chain (carry.merge), not a render cut, so 8 was doing the forgetting the
+    # decay floor was designed to do.
     monkeypatch.delenv("DAIMON_CARRY_MAX", raising=False)
-    assert config.carry_max() == 8
+    assert config.carry_max() == 24
     monkeypatch.setenv("DAIMON_CARRY_MAX", "3")
     assert config.carry_max() == 3
+    monkeypatch.setenv("DAIMON_CARRY_MAX", "0")
+    assert config.carry_max() == 1
+    monkeypatch.setenv("DAIMON_CARRY_MAX", "x")
+    assert config.carry_max() == 24
 
 
 def test_stale_days_default_override_malformed(monkeypatch):
@@ -777,10 +784,6 @@ def test_stale_days_default_override_malformed(monkeypatch):
     assert config.stale_days() == 3.5
     monkeypatch.setenv("DAIMON_STALE_DAYS", "garbage")
     assert config.stale_days() == 7.0
-    monkeypatch.setenv("DAIMON_CARRY_MAX", "0")
-    assert config.carry_max() == 1
-    monkeypatch.setenv("DAIMON_CARRY_MAX", "x")
-    assert config.carry_max() == 8
 
 
 # ---- #317: scene traces flag ----

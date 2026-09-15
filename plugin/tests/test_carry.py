@@ -2,8 +2,9 @@
 unresolved items into the new one by code. Pure function — all clock/config
 injected."""
 import copy
+import inspect
 
-from daimon_briefing import carry, provenance
+from daimon_briefing import carry, provenance, scoring
 
 NOW = 1_760_000_000.0  # arbitrary fixed epoch
 
@@ -165,6 +166,38 @@ def test_cap_keeps_heaviest_carried_only():
     # heaviest importance values survived
     kept_imps = sorted((i["importance"] for i in carried), reverse=True)
     assert kept_imps[0] == 10 and min(kept_imps) >= 3
+
+
+def test_default_cap_carries_twenty_four_per_kind():
+    # #1035: the DEFAULT cap (no cap= argument, no env) is 24. Thirty distinct
+    # prev open questions, three at each importance 1..10, merged into a
+    # checkpoint with none of its own: the 24 heaviest survive (importances 3
+    # through 10), and they arrive ordered by effective weight, not by the
+    # order prev happened to emit them in.
+    qs = [_item(f"distinct question number {i} about module alpha-{i} subsystem beta-{i}",
+                imp=(i % 10) + 1, days=3) for i in range(30)]
+    prev = _cp("S-prev", 1, questions=qs)
+    out = carry.merge(_cp("S-new"), prev, NOW)
+    carried = out["working_context"]["open_questions"]
+    assert len(carried) == 24
+    assert all(i.get("carried_from") == "S-prev" for i in carried)
+    assert sorted((i["importance"] for i in carried), reverse=True) == \
+        [imp for imp in range(10, 2, -1) for _ in range(3)]
+    weights = [scoring.effective_weight(i, "open_question", NOW) for i in carried]
+    assert weights == sorted(weights, reverse=True)
+
+
+def test_merge_signature_defaults_track_config(monkeypatch):
+    # The signature defaults are a SECOND copy of the shipping config values
+    # (#1035). Nothing in production reads them, so a stale one is invisible
+    # until a caller that injects nothing quietly merges at the wrong cap.
+    from daimon_briefing import config
+
+    monkeypatch.delenv("DAIMON_CARRY_MAX", raising=False)
+    monkeypatch.delenv("DAIMON_CARRY_FLOOR", raising=False)
+    params = inspect.signature(carry.merge).parameters
+    assert params["cap"].default == config.carry_max()
+    assert params["floor"].default == config.carry_floor()
 
 
 def test_same_item_short_texts_never_fuzzy_match():

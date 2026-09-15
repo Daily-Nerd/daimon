@@ -31,8 +31,10 @@ Unclosed items do not accumulate forever:
 - Each item's carry weight **decays** over time, importance-graded. With the
   default floor (`DAIMON_CARRY_FLOOR`), decisions expire from carry in roughly
   5–6 weeks; escalated open questions live around 3–4 months.
-- At most `DAIMON_CARRY_MAX` items per kind are carried (default: 8), so a
-  briefing stays skimmable no matter how long a project runs.
+- At most `DAIMON_CARRY_MAX` items per kind are carried (default: 24). The
+  cut happens when the checkpoint is written, not when the briefing is
+  rendered, so the render budget is what keeps a briefing skimmable no matter
+  how long a project runs.
 - [Resolving](./lifecycle.md) an item ends its carry immediately — that is the
   intended way items leave, decay is the backstop.
 

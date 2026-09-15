@@ -133,7 +133,7 @@ Arrastre determinista de ítems sin resolver entre sesiones.
 |---|---|---|
 | `DAIMON_CARRY` | on | Interruptor maestro del arrastre. Activo salvo que valga exactamente `0` (cualquier otro valor lo mantiene activo). |
 | `DAIMON_CARRY_FLOOR` | `0.05` | Peso efectivo mínimo para que un ítem arrastrado siga arrastrándose. Con el default, las decisiones expiran en ~5–6 semanas (graduado por importancia) y las preguntas abiertas escaladas viven ~3–4 meses. |
-| `DAIMON_CARRY_MAX` | `8` | Tope de ítems arrastrados por tipo (los ítems nativos nunca cuentan contra él ni se descartan). Mínimo 1. |
+| `DAIMON_CARRY_MAX` | `24` | Tope de ítems arrastrados por tipo (los ítems nativos nunca cuentan contra él ni se descartan). Mínimo 1. |
 
 ## Briefing
 

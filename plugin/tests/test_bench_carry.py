@@ -146,7 +146,7 @@ class TestEnvPinning:
         env = adapter._question_env(tmp_path, "q", "2", carry_on=True)
         # Determinism: an ambient host override must never change the fold.
         assert env["DAIMON_CARRY_FLOOR"] == "0.05"
-        assert env["DAIMON_CARRY_MAX"] == "8"
+        assert env["DAIMON_CARRY_MAX"] == "24"
         assert "DAIMON_CARRY_FLOOR" in adapter._ENV_KEYS
         assert "DAIMON_CARRY_MAX" in adapter._ENV_KEYS
 

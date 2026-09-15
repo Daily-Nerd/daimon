@@ -35,8 +35,9 @@ Los ítems sin cerrar no se acumulan para siempre:
   expiran del arrastre en unas 5–6 semanas; las preguntas abiertas escaladas
   viven alrededor de 3–4 meses.
 - Se arrastran como máximo `DAIMON_CARRY_MAX` ítems por tipo (por defecto:
-  8), así el briefing se mantiene legible sin importar cuánto dure un
-  proyecto.
+  24). El corte ocurre al escribir el checkpoint, no al renderizar el
+  briefing, así que es el presupuesto de render el que mantiene legible el
+  briefing sin importar cuánto dure un proyecto.
 - [Resolver](./lifecycle.md) un ítem termina su arrastre de inmediato — esa
   es la vía prevista de salida; el decaimiento es la red de seguridad.
 
