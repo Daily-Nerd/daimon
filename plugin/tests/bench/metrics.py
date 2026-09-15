@@ -184,6 +184,66 @@ def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
+# ---- #1038: by_question_type breakout ---------------------------------------
+#
+# The forbidden-hit dimension makes the gap visible: its denominator is the set
+# of questions that DEFINE forbidden material, which on LongMemEval-S is a
+# property of the question TYPE (today, only the knowledge-update slice ever
+# will). A single run-wide rate blends a type that can never leak with one that
+# can. Same rule as the top-level aggregate, just scoped to one type's rows —
+# and reusing that rule (not inventing a second one) is what keeps a type's
+# numbers directly comparable to the run-wide ones.
+
+
+def _group_metrics(rows: list[dict], k: int) -> dict:
+    """Recall/leak metrics for one question_type's rows, own denominators.
+
+    `rows` includes every row of the type (error and abstention rows too) so
+    `count` matches what a reader would call "how many of this type ran"; the
+    means below still score only the scored subset, exactly like `aggregate`.
+    """
+    scored = [q for q in rows if not q.get("abstention") and not q.get("error")]
+    recalls = [q["recall_at_5"] for q in scored if q.get("recall_at_5") is not None]
+    hits = [1.0 if q["hit_at_5"] else 0.0 for q in scored
+            if q.get("hit_at_5") is not None]
+    rrs = [q["mrr"] for q in scored if q.get("mrr") is not None]
+    tokens = [q["injected_tokens"] for q in rows if q.get("injected_tokens") is not None]
+    forbidden_qs = [q for q in scored if (q.get("forbidden_total") or 0) > 0]
+    leak_flags = [1.0 if q.get("forbidden_hit") else 0.0 for q in forbidden_qs]
+    penalized = [
+        q["recall_at_5_penalized"] if q.get("recall_at_5_penalized") is not None
+        else q["recall_at_5"]
+        for q in scored
+        if (q.get("recall_at_5_penalized")
+            if q.get("recall_at_5_penalized") is not None
+            else q.get("recall_at_5")) is not None
+    ]
+    result = {
+        "count": len(rows),
+        "recall_at_5": _mean(recalls),
+        "hit_at_5": _mean(hits),
+        "mrr": _mean(rrs),
+        "avg_injected_tokens": _mean([float(t) for t in tokens]),
+    }
+    # A type that never defines forbidden material gets no leak keys at all —
+    # never a 0.0, which would read as a clean pass on a dimension that does
+    # not apply to it.
+    if forbidden_qs:
+        result["forbidden_hit_rate"] = _mean(leak_flags)
+        result["recall_at_5_penalized"] = _mean(penalized)
+    return result
+
+
+def by_question_type(per_question: list[dict], k: int) -> dict:
+    """Split `per_question` rows by `question_type` (missing -> "unknown") and
+    compute `_group_metrics` for each, sorted by type name."""
+    groups: dict[str, list[dict]] = {}
+    for q in per_question:
+        qtype = q.get("question_type") or "unknown"
+        groups.setdefault(qtype, []).append(q)
+    return {qtype: _group_metrics(groups[qtype], k) for qtype in sorted(groups)}
+
+
 def aggregate(per_question: list[dict], k: int) -> dict:
     """Roll per-question rows into run-level metrics.
 
@@ -235,4 +295,5 @@ def aggregate(per_question: list[dict], k: int) -> dict:
         "questions_with_forbidden": len(forbidden_qs),
         "forbidden_hit_rate": _mean(leak_flags),
         "recall_at_5_penalized": _mean(penalized),
+        "by_question_type": by_question_type(per_question, k),
     }
