@@ -137,11 +137,19 @@ def carry_floor() -> float:
 
 
 def carry_max() -> int:
-    """Cap on CARRIED items per kind (native items never count or drop)."""
+    """Cap on CARRIED items per kind (native items never count or drop).
+
+    Default 24 (#1035). The cut happens at merge, so this is a storage cut in
+    the checkpoint chain, not a render cut: what the briefing injects is still
+    bounded by the render budget (max_briefing_decisions / _DROP_ORDER). At 8
+    the cap, not the carry_floor decay it was paired with, did all the
+    forgetting, and unresolved open questions fell out of the chain in about a
+    week. Unbounded is not the alternative: replayed over 45 real hops it
+    reaches 1,001 carried items and 12.5 s merges by day 11."""
     try:
-        return max(1, int(_get("DAIMON_CARRY_MAX") or "8"))
+        return max(1, int(_get("DAIMON_CARRY_MAX") or "24"))
     except ValueError:
-        return 8
+        return 24
 
 
 def checkpoint_keep() -> int:

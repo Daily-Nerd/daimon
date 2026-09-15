@@ -75,9 +75,12 @@ def _question_env(root: Path, qid: str, min_messages: str,
         # folds prior checkpoints forward, mirroring the product path.
         "DAIMON_CARRY": "1" if carry_on else "0",
         # Carry knobs pinned to the product defaults so an ambient override on
-        # the host can never change the measurement (determinism).
+        # the host can never change the measurement (determinism). The cap
+        # moved 8 -> 24 with #1035, so it is a UNIT EPOCH for this harness: a
+        # run from before that change measures a different carry regime and
+        # does not compare to one from after it.
         "DAIMON_CARRY_FLOOR": "0.05",
-        "DAIMON_CARRY_MAX": "8",
+        "DAIMON_CARRY_MAX": "24",
         "DAIMON_MIN_MESSAGES": min_messages,
         "DAIMON_TEAM": "0",              # no team dual-write during the benchmark
         "DAIMON_DISABLE": "0",

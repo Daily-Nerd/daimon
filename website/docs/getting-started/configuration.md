@@ -122,7 +122,7 @@ Deterministic cross-session carry-over of unresolved items.
 |---|---|---|
 | `DAIMON_CARRY` | on | Master switch for carry. On unless set to exactly `0` (any other value keeps it on). |
 | `DAIMON_CARRY_FLOOR` | `0.05` | Minimum effective weight for a carried item to keep carrying. At the default, decisions expire in ~5–6 weeks (importance-graded) and escalated open questions live ~3–4 months. |
-| `DAIMON_CARRY_MAX` | `8` | Cap on carried items per kind (native items never count against it or drop). Minimum 1. |
+| `DAIMON_CARRY_MAX` | `24` | Cap on carried items per kind (native items never count against it or drop). Minimum 1. |
 
 ## Briefing
 
