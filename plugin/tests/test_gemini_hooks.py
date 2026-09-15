@@ -285,6 +285,58 @@ def test_gemini_hooks_install_uninstall_status_roundtrip(tmp_path):
     assert "not installed" in proc.stdout
 
 
+def test_gemini_mcp_install_uninstall_roundtrip(tmp_path):
+    # #1036 parity: the read-only MCP server registration, folded into the
+    # same install/uninstall verbs and the same settings.json save this
+    # manager already does for its two hooks.
+    settings_path = tmp_path / ".gemini" / "settings.json"
+    hooks_dir = tmp_path / ".gemini" / "hooks"
+
+    proc = _manager(tmp_path, "install")
+    assert proc.returncode == 0, proc.stderr
+    wrapper = hooks_dir / "daimon-mcp-serve.py"
+    assert wrapper.is_file()
+    settings = json.loads(settings_path.read_text())
+    entry = settings["mcpServers"]["daimon"]
+    assert entry["command"] == "python3"
+    assert entry["args"] == [str(wrapper)]
+
+    proc = _manager(tmp_path, "install")
+    assert proc.returncode == 0
+    settings = json.loads(settings_path.read_text())
+    assert settings["mcpServers"]["daimon"] == entry  # unchanged, not duplicated
+
+    proc = _manager(tmp_path, "status")
+    assert proc.returncode == 0
+    assert "mcpServers.daimon" in proc.stdout
+
+    proc = _manager(tmp_path, "uninstall")
+    assert proc.returncode == 0
+    settings = json.loads(settings_path.read_text())
+    assert "daimon" not in settings.get("mcpServers", {})
+
+
+def test_gemini_mcp_install_preserves_foreign_servers(tmp_path):
+    settings_path = tmp_path / ".gemini"
+    settings_path.mkdir(parents=True)
+    (settings_path / "settings.json").write_text(json.dumps({
+        "mcpServers": {"other": {"command": "other-cli", "args": ["serve"]}}}),
+        encoding="utf-8")
+    proc = _manager(tmp_path, "install")
+    assert proc.returncode == 0, proc.stderr
+    settings = json.loads((settings_path / "settings.json").read_text())
+    assert settings["mcpServers"]["other"] == {"command": "other-cli",
+                                              "args": ["serve"]}
+    assert "daimon" in settings["mcpServers"]
+
+    proc = _manager(tmp_path, "uninstall")
+    assert proc.returncode == 0
+    settings = json.loads((settings_path / "settings.json").read_text())
+    assert settings["mcpServers"]["other"] == {"command": "other-cli",
+                                              "args": ["serve"]}
+    assert "daimon" not in settings["mcpServers"]
+
+
 def test_gemini_hooks_install_preserves_foreign_hooks(tmp_path):
     # A user's pre-existing hook in the same event must survive install+uninstall.
     settings_path = tmp_path / ".gemini" / "settings.json"

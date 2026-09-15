@@ -44,6 +44,7 @@ Host facts this encodes, all measured on a live Kimi Code 0.42.0 session on
   start a new one, and the install output says so.
 """
 
+import json
 import os
 import re
 import shutil
@@ -80,6 +81,16 @@ HOOKS: tuple[HookSpec, ...] = (
     HookSpec("daimon-kimi-session-end.py", "SessionEnd", ".*", 10),
     HookSpec("daimon-kimi-stop.py", "Stop", ".*", 10),
 )
+
+# #1036 parity: the recall hint's tool form has exactly one surface on this
+# host (UserPromptSubmit carries recall-inject); SessionEnd and Stop never
+# render a hint and never take the flag.
+_PROMPT_SCRIPT = "daimon-kimi-user-prompt-submit.py"
+
+# The resolver wrapper the MCP registration points at — same file the Claude
+# Code plugin manifest and the Codex installer run, one resolve_cli(), never
+# a path baked in anywhere.
+MCP_SCRIPT = "daimon-mcp-serve.py"
 
 FILES = tuple(spec.script for spec in HOOKS) + MODULES
 
@@ -143,6 +154,17 @@ def hooks_dir(home, env=None) -> Path:
 
 def config_path(home, env=None) -> Path:
     return config_home(home, env) / "config.toml"
+
+
+def mcp_config_path(home, env=None) -> Path:
+    """Kimi's MCP config: ~/.kimi-code/mcp.json (or $KIMI_CODE_HOME/mcp.json),
+    a SEPARATE file from config.toml. Confirmed live (2026-09-15) against a
+    real installed Kimi Code: its own mcp.json already carries a working
+    entry in exactly {"mcpServers": {name: {command/args/url/...}}} shape —
+    this repo's docs previously claimed a Claude-compatible project-root
+    .mcp.json instead, which was wrong about the path (right about the
+    shape)."""
+    return config_home(home, env) / "mcp.json"
 
 
 def _hook_blocks(text: str):
@@ -211,11 +233,19 @@ def _read(path: Path) -> str:
     return path.read_bytes().decode("utf-8")
 
 
-def _render(spec, hooks_target: Path, nl: str = "\n") -> str:
+def _render(spec, hooks_target: Path, nl: str = "\n", *,
+           mcp_tool: bool = False) -> str:
     """One `[[hooks]]` entry as text. Exactly four fields, in the host's own
     documented order. `timeout` is written bare: it is an integer, and quoting
-    it would make the host reject the entry's type."""
+    it would make the host reject the entry's type.
+
+    `mcp_tool` (#1036) only ever changes the UserPromptSubmit command — the
+    argv flag, appended after the script path as an argument TO it (never
+    before: that position belongs to `python3`, and an interpreter flag it
+    does not recognize is a crash, not a no-op)."""
     command = f"python3 {hooks_target / spec.script}"
+    if mcp_tool and spec.script == _PROMPT_SCRIPT:
+        command += " --mcp-tool"
     return (f"{MARKER}{nl}"
             f"[[hooks]]{nl}"
             f'event = "{spec.event}"{nl}'
@@ -249,11 +279,109 @@ def _save(path: Path, text: str) -> str | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     note = None
     if path.exists():
-        backup = path.with_name(f"config.toml.daimon-backup-{int(time.time())}")
+        backup = path.with_name(f"{path.name}.daimon-backup-{int(time.time())}")
         shutil.copy2(path, backup)
         note = backup.name
     path.write_bytes(text.encode("utf-8"))  # no newline translation, see _read
     return note
+
+
+# ---- #1036 parity: the read-only MCP server registration -------------------
+#
+# A SEPARATE file from config.toml (mcp_config_path, above), and plain JSON —
+# no four-field trap here, so this re-serializes normally rather than editing
+# text blocks. Same caution as the TOML side though: an unreadable file is
+# refused rather than guessed at, because a person's OTHER mcp servers (this
+# machine's own mcp.json already has one) live in the same file.
+
+
+def _load_mcp(path: Path) -> dict:
+    """Parse mcp.json. Raises ConfigError on unreadable/non-dict content — a
+    write that guesses at a shape it does not understand is one write away
+    from losing a person's other MCP servers."""
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(str(exc))
+    if not text.strip():
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"not valid JSON: {exc}")
+    if not isinstance(data, dict):
+        raise ConfigError("top level is not a JSON object")
+    return data
+
+
+def install_mcp(pkg, home, env=None) -> list[str]:
+    """Install/refresh the read-only MCP server registration for Kimi Code.
+
+    Copies the resolver wrapper (the same script the Claude Code plugin
+    manifest and the Codex installer run) into the shared hooks dir, then
+    merges ONE key, mcpServers.daimon, into mcp.json. Every other server in
+    that file is preserved as-is.
+    """
+    target = hooks_dir(home, env)
+    target.mkdir(parents=True, exist_ok=True)
+    dest = target / MCP_SCRIPT
+    dest.write_bytes((pkg / MCP_SCRIPT).read_bytes())
+    dest.chmod(dest.stat().st_mode | 0o100)  # u+x — Kimi execs it directly
+
+    path = mcp_config_path(home, env)
+    data = _load_mcp(path)  # raises ConfigError before anything is written
+    servers = data.setdefault("mcpServers", {})
+    entry = {"command": "python3", "args": [str(dest)]}
+    lines = [f"installed {MCP_SCRIPT} to {target}"]
+    if servers.get("daimon") == entry:
+        lines.append("  mcpServers.daimon: already registered")
+        lines.append(f"{path} already up to date")
+        return lines
+    servers["daimon"] = entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        backup = path.with_name(f"{path.name}.daimon-backup-{int(time.time())}")
+        shutil.copy2(path, backup)
+        note = f" (backup: {backup.name})"
+    else:
+        note = " (new file)"
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    lines.append("  mcpServers.daimon: registered")
+    lines.append(f"updated {path}{note}")
+    return lines
+
+
+def mcp_registered(home, env=None) -> bool:
+    """True when mcp.json already carries mcpServers.daimon. An unreadable
+    file reads as not-registered rather than raising: this feeds `daimon
+    hooks status`, whose job is to report a state, not crash on it."""
+    path = mcp_config_path(home, env)
+    try:
+        data = _load_mcp(path)
+    except ConfigError:
+        return False
+    return "daimon" in (data.get("mcpServers") or {})
+
+
+def remove_mcp(home, env=None) -> list[str]:
+    """Remove daimon's mcpServers.daimon entry; return output lines. Leaves
+    the installed wrapper script in place (same reasoning as `remove`
+    below: inert once unregistered, and another registration may still
+    point at it)."""
+    path = mcp_config_path(home, env)
+    if not path.exists():
+        return [f"{path} does not exist - nothing to remove"]
+    data = _load_mcp(path)  # raises ConfigError before anything is written
+    servers = data.get("mcpServers") or {}
+    if "daimon" not in servers:
+        return [f"{path}: no daimon entry found"]
+    del servers["daimon"]
+    backup = path.with_name(f"{path.name}.daimon-backup-{int(time.time())}")
+    shutil.copy2(path, backup)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return [f"removed mcpServers.daimon from {path} (backup: {backup.name})"]
 
 
 def install(pkg, home, env=None):
@@ -272,6 +400,12 @@ def install(pkg, home, env=None):
         if name not in MODULES:  # imported by same-dir lookup, never executed
             dest.chmod(dest.stat().st_mode | 0o100)  # u+x
 
+    # #1036 parity: same install verb also gets the read-only MCP server,
+    # BEFORE the hooks render below — the UserPromptSubmit command needs to
+    # know whether the tool is registered to decide its own --mcp-tool flag.
+    mcp_lines = install_mcp(pkg, home, env)
+    mcp_on = mcp_registered(home, env)
+
     path = config_path(home, env)
     original = _read(path) if path.exists() else ""
     blocks = _hook_blocks(original)  # raises ConfigError before anything is written
@@ -285,7 +419,8 @@ def install(pkg, home, env=None):
         # The one byte the round trip does not give back: remove cannot tell
         # this newline from one the person wrote. The host page says so.
         body += nl
-    additions = "".join(f"{nl}{_render(spec, target, nl)}" for spec in HOOKS)
+    additions = "".join(f"{nl}{_render(spec, target, nl, mcp_tool=mcp_on)}"
+                        for spec in HOOKS)
     updated = body + additions
 
     if updated == original:
@@ -300,6 +435,9 @@ def install(pkg, home, env=None):
         lines.append(f"updated {path}" + (f" (backup: {backup})" if backup
                                           else " (new file)"))
 
+    lines.append("")
+    lines += mcp_lines
+
     lines += [
         "",
         "Kimi Code loads hooks at session start. Start a NEW session for these "
@@ -312,7 +450,8 @@ def install(pkg, home, env=None):
 
 
 def remove(home, env=None):
-    """Remove daimon's `[[hooks]]` entries; return output lines.
+    """Remove daimon's `[[hooks]]` entries and the MCP registration; return
+    output lines.
 
     Leaves the installed scripts in place. They are inert once unregistered,
     and deleting them would break any OTHER registration a person wrote by
@@ -320,15 +459,19 @@ def remove(home, env=None):
     """
     path = config_path(home, env)
     if not path.exists():
-        return [f"{path} does not exist - nothing to remove"]
-    original = _read(path)
-    ours = [b for b in _hook_blocks(original) if _is_ours(b)]
-    if not ours:
-        return [f"{path}: no daimon entries found"]
-    updated = "".join(_strip_ours(original.splitlines(keepends=True), ours))
-    backup = _save(path, updated)
-    return [f"removed {len(ours)} daimon entr(y/ies) from {path}"
-            + (f" (backup: {backup})" if backup else "")]
+        lines = [f"{path} does not exist - nothing to remove"]
+    else:
+        original = _read(path)
+        ours = [b for b in _hook_blocks(original) if _is_ours(b)]
+        if not ours:
+            lines = [f"{path}: no daimon entries found"]
+        else:
+            updated = "".join(_strip_ours(original.splitlines(keepends=True), ours))
+            backup = _save(path, updated)
+            lines = [f"removed {len(ours)} daimon entr(y/ies) from {path}"
+                    + (f" (backup: {backup})" if backup else "")]
+    lines += remove_mcp(home, env)
+    return lines
 
 
 def registration_status(home, env=None) -> str:

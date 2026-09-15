@@ -104,6 +104,23 @@ def test_hooks_install_windsurf_writes_stable_executable_copies(tmp_path, monkey
     assert "pre_user_prompt" in out and "post_cascade_response" in out
 
 
+def test_hooks_install_windsurf_prints_an_mcp_snippet(tmp_path, monkeypatch, capsys):
+    # #1036 parity: Windsurf has no recall-hint hook (no --mcp-tool anywhere
+    # here), and daimon does not write Cascade's own config — same posture as
+    # the hooks registration snippet above this one, printed rather than
+    # written, for the same file family (~/.codeium/windsurf/mcp_config.json).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "windsurf"]) == 0
+    out = capsys.readouterr().out
+    wrapper = tmp_path / ".daimon" / "hooks" / "daimon-mcp-serve.py"
+    assert wrapper.is_file()
+    assert "mcp_config.json" in out
+    assert '"mcpServers"' in out
+    assert '"daimon"' in out
+    assert str(wrapper) in out
+    assert "--mcp-tool" not in out
+
+
 def test_hooks_install_is_idempotent_refresh(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli.main(["hooks", "install", "windsurf"]) == 0

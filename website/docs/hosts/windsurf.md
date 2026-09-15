@@ -83,6 +83,15 @@ waits on the quiet period. A knob worth setting for your first week:
 echo 'DAIMON_MIN_MESSAGES=4' >> ~/.daimon/env   # don't skip short first sessions
 ```
 
+## MCP
+
+`daimon hooks install windsurf` also prints an `mcpServers` snippet for
+`~/.codeium/windsurf/mcp_config.json` alongside the hooks registration
+snippet — see [MCP server](../reference/mcp). Daimon does not write
+Cascade's own config files, so paste it in by hand, same as the hooks
+snippet above. Windsurf has no per-prompt recall hook, so the recall hint
+has nowhere to render here yet.
+
 ## Teach the agent the protocol
 
 ```sh

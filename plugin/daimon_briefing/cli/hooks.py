@@ -104,6 +104,29 @@ def _install_one(host: str) -> int:
     lines.append("")
     lines.append("Re-run `daimon hooks install " + host +
                  "` after every `uv tool upgrade daimon-briefing`.")
+    if host == "windsurf":
+        # #1036 parity: Windsurf has no recall-hint hook at all (see
+        # daimon-windsurf-hooks.py's pre_user_prompt — it only accumulates
+        # transcript text), so this never carries --mcp-tool. Printed, not
+        # written, same posture as the hooks snippet above: daimon does not
+        # own Cascade's own config files.
+        mcp_script = "daimon-mcp-serve.py"
+        mcp_dest = target / mcp_script
+        mcp_dest.write_bytes((pkg / mcp_script).read_bytes())
+        mcp_dest.chmod(mcp_dest.stat().st_mode | 0o100)  # u+x
+        lines += [
+            "",
+            "Also register the read-only MCP server "
+            "(~/.codeium/windsurf/mcp_config.json):",
+            "  {",
+            '    "mcpServers": {',
+            '      "daimon": {',
+            '        "command": "python3",',
+            f'        "args": ["{mcp_dest}"]',
+            "      }",
+            "    }",
+            "  }",
+        ]
     lines += ["", _checks_line()]
     render.render_install_summary(lines, title=f"daimon hooks install {host}")
     return 0
@@ -138,24 +161,34 @@ def _remove_one(host: str) -> int:
         known = ", ".join(sorted(_cli._HOOK_HOSTS))
         print(f"error: unknown host '{host}' (known: {known})", file=sys.stderr)
         return 2
-    if spec.get("register") != "kimi":
-        removable = sorted(h for h, s in _cli._HOOK_HOSTS.items()
-                           if s.get("register") == "kimi")
-        print(f"error: daimon does not own the hook registration for "
-              f"'{host}', so it cannot remove it. Edit that host's hooks "
-              f"config by hand. Removable: {', '.join(removable)}",
-              file=sys.stderr)
-        return 2
-    from .. import kimi_hooks
+    if spec.get("register") == "kimi":
+        from .. import kimi_hooks
 
-    try:
-        lines = kimi_hooks.remove(Path.home())
-    except kimi_hooks.ConfigError as exc:
-        print(f"error: {kimi_hooks.config_path(Path.home())} could not be read "
-              f"safely, so nothing was written: {exc}", file=sys.stderr)
-        return 1
-    render.render_hooks_install(lines)
-    return 0
+        try:
+            lines = kimi_hooks.remove(Path.home())
+        except kimi_hooks.ConfigError as exc:
+            print(f"error: {kimi_hooks.config_path(Path.home())} could not be "
+                  f"read safely, so nothing was written: {exc}", file=sys.stderr)
+            return 1
+        render.render_hooks_install(lines)
+        return 0
+    if spec.get("register") == "codex":
+        # #1036 parity: codex has no hooks.json removal path (daimon has never
+        # offered one for it), but the MCP registration this same install verb
+        # now writes IS ours to take back — mcp_servers.daimon only, never the
+        # hooks.json entries a person may still want registered.
+        from .. import codex_hooks
+
+        lines = codex_hooks.remove_mcp(Path.home())
+        render.render_hooks_install(lines)
+        return 0
+    removable = sorted(h for h, s in _cli._HOOK_HOSTS.items()
+                       if s.get("register") in ("kimi", "codex"))
+    print(f"error: daimon does not own the hook registration for "
+          f"'{host}', so it cannot remove it. Edit that host's hooks "
+          f"config by hand. Removable: {', '.join(removable)}",
+          file=sys.stderr)
+    return 2
 
 
 def _cmd_hooks_remove(args) -> int:

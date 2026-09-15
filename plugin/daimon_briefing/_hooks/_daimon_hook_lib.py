@@ -164,15 +164,23 @@ def age_line(latest: Path) -> str:
     return f"(checkpoint: {session_id}, written {age} ago)"
 
 
-def project_env(cwd, host=None):
-    """Child env with code-owned project/host capture hints when known."""
-    if not cwd and not host:
+def project_env(cwd, host=None, **extra):
+    """Child env with code-owned project/host capture hints when known.
+
+    `extra` (#1036) is a flat set of additional overrides a caller wants in
+    the child env, on top of cwd/host — e.g. DAIMON_MCP_TOOL_AVAILABLE="1"
+    when a hook was invoked with the flag that says its host lists the MCP
+    server. One accessor for every "add this to the child's environment"
+    need, so a caller cannot get it half right by hand-building a dict
+    that copies os.environ differently than this function does."""
+    if not cwd and not host and not extra:
         return None
     env = dict(os.environ)
     if cwd:
         env["DAIMON_PROJECT_DIR"] = cwd
     if host:
         env["DAIMON_CAPTURE_HOST"] = host
+    env.update(extra)
     return env
 
 

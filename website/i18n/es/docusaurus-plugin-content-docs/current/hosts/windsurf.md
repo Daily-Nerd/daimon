@@ -92,6 +92,15 @@ primera semana:
 echo 'DAIMON_MIN_MESSAGES=4' >> ~/.daimon/env   # no omitas sesiones cortas iniciales
 ```
 
+## MCP
+
+`daimon hooks install windsurf` también imprime un snippet `mcpServers`
+para `~/.codeium/windsurf/mcp_config.json` junto al snippet de registro de
+hooks — ver [servidor MCP](../reference/mcp). Daimon no escribe los
+archivos de configuración propios de Cascade, así que pegalo a mano, igual
+que el snippet de hooks de arriba. Windsurf no tiene hook de recall por
+prompt, así que el puntero de recall no tiene dónde renderizar todavía aquí.
+
 ## Enséñale el protocolo al agente
 
 ```sh

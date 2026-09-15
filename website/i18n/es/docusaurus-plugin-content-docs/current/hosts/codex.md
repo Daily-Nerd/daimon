@@ -107,6 +107,16 @@ conveniencia pero su formato no es una interfaz estable. El parser JSONL de
 Daimon es deliberadamente best-effort e ignora filas desconocidas en lugar de
 tratar JSON crudo como texto del transcript.
 
+## MCP
+
+`daimon hooks install codex` también registra el [servidor MCP](../reference/mcp)
+de solo lectura en `[mcp_servers.daimon]` dentro de `~/.codex/config.toml`,
+junto al registro de hooks de arriba. `daimon hooks remove codex` retira
+solo esa tabla. Codex no tiene hook de recall por prompt, así que el
+puntero de recall no tiene dónde renderizar todavía aquí — la herramienta
+igual vale la pena, porque el propio agente de Codex puede llamarla
+directamente.
+
 ## Enséñale el protocolo al agente
 
 ```sh

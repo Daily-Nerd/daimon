@@ -16,6 +16,7 @@ Measured against Kimi Code 0.42.0 on 2026-09-09; the probe notes carry the
 payloads and the config shape.
 """
 
+import json
 import stat
 import sys
 from pathlib import Path
@@ -139,7 +140,9 @@ def test_each_command_points_at_the_installed_script_by_absolute_path(tmp_path):
     assert len(commands) == len(kimi_hooks.HOOKS)
     for command in commands:
         assert str(hooks_dir) in command
-        script = command.split()[-1]
+        # index 1, not -1 (#1036 parity): the UserPromptSubmit command may
+        # carry a trailing --mcp-tool argument after the script path.
+        script = command.split()[1]
         assert Path(script).is_absolute()
         assert Path(script).exists()
 
@@ -499,17 +502,18 @@ def test_cli_remove_kimi_refuses_a_config_it_cannot_read(tmp_path, monkeypatch,
 
 def test_cli_remove_refuses_a_host_daimon_did_not_register(tmp_path, monkeypatch,
                                                           capsys):
-    """Codex is self-registering too, but through its own manager; Windsurf is
-    a pasted snippet. Neither is removable through this verb, and the error
-    names what is, so the person does not go looking for a flag."""
+    """Windsurf's hooks registration is a pasted snippet daimon never wrote,
+    so it stays unremovable through this verb, and the error names what IS,
+    so the person does not go looking for a flag. (#1036 parity: codex moved
+    OFF this list — it is now removable for its MCP registration, though its
+    hooks.json entries still are not; see test_codex_mcp.py.)"""
     from daimon_briefing import cli
 
     _cli_home(tmp_path, monkeypatch)
-    for host in ("codex", "windsurf"):
-        assert cli.main(["hooks", "remove", host]) == 2
-        err = capsys.readouterr().err
-        assert f"does not own the hook registration for '{host}'" in err
-        assert "Removable: kimi" in err
+    assert cli.main(["hooks", "remove", "windsurf"]) == 2
+    err = capsys.readouterr().err
+    assert "does not own the hook registration for 'windsurf'" in err
+    assert "Removable: codex, kimi" in err
 
 
 def test_cli_remove_names_an_unknown_host(tmp_path, monkeypatch, capsys):
@@ -607,3 +611,155 @@ def test_installing_the_skill_for_kimi_writes_a_usable_skill_file(tmp_path):
     assert text.startswith("---")
     assert "name: daimon" in text
     assert "description:" in text
+
+
+# ---- #1036 parity: the read-only MCP server registration -------------------
+#
+# Kimi's MCP config is a SEPARATE file from config.toml: ~/.kimi-code/mcp.json
+# (or $KIMI_CODE_HOME/mcp.json), plain JSON, shape {"mcpServers": {name: {...}}}
+# — confirmed live against a real installed Kimi Code (0.4x) on this machine:
+# its own ~/.kimi-code/mcp.json already carries a working "obsidian" entry in
+# exactly this shape. This repo's docs previously claimed a project-root
+# .mcp.json in "the same format Claude Code uses" — the shape claim held, the
+# PATH claim did not, and this is the correction.
+
+
+def test_install_mcp_writes_the_wrapper_and_registers_the_server(tmp_path):
+    home = _home(tmp_path)
+    lines = kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    wrapper = kimi_hooks.hooks_dir(home, env={}) / "daimon-mcp-serve.py"
+    assert wrapper.is_file()
+    data = json.loads(kimi_hooks.mcp_config_path(home, env={})
+                      .read_text(encoding="utf-8"))
+    assert data["mcpServers"]["daimon"]["command"] == "python3"
+    assert data["mcpServers"]["daimon"]["args"] == [str(wrapper)]
+    assert any("registered" in ln for ln in lines)
+
+
+def test_install_mcp_preserves_other_servers(tmp_path):
+    home = _home(tmp_path)
+    mcp_path = home / ".kimi-code" / "mcp.json"
+    mcp_path.write_text(json.dumps({
+        "mcpServers": {"obsidian": {"url": "http://127.0.0.1:27123/mcp/"}}}),
+        encoding="utf-8")
+    kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert data["mcpServers"]["obsidian"]["url"] == "http://127.0.0.1:27123/mcp/"
+    assert "daimon" in data["mcpServers"]
+
+
+def test_install_mcp_is_idempotent(tmp_path):
+    home = _home(tmp_path)
+    kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    mcp_path = home / ".kimi-code" / "mcp.json"
+    first = mcp_path.read_text(encoding="utf-8")
+    lines = kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    assert mcp_path.read_text(encoding="utf-8") == first
+    assert any("already registered" in ln for ln in lines)
+
+
+def test_mcp_registered_reports_state(tmp_path):
+    home = _home(tmp_path)
+    assert kimi_hooks.mcp_registered(home, env={}) is False
+    kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    assert kimi_hooks.mcp_registered(home, env={}) is True
+
+
+def test_remove_mcp_deletes_only_the_daimon_entry(tmp_path):
+    home = _home(tmp_path)
+    mcp_path = home / ".kimi-code" / "mcp.json"
+    mcp_path.write_text(json.dumps({
+        "mcpServers": {"obsidian": {"url": "http://127.0.0.1:27123/mcp/"}}}),
+        encoding="utf-8")
+    kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    lines = kimi_hooks.remove_mcp(home, env={})
+    data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert "daimon" not in data["mcpServers"]
+    assert "obsidian" in data["mcpServers"]
+    assert any("removed" in ln for ln in lines)
+
+
+def test_remove_mcp_without_a_config_file_is_not_an_error(tmp_path):
+    home = _home(tmp_path)
+    lines = kimi_hooks.remove_mcp(home, env={})
+    assert any("does not exist" in ln for ln in lines)
+
+
+def test_install_mcp_refuses_a_config_it_cannot_read(tmp_path):
+    home = _home(tmp_path)
+    mcp_path = home / ".kimi-code" / "mcp.json"
+    mcp_path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(kimi_hooks.ConfigError):
+        kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    assert mcp_path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_install_registers_mcp_and_flags_the_prompt_hook(tmp_path):
+    # The prompt-submit hook is the only recall-hint surface on this host, so
+    # once install() has also registered the MCP server, its own rendered
+    # command carries --mcp-tool; the other two hooks never do.
+    home = _home(tmp_path)
+    _write_config(home, BASE_CONFIG)
+    _install(home)
+    assert kimi_hooks.mcp_registered(home, env={}) is True
+    blocks = kimi_hooks._hook_blocks(
+        kimi_hooks.config_path(home, env={}).read_text(encoding="utf-8"))
+    by_event = {b.fields["event"]: b.fields["command"] for b in blocks}
+    assert by_event["UserPromptSubmit"].endswith("--mcp-tool")
+    assert "--mcp-tool" not in by_event["SessionEnd"]
+    assert "--mcp-tool" not in by_event["Stop"]
+
+
+def test_cli_install_kimi_also_registers_mcp(tmp_path, monkeypatch):
+    from daimon_briefing import cli
+
+    home = _cli_home(tmp_path, monkeypatch)
+    assert cli.main(["hooks", "install", "kimi"]) == 0
+    assert kimi_hooks.mcp_registered(home, env={}) is True
+
+
+def test_install_mcp_treats_a_blank_mcp_json_as_empty(tmp_path):
+    home = _home(tmp_path)
+    (home / ".kimi-code" / "mcp.json").write_text("   \n", encoding="utf-8")
+    kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    assert kimi_hooks.mcp_registered(home, env={}) is True
+
+
+def test_install_mcp_refuses_a_json_array_at_the_top_level(tmp_path):
+    home = _home(tmp_path)
+    (home / ".kimi-code" / "mcp.json").write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(kimi_hooks.ConfigError):
+        kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+
+
+def test_install_mcp_wraps_an_os_error_reading_mcp_json_as_config_error(tmp_path):
+    home = _home(tmp_path)
+    # A directory where the installer expects a file: read_text raises
+    # IsADirectoryError, an OSError subclass.
+    (home / ".kimi-code" / "mcp.json").mkdir()
+    with pytest.raises(kimi_hooks.ConfigError):
+        kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+
+
+def test_mcp_registered_is_false_on_a_corrupt_mcp_json(tmp_path):
+    home = _home(tmp_path)
+    (home / ".kimi-code" / "mcp.json").write_text("{not json", encoding="utf-8")
+    assert kimi_hooks.mcp_registered(home, env={}) is False
+
+
+def test_remove_mcp_when_the_file_exists_but_has_no_daimon_entry(tmp_path):
+    home = _home(tmp_path)
+    (home / ".kimi-code" / "mcp.json").write_text(json.dumps({
+        "mcpServers": {"obsidian": {"url": "http://127.0.0.1:27123/mcp/"}}}),
+        encoding="utf-8")
+    lines = kimi_hooks.remove_mcp(home, env={})
+    assert any("no daimon entry found" in ln for ln in lines)
+
+
+def test_cli_remove_kimi_also_removes_mcp(tmp_path, monkeypatch):
+    from daimon_briefing import cli
+
+    home = _cli_home(tmp_path, monkeypatch)
+    assert cli.main(["hooks", "install", "kimi"]) == 0
+    assert cli.main(["hooks", "remove", "kimi"]) == 0
+    assert kimi_hooks.mcp_registered(home, env={}) is False

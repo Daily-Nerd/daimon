@@ -88,9 +88,19 @@ release.
 
 ## MCP
 
-Kimi needs no daimon-specific MCP adapter. It reads a project-root
-`.mcp.json` in the same format Claude Code uses, so an existing daimon MCP
-entry works unchanged.
+`daimon hooks install kimi` registers the read-only [MCP server](../reference/mcp)
+automatically: it merges an `mcpServers.daimon` entry into
+`~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json` when set), the file
+Kimi's own docs describe for this scope — separate from `config.toml`, which
+carries the hook registration. `daimon hooks remove kimi` takes both back
+together. Once that entry exists, the recall hint (the per-prompt "you
+worked on this before" pointer) names the `daimon_recall` tool instead of
+the `daimon recall "..."` shell command.
+
+(An earlier version of this page said Kimi reads a project-root `.mcp.json`
+in the same format Claude Code uses. Checked against a live install: the
+*shape* is right — `{"mcpServers": {...}}` — but the *path* is not; Kimi
+reads `~/.kimi-code/mcp.json`, never a project-root file.)
 
 ## Teach the agent the protocol
 

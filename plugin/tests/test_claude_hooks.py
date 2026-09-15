@@ -57,7 +57,8 @@ def _copy_without_lib(script: Path, tmp_path) -> Path:
     return dst
 
 
-def _run(script: Path, payload, tmp_path, extra_env=None) -> subprocess.CompletedProcess:
+def _run(script: Path, payload, tmp_path, extra_env=None,
+         argv=()) -> subprocess.CompletedProcess:
     env = {
         **os.environ,
         "PATH": f"{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}",
@@ -67,7 +68,7 @@ def _run(script: Path, payload, tmp_path, extra_env=None) -> subprocess.Complete
         env.update(extra_env)
     stdin = json.dumps(payload) if isinstance(payload, dict) else (payload or "")
     return subprocess.run(
-        [sys.executable, str(script)],
+        [sys.executable, str(script), *argv],
         input=stdin,
         capture_output=True,
         text=True,
@@ -669,6 +670,30 @@ def test_hook_lib_hung_ceiling_stays_in_sync_with_config():
             assert lib.hung_after_seconds() == config.hung_after_seconds(), raw
         finally:
             os.environ.pop("DAIMON_HUNG_AFTER", None)
+
+
+def test_project_env_none_without_cwd_host_or_extra():
+    # Unchanged contract: no cwd, no host, no extra override -> None, so a
+    # caller with nothing to add still gets subprocess.run's own "inherit the
+    # parent env" behavior rather than a needless copy.
+    assert lib.project_env("", None) is None
+
+
+def test_project_env_extra_kwargs_merge_into_the_child_env(monkeypatch):
+    # #1036 parity: the flag-delivery mechanism is an extra env override on
+    # top of project_env's existing cwd/host overrides, not a second
+    # accessor — one function, one place a caller can get this wrong.
+    monkeypatch.setenv("SOME_INHERITED_VAR", "keep-me")
+    env = lib.project_env("", None, DAIMON_MCP_TOOL_AVAILABLE="1")
+    assert env["DAIMON_MCP_TOOL_AVAILABLE"] == "1"
+    assert env["SOME_INHERITED_VAR"] == "keep-me"  # still a copy of os.environ
+
+
+def test_project_env_extra_kwargs_compose_with_cwd_and_host():
+    env = lib.project_env("/repo/x", "codex", DAIMON_MCP_TOOL_AVAILABLE="1")
+    assert env["DAIMON_PROJECT_DIR"] == "/repo/x"
+    assert env["DAIMON_CAPTURE_HOST"] == "codex"
+    assert env["DAIMON_MCP_TOOL_AVAILABLE"] == "1"
 
 
 def test_sweep_orphans_spawns_only_the_newest_candidate(tmp_path, monkeypatch):
@@ -1293,6 +1318,36 @@ def test_prompt_hook_silent_when_cli_missing(tmp_checkpoint_dir, tmp_path):
                  "prompt": "debugging the litellm gateway cache pinning again"},
                 tmp_path, extra_env={"PATH": "/usr/bin:/bin"})
     assert proc.returncode == 0 and proc.stdout.strip() == ""
+
+
+def test_prompt_hook_names_the_mcp_tool_when_invoked_with_the_flag(
+        tmp_checkpoint_dir, tmp_path):
+    # #1036 parity: an argv flag, not a shell env-var prefix — a host that
+    # execs argv without a shell would treat `VAR=1` as the program name and
+    # this hook would never even start. `--mcp-tool` works under every exec
+    # model, and the hook exports the env var into the CLI's own env itself.
+    cwd = "/Users/x/projR"
+    _seed_prompt_history(cwd)
+    proc = _run(PROMPT_HOOK,
+                {"cwd": cwd, "session_id": "S-now",
+                 "prompt": "debugging the litellm gateway cache pinning again"},
+                tmp_path, argv=["--mcp-tool"])
+    assert proc.returncode == 0
+    assert "call the daimon_recall tool with query" in proc.stdout
+    assert 'daimon recall "' not in proc.stdout
+
+
+def test_prompt_hook_keeps_the_shell_form_without_the_flag(
+        tmp_checkpoint_dir, tmp_path):
+    cwd = "/Users/x/projR"
+    _seed_prompt_history(cwd)
+    proc = _run(PROMPT_HOOK,
+                {"cwd": cwd, "session_id": "S-now",
+                 "prompt": "debugging the litellm gateway cache pinning again"},
+                tmp_path)
+    assert proc.returncode == 0
+    assert 'More: daimon recall "' in proc.stdout
+    assert "call the daimon_recall tool" not in proc.stdout
 
 
 def test_prompt_hook_silent_when_lib_missing(tmp_checkpoint_dir, tmp_path):

@@ -158,6 +158,32 @@ def test_on_wraps_the_line_as_additional_context(mod, monkeypatch, capsys,
     assert "--record-only" not in spawn[0][0]
 
 
+def test_mcp_tool_flag_forwards_the_env_var_to_action_recall(
+        mod, monkeypatch, capsys, spawn):
+    # #1036 parity: an argv flag on this shim, not a shell env-var prefix on
+    # the manifest command — the shim itself is responsible for exporting
+    # the flag into the CLI subprocess's own env, the same accessor every
+    # other host-aware env override in this codebase uses (project_env).
+    _mode(mod, monkeypatch, "claude-code", "on")
+    _payload(monkeypatch)
+    _cli(mod, monkeypatch)
+    assert mod.main([str(HOOK), "claude-code", "--mcp-tool"]) == 0
+    capsys.readouterr()
+    _, kwargs = spawn[0]
+    assert kwargs["env"]["DAIMON_MCP_TOOL_AVAILABLE"] == "1"
+
+
+def test_without_the_flag_the_env_carries_no_mcp_tool_var(
+        mod, monkeypatch, capsys, spawn):
+    _mode(mod, monkeypatch, "claude-code", "on")
+    _payload(monkeypatch)
+    _cli(mod, monkeypatch)
+    assert _run(mod) == 0
+    capsys.readouterr()
+    _, kwargs = spawn[0]
+    assert "DAIMON_MCP_TOOL_AVAILABLE" not in (kwargs["env"] or {})
+
+
 def test_on_never_emits_a_permission_decision(mod, monkeypatch, capsys,
                                               spawn):
     # The whole reason this is a second process. This surface observes; the
@@ -353,13 +379,30 @@ def test_the_plugin_registers_the_shim_behind_the_pre_action_hook():
     assert entry["matcher"] == "Bash"
     hook = entry["hooks"][0]
     assert hook["type"] == "command"
+    # #1036: the plugin also declares the read-only MCP server in
+    # .claude-plugin/plugin.json, so a claude-code session always has
+    # `daimon_recall` listed. `--mcp-tool` tells the recall hint to name that
+    # tool instead of the shell command — an argv flag, not a shell env-var
+    # prefix, because a host that execs argv without a shell would treat
+    # `VAR=1` as the program name and the hook would never start.
     assert hook["command"] == (
         'python3 "${CLAUDE_PLUGIN_ROOT}"/hook/daimon-action-recall.py '
-        'claude-code')
+        'claude-code --mcp-tool')
     # Five against the shim's own 1.5s subprocess budget: the shim decides
     # well before the host gives up, and a recall is never worth a stall.
     assert hook["timeout"] == 5
     assert "statusMessage" not in hook
+
+
+def test_the_plugin_flags_mcp_tool_availability_on_the_prompt_recall_hook():
+    # #1036: same flag, same reasoning, on the surface that actually delivers
+    # today (action-recall ships `unsupported` for claude-code — see CAPS).
+    cfg = json.loads((REPO / "hooks" / "hooks.json").read_text(
+        encoding="utf-8"))["hooks"]
+    hook = cfg["UserPromptSubmit"][0]["hooks"][0]
+    assert hook["command"] == (
+        'python3 "${CLAUDE_PLUGIN_ROOT}"/hook/daimon-prompt-recall.py '
+        '--mcp-tool')
 
 
 @pytest.mark.parametrize("rel", ["hook/codex-hooks.py",

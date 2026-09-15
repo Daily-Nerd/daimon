@@ -27,6 +27,18 @@ def test_disabled_flag(monkeypatch):
     assert config.is_disabled() is False
 
 
+def test_mcp_tool_available_flag(monkeypatch):
+    # #1036: off by default, so a manual (non-plugin) install or any other
+    # host keeps the shell-command recall hint until the plugin's own hook
+    # sets this explicitly.
+    monkeypatch.delenv("DAIMON_MCP_TOOL_AVAILABLE", raising=False)
+    assert config.mcp_tool_available() is False
+    monkeypatch.setenv("DAIMON_MCP_TOOL_AVAILABLE", "1")
+    assert config.mcp_tool_available() is True
+    monkeypatch.setenv("DAIMON_MCP_TOOL_AVAILABLE", "0")
+    assert config.mcp_tool_available() is False
+
+
 def test_min_messages_default_and_override(monkeypatch):
     monkeypatch.delenv("DAIMON_MIN_MESSAGES", raising=False)
     assert config.min_messages() == 10

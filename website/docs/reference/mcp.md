@@ -51,14 +51,42 @@ The server inherits daimon's cross-project discipline:
 
 ## Registering with a host
 
-Claude Code (CLI):
+Every host daimon adapts now registers this server as part of its own
+install path — nothing to run by hand on any of them. The recall hint (the
+per-prompt "you worked on this before" line) names the tool instead of the
+`daimon recall "..."` shell command wherever a prompt-time recall hook
+exists; where one does not, the server is still worth registering, because
+the host's own agent can call the tool directly.
 
-```bash
-claude mcp add daimon -- daimon mcp serve
-```
+| Host | MCP registration | Recall hint's tool form |
+|------|-------------------|--------------------------|
+| Claude Code | supported | supported |
+| Kimi Code | supported | supported |
+| Codex | supported | unsupported (no prompt-time recall hook) |
+| Windsurf | supported | unsupported (no prompt-time recall hook) |
+| Gemini CLI | supported | unsupported (no prompt-time recall hook) |
 
-Generic stdio MCP config (Windsurf, Cursor, and most others accept this
-shape):
+- **Claude Code (plugin):** the [plugin install](../hosts/claude-code)
+  declares this server in `.claude-plugin/plugin.json`'s `mcpServers`, so
+  `daimon_recall` and its siblings are listed the moment the plugin is
+  installed.
+- **Claude Code (CLI, without the plugin):** `claude mcp add daimon -- daimon mcp serve`.
+- **Codex:** `daimon hooks install codex` writes `[mcp_servers.daimon]` into
+  `~/.codex/config.toml` alongside its `hooks.json` registration.
+  `daimon hooks remove codex` takes only that table back.
+- **Kimi Code:** `daimon hooks install kimi` merges `mcpServers.daimon` into
+  `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`) alongside its
+  `config.toml` hook registration, and its `UserPromptSubmit` command picks
+  up the tool-form hint automatically once that entry exists.
+- **Windsurf:** `daimon hooks install windsurf` prints an `mcpServers`
+  snippet for `~/.codeium/windsurf/mcp_config.json`, the same way it already
+  prints the hooks registration snippet — daimon does not write Cascade's
+  own config files.
+- **Gemini CLI:** the standalone `hook/gemini-hooks.py install` lifecycle
+  manager registers `mcpServers.daimon` in `~/.gemini/settings.json`
+  alongside its two hooks, and removes it on `uninstall`.
+
+Generic stdio MCP config (any other MCP-speaking host):
 
 ```json
 {
@@ -75,7 +103,6 @@ shape):
 If your host launches MCP servers from the project directory you can omit
 `DAIMON_PROJECT_DIR` — the working directory resolves the same way.
 
-Note: on hosts where daimon's hooks already run (Claude Code, Windsurf,
-Codex), the hook briefing is the richer integration — the MCP server is for
-reads on demand and for hosts without hooks. Running both is fine; the tools
-are read-only.
+Note: on hosts where daimon's hooks already run, the hook briefing is the
+richer integration — the MCP server is for reads on demand and for hosts
+without hooks. Running both is fine; the tools are read-only.

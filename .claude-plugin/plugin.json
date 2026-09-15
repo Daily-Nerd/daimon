@@ -17,5 +17,11 @@
     "session",
     "context",
     "hooks"
-  ]
+  ],
+  "mcpServers": {
+    "daimon": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/hook/daimon-mcp-serve.py"]
+    }
+  }
 }

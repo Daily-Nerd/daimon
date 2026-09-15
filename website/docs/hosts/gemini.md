@@ -39,6 +39,14 @@ Install copies both scripts (plus `_daimon_hook_lib.py`) to `~/.gemini/hooks/`
 and registers them in `~/.gemini/settings.json` (user layer). Requires the
 `daimon` CLI on `PATH` (`uv tool install 'daimon-briefing[pretty]'`).
 
+## MCP
+
+`hook/gemini-hooks.py install` also registers the read-only
+[MCP server](../reference/mcp) in `~/.gemini/settings.json`'s
+`mcpServers.daimon`, alongside its two hooks, and removes it on
+`uninstall`. Gemini has no per-prompt recall hook (SessionStart-only, see
+above), so the recall hint has nowhere to render here yet.
+
 ## Teach the agent the protocol
 
 ```sh

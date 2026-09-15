@@ -75,6 +75,20 @@ def log_stdout() -> bool:
     return _flag("DAIMON_LOG_STDOUT")
 
 
+def mcp_tool_available() -> bool:
+    """#1036: true when the host invoking recall already lists the read-only
+    MCP server's tools (declared in .claude-plugin/plugin.json's mcpServers,
+    same manifest as hooks/hooks.json). Set by the plugin-exclusive hook
+    entry itself (hooks/hooks.json passes DAIMON_MCP_TOOL_AVAILABLE=1 to
+    daimon-prompt-recall.py and the claude-code row of daimon-action-recall.py),
+    never inferred here from a host name or process ancestry: the hook that
+    knows its own install path is the one source of truth, and this reads
+    only the flag it set. Off by default, so a manual (non-plugin) install or
+    any other host keeps the shell-command hint until it says otherwise.
+    """
+    return _flag("DAIMON_MCP_TOOL_AVAILABLE")
+
+
 def checkpoint_dir() -> Path:
     raw = _get("DAIMON_CHECKPOINT_DIR")
     if raw:
