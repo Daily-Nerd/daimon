@@ -244,6 +244,10 @@ def run(args) -> dict:
               f"(over {agg['questions_with_forbidden']} cases with forbidden "
               f"material)   Recall@{args.k} (leak-penalized): "
               f"{_fmt(agg['recall_at_5_penalized'])}")
+    # #1038: same numbers, split by question_type — a run-wide forbidden-hit
+    # rate blends a type that can never leak with one that can.
+    for line in _format_by_question_type(agg.get("by_question_type") or {}, args.k):
+        print(line)
     print(f"scored={agg['questions_scored']} abstention={agg['questions_abstention']} "
           f"serialize_calls={total_serialized} cache_hits={cache.hits}")
     print(f"wrote {out}")
@@ -252,6 +256,34 @@ def run(args) -> dict:
 
 def _fmt(v) -> str:
     return "n/a" if v is None else f"{v:.4f}"
+
+
+def _format_by_question_type(by_type: dict, k: int) -> list[str]:
+    """Render the `by_question_type` aggregate as printable lines (#1038).
+
+    Pure and side-effect-free so the table shape is unit-testable without
+    running a question through the harness. A type with no forbidden-material
+    rows shows a dash in the leak columns, never a 0.0 that reads as a clean
+    pass on a dimension that does not apply to that type.
+    """
+    if not by_type:
+        return []
+    lines = ["", "--- by question_type ---"]
+    lines.append(
+        f"{'type':<28} {'n':>5}  {'recall@' + str(k):>10}  {'hit@' + str(k):>8}  "
+        f"{'mrr':>8}  {'tokens':>8}  {'leak_rate':>10}  {'recall@' + str(k) + '(leak)':>16}"
+    )
+    for qtype, m in by_type.items():
+        leak_rate = m.get("forbidden_hit_rate")
+        penalized = m.get("recall_at_5_penalized")
+        leak_col = _fmt(leak_rate) if leak_rate is not None else "-"
+        pen_col = _fmt(penalized) if penalized is not None else "-"
+        lines.append(
+            f"{qtype:<28} {m['count']:>5}  {_fmt(m.get('recall_at_5')):>10}  "
+            f"{_fmt(m.get('hit_at_5')):>8}  {_fmt(m.get('mrr')):>8}  "
+            f"{_fmt(m.get('avg_injected_tokens')):>8}  {leak_col:>10}  {pen_col:>16}"
+        )
+    return lines
 
 
 def build_parser() -> argparse.ArgumentParser:

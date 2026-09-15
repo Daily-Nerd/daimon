@@ -217,3 +217,95 @@ class TestAggregateForbidden:
         agg = metrics.aggregate([], k=5)
         assert agg["questions_with_forbidden"] == 0
         assert agg["forbidden_hit_rate"] is None
+
+
+# ---- #1038: by_question_type breakout ---------------------------------------
+
+
+class TestAggregateByQuestionType:
+    """Every row carries question_type (adapter.py stamps it, run.py keeps it on
+    error rows); the aggregate must split recall/leak metrics on it, each type
+    scored with its OWN denominators — never one number blended across types."""
+
+    def _rows(self):
+        return [
+            # single-session-user: two scored rows, no forbidden material
+            {"question_type": "single-session-user", "recall_at_5": 1.0,
+             "hit_at_5": True, "mrr": 1.0, "injected_tokens": 100,
+             "abstention": False, "forbidden_total": 0, "forbidden_matched": 0,
+             "forbidden_hit": None, "recall_at_5_penalized": 1.0},
+            {"question_type": "single-session-user", "recall_at_5": 0.0,
+             "hit_at_5": False, "mrr": 0.0, "injected_tokens": 50,
+             "abstention": False, "forbidden_total": 0, "forbidden_matched": 0,
+             "forbidden_hit": None, "recall_at_5_penalized": 0.0},
+            # knowledge-update: defines forbidden material, one leak
+            {"question_type": "knowledge-update", "recall_at_5": 1.0,
+             "hit_at_5": True, "mrr": 1.0, "injected_tokens": 10,
+             "abstention": False, "forbidden_total": 2, "forbidden_matched": 0,
+             "forbidden_hit": False, "recall_at_5_penalized": 1.0},
+            {"question_type": "knowledge-update", "recall_at_5": 1.0,
+             "hit_at_5": True, "mrr": 1.0, "injected_tokens": 10,
+             "abstention": False, "forbidden_total": 2, "forbidden_matched": 2,
+             "forbidden_hit": True, "recall_at_5_penalized": 0.0},
+            # a row with no question_type at all -> groups under "unknown"
+            {"recall_at_5": 0.5, "hit_at_5": True, "mrr": 0.5,
+             "injected_tokens": 20, "abstention": False, "forbidden_total": 0,
+             "forbidden_matched": 0, "forbidden_hit": None,
+             "recall_at_5_penalized": 0.5},
+        ]
+
+    def test_splits_recall_metrics_per_type(self):
+        agg = metrics.aggregate(self._rows(), k=5)
+        by_type = agg["by_question_type"]
+        assert set(by_type) == {"single-session-user", "knowledge-update", "unknown"}
+        ssu = by_type["single-session-user"]
+        assert ssu["count"] == 2
+        assert ssu["recall_at_5"] == 0.5
+        assert ssu["hit_at_5"] == 0.5
+        assert ssu["mrr"] == 0.5
+        assert ssu["avg_injected_tokens"] == 75.0
+
+    def test_forbidden_columns_scoped_to_the_type_that_defines_them(self):
+        agg = metrics.aggregate(self._rows(), k=5)
+        by_type = agg["by_question_type"]
+        ku = by_type["knowledge-update"]
+        assert ku["forbidden_hit_rate"] == 0.5
+        assert ku["recall_at_5_penalized"] == 0.5
+
+    def test_type_with_no_forbidden_rows_omits_leak_keys(self):
+        # never a 0.0 that would read as a clean pass — the keys are absent
+        agg = metrics.aggregate(self._rows(), k=5)
+        ssu = agg["by_question_type"]["single-session-user"]
+        assert "forbidden_hit_rate" not in ssu
+        assert "recall_at_5_penalized" not in ssu
+
+    def test_unknown_bucket_for_rows_missing_question_type(self):
+        agg = metrics.aggregate(self._rows(), k=5)
+        unknown = agg["by_question_type"]["unknown"]
+        assert unknown["count"] == 1
+        assert unknown["recall_at_5"] == 0.5
+
+    def test_types_are_sorted(self):
+        agg = metrics.aggregate(self._rows(), k=5)
+        assert list(agg["by_question_type"]) == [
+            "knowledge-update", "single-session-user", "unknown",
+        ]
+
+    def test_error_and_abstention_rows_still_group_but_do_not_score(self):
+        rows = self._rows() + [
+            {"question_type": "single-session-user", "error": "boom",
+             "abstention": False},
+            {"question_type": "single-session-user", "abstention": True,
+             "recall_at_5": None, "hit_at_5": None, "mrr": None,
+             "injected_tokens": 0},
+        ]
+        agg = metrics.aggregate(rows, k=5)
+        ssu = agg["by_question_type"]["single-session-user"]
+        # count reflects every row of the type, error/abstention included
+        assert ssu["count"] == 4
+        # but the recall mean is still over the two ORIGINAL scored rows only
+        assert ssu["recall_at_5"] == 0.5
+
+    def test_empty_run_has_no_types(self):
+        agg = metrics.aggregate([], k=5)
+        assert agg["by_question_type"] == {}

@@ -55,6 +55,19 @@ Abstention questions (`*_abs`, no evidence session) are **excluded** from recall
 scoring — there is nothing to retrieve — and counted separately, never scored as
 zero.
 
+### Per-question-type breakout
+
+The top-level numbers above are also split by `question_type` (LongMemEval's
+own label on each question), under `metrics.by_question_type` in the result
+JSON and as a table printed under the run summary. Each type carries its own
+question count, Recall@k, Hit@k, MRR, and average injected tokens; a type that
+has cases defining forbidden material also carries its own forbidden-hit rate
+and leak-penalized recall, scored with that type's own denominators — never
+blended into a run-wide rate. A type with no such cases shows a dash in the
+leak columns, not a `0.0` that would read as a clean pass. Questions with no
+recorded `question_type` group under `"unknown"`. This does not change the
+top-level numbers or reporting policy; it is a finer read of the same run.
+
 ### Forbidden hits — material that must NOT surface
 
 Recall asks whether the right memory surfaces. A case may also carry an optional

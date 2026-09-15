@@ -83,6 +83,48 @@ def test_stamp_served_models_absent_records_nothing(tmp_path):
     assert "mixed_models" not in agg
 
 
+# ---- #1038: per-question-type report table --------------------------------
+#
+# The aggregate splits recall/leak metrics by question_type (metrics.py); the
+# runner must render that split under the existing summary. Pure formatter,
+# no LLM: extracted so the table shape is unit-testable without running main().
+
+
+def test_format_by_question_type_renders_a_row_per_type():
+    by_type = {
+        "knowledge-update": {
+            "count": 2, "recall_at_5": 0.5, "hit_at_5": 0.5, "mrr": 0.5,
+            "avg_injected_tokens": 10.0, "forbidden_hit_rate": 0.5,
+            "recall_at_5_penalized": 0.25,
+        },
+        "single-session-user": {
+            "count": 3, "recall_at_5": 1.0, "hit_at_5": 1.0, "mrr": 1.0,
+            "avg_injected_tokens": 75.0,
+        },
+    }
+    lines = "\n".join(bench_run._format_by_question_type(by_type, k=5))
+    assert "knowledge-update" in lines
+    assert "single-session-user" in lines
+    assert "0.5000" in lines
+    assert "0.2500" in lines
+
+
+def test_format_by_question_type_shows_dash_when_no_forbidden_rows():
+    by_type = {
+        "single-session-user": {
+            "count": 3, "recall_at_5": 1.0, "hit_at_5": 1.0, "mrr": 1.0,
+            "avg_injected_tokens": 75.0,
+        },
+    }
+    lines = "\n".join(bench_run._format_by_question_type(by_type, k=5))
+    assert "0.0000" not in lines  # never a fake clean-pass zero
+    assert " - " in lines or lines.rstrip().endswith("-")
+
+
+def test_format_by_question_type_empty_returns_no_lines():
+    assert bench_run._format_by_question_type({}, k=5) == []
+
+
 def test_committed_baseline_is_annotated_and_metrics_untouched():
     # #458 acceptance: the 5-question baseline's `model` is a gateway alias
     # recorded while fallback chains were live — the config block must SAY so
