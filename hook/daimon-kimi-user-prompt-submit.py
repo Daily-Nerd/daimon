@@ -122,7 +122,7 @@ def _deliver(cli, cwd: str, session: str) -> None:
         print(proc.stdout.strip())
 
 
-def _recall(cli, cwd: str, session: str, prompt: str) -> None:
+def _recall(cli, cwd: str, session: str, prompt: str, *, mcp_tool: bool) -> None:
     # Slash commands are host directives, not work statements — never match.
     if not prompt.strip() or prompt.lstrip().startswith("/"):
         return
@@ -131,18 +131,25 @@ def _recall(cli, cwd: str, session: str, prompt: str) -> None:
         cmd += ["--project", cwd]
     if session:
         cmd += ["--session", session]
+    env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1") if mcp_tool
+          else lib.project_env(cwd))
     try:
         proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                              timeout=RECALL_TIMEOUT, env=lib.project_env(cwd))
+                              timeout=RECALL_TIMEOUT, env=env)
     except (subprocess.TimeoutExpired, OSError):
         return
     if proc.returncode == 0 and proc.stdout.strip():
         print(proc.stdout.strip())
 
 
-def main() -> int:
+def main(argv=None) -> int:
     if lib is None or lib.disabled():
         return 0
+    argv = sys.argv[1:] if argv is None else argv
+    # #1036 parity: an argv flag, written by `daimon hooks install kimi` ONLY
+    # when it also registered the MCP entry in the same install — never
+    # inferred here from host name or ancestry.
+    mcp_tool = "--mcp-tool" in argv
     # Print mode has no session worth briefing and the host feeds hook output
     # straight into the one-shot answer (#999). Everything after this point
     # prints, so the guard runs before any of it.
@@ -178,7 +185,7 @@ def main() -> int:
     if (lib._config_get("DAIMON_LIVE_DELIVERY") or "").strip() in (
             "1", "true", "yes", "on"):
         _deliver(cli, cwd, session)
-    _recall(cli, cwd, session, prompt)
+    _recall(cli, cwd, session, prompt, mcp_tool=mcp_tool)
     return 0
 
 

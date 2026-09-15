@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "DAIMON_MCP_TOOL_AVAILABLE=1 python3 \"${CLAUDE_PLUGIN_ROOT}\"/hook/daimon-prompt-recall.py",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hook/daimon-prompt-recall.py --mcp-tool",
             "timeout": 5
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "DAIMON_MCP_TOOL_AVAILABLE=1 python3 \"${CLAUDE_PLUGIN_ROOT}\"/hook/daimon-action-recall.py claude-code",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hook/daimon-action-recall.py claude-code --mcp-tool",
             "timeout": 5
           }
         ]

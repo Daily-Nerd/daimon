@@ -75,7 +75,12 @@ def _command(data: dict) -> str:
 def main(argv) -> int:
     if lib is None or lib.disabled():
         return 0
-    host = argv[1] if len(argv) > 1 else ""
+    # argv[0] is the script path; the host is the first token that is not a
+    # flag, so `--mcp-tool` can precede or follow it without changing which
+    # positional wins.
+    rest = argv[1:]
+    mcp_tool = "--mcp-tool" in rest
+    host = next((a for a in rest if not a.startswith("--")), "")
     # Before stdin, before the flag, before any spawn: an unsupported or
     # unknown host costs one interpreter start and nothing else.
     if CAPS.get(host, "unsupported") == "unsupported":
@@ -107,10 +112,15 @@ def main(argv) -> int:
         cmd += ["--project", cwd]
     if mode == "record-only":
         cmd.append("--record-only")
+    # #1036 parity: same accessor recall-inject uses, same reasoning — an
+    # argv flag on THIS shim exports the env var into the CLI's own env
+    # rather than relying on a shell-interpreted prefix in the manifest.
+    env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1") if mcp_tool
+          else lib.project_env(cwd))
     try:
         proc = subprocess.run(
             cmd, input=command, capture_output=True, text=True,
-            timeout=TIMEOUT, env=lib.project_env(cwd),
+            timeout=TIMEOUT, env=env,
         )
     except (subprocess.TimeoutExpired, OSError):
         return 0

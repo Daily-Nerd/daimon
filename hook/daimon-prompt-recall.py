@@ -71,9 +71,17 @@ def _deliver(cli, cwd: str, session: str) -> None:
         print(proc.stdout.strip())
 
 
-def main() -> int:
+def main(argv=None) -> int:
     if lib is None or lib.disabled():
         return 0
+    argv = sys.argv[1:] if argv is None else argv
+    # #1036 parity: an argv flag, not a shell env-var prefix on the manifest
+    # command — a host that execs argv without a shell would treat `VAR=1`
+    # as the program name and this hook would never start. The plugin's own
+    # manifest is the one source of truth for whether it also registered the
+    # MCP server (hooks/hooks.json passes this exactly where it does), never
+    # inferred here from host name or ancestry.
+    mcp_tool = "--mcp-tool" in argv
     started = time.monotonic()
     data = lib.payload()
     prompt = str(data.get("prompt") or "")
@@ -95,10 +103,12 @@ def main() -> int:
         cmd += ["--project", cwd]
     if session:
         cmd += ["--session", session]
+    recall_env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1")
+                 if mcp_tool else lib.project_env(cwd))
     try:
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
-            timeout=_remaining(started), env=lib.project_env(cwd),
+            timeout=_remaining(started), env=recall_env,
         )
     except (subprocess.TimeoutExpired, OSError):
         return 0

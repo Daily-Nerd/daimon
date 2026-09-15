@@ -412,6 +412,68 @@ def test_recall_runs_on_a_later_prompt_and_not_on_a_slash_command(home):
     assert capture.read_text(encoding="utf-8").count("recall-inject") == before
 
 
+def _fake_cli_env_capture(home: Path, var: str):
+    """A `daimon` on PATH that appends one var's value (or `<unset>`) per
+    invocation to a file, so a test can prove what env a hook's subprocess
+    call actually carried rather than only what argv it built."""
+    bin_dir = home / "fakebin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    capture = home / "env-capture.txt"
+    script = bin_dir / "daimon"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "${{{var}:-<unset>}}" >> "{capture}"\n'
+        "exit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    return bin_dir, capture
+
+
+def _run_argv(script: Path, argv, payload, home, extra_env=None):
+    env = {
+        **os.environ,
+        "PATH": f"{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(home),
+    }
+    env.pop("KIMI_CODE_HOME", None)
+    if extra_env:
+        env.update(extra_env)
+    stdin = json.dumps(payload) if isinstance(payload, dict) else (payload or "")
+    return subprocess.run([sys.executable, str(script), *argv], input=stdin,
+                          capture_output=True, text=True, env=env, timeout=30)
+
+
+def test_mcp_tool_flag_forwards_the_env_var_into_recall_inject(home):
+    # #1036 parity: an argv flag on this hook, exported into recall-inject's
+    # own env — same mechanism and same reasoning as the Claude Code prompt
+    # hook, kept independently testable because Kimi flattens `prompt`
+    # differently and has its own first-prompt/briefing branch above recall.
+    bin_dir, capture = _fake_cli_env_capture(home, "DAIMON_MCP_TOOL_AVAILABLE")
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    base = {"hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+            "cwd": PROJECT}
+    _run_argv(PROMPT_HOOK, ["--mcp-tool"],
+             {**base, "prompt": [{"type": "text", "text": "hi"}]}, home, env)
+    _run_argv(PROMPT_HOOK, ["--mcp-tool"],
+             {**base, "prompt": [{"type": "text", "text": "what about the parser"}]},
+             home, env)
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert "1" in lines
+
+
+def test_without_the_flag_recall_inject_sees_no_mcp_tool_var(home):
+    bin_dir, capture = _fake_cli_env_capture(home, "DAIMON_MCP_TOOL_AVAILABLE")
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    base = {"hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+            "cwd": PROJECT}
+    _run(PROMPT_HOOK, {**base, "prompt": [{"type": "text", "text": "hi"}]},
+         home, env)
+    _run(PROMPT_HOOK,
+         {**base, "prompt": [{"type": "text", "text": "what about the parser"}]},
+         home, env)
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert lines and all(ln == "<unset>" for ln in lines)
+
+
 # ---- print mode: no briefing, no recall, no delivery (#999) ----
 #
 # `kimi -p` fires this event too, and the host injects hook stdout into the
