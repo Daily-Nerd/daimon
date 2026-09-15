@@ -32,7 +32,10 @@ def _load(path, name):
 
 
 def _hooks(rel):
-    return {h["event"]: h for h in _load(REPO / rel, f"m_{abs(hash(rel))}").HOOKS}
+    # Keyed by SCRIPT, not by event: #1031 registered a second hook under
+    # PreToolUse, and an event-keyed dict would quietly drop one of the two —
+    # taking it out of the parity compare below without failing anything.
+    return {h["script"]: h for h in _load(REPO / rel, f"m_{abs(hash(rel))}").HOOKS}
 
 
 @pytest.mark.parametrize("rel", [
@@ -40,8 +43,9 @@ def _hooks(rel):
     "plugin/daimon_briefing/codex_hooks.py",
 ])
 def test_session_end_is_registered_with_an_explicit_timeout(rel):
-    entry = _hooks(rel).get("SessionEnd")
+    entry = _hooks(rel).get("daimon-codex-session-end.py")
     assert entry is not None, f"{rel} does not register SessionEnd"
+    assert entry["event"] == "SessionEnd"
     cmd = entry["entry"]["hooks"][0]
     # Codex clamps above 3 with a user-visible warning, and omitting the field
     # silently yields 1, which a cold interpreter start can exceed.
@@ -59,7 +63,8 @@ def test_both_hook_manifests_agree():
 def test_stop_is_still_registered():
     # SessionEnd cannot cover ungraceful exit. Losing Stop would trade a
     # bounded worst case for total loss on a crash.
-    assert "Stop" in _hooks("hook/codex-hooks.py")
+    assert _hooks("hook/codex-hooks.py")["daimon-codex-stop.py"]["event"] \
+        == "Stop"
 
 
 def test_the_new_script_is_in_the_sync_manifest():

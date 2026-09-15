@@ -48,6 +48,11 @@ SYNC_PAIRS = (
      "plugin/daimon_briefing/_hooks/daimon-kimi-session-end.py"),
     ("hook/daimon-kimi-stop.py",
      "plugin/daimon_briefing/_hooks/daimon-kimi-stop.py"),
+    # #1031: the action-recall shim. hook/ is canonical (the Claude Code
+    # plugin runs it from there through ${CLAUDE_PLUGIN_ROOT}); the packaged
+    # copy is what `daimon hooks install codex` writes into ~/.codex/hooks.
+    ("hook/daimon-action-recall.py",
+     "plugin/daimon_briefing/_hooks/daimon-action-recall.py"),
     ("hook/_daimon_hook_lib.py", "plugin/daimon_briefing/_hooks/_daimon_hook_lib.py"),
     # #1000: the plugin-root skills/ tree is discoverable only from a source
     # checkout — the wheel ships daimon_briefing/ alone. `daimon skill install`

@@ -42,6 +42,8 @@ NOT_AGENT_FACING = {
     "serialize": "internal: the session-end child that writes the checkpoint",
     "write-checkpoint": "internal: the write seam serialize calls",
     "recall-inject": "internal: the per-prompt recall hook",
+    "action-recall": ("internal: the pre-shell-action recall hook (#1031); "
+                      "agents receive its output, never run it"),
     "request-inject": ("internal: the per-prompt live-delivery hook (#756); "
                        "agents receive its output, never run it"),
     "bucket": (

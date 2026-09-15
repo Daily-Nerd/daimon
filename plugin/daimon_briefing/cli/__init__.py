@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import time
 import traceback
 import uuid
@@ -1641,6 +1642,10 @@ def _cmd_log(args) -> int:
 _SEEN_PRUNE_SECONDS = 7 * 86400  # cooldown files for week-old sessions are dead
 
 _INJECT_BUDGET = 2   # slots per prompt (#125 noise budget)
+# #1031: slots per SHELL ACTION. One, not two, and not for symmetry — a prompt
+# arrives once per turn and an action several times within one, so the same
+# budget would multiply the noise by however many commands a turn runs.
+_ACTION_BUDGET = 1
 _INJECT_FETCH = 8    # candidates asked of `suggest`, i.e. budget + headroom:
                      # content dedup below must be able to PROMOTE the next
                      # distinct candidate, and it can only promote from
@@ -1683,14 +1688,20 @@ def _inject_age_bucket(age_days: float | None) -> str:
     return ">14d"
 
 
-def _seen_path(session: str):
+def _seen_path(session: str, *, suffix: str = "json"):
     """Cooldown-state file for one session, or None when the id is unusable
     (empty, or path-hostile — the id becomes a filename). Origin ids are not
     all uuids: a Codex session id is `rollout-<timestamp>-<hex>`, which is a
-    fine filename and must keep working."""
+    fine filename and must keep working.
+
+    `suffix` names the SURFACE, and the default is the prompt surface's, which
+    predates every other one (#1031). Two surfaces sharing one file would
+    share a read-modify-write across two processes that fire on different
+    events, and the loser of that race silently discards the winner's whole
+    cooldown — not one line, all of it."""
     if not session or "/" in session or "\\" in session or ".." in session:
         return None
-    return config.recall_seen_dir() / f"{session}.json"
+    return config.recall_seen_dir() / f"{session}.{suffix}"
 
 
 # Sentinel for "argument not supplied", where None is itself a meaningful
@@ -1791,6 +1802,48 @@ def _save_seen(path, origin_counts: dict, content_keys: set) -> None:
                     p.unlink()
             except OSError:
                 pass
+    except OSError:
+        pass  # cooldown is best-effort; losing it means one extra suggestion
+
+
+def _save_seen_atomic(path, origin_counts: dict, content_keys: set) -> None:
+    """Same state as `_save_seen`, written temp-then-rename (#1031).
+
+    The action surface fires before a SHELL ACTION, and a host runs several of
+    those at once. Two concurrent writers to one file can interleave a partial
+    write with a read, and `_load_seen` reads a truncated file as empty state,
+    which loses the whole session's cooldown rather than one line of it.
+    `os.replace` is atomic on POSIX and on Windows, so a reader sees the old
+    file or the new one and never half of either.
+
+    What this does NOT fix, deliberately: a LOST UPDATE. Two actions that read
+    the same state and both write will keep only the second, and the cost of
+    that is at most one repeated suggestion. Paying for a lock in front of
+    every shell action to save one line is the wrong trade.
+
+    No opportunistic prune here, unlike `_save_seen`: the prune walks the whole
+    directory and unlinks by mtime, and this writer runs concurrently with
+    itself. The prompt surface still sweeps the shared directory.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = json.dumps(
+            {"origins": {s: origin_counts[s] for s in sorted(origin_counts)},
+             "content_keys": sorted(content_keys)})
+        # In the SAME directory: os.replace is only atomic within a filesystem,
+        # and a temp dir elsewhere can be a different one.
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent),
+                                   prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except OSError:
         pass  # cooldown is best-effort; losing it means one extra suggestion
 
@@ -1923,6 +1976,73 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
             f"More: daimon recall \"{more}\"")
 
 
+def _choose_recall_rows(matches, seen_keys: set, now: float, *, budget: int,
+                        usage_prefix: str) -> tuple[list[dict], set]:
+    """Rows from `suggest` that actually earn a slot, plus their content keys.
+
+    ONE definition, shared by every injection surface (#1031 added the second).
+    Two copies of this loop would drift the moment either gate changed, and the
+    drift is invisible: both surfaces stay green while one of them quietly
+    enforces last month's cooldown.
+
+    #451: an origin id is not a content identity. The same claim carried by two
+    checkpoints (sibling-id copies — the read-side twin of the value-keyed
+    forget arc, #424/#435) passes the origin cooldown and re-injects as if it
+    were new: 15.5% of measured injections repeated text the session had
+    already seen, every repeated group cross-origin. So the budget is spent on
+    distinct content keys, within one injection AND across the session, and a
+    suppressed candidate yields its slot to the next distinct one instead of
+    shrinking the injection.
+
+    `usage_prefix` names the SURFACE in every counter this writes, so the rates
+    stay separable: the action surface fires per shell action and the prompt
+    surface per prompt, and pooling them would make either denominator a
+    fiction.
+    """
+    chosen: list[dict] = []
+    chosen_keys: set[str] = set()
+    suppressed = False
+    age_gated = False
+    for m in matches:
+        key = normalize.content_key(m.get("text") or "")
+        if key in seen_keys or key in chosen_keys:
+            suppressed = True
+            continue
+        # #452: stale items must show a stronger match. Age comes from the
+        # row's first_seen through the same parser scoring trusts
+        # (store._created_epoch) with the same tolerance philosophy:
+        # missing, malformed, or future stamps mean age UNKNOWN, and
+        # unknown is never gated — a missing stamp is not evidence of
+        # staleness (fail toward suggesting, the #450 direction). Like the
+        # #451 dedup, a gated candidate is a `continue`, so its slot
+        # promotes the next one.
+        # Age is computed ONCE and shared with the stats bucket below:
+        # if the gate and the #452 re-measurement ever read different
+        # clocks, the counters stop describing the gate that produced
+        # them — the same duplication this predicate exists to remove.
+        age_days = _row_age_days(m, now)
+        if age_gate_blocks(m, now, age_days=age_days):
+            age_gated = True
+            continue
+        chosen_keys.add(key)
+        chosen.append(m)
+        # #452 re-measurement: every CHOSEN row records its age bucket, so
+        # the before/after precision read by age stays a stats query.
+        _note_usage(f"{usage_prefix}:age:{_inject_age_bucket(age_days)}")
+        if len(chosen) >= budget:
+            break
+    if suppressed:
+        # Counted apart from the surface's own key, which still counts every
+        # fire: the issue's claim is a RATE, so the pair has to be readable
+        # from `daimon stats` the way #450's machine skip is.
+        _note_usage(f"{usage_prefix}:dedup-content")
+    if age_gated:
+        # Same convention as dedup-content above: once per injection run
+        # where >=1 candidate was age-gated (#452) — a rate, not a tally.
+        _note_usage(f"{usage_prefix}:age-gate")
+    return chosen, chosen_keys
+
+
 def _cmd_recall_inject(args) -> int:
     """Print 0-2 'you worked on this before' lines for the prompt on stdin, or
     nothing. rc 0 ALWAYS — this sits on the user's per-prompt critical path and
@@ -1967,56 +2087,10 @@ def _cmd_recall_inject(args) -> int:
                                  exclude_sessions=(
                                      exclude | cooled_origins(origin_counts)),
                                  limit=_INJECT_FETCH)
-        # #451: an origin id is not a content identity. The same claim carried
-        # by two checkpoints (sibling-id copies — the read-side twin of the
-        # value-keyed forget arc, #424/#435) passes the origin cooldown and
-        # re-injects as if it were new: 15.5% of measured injections repeated
-        # text the session had already seen, every repeated group cross-origin.
-        # So the budget is spent on distinct content keys, within one injection
-        # AND across the session, and a suppressed candidate yields its slot to
-        # the next distinct one instead of shrinking the injection.
         now = time.time()
-        chosen: list[dict] = []
-        chosen_keys: set[str] = set()
-        suppressed = False
-        age_gated = False
-        for m in matches:
-            key = normalize.content_key(m.get("text") or "")
-            if key in seen_keys or key in chosen_keys:
-                suppressed = True
-                continue
-            # #452: stale items must show a stronger match. Age comes from the
-            # row's first_seen through the same parser scoring trusts
-            # (store._created_epoch) with the same tolerance philosophy:
-            # missing, malformed, or future stamps mean age UNKNOWN, and
-            # unknown is never gated — a missing stamp is not evidence of
-            # staleness (fail toward suggesting, the #450 direction). Like the
-            # #451 dedup, a gated candidate is a `continue`, so its slot
-            # promotes the next one.
-            # Age is computed ONCE and shared with the stats bucket below:
-            # if the gate and the #452 re-measurement ever read different
-            # clocks, the counters stop describing the gate that produced
-            # them — the same duplication this predicate exists to remove.
-            age_days = _row_age_days(m, now)
-            if age_gate_blocks(m, now, age_days=age_days):
-                age_gated = True
-                continue
-            chosen_keys.add(key)
-            chosen.append(m)
-            # #452 re-measurement: every CHOSEN row records its age bucket, so
-            # the before/after precision read by age stays a stats query.
-            _note_usage(f"recall-inject:age:{_inject_age_bucket(age_days)}")
-            if len(chosen) >= _INJECT_BUDGET:
-                break
-        if suppressed:
-            # Counted apart from `recall-inject`, which still counts every fire:
-            # the issue's claim is a RATE, so the pair has to be readable from
-            # `daimon stats` the way #450's machine skip is.
-            _note_usage("recall-inject:dedup-content")
-        if age_gated:
-            # Same convention as dedup-content above: once per injection run
-            # where >=1 candidate was age-gated (#452) — a rate, not a tally.
-            _note_usage("recall-inject:age-gate")
+        chosen, chosen_keys = _choose_recall_rows(
+            matches, seen_keys, now, budget=_INJECT_BUDGET,
+            usage_prefix="recall-inject")
         if not chosen:
             return 0
         terms = recall.salient_terms(prompt)
@@ -2047,6 +2121,161 @@ def _cmd_recall_inject(args) -> int:
                 sid = str(m["session_id"])
                 spent[sid] = spent.get(sid, 0) + 1
             _save_seen(seen_file, spent, seen_keys | chosen_keys)
+    except Exception:  # noqa: BLE001 — see docstring: fail-open, always rc 0
+        pass
+    return 0
+
+
+# ---- #1031: action-keyed recall, in front of a shell action ----------------
+
+# The verbs whose commands are worth a query. Short and literal on purpose: a
+# classifier here would be a second ranking axis in front of every shell
+# action, and the measured claim is narrower than that — the command string of
+# a CLUSTER or REPOSITORY-CHANGING action carries enough signal on its own.
+# Everything else (`ls`, `cat`, a test run) is silence for free.
+_ACTION_VERBS = frozenset({
+    "kubectl", "helm", "argocd", "terraform", "gh",
+})
+
+# The same list, for verbs whose first token is too broad to take whole. `git`
+# is most of what anyone types; only these two reach outside the working copy.
+_ACTION_VERB_PAIRS = frozenset({"git push", "git merge"})
+
+# What a heredoc opens with, in every spelling (`<<EOF`, `<<'EOF'`, `<<-EOF`).
+# The body after it is the payload the action WRITES, not the action itself,
+# and querying on it asks "have I seen this manifest before" instead of "have
+# I learned anything about doing this".
+_HEREDOC_MARK = "<<"
+
+
+def _is_env_assignment(token: str) -> bool:
+    """`FOO=bar` — a shell env prefix, not the verb."""
+    name, sep, _ = token.partition("=")
+    return bool(sep) and bool(name) and (name[0].isalpha() or name[0] == "_") \
+        and all(ch.isalnum() or ch == "_" for ch in name)
+
+
+def _action_verb(command: str):
+    """The allowlisted verb this command leads with, or None.
+
+    Leading `FOO=bar` assignments are stepped over; nothing else is. No shell
+    parsing, no `sudo` unwrapping, no pipeline splitting: this decides whether
+    to spend a query, and every bit of cleverness here is a way to spend one on
+    a command nobody meant.
+    """
+    tokens = command.split()
+    index = 0
+    while index < len(tokens) and _is_env_assignment(tokens[index]):
+        index += 1
+    if index >= len(tokens):
+        return None
+    head = tokens[index]
+    if head in _ACTION_VERBS:
+        return head
+    pair = " ".join(tokens[index:index + 2])
+    return pair if pair in _ACTION_VERB_PAIRS else None
+
+
+def _action_query_text(command: str) -> str:
+    """The part of a command worth querying on: everything before the first
+    heredoc marker."""
+    cut = command.find(_HEREDOC_MARK)
+    return command if cut < 0 else command[:cut]
+
+
+def _cmd_action_recall(args) -> int:
+    """Print 0-1 'you worked on this before' lines for the shell command on
+    stdin, or nothing.
+
+    rc 0 ALWAYS, same fail-open posture as `recall-inject` and for a sharper
+    reason: this runs in front of an action the agent is about to take, and a
+    recall that failed loudly would be a recall that blocked work.
+
+    It is a SEPARATE process from the pre-action check on purpose. That hook is
+    the only one that can deny, its stdout must be exactly one JSON object, and
+    a fault here between its decision and its write would drop the deny in a
+    way byte-identical to a clean allow. Separate processes make that
+    structural rather than tested.
+    """
+    _note_usage("action-recall")
+    try:
+        command = sys.stdin.read()
+        # The allowlist runs BEFORE anything else, including the session check:
+        # most shell actions are not on it, and those must cost one usage line
+        # and no index read at all.
+        if _action_verb(command) is None:
+            # Counted apart from `action-recall`, which still counts every
+            # fire: the flip condition is a fire rate per 100 shell actions,
+            # and a denominator that only counted the queries it ran would
+            # make that rate uninterpretable.
+            _note_usage("action-recall:skip-verb")
+            return 0
+        session = str(args.session or "")
+        # The session id keys the cooldown. Without one, every action in a
+        # session would repeat the same line, so silence is the honest answer
+        # rather than a suggestion that arrives once per command.
+        if not session:
+            return 0
+        query = _action_query_text(command)
+        project = _resolve_project(args.project)
+        # Same exclusion as the prompt surface: whatever the SessionStart
+        # briefing already carried is not news (#784 — that is ONE checkpoint,
+        # chosen by the same route the injection hook reads).
+        exclude = set()
+        briefed = store.read_latest_body(
+            project_dir=project,
+            route=briefing.injection_read_route(project),
+            admit=store.Admit.ANY)
+        sid = (briefed or {}).get("session_id")
+        if sid:
+            exclude.add(str(sid))
+        # Its OWN cooldown file, and the prompt surface's read-only. A claim
+        # this session was already told at prompt time is not worth repeating
+        # before the action; a claim this surface delivered is not worth
+        # repeating either. Writing the prompt surface's file from here would
+        # put two processes on different events into one read-modify-write.
+        seen_file = _seen_path(session, suffix="action")
+        origin_counts, own_keys = (_load_seen(seen_file) if seen_file
+                                   else ({}, set()))
+        prompt_file = _seen_path(session)
+        prompt_keys = (_load_seen(prompt_file)[1] if prompt_file else set())
+        matches = recall.suggest(query, project_dir=project,
+                                 current_session=session,
+                                 exclude_sessions=(
+                                     exclude | cooled_origins(origin_counts)),
+                                 limit=_INJECT_FETCH)
+        now = time.time()
+        chosen, chosen_keys = _choose_recall_rows(
+            matches, own_keys | prompt_keys, now, budget=_ACTION_BUDGET,
+            usage_prefix="action-recall")
+        if not chosen:
+            _note_usage("action-recall:no-match")
+            return 0
+        terms = recall.salient_terms(query)
+        row = chosen[0]
+        # One slot, and the only slot is the lead, so it renders at the lead
+        # width (#1030). Width is a property of the slot; nothing about an
+        # action buys extra room.
+        rendered, truncated = _fit_item_text(row["text"], _LEAD_WIDTH)
+        recall_telemetry.record(
+            [{**row, "rendered_chars": len(rendered), "truncated": truncated}],
+            query_terms=terms,
+            surface="action-recall",
+            now=datetime.fromtimestamp(now, tz=timezone.utc),
+        )
+        # The ladder's middle rung: the ledger row is written either way, so a
+        # record-only soak measures exactly what delivery would have measured.
+        if not args.record_only:
+            print(_suggest_line(row, terms, now,
+                                own_slug=store.project_slug(project),
+                                width=_LEAD_WIDTH))
+        if seen_file:
+            spent = dict(origin_counts)
+            spent[str(row["session_id"])] = \
+                spent.get(str(row["session_id"]), 0) + 1
+            # Own keys only. The prompt surface's keys were read for
+            # suppression and are not this file's to record.
+            _save_seen_atomic(seen_file, spent, own_keys | chosen_keys)
     except Exception:  # noqa: BLE001 — see docstring: fail-open, always rc 0
         pass
     return 0
@@ -3594,6 +3823,7 @@ _HOOK_HOSTS: dict[str, _HookHostSpec] = {
     "codex": {
         "files": ("daimon-codex-session-start.py", "daimon-codex-stop.py",
                   "daimon-codex-session-end.py", "daimon-codex-pre-action.py",
+                  "daimon-action-recall.py",
                   "_daimon_hook_lib.py", "checks_runtime.py",
                   "checks_host.py"),
         "events": ("SessionStart", "Stop", "SessionEnd", "PreToolUse"),
@@ -4208,6 +4438,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_inject.add_argument("--session", default=None,
                           help="current session id (excluded from matches; keys the cooldown)")
     p_inject.set_defaults(func=_cmd_recall_inject)
+
+    # #1031: the PreToolUse backend, top-level beside `recall-inject` for the
+    # same reason — it is a hook backend, and the command-catalogue guard
+    # (#650) only partitions the TOP-LEVEL surface.
+    p_action = sub.add_parser(
+        "action-recall",
+        help="action-keyed recall backend for the PreToolUse hook (#1031): "
+             "shell command on stdin, prints 0-1 prior-work lines, rc 0 always",
+    )
+    p_action.add_argument("--project", default=None,
+                          help="project dir for scoping (defaults to cwd detection)")
+    p_action.add_argument("--session", default=None,
+                          help="current session id (excluded from matches; keys the cooldown)")
+    p_action.add_argument("--record-only", action="store_true",
+                          help="write the delivery-ledger row and print nothing "
+                               "(the soak rung of the per-host ladder)")
+    p_action.set_defaults(func=_cmd_action_recall)
 
     # #756: the second UserPromptSubmit backend, top-level beside
     # `recall-inject` rather than under `request` — it is a hook backend, not
