@@ -100,6 +100,14 @@ custodia las acciones de shell:
   nunca coinciden: los comandos slash (directivas del host) y los bloques
   emitidos por el host — notificaciones de tareas en segundo plano, mensajes
   de agentes o compañeros de equipo, salida de comandos.
+  La instalación como plugin también declara el [servidor MCP de solo
+  lectura](../reference/mcp) en `mcpServers`, así que este puntero nombra la
+  herramienta `daimon_recall` en lugar del comando de shell
+  `daimon recall "..."` — el propio hook del plugin fija
+  `DAIMON_MCP_TOOL_AVAILABLE=1` porque es la única vía de instalación que
+  garantiza también registrar esa herramienta. La instalación manual de
+  abajo no fija este flag y mantiene la forma de comando de shell salvo que
+  registres el servidor MCP vos mismo.
 
 - **`daimon-pre-action.py`** — hook `PreToolUse`, matcher `Bash`. **Este es el
   primer hook de daimon que puede hacer fallar una acción del anfitrión.**

@@ -96,6 +96,13 @@ close the capture -> inject loop; the fourth guards shell actions:
   suggestion. Prompts that are not a person asking for work never match:
   slash commands (host directives) and host-emitted machine blocks —
   background-task notifications, teammate/agent messages, command output.
+  The plugin install also declares the read-only [MCP server](../reference/mcp)
+  in `mcpServers`, so this pointer names the `daimon_recall` tool instead of
+  the `daimon recall "..."` shell command — the plugin's own hook entry sets
+  `DAIMON_MCP_TOOL_AVAILABLE=1` because it is the one install path guaranteed
+  to also register that tool. The manual install below does not set this
+  flag and keeps the shell-command form unless you register the MCP server
+  yourself.
 
 - **`daimon-pre-action.py`** — `PreToolUse` hook, matcher `Bash`. **This is
   the first daimon hook that can fail a host action.** Before a shell command

@@ -53,7 +53,14 @@ El servidor hereda la disciplina entre proyectos de daimon:
 
 ## Registrarlo en un host
 
-Claude Code (CLI):
+Claude Code (plugin): ya está registrado. La [instalación como
+plugin](../hosts/claude-code) declara este servidor en `mcpServers` dentro de
+`.claude-plugin/plugin.json`, así que `daimon_recall` y sus hermanas quedan
+listadas en el momento en que se instala el plugin, sin nada que ejecutar a
+mano — y el puntero de recall por prompt nombra la herramienta en lugar del
+comando de shell `daimon recall "..."` en cuanto eso ocurre.
+
+Claude Code (CLI, sin el plugin):
 
 ```bash
 claude mcp add daimon -- daimon mcp serve
