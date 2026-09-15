@@ -331,14 +331,29 @@ def _core():
     return _module("plugin/daimon_briefing/checks_host.py", "_core_for_reg")
 
 
+def _pre_action_groups(cfg):
+    """The PreToolUse groups registering THIS hook.
+
+    Selected by script rather than taken as the whole event: #1031 put a
+    second, observing hook under the same event, and an index would silently
+    start asserting about that one instead.
+    """
+    return [g for g in cfg["PreToolUse"]
+            if any("daimon-pre-action.py" in h.get("command", "")
+                   for h in g["hooks"])]
+
+
 def test_the_plugin_registers_the_hook_on_shell_actions_only():
     """The first `matcher` in this manifest. Without it the hook would fire
     before every tool call in the session, including the reads and edits the
     spec puts out of scope, and pay a manifest read for each."""
     cfg = json.loads((REPO / "hooks" / "hooks.json").read_text(
         encoding="utf-8"))["hooks"]
-    groups = cfg["PreToolUse"]
+    groups = _pre_action_groups(cfg)
     assert len(groups) == 1
+    # The deny path runs before the observing one, so it is also FIRST in the
+    # manifest a person reads.
+    assert cfg["PreToolUse"][0] is groups[0]
     assert groups[0]["matcher"] == "Bash"
     hook = groups[0]["hooks"][0]
     assert hook["type"] == "command"
@@ -361,14 +376,17 @@ def test_the_registered_matcher_and_timeout_come_from_the_profile_row():
     cfg = json.loads((REPO / "hooks" / "hooks.json").read_text(
         encoding="utf-8"))["hooks"]
     cc = core.PROFILES["claude-code"]
-    assert cfg[cc.event][0]["matcher"] == cc.matcher
-    assert cfg[cc.event][0]["hooks"][0]["timeout"] == cc.install_timeout
+    group = _pre_action_groups(cfg)[0]
+    assert group["matcher"] == cc.matcher
+    assert group["hooks"][0]["timeout"] == cc.install_timeout
 
     cx = core.PROFILES["codex"]
-    codex = {h["event"]: h for h in
+    codex = {h["script"]: h for h in
              _module("plugin/daimon_briefing/codex_hooks.py",
                      "_codex_for_reg").HOOKS}
-    entry = codex[cx.event]["entry"]
+    row = codex["daimon-codex-pre-action.py"]
+    assert row["event"] == cx.event
+    entry = row["entry"]
     assert entry["matcher"] == cx.matcher
     assert entry["hooks"][0]["timeout"] == cx.install_timeout
 
@@ -390,10 +408,10 @@ def test_the_manual_claude_code_manager_registers_the_same_event():
 def test_both_codex_manifests_register_the_pre_action_hook(rel):
     """The standalone manager cannot import the package, so the shape lives
     in two files by necessity; test_codex_session_end asserts they agree."""
-    hooks = {h["event"]: h for h in
+    hooks = {h["script"]: h for h in
              _module(rel, f"_codex_{abs(hash(rel))}").HOOKS}
-    entry = hooks["PreToolUse"]
-    assert entry["script"] == "daimon-codex-pre-action.py"
+    entry = hooks["daimon-codex-pre-action.py"]
+    assert entry["event"] == "PreToolUse"
     assert entry["entry"]["matcher"] == "Bash|shell"
     assert entry["entry"]["hooks"][0]["timeout"] == 10
     assert "daimon-codex-pre-action.py" in \

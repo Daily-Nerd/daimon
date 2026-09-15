@@ -744,6 +744,13 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         run(["recall-inject", "--session", "S-live"], 0,
             stdin="anything about the gateway seam?")
 
+    def r_action_recall():
+        # #1031: the shell command is the query. An allowlisted verb, so the
+        # drive reaches the index read instead of stopping at the verb gate —
+        # which is exactly where a future write would hide.
+        run(["action-recall", "--session", "S-live"], 0,
+            stdin="kubectl exec -it deploy/gateway -n prod -- sh")
+
     def r_status():
         run(["status"], 0)
 
@@ -901,6 +908,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("loops",): r_loops,
         ("decide",): r_decide,
         ("recall-inject",): r_recall_inject,
+        ("action-recall",): r_action_recall,
         ("request-inject",): r_request_inject,
         ("status",): r_status,
         ("verify-receipt",): r_verify_receipt,

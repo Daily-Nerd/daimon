@@ -88,6 +88,25 @@ HOOKS = [
             }],
         },
     },
+    {
+        # #1031: action-keyed recall, a SECOND PreToolUse registration rather
+        # than a branch inside the pre-action hook. That hook is the only one
+        # that can deny, and a recall fault inside it would drop the deny in a
+        # way byte-identical to a clean allow. Registered AFTER it so the
+        # deny path runs first. Timeout 5 against the shim's own 1.5s
+        # subprocess budget. The host is an argument, so one file serves
+        # every host.
+        "script": "daimon-action-recall.py",
+        "event": "PreToolUse",
+        "entry": {
+            "matcher": "Bash|shell",
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.codex/hooks/daimon-action-recall.py codex",
+                "timeout": 5,
+            }],
+        },
+    },
 ]
 
 

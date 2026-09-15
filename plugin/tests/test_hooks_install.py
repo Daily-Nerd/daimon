@@ -250,7 +250,12 @@ def test_hooks_install_codex_is_idempotent(tmp_path, monkeypatch):
     assert cli.main(["hooks", "install", "codex"]) == 0  # re-run must not duplicate
     cfg = json.loads((tmp_path / ".codex" / "hooks.json").read_text())["hooks"]
     for spec in codex_hooks.HOOKS:
-        assert len(cfg[spec["event"]]) == 1, spec["event"]
+        # Counted per SCRIPT, not per event: #1031 put a second registration
+        # under PreToolUse, so an event now legitimately carries more than one
+        # group and only a duplicate of the same script is the bug here.
+        ours = [g for g in cfg[spec["event"]]
+                if codex_hooks._is_ours(g, spec["script"])]
+        assert len(ours) == 1, spec["script"]
 
 
 def test_hooks_install_codex_refreshes_stale_script(tmp_path, monkeypatch):

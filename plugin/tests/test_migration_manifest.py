@@ -34,6 +34,11 @@ MANIFEST = {
      "store.Route.OWN_ELSE_GLOBAL", "store.Admit.ANY"),
     ("cli/__init__.py", "_cmd_recall_inject", "read_latest_body",
      "briefing.injection_read_route(project)", "store.Admit.ANY"),
+    # #1031: the action surface excludes whatever the briefing carried on the
+    # same terms as the prompt surface above, so it reads through the same
+    # route and the same admit frame.
+    ("cli/__init__.py", "_cmd_action_recall", "read_latest_body",
+     "briefing.injection_read_route(project)", "store.Admit.ANY"),
     ("cli/__init__.py", "_print_suppressed", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
     ("cli/__init__.py", "_cmd_verify_receipt", "read_latest_body",

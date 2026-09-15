@@ -141,9 +141,13 @@ PROFILES = {
         command_path=("tool_input", "command"),
         cwd_key="cwd",
         encoder="json-permission",
-        # Codex documents the same JSON deny and NO warn channel. A warn with
-        # nowhere to go is not a warn, so it degrades to record-only: the run
-        # is still logged and nothing is silently claimed to have been shown.
+        # Codex documents the same JSON deny, and its docs DO list a
+        # `systemMessage` on PreToolUse — but that delivery has never been
+        # measured reaching an operator, and documented is not delivered
+        # (scar 0072: a channel that reports warning and silently shows
+        # nothing is byte-identical to no warning at all). So warn stays
+        # capped at record-only: the run is still logged and nothing is
+        # silently claimed to have been shown. A probe flips this row.
         mode_caps={"enforce": "enforce", "warn": "record-only",
                    "record-only": "record-only"},
         matcher="Bash|shell",
