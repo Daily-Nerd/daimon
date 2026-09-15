@@ -53,6 +53,12 @@ SYNC_PAIRS = (
     # copy is what `daimon hooks install codex` writes into ~/.codex/hooks.
     ("hook/daimon-action-recall.py",
      "plugin/daimon_briefing/_hooks/daimon-action-recall.py"),
+    # #1036 parity: the MCP-serve resolver wrapper. Originally Claude Code
+    # plugin-exclusive (run straight from hook/ via ${CLAUDE_PLUGIN_ROOT});
+    # the Codex installer now ships the same file into ~/.codex/hooks/, so it
+    # needs the packaged copy every other multi-consumer script gets.
+    ("hook/daimon-mcp-serve.py",
+     "plugin/daimon_briefing/_hooks/daimon-mcp-serve.py"),
     ("hook/_daimon_hook_lib.py", "plugin/daimon_briefing/_hooks/_daimon_hook_lib.py"),
     # #1000: the plugin-root skills/ tree is discoverable only from a source
     # checkout — the wheel ships daimon_briefing/ alone. `daimon skill install`
