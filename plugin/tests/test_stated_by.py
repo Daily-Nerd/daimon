@@ -134,10 +134,10 @@ def test_cli_recall_says_nothing_when_no_one_is_named(
 def test_suggest_line_names_the_stater():
     row = {"kind": "decision", "session_id": "S-x", "text": "a claim",
            "trust": "inferred", "created": 0, "stated_by": "ana"}
-    assert "stated by ana" in cli._suggest_line(row, ["lemur"], 0.0)
+    assert "stated by ana" in cli._suggest_line(row, ["lemur"], 0.0, width=cli._SLOT_WIDTH)
 
 
 def test_suggest_line_is_silent_without_one():
     row = {"kind": "decision", "session_id": "S-x", "text": "a claim",
            "trust": "inferred", "created": 0}
-    assert "stated by" not in cli._suggest_line(row, ["lemur"], 0.0)
+    assert "stated by" not in cli._suggest_line(row, ["lemur"], 0.0, width=cli._SLOT_WIDTH)

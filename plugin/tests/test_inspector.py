@@ -733,7 +733,7 @@ def test_recall_exposes_item_id_in_json_and_human_output(
     assert all(isinstance(row.get("item_id"), str) and row["item_id"]
                for row in suggestions)
     for row in suggestions:
-        assert row["item_id"] not in cli._suggest_line(row, [], 0.0)
+        assert row["item_id"] not in cli._suggest_line(row, [], 0.0, width=cli._SLOT_WIDTH)
 
 
 # ---- #674: why falls back to the recall index when its own walk misses ----

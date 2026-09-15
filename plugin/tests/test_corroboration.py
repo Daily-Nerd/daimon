@@ -1324,6 +1324,91 @@ def test_an_echoed_briefing_item_never_self_corroborates_end_to_end(
     assert "corroborated" not in briefing.render_plain(briefing.build(marked))
 
 
+# ---- FENCE 1b (#1030): widening the lead slot does not reopen the echo hole -
+
+_WIDE_PROJECT = "/p/corroborate-wide"
+_WIDE_TEXT = " ".join((
+    "the quorint ledger reconciliation drops entries on feed pauses and the "
+    "replay window never reopens them for the nightly auditor " * 6).split())
+
+
+def _wide_recall_line():
+    """The line as the SHIPPING emitter builds it at lead width. A hand-typed
+    copy would drift from the template `_RECALL_LINE_RE` is written against,
+    and the drift is exactly what this fence has to catch."""
+    row = {"kind": "open_question", "session_id": ORIGIN,
+           "created": 1780000000.0, "trust": "verbatim", "text": _WIDE_TEXT}
+    return cli._suggest_line(row, ["quorint", "ledger"], 1780432000.0,
+                             width=cli._LEAD_WIDTH)
+
+
+def _wide_transcript(tmp_path, session, line):
+    rows = [
+        ("user", f"{line}\nok, where are we on the ingest path?"),
+        ("assistant", "the ingest path is still on the old batching code"),
+        ("user", "right, let us pick the batching work up tomorrow"),
+    ]
+    p = tmp_path / f"{session}.jsonl"
+    p.write_text("\n".join(
+        json.dumps({"type": role, "message": {"role": role, "content": body},
+                    "timestamp": f"2026-07-01T10:0{i}:00Z"})
+        for i, (role, body) in enumerate(rows)), encoding="utf-8")
+    os.utime(p, (1782000000, 1782000000))  # scar 0016: pin the mtime fallback
+    return p
+
+
+def test_a_full_width_injected_line_is_never_re_minted_as_this_sessions_item(
+        tmp_path, fake_chat_factory, monkeypatch):
+    """#1030 doubles the lead slot, so twice as much of a prior session's claim
+    now rides in the host transcript. The echo strip is length-free, but the
+    EXTRACTOR reads raw transcript text by design (#440's docstring), so the
+    widening has to be checked where it actually costs something: a run whose
+    only sighting of the prior claim is daimon's own full-width line must not
+    produce an item of this session's own carrying that text.
+
+    Carry is the confound. The prior item legitimately carries forward from the
+    ORIGIN checkpoint, so the assertion is about PROVENANCE, not presence: any
+    item bearing the text must still be the origin's, never one minted here.
+    """
+    session = "S-wide-echo"
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", _WIDE_PROJECT)
+    _seed_prev(text=_WIDE_TEXT, project=_WIDE_PROJECT)
+
+    line = _wide_recall_line()
+    excerpt = line.split(': "', 1)[1].rsplit('" [', 1)[0]
+    assert len(excerpt) == cli._LEAD_WIDTH  # the fixture really is full width
+
+    # The model extracts only the session's own genuine subject; nothing here
+    # quotes the injected line. Any appearance of it downstream is a mint.
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(json.dumps({
+        "session_id": session,
+        "working_context": {
+            "active_topic": {"text": "the ingest path", "trust": "inferred"},
+            "open_questions": [{"text": "the batching work is still open",
+                                "trust": "inferred"}],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
+    })))
+    assert cli.main(["serialize",
+                     str(_wide_transcript(tmp_path, session, line))]) == 0
+
+    written = store.read_latest_body(project_dir=_WIDE_PROJECT,
+                                     route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
+    items = (written["working_context"]["open_questions"]
+             + written["working_context"]["recent_decisions"]
+             + [written["working_context"]["active_topic"]])
+    # Liveness: the run really did merge, so the refusal below is a refusal
+    # and not a capture that never happened.
+    assert any(i["text"] == "the batching work is still open" for i in items)
+    for item in items:
+        if item["text"] in (_WIDE_TEXT, excerpt):
+            assert item.get("origin_session") == ORIGIN, (
+                "a full-width injected line was re-minted as this session's own")
+
+
 # ---- FENCE 2: a teammate's checkpoint cannot mint corroboration -----------
 #
 # v1 counts LOCAL sessions only, and the reason is the failure mode named in
