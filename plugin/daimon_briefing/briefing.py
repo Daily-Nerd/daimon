@@ -320,11 +320,45 @@ def _by_weight(items, item_type, now):
                   reverse=True)
 
 
+def _is_carried(item) -> bool:
+    """#1034: a decision inherited from the previous checkpoint. carry.merge
+    stamps `carried_from` on every copy it appends; a native item — one this
+    session actually produced — never has it."""
+    return bool(isinstance(item, dict) and item.get("carried_from"))
+
+
+def _select_decisions(decisions, n, now):
+    """The N decisions the briefing renders (#1034), native first.
+
+    The old rule was `decisions[-n:]`, positional-recent under the serializer's
+    CHRONOLOGY contract. carry.merge breaks that contract from the other side:
+    it appends the previous checkpoint's items — older than every native one by
+    construction — at the TAIL of the same list (`native.extend(carried[:cap])`).
+    Composed, the tail is the carried block, so the tail-slice spent the whole
+    cap on old carried items and dropped the decisions the session just made.
+
+    Selection instead: the chronological tail of the NATIVE block first (so the
+    newest native decision can never be crowded out), then carried items by #78
+    effective weight, heaviest first, filling whatever room is left. With no
+    carried items this is byte-identical to the old slice. n = 0 is unbounded.
+    Render-time only: the checkpoint keeps every decision."""
+    if not n or len(decisions) <= n:
+        return decisions
+    native = [i for i in decisions if not _is_carried(i)]
+    kept = native[-n:]
+    room = n - len(kept)
+    if room > 0:
+        carried = [i for i in decisions if _is_carried(i)]
+        kept = kept + _by_weight(carried, "recent_decision", now)[:room]
+    return kept
+
+
 def build(checkpoint, now=None) -> dict | None:
     """Structured briefing sections, or None if nothing is worth surfacing.
     Deterministic — no LLM; `now` is injectable for tests. Sections order by #78
-    effective weight EXCEPT recent_decisions, which stay chronological (the
-    serializer's CHRONOLOGY contract; the tail-cap below depends on it)."""
+    effective weight EXCEPT recent_decisions, whose NATIVE block stays
+    chronological (the serializer's CHRONOLOGY contract); carried decisions
+    render after it, by weight — see `_select_decisions`."""
     if not checkpoint or not isinstance(checkpoint, dict):
         return None
     if now is None:
@@ -347,11 +381,9 @@ def build(checkpoint, now=None) -> dict | None:
             or _nonempty(active)):
         return None
 
-    # Cap to the most-recent N decisions (tail — recent_decisions is chronological,
-    # oldest→newest, per the serializer's CHRONOLOGY instruction). Render-time only:
-    # the checkpoint keeps every decision. 0 = unbounded.
-    n = config.max_briefing_decisions()
-    kept = decisions[-n:] if n and len(decisions) > n else decisions
+    # Cap to N decisions: this session's own first, carried ones in the room
+    # left over (#1034). 0 = unbounded. Render-time only.
+    kept = _select_decisions(decisions, config.max_briefing_decisions(), now)
 
     return {
         "external": [i for i in open_qs if i.get("external_state")],
@@ -819,11 +851,38 @@ def _trim_note(dropped: int) -> str:
 
 # Budget drop order (#79): background sections go before actionable ones, and
 # within a section the LOWEST-weight items go first — beliefs/uncertainties are
-# #78-sorted heaviest-first, so their tail is the lightest; decisions are
-# chronological, so their head is the oldest. external / active_topic /
-# contradictions are never dropped: they are the skeleton.
+# #78-sorted heaviest-first, so their tail is the lightest. Decisions are not a
+# single ordered run (#1034): `_select_decisions` renders the native block
+# chronologically and then carried items heaviest-first, so "the head is the
+# oldest" is only true of the native half. Their rule is its own — see
+# `_decision_drop_index`. external / active_topic / contradictions are never
+# dropped: they are the skeleton.
 _DROP_ORDER = (("beliefs", "tail"), ("uncertainties", "tail"),
-               ("decisions", "head"), ("open_loops", "tail"))
+               ("decisions", "decisions"), ("open_loops", "tail"))
+
+
+def _decision_drop_index(items) -> int:
+    """Which rendered decision the budget gives up next (#1034): the LAST
+    carried one while any remains — carried render heaviest-first, so the last
+    is the lightest — and only then the head of the native block, the oldest.
+    The newest native decision is therefore the last decision standing.
+
+    Scans for the carried item rather than trusting the tail, so a caller that
+    hands render_plain a hand-built briefing with its own ordering still drops
+    a carried item before a native one."""
+    for idx in range(len(items) - 1, -1, -1):
+        if _is_carried(items[idx]):
+            return idx
+    return 0
+
+
+def _drop_index(items, end) -> int:
+    """Which index of a section the budget gives up next. Every section but
+    decisions is #78-sorted heaviest-first, so its tail ("tail") is its
+    lightest item; decisions have their own rule (#1034)."""
+    if end == "decisions":
+        return _decision_drop_index(items)
+    return -1
 
 
 # ---- #693: standing rulings — the always-present positive-polarity section ----
@@ -1243,7 +1302,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     for key, end in _DROP_ORDER:
         while estimate_tokens(text) > budget and b.get(key):
             items = list(b[key])
-            items.pop(-1 if end == "tail" else 0)
+            items.pop(_drop_index(items, end))
             b[key] = items
             trimmed[key] += 1
             text = _render_parts(b, trimmed, degraded, rulings,
