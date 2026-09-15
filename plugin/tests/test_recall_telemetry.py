@@ -40,6 +40,29 @@ def test_record_normalizes_invalid_values_and_accepts_naive_time(
     assert payload["query_term_count"] == 1
 
 
+def test_record_carries_the_rendered_width_and_normalizes_the_rest(
+        tmp_path, monkeypatch):
+    # #1030: width now varies by slot, so the ledger records what each delivery
+    # actually rendered. Surfaces that render no cut (recall-search) send no
+    # such fields and must not acquire invented ones, and a wrong-typed value
+    # is dropped the same way a wrong-typed score is.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-wide", "rendered_chars": 320, "truncated": True},
+         {"item_id": "o-short", "rendered_chars": 41, "truncated": False},
+         {"item_id": "o-plain"},
+         {"item_id": "o-bad", "rendered_chars": "320", "truncated": 1}],
+        query_terms=["ledger"],
+        surface="recall-inject",
+        now=datetime(2026, 9, 14, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert [r["rendered_chars"] for r in rows] == [320, 41, None, None]
+    assert [r["truncated"] for r in rows] == [True, False, None, None]
+
+
 def test_record_skips_empty_delivery_and_ignores_write_errors(
         tmp_path, monkeypatch):
     recall_telemetry.record([], query_terms=[], surface="recall-search")

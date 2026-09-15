@@ -110,12 +110,14 @@ def test_inject_line_marks_a_foreign_row():
     which is the whole timing argument in #889."""
     row = {"kind": "decision", "session_id": "S-x", "text": "a foreign claim",
            "trust": "inferred", "created": 0, "project_slug": "-p-theirs"}
-    line = cli._suggest_line(row, ["lemur"], 0.0, own_slug="-p-mine")
+    line = cli._suggest_line(row, ["lemur"], 0.0, own_slug="-p-mine",
+                             width=cli._SLOT_WIDTH)
     assert "from -p-theirs" in line
 
 
 def test_inject_line_is_silent_for_the_readers_own_row():
     row = {"kind": "decision", "session_id": "S-x", "text": "my own claim",
            "trust": "inferred", "created": 0, "project_slug": "-p-mine"}
-    line = cli._suggest_line(row, ["lemur"], 0.0, own_slug="-p-mine")
+    line = cli._suggest_line(row, ["lemur"], 0.0, own_slug="-p-mine",
+                             width=cli._SLOT_WIDTH)
     assert "from -p-mine" not in line

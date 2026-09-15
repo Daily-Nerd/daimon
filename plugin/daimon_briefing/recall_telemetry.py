@@ -41,6 +41,16 @@ def record(rows, *, query_terms, surface, now=None) -> None:
         hits = row.get("term_hits")
         if not isinstance(hits, int) or isinstance(hits, bool):
             hits = None
+        # #1030: how much text the delivery actually rendered, and whether the
+        # slot's width cut it. Only surfaces that render a width supply these,
+        # so a missing or wrong-typed value records as absent rather than
+        # invented — the same posture as an unscoreable match_score.
+        rendered = row.get("rendered_chars")
+        if not isinstance(rendered, int) or isinstance(rendered, bool):
+            rendered = None
+        truncated = row.get("truncated")
+        if not isinstance(truncated, bool):
+            truncated = None
         entries.append(json.dumps({
             "at": stamp,
             "surface": str(surface),
@@ -50,6 +60,8 @@ def record(rows, *, query_terms, surface, now=None) -> None:
             "match_score": score,
             "term_hits": hits,
             "query_term_count": term_count,
+            "rendered_chars": rendered,
+            "truncated": truncated,
         }, ensure_ascii=False, separators=(",", ":")))
     if not entries:
         return

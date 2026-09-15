@@ -1656,6 +1656,15 @@ _INJECT_FETCH = 8    # candidates asked of `suggest`, i.e. budget + headroom:
 _AGE_GATE_DAYS = 7   # past this, a candidate needs _STALE_MIN_HITS
 _STALE_MIN_HITS = 3  # distinct salient-term hits that buy a stale slot back
 
+# #1030: how much of an item's text each slot renders. Width is a property of
+# the SLOT, not of the item — no score, term count or pin buys extra room, so
+# there is no second ranking axis hiding in the renderer. The lead slot is the
+# one a reader acts on, so it carries enough text to act on; every slot after
+# it keeps the old width, and the noise budget (_INJECT_BUDGET), the ranking,
+# the age gate and the cooldown are all unchanged.
+_LEAD_WIDTH = 320
+_SLOT_WIDTH = 160
+
 
 def _inject_age_bucket(age_days: float | None) -> str:
     """Stats bucket for a CHOSEN candidate's age — the bands of #452's
@@ -1850,17 +1859,37 @@ def age_gate_blocks(m, now: float, age_days=_UNSET) -> bool:
     return isinstance(hits, int) and hits < _STALE_MIN_HITS
 
 
-def _suggest_line(r: dict, terms, now: float, own_slug=None) -> str:
+def _fit_item_text(raw, width: int) -> tuple[str, bool]:
+    """Item text as one slot renders it, plus whether the cut took anything.
+
+    Collapse then cut, in that order: the collapse is what keeps the #512
+    one-line contract, and it has to happen before the width is measured or a
+    newline-bearing item would be cut to a width it never occupies.
+
+    The second return value is not derivable after the fact — a rendered
+    length equal to the width could be an item that exactly fits — and #1030's
+    whole read-back rests on telling a short claim from a truncated one."""
+    text = " ".join(str(raw).split())
+    if len(text) <= width:
+        return text, False
+    return text[:width - 3] + "...", True
+
+
+def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
+                  width: int) -> str:
     """One compact, attributed, trust-preserving injection line (#125).
 
     ONE line is a contract, not a hope (#512): the echo strip that removes
     this line from the verification haystack is line-scoped, so item text
     carrying a newline would leave its tail behind as a fake witness.
-    Internal whitespace collapses here, at the emitter."""
+    Internal whitespace collapses here, at the emitter.
+
+    `width` is keyword-only and has no default on purpose (#1030): it is the
+    caller's slot decision, and a default would quietly make one slot's width
+    the invisible truth again."""
     age = _format_age(now - r["created"]) if r.get("created") else "?"
     trust = r.get("trust") or "untagged"
-    text = " ".join(str(r["text"]).split())
-    text = text if len(text) <= 160 else text[:157] + "..."
+    text, _truncated = _fit_item_text(r["text"], width)
     # v3 (#234): the flag is item-level evidence — a typed supersedes link
     # or a logged resolution — not the old whole-checkpoint recency.
     sup = r.get("superseded_by")
@@ -1991,11 +2020,20 @@ def _cmd_recall_inject(args) -> int:
         if not chosen:
             return 0
         terms = recall.salient_terms(prompt)
-        for m in chosen:
-            print(_suggest_line(m, terms, now,
-                                own_slug=store.project_slug(project)))
+        own_slug = store.project_slug(project)
+        delivered = []
+        for slot, m in enumerate(chosen):
+            # #1030: the slot table lives here and nowhere else. Lead gets
+            # _LEAD_WIDTH, every later slot _SLOT_WIDTH.
+            width = _LEAD_WIDTH if slot == 0 else _SLOT_WIDTH
+            print(_suggest_line(m, terms, now, own_slug=own_slug, width=width))
+            # Same pure fit the emitter just used, so the ledger cannot
+            # describe a rendering the host never received.
+            rendered, truncated = _fit_item_text(m["text"], width)
+            delivered.append({**m, "rendered_chars": len(rendered),
+                              "truncated": truncated})
         recall_telemetry.record(
-            chosen,
+            delivered,
             query_terms=terms,
             surface="recall-inject",
             now=datetime.fromtimestamp(now, tz=timezone.utc),

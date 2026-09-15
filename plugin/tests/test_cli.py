@@ -2460,7 +2460,7 @@ def test_suggest_line_collapses_multiline_item_text():
     # collapses to single spaces.
     r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
          "trust": "verbatim", "text": "first clause\nsecond clause\n\tthird"}
-    line = cli._suggest_line(r, ["clause"], 2000.0)
+    line = cli._suggest_line(r, ["clause"], 2000.0, width=cli._SLOT_WIDTH)
     assert "\n" not in line
     assert "first clause second clause third" in line
 
@@ -4334,7 +4334,7 @@ def test_suggest_line_marks_a_cleared_contradiction():
     r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
          "trust": "verbatim", "text": "the exporter caches limbs",
          "cured_by": "receipt-ok:receipt-valid@2026-08-29T12:00:00Z"}
-    line = cli._suggest_line(r, ["exporter"], 2000.0)
+    line = cli._suggest_line(r, ["exporter"], 2000.0, width=cli._SLOT_WIDTH)
     assert "contradiction cleared by receipt-ok:receipt-valid" in line
 
 
@@ -4344,7 +4344,7 @@ def test_suggest_line_marks_contradiction_evidence():
     r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
          "trust": "verbatim", "text": "the exporter caches limbs",
          "invalidated_by": "receipt:receipt-invalid@2026-08-29T10:00:00Z"}
-    line = cli._suggest_line(r, ["exporter"], 2000.0)
+    line = cli._suggest_line(r, ["exporter"], 2000.0, width=cli._SLOT_WIDTH)
     assert ("(contradicted by receipt:receipt-invalid "
             "at 2026-08-29T10:00:00Z)") in line
     assert "false" not in line.lower()
@@ -4569,6 +4569,129 @@ def test_recall_inject_records_delivery_score(
     assert rows and rows[0]["surface"] == "recall-inject"
     assert rows[0]["match_score"] >= 0
     assert rows[0]["term_hits"] == 3
+
+
+# ---- #1030: the lead slot is wider than the rest ----
+
+_WIDE_LEAD = (
+    "quorint ledger reconciliation drops entries whenever the feed pauses\n"
+    "and   the replay window never reopens them for the nightly auditor " * 9)
+_WIDE_TAIL = (
+    "quorint ledger reconciliation also loses the auditor cursor on a pause "
+    "so the drift report reruns from the start of the retention window " * 9)
+_WIDE_PROMPT = "the quorint ledger reconciliation pauses and the auditor replay window"
+
+
+def _quoted_item_text(line: str) -> str:
+    """The item-text span of an injection line, between the age colon and the
+    trust tag. Read off the shipped line rather than recomputed, so the test
+    measures what a host actually receives."""
+    return line.split(': "', 1)[1].rsplit('" [', 1)[0]
+
+
+def _seed_two_wide_items(project="/repo/wide"):
+    # One item per session on purpose: `recall.suggest` admits at most one row
+    # per origin session, so a two-slot injection needs two origins.
+    from daimon_briefing import store
+
+    for session, text, created in (
+            ("S-wide-a", _WIDE_LEAD, "2026-09-12T00:00:00Z"),
+            ("S-wide-b", _WIDE_TAIL, "2026-09-13T00:00:00Z")):
+        store.write_checkpoint(
+            session,
+            {"session_id": session, "created": created,
+             "working_context": {
+                 "active_topic": {"text": "unrelated prior topic",
+                                  "trust": "inferred"},
+                 "open_questions": [
+                     {"text": text, "trust": "verbatim", "importance": 9}],
+                 "recent_decisions": []},
+             "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                                    "contradictions_flagged": []}},
+            project_dir=project,
+        )
+    store.write_checkpoint(
+        "S-wide-latest",
+        {"session_id": "S-wide-latest", "created": "2026-09-14T00:00:00Z",
+         "working_context": {
+             "active_topic": {"text": "unrelated newer work",
+                              "trust": "inferred"},
+             "open_questions": [], "recent_decisions": []},
+         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                                "contradictions_flagged": []}},
+        project_dir=project,
+    )
+
+
+def test_recall_inject_widens_the_lead_slot_only(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # #1030: width is a property of the SLOT, not of the item. The lead slot
+    # carries enough of the claim to act on; every slot after it stays at the
+    # old width, so the noise budget is unchanged.
+    _seed_two_wide_items()
+    rc, out = _inject(monkeypatch, capsys, _WIDE_PROMPT, project="/repo/wide")
+    assert rc == 0
+    lines = out.splitlines()
+    assert len(lines) == 2
+    assert [len(_quoted_item_text(line)) for line in lines] == [
+        cli._LEAD_WIDTH, cli._SLOT_WIDTH]
+    # #512's one-line contract holds at both widths: the emitter collapses
+    # internal whitespace before it cuts, so no tail escapes the line-scoped
+    # echo strip and no run of spaces survives into the host's transcript.
+    for line in lines:
+        text = _quoted_item_text(line)
+        assert "\n" not in text and "  " not in text and "\t" not in text
+
+
+def test_a_full_width_lead_line_is_one_line_the_echo_strip_eats_whole(
+        tmp_checkpoint_dir):
+    # The widening is safe only because the echo strip is length-free and
+    # line-scoped. A 1,250-character item still renders as ONE line, and
+    # _RECALL_LINE_RE consumes that line entirely, so nothing of the prior
+    # session's claim is left behind in a verification haystack (#440).
+    from daimon_briefing import serializer
+
+    raw = "reconcile the quorint ledger " * 43 + "abc"
+    assert len(raw) == 1250
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": raw}
+    line = cli._suggest_line(r, ["quorint"], 2000.0, width=cli._LEAD_WIDTH)
+    assert "\n" not in line
+    assert len(_quoted_item_text(line)) == cli._LEAD_WIDTH
+    assert serializer._RECALL_LINE_RE.fullmatch(line) is not None
+
+
+def test_recall_inject_records_the_rendered_width_per_slot(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # The delivery ledger is how the widening gets read back (#989): a row has
+    # to say how much text actually crossed the surface and whether the cut
+    # took anything, or "did the wider slot help" is unanswerable after the
+    # fact, because the recall index is disposable.
+    _seed_two_wide_items()
+    rc, out = _inject(monkeypatch, capsys, _WIDE_PROMPT, project="/repo/wide")
+    assert rc == 0 and out
+    rows = [json.loads(line) for line in
+            (tmp_log_dir / "recall-delivery.jsonl").read_text().splitlines()]
+    assert [r["rendered_chars"] for r in rows] == [
+        cli._LEAD_WIDTH, cli._SLOT_WIDTH]
+    assert [r["truncated"] for r in rows] == [True, True]
+
+
+def test_recall_inject_records_an_untruncated_lead(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # The negative control for the flag above: an item that fits its slot
+    # reports the length it actually rendered and truncated False, so the
+    # ledger separates "short claim" from "claim we cut".
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys,
+                      "debugging the litellm gateway cache pinning again")
+    assert rc == 0 and out
+    rows = [json.loads(line) for line in
+            (tmp_log_dir / "recall-delivery.jsonl").read_text().splitlines()]
+    lead = rows[0]
+    assert lead["truncated"] is False
+    assert lead["rendered_chars"] == len(_quoted_item_text(out.splitlines()[0]))
+    assert lead["rendered_chars"] < cli._LEAD_WIDTH
 
 
 def test_stats_reports_recall_delivery_distribution(
