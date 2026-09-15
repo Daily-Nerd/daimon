@@ -186,6 +186,137 @@ def test_render_plain_no_marker_when_under_cap(monkeypatch):
     assert "earlier decision" not in out
 
 
+# ---- #1034: the cap must not spend its room on carried decisions ----
+
+_CARRY_NOW = 1_760_000_000.0
+
+
+def _carry_iso(days_before_now):
+    import datetime as dt
+    t = dt.datetime.fromtimestamp(_CARRY_NOW - days_before_now * 86400,
+                                  dt.timezone.utc)
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _carry_cp(sid, created_days_ago, decisions):
+    return {
+        "session_id": sid,
+        "created": _carry_iso(created_days_ago),
+        "working_context": {
+            "active_topic": {"text": f"topic {sid}", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": list(decisions),
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [], "uncertainties": [], "contradictions_flagged": [],
+        },
+    }
+
+
+# Carried decision importances, in emission order: the heaviest two are
+# cdec-03 and cdec-06, deliberately NOT at either end of the prev list, so a
+# test that passes by slicing rather than by weight cannot pass by accident.
+_CARRIED_IMPORTANCE = (4, 5, 3, 10, 6, 7, 9, 8)
+_NATIVE_TEXTS = [f"ndec-{i:02d}" for i in range(13)]
+_CARRIED_TEXTS = [f"cdec-{i:02d}" for i in range(8)]
+
+
+def _merged_checkpoint():
+    """A checkpoint whose decision list is 13 native then 8 carried, produced
+    by the SHIPPING writer (carry.merge over two native checkpoints) so the
+    fixture carries real `carried_from` stamps and carry's own tail append."""
+    from daimon_briefing import carry
+
+    prev = _carry_cp("S-prev", 1, [
+        {"text": t, "trust": "inferred", "importance": imp,
+         "first_seen": _carry_iso(3)}
+        for t, imp in zip(_CARRIED_TEXTS, _CARRIED_IMPORTANCE)
+    ])
+    new = _carry_cp("S-new", 0, [
+        {"text": t, "trust": "inferred", "importance": 5,
+         "first_seen": _carry_iso(0)}
+        for t in _NATIVE_TEXTS
+    ])
+    return carry.merge(new, prev, _CARRY_NOW)
+
+
+def _texts(items):
+    return [i.get("text") for i in items]
+
+
+def test_merged_fixture_is_native_then_carried():
+    # Pins the premise of the tests below: carry appends its (older) items at
+    # the TAIL of recent_decisions, after every native one.
+    cp = _merged_checkpoint()
+    decisions = cp["working_context"]["recent_decisions"]
+    assert _texts(decisions[:13]) == _NATIVE_TEXTS
+    assert all(not d.get("carried_from") for d in decisions[:13])
+    assert sorted(_texts(decisions[13:])) == sorted(_CARRIED_TEXTS)
+    assert all(d.get("carried_from") == "S-prev" for d in decisions[13:])
+
+
+def test_cap_spends_every_slot_on_native_decisions(monkeypatch):
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
+    b = briefing.build(_merged_checkpoint(), now=_CARRY_NOW)
+    assert _texts(b["decisions"]) == _NATIVE_TEXTS[3:]
+    assert all(not d.get("carried_from") for d in b["decisions"])
+    assert b["decisions_overflow"] == 11
+
+
+def test_carried_fill_the_room_native_leaves_heaviest_first(monkeypatch):
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "15")
+    b = briefing.build(_merged_checkpoint(), now=_CARRY_NOW)
+    # 13 native, chronological, then the two heaviest carried by #78 weight.
+    assert _texts(b["decisions"])[:13] == _NATIVE_TEXTS
+    assert _texts(b["decisions"])[13:] == ["cdec-03", "cdec-06"]
+    assert b["decisions_overflow"] == 6
+
+
+def test_budget_drops_carried_before_native_newest_stands_last(monkeypatch):
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "0")  # unbounded: all 21
+    b = briefing.build(_merged_checkpoint(), now=_CARRY_NOW)
+    assert len(b["decisions"]) == 21
+    every = _NATIVE_TEXTS + _CARRIED_TEXTS
+
+    # Explicit 0 (unbounded), never delenv: scar 0036 — an unset var still
+    # resolves through ~/.daimon/env on a machine with daimon installed.
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    baseline = briefing.estimate_tokens(briefing.render_plain(b))
+    seen_single = False
+    for budget in range(baseline, 0, -2):
+        monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", str(budget))
+        out = briefing.render_plain(b)
+        present = [t for t in every if t in out]
+        carried_left = [t for t in present if t in _CARRIED_TEXTS]
+        native_left = [t for t in present if t in _NATIVE_TEXTS]
+        # Carried go first, lightest first: none survives while a native is gone.
+        if carried_left:
+            assert native_left == _NATIVE_TEXTS, f"budget {budget}: {present}"
+        # Native go oldest first, so the survivors are always a suffix.
+        assert native_left == _NATIVE_TEXTS[len(_NATIVE_TEXTS) - len(native_left):], \
+            f"budget {budget}: {present}"
+        if len(present) == 1:
+            seen_single = True
+            assert present == ["ndec-12"], f"budget {budget}: {present}"
+    assert seen_single, "no budget left exactly one decision standing"
+
+
+def test_all_native_merge_still_renders_chronologically(monkeypatch):
+    # The all-native case (nothing carried) keeps the chronological tail.
+    from daimon_briefing import carry
+
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
+    prev = _carry_cp("S-prev", 1, [])
+    new = _carry_cp("S-new", 0, [
+        {"text": t, "trust": "inferred", "importance": 5,
+         "first_seen": _carry_iso(0)}
+        for t in _NATIVE_TEXTS
+    ])
+    b = briefing.build(carry.merge(new, prev, _CARRY_NOW), now=_CARRY_NOW)
+    assert _texts(b["decisions"]) == _NATIVE_TEXTS[3:]
+    assert b["decisions_overflow"] == 3
+
+
 def test_render_plain_byte_identical_when_unbounded(monkeypatch):
     # N=0: the decisions section must be exactly the item lines, no marker appended.
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "0")
