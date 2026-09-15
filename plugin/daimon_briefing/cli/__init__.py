@@ -1929,7 +1929,7 @@ def _fit_item_text(raw, width: int) -> tuple[str, bool]:
 
 
 def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
-                  width: int) -> str:
+                  width: int, mcp_tool_available: bool = False) -> str:
     """One compact, attributed, trust-preserving injection line (#125).
 
     ONE line is a contract, not a hope (#512): the echo strip that removes
@@ -1939,7 +1939,15 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
 
     `width` is keyword-only and has no default on purpose (#1030): it is the
     caller's slot decision, and a default would quietly make one slot's width
-    the invisible truth again."""
+    the invisible truth again.
+
+    `mcp_tool_available` (#1036) is the caller's own resolved
+    `config.mcp_tool_available()` reading, passed in rather than read here:
+    the emitter stays a pure formatter, and every existing call site keeps
+    the shell-command hint it always rendered by leaving the default alone.
+    True names the exact MCP tool instead of the shell string, so an agent
+    that already lists `daimon_recall` can act on the hint without leaving
+    its tool list."""
     age = _format_age(now - r["created"]) if r.get("created") else "?"
     trust = r.get("trust") or "untagged"
     text, _truncated = _fit_item_text(r["text"], width)
@@ -1969,11 +1977,13 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
     stated = str(r.get("stated_by") or "").strip()
     stated_mark = f" (stated by {stated})" if stated else ""
     more = " ".join(terms[:3])
+    more_hint = (f'call the daimon_recall tool with query "{more}"'
+                if mcp_tool_available else f'daimon recall "{more}"')
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "
             f"({age} ago): \"{text}\" [{trust}]{stated_mark}{scope_mark}"
             f"{superseded}"
             f"{contradicted}. "
-            f"More: daimon recall \"{more}\"")
+            f"More: {more_hint}")
 
 
 def _choose_recall_rows(matches, seen_keys: set, now: float, *, budget: int,
@@ -2095,12 +2105,17 @@ def _cmd_recall_inject(args) -> int:
             return 0
         terms = recall.salient_terms(prompt)
         own_slug = store.project_slug(project)
+        # #1036: resolved once per injection, not per line — one delivery
+        # renders one hint form, and the flag is the plugin's own hook
+        # telling the truth about itself, never inferred here.
+        mcp_available = config.mcp_tool_available()
         delivered = []
         for slot, m in enumerate(chosen):
             # #1030: the slot table lives here and nowhere else. Lead gets
             # _LEAD_WIDTH, every later slot _SLOT_WIDTH.
             width = _LEAD_WIDTH if slot == 0 else _SLOT_WIDTH
-            print(_suggest_line(m, terms, now, own_slug=own_slug, width=width))
+            print(_suggest_line(m, terms, now, own_slug=own_slug, width=width,
+                                mcp_tool_available=mcp_available))
             # Same pure fit the emitter just used, so the ledger cannot
             # describe a rendering the host never received.
             rendered, truncated = _fit_item_text(m["text"], width)
@@ -2110,6 +2125,7 @@ def _cmd_recall_inject(args) -> int:
             delivered,
             query_terms=terms,
             surface="recall-inject",
+            hint_form="tool" if mcp_available else "shell",
             now=datetime.fromtimestamp(now, tz=timezone.utc),
         )
         if seen_file:
@@ -2257,10 +2273,15 @@ def _cmd_action_recall(args) -> int:
         # width (#1030). Width is a property of the slot; nothing about an
         # action buys extra room.
         rendered, truncated = _fit_item_text(row["text"], _LEAD_WIDTH)
+        # #1036: same flag as recall-inject, read once. This surface ships
+        # `unsupported` for every host today (see CAPS in the hook), so the
+        # value is recorded for later comparison even where nothing prints.
+        mcp_available = config.mcp_tool_available()
         recall_telemetry.record(
             [{**row, "rendered_chars": len(rendered), "truncated": truncated}],
             query_terms=terms,
             surface="action-recall",
+            hint_form="tool" if mcp_available else "shell",
             now=datetime.fromtimestamp(now, tz=timezone.utc),
         )
         # The ladder's middle rung: the ledger row is written either way, so a
@@ -2268,7 +2289,8 @@ def _cmd_action_recall(args) -> int:
         if not args.record_only:
             print(_suggest_line(row, terms, now,
                                 own_slug=store.project_slug(project),
-                                width=_LEAD_WIDTH))
+                                width=_LEAD_WIDTH,
+                                mcp_tool_available=mcp_available))
         if seen_file:
             spent = dict(origin_counts)
             spent[str(row["session_id"])] = \

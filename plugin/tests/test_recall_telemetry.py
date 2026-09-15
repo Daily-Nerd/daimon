@@ -63,6 +63,48 @@ def test_record_carries_the_rendered_width_and_normalizes_the_rest(
     assert [r["truncated"] for r in rows] == [True, False, None, None]
 
 
+def test_record_carries_the_hint_form_and_defaults_to_none(tmp_path, monkeypatch):
+    # #1036: which hint rendering (shell command vs named MCP tool) a delivery
+    # actually carried, so the two can be compared later. Omitting the
+    # argument (every call site that predates #1036) must record None rather
+    # than inventing a value.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-tool"}], query_terms=["ledger"],
+        surface="recall-inject", hint_form="tool",
+        now=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+    recall_telemetry.record(
+        [{"item_id": "o-shell"}], query_terms=["ledger"],
+        surface="recall-inject", hint_form="shell",
+        now=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+    recall_telemetry.record(
+        [{"item_id": "o-legacy-call"}], query_terms=["ledger"],
+        surface="recall-inject",
+        now=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert [r["hint_form"] for r in rows] == ["tool", "shell", None]
+
+
+def test_stats_reads_a_legacy_row_missing_the_hint_form_key(tmp_path, monkeypatch):
+    # #1036: rows written before this field existed carry no `hint_form` key
+    # at all, not a null one. Reading them back must not raise.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    log.mkdir()
+    (log / "recall-delivery.jsonl").write_text(
+        json.dumps({"at": "2026-09-11T00:00:00Z", "surface": "recall-inject",
+                    "match_score": 0.5, "term_hits": 1}) + "\n",
+        encoding="utf-8",
+    )
+    out = recall_telemetry.stats(now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+    assert out["lifetime"]["deliveries"] == 1
+
+
 def test_record_skips_empty_delivery_and_ignores_write_errors(
         tmp_path, monkeypatch):
     recall_telemetry.record([], query_terms=[], surface="recall-search")

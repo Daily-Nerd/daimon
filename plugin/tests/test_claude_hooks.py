@@ -1295,6 +1295,23 @@ def test_prompt_hook_silent_when_cli_missing(tmp_checkpoint_dir, tmp_path):
     assert proc.returncode == 0 and proc.stdout.strip() == ""
 
 
+def test_prompt_hook_names_the_mcp_tool_when_the_env_flag_is_forwarded(
+        tmp_checkpoint_dir, tmp_path):
+    # #1036: the flag reaches `daimon recall-inject` however this hook's own
+    # process env carries it (hooks/hooks.json sets it, not this script) —
+    # `project_env` forwards the parent env as-is, so this proves the whole
+    # path end to end without the hook itself knowing about the flag.
+    cwd = "/Users/x/projR"
+    _seed_prompt_history(cwd)
+    proc = _run(PROMPT_HOOK,
+                {"cwd": cwd, "session_id": "S-now",
+                 "prompt": "debugging the litellm gateway cache pinning again"},
+                tmp_path, extra_env={"DAIMON_MCP_TOOL_AVAILABLE": "1"})
+    assert proc.returncode == 0
+    assert "call the daimon_recall tool with query" in proc.stdout
+    assert 'daimon recall "' not in proc.stdout
+
+
 def test_prompt_hook_silent_when_lib_missing(tmp_checkpoint_dir, tmp_path):
     stray = _copy_without_lib(PROMPT_HOOK, tmp_path)
     proc = _run(stray, {"cwd": "/Users/x/projR", "session_id": "S-now",

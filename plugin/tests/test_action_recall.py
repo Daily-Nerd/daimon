@@ -118,6 +118,19 @@ def test_an_allowlisted_verb_surfaces_the_belief_the_prompt_never_named(
     assert "daimon recall" in out  # points at the deep-dive command
 
 
+def test_names_the_mcp_tool_and_records_the_hint_form_when_the_flag_is_set(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1036: same flag as recall-inject, read by this surface's own CLI
+    # backend regardless of what a given host's hook caps it to.
+    monkeypatch.setenv("DAIMON_MCP_TOOL_AVAILABLE", "1")
+    _seed()
+    rc, out = _run(monkeypatch, capsys, ACTION)
+    assert rc == 0
+    assert "call the daimon_recall tool with query" in out
+    assert 'daimon recall "' not in out
+    assert _ledger(tmp_log_dir)[0]["hint_form"] == "tool"
+
+
 @pytest.mark.parametrize("command", ["ls -la", "python3 x.py"])
 def test_a_verb_outside_the_allowlist_is_silent_and_counted(
         command, tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):

@@ -23,11 +23,20 @@ def _stamp(now=None) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def record(rows, *, query_terms, surface, now=None) -> None:
+def record(rows, *, query_terms, surface, hint_form=None, now=None) -> None:
     """Append one bounded record for every row actually delivered.
 
     Telemetry is best-effort. A read or prompt path must never fail because a
     local measurement file is unavailable or malformed.
+
+    `hint_form` (#1036) is which "More: ..." rendering the delivery actually
+    carried: "tool" when the host lists the read-only MCP server and the hint
+    named `daimon_recall`, "shell" for the `daimon recall "..."` command
+    string. One value per call, same as `surface` — a delivery renders one
+    hint form, never a mix. Omitted (every caller that predates #1036)
+    records `None` rather than guessing; rows written before this field
+    existed carry no key at all, and a reader uses `.get` rather than assume
+    one.
     """
     entries = []
     stamp = _stamp(now)
@@ -62,6 +71,7 @@ def record(rows, *, query_terms, surface, now=None) -> None:
             "query_term_count": term_count,
             "rendered_chars": rendered,
             "truncated": truncated,
+            "hint_form": hint_form if hint_form in ("tool", "shell") else None,
         }, ensure_ascii=False, separators=(",", ":")))
     if not entries:
         return

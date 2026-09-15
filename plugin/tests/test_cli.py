@@ -2465,6 +2465,31 @@ def test_suggest_line_collapses_multiline_item_text():
     assert "first clause second clause third" in line
 
 
+def test_suggest_line_hint_defaults_to_the_shell_form():
+    # #1036: no mcp_tool_available argument at all (every pre-existing call
+    # site) must keep rendering exactly what shipped before this change.
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "reconcile the ledger"}
+    line = cli._suggest_line(r, ["quorint", "ledger"], 2000.0,
+                             width=cli._SLOT_WIDTH)
+    assert 'More: daimon recall "quorint ledger"' in line
+
+
+def test_suggest_line_hint_names_the_tool_when_mcp_is_available():
+    # #1036: when the host lists the read-only MCP server's tools, the hint
+    # is an action the agent can take without leaving its tool list, and
+    # names the exact tool plus the query terms, one line, no em-dash.
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "reconcile the ledger"}
+    line = cli._suggest_line(r, ["quorint", "ledger"], 2000.0,
+                             width=cli._SLOT_WIDTH, mcp_tool_available=True)
+    assert '—' not in line.split("More:")[1]
+    assert "daimon_recall" in line
+    assert '"quorint ledger"' in line
+    assert "\n" not in line
+    assert "daimon recall \"quorint ledger\"" not in line
+
+
 def test_cli_write_checkpoint_downgrades_unverifiable_verbatim(
         tmp_checkpoint_dir, monkeypatch):
     # #511: the introspection path has NO transcript, so `verify_quotes`
@@ -4569,6 +4594,24 @@ def test_recall_inject_records_delivery_score(
     assert rows and rows[0]["surface"] == "recall-inject"
     assert rows[0]["match_score"] >= 0
     assert rows[0]["term_hits"] == 3
+    assert rows[0]["hint_form"] == "shell"
+
+
+def test_recall_inject_names_the_mcp_tool_when_the_host_flag_is_set(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1036: the flag is explicit and boring (an env var the plugin's own
+    # hook sets), never inferred from ancestry or host name — this test
+    # exercises exactly that seam, the same one the hook flips.
+    monkeypatch.setenv("DAIMON_MCP_TOOL_AVAILABLE", "1")
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys,
+                      "debugging the litellm gateway cache pinning again")
+    assert rc == 0
+    assert "call the daimon_recall tool with query" in out
+    assert "daimon recall \"" not in out
+    rows = [json.loads(line) for line in
+            (tmp_log_dir / "recall-delivery.jsonl").read_text().splitlines()]
+    assert rows[0]["hint_form"] == "tool"
 
 
 # ---- #1030: the lead slot is wider than the rest ----
