@@ -62,7 +62,7 @@ the host's own agent can call the tool directly.
 |------|-------------------|--------------------------|
 | Claude Code | supported | supported |
 | Kimi Code | supported | supported |
-| Codex | supported | unsupported (no prompt-time recall hook) |
+| Codex | supported | supported |
 | Windsurf | supported | unsupported (no prompt-time recall hook) |
 | Gemini CLI | supported | unsupported (no prompt-time recall hook) |
 

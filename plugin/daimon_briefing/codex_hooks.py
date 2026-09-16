@@ -18,6 +18,7 @@ name inside the command string, so a machine that ran the standalone manager and
 then the packaged installer never ends up double-registered.
 """
 
+import copy
 import json
 import re
 import shutil
@@ -60,6 +61,26 @@ HOOKS = (
                 "command": "python3 ~/.codex/hooks/daimon-codex-session-start.py",
                 "timeout": 10,
                 "statusMessage": "Reading daimon briefing...",
+            }],
+        },
+    },
+    {
+        # #1042: the per-prompt recall injection. Codex already gets its
+        # briefing from SessionStart, so unlike Kimi's UserPromptSubmit hook
+        # this ONLY does recall-inject. No first-prompt briefing branch. No
+        # statusMessage: it fires on every prompt, not once a session.
+        # `--mcp-tool` is never baked in here: codex_hooks.install() appends
+        # it to a COPY of this entry (see _render_entry) only when the same
+        # install also registered the MCP server, so this static shape stays
+        # identical between the standalone manager (which never touches
+        # config.toml) and the packaged installer.
+        "script": "daimon-codex-user-prompt-submit.py",
+        "event": "UserPromptSubmit",
+        "entry": {
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.codex/hooks/daimon-codex-user-prompt-submit.py",
+                "timeout": 5,
             }],
         },
     },
@@ -129,6 +150,11 @@ HOOKS = (
     },
 )
 
+# #1042 parity with kimi_hooks._PROMPT_SCRIPT: the recall hint's tool form has
+# exactly one surface on this host, UserPromptSubmit. Every other registered
+# script never takes --mcp-tool.
+_PROMPT_SCRIPT = "daimon-codex-user-prompt-submit.py"
+
 # Everything installed into ~/.codex/hooks/: the scripts plus the shared
 # stdlib-only modules they import by same-dir lookup. No redact.py — the
 # Codex hooks spawn `daimon serialize` (the CLI redacts) and never scrub at
@@ -147,6 +173,23 @@ def _is_ours(group, script):
     command substring so it matches regardless of surrounding entry shape."""
     return any(script in h.get("command", "")
                for h in group.get("hooks", []) if isinstance(h, dict))
+
+
+def _render_entry(spec, mcp_on: bool) -> dict:
+    """`spec['entry']`, deep-copied, with `--mcp-tool` appended to the
+    UserPromptSubmit command when the MCP server is registered in the same
+    install (#1042 parity with kimi_hooks._render).
+
+    The flag only ever changes THIS hook's command, appended after the
+    script path as an argument TO it, never before: that position belongs
+    to `python3`, and an interpreter flag it does not recognize is a crash,
+    not a no-op. Every other spec's entry is returned unchanged (still
+    copied, so callers never mutate the shared HOOKS tuple).
+    """
+    entry = copy.deepcopy(spec["entry"])
+    if mcp_on and spec["script"] == _PROMPT_SCRIPT:
+        entry["hooks"][0]["command"] += " --mcp-tool"
+    return entry
 
 
 def _load(hooks_json):
@@ -322,6 +365,14 @@ def install(pkg, home):
         if name not in MODULES:  # imported, never executed
             dest.chmod(dest.stat().st_mode | 0o100)  # u+x — Codex runs the scripts
 
+    # #1042 parity with kimi_hooks.install: the MCP registration runs BEFORE
+    # the UserPromptSubmit entry is built below, because that hook's own
+    # command needs to know whether the tool is registered to decide its
+    # own --mcp-tool flag (see _render_entry). Computed here, printed after
+    # the hooks.json lines below (same stdout shape as before this parity).
+    mcp_lines = install_mcp(pkg, home)
+    mcp_on = mcp_registered(home)
+
     settings = _load(hooks_json)
     hooks_cfg = settings.setdefault("hooks", {})
     lines = [f"installed {len(FILES)} file(s) to {hooks_dir}"]
@@ -331,7 +382,7 @@ def install(pkg, home):
         if any(_is_ours(g, spec["script"]) for g in groups):
             lines.append(f"  {spec['event']}: already registered ({spec['script']})")
         else:
-            groups.append(spec["entry"])
+            groups.append(_render_entry(spec, mcp_on))
             changed = True
             lines.append(f"  {spec['event']}: registered {spec['script']}")
     if changed:
@@ -344,7 +395,7 @@ def install(pkg, home):
     # command rather than a separate one — one `daimon hooks install codex`
     # leaves the operator with both the hooks and the read-only tool surface.
     lines.append("")
-    lines += install_mcp(pkg, home)
+    lines += mcp_lines
 
     lines += [
         "",

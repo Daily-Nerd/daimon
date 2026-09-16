@@ -128,3 +128,19 @@ def test_cli_hooks_remove_codex_removes_only_the_mcp_table(tmp_path, monkeypatch
     # Hooks.json registrations are untouched: removal is MCP-only for codex.
     hooks_json = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
     assert hooks_json["hooks"]["SessionStart"]
+
+
+def test_install_registers_mcp_and_flags_the_prompt_hook(tmp_path):
+    # #1042 parity with kimi_hooks: the UserPromptSubmit hook is the only
+    # recall-hint surface Codex has, so once install() has also registered
+    # the MCP server, its own rendered command carries --mcp-tool; the other
+    # four hooks never do.
+    home = _toml_home(tmp_path)
+    codex_hooks.install(PKG, home)
+    cfg = json.loads((home / ".codex" / "hooks.json").read_text())["hooks"]
+    prompt_cmd = cfg["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert prompt_cmd.endswith("--mcp-tool")
+    for event in ("SessionStart", "SessionEnd", "Stop"):
+        assert "--mcp-tool" not in cfg[event][0]["hooks"][0]["command"]
+    pre_cmds = [h["command"] for g in cfg["PreToolUse"] for h in g["hooks"]]
+    assert not any("--mcp-tool" in c for c in pre_cmds)

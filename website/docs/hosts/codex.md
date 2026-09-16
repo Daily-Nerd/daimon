@@ -22,10 +22,10 @@ clone needed):
 daimon hooks install codex
 ```
 
-This copies the four hook scripts and the modules they share to
-`~/.codex/hooks/` and registers `SessionStart`, `SessionEnd`, `Stop` and
-`PreToolUse` in `~/.codex/hooks.json`, preserving any unrelated entries
-already there. It is idempotent — re-run it after every
+This copies the five hook scripts and the modules they share to
+`~/.codex/hooks/` and registers `SessionStart`, `SessionEnd`, `Stop`,
+`PreToolUse` and `UserPromptSubmit` in `~/.codex/hooks.json`, preserving any
+unrelated entries already there. It is idempotent, re-run it after every
 `uv tool upgrade daimon-briefing` to refresh the scripts to match the installed
 CLI. After installing, open `/hooks` in Codex to review and trust the hook
 definitions — Codex skips untrusted hook definitions until you do.
@@ -59,6 +59,13 @@ python3 hook/codex-hooks.py status
 - **`daimon-codex-session-start.py`** — `SessionStart` hook. Reads the latest
   project checkpoint and returns Codex `additionalContext` JSON, so the
   briefing is injected as developer context.
+- **`daimon-codex-user-prompt-submit.py`**: `UserPromptSubmit` hook,
+  measured live on Codex CLI 0.153.1: it fires once per user prompt and its
+  plain stdout reaches the model, no `additionalContext` envelope needed.
+  Codex already gets its briefing from `SessionStart` above, so this hook
+  carries recall injection only: the proactive "you worked on this before"
+  pointer, shelled out to `daimon recall-inject` exactly as the Claude Code
+  and Kimi prompt hooks do, plus opt-in live request delivery (#756).
 - **`daimon-codex-session-end.py`** — `SessionEnd` hook. Serializes the
   finished session in the background when Codex ends it gracefully.
 - **`daimon-codex-stop.py`** — `Stop` hook. Codex exposes `Stop` at turn
@@ -103,9 +110,10 @@ transcript text.
 `daimon hooks install codex` also registers the read-only
 [MCP server](../reference/mcp) in `~/.codex/config.toml`'s
 `[mcp_servers.daimon]`, alongside the hook registration above.
-`daimon hooks remove codex` takes only that table back. Codex has no
-per-prompt recall hook, so the recall hint has nowhere to render here yet —
-the tool is still worth having, since Codex's own agent can call it directly.
+`daimon hooks remove codex` takes only that table back. Once that entry
+exists, the recall hint (the per-prompt "you worked on this before" pointer,
+emitted by `daimon-codex-user-prompt-submit.py` above) names the
+`daimon_recall` tool instead of the `daimon recall "..."` shell command.
 
 ## Teach the agent the protocol
 
