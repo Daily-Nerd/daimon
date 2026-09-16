@@ -822,12 +822,40 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 
-def truncate_preserving_sections(text: str, max_chars: int) -> str:
-    """Cut `text` to max_chars, keeping **Label:** sections over filler: if the
-    labeled sections alone fit, they ARE the truncation; when they do not fit
-    the cut still lands INSIDE them, and only a section-less text falls back to
-    a blind head-cut of the raw text. Always appends a visible marker — silent
-    truncation reads as 'this is everything' when it isn't.
+def _byte_len(text: str) -> int:
+    """UTF-8 byte length (#1044): what the hosts that spill actually measure.
+    A char count under-counts: the render carries multi-byte glyphs (section
+    signs, arrows, ellipses) that are 2-3 bytes each in UTF-8."""
+    return len(text.encode("utf-8"))
+
+
+def _log_render_size(text: str, token_budget: int) -> None:
+    """#1044: nothing logged the token estimate before this. The rendered
+    byte size goes right next to it, at the same place the estimate is
+    computed, so the next drift between "under budget" and "still spills" is
+    visible in the log instead of discovered from a host's truncated
+    preview."""
+    log.debug("daimon: briefing rendered %d bytes (~%d tokens estimated, "
+              "token budget %d, byte ceiling %d)",
+              _byte_len(text), estimate_tokens(text), token_budget,
+              config.brief_max_bytes())
+
+
+def truncate_preserving_sections(text: str, max_len: int, *, measure=len) -> str:
+    """Cut `text` to max_len (per `measure`), keeping **Label:** sections over
+    filler: if the labeled sections alone fit, they ARE the truncation; when
+    they do not fit the cut still lands INSIDE them, and only a section-less
+    text falls back to a blind head-cut of the raw text. Always appends a
+    visible marker — silent truncation reads as 'this is everything' when it
+    isn't.
+
+    `measure` defaults to `len` (characters, #79's own unit). #1044's final
+    byte ceiling passes `measure=_byte_len` instead: same algorithm, same
+    marker, counted in UTF-8 bytes so a cut lands where the host's own byte
+    count says it should, not a char count away from it. The cut point is
+    found by search over `measure(body[:k])` rather than direct index math
+    (safe for either unit; the char case still recovers today's exact split
+    because `measure=len` is additive one-char-at-a-time).
 
     #489: the over-budget case used to fall through to the raw head-cut, which
     returned unlabeled preamble and dropped every section it had just found —
@@ -835,13 +863,22 @@ def truncate_preserving_sections(text: str, max_chars: int) -> str:
     items. Cutting the joined sections degrades predictably instead: the
     leading label survives, and what is lost is the tail rather than all of it.
     """
-    if len(text) <= max_chars:
+    if measure(text) <= max_len:
         return text
     parts = _SECTION_RE.findall(text)
     body = "\n".join(parts) if parts else text
-    if parts and len(body) + len(_TRUNCATION_MARKER) <= max_chars:
+    marker_len = measure(_TRUNCATION_MARKER)
+    if parts and measure(body) + marker_len <= max_len:
         return body + _TRUNCATION_MARKER
-    return body[:max(0, max_chars - len(_TRUNCATION_MARKER))] + _TRUNCATION_MARKER
+    limit = max(0, max_len - marker_len)
+    lo, hi = 0, len(body)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if measure(body[:mid]) <= limit:
+            lo = mid
+        else:
+            hi = mid - 1
+    return body[:lo] + _TRUNCATION_MARKER
 
 
 def _trim_note(dropped: int) -> str:
@@ -1264,6 +1301,53 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
     return lines
 
 
+def _apply_byte_ceiling(text: str, b: dict, trimmed: dict, degraded: bool,
+                        rulings, request_lines, verdict_lines, owed_lines,
+                        decision_count) -> str:
+    """#1044: the hard ceiling on the FINAL rendered briefing, applied after
+    every section is assembled. A SEPARATE, later check from the #79 token
+    budget above, in UTF-8 bytes because that is what the hosts that spill
+    actually measure (Claude Code's own spill message reports "12.8KB" for a
+    13,249-character render): chars and bytes are not the same axis once the
+    render carries multi-byte glyphs, and the token estimate never sees the
+    skeleton furniture (rulings, decision/request/verdict/owed panels) at
+    all, so a render can clear the token budget and still miss this one.
+
+    Reuses the same `_DROP_ORDER` machinery the token budget uses (background
+    sections before actionable ones, lowest-weight item first within a
+    section) to drop further if the byte ceiling is still not met once the
+    token budget is satisfied. If dropping every droppable item still is not
+    enough, and the skeleton alone (rulings, the four panels, external,
+    active_topic, contradictions) exceeds the ceiling, falls back to
+    `truncate_preserving_sections` in byte mode on everything AFTER the
+    protected head (`_head_lines`: the greeting, the #204 note, and the
+    standing rulings). The head is never touched by that final cut: rulings
+    are a human-ratified constraint and must not fade because a render ran
+    long; the HANDOFF block (printed separately, ahead of this text
+    entirely, by `render.render_brief`) is untouched by construction for the
+    same reason."""
+    max_bytes = config.brief_max_bytes()
+    if not max_bytes or _byte_len(text) <= max_bytes:
+        return text
+    b = dict(b)
+    trimmed = dict(trimmed) if trimmed else {key: 0 for key, _ in _DROP_ORDER}
+    for key, end in _DROP_ORDER:
+        while _byte_len(text) > max_bytes and b.get(key):
+            items = list(b[key])
+            items.pop(_drop_index(items, end))
+            b[key] = items
+            trimmed[key] = trimmed.get(key, 0) + 1
+            text = _render_parts(b, trimmed, degraded, rulings,
+                                 request_lines, verdict_lines, owed_lines,
+                                 decision_count)
+        if _byte_len(text) <= max_bytes:
+            return text
+    head = "\n".join(_head_lines(degraded, rulings))
+    available = max(0, max_bytes - _byte_len(head))
+    rest = text[len(head):]
+    return head + truncate_preserving_sections(rest, available, measure=_byte_len)
+
+
 def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=(), verdict_lines=(), owed_lines=(),
                  decision_count: str | None = None) -> str:
@@ -1273,11 +1357,20 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     each cut announced with a trim note. `degraded` (#204) downgrades every
     verbatim label and adds one header note when the receipt is unverifiable.
     `decision_count` (#766 slice 5) is the single count line or None —
-    outside `_DROP_ORDER` like every skeleton block, never trimmed."""
+    outside `_DROP_ORDER` like every skeleton block, never trimmed.
+
+    #1044: after the token budget above is satisfied (or found disabled), a
+    SEPARATE hard ceiling in bytes (`config.brief_max_bytes`) is applied to
+    the result (see `_apply_byte_ceiling`). Both checks run on every call;
+    neither replaces the other."""
     budget = config.brief_max_tokens()
     text = _render_parts(b, {}, degraded, rulings, request_lines,
                          verdict_lines, owed_lines, decision_count)
     if not budget or estimate_tokens(text) <= budget:
+        text = _apply_byte_ceiling(text, b, {}, degraded, rulings,
+                                   request_lines, verdict_lines, owed_lines,
+                                   decision_count)
+        _log_render_size(text, budget)
         return text
 
     # Stage 1: shorten monster items in place of dropping them. Verbatim text
@@ -1310,12 +1403,21 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
                                  decision_count)
         if estimate_tokens(text) <= budget:
             break
+    text = _apply_byte_ceiling(text, b, trimmed, degraded, rulings,
+                               request_lines, verdict_lines, owed_lines,
+                               decision_count)
+    _log_render_size(text, budget)
     return text
 
 
-def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
-                  rulings=(), request_lines=(), verdict_lines=(),
-                  owed_lines=(), decision_count: str | None = None) -> str:
+def _head_lines(degraded: bool, rulings) -> list[str]:
+    """The greeting, the #204 degrade note, and the standing rulings block:
+    the portion of the render that comes before decision/request/verdict/owed
+    panels and the cognitive body. #1044's byte ceiling protects exactly this
+    prefix: it is the closest this render gets to a human-ratified constraint
+    (rulings) plus the one line every render opens with, and the ceiling must
+    never silently eat either. Shared with `_render_parts` so the two can
+    never drift apart on what "the head" is."""
     parts = ["While you were away — here's where we left off."]
     if degraded:
         # One header note (#204), embedded in the text so the hook-injected
@@ -1328,6 +1430,13 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
         # sections below.
         parts.append("")
         parts.extend(rulings)
+    return parts
+
+
+def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
+                  rulings=(), request_lines=(), verdict_lines=(),
+                  owed_lines=(), decision_count: str | None = None) -> str:
+    parts = _head_lines(degraded, rulings)
     if decision_count:
         # #766 slice 5: sits directly above the request panel when it
         # renders, and in its position when it does not — so it is placed

@@ -129,6 +129,7 @@ Deterministic cross-session carry-over of unresolved items.
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_BRIEF_MAX_TOKENS` | `3000` | Token budget for the injected briefing, estimated at `len(text)//4` (no tokenizer dependency). `0` = unbounded. |
+| `DAIMON_BRIEF_MAX_BYTES` | `11264` | Hard ceiling on the final rendered briefing, in UTF-8 bytes, applied after every section is assembled (rulings, the request and decision panels, and the cognitive body). A separate, later check from `DAIMON_BRIEF_MAX_TOKENS` above: the token budget never sees the skeleton furniture, and bytes are what a host's own spill threshold actually measures. `0` = unbounded. |
 | `DAIMON_MAX_BRIEFING_DECISIONS` | `10` | Cap on decisions shown in the briefing (render-time view only — the checkpoint keeps all of them). `0` = unbounded. |
 | `DAIMON_BRIEF_GLOBAL_FALLBACK` | header-only | Controls the cross-project global-pointer fallback when a project has no checkpoint of its own. Default shows a header only; set to `full` (or `1`) to inject the full foreign body. |
 | `DAIMON_STALE_DAYS` | `7.0` | Age threshold (days) past which a carried item's effective last-verified stamp (its `last_verified`, else the latest resolutions.jsonl event, else `first_seen`) is stale enough for `brief` to warn about it. `0` warns on every carried item. |

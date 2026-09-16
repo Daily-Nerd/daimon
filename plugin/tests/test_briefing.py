@@ -575,6 +575,10 @@ def test_render_plain_respects_token_budget(monkeypatch):
 
 def test_render_plain_budget_zero_is_unbounded(monkeypatch):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    # #1044: this test is about the TOKEN budget's own zero-is-unbounded rule
+    # in isolation. The fat checkpoint below is well past the byte ceiling's
+    # default too, so that SEPARATE check is disabled here on purpose.
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
     b = briefing.build(_fat_checkpoint(), now=1_800_000_000.0)
     out = briefing.render_plain(b)
     assert briefing.estimate_tokens(out) > 800  # nothing dropped
@@ -595,6 +599,85 @@ def test_render_plain_under_budget_untouched(monkeypatch, sample_checkpoint):
     b = briefing.build(sample_checkpoint, now=1_800_000_000.0)
     out = briefing.render_plain(b)
     assert "trimmed" not in out and "PR #6" in out
+
+
+# ---- #1044: hard byte ceiling on the FINAL rendered briefing ----
+#
+# A separate, LATER check than the #79 token budget above: applied to the
+# whole assembled text (rulings + panels + cognitive body), measured in
+# UTF-8 bytes, because that is the unit the hosts that spill actually use.
+
+_CEILING_RULINGS = [
+    briefing._RULING_HEADER,
+    "- R-1: never let a briefing spill past the host's own preview limit.",
+]
+
+
+def _byte_ceiling_checkpoint():
+    def item(i, kind, **extra):
+        return {"text": f"{kind} {i} " + ("padding words " * 30),
+                "trust": "inferred", "importance": 5,
+                "first_seen": "2026-07-01T00:00:00Z", **extra}
+    return {
+        "session_id": "S-byte-ceiling",
+        "working_context": {
+            "active_topic": {"text": "byte ceiling stress test", "trust": "inferred"},
+            "open_questions": (
+                [item(i, "external fact", external_state=True) for i in range(6)]
+                + [item(i, "loop") for i in range(6)]
+            ),
+            "recent_decisions": [item(i, "decision") for i in range(10)],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [item(i, "belief") for i in range(20)],
+            "uncertainties": [item(i, "doubt") for i in range(10)],
+            "contradictions_flagged": [item(i, "contradiction") for i in range(5)],
+        },
+    }
+
+
+def test_byte_ceiling_caps_output_and_preserves_rulings(monkeypatch):
+    # Token budget disabled so only the byte ceiling is under test.
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "900")
+    b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
+    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    assert len(out.encode("utf-8")) <= 900
+    assert "truncated" in out
+    for line in _CEILING_RULINGS:
+        assert line in out
+
+
+def test_byte_ceiling_drops_items_without_the_hard_backstop(monkeypatch):
+    # A ceiling loose enough that dropping items (the same _DROP_ORDER the
+    # token budget uses) is enough on its own. The raw tail-cut backstop
+    # must never fire here.
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "15000")
+    b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
+    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    assert len(out.encode("utf-8")) <= 15000
+    assert "trimmed" in out
+    assert "truncated" not in out
+    for line in _CEILING_RULINGS:
+        assert line in out
+
+
+def test_byte_ceiling_zero_disables(monkeypatch):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
+    b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
+    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    assert len(out.encode("utf-8")) > 900
+    assert "truncated" not in out
+
+
+def test_byte_ceiling_leaves_small_briefings_untouched(monkeypatch, sample_checkpoint):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "3000")
+    monkeypatch.delenv("DAIMON_BRIEF_MAX_BYTES", raising=False)  # real default (11264)
+    b = briefing.build(sample_checkpoint, now=1_800_000_000.0)
+    out = briefing.render_plain(b)
+    assert "truncated" not in out and "PR #6" in out
 
 
 def test_line_marks_carried_items():

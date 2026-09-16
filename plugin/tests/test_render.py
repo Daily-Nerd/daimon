@@ -139,6 +139,29 @@ def test_render_brief_plain_handoff_unchanged(monkeypatch, sample_checkpoint, ca
     )
 
 
+def test_render_brief_plain_handoff_survives_byte_ceiling(monkeypatch, sample_checkpoint, capsys):
+    # #1044: the hard byte ceiling caps `briefing.render_plain`'s output.
+    # The handoff block is printed by `render_brief` entirely BEFORE that
+    # call, outside the capped text, so it is never a candidate for the cut
+    # in the first place. A tight ceiling proves the baton comes through
+    # whole regardless.
+    from daimon_briefing import briefing
+
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "300")
+    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "merge PR first\nthen review"}
+    render.render_brief(sample_checkpoint, handoff=handoff)
+    out = capsys.readouterr().out
+    assert out.startswith(
+        "HANDOFF (left deliberately by previous session, 2026-08-04T18:09:41Z):\n"
+        "→ merge PR first\n"
+        "→ then review\n"
+    )
+    expected_body = briefing.render_plain(briefing.build(sample_checkpoint))
+    assert expected_body in out
+    assert len(expected_body.encode("utf-8")) <= 300
+
+
 def test_render_brief_no_content(capsys):
     # #29: the old hint said "Run `serialize` first" — a dead end (serialize
     # needs a transcript path and is hook-internal). Point at the real flow.
