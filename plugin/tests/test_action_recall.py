@@ -131,6 +131,18 @@ def test_names_the_mcp_tool_and_records_the_hint_form_when_the_flag_is_set(
     assert _ledger(tmp_log_dir)[0]["hint_form"] == "tool"
 
 
+def test_records_the_injecting_session(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1043: `injected_into` is the live session running the shell action,
+    # distinct from `session_id` (the session that captured the belief).
+    _seed()
+    rc, out = _run(monkeypatch, capsys, ACTION, session="S-now")
+    assert rc == 0
+    row = _ledger(tmp_log_dir)[0]
+    assert row["injected_into"] == "S-now"
+    assert row["session_id"] != row["injected_into"]
+
+
 @pytest.mark.parametrize("command", ["ls -la", "python3 x.py"])
 def test_a_verb_outside_the_allowlist_is_silent_and_counted(
         command, tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):

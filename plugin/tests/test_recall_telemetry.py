@@ -90,6 +90,83 @@ def test_record_carries_the_hint_form_and_defaults_to_none(tmp_path, monkeypatch
     assert [r["hint_form"] for r in rows] == ["tool", "shell", None]
 
 
+def test_record_carries_the_injecting_session_and_defaults_to_unknown(
+        tmp_path, monkeypatch):
+    # #1043: `session_id` stays the CAPTURING session (provenance); a
+    # separate field carries which live session the row was injected into.
+    # Omitting the argument (every call site that predates #1043) must
+    # record None rather than inventing a value or reusing `session_id`.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-live", "session_id": "S-captured"}],
+        query_terms=["ledger"], surface="recall-inject",
+        injected_into="S-live-session",
+        now=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+    recall_telemetry.record(
+        [{"item_id": "o-legacy-call", "session_id": "S-captured"}],
+        query_terms=["ledger"], surface="recall-inject",
+        now=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert rows[0]["session_id"] == "S-captured"
+    assert rows[0]["injected_into"] == "S-live-session"
+    assert rows[1]["session_id"] == "S-captured"
+    assert rows[1]["injected_into"] is None
+
+
+def test_stats_breaks_down_deliveries_by_injected_into_and_hint_form(
+        tmp_path, monkeypatch):
+    # #1043: the follow-through comparison (hint_form tool vs shell) needs a
+    # per-injecting-session denominator without reading the raw file.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 15, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-1"}], query_terms=["x"], surface="recall-inject",
+        hint_form="tool", injected_into="S-a", now=now)
+    recall_telemetry.record(
+        [{"item_id": "o-2"}], query_terms=["x"], surface="recall-inject",
+        hint_form="shell", injected_into="S-a", now=now)
+    recall_telemetry.record(
+        [{"item_id": "o-3"}], query_terms=["x"], surface="recall-inject",
+        hint_form="tool", injected_into="S-b", now=now)
+    # A legacy-shaped call: no injected_into at all, must bucket as unknown
+    # rather than being dropped or crashing the aggregation.
+    recall_telemetry.record(
+        [{"item_id": "o-4"}], query_terms=["x"], surface="recall-search",
+        now=now)
+    out = recall_telemetry.stats(now=now)
+    by_session = out["lifetime"]["by_injected_into"]
+    assert by_session["S-a"]["deliveries"] == 2
+    assert by_session["S-a"]["by_hint_form"] == {"tool": 1, "shell": 1}
+    assert by_session["S-b"]["deliveries"] == 1
+    assert by_session["S-b"]["by_hint_form"] == {"tool": 1}
+    assert by_session["unknown"]["deliveries"] == 1
+    assert by_session["unknown"]["by_hint_form"] == {"unknown": 1}
+
+
+def test_stats_reads_a_legacy_row_missing_the_injected_into_key(
+        tmp_path, monkeypatch):
+    # Rows written before this field existed carry no `injected_into` key at
+    # all, not a null one. Reading them back must not raise, and they must
+    # bucket as unknown rather than being mistaken for provenance.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    log.mkdir()
+    (log / "recall-delivery.jsonl").write_text(
+        json.dumps({"at": "2026-09-11T00:00:00Z", "surface": "recall-inject",
+                    "session_id": "S-captured", "match_score": 0.5,
+                    "term_hits": 1}) + "\n",
+        encoding="utf-8",
+    )
+    out = recall_telemetry.stats(now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+    assert out["lifetime"]["deliveries"] == 1
+    assert out["lifetime"]["by_injected_into"]["unknown"]["deliveries"] == 1
+
+
 def test_stats_reads_a_legacy_row_missing_the_hint_form_key(tmp_path, monkeypatch):
     # #1036: rows written before this field existed carry no `hint_form` key
     # at all, not a null one. Reading them back must not raise.
