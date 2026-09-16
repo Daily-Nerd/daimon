@@ -988,3 +988,31 @@ def test_the_autouse_fixture_isolates_the_checks_dir():
     assert resolved != Path.home() / ".daimon" / "checks"
     assert not (Path.home() / ".daimon" / "checks").exists() or \
         Path.home() not in resolved.parents
+
+
+# ---- #1044: byte ceiling on the final rendered briefing ----
+
+
+def test_brief_max_bytes_default(monkeypatch):
+    monkeypatch.delenv("DAIMON_BRIEF_MAX_BYTES", raising=False)
+    assert config.brief_max_bytes() == 11264
+
+
+def test_brief_max_bytes_env_override(monkeypatch):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "4096")
+    assert config.brief_max_bytes() == 4096
+
+
+def test_brief_max_bytes_zero_disables(monkeypatch):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
+    assert config.brief_max_bytes() == 0
+
+
+def test_brief_max_bytes_garbage_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "not-a-number")
+    assert config.brief_max_bytes() == 11264
+
+
+def test_brief_max_bytes_negative_clamps_to_zero(monkeypatch):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "-5")
+    assert config.brief_max_bytes() == 0

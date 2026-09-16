@@ -139,6 +139,104 @@ def test_render_brief_plain_handoff_unchanged(monkeypatch, sample_checkpoint, ca
     )
 
 
+def test_render_handoff_public_seam_plain(capsys):
+    # #1044: `render_handoff` is the seam cli.py's global-fallback-with-no-
+    # own-checkpoint path uses (#740): its own call site into
+    # `_print_handoff`'s plain branch now that `render_brief`'s non-rich
+    # path composes the handoff text itself instead of routing through it.
+    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "merge PR first\nthen review"}
+    render.render_handoff(handoff)
+    out = capsys.readouterr().out
+    assert out == (
+        "HANDOFF (left deliberately by previous session, 2026-08-04T18:09:41Z):\n"
+        "→ merge PR first\n"
+        "→ then review\n\n"
+    )
+
+
+def _heavy_checkpoint_for_byte_ceiling():
+    def item(i, kind, **extra):
+        return {"text": f"{kind} {i} " + ("padding words " * 30),
+                "trust": "inferred", "importance": 5,
+                "first_seen": "2026-07-01T00:00:00Z", **extra}
+    return {
+        "session_id": "S-render-brief-ceiling",
+        "working_context": {
+            "active_topic": {"text": "byte ceiling stress test", "trust": "inferred"},
+            "open_questions": (
+                [item(i, "external fact", external_state=True) for i in range(6)]
+                + [item(i, "loop") for i in range(6)]
+            ),
+            "recent_decisions": [item(i, "decision") for i in range(10)],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [item(i, "belief") for i in range(20)],
+            "uncertainties": [item(i, "doubt") for i in range(10)],
+            "contradictions_flagged": [item(i, "contradiction") for i in range(5)],
+        },
+    }
+
+
+def test_render_brief_plain_total_stdout_bounded_by_byte_ceiling(
+        monkeypatch, tmp_checkpoint_dir, capsys):
+    # #1044 rework: the ceiling has to bound the WHOLE hook stdout
+    # `render_brief` produces (handoff + body + drift + teammates), not
+    # `render_plain`'s body alone. A real handoff plus drift and teammates
+    # printed after the body were exactly the gap the first cut of this fix
+    # left open (measured: total 13,202 bytes, handoff 1,211, body ~11,900;
+    # capping only the body at 11,264 still landed the total near 12,475).
+    from daimon_briefing import refutations
+
+    project = "/p/render-brief-byte-ceiling"
+    refutations.assert_ruling(
+        subject="byte ceiling probe ruling",
+        verdict="never let a briefing spill past the host's own preview limit",
+        scope="this project",
+        evidence=["issue:1044"],
+        channel="cli-tty",
+        ratified=True,
+        project_dir=project,
+    )
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "3200")
+    # 2,000 chars is cli.py's own _HANDOFF_MAX_CHARS ceiling: the largest a
+    # handoff can be at author time.
+    handoff_note = "x" * 2000
+    handoff = {"ts": "2026-08-04T18:09:41Z", "note": handoff_note}
+    drift = [{"item": {"text": "Adopt D-007 prompt"}, "kind": "soft",
+             "anchor": {"qualified_name": "plugin/x.py::run"}}]
+    teammates = _teammate_sections()
+
+    render.render_brief(_heavy_checkpoint_for_byte_ceiling(), drift=drift,
+                        teammates=teammates, handoff=handoff,
+                        project_dir=project)
+    out = capsys.readouterr().out
+
+    assert len(out.encode("utf-8")) <= 3200
+    assert handoff_note in out
+    assert "never let a briefing spill past the host's own preview limit" in out
+    assert "truncated" in out
+    assert "CODE DRIFT" in out
+    assert "Teammates — where they left off:" in out
+
+
+def test_render_brief_plain_body_budget_has_a_floor(monkeypatch,
+                                                     sample_checkpoint, capsys):
+    # #1044: an oversized handoff must not zero out the body's own budget:
+    # the floor guarantees SOME body space even when the configured ceiling
+    # is smaller than the surrounding text alone. A real host never hits
+    # this at the real 11264-byte default; the floor still has to hold for a
+    # deliberately small one.
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "50")
+    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "x" * 2000}
+    render.render_brief(sample_checkpoint, handoff=handoff)
+    out = capsys.readouterr().out
+    # The body still rendered something, not nothing, despite a ceiling far
+    # smaller than the handoff text it sits beside.
+    assert "While you were away" in out
+
+
 def test_render_brief_no_content(capsys):
     # #29: the old hint said "Run `serialize` first" — a dead end (serialize
     # needs a transcript path and is hook-internal). Point at the real flow.
@@ -147,6 +245,35 @@ def test_render_brief_no_content(capsys):
     assert "No checkpoint yet" in out
     assert "Run `serialize` first" not in out
     assert "session end" in out  # checkpoints come from hooks automatically
+
+
+def test_render_brief_rich_no_content(monkeypatch, capsys):
+    # #1044: the rich branch's "no checkpoint" body has no rich-specific
+    # rendering of its own (bare print, same as the plain path). Pinned as
+    # its own call site now that the #1044 rework split render_brief into
+    # separate rich/non-rich branches.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render.render_brief({})
+    out = capsys.readouterr().out
+    assert "No checkpoint yet" in out
+
+
+def test_render_brief_rich_honors_llm_briefing_when_present(
+        monkeypatch, sample_checkpoint, capsys):
+    # #1044: the rich branch's LLM-narrative print is its own call site now
+    # that the rework split render_brief into separate rich/non-rich
+    # branches. Mirrors test_render_brief_honors_llm_briefing_when_present
+    # but forces the rich path.
+    from daimon_briefing import briefing
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setattr(briefing.config, "llm_briefing", lambda: True)
+    sentinel = ('LLM-NARRATIVE-SENTINEL — "I\'ll merge it myself later from '
+                'the GitHub UI" / "do we chunk below 1200 lines or '
+                'single-pass?" / "we adopt the D-007 prompt for the serializer"')
+    monkeypatch.setattr(briefing, "_render_llm", lambda cp: sentinel)
+    render.render_brief(sample_checkpoint)
+    out = capsys.readouterr().out
+    assert "LLM-NARRATIVE-SENTINEL" in out
 
 
 # ---- #694 PR 2: the request panel's worldcheck_project gate -----------------
@@ -190,6 +317,18 @@ def test_render_brief_no_checkpoint_still_shows_the_panel(
         tmp_checkpoint_dir, capsys):
     _seed_request("/p/render-req-recipient-c")
     render.render_brief({}, worldcheck_project="/p/render-req-recipient-c")
+    out = capsys.readouterr().out
+    assert "publish the schema" in out
+
+
+def test_render_brief_rich_no_checkpoint_still_shows_the_panel(
+        monkeypatch, tmp_checkpoint_dir, capsys):
+    # #1044: the rich branch's "b is None, but skeleton blocks exist" body is
+    # its own call site now that the rework split render_brief into separate
+    # rich/non-rich branches. Mirrors the plain-path test above.
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    _seed_request("/p/render-req-recipient-rich")
+    render.render_brief({}, worldcheck_project="/p/render-req-recipient-rich")
     out = capsys.readouterr().out
     assert "publish the schema" in out
 
@@ -812,6 +951,22 @@ def test_render_brief_honors_llm_briefing_when_present(monkeypatch, sample_check
     render.render_brief(sample_checkpoint)
     out = capsys.readouterr().out
     assert "LLM-NARRATIVE-SENTINEL" in out
+
+
+def test_print_drift_direct_plain(capsys):
+    # #1044: `render_brief`'s non-rich path now composes `_format_drift`
+    # directly (so it can measure the drift block before the body renders)
+    # instead of calling `_print_drift`. `_print_drift`'s own non-rich
+    # branch has no live caller left except this direct one, pinned here so
+    # the delegation to `_format_drift` stays covered.
+    drift = [{"item": {"text": "Adopt D-007 prompt"}, "kind": "soft",
+             "anchor": {"qualified_name": "plugin/x.py::run"}}]
+    render._print_drift(drift)
+    out = capsys.readouterr().out
+    assert out == (
+        "\nCODE DRIFT — verify before trusting (anchored code changed):\n"
+        "- [changed] Adopt D-007 prompt  (plugin/x.py::run)\n"
+    )
 
 
 def test_render_brief_appends_drift_block(monkeypatch, sample_checkpoint, capsys):

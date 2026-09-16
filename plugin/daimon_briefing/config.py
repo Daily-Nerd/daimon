@@ -325,6 +325,26 @@ def brief_max_tokens() -> int:
     return max(0, n)
 
 
+def brief_max_bytes() -> int:
+    """Hard ceiling on the FINAL rendered briefing (#1044), measured in UTF-8
+    bytes, not the chars//4 estimate `brief_max_tokens` uses. Applied AFTER
+    every section is assembled (rulings, request/verdict/owed panels, the
+    cognitive body), as a backstop the token budget cannot give: the token
+    budget never sees the skeleton furniture, and the render carries
+    multi-byte glyphs (section signs, arrows, ellipses) that inflate bytes
+    past what a char count implies. Measured in bytes because the hosts that
+    spill measure bytes too: Claude Code's own spill message reports "12.8KB"
+    for a 13,249-character render.
+    Default 11264 (11 KiB): safely under Claude Code's ~12 KB spill line.
+    0 = unbounded. DAIMON_BRIEF_MAX_BYTES overrides."""
+    raw = _get("DAIMON_BRIEF_MAX_BYTES")
+    try:
+        n = int(raw) if raw is not None else 11264
+    except ValueError:
+        return 11264
+    return max(0, n)
+
+
 def recall_seen_dir() -> Path:
     """Per-session suggestion-cooldown state for recall-inject (#125): one small
     JSON per session, {"origins": [...], "content_keys": [...]} — the
