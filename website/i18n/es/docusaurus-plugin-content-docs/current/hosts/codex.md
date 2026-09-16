@@ -24,9 +24,9 @@ publicado (sin necesidad de clonar el repo):
 daimon hooks install codex
 ```
 
-Esto copia los cuatro scripts de hook y los módulos que comparten a
-`~/.codex/hooks/` y registra `SessionStart`, `SessionEnd`, `Stop` y
-`PreToolUse` en `~/.codex/hooks.json`, preservando
+Esto copia los cinco scripts de hook y los módulos que comparten a
+`~/.codex/hooks/` y registra `SessionStart`, `SessionEnd`, `Stop`,
+`PreToolUse` y `UserPromptSubmit` en `~/.codex/hooks.json`, preservando
 cualquier entrada no relacionada que ya exista. Es idempotente — re-ejecútalo
 después de cada `uv tool upgrade daimon-briefing` para refrescar los scripts
 y que coincidan con el CLI instalado. Tras instalar, abre `/hooks` en Codex
@@ -65,6 +65,14 @@ python3 hook/codex-hooks.py status
 - **`daimon-codex-session-start.py`** — hook `SessionStart`. Lee el último
   checkpoint del proyecto y devuelve JSON `additionalContext` de Codex, así
   el briefing se inyecta como contexto de desarrollo.
+- **`daimon-codex-user-prompt-submit.py`**: hook `UserPromptSubmit`, medido
+  en vivo en Codex CLI 0.153.1: dispara una vez por cada prompt del usuario y
+  su salida estándar en texto plano llega al modelo, sin necesitar el sobre
+  `additionalContext`. Codex ya recibe su briefing desde `SessionStart`
+  arriba, así que este hook lleva solo la inyección de recall: el puntero
+  proactivo "trabajaste en esto antes", delegado a `daimon recall-inject`
+  igual que los hooks de prompt de Claude Code y Kimi, más la entrega de
+  pedidos en vivo opcional (#756).
 - **`daimon-codex-stop.py`** — hook `Stop`. Codex expone `Stop` a nivel de
   turno, no como un evento limpio de fin de sesión, así que este hook
   serializa de forma oportunista y está regulado por
@@ -112,10 +120,10 @@ tratar JSON crudo como texto del transcript.
 `daimon hooks install codex` también registra el [servidor MCP](../reference/mcp)
 de solo lectura en `[mcp_servers.daimon]` dentro de `~/.codex/config.toml`,
 junto al registro de hooks de arriba. `daimon hooks remove codex` retira
-solo esa tabla. Codex no tiene hook de recall por prompt, así que el
-puntero de recall no tiene dónde renderizar todavía aquí — la herramienta
-igual vale la pena, porque el propio agente de Codex puede llamarla
-directamente.
+solo esa tabla. Una vez que esa entrada existe, el puntero de recall (la
+línea "trabajaste en esto antes" por prompt, emitida por
+`daimon-codex-user-prompt-submit.py` arriba) nombra la herramienta
+`daimon_recall` en lugar del comando de shell `daimon recall "..."`.
 
 ## Enséñale el protocolo al agente
 

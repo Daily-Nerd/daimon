@@ -3852,9 +3852,11 @@ _HOOK_HOSTS: dict[str, _HookHostSpec] = {
         "files": ("daimon-codex-session-start.py", "daimon-codex-stop.py",
                   "daimon-codex-session-end.py", "daimon-codex-pre-action.py",
                   "daimon-action-recall.py",
+                  "daimon-codex-user-prompt-submit.py",
                   "_daimon_hook_lib.py", "checks_runtime.py",
                   "checks_host.py"),
-        "events": ("SessionStart", "Stop", "SessionEnd", "PreToolUse"),
+        "events": ("SessionStart", "Stop", "SessionEnd", "PreToolUse",
+                   "UserPromptSubmit"),
         "register": "codex",
     },
     # #988. Like Codex, Kimi Code needs several scripts under several events

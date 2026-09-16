@@ -284,6 +284,18 @@ def test_hooks_install_codex_refreshes_stale_script(tmp_path, monkeypatch):
     assert stale.read_bytes() == (PKG_HOOKS_DIR / "daimon-codex-stop.py").read_bytes()
 
 
+def test_hooks_install_codex_registers_user_prompt_submit(tmp_path, monkeypatch):
+    # #1042: the per-prompt recall injection hook.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    cfg = json.loads((tmp_path / ".codex" / "hooks.json").read_text())["hooks"]
+    assert "UserPromptSubmit" in cfg
+    ups_hook = cfg["UserPromptSubmit"][0]["hooks"][0]
+    assert "daimon-codex-user-prompt-submit.py" in ups_hook["command"]
+    assert (tmp_path / ".codex" / "hooks"
+           / "daimon-codex-user-prompt-submit.py").is_file()
+
+
 def test_hooks_install_codex_output_tells_user_to_trust(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli.main(["hooks", "install", "codex"]) == 0

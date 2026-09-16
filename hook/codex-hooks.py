@@ -44,6 +44,25 @@ HOOKS = [
         },
     },
     {
+        # #1042: the per-prompt recall injection. Codex already gets its
+        # briefing from SessionStart, so unlike Kimi's UserPromptSubmit hook
+        # this ONLY does recall-inject. No first-prompt briefing branch. No
+        # statusMessage: it fires on every prompt, not once a session. This
+        # manager never touches config.toml, so it never appends --mcp-tool;
+        # the packaged codex_hooks.py does that dynamically on its own copy
+        # of this entry (see codex_hooks._render_entry). This static shape
+        # is what test_codex_session_end.py's parity test pins.
+        "script": "daimon-codex-user-prompt-submit.py",
+        "event": "UserPromptSubmit",
+        "entry": {
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.codex/hooks/daimon-codex-user-prompt-submit.py",
+                "timeout": 5,
+            }],
+        },
+    },
+    {
         "script": "daimon-codex-session-end.py",
         "event": "SessionEnd",
         "entry": {

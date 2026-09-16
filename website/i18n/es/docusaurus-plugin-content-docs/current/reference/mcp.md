@@ -65,7 +65,7 @@ directamente.
 |------|---------------|-------------------------------------------|
 | Claude Code | soportado | soportado |
 | Kimi Code | soportado | soportado |
-| Codex | soportado | no soportado (sin hook de recall por prompt) |
+| Codex | soportado | soportado |
 | Windsurf | soportado | no soportado (sin hook de recall por prompt) |
 | Gemini CLI | soportado | no soportado (sin hook de recall por prompt) |
 

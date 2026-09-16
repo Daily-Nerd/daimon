@@ -27,15 +27,16 @@ def test_every_row_carries_both_capabilities_from_the_known_vocabulary():
         assert caps["hint"].startswith(("supported", "unsupported")), host
 
 
-def test_only_the_two_hosts_with_a_prompt_time_recall_hook_support_the_hint():
-    # claude-code (daimon-prompt-recall.py) and kimi
-    # (daimon-kimi-user-prompt-submit.py) are the only hosts where a
-    # recall-inject call exists at all today. Codex, Windsurf and Gemini have
-    # no per-prompt recall hook (see their own module docstrings), so the
-    # hint has nowhere to render regardless of MCP registration.
+def test_only_the_three_hosts_with_a_prompt_time_recall_hook_support_the_hint():
+    # claude-code (daimon-prompt-recall.py), kimi
+    # (daimon-kimi-user-prompt-submit.py) and, since #1042, codex
+    # (daimon-codex-user-prompt-submit.py) are the hosts where a
+    # recall-inject call exists at all today. Windsurf and Gemini have no
+    # per-prompt recall hook (see their own module docstrings), so the hint
+    # has nowhere to render regardless of MCP registration.
     supported = {h for h, c in host_mcp_caps.MCP_HOST_CAPS.items()
                 if c["hint"] == "supported"}
-    assert supported == {"claude-code", "kimi"}
+    assert supported == {"claude-code", "kimi", "codex"}
 
 
 def test_render_lines_names_every_host_and_both_columns():

@@ -13,19 +13,19 @@ Two independent columns, because they answer different questions:
     standalone gemini-hooks.py) register the read-only MCP server for this
     host? Every shipped host does, as of #1036.
   - "hint": does the per-prompt recall hint have anywhere to render on this
-    host — i.e. does a prompt-time recall-inject call exist at all? Only
-    claude-code (daimon-prompt-recall.py) and kimi
-    (daimon-kimi-user-prompt-submit.py) have one today. Codex, Windsurf, and
-    Gemini are briefing-only or action-only hosts; registering the MCP
-    server there is still worthwhile (a host's own agent can call the tool
-    directly), but there is no hint text to swap forms on.
+    host, i.e. does a prompt-time recall-inject call exist at all?
+    claude-code (daimon-prompt-recall.py), kimi
+    (daimon-kimi-user-prompt-submit.py) and, since #1042, codex
+    (daimon-codex-user-prompt-submit.py) have one. Windsurf and Gemini are
+    briefing-only or action-only hosts; registering the MCP server there is
+    still worthwhile (a host's own agent can call the tool directly), but
+    there is no hint text to swap forms on.
 """
 
 MCP_HOST_CAPS: dict[str, dict[str, str]] = {
     "claude-code": {"mcp": "supported", "hint": "supported"},
     "kimi": {"mcp": "supported", "hint": "supported"},
-    "codex": {"mcp": "supported",
-             "hint": "unsupported (no prompt-time recall hook)"},
+    "codex": {"mcp": "supported", "hint": "supported"},
     "windsurf": {"mcp": "supported",
                 "hint": "unsupported (no prompt-time recall hook)"},
     "gemini": {"mcp": "supported",
