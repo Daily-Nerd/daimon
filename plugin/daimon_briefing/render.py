@@ -96,9 +96,13 @@ _SECTIONS = [
 ]
 
 
-def _print_version_note(checkpoint) -> None:
-    """Note when the checkpoint's format_version differs from the current serialize
-    prompt. Legacy checkpoints (no format_version) render silently — nothing to
+def _format_version_note(checkpoint) -> str:
+    """Text for the format-version drift note (#1044): identical bytes to
+    what `_print_version_note` used to print directly, extracted so
+    `render_brief`'s byte-ceiling accounting can measure it before the body
+    renders. "" when there is nothing to say (nothing to reserve or print).
+
+    Legacy checkpoints (no format_version) render silently — nothing to
     compare (#93). #294: older-than-code is routine schema drift (#93); newer-
     than-code is impossible by construction (PROMPT_VERSION is a source constant)
     and gets distinct wording — see cli._status_health's sibling check for the
@@ -108,17 +112,34 @@ def _print_version_note(checkpoint) -> None:
     # silent, but an explicitly stamped "" is a garbage value that still
     # deserves the fail-soft fallback wording below (#294).
     if fv is None or fv == serializer.PROMPT_VERSION:
-        return
+        return ""
     order = schema.compare_format_versions(fv, serializer.PROMPT_VERSION)
     if order is not None and order > 0:
-        print(f"⚠ checkpoint format {fv} claims a version newer than this "
-              f"daimon's {serializer.PROMPT_VERSION} — a checkpoint cannot be "
-              f"newer than the code that wrote it, so the stamp is unreliable "
-              f"(check for a second daimon install writing to this checkpoint "
-              f"dir, or a downgraded install).")
-    else:
-        print(f"⚠ checkpoint format {fv} != current {serializer.PROMPT_VERSION} — "
-              f"schema changed; some sections may render partially.")
+        return (f"⚠ checkpoint format {fv} claims a version newer than this "
+                f"daimon's {serializer.PROMPT_VERSION} — a checkpoint cannot be "
+                f"newer than the code that wrote it, so the stamp is unreliable "
+                f"(check for a second daimon install writing to this checkpoint "
+                f"dir, or a downgraded install).\n")
+    return (f"⚠ checkpoint format {fv} != current {serializer.PROMPT_VERSION} — "
+            f"schema changed; some sections may render partially.\n")
+
+
+def _print_version_note(checkpoint) -> None:
+    print(_format_version_note(checkpoint), end="")
+
+
+def _format_handoff(handoff) -> str:
+    """Plain-path text for the baton block (#523, #1044): identical bytes to
+    what `_print_handoff`'s non-rich branch used to print directly, extracted
+    so `render_brief`'s byte-ceiling accounting can measure it before the
+    body renders. "" when there is no handoff (nothing to reserve or print).
+    Multi-line batons keep one arrow per line."""
+    if not handoff:
+        return ""
+    lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
+    parts = [f"HANDOFF (left deliberately by previous session, {handoff['ts']}):"]
+    parts.extend(f"→ {line}" for line in lines)
+    return "\n".join(parts) + "\n\n"
 
 
 def _print_handoff(handoff) -> None:
@@ -134,8 +155,8 @@ def _print_handoff(handoff) -> None:
     a compatibility surface for non-TTY hosts and hook briefings."""
     if not handoff:
         return
-    lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
     if supports_rich():
+        lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
         from rich.console import Console
         from rich.panel import Panel
         from rich.text import Text
@@ -147,10 +168,7 @@ def _print_handoff(handoff) -> None:
             border_style="magenta", title_align="left",
         ))
         return
-    print(f"HANDOFF (left deliberately by previous session, {handoff['ts']}):")
-    for line in lines:
-        print(f"→ {line}")
-    print("")
+    print(_format_handoff(handoff), end="")
 
 
 def render_handoff(handoff) -> None:
@@ -160,69 +178,53 @@ def render_handoff(handoff) -> None:
     _print_handoff(handoff)
 
 
-def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
-                 project_dir=None, worldcheck_project=None) -> None:
-    """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
-    `project_dir` — the incoming-request panel's AND the sender-side
-    verdict panel's `worldcheck_project` pattern (D2), never keyed on
-    route: the caller passes it only on the CLI same-project brief path
-    (`cli._render_briefing_body`), never for `--slug`, the global-pointer
-    fallback body, or MCP. None here means neither panel, full stop."""
-    _print_handoff(handoff)
-    b = briefing.build(checkpoint)
-    # #693/#694: each path below performs exactly one ledger read per
-    # section — the LLM path reads inside briefing.render, every other path
-    # reads here. None (legacy callers, or a deliberately excluded route)
-    # skips the read entirely; an unknown project resolves to no ledger path
-    # anyway, so the guard saves the call, not a leak.
-    if b is None:
-        rulings = (briefing.ruling_lines(project_dir)
-                   if project_dir is not None else [])
-        # #766 slice 5: same gate as the request panel, not rulings —
-        # absent on --slug and the global-pointer-fallback body.
-        decision_count = (briefing.decision_count_line(worldcheck_project)
-                          if worldcheck_project is not None else None)
-        decision_count_block = [decision_count] if decision_count else []
-        request_lines = (briefing.request_panel_lines(worldcheck_project)
-                         if worldcheck_project is not None else [])
-        verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
-                         if worldcheck_project is not None else [])
-        owed_lines = (briefing.owed_panel_lines(worldcheck_project)
-                      if worldcheck_project is not None else [])
-        blocks = [blk for blk in (rulings, decision_count_block,
-                                  request_lines, verdict_lines,
-                                  owed_lines) if blk]
-        if blocks:
-            # #693/#694: standing rulings, addressed requests, and decided
-            # verdicts exist before the first checkpoint does — a day-one
-            # ratification, or the first ask/verdict this project ever sees,
-            # must not wait for a session to end.
-            print("\n\n".join("\n".join(blk) for blk in blocks))
-            print("")
-        # Point at the real flow (#29): checkpoints come from the hooks; bare
-        # `serialize` dead-ends (it needs a transcript path).
-        print("No checkpoint yet — nothing to brief. Checkpoints are written "
+# #1044: floor on the body's own budget once `render_brief`'s non-rich path
+# reserves bytes for the handoff/version-note/drift/teammates text around it.
+# Worst realistic surrounding text (a 2,000-char handoff near the cli.py
+# _HANDOFF_MAX_CHARS cap, plus a drift block and a teammates section) still
+# leaves most of the default 11264-byte ceiling for the body; this floor only
+# bites in a pathological case (e.g. a huge teammates roster), and exists so
+# that case degrades to a small body instead of an empty or negative one.
+_MIN_BODY_BYTES = 512
+
+
+def _no_checkpoint_lines(project_dir, worldcheck_project):
+    """The day-one skeleton-only body (#693/#694) shared by every render
+    path when there is no checkpoint yet: a standing ruling, an addressed
+    request, or a decided verdict can exist before the first checkpoint
+    does, and must still reach the reader. Returns the block list AND the
+    fixed pointer line, so callers can compose or print them as needed. No
+    droppable structure here, so #1044's byte ceiling does not apply to it."""
+    rulings = (briefing.ruling_lines(project_dir)
+              if project_dir is not None else [])
+    # #766 slice 5: same gate as the request panel, not rulings — absent on
+    # --slug and the global-pointer-fallback body.
+    decision_count = (briefing.decision_count_line(worldcheck_project)
+                      if worldcheck_project is not None else None)
+    decision_count_block = [decision_count] if decision_count else []
+    request_lines = (briefing.request_panel_lines(worldcheck_project)
+                     if worldcheck_project is not None else [])
+    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
+                     if worldcheck_project is not None else [])
+    owed_lines = (briefing.owed_panel_lines(worldcheck_project)
+                  if worldcheck_project is not None else [])
+    blocks = [blk for blk in (rulings, decision_count_block, request_lines,
+                              verdict_lines, owed_lines) if blk]
+    # Point at the real flow (#29): checkpoints come from the hooks; bare
+    # `serialize` dead-ends (it needs a transcript path).
+    pointer = ("No checkpoint yet — nothing to brief. Checkpoints are written "
               "automatically at session end; to backfill one manually, run "
               "`daimon serialize <transcript>`.")
-        _print_teammates(teammates)
-        return
-    _print_version_note(checkpoint)
-    # Honor the opt-in LLM briefing (DAIMON_LLM_BRIEFING) — same source of truth as
-    # the hermes hook. Free-form LLM text can't be sectioned into rich panels, so when
-    # it is active we print its narrative regardless of TTY.
-    if config.llm_briefing():
-        # Tries LLM, falls back to deterministic; #693 rulings and #694's
-        # two request panels all ride inside. Unconditional return: `b` is
-        # non-None here, so render() always yields text — a fall-through
-        # would double the ledger reads below, and structure beats a comment
-        # at keeping that invariant.
-        print(briefing.render(checkpoint, project_dir=project_dir,
-                              worldcheck_project=worldcheck_project))
-        _print_drift(drift)
-        _print_teammates(teammates)
-        return
+    return blocks, pointer
+
+
+def _panel_lines(project_dir, worldcheck_project):
+    """The four skeleton panels (rulings, decision count, request, verdict,
+    owed) computed once, shared by every render path once a checkpoint
+    exists. Kept as one seam so the rich, plain, and byte-budgeted plain
+    branches read the same ledgers the same way (#693/#694)."""
     rulings = (briefing.ruling_lines(project_dir)
-               if project_dir is not None else [])
+              if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel, not rulings.
     decision_count = (briefing.decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
@@ -232,29 +234,145 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                      if worldcheck_project is not None else [])
     owed_lines = (briefing.owed_panel_lines(worldcheck_project)
                   if worldcheck_project is not None else [])
-    # #204: degrade verbatim labels when the receipt can't be locally confirmed.
-    # Cheap check (sidecar + byte match), computed once for both render paths.
-    degraded = briefing.receipt_degraded(checkpoint)
-    if not supports_rich():
-        print(briefing.render_plain(b, degraded, rulings, request_lines,
-                                    verdict_lines, owed_lines, decision_count))
-    else:
+    return rulings, decision_count, request_lines, verdict_lines, owed_lines
+
+
+def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
+                 project_dir=None, worldcheck_project=None) -> None:
+    """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
+    `project_dir` — the incoming-request panel's AND the sender-side
+    verdict panel's `worldcheck_project` pattern (D2), never keyed on
+    route: the caller passes it only on the CLI same-project brief path
+    (`cli._render_briefing_body`), never for `--slug`, the global-pointer
+    fallback body, or MCP. None here means neither panel, full stop.
+
+    #1044: the non-rich branch is the one every SessionStart-shaped host
+    reaches, through `daimon brief`'s subprocess capture. Claude Code,
+    Codex, Gemini, and Kimi all shell out to that CLI and capture its whole
+    stdout. That stdout has to fit under `config.brief_max_bytes()`, not just
+    the body `briefing.render_plain` returns, so every block printed beside
+    the body (handoff, version note, drift, teammates) is FORMATTED (not
+    printed) first, measured, and the body's own budget shrinks by that
+    amount before it renders. Nothing is printed after the body without
+    having been counted first. The rich branch is unchanged: it is
+    TTY-interactive, never captured or spilled by a host, so the byte
+    ceiling does not apply to it."""
+    if supports_rich():
+        _print_handoff(handoff)
+        b = briefing.build(checkpoint)
+        # #693/#694: each path below performs exactly one ledger read per
+        # section — the LLM path reads inside briefing.render, every other
+        # path reads here. None (legacy callers, or a deliberately excluded
+        # route) skips the read entirely; an unknown project resolves to no
+        # ledger path anyway, so the guard saves the call, not a leak.
+        if b is None:
+            blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project)
+            if blocks:
+                # #693/#694: standing rulings, addressed requests, and
+                # decided verdicts exist before the first checkpoint does —
+                # a day-one ratification, or the first ask/verdict this
+                # project ever sees, must not wait for a session to end.
+                print("\n\n".join("\n".join(blk) for blk in blocks))
+                print("")
+            print(pointer)
+            _print_teammates(teammates)
+            return
+        _print_version_note(checkpoint)
+        # Honor the opt-in LLM briefing (DAIMON_LLM_BRIEFING) — same source
+        # of truth as the hermes hook. Free-form LLM text can't be sectioned
+        # into rich panels, so when it is active we print its narrative
+        # regardless of TTY.
+        if config.llm_briefing():
+            # Tries LLM, falls back to deterministic; #693 rulings and
+            # #694's two request panels all ride inside. Unconditional
+            # return: `b` is non-None here, so render() always yields text.
+            print(briefing.render(checkpoint, project_dir=project_dir,
+                                  worldcheck_project=worldcheck_project))
+            _print_drift(drift)
+            _print_teammates(teammates)
+            return
+        rulings, decision_count, request_lines, verdict_lines, owed_lines = (
+            _panel_lines(project_dir, worldcheck_project))
+        # #204: degrade verbatim labels when the receipt can't be locally
+        # confirmed. Cheap check (sidecar + byte match).
+        degraded = briefing.receipt_degraded(checkpoint)
         _rich_brief(b, degraded, rulings, request_lines, verdict_lines,
                     owed_lines, decision_count)
-    _print_drift(drift)
-    _print_teammates(teammates)
+        _print_drift(drift)
+        _print_teammates(teammates)
+        return
+
+    # Non-rich path (#1044): see the docstring above. Format every
+    # surrounding block BEFORE the body renders.
+    handoff_text = _format_handoff(handoff)
+    b = briefing.build(checkpoint)
+    if b is None:
+        blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project)
+        text = handoff_text
+        if blocks:
+            text += "\n\n".join("\n".join(blk) for blk in blocks) + "\n\n"
+        text += pointer + "\n"
+        print(text, end="")
+        _print_teammates(teammates)
+        return
+    version_text = _format_version_note(checkpoint)
+    drift_text = _format_drift(drift)
+    teammates_text = _format_teammates(teammates)
+    # +1 for the newline printed between the body and whatever follows it
+    # (drift_text/teammates_text, or nothing): the body's own trailing "\n"
+    # below is a byte this composition always spends, so it has to be
+    # reserved here rather than left for the body's budget to absorb.
+    surrounding_bytes = len((handoff_text + version_text + drift_text
+                             + teammates_text).encode("utf-8")) + 1
+    max_bytes = config.brief_max_bytes()
+    body_budget = (0 if not max_bytes
+                  else max(_MIN_BODY_BYTES, max_bytes - surrounding_bytes))
+    if config.llm_briefing():
+        # #1044 scope: the LLM narrative is opt-in (off by default) and has
+        # no _DROP_ORDER structure to shrink safely, so it is not bounded by
+        # the byte ceiling here (pre-existing behavior, unchanged). Tries
+        # LLM, falls back to deterministic; #693 rulings and #694's two
+        # request panels all ride inside.
+        body = briefing.render(checkpoint, project_dir=project_dir,
+                               worldcheck_project=worldcheck_project)
+        # `b` is non-None here, so `briefing.render` always returns text (its
+        # own docstring's invariant): narrows `str | None` for the concat below.
+        assert body is not None
+        print(handoff_text + version_text + body + "\n"
+             + drift_text + teammates_text, end="")
+        return
+    rulings, decision_count, request_lines, verdict_lines, owed_lines = (
+        _panel_lines(project_dir, worldcheck_project))
+    # #204: degrade verbatim labels when the receipt can't be locally
+    # confirmed. Cheap check (sidecar + byte match).
+    degraded = briefing.receipt_degraded(checkpoint)
+    body = briefing.render_plain(b, degraded, rulings, request_lines,
+                                 verdict_lines, owed_lines, decision_count,
+                                 max_bytes=body_budget)
+    print(handoff_text + version_text + body + "\n"
+         + drift_text + teammates_text, end="")
+
+
+def _format_drift(drift) -> str:
+    """Plain-path text for the CODE DRIFT block (#1044): identical bytes to
+    what `_print_drift`'s non-rich branch used to print directly, extracted
+    so `render_brief`'s byte-ceiling accounting can measure it before the
+    body renders. "" when there is no drift (nothing to reserve or print)."""
+    if not drift:
+        return ""
+    lines = ["", "CODE DRIFT — verify before trusting (anchored code changed):"]
+    for d in drift:
+        tag = "GONE" if d["kind"] == "hard" else "changed"
+        qn = d["anchor"].get("qualified_name") or "malformed anchor"
+        lines.append(f"- [{tag}] {d['item'].get('text', '').strip()}  ({qn})")
+    return "\n".join(lines) + "\n"
 
 
 def _print_drift(drift) -> None:
     if not drift:
         return
     if not supports_rich():
-        print("")
-        print("CODE DRIFT — verify before trusting (anchored code changed):")
-        for d in drift:
-            tag = "GONE" if d["kind"] == "hard" else "changed"
-            qn = d["anchor"].get("qualified_name") or "malformed anchor"
-            print(f"- [{tag}] {d['item'].get('text', '').strip()}  ({qn})")
+        print(_format_drift(drift), end="")
         return
     from rich.console import Console
     from rich.text import Text
@@ -465,12 +583,17 @@ def _print_teammates(teammates) -> None:
         _rich_teammates(teammates)
 
 
-def _plain_teammates(teammates) -> None:
-    print("")
-    print("Teammates — where they left off:")
+def _format_teammates(teammates) -> str:
+    """Plain-path text for the Teammates section (#111, #1044): identical
+    bytes to what `_plain_teammates` used to print directly, extracted so
+    `render_brief`'s byte-ceiling accounting can measure it before the body
+    renders. "" when there are no teammates (nothing to reserve or print)."""
+    if not teammates:
+        return ""
+    lines = ["", "Teammates — where they left off:"]
     for author, b in teammates:
-        print("")
-        print(f"[{author}]")
+        lines.append("")
+        lines.append(f"[{author}]")
         active = b.get("active_topic")
         if active:
             line = f"  Active topic: {active.get('text', '').strip()}"
@@ -478,15 +601,20 @@ def _plain_teammates(teammates) -> None:
                 # #423: decisions get this via briefing._line; the topic line
                 # is built here, so the label has to be repeated.
                 line += f" {briefing.FOREIGN_VERBATIM_NOTE}"
-            print(line)
+            lines.append(line)
         decisions = b.get("decisions") or []
         if decisions:
-            print("  Decisions made:")
+            lines.append("  Decisions made:")
             for i in decisions:
-                print(f"  {briefing._line(i)}")
+                lines.append(f"  {briefing._line(i)}")
             note = briefing._overflow_note(b.get("decisions_overflow", 0))
             if note:
-                print(f"    {note}")
+                lines.append(f"    {note}")
+    return "\n".join(lines) + "\n"
+
+
+def _plain_teammates(teammates) -> None:
+    print(_format_teammates(teammates), end="")
 
 
 def _rich_teammates(teammates) -> None:

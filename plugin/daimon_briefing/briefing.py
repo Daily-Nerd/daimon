@@ -829,16 +829,18 @@ def _byte_len(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
-def _log_render_size(text: str, token_budget: int) -> None:
+def _log_render_size(text: str, token_budget: int, byte_ceiling: int) -> None:
     """#1044: nothing logged the token estimate before this. The rendered
     byte size goes right next to it, at the same place the estimate is
     computed, so the next drift between "under budget" and "still spills" is
     visible in the log instead of discovered from a host's truncated
-    preview."""
+    preview. `byte_ceiling` is the EFFECTIVE ceiling this call used (a caller
+    such as `render.render_brief` may have passed a reduced `max_bytes`), not
+    always `config.brief_max_bytes()` verbatim."""
     log.debug("daimon: briefing rendered %d bytes (~%d tokens estimated, "
               "token budget %d, byte ceiling %d)",
               _byte_len(text), estimate_tokens(text), token_budget,
-              config.brief_max_bytes())
+              byte_ceiling)
 
 
 def truncate_preserving_sections(text: str, max_len: int, *, measure=len) -> str:
@@ -1303,7 +1305,7 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
 
 def _apply_byte_ceiling(text: str, b: dict, trimmed: dict, degraded: bool,
                         rulings, request_lines, verdict_lines, owed_lines,
-                        decision_count) -> str:
+                        decision_count, *, max_bytes: int) -> str:
     """#1044: the hard ceiling on the FINAL rendered briefing, applied after
     every section is assembled. A SEPARATE, later check from the #79 token
     budget above, in UTF-8 bytes because that is what the hosts that spill
@@ -1312,6 +1314,13 @@ def _apply_byte_ceiling(text: str, b: dict, trimmed: dict, degraded: bool,
     render carries multi-byte glyphs, and the token estimate never sees the
     skeleton furniture (rulings, decision/request/verdict/owed panels) at
     all, so a render can clear the token budget and still miss this one.
+
+    `max_bytes` is the EFFECTIVE ceiling for this call, not always
+    `config.brief_max_bytes()` verbatim: `render.render_brief`'s non-rich
+    path passes a REDUCED value (the configured ceiling minus the bytes it
+    already spends on the handoff, drift, teammates, and version-note text
+    that print beside this body), so the byte ceiling bounds a host's WHOLE
+    stdout rather than just this function's own return value.
 
     Reuses the same `_DROP_ORDER` machinery the token budget uses (background
     sections before actionable ones, lowest-weight item first within a
@@ -1326,7 +1335,6 @@ def _apply_byte_ceiling(text: str, b: dict, trimmed: dict, degraded: bool,
     long; the HANDOFF block (printed separately, ahead of this text
     entirely, by `render.render_brief`) is untouched by construction for the
     same reason."""
-    max_bytes = config.brief_max_bytes()
     if not max_bytes or _byte_len(text) <= max_bytes:
         return text
     b = dict(b)
@@ -1350,7 +1358,8 @@ def _apply_byte_ceiling(text: str, b: dict, trimmed: dict, degraded: bool,
 
 def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=(), verdict_lines=(), owed_lines=(),
-                 decision_count: str | None = None) -> str:
+                 decision_count: str | None = None, *,
+                 max_bytes: int | None = None) -> str:
     """The deterministic briefing text. Under the #79 budget this is
     BYTE-IDENTICAL to the legacy render(); over it, long items truncate
     (sections preserved) and then whole items drop, lowest value first,
@@ -1360,17 +1369,22 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     outside `_DROP_ORDER` like every skeleton block, never trimmed.
 
     #1044: after the token budget above is satisfied (or found disabled), a
-    SEPARATE hard ceiling in bytes (`config.brief_max_bytes`) is applied to
-    the result (see `_apply_byte_ceiling`). Both checks run on every call;
-    neither replaces the other."""
+    SEPARATE hard ceiling in bytes is applied to the result (see
+    `_apply_byte_ceiling`). Both checks run on every call; neither replaces
+    the other. `max_bytes` overrides `config.brief_max_bytes()` for this call
+    only; the default `None` reads the config, which is what every caller
+    except `render.render_brief`'s non-rich path uses (that path passes a
+    budget reduced by what it prints beside this body, so the ceiling covers
+    a host's whole stdout rather than only this return value)."""
     budget = config.brief_max_tokens()
+    eff_max_bytes = config.brief_max_bytes() if max_bytes is None else max_bytes
     text = _render_parts(b, {}, degraded, rulings, request_lines,
                          verdict_lines, owed_lines, decision_count)
     if not budget or estimate_tokens(text) <= budget:
         text = _apply_byte_ceiling(text, b, {}, degraded, rulings,
                                    request_lines, verdict_lines, owed_lines,
-                                   decision_count)
-        _log_render_size(text, budget)
+                                   decision_count, max_bytes=eff_max_bytes)
+        _log_render_size(text, budget, eff_max_bytes)
         return text
 
     # Stage 1: shorten monster items in place of dropping them. Verbatim text
@@ -1405,8 +1419,8 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
             break
     text = _apply_byte_ceiling(text, b, trimmed, degraded, rulings,
                                request_lines, verdict_lines, owed_lines,
-                               decision_count)
-    _log_render_size(text, budget)
+                               decision_count, max_bytes=eff_max_bytes)
+    _log_render_size(text, budget, eff_max_bytes)
     return text
 
 
