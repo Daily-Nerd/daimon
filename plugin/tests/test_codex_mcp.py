@@ -86,6 +86,18 @@ def test_remove_mcp_deletes_only_our_table(tmp_path):
     assert codex_hooks.mcp_registered(home) is False
 
 
+def test_remove_mcp_also_deletes_the_installed_wrapper(tmp_path):
+    # #1045: the wrapper is what the table pointed at. Leaving it behind after
+    # the registration is gone is the inverse of the drift this issue closes.
+    home = _toml_home(tmp_path)
+    codex_hooks.install_mcp(PKG, home)
+    wrapper = home / ".codex" / "hooks" / codex_hooks.MCP_SCRIPT
+    assert wrapper.is_file()
+    lines = codex_hooks.remove_mcp(home)
+    assert not wrapper.exists()
+    assert any("removed" in ln and codex_hooks.MCP_SCRIPT in ln for ln in lines)
+
+
 def test_remove_mcp_on_a_file_with_no_entry_is_a_clean_noop(tmp_path):
     home = _toml_home(tmp_path, "model = \"gpt-6\"\n")
     lines = codex_hooks.remove_mcp(home)
@@ -128,6 +140,11 @@ def test_cli_hooks_remove_codex_removes_only_the_mcp_table(tmp_path, monkeypatch
     # Hooks.json registrations are untouched: removal is MCP-only for codex.
     hooks_json = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
     assert hooks_json["hooks"]["SessionStart"]
+    # #1045: the wrapper the table pointed at is gone too; the hook scripts
+    # (still registered above) stay on disk.
+    assert not (tmp_path / ".codex" / "hooks" / codex_hooks.MCP_SCRIPT).exists()
+    assert (tmp_path / ".codex" / "hooks"
+           / "daimon-codex-session-start.py").exists()
 
 
 def test_install_registers_mcp_and_flags_the_prompt_hook(tmp_path):

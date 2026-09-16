@@ -146,6 +146,15 @@ def test_hooks_list_names_windsurf(capsys):
 # ---- codex: two scripts, two events, real hooks.json registration (#262) ----
 
 
+def test_codex_host_files_match_the_installers_own_manifest():
+    # #1045: mirrors test_kimi_hooks_install.py::test_kimi_is_a_known_hooks_host.
+    # `_hooks_status_report` walks `_HOOK_HOSTS["codex"]["files"]`, not
+    # `codex_hooks.FILES` directly, so a file the install writes and this list
+    # omits goes stale invisibly, including the MCP wrapper.
+    spec = cli._HOOK_HOSTS["codex"]
+    assert set(spec["files"]) == set(codex_hooks.FILES)
+
+
 def test_codex_scripts_are_packaged_and_drift_guarded():
     # The drift guard (test_packaged_hook_matches_repo_copy) parametrizes over
     # _SHIPPED, so proving the codex scripts are in _SHIPPED proves they are

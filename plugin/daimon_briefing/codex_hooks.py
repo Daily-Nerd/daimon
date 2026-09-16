@@ -165,7 +165,14 @@ _PROMPT_SCRIPT = "daimon-codex-user-prompt-submit.py"
 # installed without them is a hook that finds nothing and allows in silence.
 # They are imported and never executed, which is why the +x below skips them.
 MODULES = (LIB, "checks_runtime.py", "checks_host.py")
-FILES = tuple(spec["script"] for spec in HOOKS) + MODULES
+
+# #1045: MCP_SCRIPT joins FILES too. It is not a hook (no event, never in
+# HOOKS) and is never a MODULE either (Codex execs it directly as the MCP
+# server's command, the same reason install_mcp chmods it +x), but it is a
+# file the install writes into this same directory, and the status audit
+# walking `_HOOK_HOSTS["codex"]["files"]` must see it or a stale copy behind
+# the live registration reads as CURRENT forever.
+FILES = tuple(spec["script"] for spec in HOOKS) + MODULES + (MCP_SCRIPT,)
 
 
 def _is_ours(group, script):
@@ -325,11 +332,17 @@ def mcp_registered(home) -> bool:
 
 
 def remove_mcp(home) -> list[str]:
-    """Remove daimon's [mcp_servers.daimon] table; return output lines.
+    """Remove daimon's [mcp_servers.daimon] table AND the installed wrapper it
+    pointed at; return output lines.
 
-    Leaves the installed wrapper script in place, same reasoning as
-    kimi_hooks.remove: it is inert once unregistered, and deleting it would
-    break a hand-written registration pointing at the same file.
+    #1045: earlier this left the wrapper in place, reasoning that it is inert
+    once unregistered. That reasoning did not hold up: the wrapper is not just
+    a leftover script, it is the file `status` audits against the packaged
+    copy (see FILES above), so leaving it behind after taking the table back
+    means the NEXT install starts from a byte-identical "already up to date"
+    copy instead of a fresh one, and there is no other registration that
+    could legitimately still point at it, unlike the hook scripts under
+    hooks.json this verb never touches.
     """
     path = config_toml_path(home)
     if not path.exists():
@@ -342,8 +355,13 @@ def remove_mcp(home) -> list[str]:
     start, end = block
     updated = "".join(lines[:start]) + "".join(lines[end:])
     backup = _save_toml(path, updated)
-    return [f"removed mcp_servers.daimon from {path}"
-            + (f" (backup: {backup})" if backup else "")]
+    out = [f"removed mcp_servers.daimon from {path}"
+           + (f" (backup: {backup})" if backup else "")]
+    wrapper = Path(home) / ".codex" / "hooks" / MCP_SCRIPT
+    if wrapper.exists():
+        wrapper.unlink()
+        out.append(f"removed {wrapper}")
+    return out
 
 
 def install(pkg, home):

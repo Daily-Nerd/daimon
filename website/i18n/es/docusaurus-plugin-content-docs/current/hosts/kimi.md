@@ -97,10 +97,14 @@ esta versión.
 solo lectura automáticamente: fusiona una entrada `mcpServers.daimon` en
 `~/.kimi-code/mcp.json` (o `$KIMI_CODE_HOME/mcp.json` si está definido), el
 archivo que los propios docs de Kimi describen para este alcance — separado
-de `config.toml`, que lleva el registro de hooks. `daimon hooks remove kimi`
-retira ambos juntos. En cuanto esa entrada existe, el puntero de recall (la
-línea "trabajaste en esto antes" por prompt) nombra la herramienta
-`daimon_recall` en lugar del comando de shell `daimon recall "..."`.
+de `config.toml`, que lleva el registro de hooks. Esa entrada apunta a un
+script wrapper copiado bajo el directorio de hooks de Kimi, auditado por
+`daimon hooks status` igual que los tres scripts de hook. `daimon hooks
+remove kimi` retira la entrada de `mcp.json` y ese wrapper, junto con las
+entradas de hook en `config.toml`. En cuanto la entrada de `mcp.json` existe,
+el puntero de recall (la línea "trabajaste en esto antes" por prompt) nombra
+la herramienta `daimon_recall` en lugar del comando de shell `daimon recall
+"..."`.
 
 (Una versión anterior de esta página decía que Kimi lee un `.mcp.json` en la
 raíz del proyecto con el mismo formato que Claude Code. Verificado contra
@@ -131,9 +135,11 @@ daimon hooks remove kimi
 Saca las entradas `[[hooks]]` de daimon del `config.toml` y deja el resto
 del archivo como estaba, finales de línea incluidos. La única excepción: un
 archivo cuya última línea no tenía salto de línea gana uno, y remove no
-puede distinguirlo de uno que escribiste vos. Los scripts instalados quedan donde
-están, inertes una vez desregistrados. Los checkpoints en `~/.daimon/` no se
-tocan.
+puede distinguirlo de uno que escribiste vos. Los tres scripts de hook
+quedan donde están, inertes una vez desregistrados. El wrapper MCP (mirá
+MCP arriba) es la excepción: se borra junto con la entrada de `mcp.json`
+que apuntaba a él, porque nada más apunta legítimamente a ese archivo. Los
+checkpoints en `~/.daimon/` no se tocan.
 
 ## Verificar
 

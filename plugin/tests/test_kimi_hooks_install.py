@@ -484,8 +484,16 @@ def test_cli_remove_kimi_unregisters_and_leaves_the_scripts(tmp_path, monkeypatc
     assert cli.main(["hooks", "remove", "kimi"]) == 0
     assert "removed 3 daimon entr" in capsys.readouterr().out
     assert kimi_hooks.registration_status(home, env={}) == "UNREGISTERED"
+    # The hook scripts (and the shared lib) stay, inert once unregistered,
+    # and deleting them would break another registration pointing at the
+    # same files. #1045: the MCP wrapper is different. It is what the
+    # mcpServers.daimon table pointed at, and is removed below.
     for name in kimi_hooks.FILES:
+        if name == kimi_hooks.MCP_SCRIPT:
+            continue
         assert (kimi_hooks.hooks_dir(home, env={}) / name).exists()
+    assert not (kimi_hooks.hooks_dir(home, env={})
+               / kimi_hooks.MCP_SCRIPT).exists()
 
 
 def test_cli_remove_kimi_refuses_a_config_it_cannot_read(tmp_path, monkeypatch,
@@ -763,3 +771,16 @@ def test_cli_remove_kimi_also_removes_mcp(tmp_path, monkeypatch):
     assert cli.main(["hooks", "install", "kimi"]) == 0
     assert cli.main(["hooks", "remove", "kimi"]) == 0
     assert kimi_hooks.mcp_registered(home, env={}) is False
+    # #1045: and the wrapper the table pointed at is gone too.
+    assert not (kimi_hooks.hooks_dir(home, env={})
+               / kimi_hooks.MCP_SCRIPT).exists()
+
+
+def test_remove_mcp_also_deletes_the_installed_wrapper(tmp_path):
+    home = _home(tmp_path)
+    kimi_hooks.install_mcp(PKG_HOOKS, home, env={})
+    wrapper = kimi_hooks.hooks_dir(home, env={}) / kimi_hooks.MCP_SCRIPT
+    assert wrapper.is_file()
+    lines = kimi_hooks.remove_mcp(home, env={})
+    assert not wrapper.exists()
+    assert any("removed" in ln and kimi_hooks.MCP_SCRIPT in ln for ln in lines)

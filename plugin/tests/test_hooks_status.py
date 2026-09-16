@@ -183,6 +183,60 @@ def test_status_codex_exits_one_on_registration_drift(tmp_path, monkeypatch, cap
     assert "daimon hooks install codex" in out
 
 
+# ---- #1045: the MCP wrapper is a first-class audited file, both hosts -------
+#
+# `daimon-mcp-serve.py` is what the MCP registration in each host's own config
+# actually points at, so a stale copy is a stale MCP server. Before this it
+# rode outside `spec["files"]` and `status` reported CURRENT no matter how old
+# the wrapper on disk was.
+
+
+def test_status_codex_wrapper_stale_reports_drift_and_exits_one(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    wrapper = tmp_path / ".codex" / "hooks" / "daimon-mcp-serve.py"
+    wrapper.write_text("# stale drifted wrapper")
+    capsys.readouterr()
+    rc = cli.main(["hooks", "status"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "STALE" in out
+    assert "daimon hooks install codex" in out
+
+
+def test_status_codex_wrapper_missing_reports_drift(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "codex"]) == 0
+    wrapper = tmp_path / ".codex" / "hooks" / "daimon-mcp-serve.py"
+    wrapper.unlink()
+    report = cli._hooks_status_report(tmp_path)
+    assert _statuses(report, "codex")["daimon-mcp-serve.py"] == "MISSING"
+    assert _host(report, "codex")["drift"] is True
+
+
+def test_status_kimi_wrapper_stale_reports_drift_and_exits_one(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "kimi"]) == 0
+    wrapper = tmp_path / ".kimi-code" / "hooks" / "daimon-mcp-serve.py"
+    wrapper.write_text("# stale drifted wrapper")
+    capsys.readouterr()
+    rc = cli.main(["hooks", "status"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "STALE" in out
+    assert "daimon hooks install kimi" in out
+
+
+def test_status_kimi_wrapper_missing_reports_drift(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["hooks", "install", "kimi"]) == 0
+    wrapper = tmp_path / ".kimi-code" / "hooks" / "daimon-mcp-serve.py"
+    wrapper.unlink()
+    report = cli._hooks_status_report(tmp_path)
+    assert _statuses(report, "kimi")["daimon-mcp-serve.py"] == "MISSING"
+    assert _host(report, "kimi")["drift"] is True
+
+
 # ---- json pipe --------------------------------------------------------------
 
 
