@@ -2126,6 +2126,9 @@ def _cmd_recall_inject(args) -> int:
             query_terms=terms,
             surface="recall-inject",
             hint_form="tool" if mcp_available else "shell",
+            # #1043: the live session this suggestion is printing into, not
+            # the (possibly different) session that captured each item.
+            injected_into=session or None,
             now=datetime.fromtimestamp(now, tz=timezone.utc),
         )
         if seen_file:
@@ -2282,6 +2285,9 @@ def _cmd_action_recall(args) -> int:
             query_terms=terms,
             surface="action-recall",
             hint_form="tool" if mcp_available else "shell",
+            # #1043: the live session running the shell action, not the
+            # (possibly different) session that captured the matched belief.
+            injected_into=session or None,
             now=datetime.fromtimestamp(now, tz=timezone.utc),
         )
         # The ladder's middle rung: the ledger row is written either way, so a

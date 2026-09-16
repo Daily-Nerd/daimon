@@ -23,7 +23,8 @@ def _stamp(now=None) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def record(rows, *, query_terms, surface, hint_form=None, now=None) -> None:
+def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
+          now=None) -> None:
     """Append one bounded record for every row actually delivered.
 
     Telemetry is best-effort. A read or prompt path must never fail because a
@@ -37,10 +38,21 @@ def record(rows, *, query_terms, surface, hint_form=None, now=None) -> None:
     records `None` rather than guessing; rows written before this field
     existed carry no key at all, and a reader uses `.get` rather than assume
     one.
+
+    `injected_into` (#1043) is the id of the LIVE session that received this
+    delivery, read from the host payload by the caller. It is deliberately
+    NOT `row["session_id"]`: that field is the CAPTURING session of the
+    matched item (provenance) and stays unchanged. Omitted (every caller
+    that predates #1043, and the plain `daimon recall` search, which is a
+    pull rather than an injection) records `None`; a reader treats a missing
+    value as unknown, never as the provenance id.
     """
     entries = []
     stamp = _stamp(now)
     term_count = sum(1 for term in query_terms if str(term).strip())
+    injected_into = (str(injected_into)
+                     if isinstance(injected_into, str) and injected_into.strip()
+                     else None)
     for row in rows:
         score = row.get("match_score")
         try:
@@ -65,6 +77,7 @@ def record(rows, *, query_terms, surface, hint_form=None, now=None) -> None:
             "surface": str(surface),
             "item_id": row.get("item_id"),
             "session_id": row.get("session_id"),
+            "injected_into": injected_into,
             "project_slug": row.get("project_slug"),
             "match_score": score,
             "term_hits": hits,
@@ -104,6 +117,22 @@ def _summary(rows: list[dict]) -> dict:
         if isinstance(surface, str) and surface:
             surface_names.add(surface)
     surfaces = sorted(surface_names)
+    # #1043: per-injecting-session breakdown, with a hint_form split inside
+    # each bucket, so the tool-vs-shell follow-through comparison has a
+    # denominator without reading the raw file. A row with no `injected_into`
+    # (every row written before this field existed, plus the plain
+    # `daimon recall` search, which injects into nothing) buckets as
+    # "unknown" rather than being dropped or mistaken for a real session.
+    by_injected_into: dict[str, dict] = {}
+    for row in rows:
+        session = row.get("injected_into")
+        key = session if isinstance(session, str) and session.strip() else "unknown"
+        bucket = by_injected_into.setdefault(
+            key, {"deliveries": 0, "by_hint_form": {}})
+        bucket["deliveries"] += 1
+        hint = row.get("hint_form")
+        hint_key = hint if hint in ("tool", "shell") else "unknown"
+        bucket["by_hint_form"][hint_key] = bucket["by_hint_form"].get(hint_key, 0) + 1
     return {
         "deliveries": len(rows),
         "scored": len(scores),
@@ -121,6 +150,7 @@ def _summary(rows: list[dict]) -> dict:
             surface: sum(1 for r in rows if r.get("surface") == surface)
             for surface in surfaces
         },
+        "by_injected_into": by_injected_into,
     }
 
 

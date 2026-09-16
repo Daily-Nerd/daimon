@@ -4597,6 +4597,22 @@ def test_recall_inject_records_delivery_score(
     assert rows[0]["hint_form"] == "shell"
 
 
+def test_recall_inject_records_the_injecting_session(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1043: `injected_into` is the LIVE session that received the
+    # suggestion, distinct from `session_id` (the session that captured the
+    # matched item), and the two differ here on purpose.
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys,
+                      "debugging the litellm gateway cache pinning again",
+                      session="S-now")
+    assert rc == 0 and out
+    rows = [json.loads(line) for line in
+            (tmp_log_dir / "recall-delivery.jsonl").read_text().splitlines()]
+    assert rows[0]["injected_into"] == "S-now"
+    assert rows[0]["session_id"] != rows[0]["injected_into"]
+
+
 def test_recall_inject_names_the_mcp_tool_when_the_host_flag_is_set(
         tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
     # #1036: the flag is explicit and boring (an env var the plugin's own
