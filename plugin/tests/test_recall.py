@@ -1035,6 +1035,221 @@ def test_suggest_caps_at_two_distinct_sessions(tmp_checkpoint_dir, monkeypatch):
     assert len({o["session_id"] for o in out}) == len(out)
 
 
+# ---- #991: suggest applies search's live-before-superseded tier ----
+
+
+def test_suggest_promotes_live_row_over_higher_weighted_superseded_row(
+        tmp_checkpoint_dir, monkeypatch):
+    # #991: search never lets a superseded row outrank a live one — every
+    # live row sorts above every superseded row before weighted score is
+    # consulted. suggest() did not: it ranked by relevance x weight alone, so
+    # a superseded row built to weigh MORE than a live one (importance 9,
+    # verbatim, scored fresh vs importance 1, inferred, scored ancient) beat
+    # it outright. S-old is superseded via a typed link (0.7).
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    now = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    store.write_checkpoint(
+        "S-live", _cp125("S-live", decisions=[{
+            "text": "gateway cache mentioned briefly",
+            "trust": "inferred", "importance": 1,
+            "first_seen": "2000-01-01T00:00:00Z",
+        }], created="2000-01-01T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+            "importance": 9, "first_seen": stamp,
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the litellm gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pin litellm gateway cache bad responses"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5, now=now)
+    sids = [r["session_id"] for r in out]
+    assert "S-live" in sids and "S-old" in sids
+    assert sids.index("S-live") < sids.index("S-old")
+
+
+def test_suggest_promotes_live_row_over_higher_weighted_resolution(
+        tmp_checkpoint_dir, monkeypatch):
+    # Same rule, the other supersede kind (#907 resolution, weight 0.5): a
+    # person's recorded resolution is still the LOWER tier, never a fast lane
+    # back above a live row just because it weighs more.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    now = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    store.write_checkpoint(
+        "S-live", _cp125("S-live", decisions=[{
+            "text": "gateway cache mentioned briefly",
+            "trust": "inferred", "importance": 1,
+            "first_seen": "2000-01-01T00:00:00Z",
+        }], created="2000-01-01T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-resolved", _cp125("S-resolved", questions=[{
+            "text": "should the litellm gateway cache stay pinned",
+            "trust": "verbatim", "importance": 9, "first_seen": stamp,
+            "id": "o-res00001",
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.append_event("o-res00001", "resolved", project_dir="/repo/x")
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5, now=now)
+    sids = [r["session_id"] for r in out]
+    assert "S-live" in sids and "S-resolved" in sids
+    assert sids.index("S-live") < sids.index("S-resolved")
+
+
+def test_suggest_only_superseded_matches_still_delivers(
+        tmp_checkpoint_dir, monkeypatch):
+    # #112 / #991: tiering demotes, it never hides — when nothing live
+    # matches, the superseded row is still the whole answer, flagged and
+    # weighted exactly as before.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+            "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the litellm gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pin litellm gateway cache bad responses"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now")
+    flagged = [r for r in out if r["superseded_by"] == "S-newer"]
+    assert flagged and flagged[0]["session_id"] == "S-old"
+
+
+def test_suggest_candidate_limit_tiers_before_truncating(
+        tmp_checkpoint_dir, monkeypatch):
+    # #991 THE TRAP: candidates come back `ORDER BY match_score DESC LIMIT N`
+    # before any Python-side ranking runs. If that fetch orders by
+    # match_score alone, a wall of strongly-matching superseded rows fills
+    # the window and a weaker live row is truncated away before the gates or
+    # the tier sort below ever see it — no amount of Python-side tiering can
+    # recover a row SQL never returned. Shrink the fetch window so 4
+    # strongly-matching superseded rows exceed it, then confirm the one weak
+    # live row still survives.
+    monkeypatch.setattr(recall, "_SUGGEST_CANDIDATE_LIMIT", 3)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    for i in range(4):
+        sid = f"S-wall-{i}"
+        item_id = f"o-wall{i}0000"
+        store.write_checkpoint(
+            sid, _cp125(sid, questions=[{
+                "text": ("litellm gateway cache pinning debugging "
+                          "litellm gateway cache pinning debugging"),
+                "trust": "inferred", "importance": 5,
+                "first_seen": stamp, "id": item_id,
+            }], created=stamp),
+            project_dir="/repo/x",
+        )
+        store.append_event(item_id, "resolved", project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-live", _cp125("S-live", decisions=[{
+            "text": "gateway cache mentioned briefly",
+            "trust": "inferred", "importance": 1,
+            "first_seen": stamp,
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5)
+    sids = {r["session_id"] for r in out}
+    assert "S-live" in sids
+
+
+def test_suggest_tier_preserves_live_order(tmp_checkpoint_dir, monkeypatch):
+    # #991: the tier only decides live-vs-superseded. Within the live tier,
+    # today's weighted order must be untouched — same fixture #408 already
+    # pins (verbatim beats equal inferred), re-asserted here so the tier
+    # change cannot quietly disturb it.
+    stamp = "2026-06-20T00:00:00Z"
+    now = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    common = {"text": "litellm gateway cache pins bad responses",
+              "importance": 10, "first_seen": stamp}
+    store.write_checkpoint(
+        "S-inferred", _cp125("S-inferred", decisions=[
+            {**common, "trust": "inferred"}], created=stamp),
+        project_dir="/repo/x")
+    store.write_checkpoint(
+        "S-verbatim", _cp125("S-verbatim", decisions=[
+            {**common, "trust": "verbatim", "quote": "cache answers instantly"}],
+            created=stamp),
+        project_dir="/repo/x")
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5, now=now)
+    sids = [r["session_id"] for r in out]
+    assert sids.index("S-verbatim") < sids.index("S-inferred")
+
+
+def test_suggest_tier_preserves_superseded_order(tmp_checkpoint_dir, monkeypatch):
+    # #991: within the LOWER (superseded) tier, the existing weighted order
+    # must also survive the tier change — a typed link (0.7) still outranks
+    # a recorded resolution (0.5) at equal relevance and importance (#907).
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    now = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    store.write_checkpoint(
+        "S-link-old", _cp125("S-link-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "importance": 9, "first_seen": stamp,
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-link-new", _cp125("S-link-new", decisions=[{
+            "text": "unpinned the litellm gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pin litellm gateway cache bad responses"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-resolved", _cp125("S-resolved", questions=[{
+            "text": "should the litellm gateway cache stay pinned",
+            "trust": "verbatim", "importance": 9, "first_seen": stamp,
+            "id": "o-res00002",
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.append_event("o-res00002", "resolved", project_dir="/repo/x")
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5, now=now)
+    sids = [r["session_id"] for r in out]
+    assert "S-link-old" in sids and "S-resolved" in sids
+    assert sids.index("S-link-old") < sids.index("S-resolved")
+
+
 # ---- #28 S5: index errors leave a breadcrumb instead of failing to silence ----
 
 
