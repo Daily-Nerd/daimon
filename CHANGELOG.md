@@ -5,6 +5,21 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.47.0](https://github.com/Daily-Nerd/daimon/compare/v0.46.0...v0.47.0) (2026-09-17)
+
+
+### Features
+
+* **hooks:** action-recall on Claude Code moves from unsupported to record-only ([#1051](https://github.com/Daily-Nerd/daimon/issues/1051)) ([689f6b4](https://github.com/Daily-Nerd/daimon/commit/689f6b4518774a89ae857da202d0f1aeaa01140b))
+* **recall:** prompt-time recall injection on Codex ([#1047](https://github.com/Daily-Nerd/daimon/issues/1047)) ([c140f85](https://github.com/Daily-Nerd/daimon/commit/c140f85b8d4c5ebc87a1c0cbbf3a904acc3ba3bf))
+* **recall:** record the injecting session on delivery rows ([#1048](https://github.com/Daily-Nerd/daimon/issues/1048)) ([a12898c](https://github.com/Daily-Nerd/daimon/commit/a12898c063b6ad31cf6a6ada87cf833ca264bac1))
+
+
+### Bug Fixes
+
+* **briefing:** cap the rendered briefing by bytes so the host never spills it ([#1050](https://github.com/Daily-Nerd/daimon/issues/1050)) ([7a936f3](https://github.com/Daily-Nerd/daimon/commit/7a936f3ce69577996bba6e4308aab4f95114392e))
+* **hooks:** audit and remove the MCP wrapper on Codex and Kimi like every other installed file ([#1052](https://github.com/Daily-Nerd/daimon/issues/1052)) ([95b951b](https://github.com/Daily-Nerd/daimon/commit/95b951bb4819bdb9773ff6b39e504513bd0e68cf))
+
 ## [0.46.0](https://github.com/Daily-Nerd/daimon/compare/v0.45.0...v0.46.0) (2026-09-15)
 
 
