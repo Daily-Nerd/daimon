@@ -1988,8 +1988,14 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
     more = " ".join(terms[:3])
     if mcp_tool_available:
         more_hint = f'call the daimon_recall tool with query "{more}"'
-        if session:
-            more_hint += f' and session "{session}"'
+        # #1053 fix B: the SAME validator the tool argument goes through
+        # (mcp_tools._recall) — a session the hint renders is always one
+        # the tool will accept back, and a hostile id (a newline or a
+        # quote, either of which would break this one-line hint, #512)
+        # never reaches the rendered text at all.
+        clean = recall_telemetry.clean_session(session)
+        if clean:
+            more_hint += f' and session "{clean}"'
     else:
         more_hint = f'daimon recall "{more}"'
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "

@@ -11,7 +11,6 @@ as the CLI (#54) — the #257 demand counters must see MCP reads
 distinguishably or the gate they measure goes blind.
 """
 import json
-import re
 
 from . import amendments, briefing, config, recall, recall_telemetry, requests, store
 
@@ -23,24 +22,6 @@ class ToolError(Exception):
 def _note(tool: str) -> None:
     from . import cli
     cli._note_usage(f"mcp:{tool}")
-
-
-# #1053: the `session` tool argument is AGENT-SUPPLIED text, untrusted —
-# accepted only as a str, stripped, capped, and charset-limited. Anything
-# outside this shape is dropped silently (the row records no session,
-# never an error back to the caller): a made-up or malformed id must not
-# fail the call, and stats pairing already treats an unmatched session as
-# nothing (recall_telemetry._follow_through).
-_SESSION_ARG_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-
-
-def _clean_session_arg(value) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    if not value or not _SESSION_ARG_RE.fullmatch(value):
-        return None
-    return value
 
 
 def _recall(arguments: dict) -> str:
@@ -62,7 +43,10 @@ def _recall(arguments: dict) -> str:
     # #1053: the live session this pull should be attributed to, if the
     # caller (agent) names one — paired against recall-inject's own
     # `injected_into` so tool-form follow-through becomes measurable.
-    session = _clean_session_arg(arguments.get("session"))
+    # `clean_session` is the SAME validator the recall hint's session
+    # clause goes through (cli._suggest_line): whatever the hint offers,
+    # this accepts back.
+    session = recall_telemetry.clean_session(arguments.get("session"))
     from . import cli
     project = cli._resolve_project(None)
     try:

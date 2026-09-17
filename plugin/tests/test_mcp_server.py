@@ -199,6 +199,29 @@ def test_recall_tool_session_argument_lands_as_injected_into(
     assert all(row["injected_into"] == "S-live-42" for row in delivered)
 
 
+def test_recall_tool_accepts_a_kimi_shaped_session_id(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
+    # #1053 fix A: Kimi's real session id shape (tests/test_kimi_hook_scripts.py
+    # SESSION) is `session_` plus a UUID — underscore AND hyphens. The first
+    # charset shipped with no underscore, so every Kimi session's tool pull
+    # would have silently dropped its session and read as permanent zero
+    # follow-through for that host.
+    from daimon_briefing import store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    kimi_session = "session_8a1593d9-376b-43d3-abc9-5796eb848fa3"
+    _, out = rpc(_init(), _call(
+        "daimon_recall", {"query": "merge", "session": kimi_session}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert json.loads(text)
+    log_path = tmp_log_dir / "recall-delivery.jsonl"
+    delivered = [json.loads(ln) for ln in
+                 log_path.read_text(encoding="utf-8").splitlines()]
+    assert delivered
+    assert all(row["injected_into"] == kimi_session for row in delivered)
+
+
 def test_recall_tool_drops_an_untrusted_session_argument_silently(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
     # An agent-supplied session must never fail the call — a too-long value,
@@ -207,7 +230,8 @@ def test_recall_tool_drops_an_untrusted_session_argument_silently(
     from daimon_briefing import store
     store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    for bad_session in ("x" * 129, "S with spaces", "S;rm -rf /", 12345, [], None):
+    for bad_session in ("x" * 129, "S with spaces", "S;rm -rf /", 12345, [],
+                        None, "S-with-a-\nnewline", 'S-with-a-"quote'):
         log_path = tmp_log_dir / "recall-delivery.jsonl"
         if log_path.exists():
             log_path.unlink()

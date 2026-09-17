@@ -8,12 +8,44 @@ terms used for that delivery.
 """
 
 import json
+import re
 import statistics
 from datetime import datetime, timedelta, timezone
 
 from . import config
 
 WINDOW_DAYS = 7
+
+# #1053: the ONE session-id validator both the MCP tool argument
+# (mcp_tools._recall) and the recall hint's session clause (cli._suggest_line)
+# go through — a session the hint ever renders must be exactly one the tool
+# will accept back, and a hostile id (a newline or a quote, either of which
+# would break the hint's one-line echo-strip contract, #512) must be rejected
+# before it ever reaches either place. Charset covers every real session id
+# shape measured in this repo: Kimi's `session_<uuid>` (underscore AND
+# hyphens, tests/test_kimi_hook_scripts.py SESSION) and Codex's bare
+# `<uuid>` (tests/test_cli.py _CODEX_SID) both fit inside it already.
+_SESSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def clean_session(value) -> str | None:
+    """Normalize an externally-sourced session id, or drop it silently.
+
+    `value` is UNTRUSTED text — an agent-supplied MCP tool argument, or a
+    host payload field threaded through a hook and a CLI flag. Anything
+    that is not a non-empty string of at most 128 characters from
+    `_SESSION_RE`'s charset (letters, digits, `.`, `_`, `:`, `-`) comes back
+    `None`: too long, wrong type, empty/whitespace-only, or carrying a
+    character (a newline, a double quote, a space, `;`) that could either
+    break a one-line rendering or fail to round-trip through a shell/JSON
+    boundary. The caller drops the field, never raises or fails the call
+    that carries it."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or not _SESSION_RE.fullmatch(value):
+        return None
+    return value
 
 
 def _stamp(now=None) -> str:
@@ -113,11 +145,38 @@ def _parse_stamp(value):
         return None
 
 
+def _event_stamp(row: dict):
+    """The row's `at` value when present and parseable, else `None` — a
+    shared sentinel every stamp-less or malformed-stamp row for one session
+    folds into, rather than a value that could collide with a real stamp."""
+    at = row.get("at")
+    if isinstance(at, str) and at.strip() and _parse_stamp(at) is not None:
+        return at
+    return None
+
+
 def _follow_through(rows: list[dict]) -> dict:
     """Per-injecting-session pairing (#1053): for every session that received
     at least one recall-inject hint, how many recall-search PULLS (CLI or
     MCP) landed attributed to that SAME live session, and through which
     surface (`via`) they arrived.
+
+    Counts EVENTS, not rows. One `record()` call is one event — every row it
+    writes shares the same `at` stamp — and a single call routinely writes
+    more than one row (measured against the real delivery log: recall-search
+    calls wrote 20, 20, 20, and 3 rows respectively). Counting rows as pulls
+    would report that one 20-row tool call as 20 pulls against maybe 2
+    injections, a >100% follow-through rate. So `injections`/`pulls` here
+    are event counts — for pulls, distinct (`at` stamp, `via`) pairs, since
+    `via` is part of a pull's identity the way it is not for an injection —
+    and `injection_rows`/`pull_rows` report the underlying row volume
+    alongside them, so neither number hides the other.
+
+    A row with a missing or unparseable `at` (every row from before this
+    file recorded stamps reliably, or any future write bug) still counts
+    toward its `*_rows` total, but folds into ONE shared 'unknown stamp'
+    event per session (per `via`, for pulls) rather than being dropped or
+    minting one phantom event per row.
 
     A pull's `injected_into` is agent-supplied text on the MCP path — a
     made-up session id, or one that simply never received a hint, must pair
@@ -125,15 +184,23 @@ def _follow_through(rows: list[dict]) -> dict:
     seeded from recall-inject rows ONLY, and a pull naming a session absent
     from that set is dropped, never counted and never added."""
     sessions: dict[str, dict] = {}
+    inject_events: dict[str, set] = {}
     for row in rows:
         if row.get("surface") != "recall-inject":
             continue
         session = row.get("injected_into")
         if not isinstance(session, str) or not session.strip():
             continue
-        bucket = sessions.setdefault(
-            session, {"injections": 0, "pulls": 0, "by_via": {}})
-        bucket["injections"] += 1
+        bucket = sessions.setdefault(session, {
+            "injections": 0, "injection_rows": 0,
+            "pulls": 0, "pull_rows": 0, "by_via": {}})
+        bucket["injection_rows"] += 1
+        seen = inject_events.setdefault(session, set())
+        stamp = _event_stamp(row)
+        if stamp not in seen:
+            seen.add(stamp)
+            bucket["injections"] += 1
+    pull_events: dict[str, set] = {}
     for row in rows:
         if row.get("surface") != "recall-search":
             continue
@@ -143,10 +210,16 @@ def _follow_through(rows: list[dict]) -> dict:
         existing = sessions.get(session)
         if existing is None:
             continue
-        existing["pulls"] += 1
+        existing["pull_rows"] += 1
         via = row.get("via")
         via_key = via if via in ("cli", "mcp") else "unknown"
-        existing["by_via"][via_key] = existing["by_via"].get(via_key, 0) + 1
+        stamp = _event_stamp(row)
+        seen = pull_events.setdefault(session, set())
+        key = (stamp, via_key)
+        if key not in seen:
+            seen.add(key)
+            existing["pulls"] += 1
+            existing["by_via"][via_key] = existing["by_via"].get(via_key, 0) + 1
     return sessions
 
 
