@@ -12,7 +12,7 @@ distinguishably or the gate they measure goes blind.
 """
 import json
 
-from . import amendments, briefing, config, recall, requests, store
+from . import amendments, briefing, config, recall, recall_telemetry, requests, store
 
 
 class ToolError(Exception):
@@ -40,6 +40,13 @@ def _recall(arguments: dict) -> str:
         raise ToolError(config.TENANT_SCOPE_REFUSAL)
     limit = arguments.get("limit")
     limit = 20 if not isinstance(limit, int) or limit < 1 else limit
+    # #1053: the live session this pull should be attributed to, if the
+    # caller (agent) names one — paired against recall-inject's own
+    # `injected_into` so tool-form follow-through becomes measurable.
+    # `clean_session` is the SAME validator the recall hint's session
+    # clause goes through (cli._suggest_line): whatever the hint offers,
+    # this accepts back.
+    session = recall_telemetry.clean_session(arguments.get("session"))
     from . import cli
     project = cli._resolve_project(None)
     try:
@@ -47,6 +54,14 @@ def _recall(arguments: dict) -> str:
                              all_projects=all_projects, limit=limit)
     except recall.RecallError as e:
         raise ToolError(str(e))
+    try:
+        # Best-effort (#1053): a telemetry failure must never take the tool
+        # call down with it — the agent still gets its rows back.
+        recall_telemetry.record(
+            rows, query_terms=recall.salient_terms(query),
+            surface="recall-search", via="mcp", injected_into=session)
+    except Exception:  # noqa: BLE001 — see comment above
+        pass
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 

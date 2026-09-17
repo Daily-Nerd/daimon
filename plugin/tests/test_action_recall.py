@@ -143,6 +143,17 @@ def test_records_the_injecting_session(
     assert row["session_id"] != row["injected_into"]
 
 
+def test_names_the_session_in_the_tool_hint_when_the_flag_is_set(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1053: this surface always has a session (the guard above requires
+    # one), so the tool-form hint carries it whenever the MCP flag is set.
+    monkeypatch.setenv("DAIMON_MCP_TOOL_AVAILABLE", "1")
+    _seed()
+    rc, out = _run(monkeypatch, capsys, ACTION, session="S-now")
+    assert rc == 0
+    assert 'and session "S-now"' in out
+
+
 @pytest.mark.parametrize("command", ["ls -la", "python3 x.py"])
 def test_a_verb_outside_the_allowlist_is_silent_and_counted(
         command, tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):

@@ -1006,6 +1006,7 @@ def _cmd_recall(args) -> int:
         results,
         query_terms=recall.salient_terms(query),
         surface="recall-search",
+        via="cli",
     )
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
@@ -1929,7 +1930,8 @@ def _fit_item_text(raw, width: int) -> tuple[str, bool]:
 
 
 def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
-                  width: int, mcp_tool_available: bool = False) -> str:
+                  width: int, mcp_tool_available: bool = False,
+                  session: str | None = None) -> str:
     """One compact, attributed, trust-preserving injection line (#125).
 
     ONE line is a contract, not a hope (#512): the echo strip that removes
@@ -1947,7 +1949,14 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
     the shell-command hint it always rendered by leaving the default alone.
     True names the exact MCP tool instead of the shell string, so an agent
     that already lists `daimon_recall` can act on the hint without leaving
-    its tool list."""
+    its tool list.
+
+    `session` (#1053) is the live session this delivery is printing into,
+    when the caller knows it — the same value already threaded through to
+    `recall_telemetry.record`'s `injected_into`. It rides the TOOL form of
+    the hint only: the shell string has no `--session` flag to receive it
+    back, so a follow-up `daimon recall "..."` cannot be paired to this
+    injection the way a `daimon_recall` tool call can."""
     age = _format_age(now - r["created"]) if r.get("created") else "?"
     trust = r.get("trust") or "untagged"
     text, _truncated = _fit_item_text(r["text"], width)
@@ -1977,8 +1986,18 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
     stated = str(r.get("stated_by") or "").strip()
     stated_mark = f" (stated by {stated})" if stated else ""
     more = " ".join(terms[:3])
-    more_hint = (f'call the daimon_recall tool with query "{more}"'
-                if mcp_tool_available else f'daimon recall "{more}"')
+    if mcp_tool_available:
+        more_hint = f'call the daimon_recall tool with query "{more}"'
+        # #1053 fix B: the SAME validator the tool argument goes through
+        # (mcp_tools._recall) — a session the hint renders is always one
+        # the tool will accept back, and a hostile id (a newline or a
+        # quote, either of which would break this one-line hint, #512)
+        # never reaches the rendered text at all.
+        clean = recall_telemetry.clean_session(session)
+        if clean:
+            more_hint += f' and session "{clean}"'
+    else:
+        more_hint = f'daimon recall "{more}"'
     return (f"daimon recall: prior work — {r['kind']} from {r['session_id']} "
             f"({age} ago): \"{text}\" [{trust}]{stated_mark}{scope_mark}"
             f"{superseded}"
@@ -2115,7 +2134,8 @@ def _cmd_recall_inject(args) -> int:
             # _LEAD_WIDTH, every later slot _SLOT_WIDTH.
             width = _LEAD_WIDTH if slot == 0 else _SLOT_WIDTH
             print(_suggest_line(m, terms, now, own_slug=own_slug, width=width,
-                                mcp_tool_available=mcp_available))
+                                mcp_tool_available=mcp_available,
+                                session=session or None))
             # Same pure fit the emitter just used, so the ledger cannot
             # describe a rendering the host never received.
             rendered, truncated = _fit_item_text(m["text"], width)
@@ -2297,7 +2317,8 @@ def _cmd_action_recall(args) -> int:
             print(_suggest_line(row, terms, now,
                                 own_slug=store.project_slug(project),
                                 width=_LEAD_WIDTH,
-                                mcp_tool_available=mcp_available))
+                                mcp_tool_available=mcp_available,
+                                session=session or None))
         if seen_file:
             spent = dict(origin_counts)
             spent[str(row["session_id"])] = \

@@ -51,6 +51,10 @@ def _tool_descriptors():
                     "slug": {"type": "string",
                              "description": "search one other project by slug"},
                     "limit": {"type": "integer", "default": 20},
+                    "session": {"type": "string",
+                                "description": ("the live session id this "
+                                                "pull should be attributed "
+                                                "to, if known")},
                 },
                 "required": ["query"],
             },
