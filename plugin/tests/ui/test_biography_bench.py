@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from daimon_ui import reader
 from tests.ui.conftest import make_checkpoint
@@ -45,4 +46,12 @@ def test_flat_scan_cost_60_sessions_with_cross_project_noise(tmp_path):
     assert len(got["trust_anatomy"]["chain"]) == 60
     print(f"\nflat-scan cost: {elapsed_ms:.1f}ms "
           f"(160 files, 60 target sessions, 100 cross-project noise)")
-    assert elapsed_ms < 200, f"flat scan took {elapsed_ms:.1f}ms, budget 200ms"
+    # 200ms is the local bar (this runs in about 7ms on a laptop). The hosted
+    # CI runners measured 203 to 325ms on four consecutive runs of the same
+    # bytes while the local number did not move, so a shared runner gets a
+    # looser bar: this test guards against a regression in the scan's SHAPE
+    # (an order of magnitude, not a percentage), and a wall-clock budget
+    # tuned to one machine is a coin flip on another. GitHub Actions sets CI.
+    budget_ms = 1000 if os.environ.get("CI") else 200
+    assert elapsed_ms < budget_ms, (
+        f"flat scan took {elapsed_ms:.1f}ms, budget {budget_ms}ms")
