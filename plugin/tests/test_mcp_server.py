@@ -161,6 +161,93 @@ def test_recall_tool_missing_query_is_tool_error(tmp_checkpoint_dir):
     assert is_err is True
 
 
+# ---- #1053: the tool call itself was invisible to recall telemetry -----------
+
+
+def test_recall_tool_writes_a_recall_search_row_with_via_mcp(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "merge"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    assert rows  # "merge" matches the PR #6 open question in sample_checkpoint
+    log_path = tmp_log_dir / "recall-delivery.jsonl"
+    delivered = [json.loads(ln) for ln in
+                 log_path.read_text(encoding="utf-8").splitlines()]
+    assert delivered
+    assert all(row["surface"] == "recall-search" for row in delivered)
+    assert all(row["via"] == "mcp" for row in delivered)
+
+
+def test_recall_tool_session_argument_lands_as_injected_into(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _, out = rpc(_init(), _call(
+        "daimon_recall", {"query": "merge", "session": "S-live-42"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert json.loads(text)
+    log_path = tmp_log_dir / "recall-delivery.jsonl"
+    delivered = [json.loads(ln) for ln in
+                 log_path.read_text(encoding="utf-8").splitlines()]
+    assert delivered
+    assert all(row["injected_into"] == "S-live-42" for row in delivered)
+
+
+def test_recall_tool_drops_an_untrusted_session_argument_silently(
+        tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
+    # An agent-supplied session must never fail the call — a too-long value,
+    # an out-of-charset value, and a non-string all drop the field, not the
+    # row, and the tool still answers normally.
+    from daimon_briefing import store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    for bad_session in ("x" * 129, "S with spaces", "S;rm -rf /", 12345, [], None):
+        log_path = tmp_log_dir / "recall-delivery.jsonl"
+        if log_path.exists():
+            log_path.unlink()
+        _, out = rpc(_init(), _call(
+            "daimon_recall", {"query": "merge", "session": bad_session}))
+        text, is_err = _result(out)
+        assert is_err is False
+        assert json.loads(text)
+        delivered = [json.loads(ln) for ln in
+                     log_path.read_text(encoding="utf-8").splitlines()]
+        assert delivered
+        assert all(row["injected_into"] is None for row in delivered)
+
+
+def test_recall_tool_survives_a_telemetry_recorder_that_raises(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # Best-effort contract (#1053): a measurement failure must never take
+    # down the tool call — the agent still gets its rows back.
+    from daimon_briefing import store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+
+    def _boom(*a, **kw):
+        raise RuntimeError("telemetry sink is on fire")
+
+    from daimon_briefing import mcp_tools, recall_telemetry
+    monkeypatch.setattr(recall_telemetry, "record", _boom)
+    monkeypatch.setattr(mcp_tools, "recall_telemetry", recall_telemetry)
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "merge"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert json.loads(text)
+
+
+def test_recall_tool_input_schema_documents_the_session_argument():
+    _, out = rpc(_init(), {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+    tools = {t["name"]: t for t in out[1]["result"]["tools"]}
+    assert "session" in tools["daimon_recall"]["inputSchema"]["properties"]
+
+
 def test_brief_tool_renders_checkpoint_text(tmp_checkpoint_dir,
                                             sample_checkpoint, monkeypatch):
     from daimon_briefing import store

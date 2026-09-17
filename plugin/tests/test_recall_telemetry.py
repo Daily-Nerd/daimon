@@ -182,6 +182,93 @@ def test_stats_reads_a_legacy_row_missing_the_hint_form_key(tmp_path, monkeypatc
     assert out["lifetime"]["deliveries"] == 1
 
 
+def test_record_carries_the_via_and_defaults_to_unknown(tmp_path, monkeypatch):
+    # #1053: which surface actually wrote the row — the MCP tool or the CLI
+    # command — so tool-versus-shell follow-through has a value to group by.
+    # Omitting the argument (every call site that predates #1053) must record
+    # None rather than inventing a value; an out-of-vocabulary value is
+    # dropped the same way an out-of-vocabulary hint_form is.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-mcp"}], query_terms=["ledger"],
+        surface="recall-search", via="mcp",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    recall_telemetry.record(
+        [{"item_id": "o-cli"}], query_terms=["ledger"],
+        surface="recall-search", via="cli",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    recall_telemetry.record(
+        [{"item_id": "o-legacy-call"}], query_terms=["ledger"],
+        surface="recall-search",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    recall_telemetry.record(
+        [{"item_id": "o-bogus"}], query_terms=["ledger"],
+        surface="recall-search", via="carrier-pigeon",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert [r["via"] for r in rows] == ["mcp", "cli", None, None]
+
+
+def test_stats_reads_a_legacy_row_missing_the_via_key(tmp_path, monkeypatch):
+    # Rows written before this field existed carry no `via` key at all, not a
+    # null one. Reading them back must not raise.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    log.mkdir()
+    (log / "recall-delivery.jsonl").write_text(
+        json.dumps({"at": "2026-09-11T00:00:00Z", "surface": "recall-search",
+                    "match_score": 0.5, "term_hits": 1}) + "\n",
+        encoding="utf-8",
+    )
+    out = recall_telemetry.stats(now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+    assert out["lifetime"]["deliveries"] == 1
+
+
+def test_stats_pairs_injections_with_same_session_pulls_by_via(
+        tmp_path, monkeypatch):
+    # #1053: the follow-through summary — for a session that received a
+    # recall-inject hint, how many recall-search pulls landed attributed to
+    # that SAME live session, split by via (tool vs shell).
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-1"}], query_terms=["x"], surface="recall-inject",
+        hint_form="tool", injected_into="S-real", now=now)
+    recall_telemetry.record(
+        [{"item_id": "o-2"}], query_terms=["x"], surface="recall-search",
+        via="mcp", injected_into="S-real", now=now)
+    recall_telemetry.record(
+        [{"item_id": "o-3"}], query_terms=["x"], surface="recall-search",
+        via="cli", injected_into="S-real", now=now)
+    out = recall_telemetry.stats(now=now)
+    pairing = out["lifetime"]["follow_through"]["S-real"]
+    assert pairing["injections"] == 1
+    assert pairing["pulls"] == 2
+    assert pairing["by_via"] == {"mcp": 1, "cli": 1}
+
+
+def test_stats_follow_through_ignores_a_pull_with_no_matching_injection(
+        tmp_path, monkeypatch):
+    # A pull's `injected_into` is agent-supplied, untrusted text — a made-up
+    # session id (or one that simply never received a hint) must pair with
+    # nothing rather than minting a phantom bucket.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-made-up"}], query_terms=["x"], surface="recall-search",
+        via="mcp", injected_into="S-never-injected", now=now)
+    out = recall_telemetry.stats(now=now)
+    assert out["lifetime"]["follow_through"] == {}
+
+
 def test_record_skips_empty_delivery_and_ignores_write_errors(
         tmp_path, monkeypatch):
     recall_telemetry.record([], query_terms=[], surface="recall-search")

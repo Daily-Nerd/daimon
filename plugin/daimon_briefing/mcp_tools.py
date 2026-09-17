@@ -11,8 +11,9 @@ as the CLI (#54) — the #257 demand counters must see MCP reads
 distinguishably or the gate they measure goes blind.
 """
 import json
+import re
 
-from . import amendments, briefing, config, recall, requests, store
+from . import amendments, briefing, config, recall, recall_telemetry, requests, store
 
 
 class ToolError(Exception):
@@ -22,6 +23,24 @@ class ToolError(Exception):
 def _note(tool: str) -> None:
     from . import cli
     cli._note_usage(f"mcp:{tool}")
+
+
+# #1053: the `session` tool argument is AGENT-SUPPLIED text, untrusted —
+# accepted only as a str, stripped, capped, and charset-limited. Anything
+# outside this shape is dropped silently (the row records no session,
+# never an error back to the caller): a made-up or malformed id must not
+# fail the call, and stats pairing already treats an unmatched session as
+# nothing (recall_telemetry._follow_through).
+_SESSION_ARG_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _clean_session_arg(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or not _SESSION_ARG_RE.fullmatch(value):
+        return None
+    return value
 
 
 def _recall(arguments: dict) -> str:
@@ -40,6 +59,10 @@ def _recall(arguments: dict) -> str:
         raise ToolError(config.TENANT_SCOPE_REFUSAL)
     limit = arguments.get("limit")
     limit = 20 if not isinstance(limit, int) or limit < 1 else limit
+    # #1053: the live session this pull should be attributed to, if the
+    # caller (agent) names one — paired against recall-inject's own
+    # `injected_into` so tool-form follow-through becomes measurable.
+    session = _clean_session_arg(arguments.get("session"))
     from . import cli
     project = cli._resolve_project(None)
     try:
@@ -47,6 +70,14 @@ def _recall(arguments: dict) -> str:
                              all_projects=all_projects, limit=limit)
     except recall.RecallError as e:
         raise ToolError(str(e))
+    try:
+        # Best-effort (#1053): a telemetry failure must never take the tool
+        # call down with it — the agent still gets its rows back.
+        recall_telemetry.record(
+            rows, query_terms=recall.salient_terms(query),
+            surface="recall-search", via="mcp", injected_into=session)
+    except Exception:  # noqa: BLE001 — see comment above
+        pass
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 

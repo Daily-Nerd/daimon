@@ -24,7 +24,7 @@ def _stamp(now=None) -> str:
 
 
 def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
-          now=None) -> None:
+          via=None, now=None) -> None:
     """Append one bounded record for every row actually delivered.
 
     Telemetry is best-effort. A read or prompt path must never fail because a
@@ -46,6 +46,13 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
     that predates #1043, and the plain `daimon recall` search, which is a
     pull rather than an injection) records `None`; a reader treats a missing
     value as unknown, never as the provenance id.
+
+    `via` (#1053) is which SURFACE wrote this row: "cli" for the shell
+    `daimon recall` command, "mcp" for the `daimon_recall` tool. Distinct
+    from `hint_form` (which hint a delivery RENDERED) — `via` is where a
+    PULL actually came from, and only a pull (`recall-search`) ever sets it.
+    An out-of-vocabulary or omitted value (every caller that predates
+    #1053) records `None` rather than guessing.
     """
     entries = []
     stamp = _stamp(now)
@@ -85,6 +92,7 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
             "rendered_chars": rendered,
             "truncated": truncated,
             "hint_form": hint_form if hint_form in ("tool", "shell") else None,
+            "via": via if via in ("cli", "mcp") else None,
         }, ensure_ascii=False, separators=(",", ":")))
     if not entries:
         return
@@ -103,6 +111,43 @@ def _parse_stamp(value):
             tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def _follow_through(rows: list[dict]) -> dict:
+    """Per-injecting-session pairing (#1053): for every session that received
+    at least one recall-inject hint, how many recall-search PULLS (CLI or
+    MCP) landed attributed to that SAME live session, and through which
+    surface (`via`) they arrived.
+
+    A pull's `injected_into` is agent-supplied text on the MCP path — a
+    made-up session id, or one that simply never received a hint, must pair
+    with nothing rather than mint a phantom bucket. So the bucket set is
+    seeded from recall-inject rows ONLY, and a pull naming a session absent
+    from that set is dropped, never counted and never added."""
+    sessions: dict[str, dict] = {}
+    for row in rows:
+        if row.get("surface") != "recall-inject":
+            continue
+        session = row.get("injected_into")
+        if not isinstance(session, str) or not session.strip():
+            continue
+        bucket = sessions.setdefault(
+            session, {"injections": 0, "pulls": 0, "by_via": {}})
+        bucket["injections"] += 1
+    for row in rows:
+        if row.get("surface") != "recall-search":
+            continue
+        session = row.get("injected_into")
+        if not isinstance(session, str) or not session.strip():
+            continue
+        existing = sessions.get(session)
+        if existing is None:
+            continue
+        existing["pulls"] += 1
+        via = row.get("via")
+        via_key = via if via in ("cli", "mcp") else "unknown"
+        existing["by_via"][via_key] = existing["by_via"].get(via_key, 0) + 1
+    return sessions
 
 
 def _summary(rows: list[dict]) -> dict:
@@ -151,6 +196,7 @@ def _summary(rows: list[dict]) -> dict:
             for surface in surfaces
         },
         "by_injected_into": by_injected_into,
+        "follow_through": _follow_through(rows),
     }
 
 
