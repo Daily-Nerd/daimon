@@ -92,7 +92,13 @@ _PROMPT_SCRIPT = "daimon-kimi-user-prompt-submit.py"
 # a path baked in anywhere.
 MCP_SCRIPT = "daimon-mcp-serve.py"
 
-FILES = tuple(spec.script for spec in HOOKS) + MODULES
+# #1045: MCP_SCRIPT joins FILES too. Not a hook (no event, never in HOOKS)
+# and not a MODULE either (Kimi execs it directly as the MCP server's
+# command, so it needs +x, unlike the import-only modules), but it is a file
+# the install writes into this same directory, and the status audit walking
+# `_HOOK_HOSTS["kimi"]["files"]` must see it or a stale copy behind the live
+# registration reads as CURRENT forever.
+FILES = tuple(spec.script for spec in HOOKS) + MODULES + (MCP_SCRIPT,)
 
 # Written above each block so a person reading their own config knows what put
 # it there and what will take it away. Removal does NOT key on this line (a
@@ -366,10 +372,17 @@ def mcp_registered(home, env=None) -> bool:
 
 
 def remove_mcp(home, env=None) -> list[str]:
-    """Remove daimon's mcpServers.daimon entry; return output lines. Leaves
-    the installed wrapper script in place (same reasoning as `remove`
-    below: inert once unregistered, and another registration may still
-    point at it)."""
+    """Remove daimon's mcpServers.daimon entry AND the installed wrapper it
+    pointed at; return output lines.
+
+    #1045: earlier this left the wrapper in place, on the reasoning that it
+    is inert once unregistered. Unlike the `[[hooks]]` scripts `remove`
+    below leaves alone (a hand-written registration could still point at
+    one), nothing else legitimately points at this wrapper, and leaving it
+    means the wrapper is also the file `status` audits against the packaged
+    copy (see FILES above), and stale bytes behind a removed table would
+    still read as CURRENT.
+    """
     path = mcp_config_path(home, env)
     if not path.exists():
         return [f"{path} does not exist - nothing to remove"]
@@ -381,7 +394,12 @@ def remove_mcp(home, env=None) -> list[str]:
     backup = path.with_name(f"{path.name}.daimon-backup-{int(time.time())}")
     shutil.copy2(path, backup)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    return [f"removed mcpServers.daimon from {path} (backup: {backup.name})"]
+    out = [f"removed mcpServers.daimon from {path} (backup: {backup.name})"]
+    wrapper = hooks_dir(home, env) / MCP_SCRIPT
+    if wrapper.exists():
+        wrapper.unlink()
+        out.append(f"removed {wrapper}")
+    return out
 
 
 def install(pkg, home, env=None):

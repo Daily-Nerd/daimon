@@ -92,8 +92,11 @@ release.
 automatically: it merges an `mcpServers.daimon` entry into
 `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json` when set), the file
 Kimi's own docs describe for this scope — separate from `config.toml`, which
-carries the hook registration. `daimon hooks remove kimi` takes both back
-together. Once that entry exists, the recall hint (the per-prompt "you
+carries the hook registration. That entry points at a copied wrapper script
+under the Kimi hooks directory, audited by `daimon hooks status` the same way
+as the three hook scripts. `daimon hooks remove kimi` takes the `mcp.json`
+entry and that wrapper back, together with the `config.toml` hook entries.
+Once the `mcp.json` entry exists, the recall hint (the per-prompt "you
 worked on this before" pointer) names the `daimon_recall` tool instead of
 the `daimon recall "..."` shell command.
 
@@ -124,8 +127,11 @@ daimon hooks remove kimi
 This takes daimon's `[[hooks]]` entries back out of `config.toml` and leaves
 everything else in the file as it was, line endings included. The one
 exception: a file whose last line had no newline gains one, and remove
-cannot tell it from one you wrote. The installed scripts
-stay where they are, inert once unregistered. Checkpoints under `~/.daimon/`
+cannot tell it from one you wrote. The three hook scripts stay where they
+are, inert once unregistered. The MCP wrapper (see MCP above) is the
+exception: it is deleted along with the `mcp.json` entry that pointed at
+it, since nothing else legitimately points at that file. Checkpoints under
+`~/.daimon/`
 are untouched.
 
 ## Verify

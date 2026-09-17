@@ -153,8 +153,11 @@ def _remove_one(host: str) -> int:
     daimon has no idea where it landed. Saying so is better than a verb that
     reports success having touched nothing.
 
-    The installed scripts stay. They are inert once unregistered, and deleting
-    them would break any other registration pointing at the same files.
+    The installed hook scripts stay. They are inert once unregistered, and
+    deleting them would break any other registration pointing at the same
+    files. #1045: the MCP wrapper is the one exception. kimi_hooks.remove
+    and codex_hooks.remove_mcp both delete it along with the table entry that
+    pointed at it, because nothing else legitimately points at that file.
     """
     spec = _cli._HOOK_HOSTS.get(host)
     if spec is None:
@@ -293,8 +296,9 @@ def register(sub, fmt) -> None:
     ph_remove = hooks_sub.add_parser(
         "remove",
         help="unregister daimon's hook entries from a host whose registration "
-             "daimon wrote (kimi). The installed scripts are left in place; "
-             "they are inert once unregistered",
+             "daimon wrote (kimi, codex). The installed hook scripts are left "
+             "in place, inert once unregistered; the MCP wrapper is removed "
+             "along with its registration",
     )
     ph_remove.add_argument("host", nargs="?", help="host to unregister")
     ph_remove.add_argument("--all", action="store_true",

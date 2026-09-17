@@ -36,9 +36,10 @@ definiciones no confiadas hasta que lo hagas.
 Una copia instalada obsoleta sigue *funcionando* con el comportamiento viejo,
 así que la deriva es invisible. Ejecuta `daimon hooks status` para auditar
 las copias instaladas contra las versiones empaquetadas
-(CURRENT/STALE/MISSING, más el estado de registro en `hooks.json`); sale con
-código distinto de cero cuando algo derivó, y `daimon hooks install codex` lo
-refresca en el lugar.
+(CURRENT/STALE/MISSING, más el estado de registro en `hooks.json`); la
+auditoría también cubre el wrapper MCP (abajo), no solo los cinco scripts de
+hook. Sale con código distinto de cero cuando algo derivó, y `daimon hooks
+install codex` lo refresca en el lugar.
 
 Requiere el CLI `daimon` en el `PATH` (el alias obsoleto `daimon-briefing`
 también funciona como respaldo):
@@ -119,9 +120,12 @@ tratar JSON crudo como texto del transcript.
 
 `daimon hooks install codex` también registra el [servidor MCP](../reference/mcp)
 de solo lectura en `[mcp_servers.daimon]` dentro de `~/.codex/config.toml`,
-junto al registro de hooks de arriba. `daimon hooks remove codex` retira
-solo esa tabla. Una vez que esa entrada existe, el puntero de recall (la
-línea "trabajaste en esto antes" por prompt, emitida por
+junto al registro de hooks de arriba. Esa tabla apunta a un script wrapper
+copiado bajo `~/.codex/hooks/`, auditado por `daimon hooks status` igual que
+los cinco scripts de hook. `daimon hooks remove codex` retira la tabla y
+borra ese wrapper con ella, dejando intactos los scripts de hook y su
+registro en `hooks.json`. Una vez que la tabla existe, el puntero de recall
+(la línea "trabajaste en esto antes" por prompt, emitida por
 `daimon-codex-user-prompt-submit.py` arriba) nombra la herramienta
 `daimon_recall` en lugar del comando de shell `daimon recall "..."`.
 

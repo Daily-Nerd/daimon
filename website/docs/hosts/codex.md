@@ -32,7 +32,8 @@ definitions — Codex skips untrusted hook definitions until you do.
 
 A stale installed copy keeps *working* on old behavior, so drift is invisible.
 Run `daimon hooks status` to audit the installed copies against the packaged
-versions (CURRENT/STALE/MISSING, plus the `hooks.json` registration state); it
+versions (CURRENT/STALE/MISSING, plus the `hooks.json` registration state); the
+audit covers the MCP wrapper (below) too, not just the five hook scripts. It
 exits non-zero when anything drifted, and `daimon hooks install codex` refreshes
 it in place.
 
@@ -109,10 +110,13 @@ transcript text.
 
 `daimon hooks install codex` also registers the read-only
 [MCP server](../reference/mcp) in `~/.codex/config.toml`'s
-`[mcp_servers.daimon]`, alongside the hook registration above.
-`daimon hooks remove codex` takes only that table back. Once that entry
-exists, the recall hint (the per-prompt "you worked on this before" pointer,
-emitted by `daimon-codex-user-prompt-submit.py` above) names the
+`[mcp_servers.daimon]`, alongside the hook registration above. That table
+points at a copied wrapper script under `~/.codex/hooks/`, audited by
+`daimon hooks status` the same way as the five hook scripts. `daimon hooks
+remove codex` takes the table back and deletes that wrapper with it, leaving
+the hook scripts and their `hooks.json` registration untouched. Once the
+table exists, the recall hint (the per-prompt "you worked on this before"
+pointer, emitted by `daimon-codex-user-prompt-submit.py` above) names the
 `daimon_recall` tool instead of the `daimon recall "..."` shell command.
 
 ## Teach the agent the protocol

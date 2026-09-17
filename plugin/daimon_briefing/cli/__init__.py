@@ -3848,14 +3848,18 @@ _HOOK_HOSTS: dict[str, _HookHostSpec] = {
     # here drive `hooks list` only; codex_hooks owns the copy + registration.
     # #943 added daimon-codex-pre-action.py and the two modules it loads by
     # same-dir lookup. `files` is what the status audit walks, so a file the
-    # install writes and this list omits goes stale invisibly.
+    # install writes and this list omits goes stale invisibly. #1045 added
+    # daimon-mcp-serve.py for the same reason: install_mcp() copies it into
+    # this same directory and the MCP registration in config.toml points at
+    # it, but it carries no event and is never in HOOKS. It joins this file
+    # list only, never `events` below.
     "codex": {
         "files": ("daimon-codex-session-start.py", "daimon-codex-stop.py",
                   "daimon-codex-session-end.py", "daimon-codex-pre-action.py",
                   "daimon-action-recall.py",
                   "daimon-codex-user-prompt-submit.py",
                   "_daimon_hook_lib.py", "checks_runtime.py",
-                  "checks_host.py"),
+                  "checks_host.py", "daimon-mcp-serve.py"),
         "events": ("SessionStart", "Stop", "SessionEnd", "PreToolUse",
                    "UserPromptSubmit"),
         "register": "codex",
@@ -3870,10 +3874,13 @@ _HOOK_HOSTS: dict[str, _HookHostSpec] = {
     # No SessionStart: measured, its stdout is dropped by the host, so the
     # briefing rides UserPromptSubmit instead. No PreToolUse: the deny channel
     # is unmeasured, so no check profile ships (see checks_host.PROFILES).
+    # #1045 added daimon-mcp-serve.py, same reasoning as codex above: it is
+    # what mcpServers.daimon in mcp.json points at, ships into this same
+    # directory, and carries no event of its own.
     "kimi": {
         "files": ("daimon-kimi-user-prompt-submit.py",
                   "daimon-kimi-session-end.py", "daimon-kimi-stop.py",
-                  "_daimon_hook_lib.py"),
+                  "_daimon_hook_lib.py", "daimon-mcp-serve.py"),
         "events": ("UserPromptSubmit", "SessionEnd", "Stop"),
         "register": "kimi",
     },
