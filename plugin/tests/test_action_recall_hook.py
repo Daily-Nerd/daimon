@@ -8,11 +8,19 @@ and drop the deny, byte-identical to an allow. A second interpreter keeps
 that property structural rather than tested, so this shim shares nothing
 with it: no import of `checks_host.py`, no import of the sibling script.
 
-The other thing pinned here is the ladder. Every shipped row reads
-`unsupported`, because neither host's `additionalContext` on PreToolUse has
-been measured reaching the model. `unsupported` has to cost nothing at all,
-not merely print nothing, or the ladder's bottom rung would be a spawned
-interpreter per shell action for a channel nobody has seen work.
+The other thing pinned here is the ladder. `unsupported` is where every row
+ships until its host's `additionalContext` on PreToolUse has been measured
+reaching the model, and it has to cost nothing at all, not merely print
+nothing, or the ladder's bottom rung would be a spawned interpreter per shell
+action for a channel nobody has seen work. Claude Code 2.1.272 cleared that
+measurement (#1046): a `claude -p` run accepted the field and ran the
+command, but the stream showed `tool_use`, then `tool_result`, then assistant
+text, with no model turn in between. The context lands WITH the tool
+result, so it can only inform the NEXT action, never the one it fired on.
+That is why `claude-code` moved to `record-only` and not straight to `on`:
+the query runs and the ledger row lands, nothing prints, and the `on` rung
+waits on those rows showing the line would have been used. `codex` stays
+`unsupported`, its own probe measured a different, per-prompt channel.
 """
 
 import importlib.util
@@ -23,6 +31,9 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from daimon_briefing import cli as real_cli
+from daimon_briefing import store
 
 HOOK = Path(__file__).resolve().parents[2] / "hook" / "daimon-action-recall.py"
 
@@ -101,22 +112,39 @@ def _mode(mod, monkeypatch, host, mode):
     monkeypatch.setitem(mod.CAPS, host, mode)
 
 
-# ---- the shipped ladder: every row unsupported ---------------------------
+# ---- the shipped ladder: claude-code record-only, codex still unsupported -
 
 
-@pytest.mark.parametrize("host", ["claude-code", "codex"])
-def test_the_shipped_table_holds_both_hosts_at_unsupported(host, mod):
-    # A documented channel is not a measured one. Until a probe watches
-    # additionalContext reach the model, the honest row is unsupported.
-    assert mod.CAPS[host] == "unsupported"
+def test_the_shipped_table_moves_claude_code_to_record_only(mod):
+    # #1046: measured on Claude Code 2.1.272. additionalContext on
+    # PreToolUse is accepted, but it lands with the tool result, informing
+    # only the NEXT action. record-only runs the query so the ledger carries
+    # that data without claiming to have informed anything.
+    assert mod.CAPS["claude-code"] == "record-only"
 
 
-@pytest.mark.parametrize("host", ["claude-code", "codex"])
-def test_unsupported_costs_nothing_at_all(host, mod, monkeypatch, capsys,
-                                          no_spawn):
+def test_codex_stays_unsupported(mod):
+    # Codex's own probe measured a different, per-prompt channel and
+    # deny-wins with both PreToolUse hooks, not additionalContext delivery.
+    # That row waits on its own receipt.
+    assert mod.CAPS["codex"] == "unsupported"
+
+
+def test_codex_still_costs_nothing_at_all(mod, monkeypatch, capsys, no_spawn):
     _payload(monkeypatch)
     _cli(mod, monkeypatch)
-    assert _run(mod, host) == 0
+    assert _run(mod, "codex") == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_an_unsupported_host_costs_nothing_at_all(mod, monkeypatch, capsys,
+                                                  no_spawn):
+    # Same assertion, held generically via _mode so unsupported's own
+    # contract stays pinned independent of which row ships at it today.
+    _mode(mod, monkeypatch, "claude-code", "unsupported")
+    _payload(monkeypatch)
+    _cli(mod, monkeypatch)
+    assert _run(mod) == 0
     assert capsys.readouterr().out == ""
 
 
@@ -137,6 +165,127 @@ def test_record_only_passes_the_flag_and_prints_nothing(mod, monkeypatch,
     assert cmd[cmd.index("--project") + 1] == "/repo/k8s"
     assert kwargs["input"] == COMMAND
     assert kwargs["timeout"] == 1.5
+
+
+# ---- record-only, end to end: a real ledger row, no mock in the middle ----
+#
+# Every test above fakes subprocess.run to answer with a canned line, which
+# proves the shim's OWN argv/env/mode plumbing but cannot tell a real
+# record-only run from a real `on` run: both are "some subprocess ran, and
+# X was in `cmd`". The tests below route the shim's subprocess call into the
+# actual `daimon_briefing.cli.main`, in-process, so what gets asserted is the
+# thing #1046 actually shipped: a delivery row lands on disk and stdout stays
+# empty, for the host now carrying `record-only` in `CAPS`.
+
+
+@pytest.fixture
+def tmp_log_dir(tmp_path):
+    # The autouse _isolated_home fixture points HOME here; DAIMON_LOG_DIR
+    # (set by the module-level conftest fixture, sharing this same tmp_path)
+    # resolves under it the same way.
+    return tmp_path / ".daimon" / "logs"
+
+
+@pytest.fixture
+def real_subprocess(monkeypatch):
+    """Answer the shim's OWN subprocess.run call by running the real CLI
+    in-process, instead of a canned line, and forward every OTHER call
+    (`config.py`'s own `git rev-parse` among them; `subprocess` is one
+    module-level object, so a blanket patch here would hit that too) to the
+    real `subprocess.run` untouched.
+
+    `cmd[0]` is whatever `_cli()` set `resolve_cli` to return: irrelevant
+    here, since the real CLI never spawns a second process either. Only
+    `cmd[1:]` (the argv `daimon` itself would see) and `input` (stdin) cross
+    over."""
+    real_run = subprocess.run
+
+    def fake(cmd, input=None, capture_output=True, text=True, timeout=None,
+             env=None, **kwargs):
+        if not (isinstance(cmd, list) and len(cmd) > 1
+                and cmd[1] == "action-recall"):
+            return real_run(cmd, input=input, capture_output=capture_output,
+                            text=text, timeout=timeout, env=env, **kwargs)
+        saved_stdin, saved_stdout = sys.stdin, sys.stdout
+        sys.stdin = io.StringIO(input or "")
+        sys.stdout = io.StringIO()
+        try:
+            rc = real_cli.main(cmd[1:])
+            out = sys.stdout.getvalue()
+        finally:
+            sys.stdin, sys.stdout = saved_stdin, saved_stdout
+        return _Proc(out, rc)
+    monkeypatch.setattr(subprocess, "run", fake)
+
+
+def _checkpoint_body(session, text, created):
+    return {
+        "session_id": session,
+        "created": created,
+        "working_context": {
+            "active_topic": {"text": "cluster work", "trust": "inferred"},
+            "open_questions": [{
+                "text": text, "trust": "verbatim", "quote": text[:40],
+                "importance": 9, "first_seen": created,
+            }],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }
+
+
+def _seed_match(project):
+    # A matchable prior session plus a newer, unrelated one. The injection
+    # path excludes whatever the SessionStart briefing already carried
+    # (this project's LATEST checkpoint), so a single seeded session would
+    # exclude itself.
+    store.write_checkpoint(
+        "S-old", _checkpoint_body(
+            "S-old",
+            "argocd selfHeal reverts any manual kubectl edit to the "
+            "gateway deployment in prod", "2026-06-20T00:00:00Z"),
+        project_dir=project)
+    store.write_checkpoint(
+        "S-latest", _checkpoint_body(
+            "S-latest", "unrelated newer bookkeeping",
+            "2026-06-28T00:00:00Z"),
+        project_dir=project)
+
+
+def _ledger(tmp_log_dir):
+    path = tmp_log_dir / "recall-delivery.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in
+            path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_claude_code_record_only_writes_a_delivery_row_and_prints_nothing(
+        mod, monkeypatch, capsys, real_subprocess, tmp_checkpoint_dir,
+        tmp_log_dir):
+    _seed_match("/repo/k8s")
+    _payload(monkeypatch)  # default host/cwd match the seeded project
+    _cli(mod, monkeypatch)
+    assert _run(mod, "claude-code") == 0
+    assert capsys.readouterr().out == ""
+    rows = _ledger(tmp_log_dir)
+    assert len(rows) == 1
+    assert rows[0]["surface"] == "action-recall"
+    # #1043: the row carries the live session the shell action ran in,
+    # forwarded here through the shim's own --session flag.
+    assert rows[0]["injected_into"] == SESSION
+
+
+def test_codex_still_writes_no_row_for_the_same_matching_command(
+        mod, monkeypatch, capsys, real_subprocess, tmp_checkpoint_dir,
+        tmp_log_dir):
+    _seed_match("/repo/k8s")
+    _payload(monkeypatch)
+    _cli(mod, monkeypatch)
+    assert _run(mod, "codex") == 0
+    assert capsys.readouterr().out == ""
+    assert _ledger(tmp_log_dir) == []
 
 
 # ---- on: one JSON object, and never a decision --------------------------
@@ -395,8 +544,9 @@ def test_the_plugin_registers_the_shim_behind_the_pre_action_hook():
 
 
 def test_the_plugin_flags_mcp_tool_availability_on_the_prompt_recall_hook():
-    # #1036: same flag, same reasoning, on the surface that actually delivers
-    # today (action-recall ships `unsupported` for claude-code — see CAPS).
+    # #1036: same flag, same reasoning, on the surface that actually prints
+    # today (action-recall ships `record-only` for claude-code, so it never
+    # emits a line yet, see CAPS).
     cfg = json.loads((REPO / "hooks" / "hooks.json").read_text(
         encoding="utf-8"))["hooks"]
     hook = cfg["UserPromptSubmit"][0]["hooks"][0]

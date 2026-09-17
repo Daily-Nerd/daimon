@@ -24,12 +24,26 @@ shell action, and it is worth it. Nothing here imports `checks_host.py`,
 Output contract: exit 0 always, stderr silent, stdout empty or exactly one
 JSON object carrying `additionalContext`.
 
-Per-host ladder, in CAPS below. `unsupported` is where every row ships:
-both hosts DOCUMENT an additionalContext channel on PreToolUse and neither
-delivery has been measured reaching the model, and a hook that claims to be
-delivering into a channel nobody has watched work is the one failure mode
-this ladder exists to prevent (the same argument as the check adapter's
-per-host mode caps). A later commit flips a row citing its probe.
+Per-host ladder, in CAPS below. `unsupported` is where every row ships until
+its host's additionalContext channel on PreToolUse has been measured
+reaching the model (a hook that claims to deliver into a channel nobody has
+watched work is the one failure mode this ladder exists to prevent, the same
+argument as the check adapter's per-host mode caps).
+
+Claude Code 2.1.272 cleared that measurement (#1046): a `claude -p` run with
+a PreToolUse hook on `Bash` emitting `additionalContext` and no
+`permissionDecision` was accepted, the command ran, and the model repeated
+the exact nonce the hook had written. The ordering is why `claude-code`
+moves to `record-only` and not straight to `on`: the stream showed
+`tool_use`, then `tool_result`, then assistant text, with no model turn
+between the hook and the execution. The context lands WITH the tool result,
+so it can only inform the NEXT action, never the one it fired on. Only a
+deny stops the current action, and this hook never emits one. `record-only`
+runs the query so the ledger carries that data; `on` is a later, separate
+flip, gated on the record-only rows showing the injected line would have
+been useful more often than not. `codex` stays `unsupported`: its own probe
+measured a different, per-prompt channel and deny-wins with both PreToolUse
+hooks, not `additionalContext` delivery.
 """
 
 import json
@@ -52,7 +66,7 @@ TIMEOUT = 1.5
 #   record-only = run the query so the ledger row exists, emit nothing
 #   on          = run the query and emit the line
 CAPS = {
-    "claude-code": "unsupported",
+    "claude-code": "record-only",
     "codex": "unsupported",
 }
 

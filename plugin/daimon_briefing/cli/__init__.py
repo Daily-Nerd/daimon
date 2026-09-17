@@ -2276,9 +2276,10 @@ def _cmd_action_recall(args) -> int:
         # width (#1030). Width is a property of the slot; nothing about an
         # action buys extra room.
         rendered, truncated = _fit_item_text(row["text"], _LEAD_WIDTH)
-        # #1036: same flag as recall-inject, read once. This surface ships
-        # `unsupported` for every host today (see CAPS in the hook), so the
-        # value is recorded for later comparison even where nothing prints.
+        # #1036: same flag as recall-inject, read once. This surface's own
+        # hook caps per host (see CAPS in the hook, #1046): `claude-code`
+        # runs `record-only`, `codex` stays `unsupported`, so the value is
+        # recorded for later comparison even where nothing prints.
         mcp_available = config.mcp_tool_available()
         recall_telemetry.record(
             [{**row, "rendered_chars": len(rendered), "truncated": truncated}],
