@@ -322,6 +322,19 @@ def _bounded_source(item, receipt, resolution, messages) -> dict:
     }
 
 
+def _withheld_source(forgotten: int) -> dict:
+    """The `why --source` refusal (#1065). A transcript window is drawn from
+    the RAW pre-forget transcript, and redact_text only catches secret
+    SHAPES, never free text a person deliberately forgot. A live tombstone
+    anywhere in the project therefore means some window in it could hand
+    that value back. Refused project-wide rather than per-item: a tombstone
+    is a hash of the whole forgotten item's TEXT, so an unrelated window has
+    no key to scan against and clear itself individually. Over-withholding
+    is the fail-safe direction, the same posture all_forgotten_content_keys
+    documents for the inbound gate."""
+    return {"state": "withheld", "forgotten": forgotten}
+
+
 def _index_only_reason(row: dict) -> str:
     """Why this row is index-backed rather than a local project surface
     (#674): the two real divergence paths the investigation proved. A local
@@ -474,8 +487,10 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
                      "on this machine"),
         }
     if include_source:
-        result["source_excerpt"] = _bounded_source(
-            item, receipt, resolution, messages)
+        forgotten = len(store.forgotten_content_keys(project_dir))
+        result["source_excerpt"] = (
+            _withheld_source(forgotten) if forgotten
+            else _bounded_source(item, receipt, resolution, messages))
     return result
 
 
@@ -554,7 +569,12 @@ def human_lines(result: dict) -> list[str]:
             f"Source: {source.get('host', 'unknown')} session "
             f"{source.get('session_id', 'unknown')}")
     excerpt = result.get("source_excerpt")
-    if isinstance(excerpt, dict):
+    if isinstance(excerpt, dict) and excerpt.get("state") == "withheld":
+        count = excerpt.get("forgotten", 0)
+        lines.append(
+            f"Source excerpt: withheld, this project holds {count} forget "
+            "tombstone(s); the transcript predates any forgetting")
+    elif isinstance(excerpt, dict):
         lines.append(f"Source excerpt: {excerpt.get('text') or '(unavailable)'}")
         if excerpt.get("note"):
             lines.append(f"Source note: {excerpt['note']}")

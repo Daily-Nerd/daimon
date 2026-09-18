@@ -318,9 +318,11 @@ Report what the command shows; do not guess at capture state.
 `daimon why <item-id>` is the read side of every trust tag: one item's
 evidence axes — capture, provenance, source, byte integrity, current support,
 quote-check outcome, lifecycle, corroboration — with `--source` adding one
-bounded, redacted window of the originating text. Reach for it before
-repeating a `[carried]` or `[~ inferred]` claim as true, or when the user asks
-where something came from; ids come from `daimon recall` or `daimon loops`.
+bounded, redacted window of the originating text, withheld project-wide
+(with a tombstone count in its place) whenever this project holds a live
+forget tombstone. Reach for it before repeating a `[carried]` or
+`[~ inferred]` claim as true, or when the user asks where something came
+from; ids come from `daimon recall` or `daimon loops`.
 
 `daimon diff` reads the chain this project already keeps: which items were
 added, restated, re-tagged or stopped being carried between two sessions,
