@@ -283,6 +283,43 @@ def _follow_through(rows: list[dict]) -> dict:
     return sessions
 
 
+def _surface_calls(rows: list[dict]) -> dict[str, int]:
+    """Distinct CALL events per surface (#1058), the same event-counting rule
+    `_follow_through` uses for pulls, applied across every surface rather
+    than only sessions paired to an injection.
+
+    Built over the FULL, unfiltered `rows` — including the #1057 placeholder
+    row a `recall-search` call writes when it matched nothing. That row is
+    invisible to `by_surface` (it carries no item, so it contributes 0 to the
+    row count) but it is still ONE call, and this is the only summary field
+    that says so.
+
+    One `record()` call shares one `at` stamp across every row it writes, so
+    the event key for a non-pull surface is just that stamp — `_event_stamp`'s
+    "unknown stamp folds into one event" rule applies here too: rows with a
+    missing or unparseable `at` for one surface fold into a single shared
+    event rather than minting one phantom call per row.
+
+    A `recall-search` pull's event key is (`at`, `via`) instead, matching
+    `_follow_through` exactly — `via` is part of a pull's identity, so two
+    pulls sharing a stamp but landing through different surfaces (cli vs
+    mcp) are two distinct calls."""
+    events: dict[str, set] = {}
+    for row in rows:
+        surface = row.get("surface")
+        if not isinstance(surface, str) or not surface:
+            continue
+        stamp = _event_stamp(row)
+        if surface == "recall-search":
+            via = row.get("via")
+            via_key = via if via in ("cli", "mcp") else "unknown"
+            key = (stamp, via_key)
+        else:
+            key = stamp
+        events.setdefault(surface, set()).add(key)
+    return {surface: len(keys) for surface, keys in events.items()}
+
+
 def _summary(rows: list[dict]) -> dict:
     scores = [r["match_score"] for r in rows
               if isinstance(r.get("match_score"), (int, float))]
@@ -316,6 +353,11 @@ def _summary(rows: list[dict]) -> dict:
         hint = row.get("hint_form")
         hint_key = hint if hint in ("tool", "shell") else "unknown"
         bucket["by_hint_form"][hint_key] = bucket["by_hint_form"].get(hint_key, 0) + 1
+    # #1058: call EVENTS per surface, over the unfiltered `rows` (an empty
+    # pull still counts as one call) — see `_surface_calls`'s docstring for
+    # the exact event-key rule. Reindexed against `surfaces` so the two
+    # dicts (rows vs calls) always carry the same key set, in the same order.
+    surface_calls = _surface_calls(rows)
     return {
         "deliveries": len(item_rows),
         "scored": len(scores),
@@ -332,6 +374,9 @@ def _summary(rows: list[dict]) -> dict:
         "by_surface": {
             surface: sum(1 for r in item_rows if r.get("surface") == surface)
             for surface in surfaces
+        },
+        "by_surface_calls": {
+            surface: surface_calls.get(surface, 0) for surface in surfaces
         },
         "by_injected_into": by_injected_into,
         "follow_through": _follow_through(rows),

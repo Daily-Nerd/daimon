@@ -578,3 +578,96 @@ def test_stats_handles_invalid_timestamp_and_missing_log(tmp_path, monkeypatch):
     (log / "recall-delivery.jsonl").unlink()
     out = recall_telemetry.stats()
     assert out["lifetime"]["deliveries"] == 0
+
+
+# ---- #1058: `by_surface_calls` — events, not rows, per surface -------------
+
+
+def test_summary_reports_by_surface_calls_as_events_not_rows(tmp_path, monkeypatch):
+    # One record() call that delivers 3 rows is 3 ROWS but ONE CALL — the
+    # `daimon stats` recall block must not report "3 items" as "3 uses of
+    # recall-inject". `by_surface` still counts rows; `by_surface_calls`
+    # counts the distinct `record()` invocation instead.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-1"}, {"item_id": "o-2"}, {"item_id": "o-3"}],
+        query_terms=["x"], surface="recall-inject", now=now)
+    out = recall_telemetry.stats(now=now)
+    summary = out["lifetime"]
+    assert summary["by_surface"] == {"recall-inject": 3}
+    assert summary["by_surface_calls"] == {"recall-inject": 1}
+
+
+def test_summary_counts_an_empty_pull_as_one_recall_search_call(
+        tmp_path, monkeypatch):
+    # The #1057 placeholder row for a pull that matched nothing carries no
+    # item, so `by_surface` never sees it (stays at 0) — but it is still ONE
+    # call, and `by_surface_calls` is the only field that says so.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-search", via="cli", now=now)
+    out = recall_telemetry.stats(now=now)
+    summary = out["lifetime"]
+    assert summary["by_surface"] == {"recall-search": 0}
+    assert summary["by_surface_calls"] == {"recall-search": 1}
+
+
+def test_summary_by_surface_calls_splits_pulls_by_via_like_follow_through(
+        tmp_path, monkeypatch):
+    # A pull's event key is (`at`, `via`), same as `_follow_through` — two
+    # recall-search calls at the SAME stamp but different `via` are two
+    # distinct call events, not one.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-mcp"}], query_terms=["x"], surface="recall-search",
+        via="mcp", now=now)
+    recall_telemetry.record(
+        [{"item_id": "o-cli"}], query_terms=["x"], surface="recall-search",
+        via="cli", now=now)
+    out = recall_telemetry.stats(now=now)
+    assert out["lifetime"]["by_surface_calls"] == {"recall-search": 2}
+
+
+def test_summary_by_surface_calls_folds_missing_stamp_rows_into_one_event(
+        tmp_path, monkeypatch):
+    # Same "unknown stamp folds into one event" rule `_event_stamp` and
+    # `_follow_through` already apply — a stamp-less recall-inject row must
+    # not mint one phantom call per row.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    log.mkdir()
+    rows = [
+        {"surface": "recall-inject"},
+        {"surface": "recall-inject"},
+        {"surface": "recall-inject", "at": "not-a-timestamp"},
+    ]
+    (log / "recall-delivery.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    out = recall_telemetry.stats(now=datetime(2026, 9, 18, tzinfo=timezone.utc))
+    assert out["lifetime"]["by_surface_calls"] == {"recall-inject": 1}
+
+
+def test_summary_by_surface_calls_skips_rows_with_no_usable_surface(
+        tmp_path, monkeypatch):
+    # A row with no `surface` at all, or a non-string/empty one, contributes
+    # to no surface's call count — same guard `_summary`'s own surface-name
+    # collection already applies, just reused here for the event tally.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    log.mkdir()
+    rows = [
+        {"surface": "recall-inject"},
+        {},
+        {"surface": ""},
+        {"surface": 7},
+    ]
+    (log / "recall-delivery.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    out = recall_telemetry.stats(now=datetime(2026, 9, 18, tzinfo=timezone.utc))
+    assert out["lifetime"]["by_surface_calls"] == {"recall-inject": 1}
