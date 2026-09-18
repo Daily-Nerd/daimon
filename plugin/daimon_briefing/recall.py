@@ -1409,6 +1409,12 @@ _SUPERSEDED_WEIGHT = 0.7   # superseded_source 'link': a claim the model made
 _RESOLVED_WEIGHT = 0.5     # superseded_source 'resolution': a person's recorded act
 _INVALIDATED_WEIGHT = 0.4
 
+# #991: the candidate fetch window, named so the tier below has something to
+# protect. Unchanged value — this is not an admission gate, it is how many
+# rows SQL hands to the Python-side ranking; a name just makes that seam
+# visible to a test instead of buried in a literal LIMIT clause.
+_SUGGEST_CANDIDATE_LIMIT = 256
+
 
 def _suggest_weight(row, item_type: str, now: float) -> float:
     """One row's suggest() weight: #78 effective_weight, then the
@@ -1519,9 +1525,21 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         # Best-ranked candidates first (#31 item 4): without ORDER BY the LIMIT
         # window is arbitrary — on a busy project (>N matching rows) the
-        # strongest rows could be truncated away, silencing prior work.
+        # strongest rows could be truncated away, silencing prior work. #991:
+        # tiered the same way search's ORDER BY tiers (recall.py's `search`,
+        # above) — live rows before superseded ones, BEFORE match_score is
+        # consulted — because this LIMIT is where the demotion actually has
+        # to hold. Tiering only the final Python ranking is not enough: a
+        # wall of strongly-matching superseded rows can fill this window on
+        # its own and truncate a weaker live row away before the Python-side
+        # sort below ever sees it. Boolean tier only, unlike search's 3-way
+        # link/resolution split — the two supersede kinds still separate by
+        # weighted score in that Python sort, and `invalidated_by` stays OUT
+        # of the tier on purpose (#991 is scoped to `superseded_by`; an
+        # invalidated row keeps demoting through _suggest_weight, not tier).
         " WHERE items_fts MATCH ?" + _scope_clause(scopes) +
-        " ORDER BY match_score DESC LIMIT 256"
+        " ORDER BY (i.superseded_by IS NOT NULL) ASC, match_score DESC"
+        f" LIMIT {_SUGGEST_CANDIDATE_LIMIT}"
     )
     try:
         conn = sqlite3.connect(str(config.recall_db()))
@@ -1570,7 +1588,13 @@ def suggest(prompt: str, project_dir=None, current_session=None,
             r, _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
         scored.append((relevance * weight, len(hit), r))
 
-    scored.sort(key=lambda s: (-s[0], -s[1]))
+    # #991: live rows fill the slots first — sort on the same tier the SQL
+    # fetch above already applied, then fall back to the existing weighted
+    # order within a tier (unchanged: relevance x weight, then overlap).
+    # Re-deriving the tier here (rather than trusting fetch order) matters
+    # because this sort also reorders across sessions after the per-session
+    # coverage pass, which the SQL ORDER BY knows nothing about.
+    scored.sort(key=lambda s: (bool(s[2].get("superseded_by")), -s[0], -s[1]))
     out, used_sessions = [], set()
     for _score, _overlap, r in scored:
         if r["session_id"] in used_sessions:
