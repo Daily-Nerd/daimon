@@ -89,6 +89,23 @@ def mcp_tool_available() -> bool:
     return _flag("DAIMON_MCP_TOOL_AVAILABLE")
 
 
+def mcp_tool_name() -> str | None:
+    """#1062: the host-visible name of the read-only recall tool, set by the
+    same hook that set DAIMON_MCP_TOOL_AVAILABLE, next to it — each host's
+    tool list carries a different name for one server (Claude Code's plugin
+    prefix, Kimi's server-qualified form, Codex's bare tool name), and the
+    hook that registered the MCP server for its own host is the one source
+    of truth for which. A raw passthrough only, deliberately: the shape
+    check that guards this string before it reaches model-visible text
+    lives at the one place that renders it (`cli._suggest_line`'s
+    `_MCP_TOOL_NAME_RE`), not here, so it runs exactly once no matter how
+    many callers read this accessor. None when unset, same as an older
+    hook that predates this flag.
+    """
+    raw = (_get("DAIMON_MCP_TOOL_NAME") or "").strip()
+    return raw or None
+
+
 def checkpoint_dir() -> Path:
     raw = _get("DAIMON_CHECKPOINT_DIR")
     if raw:

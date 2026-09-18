@@ -474,6 +474,38 @@ def test_without_the_flag_recall_inject_sees_no_mcp_tool_var(home):
     assert lines and all(ln == "<unset>" for ln in lines)
 
 
+def test_mcp_tool_flag_forwards_kimis_own_tool_name_into_recall_inject(home):
+    # #1062: Kimi's own mcp.json registers the server under the plain key
+    # `daimon` (kimi_hooks.py install_mcp), so its tool list carries the
+    # server-qualified name `mcp__daimon__daimon_recall`, not the bare
+    # `daimon_recall` Codex shows or Claude Code's plugin-prefixed form.
+    bin_dir, capture = _fake_cli_env_capture(home, "DAIMON_MCP_TOOL_NAME")
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    base = {"hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+            "cwd": PROJECT}
+    _run_argv(PROMPT_HOOK, ["--mcp-tool"],
+             {**base, "prompt": [{"type": "text", "text": "hi"}]}, home, env)
+    _run_argv(PROMPT_HOOK, ["--mcp-tool"],
+             {**base, "prompt": [{"type": "text", "text": "what about the parser"}]},
+             home, env)
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert "mcp__daimon__daimon_recall" in lines
+
+
+def test_without_the_flag_recall_inject_sees_no_mcp_tool_name_var(home):
+    bin_dir, capture = _fake_cli_env_capture(home, "DAIMON_MCP_TOOL_NAME")
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    base = {"hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+            "cwd": PROJECT}
+    _run(PROMPT_HOOK, {**base, "prompt": [{"type": "text", "text": "hi"}]},
+         home, env)
+    _run(PROMPT_HOOK,
+         {**base, "prompt": [{"type": "text", "text": "what about the parser"}]},
+         home, env)
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert lines and all(ln == "<unset>" for ln in lines)
+
+
 # ---- print mode: no briefing, no recall, no delivery (#999) ----
 #
 # `kimi -p` fires this event too, and the host injects hook stdout into the

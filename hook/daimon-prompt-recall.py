@@ -39,6 +39,15 @@ except Exception:  # noqa: BLE001 — missing/corrupt lib: silent no-op (see abo
     lib = None
 
 TIMEOUT = 4  # seconds; hooks.json budget is 5
+
+# #1062: the exact name Claude Code's own tool list carries for the plugin's
+# read-only MCP server — `mcp__plugin_<plugin>_<server>__<tool>`, built from
+# the `mcpServers.daimon` key in .claude-plugin/plugin.json (server "daimon")
+# and the plugin's own name ("daimon", same manifest). Only ever exported
+# next to DAIMON_MCP_TOOL_AVAILABLE, so a host that never sets that flag
+# never sees this name either.
+MCP_TOOL_NAME = "mcp__plugin_daimon_daimon__daimon_recall"
+
 # Delivery's slice of that budget. A local ledger read, so it is small on
 # purpose: the two calls share one 5s hook budget, and recall must not lose
 # time it had before delivery existed. Whatever delivery leaves unspent
@@ -103,7 +112,8 @@ def main(argv=None) -> int:
         cmd += ["--project", cwd]
     if session:
         cmd += ["--session", session]
-    recall_env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1")
+    recall_env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1",
+                                  DAIMON_MCP_TOOL_NAME=MCP_TOOL_NAME)
                  if mcp_tool else lib.project_env(cwd))
     try:
         proc = subprocess.run(

@@ -1326,6 +1326,9 @@ def test_prompt_hook_names_the_mcp_tool_when_invoked_with_the_flag(
     # execs argv without a shell would treat `VAR=1` as the program name and
     # this hook would never even start. `--mcp-tool` works under every exec
     # model, and the hook exports the env var into the CLI's own env itself.
+    # #1062: the exact name is Claude Code's own — plugin-prefixed, not the
+    # generic `daimon_recall` fallback — since this hook knows it registered
+    # the MCP server under the plugin's `mcpServers.daimon` manifest key.
     cwd = "/Users/x/projR"
     _seed_prompt_history(cwd)
     proc = _run(PROMPT_HOOK,
@@ -1333,8 +1336,58 @@ def test_prompt_hook_names_the_mcp_tool_when_invoked_with_the_flag(
                  "prompt": "debugging the litellm gateway cache pinning again"},
                 tmp_path, argv=["--mcp-tool"])
     assert proc.returncode == 0
-    assert "call the daimon_recall tool with query" in proc.stdout
+    assert ("call the mcp__plugin_daimon_daimon__daimon_recall tool with "
+           "query" in proc.stdout)
     assert 'daimon recall "' not in proc.stdout
+
+
+def _fake_cli_env_capture(tmp_path, var: str):
+    """A `daimon` on PATH that appends one var's value (or `<unset>`) per
+    invocation to a file, so a test can prove what env this hook's own
+    subprocess call actually carried rather than only what argv it built.
+    Same idiom as test_kimi_hook_scripts.py's helper of the same name."""
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    capture = tmp_path / "env-capture.txt"
+    script = bin_dir / "daimon"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "${{{var}:-<unset>}}" >> "{capture}"\n'
+        "exit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    return bin_dir, capture
+
+
+def test_mcp_tool_flag_forwards_claude_codes_own_tool_name_into_recall_inject(
+        tmp_path):
+    # #1062: pins that the hook exports the plugin-prefixed name explicitly,
+    # independent of whatever text the real CLI would go on to render.
+    bin_dir, capture = _fake_cli_env_capture(tmp_path, "DAIMON_MCP_TOOL_NAME")
+    proc = _run(
+        PROMPT_HOOK,
+        {"cwd": "/Users/x/projR", "session_id": "S-now",
+         "prompt": "debugging the litellm gateway cache pinning again"},
+        tmp_path,
+        extra_env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        argv=["--mcp-tool"],
+    )
+    assert proc.returncode == 0
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert "mcp__plugin_daimon_daimon__daimon_recall" in lines
+
+
+def test_without_the_flag_recall_inject_sees_no_mcp_tool_name_var(tmp_path):
+    bin_dir, capture = _fake_cli_env_capture(tmp_path, "DAIMON_MCP_TOOL_NAME")
+    proc = _run(
+        PROMPT_HOOK,
+        {"cwd": "/Users/x/projR", "session_id": "S-now",
+         "prompt": "debugging the litellm gateway cache pinning again"},
+        tmp_path,
+        extra_env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 0
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert lines and all(ln == "<unset>" for ln in lines)
 
 
 def test_prompt_hook_keeps_the_shell_form_without_the_flag(

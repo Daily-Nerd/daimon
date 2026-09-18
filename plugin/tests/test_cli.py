@@ -2520,6 +2520,72 @@ def test_suggest_line_omits_the_session_clause_in_the_shell_form():
     assert "session" not in line.split("More:")[1]
 
 
+# ---- #1062: the tool-form hint names the tool the way each host's own tool
+# list carries it, when the caller resolved one, instead of a generic
+# default on every host. --------------------------------------------------
+
+
+def test_suggest_line_names_the_hosts_exact_mcp_tool_name_when_given():
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "reconcile the ledger"}
+    line = cli._suggest_line(
+        r, ["quorint", "ledger"], 2000.0, width=cli._SLOT_WIDTH,
+        mcp_tool_available=True,
+        mcp_tool_name="mcp__plugin_daimon_daimon__daimon_recall")
+    assert ('call the mcp__plugin_daimon_daimon__daimon_recall tool with '
+           'query "quorint ledger"' in line)
+    assert "\n" not in line
+
+
+def test_suggest_line_falls_back_to_the_bare_name_when_mcp_tool_name_is_unset():
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "reconcile the ledger"}
+    line = cli._suggest_line(r, ["quorint", "ledger"], 2000.0,
+                             width=cli._SLOT_WIDTH, mcp_tool_available=True,
+                             mcp_tool_name=None)
+    assert 'call the daimon_recall tool with query "quorint ledger"' in line
+
+
+@pytest.mark.parametrize("bad", [
+    "",
+    "   ",
+    "mcp__daimon__daimon_recall; rm -rf /",
+    "name with spaces",
+    "name\nwith\nnewline",
+    'name"with"quotes',
+    "x" * 129,
+    # `$` in `re.match` matches just before a trailing "\n", not only end of
+    # string, so a bare `.match()` against `^...$` would accept a name with
+    # one appended and render it straight into model-visible text.
+    # `config.mcp_tool_name()` strips before this ever runs, but
+    # `_suggest_line` is the documented trust boundary and must reject this
+    # on its own, independent of any caller's own hygiene.
+    "daimon_recall\n",
+    "mcp__daimon__daimon_recall\n",
+])
+def test_suggest_line_falls_back_when_the_name_fails_the_shape_check(bad):
+    # #1062: this string renders straight into model-visible text, so a
+    # value that fails a conservative shape check is never trusted verbatim,
+    # the same posture as the session clause's own validator above.
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "reconcile the ledger"}
+    line = cli._suggest_line(r, ["quorint", "ledger"], 2000.0,
+                             width=cli._SLOT_WIDTH, mcp_tool_available=True,
+                             mcp_tool_name=bad)
+    assert 'call the daimon_recall tool with query "quorint ledger"' in line
+
+
+def test_suggest_line_ignores_mcp_tool_name_in_the_shell_form():
+    # A name resolved by the caller is only ever rendered when the tool
+    # form itself is in play — the shell hint has no tool to name.
+    r = {"kind": "decision", "session_id": "S-1", "created": 1000.0,
+         "trust": "verbatim", "text": "reconcile the ledger"}
+    line = cli._suggest_line(
+        r, ["quorint", "ledger"], 2000.0, width=cli._SLOT_WIDTH,
+        mcp_tool_name="mcp__plugin_daimon_daimon__daimon_recall")
+    assert 'More: daimon recall "quorint ledger"' in line
+
+
 # ---- #1053 fix B: the hint must never render a session the tool would then
 # refuse, and a hostile session must never break the one-line echo-strip
 # contract (#512, serializer._RECALL_LINE_RE). One validator

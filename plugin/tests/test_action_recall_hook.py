@@ -322,6 +322,40 @@ def test_mcp_tool_flag_forwards_the_env_var_to_action_recall(
     assert kwargs["env"]["DAIMON_MCP_TOOL_AVAILABLE"] == "1"
 
 
+def test_mcp_tool_flag_forwards_claude_codes_own_tool_name_to_action_recall(
+        mod, monkeypatch, capsys, spawn):
+    # #1062: same seam as #1036's flag, next to it — the exact name Claude
+    # Code's own tool list carries for the plugin's read-only MCP server.
+    _mode(mod, monkeypatch, "claude-code", "on")
+    _payload(monkeypatch)
+    _cli(mod, monkeypatch)
+    assert mod.main([str(HOOK), "claude-code", "--mcp-tool"]) == 0
+    capsys.readouterr()
+    _, kwargs = spawn[0]
+    assert (kwargs["env"]["DAIMON_MCP_TOOL_NAME"]
+           == "mcp__plugin_daimon_daimon__daimon_recall")
+
+
+def test_without_the_flag_the_env_carries_no_mcp_tool_name_var(
+        mod, monkeypatch, capsys, spawn):
+    _mode(mod, monkeypatch, "claude-code", "on")
+    _payload(monkeypatch)
+    _cli(mod, monkeypatch)
+    assert mod.main([str(HOOK), "claude-code"]) == 0
+    capsys.readouterr()
+    _, kwargs = spawn[0]
+    assert "DAIMON_MCP_TOOL_NAME" not in (kwargs["env"] or {})
+
+
+def test_codex_gets_no_tool_name_even_if_it_ever_carried_the_flag(
+        mod, monkeypatch, capsys, spawn):
+    # codex is `unsupported` in CAPS and returns before any subprocess runs
+    # (see test_codex_still_costs_nothing_at_all), so NAMES never needs a
+    # codex row today; this pins that a future codex row in CAPS alone would
+    # not silently start naming a tool nobody resolved for it.
+    assert "codex" not in mod.NAMES
+
+
 def test_without_the_flag_the_env_carries_no_mcp_tool_var(
         mod, monkeypatch, capsys, spawn):
     _mode(mod, monkeypatch, "claude-code", "on")
