@@ -85,6 +85,23 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
     PULL actually came from, and only a pull (`recall-search`) ever sets it.
     An out-of-vocabulary or omitted value (every caller that predates
     #1053) records `None` rather than guessing.
+
+    #1057: a `recall-search` call (a PULL, from `_cmd_recall` or the
+    `daimon_recall` MCP tool) that matched ZERO rows still writes exactly
+    ONE row — `_follow_through` keys one event per `record()` call, so a
+    pull that found nothing must still register as one, or an agent that
+    followed the hint and got nothing back reads as an agent that never
+    asked. That row carries the SAME `at`, `surface`, `via` and
+    `injected_into` a matching call would have used; `item_id`,
+    `session_id`, `project_slug`, `term_hits` and `hint_form` are all
+    `None` (there is no item to read any of them from), `match_score` is
+    `None` too (the same "unscoreable" posture every reader already gives a
+    non-numeric score). `rendered_chars` is `0` and `truncated` is `False`
+    — both are KNOWN facts here rather than absent measurements: zero
+    characters were rendered, and zero characters can never have been cut.
+    Only a PULL gets this row: `recall-inject` and `action-recall` deliver
+    nothing by printing nothing, and an empty call there still writes
+    nothing, same as before #1057.
     """
     entries = []
     stamp = _stamp(now)
@@ -126,6 +143,25 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
             "hint_form": hint_form if hint_form in ("tool", "shell") else None,
             "via": via if via in ("cli", "mcp") else None,
         }, ensure_ascii=False, separators=(",", ":")))
+    if not entries and surface == "recall-search":
+        # #1057: the placeholder row for a pull that matched nothing — see
+        # the docstring above for the exact shape and why each field lands
+        # the way it does.
+        entries.append(json.dumps({
+            "at": stamp,
+            "surface": str(surface),
+            "item_id": None,
+            "session_id": None,
+            "injected_into": injected_into,
+            "project_slug": None,
+            "match_score": None,
+            "term_hits": None,
+            "query_term_count": term_count,
+            "rendered_chars": 0,
+            "truncated": False,
+            "hint_form": None,
+            "via": via if via in ("cli", "mcp") else None,
+        }, ensure_ascii=False, separators=(",", ":")))
     if not entries:
         return
     try:
@@ -143,6 +179,22 @@ def _parse_stamp(value):
             tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def _is_empty_pull(row: dict) -> bool:
+    """True for the #1057 placeholder row a `recall-search` call writes when
+    it matched nothing. `item_id` alone cannot tell this apart from a
+    genuine delivered row — a pre-D-011 item can carry a real (scored) row
+    with no minted id — so this checks the full combination the writer
+    above actually produces for the empty case: no item id, no score, and
+    `rendered_chars` pinned at exactly 0 (a genuine `recall-search` row
+    never sets `rendered_chars` at all — that field only ever comes from
+    `recall-inject`/`action-recall`'s own width fit — so it is otherwise
+    always `None`, never `0`)."""
+    return (row.get("surface") == "recall-search"
+            and row.get("item_id") is None
+            and row.get("match_score") is None
+            and row.get("rendered_chars") == 0)
 
 
 def _event_stamp(row: dict):
@@ -182,7 +234,14 @@ def _follow_through(rows: list[dict]) -> dict:
     made-up session id, or one that simply never received a hint, must pair
     with nothing rather than mint a phantom bucket. So the bucket set is
     seeded from recall-inject rows ONLY, and a pull naming a session absent
-    from that set is dropped, never counted and never added."""
+    from that set is dropped, never counted and never added.
+
+    #1057: the placeholder row a `recall-search` call writes when it
+    matched nothing (`_is_empty_pull`) still counts as ONE pull EVENT — the
+    event key is the same (`at`, `via`) pair a matching call would have
+    used — but never adds to `pull_rows`, since it carries no delivered
+    item. An agent that asked and got nothing back must still show up as a
+    pull, just with zero rows behind it."""
     sessions: dict[str, dict] = {}
     inject_events: dict[str, set] = {}
     for row in rows:
@@ -210,7 +269,8 @@ def _follow_through(rows: list[dict]) -> dict:
         existing = sessions.get(session)
         if existing is None:
             continue
-        existing["pull_rows"] += 1
+        if not _is_empty_pull(row):
+            existing["pull_rows"] += 1
         via = row.get("via")
         via_key = via if via in ("cli", "mcp") else "unknown"
         stamp = _event_stamp(row)
@@ -235,6 +295,11 @@ def _summary(rows: list[dict]) -> dict:
         if isinstance(surface, str) and surface:
             surface_names.add(surface)
     surfaces = sorted(surface_names)
+    # #1057: the placeholder row for a zero-match pull delivered no item, so
+    # every ITEM/ROW count below is built from this filtered list instead of
+    # `rows` directly — it still counts as one pull EVENT, but `_follow_through`
+    # (below, over the unfiltered `rows`) is the only reader that sees that.
+    item_rows = [r for r in rows if not _is_empty_pull(r)]
     # #1043: per-injecting-session breakdown, with a hint_form split inside
     # each bucket, so the tool-vs-shell follow-through comparison has a
     # denominator without reading the raw file. A row with no `injected_into`
@@ -242,7 +307,7 @@ def _summary(rows: list[dict]) -> dict:
     # `daimon recall` search, which injects into nothing) buckets as
     # "unknown" rather than being dropped or mistaken for a real session.
     by_injected_into: dict[str, dict] = {}
-    for row in rows:
+    for row in item_rows:
         session = row.get("injected_into")
         key = session if isinstance(session, str) and session.strip() else "unknown"
         bucket = by_injected_into.setdefault(
@@ -252,7 +317,7 @@ def _summary(rows: list[dict]) -> dict:
         hint_key = hint if hint in ("tool", "shell") else "unknown"
         bucket["by_hint_form"][hint_key] = bucket["by_hint_form"].get(hint_key, 0) + 1
     return {
-        "deliveries": len(rows),
+        "deliveries": len(item_rows),
         "scored": len(scores),
         "match_score": {
             "min": min(scores) if scores else None,
@@ -265,7 +330,7 @@ def _summary(rows: list[dict]) -> dict:
             "max": max(hits) if hits else None,
         },
         "by_surface": {
-            surface: sum(1 for r in rows if r.get("surface") == surface)
+            surface: sum(1 for r in item_rows if r.get("surface") == surface)
             for surface in surfaces
         },
         "by_injected_into": by_injected_into,

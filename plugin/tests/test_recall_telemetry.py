@@ -232,6 +232,116 @@ def test_stats_reads_a_legacy_row_missing_the_via_key(tmp_path, monkeypatch):
     assert out["lifetime"]["deliveries"] == 1
 
 
+# ---- #1057: an empty PULL still writes one row; an empty INJECTION does not --
+
+
+def test_record_writes_one_row_for_an_empty_recall_search_pull_via_mcp(
+        tmp_path, monkeypatch):
+    # A pull that matched nothing must still register as ONE event —
+    # otherwise an agent that followed the hint and got nothing back reads
+    # as an agent that never asked.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [], query_terms=["gateway", "  "], surface="recall-search",
+        via="mcp", injected_into="S-live",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0] == {
+        "at": "2026-09-17T00:00:00Z",
+        "surface": "recall-search",
+        "item_id": None,
+        "session_id": None,
+        "injected_into": "S-live",
+        "project_slug": None,
+        "match_score": None,
+        "term_hits": None,
+        "query_term_count": 1,
+        "rendered_chars": 0,
+        "truncated": False,
+        "hint_form": None,
+        "via": "mcp",
+    }
+
+
+def test_record_writes_one_row_for_an_empty_recall_search_pull_via_cli(
+        tmp_path, monkeypatch):
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [], query_terms=["gateway"], surface="recall-search", via="cli",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["via"] == "cli"
+    assert row["item_id"] is None
+    assert row["match_score"] is None
+    assert row["rendered_chars"] == 0
+    assert row["truncated"] is False
+    assert row["injected_into"] is None
+
+
+def test_record_writes_nothing_for_an_empty_recall_inject(tmp_path, monkeypatch):
+    # Only a PULL (recall-search) gets the placeholder row — an injection
+    # surface with nothing to inject keeps writing nothing, same as before.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-inject", hint_form="tool",
+        injected_into="S-live",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    assert not (log / "recall-delivery.jsonl").exists()
+
+
+def test_summary_excludes_the_empty_pull_row_from_item_counts(
+        tmp_path, monkeypatch):
+    # The placeholder row for a zero-match pull delivered nothing, so it
+    # must not inflate the item counts a real delivery moves — only the
+    # follow-through EVENT count (proved separately) sees it.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-1", "match_score": 0.5}], query_terms=["x"],
+        surface="recall-search", via="cli", now=now)
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-search", via="cli", now=now)
+    out = recall_telemetry.stats(now=now)
+    summary = out["lifetime"]
+    assert summary["deliveries"] == 1
+    assert summary["scored"] == 1
+    assert summary["by_surface"] == {"recall-search": 1}
+
+
+def test_stats_follow_through_counts_an_empty_pull_as_one_event_with_zero_rows(
+        tmp_path, monkeypatch):
+    # An empty recall-search call still registers as ONE pull event, with
+    # zero item rows behind it — the same event count a matching pull would
+    # have produced, just with nothing delivered.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-1"}], query_terms=["x"], surface="recall-inject",
+        hint_form="tool", injected_into="S-real", now=now)
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-search", via="mcp",
+        injected_into="S-real", now=now)
+    out = recall_telemetry.stats(now=now)
+    pairing = out["lifetime"]["follow_through"]["S-real"]
+    assert pairing["injections"] == 1
+    assert pairing["pulls"] == 1
+    assert pairing["pull_rows"] == 0
+    assert pairing["by_via"] == {"mcp": 1}
+
+
 # ---- #1053 fix A/B: clean_session is the ONE validator both the MCP tool
 # argument and the hint's session clause go through, so a session the hint
 # ever renders is always one the tool will accept back. ---------------------
@@ -403,9 +513,14 @@ def test_stats_follow_through_ignores_a_pull_with_no_matching_injection(
     assert out["lifetime"]["follow_through"] == {}
 
 
-def test_record_skips_empty_delivery_and_ignores_write_errors(
+def test_record_skips_empty_injection_delivery_and_ignores_write_errors(
         tmp_path, monkeypatch):
-    recall_telemetry.record([], query_terms=[], surface="recall-search")
+    # An empty INJECTION call still writes nothing (only a PULL,
+    # recall-search, gets the #1057 placeholder row).
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record([], query_terms=[], surface="recall-inject")
+    assert not (log / "recall-delivery.jsonl").exists()
 
     blocked_parent = tmp_path / "blocked"
     blocked_parent.write_text("not a directory", encoding="utf-8")
@@ -419,6 +534,9 @@ def test_record_skips_empty_delivery_and_ignores_write_errors(
         query_terms=[],
         surface="recall-search",
     )
+    # The #1057 empty-pull row shares the same best-effort write — a blocked
+    # log directory must not raise here either.
+    recall_telemetry.record([], query_terms=[], surface="recall-search")
 
 
 def test_stats_ignores_malformed_rows_and_splits_recent_window(tmp_path, monkeypatch):

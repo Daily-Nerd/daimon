@@ -182,6 +182,30 @@ def test_recall_tool_writes_a_recall_search_row_with_via_mcp(
     assert all(row["via"] == "mcp" for row in delivered)
 
 
+def test_recall_tool_writes_the_empty_pull_row_when_nothing_matches(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch):
+    # #1057: a pull that matched nothing still registers — otherwise an
+    # agent that followed the hint and got nothing back reads as an agent
+    # that never asked. No checkpoint is written for this project, so the
+    # index has nothing to match regardless of query.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/empty")
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "zzznomatch"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert json.loads(text) == []
+    log_path = tmp_log_dir / "recall-delivery.jsonl"
+    delivered = [json.loads(ln) for ln in
+                 log_path.read_text(encoding="utf-8").splitlines()]
+    assert len(delivered) == 1
+    row = delivered[0]
+    assert row["surface"] == "recall-search"
+    assert row["via"] == "mcp"
+    assert row["item_id"] is None
+    assert row["match_score"] is None
+    assert row["rendered_chars"] == 0
+    assert row["truncated"] is False
+
+
 def test_recall_tool_session_argument_lands_as_injected_into(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
     from daimon_briefing import store
