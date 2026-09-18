@@ -623,6 +623,28 @@ def test_source_disclosure_withheld_count_reflects_every_live_tombstone(
     assert result["source_excerpt"] == {"state": "withheld", "forgotten": 2}
 
 
+def test_source_disclosure_withheld_after_the_real_forget_command(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """The other withheld tests above hand-append a `forgotten:` event with an
+    arbitrary hash, as a unit fixture. This proves the same guarantee through
+    the SHIPPING writer: the real `daimon forget` verb (cli.lifecycle,
+    store.append_event under the hood), forgetting a DIFFERENT item's text
+    than the one `why --source` is later run against."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    canary = "zqxcanary4471 a forgettable unrelated planning note"
+    _write_checkpoint("S-containing", [
+        _item(),
+        _item(text=canary, item_id="o-canary1", quote=canary),
+    ])
+
+    assert cli.main(["forget", canary, "--project", _PROJECT]) == 0
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
+
+    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+
+
 def test_source_disclosure_withheld_path_still_redacts_the_item_text(
     tmp_checkpoint_dir, monkeypatch
 ):

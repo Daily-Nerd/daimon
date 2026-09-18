@@ -1000,8 +1000,17 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
 
     // source_excerpt is structured: {kind, text, truncated?} — render the text,
     // label its kind, and say when it was cut rather than pretending it wasn't.
+    // #1065: a live forget tombstone answers with {state: "withheld", forgotten}
+    // instead. That shape carries no `text`, so gating on `src.text` alone
+    // would render nothing at all, the exact silent-empty failure #1065 exists
+    // to prevent. It renders as a stated line, never a <pre>: there is no
+    // transcript text here to show.
     var src = payload.source_excerpt;
-    if (src && src.text) {
+    if (src && src.state === "withheld") {
+      html += '<div class="why-source"><span class="why-label">Transcript context · withheld</span>' +
+        '<p class="why-none">this project holds ' + escapeHtml(String(src.forgotten || 0)) +
+        ' forget tombstone(s); the transcript predates any forgetting</p></div>';
+    } else if (src && src.text) {
       html += '<div class="why-source"><span class="why-label">Transcript context · fetched now, not stored' +
         (src.kind ? " · " + escapeHtml(String(src.kind)) : "") + "</span>" +
         "<pre>" + escapeHtml(String(src.text)) +
