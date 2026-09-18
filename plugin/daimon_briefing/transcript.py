@@ -9,18 +9,20 @@
 
 All messages normalize to OpenAI-format dicts: {"role": str, "content": str},
 plus an optional "id" (#358) when the host row carries a stable per-message
-identifier (Claude Code JSONL `uuid`). Hosts without one — Windsurf Cascade's
+identifier: Claude Code's JSONL `uuid`, or Kimi's own `toolCallId` for a
+`tool.result` row and a synthesized `kimi-L<line>` for every other Kimi row
+(#1064, see the Kimi section below). Hosts without one — Windsurf Cascade's
 native rows ({type, status, payload}, field-confirmed #70), the Codex event
 stream (payload is just {type, message}), hermes SessionDB, markdown/plain
 text — keep the exact two-key shape, and downstream quote verification falls
 back to whole-transcript scanning.
 
-#359: Claude Code rows whose only payload is tool_result blocks — previously
-dropped as noise — surface as {"role": "tool", "content": <capped output>,
-"id": uuid, "tool_result": True, ["tool_error": True]} so outcome claims can
-ground in the concrete signal (exit status, test summary) they carry. Claude
-Code only: it is the one host with BOTH stable ids and parseable tool
-results; the other hosts' output stays byte-identical.
+#359: a row whose only payload is tool_result blocks — previously dropped as
+noise — surfaces as {"role": "tool", "content": <capped output>,
+"id": <host id>, "tool_result": True, ["tool_error": True]} so outcome claims
+can ground in the concrete signal (exit status, test summary) they carry.
+Claude Code and Kimi only: they are the two hosts with both a stable id and
+parseable tool results; the other hosts' output stays byte-identical.
 """
 
 import hashlib
@@ -312,6 +314,21 @@ def _split_speaker_line(content: str, delim: str) -> tuple[str | None, str, bool
 # assumption. Handed a subagent file directly, this branch folds it normally.
 #
 # `time` is epoch MILLISECONDS (verified: 1788971099794 -> 2026-09-09T16:24:59Z).
+#
+# 3. Message ids (#1064). Only `tool.call`/`tool.result` carry a native id
+#    (`toolCallId`, used since #988). Neither the canonical
+#    `context.append_message` row, its surviving mirror, nor a buffered
+#    `content.part` run has one, so without an id `why --source` could never
+#    bind a Kimi item to the message it quoted and always fell back to the
+#    stored-quote disclosure. Every other folded message is now given
+#    `kimi-L<n>`, `n` the 1-based PHYSICAL line of `wire.jsonl` it started on
+#    (the row's own line for a single-line message; the FIRST contributing
+#    `content.part`'s line for a buffered assistant run). Deliberately not a
+#    content hash: two byte-identical messages on different lines must not
+#    collide. Stable under append: `wire.jsonl` only grows, a line's number
+#    never changes, and this module resolves ids at READ time — a checkpoint
+#    captured before this landed carries no Kimi message ids and keeps
+#    falling back; nothing here rewrites a receipt already on disk.
 
 # Kimi's own scaffolding, appended to context by the host rather than by a
 # person: a date-change notice, a permission-mode notice. The direct analogue
@@ -394,25 +411,36 @@ def _kimi_tool_message(event: dict, daimon_calls: set[str]) -> dict | None:
     return msg
 
 
-def _from_kimi_wire(objects: list[dict]) -> list[dict]:
+def _from_kimi_wire(numbered: list[tuple[int, dict]]) -> list[dict]:
     """Fold a Kimi Code wire event log into conversation messages.
+
+    `numbered` pairs each object with its 1-based PHYSICAL line in the raw
+    log (see `_numbered_objects_of`) — the source of the `kimi-L<n>` ids
+    stamped below (#1064, see the module-level Kimi note, point 3).
 
     Total for this format: an unrecognized event type contributes nothing and
     never raises, so a Kimi release that adds events keeps parsing. A log with
     no message-bearing events yields [] — never the raw-blob fallback."""
+    objects = [obj for _line, obj in numbered]
     messages: list[dict] = []
     appended = _kimi_appended_texts(objects)
     daimon_calls: set[str] = set()
     mirrored: set[str] = set()
     buf: list[str] = []
+    buf_start_line: int | None = None
 
     def flush() -> None:
+        nonlocal buf_start_line
         text = "\n".join(buf).strip()
         buf.clear()
         if text:
-            messages.append({"role": "assistant", "content": text})
+            msg: dict = {"role": "assistant", "content": text}
+            if buf_start_line is not None:
+                msg["id"] = f"kimi-L{buf_start_line}"
+            messages.append(msg)
+        buf_start_line = None
 
-    for obj in objects:
+    for line_no, obj in numbered:
         typ = obj.get("type")
         if typ == "context.append_message":
             msg = obj.get("message")
@@ -429,7 +457,8 @@ def _from_kimi_wire(objects: list[dict]) -> list[dict]:
             if not text:
                 continue
             flush()
-            messages.append({"role": role, "content": text})
+            messages.append({"role": role, "content": text,
+                             "id": f"kimi-L{line_no}"})
         elif typ in _KIMI_MIRROR_TYPES:
             text = _kimi_text(obj.get("input") if "input" in obj
                               else obj.get("content"))
@@ -443,7 +472,8 @@ def _from_kimi_wire(objects: list[dict]) -> list[dict]:
                 continue
             mirrored.add(key)
             flush()
-            messages.append({"role": "user", "content": text})
+            messages.append({"role": "user", "content": text,
+                             "id": f"kimi-L{line_no}"})
         elif typ == "context.append_loop_event":
             event = obj.get("event")
             if not isinstance(event, dict):
@@ -454,6 +484,8 @@ def _from_kimi_wire(objects: list[dict]) -> list[dict]:
                 if isinstance(part, dict) and part.get("type") == "text":
                     text = str(part.get("text") or "").strip()
                     if text:
+                        if not buf:
+                            buf_start_line = line_no
                         buf.append(text)
             elif etype == "tool.call":
                 if _is_daimon_tool_use({"name": event.get("name"),
@@ -470,23 +502,39 @@ def _from_kimi_wire(objects: list[dict]) -> list[dict]:
     return messages
 
 
-def _objects_of(text: str) -> list[dict]:
-    """Every parseable JSON object in a JSONL blob, in file order. A malformed
-    line is skipped, never fatal: a log truncated mid-write by a crashed host
-    is exactly the transcript most worth reading."""
-    objects: list[dict] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
+def _numbered_objects_of(text: str) -> list[tuple[int, dict]]:
+    """Every parseable JSON object in a JSONL blob, paired with its 1-based
+    index from `str.splitlines()` (every line counts, blank or malformed).
+    This is the same splitting `_objects_of` has always used, and it matches
+    `sed` line numbers for any log whose records contain no raw Unicode line
+    separator (`splitlines()` also breaks on U+2028/U+2029/U+0085/\\x0b/
+    \\x0c/\\x1c-\\x1e and bare \\r, which `sed -n 'Np'` would not treat as a
+    line break; a record containing one of those unescaped inside a JSON
+    string would split across two "lines" here and get dropped as malformed,
+    the same pre-existing behavior `_objects_of` already had on main). A
+    malformed line is skipped, never fatal: a log truncated mid-write by a
+    crashed host is exactly the transcript most worth reading.
+
+    Kimi's `kimi-L<n>` message ids (#1064) key off this number; every other
+    reader only needs the objects (`_objects_of`, below)."""
+    out: list[tuple[int, dict]] = []
+    for n, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
             continue
         try:
-            obj = json.loads(line)
+            obj = json.loads(stripped)
         except json.JSONDecodeError:
             continue
         if not isinstance(obj, dict):
             continue
-        objects.append(obj)
-    return objects
+        out.append((n, obj))
+    return out
+
+
+def _objects_of(text: str) -> list[dict]:
+    """Every parseable JSON object in a JSONL blob, in file order."""
+    return [obj for _line, obj in _numbered_objects_of(text)]
 
 
 def _from_jsonl(text: str, speaker_line: str | None = None,
@@ -502,13 +550,16 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
     `kimi` forces the Kimi Code branch for a file whose PATH says it is a wire
     log even though its header is gone (see `_is_kimi_wire_path`).
     """
-    objects = _objects_of(text)
+    numbered = _numbered_objects_of(text)
+    objects = [obj for _line, obj in numbered]
 
     # #988: Kimi Code writes an event log, not a message list, so its branch
     # runs first and is total — a wire log must never fall through to the
     # generic reader below, which would read its `type` keys as roles.
+    # #1064: the numbered form, not `objects` — `_from_kimi_wire` keys its
+    # message ids on physical line number.
     if kimi or _is_kimi_wire(objects):
-        return _from_kimi_wire(objects)
+        return _from_kimi_wire(numbered)
 
     # Current Codex rollouts emit each visible turn twice: once as an
     # `event_msg` and once as a nested `response_item`. Prefer the event stream

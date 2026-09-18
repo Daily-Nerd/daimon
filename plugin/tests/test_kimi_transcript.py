@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from daimon_briefing import serializer, transcript
+from daimon_briefing import provenance, serializer, transcript
 
 MS = 1788971099794  # epoch milliseconds, the unit Kimi stamps `time` in
 
@@ -446,3 +446,164 @@ def test_malformed_events_contribute_nothing_and_never_raise(tmp_path):
     ]
     path = _write(tmp_path, objs)
     assert _roles(transcript.from_file(path)) == [("user", "the real prompt")]
+
+
+# ---- message ids (#1064) ----
+#
+# `daimon why --source` and `daimon audit quotes` bind a verbatim item to the
+# exact message it quoted through a host-stable per-message `id` (#358).
+# Every other adapted host either carries a native one (Claude Code's `uuid`)
+# or has none at all (Codex, Windsurf), and `_kimi_tool_message` already
+# stamps `id` = `toolCallId` for `tool.result` rows. The remaining Kimi rows —
+# the canonical `context.append_message`, its surviving lifecycle mirror, and
+# a buffered run of `content.part` fragments — have no native per-message id
+# at all, so `why --source` on a Kimi item always fell back to the
+# stored-quote disclosure, never the real transcript window.
+#
+# The id is `kimi-L<n>`, where `n` is the 1-based PHYSICAL line of `wire.jsonl`
+# the message started on (the line of the row itself for a single-line
+# message; the line of the FIRST contributing `content.part` for a buffered
+# assistant run). Not a content hash: two byte-identical messages on
+# different lines must never collide (see
+# test_identical_prompts_on_different_lines_get_different_ids below). Stable
+# under append: `wire.jsonl` only ever grows, so a line's number never
+# changes, and an id stamped into a checkpoint's receipt at capture time
+# still resolves against the SAME line once the log has grown further.
+# Checkpoints captured before this landed carry no Kimi message ids at all
+# and keep falling back to the stored-quote disclosure; this module resolves
+# ids at READ time and never rewrites a receipt already on disk.
+
+def test_a_context_append_message_gets_a_line_keyed_id(tmp_path):
+    # line 1 = metadata, line 2 = the append_message row itself.
+    path = _write(tmp_path, [_metadata(), _append_message("hello there")])
+    assert transcript.from_file(path)[0]["id"] == "kimi-L2"
+
+
+def test_a_mirror_survivor_gets_a_line_keyed_id(tmp_path):
+    # A prompt whose only surviving record is the lifecycle mirror (the
+    # canonical append never landed) still gets an id from ITS OWN line.
+    text = "the prompt whose append never landed"
+    path = _write(tmp_path, [_metadata(), _turn_prompt(text)])
+    msgs = transcript.from_file(path)
+    assert msgs[0]["id"] == "kimi-L2"
+
+
+def test_a_buffered_assistant_run_keys_its_id_on_the_first_fragment_line(
+        tmp_path):
+    # line 1 = metadata, line 2 = the user prompt, line 3 = the FIRST
+    # content.part fragment, line 4 = the second fragment folded into the
+    # same assistant message.
+    path = _write(tmp_path, [
+        _metadata(),
+        _append_message("question"),
+        _part("text", "First half."),
+        _part("text", "Second half."),
+    ])
+    msgs = transcript.from_file(path)
+    assert [m["id"] for m in msgs] == ["kimi-L2", "kimi-L3"]
+
+
+def test_identical_prompts_on_different_lines_get_different_ids(tmp_path):
+    # Do NOT hash content: two byte-identical prompts must not collide.
+    path = _write(tmp_path, [
+        _metadata(),
+        _turn_prompt("one last one", "p-1"),
+        _append_message("one last one"),
+        _turn_prompt("one last one", "p-2"),
+        _append_message("one last one"),
+    ])
+    ids = [m["id"] for m in transcript.from_file(path)]
+    assert len(ids) == len(set(ids)) == 2
+
+
+def test_ids_never_collide_across_message_and_tool_rows(tmp_path):
+    path = _write(tmp_path, [
+        _metadata(),
+        _append_message("q1"),
+        _part("text", "a1"),
+        _tool_call("Bash", {"command": "ls"}, "call-1"),
+        _tool_result("a\nb", "call-1"),
+        _append_message("q2"),
+    ])
+    ids = [m.get("id") for m in transcript.from_file(path)]
+    assert all(ids)
+    assert len(ids) == len(set(ids))
+
+
+def test_ids_are_stable_across_two_reads_of_the_same_file(tmp_path):
+    path = _write(tmp_path, [
+        _metadata(), _append_message("q"), _part("text", "a")])
+    first = [m["id"] for m in transcript.from_file(path)]
+    second = [m["id"] for m in transcript.from_file(path)]
+    assert first == second
+
+
+def test_ids_survive_appending_new_lines(tmp_path):
+    path = _write(tmp_path, [_metadata(), _append_message("first")])
+    before = transcript.from_file(path)[0]["id"]
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(_append_message("second")) + "\n")
+    after = [m["id"] for m in transcript.from_file(path)]
+    assert after[0] == before
+    assert after[1] != before
+
+
+def test_serialize_strict_binds_kimi_message_ids_through_the_shipping_pipeline(
+    tmp_path, fake_chat_factory
+):
+    # End to end, the SHIPPING writer (serializer.serialize_strict ->
+    # verify_quotes -> provenance.quote_receipt), never a hand-built receipt.
+    # Proves the marker -> host-id translation (sanitize_source_ids,
+    # message_id_map) needed NO Kimi-specific code: it already reads any
+    # message's generic "id" field, so stamping one in _from_kimi_wire is
+    # the whole fix.
+    # Padded past DAIMON_MIN_MESSAGES (10 non-tool rows by default) with
+    # unrelated small talk, same as a real multi-turn session would be.
+    path = _write(tmp_path, [
+        _metadata(),
+        _append_message("please confirm the D-007 prompt"),
+        _part("text", "confirmed, adopting the D-007 prompt"),
+        _append_message("thanks, one more thing"),
+        _part("text", "sure, go ahead"),
+        _append_message("what time is it"),
+        _part("text", "I don't have a clock"),
+        _append_message("no worries"),
+        _part("text", "anything else"),
+        _append_message("that's all for now"),
+        _part("text", "sounds good"),
+    ])
+    messages = transcript.from_file(path)
+    assert messages[0]["id"] == "kimi-L2"
+    assert messages[1]["id"] == "kimi-L3"
+    script = json.dumps({
+        "session_id": "S-kimi",
+        "working_context": {
+            "active_topic": {"text": "topic", "trust": "inferred"},
+            "open_questions": [],
+            "recent_decisions": [{
+                "text": "adopted the D-007 prompt", "trust": "verbatim",
+                "quote": "confirmed, adopting the D-007 prompt",
+                "source_message_ids": ["m2"],
+            }],
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": [], "uncertainties": [],
+            "contradictions_flagged": [],
+        },
+    })
+    chat = fake_chat_factory(script)
+    source = {"version": provenance.SOURCE_REF_VERSION, "host": "kimi",
+              "session_id": "session_abc", "locator": "managed",
+              "author": "alice"}
+
+    cp = serializer.serialize_strict(
+        "S-kimi", messages, chat=chat, source_ref=source,
+        transcript_hash="a" * 64)
+
+    item = cp["working_context"]["recent_decisions"][0]
+    assert item["trust"] == "verbatim"
+    assert item["quote_verified"] is True
+    receipt = item["quote_provenance"]
+    assert provenance.valid_quote_receipt(receipt)
+    assert receipt["binding"]["mode"] == "message-ids"
+    assert receipt["binding"]["message_ids"] == ["kimi-L3"]

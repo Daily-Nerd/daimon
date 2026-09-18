@@ -26,7 +26,13 @@ QUOTE_VERIFIER_ID = "tier-f"
 QUOTE_VERIFIER_VERSION = 1
 
 _HOSTS = frozenset((
-    "claude-code", "codex", "windsurf", "gemini", "hermes", "manual"))
+    "claude-code", "codex", "windsurf", "gemini", "hermes", "manual", "kimi"))
+# #1064: Kimi was captured for several releases before it was a registered
+# host here, so every checkpoint it produced was stamped host "manual",
+# locator "unsupported". This module resolves a source ref at READ time and
+# never rewrites one already on disk, so those older checkpoints stay
+# exactly as recorded; only a NEW capture (or a resolve of a checkpoint that
+# already carries host "kimi") benefits from the roots and aliases below.
 _LOCATORS = frozenset(("managed", "host-api", "unsupported"))
 _OUTCOMES = frozenset(("verified", "not-verified"))
 _BINDING_MODES = frozenset(("message-ids", "transcript-scan"))
@@ -81,8 +87,19 @@ def _codex_home() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".codex"
 
 
+def _kimi_home() -> Path:
+    """Kimi's config directory, same env var and default as the Kimi hooks
+    and installer already use (`daimon_briefing.kimi_hooks.config_home`,
+    `_daimon_hook_lib.kimi_home`): `KIMI_CODE_HOME` when set, else
+    `~/.kimi-code`. Kept a free function, mirroring `_codex_home`, so the
+    default resolves from the real environment unless a caller injects
+    `kimi_home` explicitly."""
+    raw = os.environ.get("KIMI_CODE_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".kimi-code"
+
+
 def infer_host(transcript_path, *, home=None, codex_home=None,
-               claude_projects=None) -> tuple[str, str]:
+               claude_projects=None, kimi_home=None) -> tuple[str, str]:
     """Infer a supported host only from registered transcript roots."""
     if transcript_path is None:
         return "manual", "unsupported"
@@ -101,6 +118,15 @@ def infer_host(transcript_path, *, home=None, codex_home=None,
     if (_under(path, home / ".windsurf" / "transcripts")
             or _under(path, _daimon_windsurf_transcripts(home))):
         return "windsurf", "managed"
+    kimi_home = (Path(kimi_home).expanduser() if kimi_home is not None
+                 else _kimi_home())
+    # Kimi's session id is a DIRECTORY name nested under an unpredictable
+    # workspace-hash directory (`sessions/wd_<dir>_<hex>/<session id>/agents/
+    # main/wire.jsonl`, measured 0.42.0); `_under` only needs the shared
+    # `sessions` root, the same way codex only needs `sessions`/
+    # `archived_sessions` and never the intervening date directories.
+    if _under(path, kimi_home / "sessions"):
+        return "kimi", "managed"
     return "manual", "unsupported"
 
 
@@ -119,19 +145,21 @@ def normalize_host(value) -> str | None:
         "gemini-cli": "gemini",
         "hermes": "hermes",
         "manual": "manual",
+        "kimi": "kimi",
+        "kimi-code": "kimi",
     }
     return aliases.get(raw)
 
 
 def capture_source_ref(session_id: str, transcript_path=None, *, author=None,
                        host_hint=None, home=None, codex_home=None,
-                       claude_projects=None) -> dict | None:
+                       claude_projects=None, kimi_home=None) -> dict | None:
     """Create code-owned capture metadata, or None for an unsafe session id."""
     if not valid_session_id(session_id):
         return None
     inferred_host, locator = infer_host(
         transcript_path, home=home, codex_home=codex_home,
-        claude_projects=claude_projects)
+        claude_projects=claude_projects, kimi_home=kimi_home)
     hinted = normalize_host(host_hint)
     host = hinted or inferred_host
     if transcript_path is None and host == "hermes":
@@ -294,13 +322,15 @@ class SourceResolver:
     """Strict resolver over registered host roots; never guesses or falls back."""
 
     def __init__(self, *, home=None, codex_home=None, claude_projects=None,
-                 current_author=None):
+                 kimi_home=None, current_author=None):
         self.home = Path(home).expanduser() if home is not None else Path.home()
         self.codex_home = (Path(codex_home).expanduser() if codex_home is not None
                            else _codex_home())
         self.claude_projects = (
             Path(claude_projects).expanduser() if claude_projects is not None
             else self.home / ".claude" / "projects")
+        self.kimi_home = (Path(kimi_home).expanduser() if kimi_home is not None
+                          else _kimi_home())
         self.current_author = current_author
         self._indexes: dict[str, dict[str, list[Path]]] = {}
 
@@ -313,6 +343,8 @@ class SourceResolver:
         if host == "windsurf":
             return (self.home / ".windsurf" / "transcripts",
                     _daimon_windsurf_transcripts(self.home))
+        if host == "kimi":
+            return (self.kimi_home / "sessions",)
         return None
 
     def _candidates(self, source: dict) -> list[Path] | None:
@@ -337,6 +369,19 @@ class SourceResolver:
                     self.home / ".windsurf" / "transcripts" / f"{sid}.jsonl",
                     _daimon_windsurf_transcripts(self.home) / f"{sid}.md",
                 ]
+            if host == "kimi":
+                # scar 0061: never key this on the host payload id directly
+                # without walking the real on-disk layout — here the payload
+                # session_id IS the directory segment, but the file itself is
+                # always named "wire.jsonl", so a stem-keyed index (the
+                # claude-code/codex approach) would collide every Kimi
+                # session onto the same stem. Glob the session-id segment
+                # instead, exactly like `_daimon_hook_lib.kimi_transcript`
+                # does for the hook's own capture-time lookup, so hook and
+                # CLI resolve the same session to the same path.
+                return sorted(
+                    (self.kimi_home / "sessions").glob(
+                        f"*/{sid}/agents/main/wire.jsonl"))
         except OSError:
             return []
         return None

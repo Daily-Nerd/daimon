@@ -135,6 +135,31 @@ def _resolver(tmp_path, projects_dir):
     )
 
 
+def _write_kimi(kimi_home, session_id, text, *, role="user"):
+    """A real Kimi `wire.jsonl` at the measured on-disk shape (#988):
+    <kimi_home>/sessions/wd_<dir>_<hex>/<session_id>/agents/main/wire.jsonl.
+    One `context.append_message` event is enough for `transcript.from_file`
+    (the shipping Kimi adapter, tests/test_kimi_transcript.py) to fold it
+    into a plain user/assistant message."""
+    d = (kimi_home / "sessions" / "wd_proj_0123456789ab" / session_id
+         / "agents" / "main")
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "wire.jsonl"
+    event = {
+        "type": "context.append_message",
+        "agentId": "main",
+        "message": {
+            "role": role,
+            "content": [{"type": "text", "text": text}],
+            "toolCalls": [],
+            "origin": {"kind": role},
+        },
+        "time": 1788971099794,
+    }
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    return path
+
+
 @pytest.mark.parametrize("value, expected", [
     ("o-abcdef", True),
     ("q-0123456789abcdef-2", True),
@@ -528,6 +553,114 @@ def test_source_disclosure_does_not_redact_stored_quote_twice(
 
     assert result["source_excerpt"]["kind"] == "stored-quote"
     assert result["source_excerpt"]["text"] == "stored quote evidence"
+
+
+def test_kimi_checkpoint_with_legacy_idless_receipt_falls_back_to_stored_quote(
+    tmp_checkpoint_dir, tmp_path, monkeypatch
+):
+    # #1064: before Kimi was a registered provenance host, this checkpoint's
+    # source_ref would already carry host "kimi" (the hook stamps it),
+    # but the resolver could not find the transcript wire.jsonl lives at a
+    # session-id DIRECTORY, not a stem-matched file, so `why --source` and
+    # `audit quotes` reported "unsupported" with no diagnosis for why.
+    #
+    # This receipt has NO message ids, the shape every Kimi capture produced
+    # before `_from_kimi_wire` learned to stamp them (#1064, widened) — the
+    # legacy case this module resolves at read time and never rewrites.
+    # `test_kimi_checkpoint_with_message_ids_discloses_the_real_window` below
+    # covers a receipt captured AFTER that fix.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    kimi_home = tmp_path / ".kimi-code"
+    path = _write_kimi(kimi_home, "session_abc", "durable kimi decision")
+    receipt = _receipt(
+        _source(session_id="session_abc", host="kimi"),
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+        mode="transcript-scan", message_ids=())
+    _write_checkpoint("S-containing", [
+        _item(quote="durable kimi decision", receipt=receipt),
+    ])
+    resolver = provenance.SourceResolver(
+        home=tmp_path, kimi_home=kimi_home, current_author="alice")
+
+    default = inspector.inspect_item(_PROJECT, _ITEM_ID, resolver=resolver)
+    disclosed = inspector.inspect_item(
+        _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
+
+    assert default["axes"]["locator"] == "resolved"
+    assert default["axes"]["bytes"] == "unchanged"
+    assert default["axes"]["current_support"] == "transcript-scan-match"
+    assert disclosed["source_excerpt"]["kind"] == "stored-quote"
+    assert disclosed["source_excerpt"]["text"] == "durable kimi decision"
+
+
+def test_kimi_checkpoint_with_message_ids_discloses_the_real_window(
+    tmp_checkpoint_dir, tmp_path, monkeypatch
+):
+    # #1064 (widened): `_from_kimi_wire` now stamps every folded message with
+    # a stable `kimi-L<line>` id (transcript.py), so a receipt captured with
+    # that id binds the same way a Claude Code uuid-bound receipt does —
+    # `why --source` discloses the REAL transcript window, not the
+    # stored-quote fallback.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    kimi_home = tmp_path / ".kimi-code"
+    path = _write_kimi(kimi_home, "session_xyz", "durable kimi decision")
+    receipt = _receipt(
+        _source(session_id="session_xyz", host="kimi"),
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+        mode="message-ids", message_ids=("kimi-L1",))
+    _write_checkpoint("S-containing", [
+        _item(quote="durable kimi decision", receipt=receipt),
+    ])
+    resolver = provenance.SourceResolver(
+        home=tmp_path, kimi_home=kimi_home, current_author="alice")
+
+    disclosed = inspector.inspect_item(
+        _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
+
+    excerpt = disclosed["source_excerpt"]
+    assert excerpt["kind"] == "message-window"
+    assert excerpt["message_ids"] == ["kimi-L1"]
+    assert "durable kimi decision" in excerpt["text"]
+
+
+def test_kimi_message_window_still_discloses_after_the_log_grows(
+    tmp_checkpoint_dir, tmp_path, monkeypatch
+):
+    # #1064: `wire.jsonl` is append-only, so a session that kept going after
+    # capture is the normal case, not an edge case. The whole-file raw-file
+    # digest legitimately reports "changed" once the file has grown (that
+    # contract is untouched here) — but line 1 never renumbers, so the
+    # RECEIPT's kimi-L1 binding still finds the exact message it named in
+    # a fresh parse of the grown file, and the window still discloses.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    kimi_home = tmp_path / ".kimi-code"
+    path = _write_kimi(kimi_home, "session_grown", "durable kimi decision")
+    captured_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    receipt = _receipt(
+        _source(session_id="session_grown", host="kimi"),
+        captured_hash, mode="message-ids", message_ids=("kimi-L1",))
+    _write_checkpoint("S-containing", [
+        _item(quote="durable kimi decision", receipt=receipt),
+    ])
+    # The session kept going after this checkpoint was captured.
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "type": "context.append_message", "agentId": "main",
+            "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "a later, unrelated reply"}],
+                       "toolCalls": [], "origin": {"kind": "assistant"}},
+            "time": 1788971099999,
+        }) + "\n")
+    resolver = provenance.SourceResolver(
+        home=tmp_path, kimi_home=kimi_home, current_author="alice")
+
+    result = inspector.inspect_item(
+        _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
+
+    assert result["axes"]["bytes"] == "changed"  # whole-file digest moved
+    excerpt = result["source_excerpt"]
+    assert excerpt["kind"] == "message-window"  # binding survived anyway
+    assert "durable kimi decision" in excerpt["text"]
 
 
 def test_source_disclosure_caps_message_count_and_reports_unavailable(
