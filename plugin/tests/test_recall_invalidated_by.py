@@ -702,3 +702,224 @@ def test_describe_cure_reads_the_stored_encoding():
         "contradiction cleared by receipt-ok:receipt-valid at 2026-08-29T12:00:00Z"
     assert recall.describe_cure(None) is None
     assert recall.describe_cure("garbage") == "contradiction cleared by garbage"
+
+
+# --- #1063: suggest's tier extends to invalidated_by, mirroring search -----
+#
+# #991 tiered suggest's candidate fetch and final sort on superseded_by
+# alone, leaving invalidated_by as a weight-only penalty (_INVALIDATED_WEIGHT
+# = 0.4 in _suggest_weight). search's ORDER BY tiers BOTH axes with
+# invalidated_by as the PRIMARY split — every non-invalidated row sorts
+# before every invalidated row, superseded_by only decides order WITHIN each
+# half (#837: "a contradicted row sorts below a merely-replaced one"). A
+# strongly-matching invalidated row could still fill suggest's fetch window,
+# or outrank a weaker live row on weighted score alone before the 0.4x
+# multiplier closed enough of the gap — the #991 trap, replayed on the axis
+# it left untiered.
+
+
+def test_suggest_promotes_live_row_over_higher_weighted_invalidated_row(
+        tmp_checkpoint_dir, monkeypatch):
+    # An invalidated row built to weigh MORE than a live one (importance 9,
+    # verbatim, fresh vs importance 1, inferred, ancient) must still sort
+    # below it — the tier decides before weighted score is consulted, the
+    # same rule #991 pinned for superseded_by.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-live", _cp("S-live", decisions=[{
+            "text": "gateway cache mentioned briefly",
+            "trust": "inferred", "importance": 1,
+            "first_seen": "2000-01-01T00:00:00Z",
+        }], created="2000-01-01T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-bad", _cp("S-bad", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+            "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
+            "id": "o-bad111",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5)
+    sids = [r["session_id"] for r in out]
+    assert "S-live" in sids and "S-bad" in sids
+    assert sids.index("S-live") < sids.index("S-bad")
+
+
+def test_suggest_both_superseded_and_invalidated_lands_in_lowest_tier(
+        tmp_checkpoint_dir, monkeypatch):
+    # A row carrying BOTH superseded_by and invalidated_by lands below a
+    # clean live row, a superseded-only row, AND an invalidated-only row —
+    # the lowest of the four. Importance/trust/first_seen are IDENTICAL
+    # across all four so tier, not weight, is what separates them.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    common = {"trust": "inferred", "importance": 5, "first_seen": stamp}
+    # Only "wombat"/"plan" are shared across all four texts (2 terms — enough
+    # for suggest's overlap gate). Each pair also carries one word unique to
+    # ONLY that pair, so the free-text link below clears _MIN_LINK_SHARED (3)
+    # against its own target and stays under it against every sibling row —
+    # sharing 3+ terms with more than one candidate makes bind_links refuse
+    # to guess (recall._apply_typed_supersession), which silently no-ops the
+    # whole fixture instead of failing loudly.
+    store.write_checkpoint(
+        "S-live", _cp("S-live", decisions=[
+            {**common, "text": "wombat archive plan alpha"}],
+            created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-super", _cp("S-super", decisions=[
+            {**common, "text": "wombat beacon plan superseded"}],
+            created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-super-newer", _cp("S-super-newer", decisions=[{
+            "text": "wombat beacon plan replaced",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "wombat beacon plan superseded"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-bad", _cp("S-bad", decisions=[
+            {**common, "text": "wombat comet plan invalidated",
+             "id": "o-bad111"}], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-worst", _cp("S-worst", decisions=[
+            {**common, "text": "wombat delta plan worst",
+             "id": "o-worst1"}], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-worst-newer", _cp("S-worst-newer", decisions=[{
+            "text": "wombat delta plan replaced",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "wombat delta plan worst"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    _write_ledger(store.project_slug("/repo/x"), [
+        _receipt_row("o-bad111"), _receipt_row("o-worst1"),
+    ])
+
+    out = recall.suggest("checking on the wombat plan status again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=10)
+    sids = [r["session_id"] for r in out]
+    for s in ("S-live", "S-super", "S-bad", "S-worst"):
+        assert s in sids
+    assert sids.index("S-live") < sids.index("S-super")
+    assert sids.index("S-super") < sids.index("S-bad")
+    assert sids.index("S-bad") < sids.index("S-worst")
+
+    by_sid = {r["session_id"]: r for r in out}
+    assert by_sid["S-worst"]["superseded_by"] == "S-worst-newer"
+    assert by_sid["S-worst"]["invalidated_by"] == \
+        "receipt:receipt-invalid@2026-08-29T10:00:00Z"
+
+
+def test_suggest_invalidated_wall_never_starves_the_fetch_window(
+        tmp_checkpoint_dir, monkeypatch):
+    # #991's trap, replayed on invalidated_by: the candidate fetch is
+    # `ORDER BY ... LIMIT N` before Python ranking runs. Without invalidated
+    # rows tiered ahead of match_score in that fetch, a wall of strongly-
+    # matching invalidated rows fills the window and a weaker live row is
+    # truncated away before any Python-side sort ever sees it.
+    monkeypatch.setattr(recall, "_SUGGEST_CANDIDATE_LIMIT", 3)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    refs = []
+    for i in range(4):
+        sid = f"S-wall-{i}"
+        item_id = f"o-wall{i}0000"
+        refs.append(item_id)
+        store.write_checkpoint(
+            sid, _cp(sid, questions=[{
+                "text": ("litellm gateway cache pinning debugging "
+                          "litellm gateway cache pinning debugging"),
+                "trust": "inferred", "importance": 5,
+                "first_seen": stamp, "id": item_id,
+            }], created=stamp),
+            project_dir="/repo/x",
+        )
+    _write_ledger(store.project_slug("/repo/x"),
+                  [_receipt_row(ref) for ref in refs])
+    store.write_checkpoint(
+        "S-live", _cp("S-live", decisions=[{
+            "text": "gateway cache mentioned briefly",
+            "trust": "inferred", "importance": 1,
+            "first_seen": stamp,
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         limit=5)
+    sids = {r["session_id"] for r in out}
+    assert "S-live" in sids
+
+
+def test_suggest_and_search_agree_on_live_superseded_invalidated_order(
+        tmp_checkpoint_dir, monkeypatch):
+    # suggest's tier now mirrors search's precedence exactly, so the two
+    # surfaces must agree on the relative order of one live, one superseded
+    # and one invalidated row for the same query.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    # Same specificity rule as the fixture above: only "quokka"/"plan" are
+    # shared (2 terms), each row also carries a word unique to it so the
+    # link below clears _MIN_LINK_SHARED (3) against its own target only.
+    store.write_checkpoint(
+        "S-live", _cp("S-live", decisions=[{
+            "text": "quokka archive plan alpha",
+            "trust": "inferred", "importance": 5, "first_seen": stamp,
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-super", _cp("S-super", decisions=[{
+            "text": "quokka beacon plan superseded",
+            "trust": "inferred", "importance": 5, "first_seen": stamp,
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-super-newer", _cp("S-super-newer", decisions=[{
+            "text": "quokka beacon plan replaced",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "quokka beacon plan superseded"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-bad", _cp("S-bad", decisions=[{
+            "text": "quokka comet plan invalidated",
+            "trust": "inferred", "importance": 5, "first_seen": stamp,
+            "id": "o-bad222",
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad222")])
+
+    suggest_out = recall.suggest("checking the quokka plan status",
+                                 project_dir="/repo/x",
+                                 current_session="S-now", limit=10)
+    search_out = recall.search("quokka plan status",
+                               project_dir="/repo/x")
+    for sids in ([r["session_id"] for r in suggest_out],
+                 [r["session_id"] for r in search_out]):
+        assert "S-live" in sids and "S-super" in sids and "S-bad" in sids
+        assert sids.index("S-live") < sids.index("S-super")
+        assert sids.index("S-super") < sids.index("S-bad")
