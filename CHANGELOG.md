@@ -5,6 +5,14 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.47.1](https://github.com/Daily-Nerd/daimon/compare/v0.47.0...v0.47.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* **recall:** record daimon_recall MCP pulls with via and session telemetry ([#1054](https://github.com/Daily-Nerd/daimon/issues/1054)) ([94a6445](https://github.com/Daily-Nerd/daimon/commit/94a6445d25fbebfeb0a63b0ca83244b63ea6bce9))
+* **recall:** tier suggest results live before superseded, like search ([#1056](https://github.com/Daily-Nerd/daimon/issues/1056)) ([23e12d3](https://github.com/Daily-Nerd/daimon/commit/23e12d325eae28ca3843500bd5e66be6683f0fb9))
+
 ## [0.47.0](https://github.com/Daily-Nerd/daimon/compare/v0.46.0...v0.47.0) (2026-09-17)
 
 
