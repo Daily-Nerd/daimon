@@ -93,6 +93,15 @@ commands look under it, matching the install path above. Checkpoints
 captured before this host was registered were stamped with an unresolvable
 source and stay that way; only checkpoints captured afterward resolve.
 
+`why --source` goes one step further for Kimi than it does for Codex and
+Windsurf: every folded message (each `context.append_message`/lifecycle row,
+and each `tool.result`) carries a stable id, so a verbatim item captured
+after this landed discloses the exact quoted message, the same way it does
+for Claude Code, instead of falling back to the stored quote. daimon does
+not read a per-message id from Codex or Windsurf transcripts yet, so their
+disclosure still falls back. A Kimi checkpoint captured before this landed
+carries no message ids either and keeps falling back too.
+
 ## MCP
 
 `daimon hooks install kimi` registers the read-only [MCP server](../reference/mcp)

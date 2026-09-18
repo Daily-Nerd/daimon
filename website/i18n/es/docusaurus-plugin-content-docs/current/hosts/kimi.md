@@ -99,6 +99,16 @@ instalación descrita arriba. Los checkpoints capturados antes de registrar
 este host quedaron marcados con un origen que no se puede resolver y siguen
 así; solo los capturados después resuelven.
 
+`why --source` va un paso más allá para Kimi que para Codex y Windsurf: cada
+mensaje plegado (cada fila de `context.append_message`/evento de ciclo de
+vida, y cada `tool.result`) lleva un id estable, así que un item verbatim
+capturado después de este cambio muestra el mensaje exacto citado, igual que
+para Claude Code, en vez de recurrir a la cita guardada. daimon todavía no
+lee un id por mensaje de los transcripts de Codex ni de Windsurf, así que su
+divulgación sigue recurriendo a la cita guardada. Un checkpoint de Kimi
+capturado antes de este cambio tampoco lleva ids de mensaje y sigue
+recurriendo a la cita guardada.
+
 ## MCP
 
 `daimon hooks install kimi` registra el [servidor MCP](../reference/mcp) de
