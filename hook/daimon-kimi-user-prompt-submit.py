@@ -49,6 +49,13 @@ BRIEF_TIMEOUT = 8   # the host's registered timeout is 10
 RECALL_TIMEOUT = 4
 DELIVERY_TIMEOUT = 1.5
 
+# #1062: the exact name Kimi's own tool list carries for the read-only MCP
+# server. `kimi_hooks.install_mcp` merges the server into `mcp.json` under
+# the plain key `daimon` (mcpServers.daimon, no plugin-style prefix — that
+# convention is Claude Code's own), so Kimi shows it server-qualified rather
+# than bare. Only ever exported next to DAIMON_MCP_TOOL_AVAILABLE.
+MCP_TOOL_NAME = "mcp__daimon__daimon_recall"
+
 
 def _safe_name(session_id: str) -> str:
     return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
@@ -131,7 +138,8 @@ def _recall(cli, cwd: str, session: str, prompt: str, *, mcp_tool: bool) -> None
         cmd += ["--project", cwd]
     if session:
         cmd += ["--session", session]
-    env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1") if mcp_tool
+    env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1",
+                           DAIMON_MCP_TOOL_NAME=MCP_TOOL_NAME) if mcp_tool
           else lib.project_env(cwd))
     try:
         proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,

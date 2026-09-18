@@ -39,6 +39,23 @@ def _run(payload, tmp_path, extra_env=None, argv=()) -> subprocess.CompletedProc
     )
 
 
+def _fake_cli_env_capture(tmp_path, var: str):
+    """A `daimon` on PATH that appends one var's value (or `<unset>`) per
+    invocation to a file, so a test can prove what env this hook's own
+    subprocess call actually carried rather than only what argv it built.
+    Same idiom as test_kimi_hook_scripts.py's helper of the same name."""
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    capture = tmp_path / "env-capture.txt"
+    script = bin_dir / "daimon"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "${{{var}:-<unset>}}" >> "{capture}"\n'
+        "exit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    return bin_dir, capture
+
+
 def _copy_without_lib(script: Path, tmp_path) -> Path:
     """Copy a hook into a lib-less dir, the stale/partial-install shape where
     _daimon_hook_lib.py never landed. The same-dir import then fails."""
@@ -132,6 +149,38 @@ def test_prompt_hook_names_the_mcp_tool_when_invoked_with_the_flag(
     assert proc.returncode == 0
     assert "call the daimon_recall tool with query" in proc.stdout
     assert 'daimon recall "' not in proc.stdout
+
+
+def test_mcp_tool_flag_forwards_codexs_own_tool_name_into_recall_inject(
+        tmp_path):
+    # #1062: Codex shows the bare tool name (no server prefix) in its own
+    # tool list, so this pins that the hook exports it explicitly rather
+    # than the rendered hint merely coinciding with `_suggest_line`'s own
+    # bare-name fallback by luck.
+    bin_dir, capture = _fake_cli_env_capture(tmp_path, "DAIMON_MCP_TOOL_NAME")
+    proc = _run(
+        {"cwd": "/Users/x/projR", "session_id": "S-now",
+         "prompt": "debugging the litellm gateway cache pinning again"},
+        tmp_path,
+        extra_env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        argv=["--mcp-tool"],
+    )
+    assert proc.returncode == 0
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert "daimon_recall" in lines
+
+
+def test_without_the_flag_recall_inject_sees_no_mcp_tool_name_var(tmp_path):
+    bin_dir, capture = _fake_cli_env_capture(tmp_path, "DAIMON_MCP_TOOL_NAME")
+    proc = _run(
+        {"cwd": "/Users/x/projR", "session_id": "S-now",
+         "prompt": "debugging the litellm gateway cache pinning again"},
+        tmp_path,
+        extra_env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 0
+    lines = capture.read_text(encoding="utf-8").splitlines()
+    assert lines and all(ln == "<unset>" for ln in lines)
 
 
 def test_prompt_hook_keeps_the_shell_form_without_the_flag(

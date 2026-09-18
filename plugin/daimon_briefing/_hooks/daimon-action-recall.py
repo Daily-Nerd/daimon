@@ -70,6 +70,17 @@ CAPS = {
     "codex": "unsupported",
 }
 
+# #1062: host -> the exact name that host's own tool list carries for the
+# read-only MCP server, so the tool-form hint (once `on` prints it) names
+# the exact thing the agent already sees instead of a generic default. Only
+# a host present in CAPS at something other than "unsupported" ever reaches
+# the code that reads this; codex has no row because it never gets past the
+# `unsupported` return above, and adding one here alone would not change
+# that — CAPS is still the ladder's own gate.
+NAMES = {
+    "claude-code": "mcp__plugin_daimon_daimon__daimon_recall",
+}
+
 # Where both hosts carry the shell command. Replicated from
 # checks_host.PROFILES rather than imported — see the module docstring; two
 # lines of duplication are the price of not sharing a process with the deny
@@ -129,8 +140,16 @@ def main(argv) -> int:
     # #1036 parity: same accessor recall-inject uses, same reasoning — an
     # argv flag on THIS shim exports the env var into the CLI's own env
     # rather than relying on a shell-interpreted prefix in the manifest.
-    env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1") if mcp_tool
-          else lib.project_env(cwd))
+    if mcp_tool:
+        extra = {"DAIMON_MCP_TOOL_AVAILABLE": "1"}
+        # #1062: only ever set alongside the flag above, and only for a host
+        # this file actually knows a name for.
+        name = NAMES.get(host)
+        if name:
+            extra["DAIMON_MCP_TOOL_NAME"] = name
+        env = lib.project_env(cwd, **extra)
+    else:
+        env = lib.project_env(cwd)
     try:
         proc = subprocess.run(
             cmd, input=command, capture_output=True, text=True,

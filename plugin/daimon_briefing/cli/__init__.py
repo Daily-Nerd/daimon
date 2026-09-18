@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -1929,8 +1930,25 @@ def _fit_item_text(raw, width: int) -> tuple[str, bool]:
     return text[:width - 3] + "...", True
 
 
+# #1062: a conservative shape for a value that renders straight into
+# model-visible text — anything else falls back to the bare tool name rather
+# than being trusted verbatim. Alphanumerics and underscores cover every
+# real tool name in this codebase's own hosts (a bare `daimon_recall`, a
+# server-qualified `mcp__daimon__daimon_recall`, a plugin-prefixed
+# `mcp__plugin_daimon_daimon__daimon_recall`); a length ceiling matches the
+# one `recall_telemetry.clean_session` already applies to the neighboring
+# session clause. Checked with `fullmatch`, never `match` against an
+# anchored pattern: Python's `$` matches just before a trailing "\n", not
+# only end of string, so `match()` here would accept "daimon_recall\n" and
+# render the newline straight into model-visible text.
+_MCP_TOOL_NAME_RE = re.compile(r"[A-Za-z0-9_]{1,128}")
+
+_DEFAULT_MCP_TOOL_NAME = "daimon_recall"
+
+
 def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
                   width: int, mcp_tool_available: bool = False,
+                  mcp_tool_name: str | None = None,
                   session: str | None = None) -> str:
     """One compact, attributed, trust-preserving injection line (#125).
 
@@ -1956,7 +1974,20 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
     `recall_telemetry.record`'s `injected_into`. It rides the TOOL form of
     the hint only: the shell string has no `--session` flag to receive it
     back, so a follow-up `daimon recall "..."` cannot be paired to this
-    injection the way a `daimon_recall` tool call can."""
+    injection the way a `daimon_recall` tool call can.
+
+    `mcp_tool_name` (#1062) is the caller's own resolved
+    `config.mcp_tool_name()` reading, same posture as `mcp_tool_available`:
+    the host-visible name the AGENT's own tool list carries for the
+    read-only MCP server — Claude Code's plugin-prefixed
+    `mcp__plugin_daimon_daimon__daimon_recall`, Kimi's server-qualified
+    `mcp__daimon__daimon_recall`, Codex's bare `daimon_recall` — instead of
+    a generic default on every host. It only ever changes the TOOL form of
+    the hint; the shell string never names a tool at all. Falls back to the
+    bare `daimon_recall` when unset (an older hook that predates this flag)
+    or when it fails `_MCP_TOOL_NAME_RE`'s conservative shape check: this
+    string renders straight into model-visible text, so a value this codebase
+    did not itself produce is never trusted verbatim."""
     age = _format_age(now - r["created"]) if r.get("created") else "?"
     trust = r.get("trust") or "untagged"
     text, _truncated = _fit_item_text(r["text"], width)
@@ -1987,7 +2018,10 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
     stated_mark = f" (stated by {stated})" if stated else ""
     more = " ".join(terms[:3])
     if mcp_tool_available:
-        more_hint = f'call the daimon_recall tool with query "{more}"'
+        tool_name = (mcp_tool_name if mcp_tool_name
+                    and _MCP_TOOL_NAME_RE.fullmatch(mcp_tool_name)
+                    else _DEFAULT_MCP_TOOL_NAME)
+        more_hint = f'call the {tool_name} tool with query "{more}"'
         # #1053 fix B: the SAME validator the tool argument goes through
         # (mcp_tools._recall) — a session the hint renders is always one
         # the tool will accept back, and a hostile id (a newline or a
@@ -2128,6 +2162,9 @@ def _cmd_recall_inject(args) -> int:
         # renders one hint form, and the flag is the plugin's own hook
         # telling the truth about itself, never inferred here.
         mcp_available = config.mcp_tool_available()
+        # #1062: same posture, same call site, the sibling value the hook
+        # exports next to the flag above.
+        mcp_name = config.mcp_tool_name()
         delivered = []
         for slot, m in enumerate(chosen):
             # #1030: the slot table lives here and nowhere else. Lead gets
@@ -2135,6 +2172,7 @@ def _cmd_recall_inject(args) -> int:
             width = _LEAD_WIDTH if slot == 0 else _SLOT_WIDTH
             print(_suggest_line(m, terms, now, own_slug=own_slug, width=width,
                                 mcp_tool_available=mcp_available,
+                                mcp_tool_name=mcp_name,
                                 session=session or None))
             # Same pure fit the emitter just used, so the ledger cannot
             # describe a rendering the host never received.
@@ -2301,6 +2339,8 @@ def _cmd_action_recall(args) -> int:
         # runs `record-only`, `codex` stays `unsupported`, so the value is
         # recorded for later comparison even where nothing prints.
         mcp_available = config.mcp_tool_available()
+        # #1062: same sibling value as recall-inject's own call site.
+        mcp_name = config.mcp_tool_name()
         recall_telemetry.record(
             [{**row, "rendered_chars": len(rendered), "truncated": truncated}],
             query_terms=terms,
@@ -2318,6 +2358,7 @@ def _cmd_action_recall(args) -> int:
                                 own_slug=store.project_slug(project),
                                 width=_LEAD_WIDTH,
                                 mcp_tool_available=mcp_available,
+                                mcp_tool_name=mcp_name,
                                 session=session or None))
         if seen_file:
             spent = dict(origin_counts)

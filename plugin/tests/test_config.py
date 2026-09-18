@@ -39,6 +39,19 @@ def test_mcp_tool_available_flag(monkeypatch):
     assert config.mcp_tool_available() is False
 
 
+def test_mcp_tool_name_flag(monkeypatch):
+    # #1062: a raw passthrough only. The shape check that guards this value
+    # before it reaches model-visible text lives at the render boundary
+    # (cli._suggest_line), not here — this accessor just says what the host's
+    # own hook exported, or None when it exported nothing.
+    monkeypatch.delenv("DAIMON_MCP_TOOL_NAME", raising=False)
+    assert config.mcp_tool_name() is None
+    monkeypatch.setenv("DAIMON_MCP_TOOL_NAME", "mcp__daimon__daimon_recall")
+    assert config.mcp_tool_name() == "mcp__daimon__daimon_recall"
+    monkeypatch.setenv("DAIMON_MCP_TOOL_NAME", "   ")
+    assert config.mcp_tool_name() is None
+
+
 def test_min_messages_default_and_override(monkeypatch):
     monkeypatch.delenv("DAIMON_MIN_MESSAGES", raising=False)
     assert config.min_messages() == 10

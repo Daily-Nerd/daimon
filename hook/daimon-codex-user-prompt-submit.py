@@ -46,6 +46,16 @@ TIMEOUT = 4  # seconds; the hooks.json registration budget is 5
 # delivery existed. Whatever delivery leaves unspent stays with recall.
 DELIVERY_TIMEOUT = 1.5
 
+# #1062: the exact name Codex's own tool list carries for the read-only MCP
+# server — bare, no server or plugin prefix (confirmed against Codex CLI's
+# own tool listing; codex_hooks.py registers the server under
+# `[mcp_servers.daimon]` in config.toml, and Codex shows the tool name alone,
+# unlike Claude Code's and Kimi's `mcp__<server>__<tool>` forms). Coincides
+# with `cli._DEFAULT_MCP_TOOL_NAME`, but exported explicitly rather than
+# left to that fallback, so a future default change cannot silently start
+# misnaming this host's tool.
+MCP_TOOL_NAME = "daimon_recall"
+
 
 def _remaining(started: float) -> float:
     """Recall's timeout, minus whatever delivery actually spent. Never below
@@ -100,7 +110,8 @@ def main(argv=None) -> int:
         cmd += ["--project", cwd]
     if session:
         cmd += ["--session", session]
-    recall_env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1")
+    recall_env = (lib.project_env(cwd, DAIMON_MCP_TOOL_AVAILABLE="1",
+                                  DAIMON_MCP_TOOL_NAME=MCP_TOOL_NAME)
                  if mcp_tool else lib.project_env(cwd))
     try:
         proc = subprocess.run(
