@@ -1,16 +1,21 @@
 <p align="center">
-  <img src="website/static/img/emblem.svg" alt="daimon mark — a coin of dots on the golden-angle spiral: the written half, the empty half still to come, three amber dots carried into the dark" width="190"/>
+  <img src="website/static/img/emblem.svg" alt="daimon mark, a coin of dots on the golden-angle spiral: the written half, the empty half still to come, three amber dots carried into the dark" width="190"/>
 </p>
 
 # Daimon
 
-[![codecov](https://codecov.io/gh/Daily-Nerd/daimon/graph/badge.svg?token=gYJmnMwAue)](https://codecov.io/gh/Daily-Nerd/daimon)
+<p align="center">
+  <a href="https://pypi.org/project/daimon-briefing/"><img src="https://img.shields.io/pypi/v/daimon-briefing?style=flat-square" alt="PyPI version"></a>
+  <a href="https://github.com/Daily-Nerd/daimon/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Daily-Nerd/daimon/ci.yml?style=flat-square" alt="CI status"></a>
+  <a href="https://codecov.io/gh/Daily-Nerd/daimon"><img src="https://codecov.io/gh/Daily-Nerd/daimon/graph/badge.svg?token=gYJmnMwAue" alt="codecov"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Daily-Nerd/daimon?style=flat-square" alt="License: Apache-2.0"></a>
+</p>
 
 > A **dream-briefing** for your AI agent: a skimmable "while you were away / here's where we left off" artifact, shown when you resume a session.
 
-**Documentation: [daily-nerd.github.io/daimon](https://daily-nerd.github.io/daimon/)** — setup guides, configuration reference, concepts.
+**Documentation:** [daily-nerd.github.io/daimon](https://daily-nerd.github.io/daimon/), with setup guides, configuration reference, and concepts.
 
-Your agent forgets everything between sessions. Daimon writes a small cognitive checkpoint when a session ends and turns it into a briefing when the next one starts — so the agent resumes from a faithful prior state instead of a confident guess:
+Your agent forgets everything between sessions. Daimon writes a small cognitive checkpoint when a session ends and turns it into a briefing when the next one starts, so the agent resumes from a faithful prior state instead of a confident guess:
 
 ```
 While you were away — here's where we left off.
@@ -29,21 +34,21 @@ Decisions made:
 Active topic: Migrating the scheduler off cron to the new worker pool
 ```
 
-Every item carries its **trust class**: `✓ verbatim` items are pinned to an exact quote from the transcript and are never reworded — not by carry-over between sessions, not by rendering, not by budget truncation. `~ inferred` items are the agent's own conclusions and are allowed to evolve. Items carried from older sessions say so. That distinction — knowing which memories are quotes and which are guesses — is the point.
+Every item carries its **trust class**. `✓ verbatim` items are pinned to an exact quote from the transcript and are never reworded: not by carry-over between sessions, not by rendering, not by budget truncation. `~ inferred` items are the agent's own conclusions and are allowed to evolve. Items carried from older sessions say so. That distinction, knowing which memories are quotes and which are guesses, is the point.
 
-`≈ corroborated ×N` is a **separate axis**: N independent sessions have witnessed that claim. It never promotes the trust class, and daimon's own briefing and recall echoes are excluded from the count by construction — see [trust classes](https://daily-nerd.github.io/daimon/docs/concepts/trust-classes/).
+`≈ corroborated ×N` is a **separate axis**: N independent sessions have witnessed that claim. It never promotes the trust class, and daimon's own briefing and recall echoes are excluded from the count by construction. See [trust classes](https://daily-nerd.github.io/daimon/docs/concepts/trust-classes/) for the full rule.
 
 ## See it happen
 
-Two sessions: commit to the AWS cert, then pivot to GCP. The next briefing carries the old commitment **flagged as likely superseded** — with the confirm/reject commands inline — instead of injecting it back as current fact. One command confirms, and the stale decision is withheld from then on:
+Two sessions: commit to the AWS cert, then pivot to GCP. The next briefing carries the old commitment **flagged as likely superseded** (with the confirm/reject commands inline) instead of injecting it back as current fact. One command confirms, and the stale decision is withheld from then on:
 
 ![daimon briefing flags a superseded decision, the human confirms, the next briefing withholds it](docs/demo/daimon-demo.gif)
 
-And because the briefing is injected automatically when a session starts, the agent itself answers from it — no commands, just ask:
+And because the briefing is injected automatically when a session starts, the agent itself answers from it. No commands, just ask:
 
 ![headless Claude Code answers "where did we leave off?" from the injected briefing, calling out the stale pre-pivot items as superseded](docs/demo/claude-p.png)
 
-Nothing here is mocked — the transcripts, the recording scripts, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
+Nothing here is mocked. The transcripts, the recording scripts, and the steps to reproduce it are in [`docs/demo/`](docs/demo/).
 
 ---
 
@@ -55,9 +60,10 @@ uv tool install 'daimon-briefing[pretty]'   # pipx works identically
 #   then `daimon hooks install <host>` to refresh installed hook scripts (non-plugin hosts)
 ```
 
-Serialization needs an LLM endpoint. If the `claude` CLI is on your PATH you are **zero-config** — `daimon configure` prints `✓ ready` and you're done. Otherwise any OpenAI-compatible endpoint or headless CLI works: see [configuration](https://daily-nerd.github.io/daimon/docs/getting-started/configuration/).
+> [!TIP]
+> If the `claude` CLI is on your PATH you are **zero-config**: `daimon configure` prints `✓ ready` and you're done. Otherwise any OpenAI-compatible endpoint or headless CLI works. See [configuration](https://daily-nerd.github.io/daimon/docs/getting-started/configuration/).
 
-**Claude Code (plugin — recommended):**
+**Claude Code (plugin, recommended):**
 
 ```
 /plugin marketplace add Daily-Nerd/daimon
@@ -70,30 +76,31 @@ Serialization needs an LLM endpoint. If the `claude` CLI is on your PATH you are
 npx skills add Daily-Nerd/daimon
 ```
 
-Adds `daimon-briefing` and `daimon-end` to whichever agent it detects. Use `--skill daimon-briefing` for one of them. Claude Code users who installed the plugin above already have both, so there is no need to run this as well.
+> [!NOTE]
+> This adds `daimon-briefing` and `daimon-end` to whichever agent it detects. Use `--skill daimon-briefing` for just one of them. Claude Code users who installed the plugin above already have both, so there is no need to run this as well.
 
 **Other hosts** (Windsurf, Codex, Kimi Code, Gemini CLI): per-host guides at [daily-nerd.github.io/daimon/docs/hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
 
-That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status` — it reports capture health honestly, including failures, skips, and crashes; a failed capture self-heals on the next start.
+That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status`, which reports capture health honestly, including failures, skips, and crashes. A failed capture self-heals on the next start.
 
 ## Beyond the briefing
 
-- **`daimon recall <terms>`** — full-text search over your whole checkpoint history (and your team's, if enabled). This is also the working-set boundary, stated plainly: one live checkpoint per project feeds the briefing, and an item that falls out of [carry](https://daily-nerd.github.io/daimon/docs/concepts/carry/) never re-enters a briefing on its own — it stays reachable here, permanently, but only when asked for.
-- **`daimon why <item-id>`** — inspect a recalled item's independent capture, provenance, source, byte-integrity, current-support, verifier, lifecycle, and corroboration evidence. Add `--source` for one bounded redacted source window. See the [Trust Inspector guide](docs/trust-inspector.md).
-- **Context switching** — `daimon projects`, `daimon brief --slug <slug>`: read another project's memory deliberately, provenance-labeled — never automatic.
-- **Proactive recall** — when a new prompt overlaps prior work from an older session, the briefing surfaces it, in English or Spanish.
-- **Code anchors** — `daimon anchor <file> <symbol>` pins a belief to a code symbol; drift is flagged in the next briefing. Offline, stdlib `ast`.
-- **Item lifecycle** — `daimon resolve` closes loops, `daimon forget` removes an item with a tombstone event; supersession is tracked, not silently overwritten.
-- **Negative-knowledge ledger** — `daimon refute` records scoped, evidence-cited rejected approaches outside checkpoint decay; agents propose candidates, humans ratify active guards, and overturns remain auditable.
-- **[Team memory](https://daily-nerd.github.io/daimon/docs/team/) (opt-in)** — checkpoints mirrored through a private git remote; teammates' topics and decisions appear clearly attributed, never merged into yours.
-- **Signed receipts (opt-in)** — `DAIMON_RECEIPTS=1` pairs each checkpoint with an offline [vitni](https://github.com/Daily-Nerd/vitni) signature binding its exact bytes to its source transcript; verify with `daimon verify-receipt`.
-- **Scar harvest (opt-in)** — `DAIMON_SCAR_HARVEST=1` drafts negative-knowledge *candidates* (dead ends, intentional-looking weirdness, non-obvious couplings) from each session into `.scars/candidates/` for human review. Zero-LLM, path-anchored, active only in repos that already have a `.scars/` directory; review and promotion tooling lives in [Scar](https://github.com/Daily-Nerd/Scar).
+- **`daimon recall <terms>`:** full-text search over your whole checkpoint history (and your team's, if enabled). This is also the working-set boundary, stated plainly: one live checkpoint per project feeds the briefing, and an item that falls out of [carry](https://daily-nerd.github.io/daimon/docs/concepts/carry/) never re-enters a briefing on its own. It stays reachable here, permanently, but only when asked for.
+- **`daimon why <item-id>`:** inspect a recalled item's independent capture, provenance, source, byte-integrity, current-support, verifier, lifecycle, and corroboration evidence. Add `--source` for one bounded redacted source window. See the [Trust Inspector guide](docs/trust-inspector.md).
+- **Context switching:** `daimon projects`, `daimon brief --slug <slug>`: read another project's memory deliberately, provenance-labeled, never automatic.
+- **Proactive recall:** when a new prompt overlaps prior work from an older session, the briefing surfaces it, in English or Spanish.
+- **Code anchors:** `daimon anchor <file> <symbol>` pins a belief to a code symbol; drift is flagged in the next briefing. Offline, stdlib `ast`.
+- **Item lifecycle:** `daimon resolve` closes loops, `daimon forget` removes an item with a tombstone event. Supersession is tracked, not silently overwritten.
+- **Negative-knowledge ledger:** `daimon refute` records scoped, evidence-cited rejected approaches outside checkpoint decay. Agents propose candidates, humans ratify active guards, and overturns remain auditable.
+- **[Team memory](https://daily-nerd.github.io/daimon/docs/team/) (opt-in):** checkpoints mirrored through a private git remote. Teammates' topics and decisions appear clearly attributed, never merged into yours.
+- **Signed receipts (opt-in):** `DAIMON_RECEIPTS=1` pairs each checkpoint with an offline [vitni](https://github.com/Daily-Nerd/vitni) signature binding its exact bytes to its source transcript. Verify with `daimon verify-receipt`.
+- **Scar harvest (opt-in):** `DAIMON_SCAR_HARVEST=1` drafts negative-knowledge *candidates* (dead ends, intentional-looking weirdness, non-obvious couplings) from each session into `.scars/candidates/` for human review. Zero-LLM, path-anchored, active only in repos that already have a `.scars/` directory. Review and promotion tooling lives in [Scar](https://github.com/Daily-Nerd/Scar).
 
 ## What's net-new here
 
 - **Trust-classed, quote-pinned memory:** every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, and no required daemon: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
-- **The briefing UX** — memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
-- **Host-agnostic hooks** — Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06), Kimi Code (briefing and capture; the briefing arrives with the first prompt, since that host has no session-start injection channel); other hosts are reachable via the same thin adapter shape.
+- **The briefing UX:** memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
+- **Host-agnostic hooks:** Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06), Kimi Code (briefing and capture; the briefing arrives with the first prompt, since that host has no session-start injection channel). Other hosts are reachable via the same thin adapter shape.
 
 ## An independent reading
 
@@ -127,12 +134,12 @@ current component map is documented in
 
 ## Docs
 
-- **[Documentation site](https://daily-nerd.github.io/daimon/)** — setup, hosts, configuration, concepts
+- **[Documentation site](https://daily-nerd.github.io/daimon/)**: setup, hosts, configuration, concepts
 - [Runtime Architecture](./docs/RUNTIME-ARCHITECTURE.md): current layers, components, and data flow
 - [MVP: Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md): historical foundation of the shipped runtime
-- [Research Logbook](./research/README.md) — findings, decisions, evidence trail
-- [Contributing](./CONTRIBUTING.md) — dev setup, tests, lint, pre-commit hooks
+- [Research Logbook](./research/README.md): findings, decisions, evidence trail
+- [Contributing](./CONTRIBUTING.md): dev setup, tests, lint, pre-commit hooks
 
 ---
 
-The name comes from the Greek *δαίμων* — a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings. This one shows its sources.
+The name comes from the Greek *δαίμων*, a guiding spirit (distinct from "demon") believed to accompany a person, offering counsel and warnings. This one shows its sources.
