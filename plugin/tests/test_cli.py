@@ -4327,6 +4327,29 @@ def test_cli_recall_writes_a_recall_search_row_with_via_cli(
     assert all(row["via"] == "cli" for row in rows)
 
 
+def test_cli_recall_writes_the_empty_pull_row_on_no_matches(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    # #1057: a `daimon recall` pull that matches nothing still registers one
+    # telemetry row — otherwise an agent that followed the hint and got
+    # nothing back reads as an agent that never asked.
+    from daimon_briefing import config
+    proj = str((tmp_path / "proj").resolve())
+    rc = cli.main(["recall", "nonexistentword", "--project", proj])
+    assert rc == 0
+    capsys.readouterr()
+    log_path = config.recall_delivery_log()
+    rows = [json.loads(line) for line in
+            log_path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["surface"] == "recall-search"
+    assert row["via"] == "cli"
+    assert row["item_id"] is None
+    assert row["match_score"] is None
+    assert row["rendered_chars"] == 0
+    assert row["truncated"] is False
+
+
 def test_cli_recall_multiword_query(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
     from daimon_briefing import store
 
