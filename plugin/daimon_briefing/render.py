@@ -2093,6 +2093,42 @@ def _stitching_line(s: dict) -> str:
     return line
 
 
+def _recall_follow_through_line(follow_through: dict) -> str:
+    """#1058: the one follow-through summary line, shared by the plain and
+    rich stats renderers — derived from `recall_telemetry._follow_through`'s
+    per-session pairing with a few lines of arithmetic, not a new `stats()`
+    aggregate: every session bucket already carries `pulls` and `by_via`, so
+    counting sessions and summing vias is all that is needed here.
+
+    `follow_through` maps injecting session id -> pairing bucket, seeded ONLY
+    from sessions that received at least one recall-inject hint (`_summary`'s
+    caller-facing contract) — so its length alone is "hinted sessions", no
+    filtering needed. "pulled" counts sessions with `pulls > 0`, not pull
+    EVENTS — the parenthetical after it is the event breakdown by `via`,
+    summed across every session's own `by_via`. A `via` key is only ever
+    present in a bucket when its count is >= 1 (`_follow_through` only
+    increments, never seeds a zero), so summing never introduces a
+    zero-valued `unknown` entry to filter back out.
+
+    An install with no hinted sessions yet says so directly rather than
+    printing "0 hinted sessions, 0 pulled ()", which reads as a measurement
+    that ran and found nothing rather than a population that does not exist
+    yet."""
+    hinted = len(follow_through)
+    if not hinted:
+        return "follow-through: no hinted sessions yet"
+    pulled = sum(1 for v in follow_through.values() if v.get("pulls"))
+    by_via: dict[str, int] = {}
+    for v in follow_through.values():
+        for via, n in v.get("by_via", {}).items():
+            by_via[via] = by_via.get(via, 0) + n
+    # Same descending-by-count ordering `_plain_stats`'s usage table uses.
+    via_str = ", ".join(f"{k} {v}" for k, v in
+                        sorted(by_via.items(), key=lambda kv: (-kv[1], kv[0])))
+    suffix = f" ({via_str})" if via_str else ""
+    return f"follow-through: {hinted} hinted sessions, {pulled} pulled{suffix}"
+
+
 def _plain_stats(data: dict) -> None:
     u, c, s = data["usage"], data["capture"], data["store"]
     print("usage (local, never transmitted):")
@@ -2146,9 +2182,13 @@ def _plain_stats(data: dict) -> None:
         print(f"  items: {window['deliveries']}  scored: {window['scored']}  "
               f"match score min {score['min']}  median {score['median']}  "
               f"max {score['max']}")
-        print("  surfaces: " + (", ".join(
+        print("  surfaces (rows): " + (", ".join(
             f"{k} {v}" for k, v in window["by_surface"].items())
             or "none"))
+        print("  calls: " + (", ".join(
+            f"{k} {v}" for k, v in window["by_surface_calls"].items())
+            or "none"))
+        print(f"  {_recall_follow_through_line(window['follow_through'])}")
     speaker_line = _speaker_lines_line(c)
     if speaker_line:
         print(f"  {speaker_line}")
@@ -2316,10 +2356,19 @@ def _rich_stats(data: dict) -> None:
             f"min {score['min']}  median {score['median']}  max {score['max']}",
         )
         recall_table.add_row(
-            "surfaces",
+            "surfaces (rows)",
             ", ".join(f"{k} {v}" for k, v in window["by_surface"].items())
             or "none",
         )
+        recall_table.add_row(
+            "calls",
+            ", ".join(f"{k} {v}" for k, v in
+                      window["by_surface_calls"].items())
+            or "none",
+        )
+        ft_line = _recall_follow_through_line(window["follow_through"])
+        label, _, value = ft_line.partition(": ")
+        recall_table.add_row(label, value)
         console.print(recall_table)
     # The #364/#742 gate warnings when tripped, and #944's margin line when
     # not. Only a warning is coloured: a margin printed in yellow reads as a

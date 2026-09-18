@@ -2168,3 +2168,93 @@ def test_the_margin_follows_the_constant_not_a_typed_literal(monkeypatch):
     monkeypatch.setattr(ledger, "_CAPTURE_ERROR_GATE_PCT", 20)
     assert any("against the 20% gate, margin 11.3pp" in ln
                for ln in render._capture_window_lines(_window(error_rate_pct=8.7)))
+
+
+# ---- #1058: recall delivery block — calls vs rows, and follow-through ------
+
+
+def _recall_stats_base():
+    """The minimal non-recall keys `render_stats` reads unconditionally,
+    same skeleton `_stats_empty()` above uses — the `recall` key is filled by
+    the caller from a real `recall_telemetry.stats()` fixture, never a
+    hand-typed dict (per the project's telemetry-fixture rule)."""
+    return {
+        "usage": {},
+        "capture": {"success": 0, "skipped": 0, "errors": 0,
+                    "fallback_serializes": 0, "fallback_attempts": 0,
+                    "hosts": {},
+                    "max_serialize_seconds": 0, "total_serialize_seconds": 0},
+        "store": {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
+                  "items_verbatim": 0, "items_inferred": 0, "items_untagged": 0,
+                  "items_carried": 0},
+    }
+
+
+def _two_hinted_one_pulled_via_mcp(tmp_path, monkeypatch):
+    """Two sessions get a recall-inject hint; only one of them (S-B) pulls,
+    once, via mcp. Built with the shipping `record()` writer across three
+    distinct calls (three distinct `now=` stamps) so each is its own event —
+    a repeated stamp would fold two separate calls into one under the
+    event-counting rule this feature is built on."""
+    from datetime import datetime, timezone
+
+    from daimon_briefing import recall_telemetry
+
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    t1 = datetime(2026, 9, 17, 12, 0, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 9, 17, 12, 0, 5, tzinfo=timezone.utc)
+    t3 = datetime(2026, 9, 17, 12, 0, 10, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-a1", "match_score": 0.5},
+         {"item_id": "o-a2", "match_score": 0.6}],
+        query_terms=["x"], surface="recall-inject", hint_form="tool",
+        injected_into="S-A", now=t1)
+    recall_telemetry.record(
+        [{"item_id": "o-b1", "match_score": 0.7}],
+        query_terms=["x"], surface="recall-inject", hint_form="tool",
+        injected_into="S-B", now=t2)
+    recall_telemetry.record(
+        [{"item_id": "o-b2", "match_score": 0.8}],
+        query_terms=["x"], surface="recall-search", via="mcp",
+        injected_into="S-B", now=t3)
+    return recall_telemetry.stats(now=t3)
+
+
+def test_stats_plain_recall_block_shows_rows_calls_and_follow_through(
+        tmp_path, monkeypatch, capsys):
+    data = _recall_stats_base()
+    data["recall"] = _two_hinted_one_pulled_via_mcp(tmp_path, monkeypatch)
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert "surfaces (rows): recall-inject 3, recall-search 1" in out
+    assert "calls: recall-inject 2, recall-search 1" in out
+    assert "follow-through: 2 hinted sessions, 1 pulled (mcp 1)" in out
+
+
+def test_stats_rich_recall_block_shows_rows_calls_and_follow_through(
+        tmp_path, monkeypatch, capsys):
+    pytest.importorskip("rich")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = _recall_stats_base()
+    data["recall"] = _two_hinted_one_pulled_via_mcp(tmp_path, monkeypatch)
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert "recall-inject 3" in out and "recall-search 1" in out
+    assert "recall-inject 2" in out
+    assert "2 hinted sessions" in out and "1 pulled" in out and "mcp 1" in out
+
+
+def test_stats_plain_recall_block_fresh_install_has_no_rows(capsys):
+    # No delivery log at all: `recall_telemetry.stats()` still returns a
+    # well-formed (empty) summary, and the block must render without error
+    # and without claiming pulls or hinted sessions that never happened.
+    from daimon_briefing import recall_telemetry
+
+    data = _recall_stats_base()
+    data["recall"] = recall_telemetry.stats()
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert "surfaces (rows): none" in out
+    assert "calls: none" in out
+    assert "follow-through: no hinted sessions yet" in out
