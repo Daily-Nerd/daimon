@@ -46,21 +46,55 @@ def _checkpoint(session, item, created):
 def test_capture_source_ref_infers_registered_hosts(tmp_path):
     claude = tmp_path / ".claude" / "projects"
     codex = tmp_path / ".codex"
+    kimi = tmp_path / ".kimi-code"
     home = tmp_path
 
     c = provenance.capture_source_ref(
         "S-claude", claude / "slug" / "S-claude.jsonl",
-        home=home, codex_home=codex, claude_projects=claude, author="alice")
+        home=home, codex_home=codex, claude_projects=claude,
+        kimi_home=kimi, author="alice")
     x = provenance.capture_source_ref(
         "S-codex", codex / "sessions" / "2026" / "S-codex.jsonl",
-        home=home, codex_home=codex, claude_projects=claude, author="alice")
+        home=home, codex_home=codex, claude_projects=claude,
+        kimi_home=kimi, author="alice")
     w = provenance.capture_source_ref(
         "S-wind", home / ".windsurf" / "transcripts" / "S-wind.jsonl",
-        home=home, codex_home=codex, claude_projects=claude, author="alice")
+        home=home, codex_home=codex, claude_projects=claude,
+        kimi_home=kimi, author="alice")
+    k = provenance.capture_source_ref(
+        "session_abc",
+        kimi / "sessions" / "wd_proj_0123456789ab" / "session_abc"
+        / "agents" / "main" / "wire.jsonl",
+        home=home, codex_home=codex, claude_projects=claude,
+        kimi_home=kimi, author="alice")
 
     assert (c["host"], c["locator"]) == ("claude-code", "managed")
     assert (x["host"], x["locator"]) == ("codex", "managed")
     assert (w["host"], w["locator"]) == ("windsurf", "managed")
+    assert (k["host"], k["locator"]) == ("kimi", "managed")
+
+
+def test_normalize_host_recognizes_kimi_aliases():
+    assert provenance.normalize_host("kimi") == "kimi"
+    assert provenance.normalize_host("kimi-code") == "kimi"
+    assert provenance.normalize_host("Kimi_Code") == "kimi"
+
+
+def test_capture_source_ref_honors_kimi_host_hint_env_default(
+    tmp_path, monkeypatch
+):
+    # No explicit kimi_home: falls back to KIMI_CODE_HOME, the same env var
+    # the Kimi hooks and the installer already read (kimi_hooks.config_home,
+    # _daimon_hook_lib.kimi_home).
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / ".kimi-code"))
+    transcript = (tmp_path / ".kimi-code" / "sessions" / "wd_proj_ab"
+                  / "session_xyz" / "agents" / "main" / "wire.jsonl")
+
+    source = provenance.capture_source_ref(
+        "session_xyz", transcript, author="alice", host_hint="kimi")
+
+    assert source["host"] == "kimi"
+    assert source["locator"] == "managed"
 
 
 def test_capture_source_ref_rejects_unsafe_session_id(tmp_path):
@@ -260,6 +294,58 @@ def test_resolver_supports_windsurf_roots_and_skips_missing_candidate(tmp_path):
     resolver = provenance.SourceResolver(home=tmp_path)
 
     result = resolver.resolve(_source("S-wind", host="windsurf"))
+
+    assert result.state == "resolved" and result.path == target
+
+
+def test_resolver_supports_kimi_nested_session_directories(tmp_path):
+    # Real layout (0.42.0, measured, kept in sync with
+    # _daimon_hook_lib.kimi_transcript): the session id is a DIRECTORY name
+    # nested under an unpredictable workspace-hash directory, and the leaf
+    # file is always "wire.jsonl" for every session. A stem-keyed index (the
+    # claude-code/codex approach) would collide every Kimi session on the
+    # same stem, "wire" — this must resolve by walking the session-id
+    # segment instead.
+    kimi = tmp_path / ".kimi-code"
+    target = (kimi / "sessions" / "wd_proj_0123456789ab" / "session_abc"
+              / "agents" / "main" / "wire.jsonl")
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+    resolver = provenance.SourceResolver(home=tmp_path, kimi_home=kimi)
+
+    result = resolver.resolve(_source("session_abc", host="kimi"))
+
+    assert result.state == "resolved" and result.path == target
+
+
+def test_resolver_kimi_two_sessions_share_the_wire_jsonl_stem(tmp_path):
+    kimi = tmp_path / ".kimi-code"
+    one = (kimi / "sessions" / "wd_proj_aaaaaaaaaaaa" / "session_one"
+           / "agents" / "main" / "wire.jsonl")
+    two = (kimi / "sessions" / "wd_proj_bbbbbbbbbbbb" / "session_two"
+           / "agents" / "main" / "wire.jsonl")
+    one.parent.mkdir(parents=True)
+    two.parent.mkdir(parents=True)
+    one.write_text('{"session":"one"}\n', encoding="utf-8")
+    two.write_text('{"session":"two"}\n', encoding="utf-8")
+    resolver = provenance.SourceResolver(home=tmp_path, kimi_home=kimi)
+
+    first = resolver.resolve(_source("session_one", host="kimi"))
+    second = resolver.resolve(_source("session_two", host="kimi"))
+
+    assert first.state == "resolved" and first.path == one
+    assert second.state == "resolved" and second.path == two
+
+
+def test_resolver_kimi_env_default_matches_hook_lib(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / ".kimi-code"))
+    target = (tmp_path / ".kimi-code" / "sessions" / "wd_proj_0123456789ab"
+              / "session_env" / "agents" / "main" / "wire.jsonl")
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+    resolver = provenance.SourceResolver(home=tmp_path)
+
+    result = resolver.resolve(_source("session_env", host="kimi"))
 
     assert result.state == "resolved" and result.path == target
 

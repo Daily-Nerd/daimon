@@ -135,6 +135,31 @@ def _resolver(tmp_path, projects_dir):
     )
 
 
+def _write_kimi(kimi_home, session_id, text, *, role="user"):
+    """A real Kimi `wire.jsonl` at the measured on-disk shape (#988):
+    <kimi_home>/sessions/wd_<dir>_<hex>/<session_id>/agents/main/wire.jsonl.
+    One `context.append_message` event is enough for `transcript.from_file`
+    (the shipping Kimi adapter, tests/test_kimi_transcript.py) to fold it
+    into a plain user/assistant message."""
+    d = (kimi_home / "sessions" / "wd_proj_0123456789ab" / session_id
+         / "agents" / "main")
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "wire.jsonl"
+    event = {
+        "type": "context.append_message",
+        "agentId": "main",
+        "message": {
+            "role": role,
+            "content": [{"type": "text", "text": text}],
+            "toolCalls": [],
+            "origin": {"kind": role},
+        },
+        "time": 1788971099794,
+    }
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    return path
+
+
 @pytest.mark.parametrize("value, expected", [
     ("o-abcdef", True),
     ("q-0123456789abcdef-2", True),
@@ -528,6 +553,38 @@ def test_source_disclosure_does_not_redact_stored_quote_twice(
 
     assert result["source_excerpt"]["kind"] == "stored-quote"
     assert result["source_excerpt"]["text"] == "stored quote evidence"
+
+
+def test_kimi_checkpoint_resolves_and_discloses_source(
+    tmp_checkpoint_dir, tmp_path, monkeypatch
+):
+    # #1064: before Kimi was a registered provenance host, this checkpoint's
+    # source_ref would already carry host "kimi" (the hook stamps it),
+    # but the resolver could not find the transcript wire.jsonl lives at a
+    # session-id DIRECTORY, not a stem-matched file, so `why --source` and
+    # `audit quotes` reported "unsupported" with no diagnosis for why.
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    kimi_home = tmp_path / ".kimi-code"
+    path = _write_kimi(kimi_home, "session_abc", "durable kimi decision")
+    receipt = _receipt(
+        _source(session_id="session_abc", host="kimi"),
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+        mode="transcript-scan", message_ids=())
+    _write_checkpoint("S-containing", [
+        _item(quote="durable kimi decision", receipt=receipt),
+    ])
+    resolver = provenance.SourceResolver(
+        home=tmp_path, kimi_home=kimi_home, current_author="alice")
+
+    default = inspector.inspect_item(_PROJECT, _ITEM_ID, resolver=resolver)
+    disclosed = inspector.inspect_item(
+        _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
+
+    assert default["axes"]["locator"] == "resolved"
+    assert default["axes"]["bytes"] == "unchanged"
+    assert default["axes"]["current_support"] == "transcript-scan-match"
+    assert disclosed["source_excerpt"]["kind"] == "stored-quote"
+    assert disclosed["source_excerpt"]["text"] == "durable kimi decision"
 
 
 def test_source_disclosure_caps_message_count_and_reports_unavailable(

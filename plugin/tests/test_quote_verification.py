@@ -958,6 +958,51 @@ def test_audit_quotes_resolves_codex_receipt_source(
     assert "origin-resolved: 1" in out
 
 
+def test_audit_quotes_resolves_kimi_receipt_source(
+    tmp_checkpoint_dir, tmp_path, capsys, monkeypatch
+):
+    # #1064: `audit quotes` builds its SourceResolver with no explicit
+    # kimi_home, exactly like it does for codex — the env default
+    # (KIMI_CODE_HOME) must resolve the nested session-id directory that
+    # `_daimon_hook_lib.kimi_transcript` already resolves for capture.
+    kimi_home = tmp_path / ".kimi-code"
+    path = (kimi_home / "sessions" / "wd_proj_0123456789ab" / "session_kimi"
+            / "agents" / "main" / "wire.jsonl")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "type": "context.append_message",
+        "agentId": "main",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text",
+                        "text": "the kimi source supports this quote"}],
+            "toolCalls": [], "origin": {"kind": "user"},
+        },
+        "time": 1788971099794,
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("KIMI_CODE_HOME", str(kimi_home))
+    slug = store.project_slug("/p/A")
+    source = {"version": 1, "host": "kimi", "session_id": "session_kimi",
+              "locator": "managed", "author": "alice"}
+    receipt = provenance.quote_receipt(
+        source, {"algorithm": "sha256", "scope": "raw-file",
+                 "value": "c" * 64},
+        outcome="verified", checked_at="2026-08-05T10:00:00Z",
+        binding_mode="transcript-scan")
+    cp = _stored_checkpoint("S-containing", slug, [{
+        "text": "kimi decision", "trust": "verbatim",
+        "quote": "kimi source supports this quote",
+        "quote_provenance": receipt, "id": "d-kimi",
+    }])
+    assert receipt is not None  # sanity: host "kimi" must be an accepted host
+    store.write_checkpoint("S-containing", cp, project_dir="/p/A")
+
+    assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
+    out = capsys.readouterr().out
+    assert "verified: 1" in out
+    assert "origin-resolved: 1" in out
+
+
 def test_audit_source_helpers_reject_unbound_items_and_use_origin_source(
     monkeypatch,
 ):

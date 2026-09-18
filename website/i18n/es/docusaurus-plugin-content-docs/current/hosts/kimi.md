@@ -91,6 +91,14 @@ el transcript buscando ese id de sesión dentro del directorio de sesiones.
 Los transcripts de subagentes no se combinan con el transcript principal en
 esta versión.
 
+Kimi es un host de origen registrado: `daimon why <item-id> --source` y
+`daimon audit quotes` resuelven el transcript de un checkpoint de Kimi de la
+misma forma que lo hacen para Claude Code, Codex y Windsurf. Con
+`$KIMI_CODE_HOME` definido, ambos comandos buscan ahí, igual que la
+instalación descrita arriba. Los checkpoints capturados antes de registrar
+este host quedaron marcados con un origen que no se puede resolver y siguen
+así; solo los capturados después resuelven.
+
 ## MCP
 
 `daimon hooks install kimi` registra el [servidor MCP](../reference/mcp) de

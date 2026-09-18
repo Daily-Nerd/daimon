@@ -86,6 +86,13 @@ transcript by globbing for that session id under the sessions directory.
 Subagent transcripts are not merged into the main transcript in this
 release.
 
+Kimi is a registered source host: `daimon why <item-id> --source` and
+`daimon audit quotes` resolve a Kimi checkpoint's transcript the same way
+they do for Claude Code, Codex, and Windsurf. Set `$KIMI_CODE_HOME` and both
+commands look under it, matching the install path above. Checkpoints
+captured before this host was registered were stamped with an unresolvable
+source and stay that way; only checkpoints captured afterward resolve.
+
 ## MCP
 
 `daimon hooks install kimi` registers the read-only [MCP server](../reference/mcp)
