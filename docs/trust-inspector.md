@@ -144,3 +144,12 @@ safely. It does not redact stored evidence a second time.
 `not-reproduced` is a current observation, not an accusation. Sources can be
 edited, truncated, migrated, or parsed differently by a newer host adapter.
 Use the other axes to understand which condition actually changed.
+
+### Forget withholds the window
+
+The window is drawn from the raw, pre-forget transcript. Redaction only
+catches known secret shapes, never free text someone deliberately forgot. If
+this project holds any live forget tombstone, `--source` withholds the window
+project-wide (not only for the forgotten item) and reports the tombstone
+count instead. The item itself still prints; only the transcript excerpt is
+withheld.

@@ -549,8 +549,11 @@ def test_source_disclosure_caps_message_count_and_reports_unavailable(
     assert disclosed["source_excerpt"]["message_ids"] == ["u-1", "u-2", "u-3"]
     assert disclosed["source_excerpt"]["truncated"] is True
 
+    # A neutral status, deliberately not "forgotten:". #1065 makes ANY live
+    # forget tombstone in the project withhold every window project-wide, and
+    # this assertion is testing the unrelated no-occurrence-at-all shape.
     assert store.append_event(
-        "o-fedcba", "forgotten:" + "a" * 64,
+        "o-fedcba", "resolved",
         project_dir=_PROJECT, allow_disabled=True)
     unavailable = inspector.inspect_item(
         _PROJECT, "o-fedcba", include_source=True,
@@ -559,6 +562,131 @@ def test_source_disclosure_caps_message_count_and_reports_unavailable(
     human = "\n".join(inspector.human_lines(unavailable))
     assert "Source excerpt: (unavailable)" in human
     assert "no bounded source excerpt is available" in human
+
+
+# ---- #1065: a live forget tombstone withholds the --source window --------
+
+
+def test_source_disclosure_is_withheld_when_project_holds_a_forget_tombstone(
+    tmp_checkpoint_dir, tmp_path, monkeypatch
+):
+    """The transcript a window is drawn from predates any later forget, and
+    redact_text only catches secret SHAPES, never free text a person forgot.
+    A live tombstone anywhere in the project must therefore withhold every
+    window, not just the forgotten item's own (the tombstone is a hash of
+    the whole forgotten item's text, so an unrelated window cannot be
+    scanned to clear itself individually)."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    projects = tmp_path / ".claude" / "projects"
+    messages = [("user", f"evidence {n}", f"u-{n}") for n in range(1, 3)]
+    path = _write_claude(projects, "S-source", messages)
+    receipt = _receipt(
+        _source(), hashlib.sha256(path.read_bytes()).hexdigest(),
+        message_ids=tuple(message_id for _, _, message_id in messages))
+    _write_checkpoint("S-containing", [_item(receipt=receipt)])
+    resolver = _resolver(tmp_path, projects)
+
+    disclosed = inspector.inspect_item(
+        _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
+    assert disclosed["source_excerpt"]["kind"] == "message-window"
+
+    # The tombstone below is for a DIFFERENT item entirely.
+    assert store.append_event(
+        "o-elsewhere", "forgotten:" + "b" * 64,
+        project_dir=_PROJECT, allow_disabled=True)
+
+    withheld = inspector.inspect_item(
+        _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
+
+    assert withheld["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    # The item itself still prints. Only the transcript window is withheld.
+    assert withheld["item"]["text"] == "durable trust decision"
+    human = "\n".join(inspector.human_lines(withheld))
+    assert "withheld" in human.lower()
+    assert "1" in human
+
+
+def test_source_disclosure_withheld_count_reflects_every_live_tombstone(
+    tmp_checkpoint_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-containing", [_item()])
+    assert store.append_event(
+        "o-one", "forgotten:" + "b" * 64,
+        project_dir=_PROJECT, allow_disabled=True)
+    assert store.append_event(
+        "o-two", "forgotten:" + "c" * 64,
+        project_dir=_PROJECT, allow_disabled=True)
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
+
+    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 2}
+
+
+def test_source_disclosure_withheld_after_the_real_forget_command(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """The other withheld tests above hand-append a `forgotten:` event with an
+    arbitrary hash, as a unit fixture. This proves the same guarantee through
+    the SHIPPING writer: the real `daimon forget` verb (cli.lifecycle,
+    store.append_event under the hood), forgetting a DIFFERENT item's text
+    than the one `why --source` is later run against."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    canary = "zqxcanary4471 a forgettable unrelated planning note"
+    _write_checkpoint("S-containing", [
+        _item(),
+        _item(text=canary, item_id="o-canary1", quote=canary),
+    ])
+
+    assert cli.main(["forget", canary, "--project", _PROJECT]) == 0
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
+
+    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+
+
+def test_source_disclosure_withheld_path_still_redacts_the_item_text(
+    tmp_checkpoint_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    secret = "sk-proj-" + "A" * 24
+    _write_checkpoint("S-containing", [
+        _item(text=f"the credential is {secret}", quote=None),
+    ])
+    assert store.append_event(
+        "o-elsewhere", "forgotten:" + "b" * 64,
+        project_dir=_PROJECT, allow_disabled=True)
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
+
+    assert secret not in result["item"]["text"]
+    assert "[redacted:" in result["item"]["text"]
+    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+
+
+def test_why_cli_source_flag_prints_withheld_line_when_project_forgot(
+    tmp_checkpoint_dir, monkeypatch, capsys
+):
+    """CLI-level: --source wires straight through inspector.inspect_item's
+    include_source, and the human line must carry the withholding reason."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-containing", [_item()])
+    assert store.append_event(
+        "o-elsewhere", "forgotten:" + "b" * 64,
+        project_dir=_PROJECT, allow_disabled=True)
+
+    assert cli.main([
+        "why", _ITEM_ID, "--project", _PROJECT, "--source",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "withheld" in out.lower()
+    assert "1" in out
+
+    assert cli.main([
+        "why", _ITEM_ID, "--project", _PROJECT, "--source", "--json",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source_excerpt"] == {"state": "withheld", "forgotten": 1}
 
 
 def test_source_helpers_ignore_malformed_messages_and_cap_plain_text():
