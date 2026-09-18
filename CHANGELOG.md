@@ -5,6 +5,22 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.48.0](https://github.com/Daily-Nerd/daimon/compare/v0.47.1...v0.48.0) (2026-09-18)
+
+
+### Features
+
+* **recall:** name the recall tool the way each host lists it in the prompt hint ([#1069](https://github.com/Daily-Nerd/daimon/issues/1069)) ([6517f6e](https://github.com/Daily-Nerd/daimon/commit/6517f6ecf97325828f2f101809e5a5f796cbdadf))
+* **recall:** show delivery calls and follow-through in daimon stats ([#1061](https://github.com/Daily-Nerd/daimon/issues/1061)) ([f281fce](https://github.com/Daily-Nerd/daimon/commit/f281fce1eb193bf0eba3b48610f43606d4840d1e))
+
+
+### Bug Fixes
+
+* **provenance:** register Kimi as a provenance host so its checkpoints resolve ([#1067](https://github.com/Daily-Nerd/daimon/issues/1067)) ([cd84ec2](https://github.com/Daily-Nerd/daimon/commit/cd84ec2d7fc9d631054242545b8b93bc7e3aaa78))
+* **recall:** record an empty pull as one telemetry row, not silence ([#1059](https://github.com/Daily-Nerd/daimon/issues/1059)) ([e51e894](https://github.com/Daily-Nerd/daimon/commit/e51e894627d7e719702a84b37049ee5c4c95afc8))
+* **recall:** tier invalidated rows below live and superseded ones on suggest ([#1068](https://github.com/Daily-Nerd/daimon/issues/1068)) ([0de6a31](https://github.com/Daily-Nerd/daimon/commit/0de6a3111c680cb83cb21e2f4ba9f6f218769995))
+* **why:** withhold the --source window when the project holds a forget tombstone ([#1066](https://github.com/Daily-Nerd/daimon/issues/1066)) ([19562e7](https://github.com/Daily-Nerd/daimon/commit/19562e76ff67426b4b2b014290066016b58a92e7))
+
 ## [0.47.1](https://github.com/Daily-Nerd/daimon/compare/v0.47.0...v0.47.1) (2026-09-18)
 
 
