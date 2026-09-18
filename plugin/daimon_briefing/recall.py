@@ -1525,20 +1525,23 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         # Best-ranked candidates first (#31 item 4): without ORDER BY the LIMIT
         # window is arbitrary — on a busy project (>N matching rows) the
-        # strongest rows could be truncated away, silencing prior work. #991:
-        # tiered the same way search's ORDER BY tiers (recall.py's `search`,
-        # above) — live rows before superseded ones, BEFORE match_score is
-        # consulted — because this LIMIT is where the demotion actually has
-        # to hold. Tiering only the final Python ranking is not enough: a
-        # wall of strongly-matching superseded rows can fill this window on
-        # its own and truncate a weaker live row away before the Python-side
-        # sort below ever sees it. Boolean tier only, unlike search's 3-way
-        # link/resolution split — the two supersede kinds still separate by
-        # weighted score in that Python sort, and `invalidated_by` stays OUT
-        # of the tier on purpose (#991 is scoped to `superseded_by`; an
-        # invalidated row keeps demoting through _suggest_weight, not tier).
+        # strongest rows could be truncated away, silencing prior work. #991
+        # tiered live before superseded; #1063 extends the SAME tier to
+        # invalidated_by, mirroring search's ORDER BY precedence literally
+        # (recall.py's `search`, above): invalidated is the PRIMARY split —
+        # every non-invalidated row (live or superseded) sorts ahead of every
+        # invalidated row — and superseded_by is the secondary split within
+        # each half, BEFORE match_score is consulted. Both must hold BEFORE
+        # this LIMIT, not just in the final Python sort: a wall of strongly-
+        # matching rows in either demoted class can fill this window on its
+        # own and truncate a weaker, better-tiered row away before the
+        # Python-side sort below ever sees it. Boolean tiers only, unlike
+        # search's 3-way link/resolution split within the superseded half —
+        # the two supersede kinds still separate by weighted score in that
+        # Python sort.
         " WHERE items_fts MATCH ?" + _scope_clause(scopes) +
-        " ORDER BY (i.superseded_by IS NOT NULL) ASC, match_score DESC"
+        " ORDER BY (i.invalidated_by IS NOT NULL) ASC,"
+        " (i.superseded_by IS NOT NULL) ASC, match_score DESC"
         f" LIMIT {_SUGGEST_CANDIDATE_LIMIT}"
     )
     try:
@@ -1588,13 +1591,17 @@ def suggest(prompt: str, project_dir=None, current_session=None,
             r, _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
         scored.append((relevance * weight, len(hit), r))
 
-    # #991: live rows fill the slots first — sort on the same tier the SQL
-    # fetch above already applied, then fall back to the existing weighted
-    # order within a tier (unchanged: relevance x weight, then overlap).
-    # Re-deriving the tier here (rather than trusting fetch order) matters
-    # because this sort also reorders across sessions after the per-session
-    # coverage pass, which the SQL ORDER BY knows nothing about.
-    scored.sort(key=lambda s: (bool(s[2].get("superseded_by")), -s[0], -s[1]))
+    # #991/#1063: live rows fill the slots first, superseded next, invalidated
+    # last — sort on the SAME two tiers the SQL fetch above already applied
+    # (invalidated primary, superseded secondary), then fall back to the
+    # existing weighted order within a tier (unchanged: relevance x weight,
+    # then overlap). Re-deriving the tier here (rather than trusting fetch
+    # order) matters because this sort also reorders across sessions after
+    # the per-session coverage pass, which the SQL ORDER BY knows nothing
+    # about.
+    scored.sort(key=lambda s: (bool(s[2].get("invalidated_by")),
+                                bool(s[2].get("superseded_by")),
+                                -s[0], -s[1]))
     out, used_sessions = [], set()
     for _score, _overlap, r in scored:
         if r["session_id"] in used_sessions:
