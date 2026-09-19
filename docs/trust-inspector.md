@@ -153,3 +153,14 @@ this project holds any live forget tombstone, `--source` withholds the window
 project-wide (not only for the forgotten item) and reports the tombstone
 count instead. The item itself still prints; only the transcript excerpt is
 withheld.
+
+A teammate's forget counts too, not only this project's own ledger: `why`
+honors the same tombstones every other read path honors, published or not
+yet applied locally.
+
+### Forget withholds the item too
+
+If the item's own text matches a live forget tombstone, local or a
+teammate's, `why <id>` withholds the value itself, with one line saying so.
+The item id and the evidence axes that carry no text of their own still
+print.

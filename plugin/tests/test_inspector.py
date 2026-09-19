@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import (cli, config, inspector, provenance, recall,
-                              redact, schema, scoring, store, transcript)
+from daimon_briefing import (cli, config, inspector, normalize, provenance,
+                              recall, redact, schema, scoring, store,
+                              transcript)
 
 
 _PROJECT = "/p/A"
@@ -820,6 +821,152 @@ def test_why_cli_source_flag_prints_withheld_line_when_project_forgot(
     ]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+
+
+# ---- #1070: why honors a TEAMMATE's forget tombstone too ------------------
+#
+# Every other read path unions the local ledger (forgotten_content_keys) with
+# what teammates published (foreign_forgotten_content_keys) before deciding
+# what to suppress. #1066 above only fixed the LOCAL half of that for
+# `why --source`; the item itself never checked either half.
+
+
+def _publish_foreign_tombstone(text, *, author, project, monkeypatch):
+    """A teammate's forget landing here through the real #600 slice B writer
+    (store.publish_tombstone), inside a genuine synced remote rather than the
+    machine-local mirror ('local') that foreign_forgotten_content_keys
+    deliberately excludes (see its own docstring: a solo user's own publish
+    into 'local' must never read back as someone else's deletion).
+
+    DAIMON_TEAM_PROJECT stands in for a real daimon-team.toml grant:
+    teamproject.in_scope's honor_env branch returns True on that alone for a
+    single-remote setup, so the write routes into the fake 'team-a' clone
+    instead of falling back to 'local' for want of membership config."""
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "shared")
+    (config.team_dir() / "team-a" / ".git").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DAIMON_AUTHOR", author)
+    content_hash = normalize.content_key(text)
+    published = store.publish_tombstone(content_hash, project_dir=project)
+    assert published, "fixture bug: the publish itself must land somewhere"
+    return content_hash
+
+
+def test_why_withholds_item_text_forgotten_by_a_teammate(
+    tmp_checkpoint_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-containing", [_item()])
+
+    _publish_foreign_tombstone("durable trust decision", author="grace",
+                               project=_PROJECT, monkeypatch=monkeypatch)
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")  # back to the local reader
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result["item"]["text"] == {"state": "withheld"}
+    human = "\n".join(inspector.human_lines(result))
+    assert "withheld" in human.lower()
+    assert "durable trust decision" not in human
+
+
+def test_why_still_prints_item_id_and_axes_when_text_is_withheld_by_a_teammate(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """The item id and the evidence axes carry no text of their own; a
+    teammate's forget must not blank them out along with the value."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-containing", [_item()])
+    _publish_foreign_tombstone("durable trust decision", author="grace",
+                               project=_PROJECT, monkeypatch=monkeypatch)
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID)
+
+    assert result["item"]["item_id"] == _ITEM_ID
+    assert result["item"]["kind"]
+    assert result["axes"]["capture"]
+    assert result["axes"]["provenance"]
+
+
+def test_why_json_carries_withheld_state_for_a_teammates_forgotten_item(
+    tmp_checkpoint_dir, monkeypatch, capsys
+):
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-containing", [_item()])
+    _publish_foreign_tombstone("durable trust decision", author="grace",
+                               project=_PROJECT, monkeypatch=monkeypatch)
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+
+    assert cli.main(["why", _ITEM_ID, "--project", _PROJECT, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["item"]["text"] == {"state": "withheld"}
+
+
+def test_why_source_withheld_count_includes_a_teammates_tombstone(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """#1066 counted only the local ledger. A project whose ONLY tombstone
+    came from a teammate must still withhold the --source window, and the
+    count must include it."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    _write_checkpoint("S-containing", [_item()])
+    _publish_foreign_tombstone("some unrelated teammate secret",
+                               author="grace", project=_PROJECT,
+                               monkeypatch=monkeypatch)
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
+
+    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    # The forgotten value is unrelated to this item's own text.
+    assert result["item"]["text"] == "durable trust decision"
+
+
+def test_why_does_not_double_count_the_readers_own_published_tombstone(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """foreign_forgotten_content_keys() deliberately excludes the CURRENT
+    author's own rows (its docstring: a local `reopen` must be able to lift
+    a tombstone the foreign fold cannot see retracted). `why`'s union must
+    inherit that exclusion: the author's own forget already counts once,
+    through the local ledger, and must not count twice through the mirrored
+    copy of their own publish sitting in the shared remote."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "shared")
+    (config.team_dir() / "team-a" / ".git").mkdir(parents=True, exist_ok=True)
+    canary = "zqxownforget8842 alice's own forgotten note"
+    _write_checkpoint("S-containing", [
+        _item(),
+        _item(text=canary, item_id="o-canary1", quote=canary),
+    ])
+
+    assert cli.main(["forget", canary, "--project", _PROJECT]) == 0
+    published = list(config.team_dir().rglob(store._TOMBSTONE_NAME))
+    assert published and any(p.parent.name == "alice" for p in published), (
+        "fixture bug: the forget must have published as the reading author")
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
+
+    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+
+
+def test_why_unaffected_when_no_tombstone_exists_anywhere_team_enabled(
+    tmp_checkpoint_dir, monkeypatch
+):
+    """Team mirroring on, teammates present, but nobody forgot anything: the
+    union is empty and `why` behaves exactly as it does with teams off."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "shared")
+    (config.team_dir() / "team-a" / ".git").mkdir(parents=True, exist_ok=True)
+    _write_checkpoint("S-containing", [_item()])
+
+    result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
+
+    assert result["item"]["text"] == "durable trust decision"
+    assert result["source_excerpt"]["kind"] == "stored-quote"
 
 
 def test_source_helpers_ignore_malformed_messages_and_cap_plain_text():

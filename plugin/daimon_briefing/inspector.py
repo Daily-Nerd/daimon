@@ -15,8 +15,8 @@ import re
 import time
 from pathlib import Path
 
-from . import (config, provenance, recall, redact, schema, scoring,
-               serializer, store, tool_context, transcript)
+from . import (config, normalize, provenance, recall, redact, schema,
+               scoring, serializer, store, tool_context, transcript)
 
 
 SCHEMA_VERSION = 1
@@ -335,6 +335,22 @@ def _withheld_source(forgotten: int) -> dict:
     return {"state": "withheld", "forgotten": forgotten}
 
 
+def _withheld_item() -> dict:
+    """The `why <id>` item-text/quote refusal (#1070). Every other read path
+    suppresses a value under a live forget tombstone with no opt-in needed:
+    recall search and the team read both union
+    store.forgotten_content_keys(project_dir) with
+    store.foreign_forgotten_content_keys() before a value can surface, and
+    that suppression is always on regardless of the opt-in local rewrite
+    (config.team_apply_forget). `why` binds an id straight to its stored
+    text, so it is the one surface that could still hand a forgotten value
+    back to anyone still holding that id. The item id and every axis that
+    carries no text of its own still print; only the value itself is
+    withheld, keyed on the item's OWN content (normalize.content_key of its
+    text), the same key `forget` itself publishes."""
+    return {"state": "withheld"}
+
+
 def _index_only_reason(row: dict) -> str:
     """Why this row is index-backed rather than a local project surface
     (#674): the two real divergence paths the investigation proved. A local
@@ -420,6 +436,17 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
                     receipt["verifier"]["version"])
         verifier = "same-version" if recorded == current else "different-version"
 
+    # #1070: every other read path (store.read_team, recall's inbound gate)
+    # unions the local ledger with what teammates published before deciding
+    # what to suppress; `why` must too. Computed once and reused below for
+    # both the item-text withhold and the --source count, so the two never
+    # drift to different answers within one call.
+    forgotten_keys = (store.forgotten_content_keys(project_dir)
+                      | store.foreign_forgotten_content_keys())
+    item_text = item.get("text")
+    item_forgotten = bool(item_text) and (
+        normalize.content_key(item_text) in forgotten_keys)
+
     corroboration = store.corroborations(project_dir=project_dir).get(item_id, {})
     # #983 change 3: `why` must show the SAME effective count the briefing
     # badge does — an item whose first writer was a provisional never
@@ -431,9 +458,10 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
         "item": {
             "item_id": item_id,
             "kind": kind,
-            "text": item.get("text"),
+            "text": _withheld_item() if item_forgotten else item.get("text"),
             "trust": item.get("trust"),
-            "quote": item.get("quote"),
+            "quote": (_withheld_item() if item_forgotten
+                     else item.get("quote")),
             "author": checkpoint.get("author"),
             "project_slug": store.project_slug(project_dir),
             "session_id": checkpoint.get("session_id"),
@@ -487,7 +515,12 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
                      "on this machine"),
         }
     if include_source:
-        forgotten = len(store.forgotten_content_keys(project_dir))
+        # #1070: this count used to read the local ledger only
+        # (store.forgotten_content_keys); `forgotten_keys` above already
+        # holds the union with what teammates published, so a
+        # teammate-only tombstone withholds the window exactly like a
+        # local one.
+        forgotten = len(forgotten_keys)
         result["source_excerpt"] = (
             _withheld_source(forgotten) if forgotten
             else _bounded_source(item, receipt, resolution, messages))
@@ -529,10 +562,19 @@ def human_lines(result: dict) -> list[str]:
         "changed": "source changed",
         "unknown": f"source bytes unknown ({axes['locator']})",
     }[axes["bytes"]])
+    item_text = item.get("text")
+    if isinstance(item_text, dict) and item_text.get("state") == "withheld":
+        # #1070: a live tombstone (local or a teammate's) matches this
+        # item's own content, one line saying so in place of the value.
+        item_line = (f"Item: [{item['item_id']}] [{item['kind']}] "
+                    "(withheld: this project holds a forget tombstone for "
+                    "this value)")
+    else:
+        item_line = (f"Item: [{item['item_id']}] [{item['kind']}] "
+                    f"{item_text or '(content unavailable)'}")
     lines = [
         f"Now: capture {axes['capture']}; {source_state}; {support}",
-        f"Item: [{item['item_id']}] [{item['kind']}] "
-        f"{item.get('text') or '(content unavailable)'}",
+        item_line,
         f"Capture: {axes['capture']}",
         f"Provenance: {axes['provenance']}",
         f"Locator: {axes['locator']}",

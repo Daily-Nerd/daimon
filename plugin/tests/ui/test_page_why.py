@@ -45,3 +45,53 @@ def test_why_view_still_renders_a_disclosed_window(srv):
     src = _render_why_view_src(srv)
     assert "src.text" in src
     assert "<pre>" in src
+
+
+# ---- #1070: the item itself can also carry a withheld state --------------
+#
+# `why <id>` withholds the item's text/quote (not just --source's transcript
+# window) whenever the item's own content matches a live forget tombstone,
+# local or a teammate's. `item.text`/`item.quote` then carry {state:
+# "withheld"} instead of a string, and gating on truthiness alone would print
+# "[object Object]" via escapeHtml, the same silent-wrong-render class #1065
+# exists to prevent, one level up.
+
+
+def test_why_view_renders_a_visible_line_when_item_text_is_withheld(srv):
+    src = _render_why_view_src(srv)
+    assert 'item.text.state === "withheld"' in src
+    assert "forget tombstone" in src
+
+
+def test_why_view_item_text_withheld_branch_never_reaches_escapeHtml_of_the_object(srv):
+    """The withheld branch must render its own stated line, not fall through
+    to `escapeHtml(item.text)`, which would stringify the object."""
+    src = _render_why_view_src(srv)
+    branch = src.split('item.text.state === "withheld"', 1)[1]
+    branch = branch.split("} else", 1)[0]
+    assert "why-none" in branch
+    assert "escapeHtml(item.text" not in branch
+
+
+def test_why_view_still_renders_a_plain_item_text(srv):
+    src = _render_why_view_src(srv)
+    assert 'escapeHtml(item.text || "")' in src
+
+
+def test_why_view_renders_a_visible_line_when_item_quote_is_withheld(srv):
+    src = _render_why_view_src(srv)
+    assert 'item.quote.state === "withheld"' in src
+
+
+def test_why_view_item_quote_withheld_is_not_rendered_as_a_blockquote(srv):
+    src = _render_why_view_src(srv)
+    branch = src.split('item.quote.state === "withheld"', 1)[1]
+    branch = branch.split("} else if", 1)[0]
+    assert "<blockquote>" not in branch
+    assert "why-none" in branch
+
+
+def test_why_view_still_renders_a_stored_quote_when_not_withheld(srv):
+    src = _render_why_view_src(srv)
+    assert "<blockquote>" in src
+    assert "no quote stored" in src
