@@ -982,13 +982,30 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       '</code><span class="crumb-trust">' + trustGlyph(trust) + escapeHtml(trust) + "</span></div>";
 
     html += '<div class="why-card">';
-    html += '<p class="why-text">' + escapeHtml(item.text || "") + "</p>";
+    // #1070: item.text (and item.quote below) can also carry {state:
+    // "withheld"} when the item's own content matches a live forget
+    // tombstone, local or a teammate's. That shape is an object, not a
+    // string, and it is truthy, so gating on `item.text` alone would
+    // fall through to escapeHtml(item.text) and print "[object Object]",
+    // the same silent-wrong-render class #1065 fixed one level down for
+    // the source excerpt.
+    if (item.text && item.text.state === "withheld") {
+      html += '<p class="why-text why-none">withheld: this project holds a ' +
+        'forget tombstone for this value</p>';
+    } else {
+      html += '<p class="why-text">' + escapeHtml(item.text || "") + "</p>";
+    }
     html += '<div class="why-meta"><span>origin <span class="obj-ref">' +
       escapeHtml(String(origin).slice(0, 8)) + "</span></span><span>" +
       escapeHtml(String(item.occurrences || 0)) + " occurrence(s)</span><span>" +
       escapeHtml(item.kind || "") + "</span></div>";
 
-    if (item.quote) {
+    if (item.quote && item.quote.state === "withheld") {
+      html += '<div class="why-quote"><div class="why-quote-head">' +
+        '<span class="why-label">Stored quote</span></div>' +
+        '<p class="why-none">withheld: this project holds a forget ' +
+        'tombstone for this value</p></div>';
+    } else if (item.quote) {
       html += '<div class="why-quote"><div class="why-quote-head">' +
         '<span class="why-label">Stored quote</span></div>' +
         '<blockquote>' + escapeHtml(item.quote) + "</blockquote></div>";
