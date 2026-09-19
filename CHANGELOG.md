@@ -5,6 +5,18 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.48.1](https://github.com/Daily-Nerd/daimon/compare/v0.48.0...v0.48.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **why:** honor teammates' forget tombstones on the item and the source window ([#1074](https://github.com/Daily-Nerd/daimon/issues/1074)) ([ae685ec](https://github.com/Daily-Nerd/daimon/commit/ae685ec263bab4b8c7b914dbf2ecf6d75689e37a))
+
+
+### Documentation
+
+* **readme:** add a badge row and install callouts, tighten the prose ([#1071](https://github.com/Daily-Nerd/daimon/issues/1071)) ([c10b1aa](https://github.com/Daily-Nerd/daimon/commit/c10b1aad2086d61b4b94415709ed7f873e38d21f))
+
 ## [0.48.0](https://github.com/Daily-Nerd/daimon/compare/v0.47.1...v0.48.0) (2026-09-18)
 
 
