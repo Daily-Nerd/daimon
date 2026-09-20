@@ -316,7 +316,46 @@ def test_no_match_is_silent_and_counted(
     rc, out = _run(monkeypatch, capsys, "kubectl get flamingo topiary")
     assert rc == 0 and out == ""
     assert "action-recall:no-match" in _usage(tmp_log_dir)
-    assert _ledger(tmp_log_dir) == []
+    # #1073: an empty pull is no longer silent — one honest-empty placeholder
+    # row lands, with no candidate to have refused (suggest matched nothing).
+    rows = _ledger(tmp_log_dir)
+    assert len(rows) == 1
+    assert rows[0]["surface"] == "action-recall"
+    assert rows[0]["item_id"] is None
+    assert rows[0]["best_refused"] is None
+
+
+def test_gated_candidate_records_best_refused_on_the_placeholder(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1073 gap 2: suggest() found a candidate, but the age gate (#452)
+    # turned it away for a two-hit stale match — the placeholder must carry
+    # its score, not None, so a floor read can see what refusing it cost.
+    import time as _time
+
+    stamp = _time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_time.time() - 30 * 86400))
+    latest_stamp = _time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_time.time() - 1 * 86400))
+    store.write_checkpoint(
+        "S-stale",
+        _checkpoint("S-stale", "ocelot pipeline rollback stalls staging",
+                    stamp),
+        project_dir=PROJECT)
+    # Written with the NEWEST stamp so the briefing-already-covered exclusion
+    # lands on it, not on S-stale — the fixture must not depend on wall-clock
+    # dates baked in as string literals.
+    store.write_checkpoint(
+        "S-latest",
+        _checkpoint("S-latest", "unrelated newer bookkeeping", latest_stamp),
+        project_dir=PROJECT)
+    rc, out = _run(monkeypatch, capsys,
+                   "kubectl get ocelot pipeline cache deploy")
+    assert rc == 0 and out == ""
+    rows = _ledger(tmp_log_dir)
+    assert len(rows) == 1
+    assert rows[0]["item_id"] is None
+    assert isinstance(rows[0]["best_refused"], float)
+    assert rows[0]["best_refused"] >= 0
 
 
 def test_without_a_session_id_the_surface_stays_silent(

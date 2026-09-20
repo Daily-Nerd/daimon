@@ -2154,14 +2154,32 @@ def _cmd_recall_inject(args) -> int:
         chosen, chosen_keys = _choose_recall_rows(
             matches, seen_keys, now, budget=_INJECT_BUDGET,
             usage_prefix="recall-inject")
-        if not chosen:
-            return 0
         terms = recall.salient_terms(prompt)
-        own_slug = store.project_slug(project)
         # #1036: resolved once per injection, not per line — one delivery
         # renders one hint form, and the flag is the plugin's own hook
-        # telling the truth about itself, never inferred here.
+        # telling the truth about itself, never inferred here. Read before
+        # the empty-pull exit below too: the placeholder row's hint_form
+        # describes the delivery that WOULD have rendered.
         mcp_available = config.mcp_tool_available()
+        if not chosen:
+            # #1073: an empty pull is still an event — record the
+            # honest-empty placeholder so a 7-day distribution can see
+            # refusals, not just admissions. `best_refused` is the strongest
+            # candidate suggest() found that the age gate then turned away;
+            # None when suggest() itself matched nothing.
+            numeric = [m["match_score"] for m in matches
+                      if isinstance(m.get("match_score"), (int, float))]
+            recall_telemetry.record(
+                [],
+                query_terms=terms,
+                surface="recall-inject",
+                hint_form="tool" if mcp_available else "shell",
+                injected_into=session or None,
+                now=datetime.fromtimestamp(now, tz=timezone.utc),
+                best_refused=max(numeric) if numeric else None,
+            )
+            return 0
+        own_slug = store.project_slug(project)
         # #1062: same posture, same call site, the sibling value the hook
         # exports next to the flag above.
         mcp_name = config.mcp_tool_name()
@@ -2325,10 +2343,24 @@ def _cmd_action_recall(args) -> int:
         chosen, chosen_keys = _choose_recall_rows(
             matches, own_keys | prompt_keys, now, budget=_ACTION_BUDGET,
             usage_prefix="action-recall")
+        terms = recall.salient_terms(query)
         if not chosen:
             _note_usage("action-recall:no-match")
+            # #1073: same honest-empty placeholder as recall-inject — see
+            # its call site for the reasoning behind `best_refused`.
+            mcp_available = config.mcp_tool_available()
+            numeric = [m["match_score"] for m in matches
+                      if isinstance(m.get("match_score"), (int, float))]
+            recall_telemetry.record(
+                [],
+                query_terms=terms,
+                surface="action-recall",
+                hint_form="tool" if mcp_available else "shell",
+                injected_into=session or None,
+                now=datetime.fromtimestamp(now, tz=timezone.utc),
+                best_refused=max(numeric) if numeric else None,
+            )
             return 0
-        terms = recall.salient_terms(query)
         row = chosen[0]
         # One slot, and the only slot is the lead, so it renders at the lead
         # width (#1030). Width is a property of the slot; nothing about an

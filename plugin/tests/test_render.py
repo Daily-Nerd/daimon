@@ -2245,6 +2245,58 @@ def test_stats_rich_recall_block_shows_rows_calls_and_follow_through(
     assert "2 hinted sessions" in out and "1 pulled" in out and "mcp 1" in out
 
 
+def test_stats_plain_recall_block_shows_rank_score_beside_match_score(
+        tmp_path, monkeypatch, capsys):
+    # #1073: rank_score is the number the admission decision actually read —
+    # shown next to the raw bm25 match_score so the two can be compared.
+    from datetime import datetime, timezone
+
+    from daimon_briefing import recall_telemetry
+
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    # Three rows, odd count: statistics.median picks the middle element
+    # directly, with no averaging division to introduce float noise into
+    # the pinned assertion below.
+    recall_telemetry.record(
+        [{"item_id": "o-1", "match_score": 0.2, "rank_score": 0.1},
+         {"item_id": "o-2", "match_score": 0.5, "rank_score": 0.3},
+         {"item_id": "o-3", "match_score": 0.8, "rank_score": 0.9}],
+        query_terms=["x"], surface="recall-inject", now=now)
+    data = _recall_stats_base()
+    data["recall"] = recall_telemetry.stats(now=now)
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert "match score min 0.2  median 0.5  max 0.8" in out
+    assert "rank score min 0.1  median 0.3  max 0.9" in out
+
+
+def test_stats_rich_recall_block_shows_rank_score_beside_match_score(
+        tmp_path, monkeypatch, capsys):
+    pytest.importorskip("rich")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    from datetime import datetime, timezone
+
+    from daimon_briefing import recall_telemetry
+
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-1", "match_score": 0.2, "rank_score": 0.1},
+         {"item_id": "o-2", "match_score": 0.5, "rank_score": 0.3},
+         {"item_id": "o-3", "match_score": 0.8, "rank_score": 0.9}],
+        query_terms=["x"], surface="recall-inject", now=now)
+    data = _recall_stats_base()
+    data["recall"] = recall_telemetry.stats(now=now)
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert "min 0.2  median 0.5  max 0.8" in out
+    assert "min 0.1  median 0.3  max 0.9" in out
+    assert "rank score" in out
+
+
 def test_stats_plain_recall_block_fresh_install_has_no_rows(capsys):
     # No delivery log at all: `recall_telemetry.stats()` still returns a
     # well-formed (empty) summary, and the block must render without error
