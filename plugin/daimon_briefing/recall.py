@@ -1000,7 +1000,13 @@ def _dedupe_rows(rows: list[dict], want_n: int) -> list[dict]:
             continue
         by_key[key] = len(out)
         out.append(row)
-    return out[:want_n]
+    out = out[:want_n]
+    # #1073: search is an unweighted surface — its rank IS the raw bm25
+    # match_score, so rank_score just carries that value under the shared
+    # name the delivery telemetry reads across every surface.
+    for row in out:
+        row["rank_score"] = row.get("match_score")
+    return out
 
 
 def _ambient_scopes(project_dir) -> list[str] | None:
@@ -1589,6 +1595,12 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         relevance = max(0.0, float(r["match_score"]))
         weight = _suggest_weight(
             r, _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
+        # #1073: the rank the sort below actually used, carried on the row
+        # itself so the delivery telemetry can persist it. match_score stays
+        # the raw bm25 value (the #989 axis); this is the weighted product a
+        # demoted (superseded/invalidated) row cannot hide behind an
+        # unweighted score that reads identically to a live row's.
+        r["rank_score"] = relevance * weight
         scored.append((relevance * weight, len(hit), r))
 
     # #991/#1063: live rows fill the slots first, superseded next, invalidated

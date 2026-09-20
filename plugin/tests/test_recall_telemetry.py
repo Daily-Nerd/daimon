@@ -24,6 +24,40 @@ def test_record_writes_one_structured_row_per_delivery(tmp_path, monkeypatch):
     assert payload["query_term_count"] == 2
 
 
+def test_record_writes_rank_score_beside_match_score(tmp_path, monkeypatch):
+    # #1073: the rank the delivering surface's sort actually used, next to
+    # the raw bm25 match_score — the two differ on a demoted (superseded or
+    # invalidated) row, and match_score alone cannot tell the two apart.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-abc123", "match_score": 0.42, "rank_score": 0.294}],
+        query_terms=["gateway"],
+        surface="recall-inject",
+        now=datetime(2026, 9, 19, tzinfo=timezone.utc),
+    )
+    payload = json.loads((log / "recall-delivery.jsonl").read_text())
+    assert payload["match_score"] == 0.42
+    assert payload["rank_score"] == 0.294
+
+
+def test_record_normalizes_an_invalid_rank_score_to_none(tmp_path, monkeypatch):
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-bad-rank", "match_score": 0.5,
+          "rank_score": "not-a-rank"},
+         {"item_id": "o-no-rank", "match_score": 0.5}],
+        query_terms=["gateway"],
+        surface="recall-inject",
+        now=datetime(2026, 9, 19, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert rows[0]["rank_score"] is None
+    assert rows[1]["rank_score"] is None
+
+
 def test_record_normalizes_invalid_values_and_accepts_naive_time(
         tmp_path, monkeypatch):
     log = tmp_path / "logs"
@@ -258,12 +292,14 @@ def test_record_writes_one_row_for_an_empty_recall_search_pull_via_mcp(
         "injected_into": "S-live",
         "project_slug": None,
         "match_score": None,
+        "rank_score": None,
         "term_hits": None,
         "query_term_count": 1,
         "rendered_chars": 0,
         "truncated": False,
         "hint_form": None,
         "via": "mcp",
+        "best_refused": None,
     }
 
 
@@ -287,9 +323,10 @@ def test_record_writes_one_row_for_an_empty_recall_search_pull_via_cli(
     assert row["injected_into"] is None
 
 
-def test_record_writes_nothing_for_an_empty_recall_inject(tmp_path, monkeypatch):
-    # Only a PULL (recall-search) gets the placeholder row — an injection
-    # surface with nothing to inject keeps writing nothing, same as before.
+def test_record_writes_one_row_for_an_empty_recall_inject(tmp_path, monkeypatch):
+    # #1073 gap 2: an empty pull was silent on two of three surfaces —
+    # recall-inject now gets the same honest-empty placeholder recall-search
+    # has had since #1057, so a 7-day distribution can see refusals too.
     log = tmp_path / "logs"
     monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
     recall_telemetry.record(
@@ -297,7 +334,91 @@ def test_record_writes_nothing_for_an_empty_recall_inject(tmp_path, monkeypatch)
         injected_into="S-live",
         now=datetime(2026, 9, 17, tzinfo=timezone.utc),
     )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["surface"] == "recall-inject"
+    assert row["item_id"] is None
+    assert row["match_score"] is None
+    assert row["rank_score"] is None
+    assert row["rendered_chars"] == 0
+    assert row["truncated"] is False
+    assert row["hint_form"] == "tool"
+    assert row["injected_into"] == "S-live"
+    assert row["best_refused"] is None
+
+
+def test_record_writes_one_row_for_an_empty_action_recall(tmp_path, monkeypatch):
+    # Same widening, the third surface.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="action-recall", hint_form="shell",
+        injected_into="S-live",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    rows = [json.loads(line) for line in
+            (log / "recall-delivery.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["surface"] == "action-recall"
+    assert rows[0]["item_id"] is None
+
+
+def test_record_still_writes_nothing_for_an_empty_call_on_an_unknown_surface(
+        tmp_path, monkeypatch):
+    # The widening is to the three named delivery surfaces only — an
+    # out-of-vocabulary surface (a future caller's typo, or a test double)
+    # still writes nothing on an empty call, same as before #1073.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="some-other-surface",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
     assert not (log / "recall-delivery.jsonl").exists()
+
+
+def test_record_carries_best_refused_on_the_placeholder_when_a_candidate_existed(
+        tmp_path, monkeypatch):
+    # #1073: the strongest candidate an active gate turned away, so a floor
+    # read can see what an empty result would have cost — distinct from "no
+    # candidate matched at all" (best_refused stays None there).
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-inject",
+        injected_into="S-live", best_refused=0.73,
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    row = json.loads((log / "recall-delivery.jsonl").read_text())
+    assert row["best_refused"] == 0.73
+
+
+def test_best_refused_normalizes_an_invalid_value_to_none(tmp_path, monkeypatch):
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-inject",
+        best_refused="not-a-score",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    row = json.loads((log / "recall-delivery.jsonl").read_text())
+    assert row["best_refused"] is None
+
+
+def test_best_refused_is_absent_by_default_on_a_delivered_row(tmp_path, monkeypatch):
+    # `best_refused` is a PLACEHOLDER-only field — a genuine delivered row
+    # never carries a demoted candidate's score under this name.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    recall_telemetry.record(
+        [{"item_id": "o-1", "match_score": 0.5}],
+        query_terms=["x"], surface="recall-inject",
+        now=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    row = json.loads((log / "recall-delivery.jsonl").read_text())
+    assert "best_refused" not in row
 
 
 def test_summary_excludes_the_empty_pull_row_from_item_counts(
@@ -340,6 +461,27 @@ def test_stats_follow_through_counts_an_empty_pull_as_one_event_with_zero_rows(
     assert pairing["pulls"] == 1
     assert pairing["pull_rows"] == 0
     assert pairing["by_via"] == {"mcp": 1}
+
+
+def test_follow_through_never_counts_an_empty_recall_inject_as_an_injection(
+        tmp_path, monkeypatch):
+    # #1073: recall-inject now writes a placeholder on an empty pull too, but
+    # nothing was actually injected — counting it as an injection event would
+    # inflate the follow-through denominator with a hint that never fired.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-inject",
+        injected_into="S-empty", now=now)
+    recall_telemetry.record(
+        [{"item_id": "o-1"}], query_terms=["x"], surface="recall-search",
+        via="mcp", injected_into="S-empty", now=now)
+    out = recall_telemetry.stats(now=now)
+    # No genuine injection ever landed for S-empty, so it must not seed a
+    # follow-through bucket at all — the pull naming it pairs with nothing,
+    # same rule an agent-supplied bogus session already follows.
+    assert out["lifetime"]["follow_through"] == {}
 
 
 # ---- #1053 fix A/B: clean_session is the ONE validator both the MCP tool
@@ -513,15 +655,22 @@ def test_stats_follow_through_ignores_a_pull_with_no_matching_injection(
     assert out["lifetime"]["follow_through"] == {}
 
 
-def test_record_skips_empty_injection_delivery_and_ignores_write_errors(
+def test_record_skips_empty_delivery_on_an_unlisted_surface(
         tmp_path, monkeypatch):
-    # An empty INJECTION call still writes nothing (only a PULL,
-    # recall-search, gets the #1057 placeholder row).
+    # An empty call on a surface outside the #1073 placeholder set still
+    # writes nothing.
     log = tmp_path / "logs"
     monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
-    recall_telemetry.record([], query_terms=[], surface="recall-inject")
+    recall_telemetry.record([], query_terms=[], surface="some-other-surface")
     assert not (log / "recall-delivery.jsonl").exists()
 
+
+def test_record_write_errors_are_swallowed_for_delivered_and_placeholder_rows(
+        tmp_path, monkeypatch):
+    # Telemetry is best-effort: a blocked log directory must not raise, for a
+    # genuine delivery or for the #1057/#1073 honest-empty placeholder row.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
     blocked_parent = tmp_path / "blocked"
     blocked_parent.write_text("not a directory", encoding="utf-8")
     monkeypatch.setattr(
@@ -534,9 +683,48 @@ def test_record_skips_empty_injection_delivery_and_ignores_write_errors(
         query_terms=[],
         surface="recall-search",
     )
-    # The #1057 empty-pull row shares the same best-effort write — a blocked
-    # log directory must not raise here either.
+    # The #1057/#1073 empty-pull row shares the same best-effort write — a
+    # blocked log directory must not raise here either, on any of the three
+    # widened surfaces.
     recall_telemetry.record([], query_terms=[], surface="recall-search")
+    recall_telemetry.record([], query_terms=[], surface="recall-inject")
+    recall_telemetry.record([], query_terms=[], surface="action-recall")
+
+
+def test_stats_summarizes_rank_score_min_median_max(tmp_path, monkeypatch):
+    # #1073: the rank_score block mirrors match_score's shape, so a reader
+    # can compare the two without a second query.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [{"item_id": "o-1", "match_score": 0.8, "rank_score": 0.2},
+         {"item_id": "o-2", "match_score": 0.6, "rank_score": 0.6},
+         {"item_id": "o-3", "match_score": 0.4, "rank_score": 0.4}],
+        query_terms=["x"], surface="recall-inject", now=now)
+    out = recall_telemetry.stats(now=now)
+    rank = out["lifetime"]["rank_score"]
+    assert rank["min"] == 0.2
+    assert rank["median"] == 0.4
+    assert rank["max"] == 0.6
+
+
+def test_stats_rank_score_tolerates_old_rows_missing_the_field(
+        tmp_path, monkeypatch):
+    # Rows written before #1073 carry no `rank_score` key at all — they must
+    # not raise and must not contribute to the block (same posture as an
+    # unscoreable match_score).
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    log.mkdir()
+    (log / "recall-delivery.jsonl").write_text(
+        json.dumps({"at": "2026-09-11T00:00:00Z", "surface": "recall-inject",
+                    "match_score": 0.5, "term_hits": 1}) + "\n",
+        encoding="utf-8",
+    )
+    out = recall_telemetry.stats(now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+    rank = out["lifetime"]["rank_score"]
+    assert rank == {"min": None, "median": None, "max": None}
 
 
 def test_stats_ignores_malformed_rows_and_splits_recent_window(tmp_path, monkeypatch):
@@ -614,6 +802,25 @@ def test_summary_counts_an_empty_pull_as_one_recall_search_call(
     summary = out["lifetime"]
     assert summary["by_surface"] == {"recall-search": 0}
     assert summary["by_surface_calls"] == {"recall-search": 1}
+
+
+def test_summary_counts_an_empty_inject_and_action_recall_as_calls_not_rows(
+        tmp_path, monkeypatch):
+    # #1073: the same #1057 rule, extended to the two newly-widened
+    # surfaces — a placeholder is invisible to `by_surface` but still ONE
+    # call each.
+    log = tmp_path / "logs"
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log))
+    now = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="recall-inject", now=now)
+    recall_telemetry.record(
+        [], query_terms=["x"], surface="action-recall", now=now)
+    out = recall_telemetry.stats(now=now)
+    summary = out["lifetime"]
+    assert summary["by_surface"] == {"recall-inject": 0, "action-recall": 0}
+    assert summary["by_surface_calls"] == {"recall-inject": 1, "action-recall": 1}
+    assert summary["deliveries"] == 0
 
 
 def test_summary_by_surface_calls_splits_pulls_by_via_like_follow_through(

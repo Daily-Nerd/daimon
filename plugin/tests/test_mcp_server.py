@@ -180,6 +180,9 @@ def test_recall_tool_writes_a_recall_search_row_with_via_mcp(
     assert delivered
     assert all(row["surface"] == "recall-search" for row in delivered)
     assert all(row["via"] == "mcp" for row in delivered)
+    # #1073: search is unweighted, so the ledger's rank_score is just the
+    # same value as match_score, carried through from the returned row.
+    assert all(row["rank_score"] == row["match_score"] for row in delivered)
 
 
 def test_recall_tool_writes_the_empty_pull_row_when_nothing_matches(
@@ -204,6 +207,11 @@ def test_recall_tool_writes_the_empty_pull_row_when_nothing_matches(
     assert row["match_score"] is None
     assert row["rendered_chars"] == 0
     assert row["truncated"] is False
+    # #1073: this call site never computes a refused candidate — search()
+    # has no gate to refuse one behind — so the placeholder's new field
+    # defaults to None here, same as an omitted rank_score.
+    assert row["best_refused"] is None
+    assert row["rank_score"] is None
 
 
 def test_recall_tool_session_argument_lands_as_injected_into(

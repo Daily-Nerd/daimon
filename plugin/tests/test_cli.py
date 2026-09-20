@@ -5013,6 +5013,42 @@ def test_recall_inject_no_match_is_silent_rc_zero(tmp_checkpoint_dir, capsys, mo
     assert rc == 0 and out == ""
 
 
+def test_recall_inject_no_match_records_an_honest_empty_placeholder(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1073 gap 2: suggest() itself found nothing (no term overlap at all),
+    # so the placeholder's best_refused is None — there was no candidate to
+    # have refused.
+    _seed_recall_history()
+    rc, out = _inject(monkeypatch, capsys,
+                      "completely unrelated flamingo topiary hobby")
+    assert rc == 0 and out == ""
+    rows = [json.loads(line) for line in
+            (tmp_log_dir / "recall-delivery.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["surface"] == "recall-inject"
+    assert rows[0]["item_id"] is None
+    assert rows[0]["match_score"] is None
+    assert rows[0]["rank_score"] is None
+    assert rows[0]["best_refused"] is None
+
+
+def test_recall_inject_gated_candidate_records_best_refused_on_the_placeholder(
+        tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch):
+    # #1073 gap 2: the age gate (#452) turned away a real candidate — the
+    # placeholder must carry the strongest refused score, not None, so a
+    # floor read can see what an empty result would have cost.
+    _seed_aged("S-stale", _AGE_WEAK, 9, days_old=30)
+    _seed_age_decoy()
+    rc, out = _inject(monkeypatch, capsys, _AGE_PROMPT)
+    assert rc == 0 and out == ""
+    rows = [json.loads(line) for line in
+            (tmp_log_dir / "recall-delivery.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["item_id"] is None
+    assert isinstance(rows[0]["best_refused"], float)
+    assert rows[0]["best_refused"] >= 0
+
+
 def test_recall_inject_never_fails(tmp_checkpoint_dir, capsys, monkeypatch):
     # No history, no index, unknown project — still rc 0, still silent.
     monkeypatch.setattr("sys.stdin", io.StringIO("anything at all here"))

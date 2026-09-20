@@ -16,6 +16,12 @@ from . import config
 
 WINDOW_DAYS = 7
 
+# #1073: the surfaces that get an honest-empty placeholder row when a call
+# delivers nothing. Started as `recall-search` alone (#1057, a PULL); widened
+# here to the two injection surfaces too, since a silent empty pull on either
+# of them hid every refusal from the same 7-day distribution #989 read.
+_PLACEHOLDER_SURFACES = ("recall-search", "recall-inject", "action-recall")
+
 # #1053: the ONE session-id validator both the MCP tool argument
 # (mcp_tools._recall) and the recall hint's session clause (cli._suggest_line)
 # go through — a session the hint ever renders must be exactly one the tool
@@ -56,7 +62,7 @@ def _stamp(now=None) -> str:
 
 
 def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
-          via=None, now=None) -> None:
+          via=None, now=None, best_refused=None) -> None:
     """Append one bounded record for every row actually delivered.
 
     Telemetry is best-effort. A read or prompt path must never fail because a
@@ -99,9 +105,28 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
     non-numeric score). `rendered_chars` is `0` and `truncated` is `False`
     — both are KNOWN facts here rather than absent measurements: zero
     characters were rendered, and zero characters can never have been cut.
-    Only a PULL gets this row: `recall-inject` and `action-recall` deliver
-    nothing by printing nothing, and an empty call there still writes
-    nothing, same as before #1057.
+
+    #1073: the placeholder widened from `recall-search` alone to every
+    surface in `_PLACEHOLDER_SURFACES` (recall-search, recall-inject,
+    action-recall) — an empty INJECTION was silent before this, and a 7-day
+    distribution built only from admissions cannot show what a floor would
+    have refused. The placeholder row also gains two fields no delivered row
+    carries: `rank_score` is always `None` on it (there is no ranked row to
+    read one from), and `best_refused` is the raw `match_score` of the
+    strongest candidate an active gate turned away — the caller computes it
+    from whatever `suggest()` returned before gating, `None` when nothing
+    matched at all. An out-of-vocabulary surface (outside the three named
+    above) still writes nothing on an empty call, same as before #1057.
+
+    `rank_score` (#1073) is the rank the delivering surface's OWN sort
+    actually used for a genuine delivered row — `suggest`'s weighted
+    `relevance * weight` product, or `search`'s unweighted `match_score`
+    again. Normalized the same way `match_score` is: a missing or
+    wrong-typed value records as `None`, never invented. `match_score` stays
+    the raw bm25 value on every row (the #989 axis); `rank_score` is the
+    number the admission decision itself actually read, so a row's position
+    in a slot can be told apart from an equally-scored row that ranked
+    differently because it was demoted.
     """
     entries = []
     stamp = _stamp(now)
@@ -115,6 +140,16 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
             score = float(score)
         except (TypeError, ValueError):
             score = None
+        # #1073: the rank the delivering surface's own sort actually used —
+        # `suggest` writes `relevance * weight` here, `search` writes its
+        # (unweighted) match_score again. Normalized the same way an
+        # unscoreable match_score is: a missing or wrong-typed value records
+        # as absent, never invented.
+        rank = row.get("rank_score")
+        try:
+            rank = float(rank)
+        except (TypeError, ValueError):
+            rank = None
         hits = row.get("term_hits")
         if not isinstance(hits, int) or isinstance(hits, bool):
             hits = None
@@ -136,6 +171,7 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
             "injected_into": injected_into,
             "project_slug": row.get("project_slug"),
             "match_score": score,
+            "rank_score": rank,
             "term_hits": hits,
             "query_term_count": term_count,
             "rendered_chars": rendered,
@@ -143,10 +179,17 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
             "hint_form": hint_form if hint_form in ("tool", "shell") else None,
             "via": via if via in ("cli", "mcp") else None,
         }, ensure_ascii=False, separators=(",", ":")))
-    if not entries and surface == "recall-search":
-        # #1057: the placeholder row for a pull that matched nothing — see
-        # the docstring above for the exact shape and why each field lands
-        # the way it does.
+    if not entries and surface in _PLACEHOLDER_SURFACES:
+        # #1057/#1073: the honest-empty placeholder row for a call that
+        # delivered nothing — see the docstring above for the exact shape
+        # and why each field lands the way it does. `hint_form` is carried
+        # (not forced None) because the two injection surfaces resolve it
+        # before gating and it describes the delivery THAT WOULD HAVE
+        # rendered, not one that did.
+        try:
+            refused = float(best_refused)
+        except (TypeError, ValueError):
+            refused = None
         entries.append(json.dumps({
             "at": stamp,
             "surface": str(surface),
@@ -155,12 +198,14 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
             "injected_into": injected_into,
             "project_slug": None,
             "match_score": None,
+            "rank_score": None,
             "term_hits": None,
             "query_term_count": term_count,
             "rendered_chars": 0,
             "truncated": False,
-            "hint_form": None,
+            "hint_form": hint_form if hint_form in ("tool", "shell") else None,
             "via": via if via in ("cli", "mcp") else None,
+            "best_refused": refused,
         }, ensure_ascii=False, separators=(",", ":")))
     if not entries:
         return
@@ -182,16 +227,19 @@ def _parse_stamp(value):
 
 
 def _is_empty_pull(row: dict) -> bool:
-    """True for the #1057 placeholder row a `recall-search` call writes when
-    it matched nothing. `item_id` alone cannot tell this apart from a
-    genuine delivered row — a pre-D-011 item can carry a real (scored) row
-    with no minted id — so this checks the full combination the writer
-    above actually produces for the empty case: no item id, no score, and
-    `rendered_chars` pinned at exactly 0 (a genuine `recall-search` row
-    never sets `rendered_chars` at all — that field only ever comes from
-    `recall-inject`/`action-recall`'s own width fit — so it is otherwise
-    always `None`, never `0`)."""
-    return (row.get("surface") == "recall-search"
+    """True for the #1057/#1073 placeholder row a call on any of
+    `_PLACEHOLDER_SURFACES` writes when it delivered nothing. `item_id`
+    alone cannot tell this apart from a genuine delivered row — a
+    pre-D-011 item can carry a real (scored) row with no minted id — so this
+    checks the full combination the writer above actually produces for the
+    empty case: no item id, no score, and `rendered_chars` pinned at exactly
+    0. A genuine `recall-search` row never sets `rendered_chars` at all (so
+    it is otherwise always `None`, never `0`); a genuine `recall-inject` or
+    `action-recall` row always has a real item id and a real match_score
+    (both come straight from the `suggest()` row that was actually chosen),
+    so this combination never arises for a real delivery on those surfaces
+    either — #1073 widened the surface check, not the signal itself."""
+    return (row.get("surface") in _PLACEHOLDER_SURFACES
             and row.get("item_id") is None
             and row.get("match_score") is None
             and row.get("rendered_chars") == 0)
@@ -241,11 +289,22 @@ def _follow_through(rows: list[dict]) -> dict:
     event key is the same (`at`, `via`) pair a matching call would have
     used — but never adds to `pull_rows`, since it carries no delivered
     item. An agent that asked and got nothing back must still show up as a
-    pull, just with zero rows behind it."""
+    pull, just with zero rows behind it.
+
+    #1073: the SAME placeholder shape a `recall-inject` call now writes on
+    an empty pull is the opposite case — nothing was injected, so it must
+    NOT seed or grow a session's bucket the way a real hint does. That row
+    is skipped entirely on the injection side (never counted, never used to
+    seed the bucket set a pull's `injected_into` is checked against)."""
     sessions: dict[str, dict] = {}
     inject_events: dict[str, set] = {}
     for row in rows:
         if row.get("surface") != "recall-inject":
+            continue
+        # #1073: recall-inject now writes an honest-empty placeholder too,
+        # but nothing was actually injected — counting it here would seed (or
+        # inflate) a session's bucket with a hint that never fired.
+        if _is_empty_pull(row):
             continue
         session = row.get("injected_into")
         if not isinstance(session, str) or not session.strip():
@@ -323,6 +382,12 @@ def _surface_calls(rows: list[dict]) -> dict[str, int]:
 def _summary(rows: list[dict]) -> dict:
     scores = [r["match_score"] for r in rows
               if isinstance(r.get("match_score"), (int, float))]
+    # #1073: the rank a delivery's own sort actually used, beside the raw
+    # bm25 score above — same "tolerate a missing/wrong-typed field" posture,
+    # so a log written before this field existed contributes nothing here
+    # rather than raising.
+    ranks = [r["rank_score"] for r in rows
+             if isinstance(r.get("rank_score"), (int, float))]
     hits = [r["term_hits"] for r in rows
             if isinstance(r.get("term_hits"), int)
             and not isinstance(r.get("term_hits"), bool)]
@@ -365,6 +430,11 @@ def _summary(rows: list[dict]) -> dict:
             "min": min(scores) if scores else None,
             "median": statistics.median(scores) if scores else None,
             "max": max(scores) if scores else None,
+        },
+        "rank_score": {
+            "min": min(ranks) if ranks else None,
+            "median": statistics.median(ranks) if ranks else None,
+            "max": max(ranks) if ranks else None,
         },
         "term_hits": {
             "min": min(hits) if hits else None,

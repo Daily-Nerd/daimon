@@ -2178,10 +2178,16 @@ def _plain_stats(data: dict) -> None:
     if recall_data:
         window = recall_data["window"]
         score = window["match_score"]
+        # #1073: `.get` — a log written before rank_score existed reads back
+        # with no key at all, same posture the reader already gives every
+        # older field.
+        rank = window.get("rank_score", {"min": None, "median": None, "max": None})
         print(f"recall delivery (last {recall_data['window_days']}d):")
         print(f"  items: {window['deliveries']}  scored: {window['scored']}  "
               f"match score min {score['min']}  median {score['median']}  "
               f"max {score['max']}")
+        print(f"  rank score min {rank['min']}  median {rank['median']}  "
+              f"max {rank['max']}")
         print("  surfaces (rows): " + (", ".join(
             f"{k} {v}" for k, v in window["by_surface"].items())
             or "none"))
@@ -2344,6 +2350,10 @@ def _rich_stats(data: dict) -> None:
     if recall_data:
         window = recall_data["window"]
         score = window["match_score"]
+        # #1073: `.get` — a log written before rank_score existed reads back
+        # with no key at all, same posture the reader already gives every
+        # older field.
+        rank = window.get("rank_score", {"min": None, "median": None, "max": None})
         recall_table = Table(
             title=f"recall delivery (last {recall_data['window_days']}d)",
             title_justify="left", show_header=True, header_style="bold")
@@ -2354,6 +2364,10 @@ def _rich_stats(data: dict) -> None:
         recall_table.add_row(
             "match score",
             f"min {score['min']}  median {score['median']}  max {score['max']}",
+        )
+        recall_table.add_row(
+            "rank score",
+            f"min {rank['min']}  median {rank['median']}  max {rank['max']}",
         )
         recall_table.add_row(
             "surfaces (rows)",

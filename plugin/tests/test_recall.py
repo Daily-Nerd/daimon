@@ -510,6 +510,20 @@ def test_search_names_and_normalizes_match_score(tmp_checkpoint_dir, monkeypatch
     assert hits[0]["match_score"] >= 0
 
 
+def test_search_rows_carry_rank_score_equal_to_match_score(
+        tmp_checkpoint_dir, monkeypatch):
+    # #1073: search is an UNWEIGHTED surface — its rank IS the raw bm25
+    # match_score, so rank_score is just that value carried under the new
+    # name, never a separate computation.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S1", _cp("S1", decisions=[
+        {"text": "osprey harrier combined rework", "trust": "inferred"}]),
+        project_dir="/repo/x")
+    hits = recall.search("osprey harrier", all_projects=True)
+    assert hits
+    assert hits[0]["rank_score"] == hits[0]["match_score"]
+
+
 # ---- #25: AND-then-OR fallback — a richer cue must never zero out recall ----
 
 
@@ -1142,6 +1156,69 @@ def test_suggest_only_superseded_matches_still_delivers(
                          project_dir="/repo/x", current_session="S-now")
     flagged = [r for r in out if r["superseded_by"] == "S-newer"]
     assert flagged and flagged[0]["session_id"] == "S-old"
+
+
+# ---- #1073: rank_score — the weighted rank the sort used, next to the raw
+# ---- bm25 match_score every row already carries -----------------------
+
+
+def test_suggest_live_row_rank_score_is_relevance_times_effective_weight(
+        tmp_checkpoint_dir, monkeypatch):
+    # A live (never superseded, never invalidated) row's rank_score is just
+    # relevance (its own match_score, floored at 0) times #78's
+    # effective_weight — no demotion applies, so this pins the base formula
+    # before the demoted tests below layer a multiplier on top of it.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    stamp = "2026-06-20T00:00:00Z"
+    now = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    store.write_checkpoint(
+        "S-live", _cp125("S-live", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+            "importance": 9, "first_seen": stamp,
+        }], created=stamp),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now",
+                         now=now)
+    assert out and out[0]["session_id"] == "S-live"
+    row = out[0]
+    weight = recall._suggest_weight(row, "recent_decision", now)
+    expected = max(0.0, float(row["match_score"])) * weight
+    assert row["rank_score"] == pytest.approx(expected)
+    assert row["rank_score"] < row["match_score"]
+
+
+def test_suggest_superseded_row_rank_score_is_lower_than_its_match_score(
+        tmp_checkpoint_dir, monkeypatch):
+    # #1073 gap 1: the raw match_score cannot tell a demoted row apart from a
+    # live one with the same bm25 score. rank_score must carry the demotion
+    # (the 0.7 supersede-link weight, #907/#991) that match_score never did.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S-old", _cp125("S-old", decisions=[{
+            "text": "pin the litellm gateway cache for bad responses",
+            "trust": "verbatim", "quote": "pin it",
+            "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
+        }], created="2026-06-20T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    store.write_checkpoint(
+        "S-newer", _cp125("S-newer", decisions=[{
+            "text": "unpinned the litellm gateway cache, old diagnosis wrong",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "pin litellm gateway cache bad responses"}],
+        }], created="2026-06-25T00:00:00Z"),
+        project_dir="/repo/x",
+    )
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now")
+    flagged = [r for r in out if r["superseded_by"] == "S-newer"]
+    assert flagged
+    row = flagged[0]
+    assert row["rank_score"] < row["match_score"]
 
 
 def test_suggest_candidate_limit_tiers_before_truncating(
