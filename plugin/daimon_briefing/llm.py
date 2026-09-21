@@ -586,7 +586,16 @@ def extract_json(text):
     raise json.JSONDecodeError("no JSON object/array found in response", t, 0)
 
 
-_CLAUDE_PRESET = ("claude -p --model haiku --output-format json", "json:result")
+# #1077: the child still loads the user's plugins under DAIMON_DISABLE=1,
+# including daimon's own MCP server. That launcher sees DAIMON_DISABLE and
+# exits 0 before starting the server, the right call for the child, but
+# Claude Code records that early exit as CONNECTION_CLOSED in its shared,
+# machine-wide MCP failure cache, keyed by server name. For the next 15
+# minutes every new session on the machine skips that server. The serializer
+# only turns text into JSON and never needs an MCP tool, so
+# --strict-mcp-config with no --mcp-config makes the child load none, and it
+# never touches the shared cache.
+_CLAUDE_PRESET = ("claude -p --model haiku --output-format json --strict-mcp-config", "json:result")
 
 
 def _flatten_messages(messages):
