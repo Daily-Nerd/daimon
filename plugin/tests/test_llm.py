@@ -369,10 +369,11 @@ def test_resolve_command_claude_preset(monkeypatch):
     assert inp == "stdin"  # #58: the claude-cli preset never changes off stdin
     # #1077: the child still loads the user's plugins under DAIMON_DISABLE=1,
     # and a launcher exiting 0 there gets recorded as CONNECTION_CLOSED in
-    # Claude Code's shared, machine-wide MCP failure cache, hiding every MCP
-    # server (not just daimon's own) from every session for the next 15
-    # minutes. The serializer only turns text into JSON and needs no MCP
-    # tools, so the resolved argv must refuse all of them.
+    # Claude Code's shared, machine-wide MCP failure cache, keyed by server
+    # name. That hides daimon's own MCP server from every new session on the
+    # machine for the next 15 minutes. The serializer only turns text into
+    # JSON and needs no MCP tools, so the resolved argv must refuse all of
+    # them.
     assert "--strict-mcp-config" in shlex.split(cmd)
 
 
