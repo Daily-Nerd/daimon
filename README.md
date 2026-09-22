@@ -119,7 +119,7 @@ It is not praise alone. The same summary names the weak half: "The retrieval hal
 | Windsurf adapter | live-validated |
 | Codex adapter | live-validated capture (real sessions serialized since 2026-08-06) |
 | Kimi Code adapter | briefing and capture, probe-measured; no ruling checks yet |
-| Gemini host hooks | blocked upstream (`gemini-cli#14715`) |
+| Gemini host hooks | briefing ships; capture unverified (upstream `transcript_path` stub fixed in gemini-cli v0.21.0, no real session run through serialize yet) |
 | Team memory | shipped, opt-in, early |
 
 Daimon is self-contained at runtime: no external memory backend or required daemon.

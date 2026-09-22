@@ -1,13 +1,15 @@
 ---
-description: "Set up daimon on Gemini CLI. Briefing injection ships today; capture is blocked upstream on gemini-cli#14715, so this host runs half the loop."
+description: "Set up daimon on Gemini CLI. Briefing injection ships today; the upstream transcript_path stub (gemini-cli#14715) was fixed in gemini-cli v0.21.0, so serialize can run, but end-to-end capture is unverified by this project."
 ---
 
 # Gemini CLI
 
 Gemini support mirrors the Claude Code shape, split across two scripts. The
-briefing hook is shipped, but serialize **cannot run end-to-end today**:
-capture is staged behind upstream `gemini-cli#14715` (`transcript_path`
-stub) — half a loop, by upstream constraint, not a daimon bug.
+briefing hook is shipped. Serialize can run too: the upstream `transcript_path`
+stub (`gemini-cli#14715`) was fixed in gemini-cli **v0.21.0** (2025-12-16), so
+a real path reaches the `SessionEnd` hook on that version and later. What
+`daimon serialize` does with a Gemini transcript once it has a real path is
+unverified by this project, see the Verify section below.
 
 ## What each script does
 
@@ -19,11 +21,11 @@ stub) — half a loop, by upstream constraint, not a daimon bug.
   `{"systemMessage": ...}` instead. `SessionStart` is advisory-only: exit 0
   always, startup is never blocked.
 - **`daimon-gemini-session-end.py`** — `SessionEnd` hook. Mirrors the Claude
-  Code `SessionEnd` hook (spawns `daimon serialize <transcript_path>`
-  detached), but Gemini CLI currently sends `transcript_path` as an **empty
-  stub** (`gemini-cli#14715`, upstream limitation as of 2026-07-01), so this
-  hook's primary behavior today is a graceful, logged skip. The spawn path is
-  ready for when upstream populates the field.
+  Code `SessionEnd` hook: spawns `daimon serialize <transcript_path>` detached
+  when `transcript_path` is non-empty, and logs a graceful skip when it is
+  not. On gemini-cli **v0.21.0 and later** (the fix for `gemini-cli#14715`),
+  `transcript_path` carries a real path, so the hook spawns serialize. On
+  earlier versions the field still arrives empty and the hook still skips.
 
 ## Install (manual, from a clone)
 
@@ -63,6 +65,15 @@ install after upgrading `daimon` to refresh the content.
 daimon status
 ```
 
-Until `gemini-cli#14715` is resolved upstream, expect `daimon status` to show
-capture as skipped rather than written — briefing injection on `SessionStart`
-still works independently of capture.
+On gemini-cli **v0.21.0 or later**, `daimon status` should show a fresh
+checkpoint for the project after a session ends. Whether a Gemini transcript
+actually parses into a checkpoint is unverified by this project: `daimon
+serialize` has purpose-built parsing for Codex, Windsurf and Kimi, plus a
+generic fallback, and nobody on the project has run a real Gemini session
+through it since the upstream fix shipped. If `daimon status` shows no fresh
+checkpoint, or a serialize error, a parsing gap is the likely cause, and a
+report naming your gemini-cli version is welcome.
+
+On gemini-cli **before v0.21.0**, expect capture to show as skipped rather
+than written. Briefing injection on `SessionStart` works independently of
+capture either way.
