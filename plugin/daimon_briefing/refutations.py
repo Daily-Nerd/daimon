@@ -174,9 +174,21 @@ _CHECK_HOST_ROOT_RE = re.compile(r"(?:^|[^\w/])(?:~/|\$HOME/|\$\{HOME\}/|"
 # one vocabulary.
 _POLICY_SLUG_RE = re.compile(r"[\w-]{1,255}")
 _POLICY_KINDS = frozenset({"info", "work"})
-_POLICY_VERBS = frozenset({"accept"})
+# #961 slice 5: `verb=open` covers exactly `kind=info` — the ONLY thing a
+# sender-side ruling can lower is its own agent's approval bar on an ask it
+# is about to send, and `work` is already `DEFAULT_KIND`, so a `verb=open,
+# kind=work` policy would authorize nothing a ratify would ever need to grant.
+_POLICY_OPEN_KINDS = frozenset({"info"})
+_POLICY_VERBS = frozenset({"accept", "open"})
 _POLICY_BY = frozenset({"agent"})
-_POLICY_KEYS = frozenset({"sender", "kind", "verb", "by"})
+# Verb-branched: `accept` (slice 4) names the SENDER this project trusts;
+# `open` (slice 5) names the RECIPIENT the ruling's own bucket — unambiguously
+# the sender for that verb — may open a lowered-scrutiny ask toward. A single
+# unified shape with both fields present-but-optional would let a caller
+# supply both, or neither, with no refusal to explain what they meant — the
+# same totality-over-shape posture `_check` already holds this ledger to.
+_POLICY_KEYS_ACCEPT = frozenset({"sender", "kind", "verb", "by"})
+_POLICY_KEYS_OPEN = frozenset({"to", "kind", "verb", "by"})
 
 # Every field of a ledger row that can hold ITEM plaintext, flat then nested
 # (#645). One declaration, two consumers: `forget_content_key` below decides
@@ -226,6 +238,118 @@ def _path(project_dir=None):
     if not slug:
         return None
     return config.checkpoint_dir() / slug / "refutations.jsonl"
+
+
+def _tombstone_path(project_dir=None):
+    """#961 slice 5: the plaintext-free interval record `forget_content_key`
+    leaves behind for a forgotten ruling that carried a `request_policy`.
+
+    Mirrors `_path`, but a SEPARATE file rather than a row shape inside
+    `refutations.jsonl` — `events()` only accepts rows whose `event` is a
+    known lifecycle event and whose `refutation_id` names a record `fold`
+    can build, and this file exists precisely BECAUSE forget stops that
+    ruling id from being a live record at all; growing the main ledger's own
+    event vocabulary for one dead record's interval is not worth it."""
+    slug = store.project_slug(config.resolve_project_dir(project_dir))
+    if not slug:
+        return None
+    return config.checkpoint_dir() / slug / "request_policy_tombstones.jsonl"
+
+
+def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
+    """#961 slice 5, ratified 2026-09-22 section 11: `forget_content_key`
+    removes every row of a matched ruling, which would otherwise erase that
+    ruling's activation interval too — and because `kind` is re-derived on
+    every fold (`requests._kind_of`), a past `info` ask opened under that
+    ruling would silently flip to `work` the instant its authorizing text
+    was forgotten. This writes one tombstone row per interval `doomed` ever
+    held, read from `request_policy_history` BEFORE the caller rewrites the
+    ledger, each carrying the SAME nine fields `request_policy_history`
+    already returns — so the merge `request_policy_history` does at read
+    time is a plain union, never a special case. All six grant fields are
+    structural (a bucket slug, closed-enum strings, an opaque id, a hash),
+    none of them in `_PLAINTEXT_FIELDS`.
+
+    A still-OPEN interval (`active_until is None`) is closed at the
+    forget's own `order` here, never left open: `overturn`/`retire` both
+    refuse a forgotten record, so an open tombstone would be a permanent
+    grant a forged future row could ride forever. An already-CLOSED
+    interval is written unchanged — its true close point is already known
+    and must not be pushed later than it really was. Best-effort: a write
+    failure here is disclosed nowhere else, the same posture `_sync_checks`
+    already holds for its own post-forget bookkeeping."""
+    if not doomed:
+        return
+    path = _tombstone_path(project_dir)
+    if path is None:
+        return
+    try:
+        history = request_policy_history(project_dir=project_dir)
+    except Exception:
+        history = frozenset()
+    forget_order = time.time_ns()
+    rows = []
+    for entry in history:
+        sender, to, kind, verb, by, ruling_id, sha, since, until = entry
+        if ruling_id not in doomed:
+            continue
+        until = forget_order if until is None else until
+        rows.append({
+            "sender": sender, "to": to, "kind": kind, "verb": verb, "by": by,
+            "ruling_id": ruling_id, "policy_sha256": sha,
+            "active_from": since, "active_until": until,
+        })
+    if not rows:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            if _is_torn(path):
+                handle.write("\n")
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _read_policy_tombstones(project_dir=None) -> frozenset:
+    """#961 slice 5: every tombstoned interval for this project's forgotten
+    rulings, as the SAME 9-field tuples `request_policy_history` returns.
+    Merged into that function's result there — a plain union, since the
+    ledger fold can never produce an entry for a ruling id `forget` has
+    already removed every row of. Fail-open to the empty set on any read
+    error, the same posture every reader in this module holds for the
+    ledger it belongs to."""
+    path = _tombstone_path(project_dir)
+    if path is None or not path.exists():
+        return frozenset()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return frozenset()
+    out = set()
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        active_from_raw = row.get("active_from")
+        active_until_raw = row.get("active_until")
+        try:
+            active_from = int(active_from_raw)  # type: ignore[arg-type]
+            active_until = (None if active_until_raw is None
+                            else int(active_until_raw))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        out.add((
+            str(row.get("sender") or ""), str(row.get("to") or ""),
+            row.get("kind"), row.get("verb"), row.get("by"),
+            str(row.get("ruling_id") or ""),
+            str(row.get("policy_sha256") or ""),
+            active_from, active_until))
+    return frozenset(out)
 
 
 def bucket_exists(project_dir=None) -> bool:
@@ -399,73 +523,104 @@ def _check(value) -> dict | None:
 
 
 def _policy(value) -> dict | None:
-    """Validate and normalize a ruling's `request_policy` (#961 slice 4), or
-    None.
+    """Validate and normalize a ruling's `request_policy`, or None.
 
-    Shape: `{"sender": "<slug>", "kind": "info"|"work", "verb": "accept",
-    "by": "agent"}` — exactly those four keys. A missing one is silently
-    narrower than the ceremony would display and an extra one is a caller
-    reaching for a shape this ruling hook has not built, so both are refused
-    rather than defaulted or ignored, the same totality-over-shape posture
-    `_check` already holds this ledger to.
+    Verb-branched, not one shape with optional fields (#961 slice 5): a
+    caller supplying both `sender` and `to`, or neither, would otherwise get
+    no refusal explaining what they meant, the same totality-over-shape
+    posture `_check` already holds this ledger to.
 
-    `kind: "info"` is accepted and stored as a genuine, if inert, policy: an
-    `info` accept needs no ruling at all (`accept()`'s own write boundary
-    already permits it unconditionally), so a policy naming it can never be
-    the thing that authorizes a landed accept — `active_request_policies`
-    still returns it, `requests.fold`'s widened exception still only ever
-    matches a `work` row, and there is no second code path here that treats
-    `info` as unreachable and could drift from that. Refusing it instead
-    would just relabel the same inertness as a write-time error for no
-    reader's benefit.
+    `verb == "accept"` (slice 4): `{"sender": "<slug>", "kind": "info"|
+    "work", "verb": "accept", "by": "agent"}` — the party THIS project
+    trusts to record an accept on its behalf.
 
-    `sender` is an EXACT bucket slug, never a wildcard — slice 4's own
-    binding answer (`sender="*"` is not permitted). Returns the dict that is
-    STORED, plus a `sha256` over its own canonical four fields: the same
-    role `check`'s embedded hash plays for `ratify`'s content-binding pin
-    (`policy_sha256`, mirroring `check_sha256`).
+    `verb == "open"` (slice 5): `{"to": "<slug>", "kind": "info", "verb":
+    "open", "by": "agent"}` — the recipient this ruling's OWN bucket (the
+    sender, unambiguously) may open a lowered-scrutiny ask toward. `kind` is
+    restricted to the single member `info`: `work` is already `DEFAULT_KIND`,
+    so a `verb=open, kind=work` policy would authorize nothing — the same
+    reasoning the reclassification design gives for refusing an agent
+    proposal targeting `work`. `to` is an EXACT bucket slug, never a
+    wildcard (ratified 2026-09-22: a sender-side wildcard would spend other
+    projects' oversight without their consent, since `info` removes an ask
+    from the RECIPIENT's own decision queue).
+
+    `kind: "info"` on a `verb=accept` policy is accepted and stored as a
+    genuine, if inert, policy: an `info` accept needs no ruling at all
+    (`accept()`'s own write boundary already permits it unconditionally), so
+    a policy naming it can never be the thing that authorizes a landed
+    accept — `active_request_policies` still returns it, `requests.fold`'s
+    widened exception still only ever matches a `work` row, and there is no
+    second code path here that treats `info` as unreachable and could drift
+    from that. Refusing it instead would just relabel the same inertness as
+    a write-time error for no reader's benefit.
+
+    Returns the dict that is STORED, plus a `sha256` over its own canonical
+    four fields: the same role `check`'s embedded hash plays for `ratify`'s
+    content-binding pin (`policy_sha256`, mirroring `check_sha256`).
     """
     if value is None:
         return None
     if not isinstance(value, dict):
         raise RefutationError(
-            "request_policy must be an object with sender, kind, verb, and by")
+            "request_policy must be an object with verb, kind, by, and "
+            "either sender (verb=accept) or to (verb=open)")
+    # `verb` decides which key set applies below, so a MISSING `verb` is
+    # checked on its own, before the value check — otherwise a caller who
+    # dropped `verb` entirely would see "must be one of: accept, open"
+    # rather than the "missing" wording every other missing key gets, the
+    # same totality-over-shape posture `_check` already holds this ledger
+    # to (a missing key is silently narrower than the ceremony would show).
+    if "verb" not in value:
+        raise RefutationError(
+            "request_policy is missing verb; must carry exactly sender, "
+            "kind, verb, and by (verb=accept) or to, kind, verb, and by "
+            "(verb=open)")
+    verb = value.get("verb")
+    if verb not in _POLICY_VERBS:
+        raise RefutationError(
+            "request_policy verb must be one of: "
+            f"{', '.join(sorted(_POLICY_VERBS))}")
+    if verb == "accept":
+        expected_keys = _POLICY_KEYS_ACCEPT
+        field_name = "sender"
+        allowed_kinds = _POLICY_KINDS
+    else:
+        expected_keys = _POLICY_KEYS_OPEN
+        field_name = "to"
+        allowed_kinds = _POLICY_OPEN_KINDS
     keys = frozenset(value.keys())
-    if keys != _POLICY_KEYS:
-        missing = sorted(_POLICY_KEYS - keys)
-        extra = sorted(keys - _POLICY_KEYS)
+    if keys != expected_keys:
+        missing = sorted(expected_keys - keys)
+        extra = sorted(keys - expected_keys)
         detail = []
         if missing:
             detail.append(f"missing {', '.join(missing)}")
         if extra:
             detail.append(f"unexpected {', '.join(extra)}")
         raise RefutationError(
-            "request_policy must carry exactly sender, kind, verb, and by "
-            f"({'; '.join(detail)})")
-    sender = str(value.get("sender") or "")
+            f"a verb={verb!r} request_policy must carry exactly "
+            f"{', '.join(sorted(expected_keys))} ({'; '.join(detail)})")
+    field_value = str(value.get(field_name) or "")
     kind = value.get("kind")
-    verb = value.get("verb")
     by = value.get("by")
-    if not sender or not _POLICY_SLUG_RE.fullmatch(sender):
+    if not field_value or not _POLICY_SLUG_RE.fullmatch(field_value):
         raise RefutationError(
-            "request_policy sender must be an exact bucket slug; wildcards "
-            "are not permitted in slice 4")
-    if kind not in _POLICY_KINDS:
+            f"request_policy {field_name} must be an exact bucket slug; "
+            "wildcards are not permitted"
+            + (" in slice 4" if verb == "accept" else ""))
+    if kind not in allowed_kinds:
         raise RefutationError(
             "request_policy kind must be one of: "
-            f"{', '.join(sorted(_POLICY_KINDS))}")
-    if verb not in _POLICY_VERBS:
-        raise RefutationError(
-            "request_policy verb must be one of: "
-            f"{', '.join(sorted(_POLICY_VERBS))}")
+            f"{', '.join(sorted(allowed_kinds))}")
     if by not in _POLICY_BY:
         raise RefutationError(
             f"request_policy by must be one of: {', '.join(sorted(_POLICY_BY))}")
     canonical = json.dumps(
-        {"sender": sender, "kind": kind, "verb": verb, "by": by},
+        {field_name: field_value, "kind": kind, "verb": verb, "by": by},
         sort_keys=True)
     return {
-        "sender": sender,
+        field_name: field_value,
         "kind": kind,
         "verb": verb,
         "by": by,
@@ -712,6 +867,12 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
                 doomed.add(ref_id)
     if not doomed:
         return []
+    # #961 slice 5: read the interval BEFORE the rewrite below removes every
+    # row a doomed ruling ever wrote — `request_policy_history` reads the
+    # ledger fresh, so this must run while the rows it needs are still on
+    # disk. Tombstones only a ruling's OWN interval; a doomed record with no
+    # `request_policy` at all resolves to no rows here and costs nothing.
+    _write_policy_tombstones(doomed, project_dir=project_dir)
     # Rewrite RAW LINES, never `events()` output. That reader is deliberately
     # tolerant — it drops malformed lines and rows whose `event` it does not
     # recognise, and it stamps a `_line` key onto what it returns. Round-tripping
@@ -1084,26 +1245,44 @@ def get(refutation_id: str, project_dir=None) -> dict | None:
 
 
 def _policy_tuple(ruling: dict):
-    """The `(sender, kind, verb, by, ruling_id, sha256)` tuple for one
+    """The `(sender, to, kind, verb, by, ruling_id, sha256)` 7-tuple for one
     ACTIVE-shaped ruling record, or None when its `request_policy` is
     missing or malformed (a hand-edited ledger — the fold gate already
     refuses any ratify that would leave a mismatched or unpinned policy on
     a record read through the ordinary writers, so this is read-boundary
     defense, not the enforcement itself). Shared by `active_request_
     policies` and `request_policy_history` so the two can never disagree
-    about what counts as a well-formed grant."""
+    about what counts as a well-formed grant.
+
+    #961 slice 5: widened by one field, not duplicated per verb. `sender` is
+    `""` for a `verb=open` policy, `to` is `""` for a `verb=accept` one —
+    never a real slug for either verb (`_policy` refuses an empty `sender`
+    or `to` at the write boundary), so a matcher reading only its own verb's
+    field can never accidentally match the other verb's empty string."""
     policy = ruling.get("request_policy")
     if not isinstance(policy, dict):
         return None
     sha = str(policy.get("sha256") or "")
-    sender = str(policy.get("sender") or "")
-    kind = policy.get("kind")
     verb = policy.get("verb")
+    kind = policy.get("kind")
     by = policy.get("by")
-    if (not sha or not sender or kind not in _POLICY_KINDS
-            or verb not in _POLICY_VERBS or by not in _POLICY_BY):
+    if verb == "accept":
+        sender = str(policy.get("sender") or "")
+        to = ""
+        allowed_kinds = _POLICY_KINDS
+        valid_field = bool(sender)
+    elif verb == "open":
+        sender = ""
+        to = str(policy.get("to") or "")
+        allowed_kinds = _POLICY_OPEN_KINDS
+        valid_field = bool(to)
+    else:
         return None
-    return (sender, kind, verb, by, str(ruling.get("refutation_id") or ""), sha)
+    if (not sha or not valid_field or kind not in allowed_kinds
+            or by not in _POLICY_BY):
+        return None
+    return (sender, to, kind, verb, by, str(ruling.get("refutation_id") or ""),
+            sha)
 
 
 def active_request_policies(project_dir=None) -> frozenset:
@@ -1250,7 +1429,13 @@ def request_policy_history(project_dir=None) -> frozenset:
         for ref_id, current in open_grant.items():
             if current is not None:
                 out.add(current + (open_since[ref_id], None))
-        return frozenset(out)
+        # #961 slice 5: a forgotten ruling's own rows are gone from `events`
+        # above by the time this runs again, so its interval would otherwise
+        # vanish entirely rather than merely close — `_write_policy_
+        # tombstones` (called from `forget_content_key`, before the rewrite)
+        # is the only remaining source for it. Tuple-identical, so this is a
+        # plain set union, never a special case downstream.
+        return frozenset(out) | _read_policy_tombstones(project_dir=project_dir)
     except Exception:
         return frozenset()
 

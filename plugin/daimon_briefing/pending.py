@@ -348,11 +348,21 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
             by_id.setdefault(rid, []).append(stripped)
     counts: dict[str, int] = {}
     policies_by_recipient: dict[str, frozenset] = {}
+    # #961 slice 5: a SECOND cache, keyed on the founder's own ORIGIN bucket
+    # (`row["_origin_slug"]`, already stamped above) rather than the
+    # recipient `to` — `verb=open` authority is sender-side, the opposite
+    # direction from the `verb=accept` cache just above, so mixing the two
+    # into one map would let a recipient's own ruling cover an open it never
+    # ratified. One read per distinct origin, the same discipline the
+    # `to`-keyed cache already holds.
+    open_policies_by_origin: dict[str, frozenset] = {}
     for rows in by_id.values():
         to = ""
+        origin = ""
         for row in rows:
             if row.get("event") == "opened":
                 to = str(row.get("to") or "")
+                origin = str(row.get("_origin_slug") or "")
                 break
         policies = policies_by_recipient.get(to)
         if policies is None:
@@ -362,8 +372,18 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
             except Exception:
                 policies = frozenset()
             policies_by_recipient[to] = policies
+        open_policies = open_policies_by_origin.get(origin)
+        if open_policies is None:
+            try:
+                open_policies = (
+                    refutations.request_policy_history(project_dir=origin)
+                    if origin else frozenset())
+            except Exception:
+                open_policies = frozenset()
+            open_policies_by_origin[origin] = open_policies
         try:
-            folded = requests.fold(rows, policies=policies)
+            folded = requests.fold(rows, policies=policies,
+                                   open_policies={origin: open_policies})
         except Exception:
             continue
         for record in folded.values():

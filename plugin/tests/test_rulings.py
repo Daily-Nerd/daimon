@@ -2052,7 +2052,9 @@ def test_active_request_policies_returns_an_active_pinned_grant(
     ruling_id = _rule(channel="cli-tty", ratified=True, request_policy=_policy())
     sha = refutations.get(ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
     out = refutations.active_request_policies(project_dir=PROJECT)
-    assert ("p-sender", "work", "accept", "agent", ruling_id, sha) in out
+    # #961 slice 5: `_policy_tuple` widened by one field (`to`, index 1,
+    # `""` on every `verb=accept` grant).
+    assert ("p-sender", "", "work", "accept", "agent", ruling_id, sha) in out
 
 
 def test_active_request_policies_excludes_a_candidate_ruling(
@@ -2102,9 +2104,11 @@ def test_request_policy_history_returns_an_open_interval_for_an_active_grant(
     out = refutations.request_policy_history(project_dir=PROJECT)
     assert len(out) == 1
     entry = next(iter(out))
-    sender, kind, verb, by, rid, entry_sha, since, until = entry
-    assert (sender, kind, verb, by, rid, entry_sha) == (
-        "p-sender", "work", "accept", "agent", ruling_id, sha)
+    # #961 slice 5: `_policy_tuple` widened by one field (`to`, inserted
+    # after `sender`) — a `verb=accept` grant carries `to == ""`.
+    sender, to, kind, verb, by, rid, entry_sha, since, until = entry
+    assert (sender, to, kind, verb, by, rid, entry_sha) == (
+        "p-sender", "", "work", "accept", "agent", ruling_id, sha)
     assert since is not None
     assert until is None  # still open
 
@@ -2116,8 +2120,10 @@ def test_request_policy_history_closes_the_interval_on_overturn(
     out = refutations.request_policy_history(project_dir=PROJECT)
     assert len(out) == 1
     entry = next(iter(out))
-    assert entry[6] is not None and entry[7] is not None  # since, until
-    assert entry[6] < entry[7]
+    # #961 slice 5: since/until shifted from indices 6/7 to 7/8 by the `to`
+    # field inserted at index 1.
+    assert entry[7] is not None and entry[8] is not None  # since, until
+    assert entry[7] < entry[8]
 
 
 def test_request_policy_history_opens_a_second_interval_on_a_narrower_revise(
@@ -2127,15 +2133,16 @@ def test_request_policy_history_opens_a_second_interval_on_a_narrower_revise(
         ruling_id, channel="signed", evidence=["issue:961"],
         request_policy=_policy(sender="p-other"), project_dir=PROJECT)
     out = refutations.request_policy_history(project_dir=PROJECT)
-    senders_and_until = {(e[0], e[7]) for e in out}
+    # #961 slice 5: `until` shifted from index 7 to 8; `sender` stays at 0.
+    senders_and_until = {(e[0], e[8]) for e in out}
     # The original grant's interval CLOSED (until is not None); the new
     # grant's interval is OPEN (until is None) — two distinct facts, both
     # kept, neither erased.
     assert ("p-sender", None) not in senders_and_until
     closed = [e for e in out if e[0] == "p-sender"]
-    assert len(closed) == 1 and closed[0][7] is not None
+    assert len(closed) == 1 and closed[0][8] is not None
     opened = [e for e in out if e[0] == "p-other"]
-    assert len(opened) == 1 and opened[0][7] is None
+    assert len(opened) == 1 and opened[0][8] is None
 
 
 def test_request_policy_history_a_candidate_ruling_contributes_no_interval(
@@ -2245,10 +2252,12 @@ def test_a_forged_row_with_a_non_numeric_order_does_not_sink_the_history(
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(forged) + "\n")
     after = refutations.request_policy_history(project_dir=PROJECT)
-    grant = lambda entry: entry[:6]  # noqa: E731 — (sender, kind, verb, by, id, sha)
+    # #961 slice 5: `_policy_tuple` widened by one field (`to`, index 1) —
+    # a `verb=accept` grant's own 7-field identity is now entry[:7].
+    grant = lambda entry: entry[:7]  # noqa: E731 — (sender, to, kind, verb, by, id, sha)
     assert {grant(e) for e in after} == {grant(e) for e in before}
     (entry,) = after
-    active_from, active_until = entry[6], entry[7]
+    active_from, active_until = entry[7], entry[8]
     assert active_from == 0, "a non-numeric order reads as 0, not as an error"
     assert active_until is None
 
@@ -2264,6 +2273,525 @@ def test_clearing_a_request_policy_on_a_refutation_is_refused(
         refutations.revise(ref_id, channel="cli-agent",
                            evidence=["measurement:again"],
                            clear_request_policy=True, project_dir=PROJECT)
+
+
+# ---- #961 slice 5: verb=open request_policy, the sender-side ruling ------
+#
+# Slice 4's `request_policy` names the party THIS project trusts to accept on
+# its behalf (`verb=accept`). Slice 5 is the mirror direction: a ruling in
+# the SENDER's own bucket naming the RECIPIENT its own agent may open a
+# lowered-scrutiny `info` ask toward (`verb=open`). Validation, storage, and
+# the two resolvers are covered here; the write boundary
+# (`requests.open_request`) and the fold gate are in test_requests.py.
+
+
+def _open_policy(**overrides):
+    values = {"to": "p-recipient", "kind": "info", "verb": "open",
+             "by": "agent"}
+    values.update(overrides)
+    return values
+
+
+def test_open_policy_validator_accepts_the_documented_shape():
+    out = refutations._policy(_open_policy())
+    assert out["to"] == "p-recipient"
+    assert out["kind"] == "info"
+    assert out["verb"] == "open"
+    assert out["by"] == "agent"
+    assert len(out["sha256"]) == 64
+    assert "sender" not in out
+
+
+def test_open_policy_validator_refuses_kind_work():
+    """`work` is already `DEFAULT_KIND`; a `verb=open` policy naming it
+    would authorize nothing a ratify would ever need to grant."""
+    with pytest.raises(refutations.RefutationError, match="kind"):
+        refutations._policy(_open_policy(kind="work"))
+
+
+def test_open_policy_validator_refuses_a_wildcard_to():
+    """Ratified 2026-09-22: no wildcard. `info` removes an ask from the
+    RECIPIENT's own decision queue, so a sender-side wildcard would spend
+    other projects' oversight without their consent."""
+    with pytest.raises(refutations.RefutationError, match="wildcard"):
+        refutations._policy(_open_policy(to="*"))
+
+
+def test_open_policy_validator_refuses_an_empty_to():
+    with pytest.raises(refutations.RefutationError, match="bucket slug"):
+        refutations._policy(_open_policy(to=""))
+
+
+@pytest.mark.parametrize("missing", ["to", "kind", "verb", "by"])
+def test_open_policy_validator_refuses_a_missing_key(missing):
+    values = _open_policy()
+    del values[missing]
+    with pytest.raises(refutations.RefutationError, match="missing"):
+        refutations._policy(values)
+
+
+def test_open_policy_validator_refuses_a_sender_field_as_an_unexpected_extra():
+    """The `verb=accept` key on a `verb=open` policy is an unexpected extra,
+    never a silent no-op."""
+    values = _open_policy()
+    values["sender"] = "p-someone"
+    with pytest.raises(refutations.RefutationError, match="unexpected"):
+        refutations._policy(values)
+
+
+def test_open_policy_validator_refuses_an_unknown_verb():
+    with pytest.raises(refutations.RefutationError, match="verb"):
+        refutations._policy(_open_policy(verb="reject"))
+
+
+def test_open_policy_validator_hash_is_stable_for_the_same_four_fields():
+    a = refutations._policy(_open_policy())
+    b = refutations._policy(_open_policy())
+    assert a["sha256"] == b["sha256"]
+
+
+def test_open_policy_validator_hash_changes_with_to():
+    a = refutations._policy(_open_policy())
+    b = refutations._policy(_open_policy(to="p-other"))
+    assert a["sha256"] != b["sha256"]
+
+
+def test_open_policy_validator_hash_differs_from_an_accept_policy_naming_the_same_slug():
+    """Two different verbs, two different grants — even naming the same
+    bucket slug, the hashes must never collide."""
+    open_out = refutations._policy(_open_policy(to="p-shared"))
+    accept_out = refutations._policy(_policy(sender="p-shared"))
+    assert open_out["sha256"] != accept_out["sha256"]
+
+
+def test_open_policy_tuple_widens_by_one_field_sender_empty_to_set(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True,
+                      request_policy=_open_policy())
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    tup = refutations._policy_tuple(record)
+    assert tup[:5] == ("", "p-recipient", "info", "open", "agent")
+
+
+def test_active_request_policies_returns_an_open_verb_grant(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True,
+                      request_policy=_open_policy())
+    sha = refutations.get(
+        ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    out = refutations.active_request_policies(project_dir=PROJECT)
+    assert ("", "p-recipient", "info", "open", "agent", ruling_id, sha) in out
+
+
+def test_request_policy_history_returns_an_open_interval_for_an_open_verb_grant(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True,
+                      request_policy=_open_policy())
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(out) == 1
+    entry = next(iter(out))
+    sender, to, kind, verb, by, rid, sha, since, until = entry
+    assert (sender, to, kind, verb, by, rid) == (
+        "", "p-recipient", "info", "open", "agent", ruling_id)
+    assert since is not None
+    assert until is None  # still open
+
+
+def test_request_policy_history_closes_an_open_verb_interval_on_overturn(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True,
+                      request_policy=_open_policy())
+    refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    (entry,) = out
+    assert entry[7] is not None and entry[8] is not None
+    assert entry[7] < entry[8]
+
+
+# ---- #961 slice 5: forget leaves a plaintext-free interval tombstone ------
+#
+# `forget_content_key` removes every row of a matched ruling, which would
+# otherwise erase its activation interval too — and because `kind` is
+# re-derived on every fold, a past `info` ask opened under that ruling would
+# silently flip to `work` the instant its authorizing text was forgotten.
+
+
+def test_forgetting_a_ruling_leaves_a_closed_tombstone_for_its_open_policy(
+        tmp_checkpoint_dir):
+    from daimon_briefing import normalize
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="tombstone open subject",
+        verdict="tombstone open verdict text")
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    assert before, "seed must produce an interval to compare against"
+    removed = refutations.forget_content_key(
+        normalize.content_key("tombstone open verdict text"),
+        project_dir=PROJECT)
+    assert ruling_id in removed
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(after) == 1
+    (entry,) = after
+    sender, to, kind, verb, by, rid, sha, since, until = entry
+    assert (to, kind, verb, by, rid) == (
+        "p-recipient", "info", "open", "agent", ruling_id)
+    # Closed at forget's own order — never left open, or a forged future row
+    # could ride the grant forever (`overturn`/`retire` both refuse a
+    # forgotten record, so nothing else could ever close it).
+    assert until is not None
+    assert since < until
+
+
+def test_forgetting_a_ruling_leaves_a_closed_tombstone_for_its_accept_policy(
+        tmp_checkpoint_dir):
+    """Section 11's point 5: the same tombstone path applies to `verb=accept`
+    policies too, sharing one mechanism."""
+    from daimon_briefing import normalize
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_policy(),
+        subject="tombstone accept subject",
+        verdict="tombstone accept verdict text")
+    removed = refutations.forget_content_key(
+        normalize.content_key("tombstone accept verdict text"),
+        project_dir=PROJECT)
+    assert ruling_id in removed
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(after) == 1
+    (entry,) = after
+    assert entry[0] == "p-sender" and entry[5] == ruling_id
+    assert entry[8] is not None  # until — closed, never open
+
+
+def test_a_tombstone_survives_a_later_forget_aimed_at_the_ruling_id(
+        tmp_checkpoint_dir):
+    """It holds no plaintext, so there is nothing left for a second forget
+    to find or remove."""
+    from daimon_briefing import normalize
+    _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="tombstone survives subject",
+        verdict="tombstone survives verdict text")
+    refutations.forget_content_key(
+        normalize.content_key("tombstone survives verdict text"),
+        project_dir=PROJECT)
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    assert len(before) == 1
+    # A second forget naming something the tombstone does not carry (it is
+    # plaintext-free) must not disturb it.
+    refutations.forget_content_key(
+        normalize.content_key("some unrelated value"), project_dir=PROJECT)
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    assert after == before
+
+
+def test_a_tombstone_carries_no_field_in_plaintext_fields(tmp_checkpoint_dir):
+    from daimon_briefing import normalize
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="tombstone plaintext-free subject",
+        verdict="tombstone plaintext-free verdict text")
+    refutations.forget_content_key(
+        normalize.content_key("tombstone plaintext-free verdict text"),
+        project_dir=PROJECT)
+    path = refutations._tombstone_path(PROJECT)
+    row = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert set(row.keys()) & set(refutations._PLAINTEXT_FIELDS) == set()
+    assert row["ruling_id"] == ruling_id
+
+
+def test_forgetting_a_ruling_with_no_request_policy_writes_no_tombstone(
+        tmp_checkpoint_dir):
+    _rule(channel="cli-tty", ratified=True,
+         subject="no policy subject",
+         verdict="no policy verdict text")
+    from daimon_briefing import normalize
+    refutations.forget_content_key(
+        normalize.content_key("no policy verdict text"), project_dir=PROJECT)
+    assert refutations.request_policy_history(project_dir=PROJECT) == (
+        frozenset())
+    path = refutations._tombstone_path(PROJECT)
+    assert path is None or not path.exists() or not path.read_text(
+        encoding="utf-8").strip()
+
+
+def test_forgetting_one_ruling_leaves_a_sibling_rulings_history_untouched(
+        tmp_checkpoint_dir):
+    """`_write_policy_tombstones` reads the WHOLE ledger's history and
+    filters to `doomed` — with two active open-verb rulings, forgetting one
+    must not tombstone the other's still-live interval."""
+    from daimon_briefing import normalize
+    kept_id = _rule(
+        channel="cli-tty", ratified=True,
+        request_policy=_open_policy(to="p-kept"),
+        subject="kept subject", verdict="kept verdict text")
+    forgotten_id = _rule(
+        channel="cli-tty", ratified=True,
+        request_policy=_open_policy(to="p-forgotten"),
+        subject="forgotten subject", verdict="forgotten verdict text")
+    refutations.forget_content_key(
+        normalize.content_key("forgotten verdict text"), project_dir=PROJECT)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    ids = {e[5] for e in out}
+    assert kept_id in ids and forgotten_id in ids
+    kept_entry = next(e for e in out if e[5] == kept_id)
+    forgotten_entry = next(e for e in out if e[5] == forgotten_id)
+    assert kept_entry[8] is None  # still open — never tombstoned
+    assert forgotten_entry[8] is not None  # closed by the tombstone
+
+
+def test_a_ruling_revised_twice_then_forgotten_tombstones_both_intervals(
+        tmp_checkpoint_dir):
+    """A `verb=open` ruling ratified, then revised to a DIFFERENT `to`
+    in-process (closing interval 1, opening interval 2), then forgotten:
+    both intervals must survive the forget, interval 1's `until` must stay
+    exactly what the revision set it to (never re-touched by the tombstone
+    write, which only caps a STILL-OPEN interval), interval 2's `until`
+    must equal the forget's own order, a row genuinely landed inside
+    interval 1 must still fold to `info`, and a row ordered after the
+    forget must fold to `work`."""
+    import time as _time
+    from daimon_briefing import normalize, requests
+
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True,
+        request_policy=_open_policy(to="p-first"),
+        subject="twice revised subject", verdict="twice revised verdict text")
+    sha1 = refutations.get(
+        ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    # An order that genuinely falls inside interval 1 — captured here,
+    # strictly between ratify's own order and the revision's, both below.
+    order_in_interval1 = _time.time_ns()
+    # In-process human channel: arms the new policy immediately, no
+    # separate ratify call needed (mirrors `test_human_in_process_revise_
+    # arms_the_supplied_policy_without_a_pin`).
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:961"],
+        request_policy=_open_policy(to="p-second"), project_dir=PROJECT)
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    interval1_before = next(e for e in before if e[1] == "p-first")
+    assert interval1_before[8] is not None  # already closed by the revise
+
+    removed = refutations.forget_content_key(
+        normalize.content_key("twice revised verdict text"),
+        project_dir=PROJECT)
+    assert ruling_id in removed
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None
+
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    entries = [e for e in after if e[5] == ruling_id]
+    assert len(entries) == 2, "both intervals must survive the forget"
+    interval1_after = next(e for e in entries if e[1] == "p-first")
+    interval2_after = next(e for e in entries if e[1] == "p-second")
+    assert interval1_after[8] == interval1_before[8], (
+        "an already-closed interval's until must be untouched by the "
+        "tombstone write")
+    assert interval2_after[8] is not None  # closed now, not left open
+    assert interval2_after[7] < interval2_after[8]
+
+    # A row genuinely landed inside interval 1 still folds to `info`.
+    covered_row = requests._stamp(
+        "opened", "q-0000000000f6", "cli-agent", now_ns=order_in_interval1)
+    covered_row.update({"to": "p-first", "ask": "an ask", "why": "a why",
+                        "kind": "info", "under_ruling": ruling_id,
+                        "policy_sha256": sha1})
+    assert requests.append(covered_row, project_dir=PROJECT)
+    record = requests.records(project_dir=PROJECT)["q-0000000000f6"]
+    assert record["kind"] == "info"
+
+    # A row ordered AFTER the forget folds to `work` — both intervals are
+    # closed by then, and no future row can ride either grant.
+    late_row = requests._stamp(
+        "opened", "q-0000000000f7", "cli-agent", now_ns=_time.time_ns())
+    late_row.update({"to": "p-first", "ask": "a late ask", "why": "a why",
+                     "kind": "info", "under_ruling": ruling_id,
+                     "policy_sha256": sha1})
+    assert requests.append(late_row, project_dir=PROJECT)
+    record = requests.records(project_dir=PROJECT)["q-0000000000f7"]
+    assert record["kind"] == "work"
+
+    # The tombstone rows carry no plaintext field.
+    path = refutations._tombstone_path(PROJECT)
+    tombstone_rows = [json.loads(line) for line in
+                      path.read_text(encoding="utf-8").splitlines()
+                      if line.strip()]
+    matching = [r for r in tombstone_rows if r.get("ruling_id") == ruling_id]
+    assert len(matching) == 2
+    for row in matching:
+        assert set(row.keys()) & set(refutations._PLAINTEXT_FIELDS) == set()
+
+
+def test_write_policy_tombstones_survives_request_policy_history_raising(
+        tmp_checkpoint_dir, monkeypatch):
+    """`_write_policy_tombstones` reads `request_policy_history` BEFORE
+    the caller rewrites the ledger; if that read itself raises (a
+    monkeypatched failure, standing in for a corrupt ledger reached mid
+    fold), the tombstone write must not crash and must simply write no
+    rows — never half a row, never propagate."""
+    from daimon_briefing import normalize
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="history raises subject", verdict="history raises verdict")
+    monkeypatch.setattr(
+        refutations, "request_policy_history",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    removed = refutations.forget_content_key(
+        normalize.content_key("history raises verdict"), project_dir=PROJECT)
+    assert ruling_id in removed  # the ledger rewrite still happened
+    path = refutations._tombstone_path(PROJECT)
+    assert path is None or not path.exists() or not path.read_text(
+        encoding="utf-8").strip()
+
+
+def test_write_policy_tombstones_repairs_a_torn_file_before_appending(
+        tmp_checkpoint_dir):
+    """A pre-existing tombstone file with no trailing newline must not be
+    fused with the new row `forget` appends — the same torn-write guard
+    `append` itself already applies to the main ledger."""
+    from daimon_briefing import normalize
+    path = refutations._tombstone_path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not terminated", encoding="utf-8")  # no trailing \n
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="torn file subject", verdict="torn file verdict text")
+    refutations.forget_content_key(
+        normalize.content_key("torn file verdict text"), project_dir=PROJECT)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "not terminated"
+    new_rows = [json.loads(line) for line in lines[1:] if line.strip()]
+    assert any(row.get("ruling_id") == ruling_id for row in new_rows)
+
+
+def test_write_policy_tombstones_survives_an_oserror_on_write(
+        tmp_checkpoint_dir, monkeypatch):
+    """The tombstone write is best-effort: a write failure must not sink
+    `forget_content_key`, and the ledger rewrite (the deletion promise
+    `forget` actually exists for) still has to happen."""
+    from daimon_briefing import normalize
+    tombstone_path = refutations._tombstone_path(PROJECT)
+    real_open = Path.open
+
+    def _boom_open(self, *args, **kwargs):
+        if self == tombstone_path and args and args[0] == "a":
+            raise OSError("simulated write failure")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _boom_open)
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="write oserror subject", verdict="write oserror verdict text")
+    removed = refutations.forget_content_key(
+        normalize.content_key("write oserror verdict text"),
+        project_dir=PROJECT)
+    assert ruling_id in removed
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None
+
+
+def test_read_policy_tombstones_survives_invalid_utf8_bytes(
+        tmp_checkpoint_dir):
+    """An unreadable-as-utf8 tombstone file must not sink the still-live
+    ledger interval this project's OWN ruling ledger already grants —
+    only the tombstoned (forgotten) half is lost, silently, never an
+    exception."""
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="bad utf8 subject", verdict="bad utf8 verdict text")
+    live = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in live)
+    path = refutations._tombstone_path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe not valid utf-8 at all")
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in out)
+
+
+def test_read_policy_tombstones_survives_an_oserror_on_read(
+        tmp_checkpoint_dir, monkeypatch):
+    """The same fail-open posture, for an OSError instead of a decode
+    error — a permissions fault or a symlink loop on the tombstone file
+    specifically, never the ledger's own read."""
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="read oserror subject", verdict="read oserror verdict text")
+    live = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in live)
+    tombstone_path = refutations._tombstone_path(PROJECT)
+    tombstone_path.parent.mkdir(parents=True, exist_ok=True)
+    tombstone_path.write_text('{"sender": ""}', encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def _boom_read_text(self, *args, **kwargs):
+        if self == tombstone_path:
+            raise OSError("simulated read failure")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _boom_read_text)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in out)
+
+
+def test_active_request_policies_ignores_a_record_with_an_unknown_verb(
+        tmp_checkpoint_dir):
+    """`_policy_tuple`'s `else: return None` branch, for a hand-edited
+    `request_policy` whose `verb` is neither `accept` nor `open` — a
+    shape no writer this codebase ships can produce, only a hand-edited
+    ledger. Both the direct unit call AND the read-boundary resolver that
+    consumes it must treat it as no grant, not raise."""
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_policy(),
+        subject="bad verb subject", verdict="bad verb verdict text")
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    bad_verb_record = {**record, "request_policy":
+                       {**record["request_policy"], "verb": "reject"}}
+    assert refutations._policy_tuple(bad_verb_record) is None
+    path = refutations._path(PROJECT)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for line in lines:
+        row = json.loads(line)
+        if row.get("refutation_id") == ruling_id and "request_policy" in row:
+            row["request_policy"]["verb"] = "reject"
+        rewritten.append(json.dumps(row))
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    assert refutations.active_request_policies(project_dir=PROJECT) == (
+        frozenset())
+
+
+def test_read_policy_tombstones_skips_malformed_lines(tmp_checkpoint_dir):
+    """A non-JSON line, a JSON scalar (not an object), and a row with a
+    non-numeric `active_from` must each be skipped rather than raising —
+    the same fail-open-per-line posture `events()` itself already holds."""
+    path = refutations._tombstone_path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    good = {"sender": "", "to": "p-recipient", "kind": "info", "verb": "open",
+            "by": "agent", "ruling_id": "r-goodgoodgood",
+            "policy_sha256": "a" * 64, "active_from": 10, "active_until": 20}
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("not json at all\n")
+        handle.write(json.dumps("just a string") + "\n")
+        handle.write(json.dumps({**good, "active_from": "not a number"}) + "\n")
+        handle.write(json.dumps(good) + "\n")
+    out = refutations._read_policy_tombstones(PROJECT)
+    assert len(out) == 1
+    (entry,) = out
+    assert entry[5] == "r-goodgoodgood"
+
+
+def test_write_policy_tombstones_is_a_no_op_with_nothing_doomed(
+        tmp_checkpoint_dir):
+    refutations._write_policy_tombstones(set(), project_dir=PROJECT)
+    path = refutations._tombstone_path(PROJECT)
+    assert path is None or not path.exists()
+
+
+def test_write_policy_tombstones_is_a_no_op_with_no_resolvable_project(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(refutations.store, "project_slug", lambda *a, **k: "")
+    # Must not raise even though a real ruling id is named — there is
+    # nowhere to write.
+    refutations._write_policy_tombstones({"r-doesnotmatter"},
+                                         project_dir=PROJECT)
 
 
 # ---- #970: a hand-edited anchors/evidence scalar is a malformed ROW, not an
