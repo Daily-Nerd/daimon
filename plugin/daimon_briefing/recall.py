@@ -826,10 +826,11 @@ def _supersession_origin(row) -> str:
     An unknown source reads as unknown rather than defaulting to either. A row
     written before the column existed is not evidence for either writer, and
     guessing would invent exactly the certainty this change exists to stop."""
+    source = str((row or {}).get("superseded_source") or "")
     return {
         "resolution": "from a recorded resolution",
         "link": "from a model-authored link",
-    }.get((row or {}).get("superseded_source"), "origin not recorded")
+    }.get(source, "origin not recorded")
 
 
 def describe_supersession(row, *, name_id: bool = True) -> str | None:
