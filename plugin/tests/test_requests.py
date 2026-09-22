@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daimon_briefing import config, normalize, redact, refutations, requests, store
+from daimon_briefing import (config, normalize, pending, redact, refutations,
+                             requests, store)
 
 
 def _iso(offset_seconds=0):
@@ -1483,6 +1484,372 @@ def test_a_valid_duplicate_opened_in_a_third_bucket_at_an_earlier_order_does_not
                            policies=frozenset())["q-0123456789ab"]
     assert record["from_slug"] == "p-first-writer"
     assert record["kind"] == "work"
+
+
+def test_a_planted_origin_slug_on_a_local_opened_row_is_inert_on_recipient_join(
+        project):
+    """#1083 Hole A: `events()` copies a persisted line whole (`copy =
+    dict(row)`, requests.py's own `events()`), and `policy.admit_row`
+    scrubs only named text fields — never `_origin_slug` — so a row
+    written into a project's OWN `requests.jsonl` that carries a planted
+    `_origin_slug` used to read back with it. `recipient_join`'s local
+    branch never re-stamped such a row before this fix, so a ratified
+    ruling covering agent accepts from a donor project could be walked
+    straight through for a row that never actually left this project's own
+    bucket. The founder's real origin for a row THIS project appended
+    locally must always be "", never a slug the row itself claims, so the
+    accept stays inert regardless of the ruling id/hash it cites."""
+    donor = _seed_bucket("/p/req-1083-donor")
+    ruling_id, sha = _cover(project, donor)
+    my_slug = store.project_slug(project)
+    q_id = "q-0123456789ab"
+    opened = requests._stamp("opened", q_id, "cli-tty")
+    opened.update({"to": my_slug, "ask": ASK, "why": WHY})
+    opened["_origin_slug"] = donor  # planted: this row never left this bucket
+    assert requests.append(opened, project_dir=project)
+    accepted = requests._stamp("accepted", q_id, "cli-agent")
+    accepted["under_ruling"] = ruling_id
+    accepted["policy_sha256"] = sha
+    assert requests.append(accepted, project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
+    assert record["from_slug"] == ""
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
+    assert record["accepted_under"] is None
+
+
+def test_a_ruling_covered_agent_accept_renders_the_same_on_request_list_and_request_inbox(
+        project):
+    """#1083: `listing()` (the `request list` surface) folded with NO
+    policies at all, while `recipient_join` (the `request inbox` surface)
+    already injected `_request_policy_history`. A `work` ask a ruling let
+    the recipient's agent accept therefore rendered `accepted` on the
+    recipient's own inbox and stayed `open` on the sender's `request list`
+    for the identical record.
+
+    A flat, single-ledger fix (`listing()` calling `_request_policy_history
+    (project_dir)`, matching `sender_join()`'s pre-existing call shape) was
+    tried first and PROVED insufficient, reported before this test was
+    written this way: `_covered_by_policy` matches `current["from_slug"]`,
+    always `""` for a local founder, against a `sender` field a policy
+    tuple carries — a single flat resolution of THIS reading project's own
+    ledger can never be the RECIPIENT's ledger for a genuinely foreign ask.
+    The real fix is `policies_by_to` (`_policies_by_to`, above): resolved
+    PER RECORD from that record's own `to`, mirroring `pending.
+    _foreign_request_counts`'s existing per-recipient cache, plus
+    `own_slug`/`_covered_by_policy`'s alias-widened fallback so a LOCAL
+    founder's identity is this composer's own bucket, never an empty,
+    permanently-unmatchable string."""
+    sender_slug = _seed_bucket("/p/req-1083-parity-sender")
+    _cover(project, sender_slug)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    inbox_record = requests.recipient_join(project_dir=project)[q_id]
+    list_record = {r["request_id"]: r
+                   for r in requests.listing(project_dir=sender_slug)}[q_id]
+    joined_record = requests.sender_join(project_dir=sender_slug)[q_id]
+    assert inbox_record["state"] == "accepted"
+    assert list_record["state"] == inbox_record["state"] == "accepted"
+    assert joined_record["state"] == "accepted"
+    assert list_record["accepted_under"] == inbox_record["accepted_under"]
+    assert joined_record["accepted_under"] == inbox_record["accepted_under"]
+    assert list_record["accepted_under"] is not None
+
+
+def test_a_ratified_policy_in_one_recipients_ledger_never_covers_an_ask_addressed_to_another(
+        project):
+    """#1083: the cross-recipient authority leak a naive `policies` union
+    would open, pinned directly. Two DIFFERENT recipients (`project`, the
+    fixture, and a second project this test seeds) each receive an ask from
+    the SAME sender. Only `project` ratifies a covering ruling; the second
+    recipient never does. Read from the SENDER's own side (`listing()`/
+    `sender_join()`, which fold both records in the SAME call and therefore
+    resolve `policies_by_to` for both recipients at once), the ask
+    addressed to `project` must land `accepted`; the ask addressed to the
+    OTHER recipient — same sender, same ruling id/hash forged onto it —
+    must stay `open`, because that recipient's own ledger never granted
+    anything."""
+    other_recipient = _seed_bucket("/p/req-1083-other-recipient")
+    sender_slug = _seed_bucket("/p/req-1083-leak-sender")
+    ruling_id, sha = _cover(project, sender_slug)
+    covered_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    requests.accept(covered_id, channel="cli-agent", project_dir=project)
+    uncovered_id = requests.open_request(
+        to=other_recipient, ask="a second, unrelated ask", why=WHY,
+        channel="cli-tty", project_dir=sender_slug)
+    # Forge the identical genuine ruling id/hash onto an accept addressed to
+    # the UNCOVERED recipient — `other_recipient` never ratified anything,
+    # so even a real ruling id/hash from a DIFFERENT recipient's ledger must
+    # stay inert here. `requests.append` bypasses `accept()`'s own write
+    # boundary refusal on purpose, the same forged-row shape every other
+    # `_covered_by_policy` test in this file uses.
+    forged = requests._stamp("accepted", uncovered_id, "cli-agent")
+    forged["under_ruling"] = ruling_id
+    forged["policy_sha256"] = sha
+    assert requests.append(forged, project_dir=other_recipient)
+    listed = {r["request_id"]: r
+             for r in requests.listing(project_dir=sender_slug)}
+    joined = requests.sender_join(project_dir=sender_slug)
+    assert listed[covered_id]["state"] == "accepted"
+    assert joined[covered_id]["state"] == "accepted"
+    assert listed[uncovered_id]["state"] == "open"
+    assert joined[uncovered_id]["state"] == "open"
+    assert listed[uncovered_id]["accepted_by"] is None
+    assert joined[uncovered_id]["accepted_by"] is None
+
+
+def test_a_candidate_ruling_in_the_recipients_ledger_is_inert_on_the_sender_side(
+        project):
+    """#1083: the per-recipient resolution (`_policies_by_to`) reads
+    `refutations.request_policy_history`, which only ever activates a
+    RATIFIED ruling — an unratified (candidate) one contributes nothing,
+    the same slice 4 guarantee `test_agent_accept_on_a_candidate_ruling_
+    is_refused` already pins at the write boundary, proven here on the
+    sender-side READ instead."""
+    sender_slug = _seed_bucket("/p/req-1083-candidate-sender")
+    ruling_id = refutations.assert_ruling(
+        subject=f"work asks from {sender_slug}",
+        verdict=f"agent may accept work asks from {sender_slug}",
+        scope="cross-project requests", evidence=["issue:1083"],
+        channel="cli-agent",  # never ratified
+        request_policy={"sender": sender_slug, "kind": "work",
+                        "verb": "accept", "by": "agent"},
+        project_dir=project)
+    sha = refutations.get(
+        ruling_id, project_dir=project)["request_policy"]["sha256"]
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    forged = requests._stamp("accepted", q_id, "cli-agent")
+    forged["under_ruling"] = ruling_id
+    forged["policy_sha256"] = sha
+    assert requests.append(forged, project_dir=project)
+    listed = {r["request_id"]: r
+             for r in requests.listing(project_dir=sender_slug)}[q_id]
+    assert listed["state"] == "open"
+    assert listed["accepted_by"] is None
+
+
+def test_an_unreadable_recipient_ledger_shows_inert_on_the_sender_side_while_the_recipient_shows_accepted(
+        project, monkeypatch):
+    """#1083: the accepted asymmetry, named directly. A genuine, real
+    covered accept lands correctly on the RECIPIENT's own read
+    (`recipient_join`, which resolves its OWN ledger directly and pays no
+    price for a foreign read failing). The SENDER's own read
+    (`listing()`/`sender_join()`) resolves that SAME recipient's ledger
+    remotely, through `_policies_by_to`, and `request_policy_history` fails
+    OPEN to `frozenset()` on any read error (its own documented posture) —
+    so a recipient ledger this call cannot read shows the record as
+    inert/`open` on the sender's own surfaces even though the recipient's
+    surface, reading locally, correctly shows `accepted`. This is a
+    disagreement toward MORE scrutiny on the read that could not verify,
+    never the reverse, and is the deliberate, documented shape of a
+    fail-open per-recipient resolution — not a bug to chase."""
+    sender_slug = _seed_bucket("/p/req-1083-unreadable-sender")
+    _cover(project, sender_slug)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=sender_slug)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+    assert requests.recipient_join(
+        project_dir=project)[q_id]["state"] == "accepted"
+    real_history = refutations.request_policy_history
+
+    def _fail_for_recipient(project_dir=None):
+        if project_dir == store.project_slug(project):
+            raise OSError("simulated unreadable ruling ledger")
+        return real_history(project_dir=project_dir)
+
+    monkeypatch.setattr(refutations, "request_policy_history",
+                        _fail_for_recipient)
+    listed = {r["request_id"]: r
+             for r in requests.listing(project_dir=sender_slug)}[q_id]
+    joined = requests.sender_join(project_dir=sender_slug)[q_id]
+    assert listed["state"] == "open"
+    assert joined["state"] == "open"
+    assert listed["accepted_by"] is None
+    assert joined["accepted_by"] is None
+
+
+def test_a_ruling_naming_an_alias_of_the_sending_project_still_covers_an_accept_sent_abroad(
+        project, monkeypatch):
+    """#1083: `own_slug`'s alias-widened fallback (`_covered_by_policy`,
+    `{own_slug} | buckets.aliases_for(own_slug)`), pinned directly. NOT the
+    self-addressed shape (the boundary-parity review caught that: a
+    self-referential ruling must never cover a self-addressed accept
+    anywhere, `fold`'s own `current["to"] != own_slug` gate — see the
+    dedicated test above) — this is the ORDINARY "sent abroad" case
+    `listing()`/`sender_join()`'s fallback exists for: this project sends
+    an ask to a DIFFERENT recipient, whose own ruling ledger names the
+    sender by an OLD, pre-migration slug rather than this project's CURRENT
+    one. `buckets.aliases_for` is monkeypatched directly (the READ side
+    `_covered_by_policy`'s fallback calls) rather than driving a real
+    `migrate()` receipt through `buckets.py`, the same boundary-precision
+    style this file already uses for `_covered_by_policy`'s other
+    forged-row tests."""
+    my_slug = store.project_slug(project)
+    old_slug = "-p-req-1083-old-alias"
+    recipient_slug = _seed_bucket("/p/req-1083-alias-recipient")
+    real_aliases_for = requests.buckets.aliases_for
+
+    def _fake_aliases_for(slug):
+        if slug == my_slug:
+            return frozenset({old_slug})
+        return real_aliases_for(slug)
+
+    ruling_id, sha = _cover(recipient_slug, old_slug)
+    q_id = requests.open_request(
+        to=recipient_slug, ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=project)
+    forged = requests._stamp("accepted", q_id, "cli-agent")
+    forged["under_ruling"] = ruling_id
+    forged["policy_sha256"] = sha
+    assert requests.append(forged, project_dir=recipient_slug)
+    monkeypatch.setattr(requests.buckets, "aliases_for", _fake_aliases_for)
+    listed = {r["request_id"]: r
+             for r in requests.listing(project_dir=project)}[q_id]
+    joined = requests.sender_join(project_dir=project)[q_id]
+    assert listed["state"] == "accepted"
+    assert listed["accepted_under"] == ruling_id
+    assert joined["state"] == "accepted"
+    assert joined["accepted_under"] == ruling_id
+
+
+def test_every_fold_call_site_receives_policies_and_stamped_rows(
+        project, monkeypatch):
+    """#1083: an enumeration test so a new composer cannot skip either half
+    of the invariant silently. `requests.fold` is patched on the shared
+    module — `pending.py` imports `requests` as a module and looks the
+    attribute up at call time, so this reaches all five sites named in the
+    issue: `records`, `listing`, `sender_join`, `recipient_join`, and
+    `pending._foreign_request_counts`. Asserts every row handed to `fold`
+    carries an `_origin_slug` key (even when the value is "") and that
+    EITHER `policies` (the flat, single-recipient shape `recipient_join`
+    and `pending` use) OR `policies_by_to` (the per-recipient shape
+    `records`/`listing`/`sender_join` use, since one call can address
+    several different recipients) was passed explicitly at every call,
+    never left at the bare `frozenset()`/`None` defaults."""
+    donor = _seed_bucket("/p/req-1083-enum-sender")
+    _cover(project, donor)
+    q_id = requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
+        project_dir=donor)
+    requests.accept(q_id, channel="cli-agent", project_dir=project)
+
+    real_fold = requests.fold
+    calls = []
+
+    def _tracking(rows, **kwargs):
+        calls.append((list(rows), kwargs))
+        return real_fold(rows, **kwargs)
+
+    monkeypatch.setattr(requests, "fold", _tracking)
+
+    requests.records(project_dir=project)
+    requests.listing(project_dir=donor)
+    requests.sender_join(project_dir=donor)
+    requests.recipient_join(project_dir=project)
+    pending.foreign_counts(project_dir=donor)
+
+    assert len(calls) >= 5
+    for rows, kwargs in calls:
+        assert "policies" in kwargs or "policies_by_to" in kwargs, (
+            "a fold call site injected no policies at all")
+        for row in rows:
+            assert "_origin_slug" in row, f"unstamped row reached fold: {row}"
+
+
+def test_sender_rows_stamps_origin_on_both_local_and_foreign_rows(project):
+    """Mirrors what `recipient_join` already did for foreign rows before
+    this fix: `_sender_rows` must stamp `_origin_slug` on every row it
+    hands to a fold, not only the ones a caller happens to inspect. Local
+    rows (this project's own bucket) get "", the recipient's own foreign
+    verdict row gets the recipient's slug — the same convention
+    `recipient_join` already used for the opposite direction."""
+    recipient_slug = _seed_bucket("/p/req-1083-sender-rows")
+    q_id = _open(project, to=recipient_slug)
+    requests.accept(q_id, channel="cli-tty", project_dir=recipient_slug)
+    grouped = requests._sender_rows(project_dir=project)
+    rows = grouped[q_id]
+    local = [r for r in rows if r.get("event") == "opened"]
+    foreign = [r for r in rows if r.get("event") == "accepted"]
+    assert local and local[0]["_origin_slug"] == ""
+    assert foreign and foreign[0]["_origin_slug"] == recipient_slug
+
+
+def test_covered_by_policy_matches_by_full_identity_not_substring():
+    """Regression, pinned directly against `_covered_by_policy`: `sender in
+    origin_slugs` must be SET membership, never substring containment.
+    #1083 briefly introduced exactly this bug at `accept()`'s own write
+    boundary — `_covered_by_policy(synthetic, origin_slug, history)` passed
+    a bare STRING where the widened signature now expects a set, and
+    `sender in "a-string"` silently does substring matching in Python
+    instead of raising a type error. Caught by code review, not by any
+    existing test: the write-boundary test that exercises this exact path
+    (`test_a_ruling_covered_agent_accept_renders_the_same_on_request_list_
+    and_request_inbox`, above) happens to check a sender identical to the
+    origin, where self-substring is trivially true and hides the bug."""
+    row = {"under_ruling": "r-abc123456789", "policy_sha256": "f" * 64,
+          "order": 100}
+    policies = frozenset({
+        ("-p-req", "work", "accept", "agent", "r-abc123456789", "f" * 64,
+         0, None)})
+    # "-p-req" IS a substring of "-p-req-real-sender" but not equal to it —
+    # a real accept from the LONGER, different sender must stay uncovered.
+    assert not requests._covered_by_policy(
+        row, frozenset({"-p-req-real-sender"}), policies)
+    # The genuine, exact match still covers.
+    assert requests._covered_by_policy(row, frozenset({"-p-req"}), policies)
+
+
+def test_a_self_ratified_policy_never_covers_a_self_addressed_accept_anywhere(
+        project):
+    """#1083, the boundary-parity break the team lead's review caught: a
+    project that ratifies a `verb=accept` policy naming ITS OWN slug as
+    `sender` must never get its own agent-covered accept on a self-
+    addressed ask (`to == own project`) — the fold must never be MORE
+    permissive than `accept()`'s own write boundary, which already refuses
+    this (a self-addressed `origin_slug == ""` returns `None` from
+    `_resolve_covering_ruling` before any dry run runs, so no ruling, real
+    or forged, was ever able to authorize this through the ordinary path).
+
+    (a) `accept(channel="cli-agent")` on the self-addressed ask is refused,
+    unchanged, proving the write boundary still holds.
+    (b) A raw, FORGED `accepted` row citing the genuine ruling id and hash
+    is inert on every one of the four fold composers alike — `records()`
+    and `recipient_join()` (which pass no `own_slug` at all for exactly
+    this reason) and `listing()`/`sender_join()` (which DO pass `own_slug`
+    for the ordinary "sent abroad" case, but `fold`'s own `current["to"] !=
+    own_slug` gate refuses to apply the fallback here since `to == own_
+    slug`). Before the `to != own_slug` gate was added, this half was RED
+    for `listing()`/`sender_join()`: `own_slug`'s fallback matched the
+    self-referential ruling with no way to distinguish a self-addressed ask
+    from an ordinary one sent abroad."""
+    my_slug = store.project_slug(project)
+    ruling_id, sha = _cover(project, my_slug)
+    q_id = requests.open_request(to=my_slug, ask=ASK, why=WHY,
+                                 channel="cli-tty", project_dir=project)
+    with pytest.raises(requests.RequestError):
+        requests.accept(q_id, channel="cli-agent", project_dir=project)
+    assert requests.recipient_join(project_dir=project)[q_id]["state"] == "open"
+    forged = requests._stamp("accepted", q_id, "cli-agent")
+    forged["under_ruling"] = ruling_id
+    forged["policy_sha256"] = sha
+    assert requests.append(forged, project_dir=project)
+    listed = {r["request_id"]: r
+             for r in requests.listing(project_dir=project)}[q_id]
+    joined = requests.sender_join(project_dir=project)[q_id]
+    recorded = requests.records(project_dir=project)[q_id]
+    inboxed = requests.recipient_join(project_dir=project)[q_id]
+    for label, record in (("listing", listed), ("sender_join", joined),
+                          ("records", recorded), ("recipient_join", inboxed)):
+        assert record["state"] == "open", f"{label} wrongly covered"
+        assert record["accepted_by"] is None, f"{label} wrongly covered"
+        assert record["accepted_under"] is None, f"{label} wrongly covered"
 
 
 def test_a_policy_covered_accept_then_agent_done_lands_done(project):
