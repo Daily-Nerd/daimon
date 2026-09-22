@@ -281,6 +281,8 @@ A `claude` binary merely present on PATH is **not** adopted automatically. Seria
 
 Previously an unset `DAIMON_LLM_COMMAND` plus a `claude` anywhere on PATH was enough for `auto` installs and for the litellm rescue path. If you relied on that, set one of the two variables above. `daimon configure` names the resolved binary and its path so you can see exactly which one is in use.
 
+The `claude-cli` preset runs its `claude -p` child with `--strict-mcp-config`, so it loads no MCP servers. Without that flag, the child's own launcher exits early under the isolation env the serializer sets, and Claude Code caches that as a connection failure, so every new session on the machine skips daimon's MCP server for the next 15 minutes (#1077). If you point a `DAIMON_LLM_COMMAND` at `claude` yourself, add `--strict-mcp-config` to it too: the serializer only turns text into JSON and never needs an MCP tool.
+
 :::
 
 ## Serializer chunking
