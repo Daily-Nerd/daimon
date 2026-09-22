@@ -2540,6 +2540,87 @@ def test_forgetting_one_ruling_leaves_a_sibling_rulings_history_untouched(
     assert forgotten_entry[8] is not None  # closed by the tombstone
 
 
+def test_a_ruling_revised_twice_then_forgotten_tombstones_both_intervals(
+        tmp_checkpoint_dir):
+    """A `verb=open` ruling ratified, then revised to a DIFFERENT `to`
+    in-process (closing interval 1, opening interval 2), then forgotten:
+    both intervals must survive the forget, interval 1's `until` must stay
+    exactly what the revision set it to (never re-touched by the tombstone
+    write, which only caps a STILL-OPEN interval), interval 2's `until`
+    must equal the forget's own order, a row genuinely landed inside
+    interval 1 must still fold to `info`, and a row ordered after the
+    forget must fold to `work`."""
+    import time as _time
+    from daimon_briefing import normalize, requests
+
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True,
+        request_policy=_open_policy(to="p-first"),
+        subject="twice revised subject", verdict="twice revised verdict text")
+    sha1 = refutations.get(
+        ruling_id, project_dir=PROJECT)["request_policy"]["sha256"]
+    # An order that genuinely falls inside interval 1 — captured here,
+    # strictly between ratify's own order and the revision's, both below.
+    order_in_interval1 = _time.time_ns()
+    # In-process human channel: arms the new policy immediately, no
+    # separate ratify call needed (mirrors `test_human_in_process_revise_
+    # arms_the_supplied_policy_without_a_pin`).
+    refutations.revise(
+        ruling_id, channel="signed", evidence=["issue:961"],
+        request_policy=_open_policy(to="p-second"), project_dir=PROJECT)
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    interval1_before = next(e for e in before if e[1] == "p-first")
+    assert interval1_before[8] is not None  # already closed by the revise
+
+    removed = refutations.forget_content_key(
+        normalize.content_key("twice revised verdict text"),
+        project_dir=PROJECT)
+    assert ruling_id in removed
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None
+
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    entries = [e for e in after if e[5] == ruling_id]
+    assert len(entries) == 2, "both intervals must survive the forget"
+    interval1_after = next(e for e in entries if e[1] == "p-first")
+    interval2_after = next(e for e in entries if e[1] == "p-second")
+    assert interval1_after[8] == interval1_before[8], (
+        "an already-closed interval's until must be untouched by the "
+        "tombstone write")
+    assert interval2_after[8] is not None  # closed now, not left open
+    assert interval2_after[7] < interval2_after[8]
+
+    # A row genuinely landed inside interval 1 still folds to `info`.
+    covered_row = requests._stamp(
+        "opened", "q-0000000000f6", "cli-agent", now_ns=order_in_interval1)
+    covered_row.update({"to": "p-first", "ask": "an ask", "why": "a why",
+                        "kind": "info", "under_ruling": ruling_id,
+                        "policy_sha256": sha1})
+    assert requests.append(covered_row, project_dir=PROJECT)
+    record = requests.records(project_dir=PROJECT)["q-0000000000f6"]
+    assert record["kind"] == "info"
+
+    # A row ordered AFTER the forget folds to `work` — both intervals are
+    # closed by then, and no future row can ride either grant.
+    late_row = requests._stamp(
+        "opened", "q-0000000000f7", "cli-agent", now_ns=_time.time_ns())
+    late_row.update({"to": "p-first", "ask": "a late ask", "why": "a why",
+                     "kind": "info", "under_ruling": ruling_id,
+                     "policy_sha256": sha1})
+    assert requests.append(late_row, project_dir=PROJECT)
+    record = requests.records(project_dir=PROJECT)["q-0000000000f7"]
+    assert record["kind"] == "work"
+
+    # The tombstone rows carry no plaintext field.
+    path = refutations._tombstone_path(PROJECT)
+    tombstone_rows = [json.loads(line) for line in
+                      path.read_text(encoding="utf-8").splitlines()
+                      if line.strip()]
+    matching = [r for r in tombstone_rows if r.get("ruling_id") == ruling_id]
+    assert len(matching) == 2
+    for row in matching:
+        assert set(row.keys()) & set(refutations._PLAINTEXT_FIELDS) == set()
+
+
 def test_read_policy_tombstones_skips_malformed_lines(tmp_checkpoint_dir):
     """A non-JSON line, a JSON scalar (not an object), and a row with a
     non-numeric `active_from` must each be skipped rather than raising —
