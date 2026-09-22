@@ -5,6 +5,19 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.49.0](https://github.com/Daily-Nerd/daimon/compare/v0.48.1...v0.49.0) (2026-09-22)
+
+
+### Features
+
+* **recall:** record the rank a delivery used and an honest-empty row on every surface ([#1075](https://github.com/Daily-Nerd/daimon/issues/1075)) ([9c58559](https://github.com/Daily-Nerd/daimon/commit/9c5855913ae4872b3bd5683c9f394229bed81041))
+
+
+### Bug Fixes
+
+* **llm:** stop the claude-cli preset from poisoning Claude Code's MCP cache ([#1078](https://github.com/Daily-Nerd/daimon/issues/1078)) ([cc0177f](https://github.com/Daily-Nerd/daimon/commit/cc0177fa3e8f5caa3469955bbbce1d57f7b440b8))
+* **mcp:** say in daimon_recall rows when an item is resolved, superseded or contradicted ([#1080](https://github.com/Daily-Nerd/daimon/issues/1080)) ([7ce0dde](https://github.com/Daily-Nerd/daimon/commit/7ce0ddef0bd8094af30e82737a03deb5b271ee25))
+
 ## [0.48.1](https://github.com/Daily-Nerd/daimon/compare/v0.48.0...v0.48.1) (2026-09-19)
 
 
