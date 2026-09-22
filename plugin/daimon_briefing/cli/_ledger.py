@@ -292,15 +292,28 @@ def _policy_ceremony_lines(request_policy: dict, *, verb: str,
     the same "New check"/"Check" label split `_check_ceremony_lines`
     already uses, so a revise ceremony discloses the sha it is ABOUT to pin
     on the SAME terms ratify discloses one it already pinned, instead of
-    the raw, unhashed KEY=VALUE dict it showed before this."""
+    the raw, unhashed KEY=VALUE dict it showed before this.
+
+    #961 slice 5: verb-branched, like `refutations._policy` itself —
+    `request_policy.get("sender")` is `None` on a `verb=open` policy
+    (`_policy` never stores that key for that verb), so printing the
+    accept-shaped line unconditionally would show a blank `sender=`."""
     sha = str(request_policy.get("sha256") or "")
-    return [
-        f"  {label}: sender={request_policy.get('sender')} "
-        f"kind={request_policy.get('kind')} verb={request_policy.get('verb')} "
-        f"by={request_policy.get('by')} · sha {sha[:12]}",
-        f"  {verb} lets that sender's agent record this verdict on this "
-        "project's behalf for asks it covers.",
-    ]
+    if request_policy.get("verb") == "open":
+        line = (
+            f"  {label}: to={request_policy.get('to')} "
+            f"kind={request_policy.get('kind')} verb=open "
+            f"by={request_policy.get('by')} · sha {sha[:12]}")
+        detail = (f"  {verb} lets this project's own agent open an ask to "
+                 "that recipient as kind info, with no person touching it.")
+    else:
+        line = (
+            f"  {label}: sender={request_policy.get('sender')} "
+            f"kind={request_policy.get('kind')} verb={request_policy.get('verb')} "
+            f"by={request_policy.get('by')} · sha {sha[:12]}")
+        detail = (f"  {verb} lets that sender's agent record this verdict on "
+                 "this project's behalf for asks it covers.")
+    return [line, detail]
 
 
 def _ruling_lines(record: dict, *, detailed: bool = False,
@@ -367,14 +380,23 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     # #961 slice 4: where `check` prints its line above, on the identical
     # terms — a `request_policy` present on the record but the ruling not
     # `active` is a candidate grant, authorizing nothing yet.
+    #
+    # #961 slice 5: verb-branched — `sender` is `None` on a `verb=open`
+    # policy (`_policy` never stores that key for that verb).
     request_policy = record.get("request_policy")
     if isinstance(request_policy, dict):
         armed = "in force" if state == "active" else "not in force (candidate)"
-        lines.append(
-            f"  Policy: sender={request_policy.get('sender')} "
-            f"kind={request_policy.get('kind')} "
-            f"verb={request_policy.get('verb')} "
-            f"by={request_policy.get('by')} · {armed}")
+        if request_policy.get("verb") == "open":
+            lines.append(
+                f"  Policy: to={request_policy.get('to')} "
+                f"kind={request_policy.get('kind')} verb=open "
+                f"by={request_policy.get('by')} · {armed}")
+        else:
+            lines.append(
+                f"  Policy: sender={request_policy.get('sender')} "
+                f"kind={request_policy.get('kind')} "
+                f"verb={request_policy.get('verb')} "
+                f"by={request_policy.get('by')} · {armed}")
     proposal = record.get("revision_proposed")
     if proposal:
         line = (f"  Pending revision proposal ({proposal.get('by', '?')}): "

@@ -404,7 +404,42 @@ def events(project_dir=None) -> list[dict]:
     return rows
 
 
-def _kind_of(row: dict) -> str:
+def _covered_by_open_policy(row: dict, policies) -> bool:
+    """#961 slice 5: whether `row` (an agent-channel `opened` row proposing
+    `kind="info"`) is authorized by one of the `(sender, to, kind, verb, by,
+    ruling_id, sha256, active_from, active_until)` INTERVALS in `policies` —
+    the set `refutations.request_policy_history` resolved for the row's own
+    ORIGIN bucket (the sender, ratified against ITS OWN ruling ledger; see
+    `fold`'s `open_policies` parameter).
+
+    Mirrors `_covered_by_policy` exactly, matching on `to` instead of
+    `sender` (the field a `verb=open` policy tuple carries; `sender` is
+    always `""` on that shape, `_policy_tuple`'s own docstring). The row's
+    own `under_ruling`/`policy_sha256` are a STAMP a non-human channel wrote
+    about itself, never the gate on their own: this only lands when the
+    INJECTED history independently names the same ruling id and hash AND the
+    ROW's own `order` falls inside the interval during which that exact
+    grant was active — never merely "was ever active at some point"."""
+    ruling_id = str(row.get("under_ruling") or "")
+    sha = str(row.get("policy_sha256") or "")
+    if not ruling_id or not sha:
+        return False
+    try:
+        row_order = int(row.get("order") or 0)
+    except (TypeError, ValueError):
+        return False
+    to = str(row.get("to") or "")
+    for entry in policies:
+        sender, entry_to, kind, verb, by, entry_ruling, entry_sha, since, until = entry
+        if (entry_to == to and kind == "info" and verb == "open"
+                and by == "agent" and entry_ruling == ruling_id
+                and entry_sha == sha and row_order >= since
+                and (until is None or row_order < until)):
+            return True
+    return False
+
+
+def _kind_of(row: dict, open_policies: dict[str, frozenset] | None = None) -> str:
     """The approval-requirement kind an `opened` row carries (#961).
 
     Read from a row in exactly one place, this branch of `fold` — no other
@@ -435,12 +470,28 @@ def _kind_of(row: dict) -> str:
        boundary, not only the write one, for exactly that reason. `ui` and
        `signed` both map to `"human"`, so the legitimate in-process human
        writer pays nothing for this check.
-    """
+
+    #961 slice 5: an AGENT-channel row proposing `kind="info"` is no longer
+    unconditionally forced to `work` — inside the SAME non-human branch, an
+    agent-authored row is `info` when a `verb=open` ruling in the row's own
+    ORIGIN bucket covers it. `open_slug` is read directly off the row's own
+    `_origin_slug` (`_founder_by_id`'s own stamp), never a second pre-pass
+    (scar 0084): the SAME founder row decides both `kind` and which ledger
+    governs it. `open_policies` defaults toward MORE scrutiny — `None`/`{}`
+    (a caller injecting nothing, or the row's own origin having no entry)
+    leaves every agent-opened `info` row reading as `work`, unchanged from
+    before this slice."""
     value = row.get("kind")
     kind = value if isinstance(value, str) and value in KINDS else DEFAULT_KIND
     if row.get("to_human") is True:
         return DEFAULT_KIND
-    if CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) != "human":
+    authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+    if authority != "human":
+        if authority == "agent" and kind == "info" and open_policies:
+            open_slug = str(row.get("_origin_slug") or "")
+            if _covered_by_open_policy(row, open_policies.get(open_slug,
+                                                              frozenset())):
+                return "info"
         return DEFAULT_KIND
     return kind
 
@@ -465,7 +516,9 @@ def _stamped(rows: list[dict], origin_slug: str) -> list[dict]:
     return rows
 
 
-def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
+def _founder_by_id(ordered: list[dict],
+                   open_policies: dict[str, frozenset] | None = None,
+                   ) -> dict[str, tuple[str, str, str]]:
     """#961 slice 4 review round 2 (C1): the ONE founder resolution for
     every request id, resolved in a PRE-PASS over every `opened` row before
     `fold`'s main pass applies any lifecycle event against it — replacing
@@ -499,7 +552,11 @@ def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
     later duplicate would go on to disagree and force it to `work` — see
     #961 slice 3 review item 3's own history for the exploit this closed.
 
-    Returns `{request_id: (kind, origin_slug)}`. `origin_slug` reads
+    Returns `{request_id: (kind, origin_slug, opened_under_ruling)}` (#961
+    slice 5 widens the tuple by one field: the covering ruling id when an
+    AGENT-authority founder resolved to `kind="info"` via `open_policies`,
+    `""` otherwise — including every human-opened `info`, which carries no
+    ruling). `origin_slug` reads
     `_origin_slug`, a transient field a row never persists on disk
     (`append` never writes it, and any value a row's own text carried
     under that key is overwritten before `fold` ever sees it) — the
@@ -518,7 +575,7 @@ def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
     here, so this stays exactly as deterministic under reorder as `fold`
     already is — the pre-pass and the main pass share one sort, not two
     that could drift apart."""
-    founders: dict[str, tuple[str, str]] = {}
+    founders: dict[str, tuple[str, str, str]] = {}
     for row in ordered:
         if row.get("event") != "opened":
             continue
@@ -533,11 +590,23 @@ def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
-            founders[q_id] = (_kind_of(row), str(row.get("_origin_slug") or ""))
+            kind = _kind_of(row, open_policies)
+            row_authority = CHANNEL_AUTHORITY.get(
+                str(row.get("channel") or ""))
+            # #961 slice 5: the ruling id only when THIS founder row is the
+            # reason `kind == "info"` — a human-opened info carries none, so
+            # `opened_under_ruling` never renders on one (#766's own
+            # "rendering is a write" reasoning: a ruling-classified ask must
+            # never look identical to a human-opened one, nor vice versa).
+            ruling = (str(row.get("under_ruling") or "")
+                     if kind == "info" and row_authority == "agent" else "")
+            founders[q_id] = (kind, str(row.get("_origin_slug") or ""),
+                             ruling)
             continue
         authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
-        if authority == "human" and _kind_of(row) != founders[q_id][0]:
-            founders[q_id] = (DEFAULT_KIND, founders[q_id][1])
+        if (authority == "human"
+                and _kind_of(row, open_policies) != founders[q_id][0]):
+            founders[q_id] = (DEFAULT_KIND, founders[q_id][1], "")
     return founders
 
 
@@ -591,7 +660,11 @@ def _covered_by_policy(row: dict, origin_slugs, policies) -> bool:
     except (TypeError, ValueError):
         return False
     for entry in policies:
-        sender, kind, verb, by, entry_ruling, entry_sha, since, until = entry
+        # #961 slice 5: `_policy_tuple` widened by one field (`to`, index 1,
+        # `""` on every `verb=accept` grant) — unpacked and ignored here,
+        # the field `_covered_by_open_policy` reads instead.
+        (sender, _to, kind, verb, by, entry_ruling, entry_sha, since,
+         until) = entry
         if (sender in origin_slugs and kind == "work" and verb == "accept"
                 and by == "agent" and entry_ruling == ruling_id
                 and entry_sha == sha and row_order >= since
@@ -602,7 +675,8 @@ def _covered_by_policy(row: dict, origin_slugs, policies) -> bool:
 
 def fold(rows: list[dict], policies=frozenset(), *,
          policies_by_to: dict[str, frozenset] | None = None,
-         own_slug: str = "") -> dict[str, dict]:
+         own_slug: str = "",
+         open_policies: dict[str, frozenset] | None = None) -> dict[str, dict]:
     """Fold this bucket's rows into current records, deterministic under
     reorder.
 
@@ -634,7 +708,16 @@ def fold(rows: list[dict], policies=frozenset(), *,
     boundary, which already refuses to authorize a self-addressed accept
     under any ruling (a self-referential grant is the same "agent lowering
     its own ask's approval bar" pattern `_kind_of` already forbids for
-    `kind == "info"`, generalized here to a `work` ruling)."""
+    `kind == "info"`, generalized here to a `work` ruling).
+
+    #961 slice 5: `open_policies`, a `dict[origin_slug, frozenset]` of
+    `request_policy_history`-shaped intervals, keyed by the ORIGIN bucket a
+    founder row's own `_origin_slug` names (`""` = local to this composer).
+    Threaded straight through to `_founder_by_id` (the one place `kind` is
+    ever resolved) — never consulted a second time inside this function.
+    `None`/`{}` (every caller before this slice) leaves every agent-opened
+    `kind="info"` row reading as `work`, the negative control this
+    parameter's own default preserves by construction."""
     def _integer(row, key, default=0):
         try:
             return int(row.get(key) or default)
@@ -654,7 +737,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
     # later duplicate revoke it out from under an already-landed row, and
     # why `kind` and `origin_slug` are resolved from the SAME founder row
     # rather than two independent passes that could disagree.
-    founders = _founder_by_id(ordered)
+    founders = _founder_by_id(ordered, open_policies)
     out: dict[str, dict] = {}
     for row in ordered:
         q_id = row["request_id"]
@@ -675,8 +758,8 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
-            founder_kind, founder_origin = founders.get(
-                q_id, (DEFAULT_KIND, ""))
+            founder_kind, founder_origin, founder_ruling = founders.get(
+                q_id, (DEFAULT_KIND, "", ""))
             out[q_id] = {
                 "request_id": q_id,
                 "state": "open",
@@ -691,6 +774,9 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 # decided. "" for `records()`/`sender_join()`, which always
                 # stamp "" (#1083, `_stamped`) — see `_founder_by_id`.
                 "from_slug": founder_origin,
+                # #961 slice 5: the covering ruling id, or "" — never
+                # rendered identically to a human-opened `info` (#766).
+                "opened_under_ruling": founder_ruling,
                 "ask": str(row.get("ask") or ""),
                 "why": str(row.get("why") or ""),
                 "evidence": str(row.get("evidence") or ""),
@@ -1199,6 +1285,18 @@ def _policies_by_to(rows: list[dict]) -> dict[str, frozenset]:
     return cache
 
 
+def _open_policies_local(project_dir) -> dict[str, frozenset]:
+    """#961 slice 5: the `open_policies` map for a composer whose OWN
+    `opened` rows are always local — `records()`, `listing()`,
+    `sender_join()`. The ask this project sends is always founded in this
+    project's own bucket (`_stamped` gives every row here `""`), so there is
+    exactly one entry to resolve: this project's own ruling ledger, keyed
+    `""`, the SAME convention `_founder_by_id` already reads a local
+    founder's `_origin_slug` as. `request_policy_history` already fails
+    open to `frozenset()` on any read error."""
+    return {"": refutations.request_policy_history(project_dir=project_dir)}
+
+
 def records(project_dir=None) -> dict[str, dict]:
     # #1083: a local, per-bucket fold — every founder here has no
     # cross-bucket sender to name, so every row is stamped "" (`_stamped`),
@@ -1215,7 +1313,8 @@ def records(project_dir=None) -> dict[str, dict]:
     # lands in this project's own file at all), so there is no legitimate
     # use for the fallback here at all.
     rows = _stamped(events(project_dir=project_dir), "")
-    return fold(rows, policies_by_to=_policies_by_to(rows))
+    return fold(rows, policies_by_to=_policies_by_to(rows),
+               open_policies=_open_policies_local(project_dir))
 
 
 def get(request_id: str, project_dir=None) -> dict | None:
@@ -1252,7 +1351,8 @@ def listing(project_dir=None) -> list[dict]:
     own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
     return sorted(
         fold(rows, policies_by_to=_policies_by_to(rows),
-            own_slug=own_slug).values(),
+            own_slug=own_slug,
+            open_policies=_open_policies_local(project_dir)).values(),
         key=lambda r: (r["state"] not in _SENDER_MOVABLE,
                        r.get("updated_at") or "", r["request_id"]))
 
@@ -1293,6 +1393,18 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     approval requirement, and can never be paired with `info`: a person is
     always the one who reads it.
 
+    #961 slice 5: an AGENT channel MAY assign `kind="info"` when a
+    human-ratified `verb=open` ruling in THIS project's OWN ledger covers
+    `to` — resolved the same two-phase way `accept()`'s agent path resolves
+    a `verb=accept` grant (H2 review fix): the row that is about to be
+    written is stamped with the covering `(ruling_id, policy_sha256)` and
+    re-checked against the order-aware `request_policy_history` BEFORE
+    `append` ever runs, so a current-state grant that does not actually
+    cover this row's own order (clock skew against the machine that
+    ratified it) is refused here rather than landing a row the fold goes on
+    to silently treat as `work` forever. The row that lands is the SAME
+    stamped row the dry run checked, never re-stamped afterward.
+
     #1026: `author` names the person behind THIS act, for an in-process
     writer serving several people through one channel. Refused on a channel
     that derives its author from the environment (`_act_author`), so a
@@ -1314,17 +1426,14 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
             f"channel must be one of: {', '.join(sorted(CHANNEL_AUTHORITY))}")
     if kind not in KINDS:
         raise RequestError(f"kind must be one of: {', '.join(sorted(KINDS))}")
+    # `--to-human` stays refused unconditionally and first, before any
+    # ruling resolution runs — audience, never approval requirement, and no
+    # ruling reaches it (unchanged from before this slice).
     if to_human and kind == "info":
         raise RequestError(
             "--to-human addresses that project's person, which is always "
             "the work approval requirement; it cannot be opened as kind "
             "info")
-    if kind == "info" and CHANNEL_AUTHORITY.get(channel) != "human":
-        raise RequestError(
-            "kind info lowers this request's own approval requirement, and "
-            "only the sender's human channel may assign it; open it as kind "
-            f"work (the default), or run this from a human channel — this "
-            f"call arrived through {channel!r}")
     slug = store.project_slug(project_dir)
     if not slug:
         raise RequestError("project unknown; requests are recorded in the "
@@ -1352,11 +1461,60 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
         row["evidence"] = evidence
     if supersedes:
         row["supersedes"] = supersedes
+    if kind == "info" and CHANNEL_AUTHORITY.get(channel) != "human":
+        authority = CHANNEL_AUTHORITY.get(channel)
+        covering = None
+        skew = False
+        if authority == "agent":
+            covering = _resolve_covering_open_policy(to, project_dir)
+            if covering is not None:
+                ruling_id, sha = covering
+                row["under_ruling"] = ruling_id
+                row["policy_sha256"] = sha
+                history = refutations.request_policy_history(
+                    project_dir=project_dir)
+                if not _covered_by_open_policy(row, history):
+                    covering = None
+                    skew = True
+                    row.pop("under_ruling", None)
+                    row.pop("policy_sha256", None)
+        if covering is None:
+            detail = (
+                " — an active ruling grants this recipient coverage right "
+                "now, but the write would land outside the interval that "
+                "ruling has been active for (commonly a clock skew between "
+                "this machine and the one that ratified it); retry once "
+                "the clocks agree, or"
+                if skew else "; open it as kind work (the default), run "
+                "this from a human channel, or have a human ratify a "
+                "`verb=open` ruling naming this recipient, so")
+            raise RequestError(
+                "kind info lowers this request's own approval requirement, "
+                "and only the sender's human channel may assign it"
+                f"{detail} this call arrived through {channel!r}")
     if not append(row, project_dir=project_dir):
         raise RequestError(
             "request not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
     return q_id
+
+
+def _resolve_covering_open_policy(to: str, project_dir):
+    """#961 slice 5: the `(ruling_id, policy_sha256)` of an active
+    `verb=open` ruling in THIS project's OWN ledger that lets its own agent
+    open an ask to `to` as `kind="info"`, or None. Mirrors `_resolve_
+    covering_ruling` exactly — current-state (`active_request_policies`),
+    the write boundary's own question; the dry run in `open_request` re-
+    checks the exact stamped row against the order-aware `request_policy_
+    history` before ever appending it."""
+    if not to:
+        return None
+    for entry in refutations.active_request_policies(project_dir=project_dir):
+        sender, entry_to, kind, verb, by, ruling_id, sha = entry
+        if (entry_to == to and kind == "info" and verb == "open"
+                and by == "agent"):
+            return ruling_id, sha
+    return None
 
 
 def revise(request_id: str, *, channel: str, ask: str | None = None,
@@ -1479,7 +1637,9 @@ def _resolve_covering_ruling(sender: str, project_dir):
     if not sender:
         return None
     for entry in refutations.active_request_policies(project_dir=project_dir):
-        entry_sender, kind, verb, by, ruling_id, sha = entry
+        # #961 slice 5: widened by one field (`to`, index 1) — unpacked and
+        # ignored here.
+        entry_sender, _to, kind, verb, by, ruling_id, sha = entry
         if (entry_sender == sender and kind == "work" and verb == "accept"
                 and by == "agent"):
             return ruling_id, sha
@@ -1848,7 +2008,8 @@ def sender_join(project_dir=None) -> dict[str, dict]:
     rows = _without_suppression(
         [row for group in _sender_rows(project_dir).values() for row in group])
     own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
-    return fold(rows, policies_by_to=_policies_by_to(rows), own_slug=own_slug)
+    return fold(rows, policies_by_to=_policies_by_to(rows), own_slug=own_slug,
+               open_policies=_open_policies_local(project_dir))
 
 
 def _bucket_slugs() -> list[str]:
@@ -1980,7 +2141,22 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
     # holds for it — `fold`'s own gate comment on `to != own_slug` has the
     # full reasoning. A genuinely FOREIGN founder already carries its own
     # non-empty `from_slug`, stamped above, and needs no fallback at all.
-    return fold(all_rows, policies=_request_policy_history(project_dir))
+    #
+    # #961 slice 5: `open_policies` is the opposite direction from
+    # `policies` above — a `verb=open` ruling lives in the SENDER's own
+    # bucket, never this project's. One entry per DISTINCT foreign origin
+    # `origin_of` already named (resolved ONCE per bucket, not once per
+    # row — the same discipline `request_policy_history` itself needed
+    # after the H3 fix), plus `""` for the rare self-addressed case (this
+    # project's own agent opening an `info` ask to itself), pointed at this
+    # project's own ledger the same way `_open_policies_local` reads it.
+    open_policies: dict[str, frozenset] = {
+        "": refutations.request_policy_history(project_dir=my_slug)}
+    for origin_slug in set(origin_of.values()):
+        open_policies[origin_slug] = refutations.request_policy_history(
+            project_dir=origin_slug)
+    return fold(all_rows, policies=_request_policy_history(project_dir),
+               open_policies=open_policies)
 
 
 def inbox_listing(project_dir=None) -> list[dict]:

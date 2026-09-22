@@ -126,7 +126,16 @@ def _request_lines(record: dict, project_dir=None) -> list:
     # mark `info` only to keep the common `work` case quiet. Read from the
     # FOLDED record only (THE ONE RULE): `record.get("kind")` here is
     # whatever `requests.fold`'s `_kind_of` already decided, never a raw row.
-    lines.append(f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}")
+    # #961 slice 5: "opened by agent under r-..." only when
+    # `opened_under_ruling` is set — a human-opened `info` (or any `work`
+    # ask) carries none, so this never renders identically to one (#766's
+    # own "rendering is a write" reasoning, applied here as a disclosure the
+    # sender is owed too: no person approved this ask's own approval bar).
+    opened_ruling = record.get("opened_under_ruling")
+    lines.append(
+        f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}"
+        + (f" (opened by agent under {opened_ruling})" if opened_ruling
+           else ""))
     if record.get("state") == "accepted":
         # #961 slice 3: who landed THIS accept — "agent" only for the one
         # case the fold permits (an addressed `info` ask), "human" for
@@ -186,7 +195,16 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
                  + (" (for a human)" if record.get("to_human") else ""))
     # #961 slice 2: same posture as `_request_lines` — always printed, read
     # from the folded record only.
-    lines.append(f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}")
+    #
+    # #961 slice 5: the recipient is exactly the party whose oversight
+    # `info` spends, so this render stays here even though the ruling id
+    # crosses a bucket boundary — the same bare-id-only shape `accepted_
+    # under` already ships on `_request_lines` above (#961 slice 4).
+    opened_ruling = record.get("opened_under_ruling")
+    lines.append(
+        f"  Kind: {record.get('kind') or requests.DEFAULT_KIND}"
+        + (f" (opened by agent under {opened_ruling})" if opened_ruling
+           else ""))
     if record.get("state") == "accepted":
         # #961 slice 3/4: same posture as `_request_lines` above.
         under = record.get("accepted_under")

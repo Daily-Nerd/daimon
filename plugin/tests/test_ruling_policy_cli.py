@@ -266,3 +266,67 @@ def test_show_names_a_pending_proposal_that_carries_a_request_policy(
     out = capsys.readouterr().out
     assert "Pending revision proposal" in out
     assert "(carries a request_policy)" in out
+
+
+# ---- #961 slice 5: verb=open, the sender-side ruling -----------------
+#
+# `--request-policy verb=open kind=info by=agent to=<slug>` — the mirror
+# shape, threaded through the SAME generic KEY=VALUE flag collector
+# (`_policy_args`), so no CLI arg-parsing change was needed. This section
+# exercises the verb branch in `_policy_ceremony_lines` and the `Policy:`
+# render on `ruling show`, both of which hardcoded `sender=` before this
+# slice and would print a blank field for an open-verb policy otherwise.
+
+
+_OPEN_POLICY_FLAGS = ["--request-policy", "to=p-recipient",
+                      "--request-policy", "kind=info",
+                      "--request-policy", "verb=open",
+                      "--request-policy", "by=agent"]
+
+
+def _propose_open(extra=()):
+    argv = ["ruling", "propose", "--subject", "info asks to p-recipient",
+            "--verdict", "agent may open info asks to p-recipient",
+            "--scope", "cross-project requests", "--evidence", "issue:961",
+            "--by", "agent", "--project", PROJECT, "--json"]
+    argv += list(extra)
+    return cli.main(argv)
+
+
+def test_propose_with_open_verb_flags_records_a_candidate_grant(
+        tmp_checkpoint_dir, capsys):
+    assert _propose_open(_OPEN_POLICY_FLAGS) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["request_policy"]["to"] == "p-recipient"
+    assert record["request_policy"]["verb"] == "open"
+    assert record["state"] == "candidate"
+
+
+def test_ratify_shows_and_pins_an_open_verb_policy(tmp_checkpoint_dir, _tty,
+                                                    monkeypatch, capsys):
+    assert _propose_open(_OPEN_POLICY_FLAGS) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Policy: to=p-recipient" in out
+    assert "verb=open" in out
+    assert "sender=" not in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+
+
+def test_ruling_show_renders_an_active_open_verb_policy_line(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    assert _propose_open(_OPEN_POLICY_FLAGS) == 0
+    ruling_id = json.loads(capsys.readouterr().out)["refutation_id"]
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT]) == 0
+    capsys.readouterr()
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "Policy: to=p-recipient" in out
+    assert "verb=open" in out
+    assert "in force" in out
+    assert "sender=" not in out
