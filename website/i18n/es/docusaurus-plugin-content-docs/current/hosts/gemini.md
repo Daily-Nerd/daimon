@@ -1,14 +1,16 @@
 ---
-description: "Configura daimon en Gemini CLI. La inyeccion del briefing ya funciona; la captura esta bloqueada upstream por gemini-cli#14715, asi que corre medio loop."
+description: "Configura daimon en Gemini CLI. La inyeccion del briefing ya funciona; el stub upstream transcript_path (gemini-cli#14715) se corrigio en gemini-cli v0.21.0, asi que la serializacion puede correr, pero la captura de punta a punta no esta verificada por este proyecto."
 ---
 
 # Gemini CLI
 
 El soporte de Gemini replica la forma de Claude Code, dividido en dos
-scripts. El hook del briefing está publicado, pero la serialización **hoy no
-puede correr de punta a punta**: la captura está detenida detrás del issue
-upstream `gemini-cli#14715` (`transcript_path` es un stub) — medio ciclo, por
-restricción upstream, no por un bug de daimon.
+scripts. El hook del briefing está publicado. La serialización también puede
+correr: el stub upstream de `transcript_path` (`gemini-cli#14715`) se corrigió
+en gemini-cli **v0.21.0** (2025-12-16), así que a partir de esa versión el
+hook `SessionEnd` recibe una ruta real. Qué hace `daimon serialize` con una
+transcripción de Gemini una vez que tiene una ruta real no está verificado
+por este proyecto, ver la sección Verificar más abajo.
 
 ## Qué hace cada script
 
@@ -21,11 +23,11 @@ restricción upstream, no por un bug de daimon.
   siempre exit 0, el arranque nunca se bloquea.
 - **`daimon-gemini-session-end.py`** — hook `SessionEnd`. Replica el hook
   `SessionEnd` de Claude Code (lanza `daimon serialize <transcript_path>`
-  desacoplado), pero Gemini CLI actualmente envía `transcript_path` como un
-  **stub vacío** (`gemini-cli#14715`, limitación upstream al 2026-07-01), así
-  que el comportamiento principal de este hook hoy es una omisión elegante y
-  registrada. La ruta de lanzamiento queda lista para cuando upstream
-  complete el campo.
+  desacoplado cuando `transcript_path` no está vacío, y registra una omisión
+  elegante cuando el campo llega vacío). En gemini-cli **v0.21.0 en adelante**
+  (la corrección de `gemini-cli#14715`), `transcript_path` trae una ruta real,
+  así que el hook lanza la serialización. En versiones anteriores el campo
+  sigue llegando vacío y el hook sigue omitiendo.
 
 ## Instalación (manual, desde un clon)
 
@@ -67,6 +69,16 @@ contenido.
 daimon status
 ```
 
-Hasta que `gemini-cli#14715` se resuelva upstream, espera que `daimon status`
-muestre la captura como omitida en lugar de escrita — la inyección del
-briefing en `SessionStart` funciona con independencia de la captura.
+En gemini-cli **v0.21.0 o posterior**, `daimon status` debería mostrar un
+checkpoint nuevo del proyecto después de terminar una sesión. Si una
+transcripción de Gemini efectivamente se parsea en un checkpoint no está
+verificado por este proyecto: `daimon serialize` tiene parseo hecho a medida
+para Codex, Windsurf y Kimi, más un mecanismo genérico de respaldo, y nadie
+en el proyecto corrió una sesión real de Gemini desde que se publicó la
+corrección upstream. Si `daimon status` no muestra un checkpoint nuevo, o
+muestra un error de serialización, un hueco de parseo es la causa más
+probable, y un reporte que indique tu versión de gemini-cli es bienvenido.
+
+En gemini-cli **anterior a v0.21.0**, espera que la captura se muestre como
+omitida en lugar de escrita. La inyección del briefing en `SessionStart`
+funciona con independencia de la captura de todas formas.
