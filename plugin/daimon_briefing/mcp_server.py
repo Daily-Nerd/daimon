@@ -38,9 +38,10 @@ def _tool_descriptors():
             "description": (
                 "Search daimon's cross-session memory. Rows carry provenance: "
                 "trust class (verbatim = exact quote, inferred = model "
-                "conclusion), author, supersession state, and origin project "
-                "slug. Cross-project search only via all_projects/slug — "
-                "never implicit."),
+                "conclusion), author, origin project slug, and a `status` "
+                "field in plain words when a row is resolved, superseded or "
+                "contradicted (null for a live row). Cross-project search "
+                "only via all_projects/slug — never implicit."),
             "inputSchema": {
                 "type": "object",
                 "properties": {

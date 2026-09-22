@@ -811,6 +811,75 @@ def describe_cure(value) -> str | None:
     return f"contradiction cleared by {evidence} at {ts}"
 
 
+def _supersession_origin(row) -> str:
+    """How this row's supersession was produced, in plain words (#865).
+
+    Moved here from the CLI module (#1079) so the MCP `daimon_recall` tool
+    can share the same wording as `daimon recall` without importing the CLI.
+
+    The two mechanisms carry different weight to a reader: a person recorded
+    an action, or a model asserted a relationship. The column stores the
+    mechanism rather than an evidential grade, because grading is vocabulary
+    the language contract governs; this renders the mechanism and lets the
+    reader do the grading.
+
+    An unknown source reads as unknown rather than defaulting to either. A row
+    written before the column existed is not evidence for either writer, and
+    guessing would invent exactly the certainty this change exists to stop."""
+    return {
+        "resolution": "from a recorded resolution",
+        "link": "from a model-authored link",
+    }.get((row or {}).get("superseded_source"), "origin not recorded")
+
+
+def describe_supersession(row, *, name_id: bool = True) -> str | None:
+    """Render a row's `superseded_by` as a marker phrase, or None (#1079).
+
+    The ONE parse of this axis, shared by `_cmd_recall`, `_suggest_line` and
+    the `daimon_recall` MCP tool, so a supersession can never read as one
+    thing on a pull and another on an injection.
+
+    `name_id` (default True) is the CLI text-mode wording: it names the
+    superseding id and, via `_supersession_origin`, which writer produced it
+    (#865). `_suggest_line` passes `name_id=False` on purpose — that surface
+    has always used the vaguer "superseded by later work", with no `daimon
+    why` follow-up to resolve an id and no cure path that would retract it,
+    and this keeps that intentional difference alive in one function rather
+    than in two renderers that could drift apart. Both forms still say
+    `"resolved"` for the literal sentinel: that value has always been
+    unambiguous, and both readers already agree on it."""
+    sup = (row or {}).get("superseded_by")
+    if not sup:
+        return None
+    if sup == "resolved":
+        return "resolved"
+    if not name_id:
+        return "superseded by later work"
+    return f"superseded by {sup}, {_supersession_origin(row)}"
+
+
+def describe_status(row) -> str | None:
+    """One combined status phrase for a row, or None for a live one (#1079).
+
+    Folds the three independent demotion markers `_cmd_recall` prints as
+    separate `[...]` groups (supersession, contradiction, cure — #837, #866)
+    into a single field, in the same order, so a consumer that only wants
+    "is this row still live" reads one value instead of parsing the raw
+    superseded_by/invalidated_by/cured_by columns itself. Multiple parts join
+    with "; ": this field has no brackets of its own to separate them with."""
+    parts = []
+    sup = describe_supersession(row)
+    if sup:
+        parts.append(sup)
+    inv = describe_invalidation((row or {}).get("invalidated_by"))
+    if inv:
+        parts.append(inv)
+    cured = describe_cure((row or {}).get("cured_by"))
+    if cured:
+        parts.append(cured)
+    return "; ".join(parts) if parts else None
+
+
 def rebuild() -> int:
     """Drop + rebuild the whole index by scanning local + team checkpoints.
     Atomic: builds into a sibling temp file, then os.replace — a concurrent

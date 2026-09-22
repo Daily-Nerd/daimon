@@ -1049,16 +1049,15 @@ def _cmd_recall(args) -> int:
     lines = []
     for r in results:
         age = _format_age(now - r["created"]) if r.get("created") else "?"
-        sup = r.get("superseded_by")
         # #865: name the WRITER, not just the value. A model-authored
         # supersedes link and a human `daimon resolve` both land here and
         # both can write a bare id, so the marker rendered a claim and an
         # action identically. `resolved` is the one value that was already
         # unambiguous, and only by accident of its spelling.
-        superseded = ("" if not sup
-                      else " [resolved]" if sup == "resolved"
-                      else f" [superseded by {sup}, "
-                           f"{_supersession_origin(r)}]")
+        # #1079: the phrase itself lives in recall.describe_supersession —
+        # the MCP `daimon_recall` tool shares this exact wording.
+        sup_phrase = recall.describe_supersession(r)
+        superseded = f" [{sup_phrase}]" if sup_phrase else ""
         # #837: an independent axis gets an independent marker — a row can
         # carry both, and collapsing them would hide one fact behind the
         # other. recall owns the phrasing so this marker can never describe a
@@ -1088,24 +1087,6 @@ def _cmd_recall(args) -> int:
                      f"{superseded}{contradicted}")
     render.render_recall_lines(lines)
     return 0
-
-
-def _supersession_origin(row) -> str:
-    """How this row's supersession was produced, in plain words (#865).
-
-    The two mechanisms carry different weight to a reader: a person recorded
-    an action, or a model asserted a relationship. The column stores the
-    mechanism rather than an evidential grade, because grading is vocabulary
-    the language contract governs; this renders the mechanism and lets the
-    reader do the grading.
-
-    An unknown source reads as unknown rather than defaulting to either. A row
-    written before the column existed is not evidence for either writer, and
-    guessing would invent exactly the certainty this change exists to stop."""
-    return {
-        "resolution": "from a recorded resolution",
-        "link": "from a model-authored link",
-    }.get(row.get("superseded_source"), "origin not recorded")
 
 
 def _cmd_why(args) -> int:
@@ -1993,10 +1974,11 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
     text, _truncated = _fit_item_text(r["text"], width)
     # v3 (#234): the flag is item-level evidence — a typed supersedes link
     # or a logged resolution — not the old whole-checkpoint recency.
-    sup = r.get("superseded_by")
-    superseded = ("" if not sup
-                  else " (resolved)" if sup == "resolved"
-                  else " (superseded by later work)")
+    # #1079: name_id=False keeps this surface's deliberately vaguer wording
+    # (no id, no writer) — recall.describe_supersession is the shared parse,
+    # not a shared phrase, across every surface.
+    sup_phrase = recall.describe_supersession(r, name_id=False)
+    superseded = f" ({sup_phrase})" if sup_phrase else ""
     # #837: suggest() ranks a contradicted item DOWN, and a demotion alone is
     # silent burial — one that still clears the gate has to arrive flagged.
     # The evidence is named in full here, unlike the supersession marker's

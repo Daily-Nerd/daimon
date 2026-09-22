@@ -62,6 +62,13 @@ def _recall(arguments: dict) -> str:
             surface="recall-search", via="mcp", injected_into=session)
     except Exception:  # noqa: BLE001 — see comment above
         pass
+    # #1079: `status` in the SAME words `daimon recall` (text mode) prints
+    # inside its `[...]` markers — None for a live row. Added AFTER telemetry
+    # records above so the recall-delivery ledger's row shape is untouched;
+    # it is a display field for the agent reading this result, not a
+    # measurement.
+    for row in rows:
+        row["status"] = recall.describe_status(row)
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 

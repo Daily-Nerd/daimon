@@ -304,6 +304,188 @@ def test_recall_tool_input_schema_documents_the_session_argument():
     assert "session" in tools["daimon_recall"]["inputSchema"]["properties"]
 
 
+# ---- #1079: a readable status field on resolved/superseded/contradicted rows -
+#
+# `json.dumps(rows)` carried the raw superseded_by/invalidated_by/cured_by
+# columns and nothing that turned them into words — an agent reading the tool
+# result had to already know those keys existed and what their values meant.
+# In practice a demoted row read exactly like a live one. `status` fixes that
+# with the SAME wording `daimon recall` (text mode) prints, via the one
+# shared helper (recall.describe_status) both surfaces now call.
+
+
+def test_recall_tool_marks_a_resolved_row(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    from tests.test_recall import _cp
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _cp("S-res", questions=[
+        {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
+         "id": "o-mee111"}])
+    store.write_checkpoint("S-res", cp, project_dir="/p/A")
+    store.append_event("o-mee111", "resolved", project_dir="/p/A")
+
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    assert rows and rows[0]["status"] == "resolved"
+
+
+def test_recall_tool_marks_a_superseded_row(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    from tests.test_recall import _cp
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.write_checkpoint(
+        "S-linked",
+        _cp("S-linked", decisions=[
+            {"text": "meerkat burrow mapping plan colony",
+             "trust": "inferred"}],
+            created="2025-01-01T00:00:00Z"),
+        project_dir="/p/A")
+    newer = _cp(
+        "S-new", decisions=[{
+            "text": "abandoned meerkat burrow mapping plan colony too unstable",
+            "trust": "inferred",
+            "links": [{"type": "supersedes",
+                       "target": "meerkat burrow mapping plan colony"}]}],
+        created="2025-06-01T00:00:00Z")
+    store.write_checkpoint("S-new", newer, project_dir="/p/A")
+
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    old_row = next(r for r in rows
+                  if r["text"] == "meerkat burrow mapping plan colony")
+    assert old_row["status"] == \
+        "superseded by S-new, from a model-authored link"
+
+
+def test_recall_tool_marks_an_invalidated_row(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    from tests.test_recall import _cp
+    from tests.test_recall_invalidated_by import _receipt_row, _write_ledger
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.write_checkpoint(
+        "S-bad",
+        _cp("S-bad", questions=[
+            {"text": "the axolotl exporter claim was verified",
+             "trust": "inferred", "id": "o-bad111"}],
+            created="2026-08-01T00:00:00Z"),
+        project_dir="/p/A")
+    _write_ledger(store.project_slug("/p/A"), [_receipt_row("o-bad111")])
+
+    _, out = rpc(_init(), _call("daimon_recall",
+                                {"query": "axolotl exporter"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    assert rows and rows[0]["status"] == \
+        "contradicted by receipt:receipt-invalid at 2026-08-29T10:00:00Z"
+
+
+def test_recall_tool_marks_a_cured_row(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store
+    from tests.test_recall import _cp
+    from tests.test_recall_invalidated_by import (
+        _cure_row, _receipt_row, _write_ledger)
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    store.write_checkpoint(
+        "S-1",
+        _cp("S-1", questions=[
+            {"text": "the axolotl exporter claim was verified",
+             "trust": "inferred", "id": "o-111aaa"}],
+            created="2026-08-01T00:00:00Z"),
+        project_dir="/p/A")
+    _write_ledger(store.project_slug("/p/A"), [
+        _receipt_row("o-111aaa"), _cure_row("o-111aaa")])
+
+    _, out = rpc(_init(), _call("daimon_recall",
+                                {"query": "axolotl exporter"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    assert rows and rows[0]["status"] == (
+        "contradiction cleared by receipt-ok:receipt-valid "
+        "at 2026-08-29T12:00:00Z")
+
+
+def test_recall_tool_live_row_carries_a_null_status(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "merge"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    rows = json.loads(text)
+    assert rows
+    assert all(r["status"] is None for r in rows)
+
+
+def test_recall_tool_status_matches_the_cli_text_mode_wording(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """One shared helper, not two renderers that could drift: the MCP
+    `status` field and `daimon recall`'s own bracketed marker must describe
+    the SAME resolved row identically (#1079)."""
+    from daimon_briefing import cli, store
+    from tests.test_recall import _cp
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _cp("S-res", questions=[
+        {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
+         "id": "o-mee111"}])
+    store.write_checkpoint("S-res", cp, project_dir="/p/A")
+    store.append_event("o-mee111", "resolved", project_dir="/p/A")
+
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
+    text, _ = _result(out)
+    status = json.loads(text)[0]["status"]
+
+    rc = cli.main(["recall", "meerkat", "--project", "/p/A"])
+    assert rc == 0
+    cli_line = [ln for ln in capsys.readouterr().out.splitlines()
+               if "meerkat" in ln][0]
+    assert f"[{status}]" in cli_line
+
+
+def test_recall_tool_status_field_is_not_persisted_to_telemetry(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch):
+    """The status field is added AFTER recall_telemetry.record() runs, on the
+    rows being serialized — the telemetry row shape must stay exactly what it
+    was before #1079."""
+    from daimon_briefing import store
+    from tests.test_recall import _cp
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _cp("S-res", questions=[
+        {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
+         "id": "o-mee111"}])
+    store.write_checkpoint("S-res", cp, project_dir="/p/A")
+    store.append_event("o-mee111", "resolved", project_dir="/p/A")
+
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert json.loads(text)[0]["status"] == "resolved"
+
+    log_path = tmp_log_dir / "recall-delivery.jsonl"
+    delivered = [json.loads(ln) for ln in
+                log_path.read_text(encoding="utf-8").splitlines()]
+    assert delivered
+    assert "status" not in delivered[0]
+
+
 def test_brief_tool_renders_checkpoint_text(tmp_checkpoint_dir,
                                             sample_checkpoint, monkeypatch):
     from daimon_briefing import store
