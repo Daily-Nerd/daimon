@@ -445,6 +445,26 @@ def _kind_of(row: dict) -> str:
     return kind
 
 
+def _stamped(rows: list[dict], origin_slug: str) -> list[dict]:
+    """#1083: stamp `_origin_slug` on every row, OVERWRITING whatever the
+    disk row already carried under that key.
+
+    `events()` copies a persisted line whole (`copy = dict(row)`, above)
+    and `policy.admit_row` scrubs only named text fields — never
+    `_origin_slug` — so a row written into a project's own `requests.jsonl`
+    that plants this key reads back with it. Before this fix, only
+    `recipient_join`'s foreign branch ever stamped, which meant every OTHER
+    composer (and `recipient_join`'s own local branch) trusted whatever a
+    row claimed about its own origin. The invariant now is: every composer
+    calls this on every row it hands to `fold`, and no gate ever reads an
+    unstamped value — a local row always gets `""`, the only value
+    `_covered_by_policy`/`_founder_by_id` ever treat as "no cross-bucket
+    sender to match"."""
+    for row in rows:
+        row["_origin_slug"] = origin_slug
+    return rows
+
+
 def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
     """#961 slice 4 review round 2 (C1): the ONE founder resolution for
     every request id, resolved in a PRE-PASS over every `opened` row before
@@ -480,16 +500,19 @@ def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
     #961 slice 3 review item 3's own history for the exploit this closed.
 
     Returns `{request_id: (kind, origin_slug)}`. `origin_slug` reads
-    `_origin_slug`, a transient field a row never persists (`append` never
-    writes it, `events()` never reads it off disk) — `recipient_join` is
-    the one caller that knows which bucket a foreign row came from and
-    stamps it before the merged, multi-bucket row set reaches `fold`, the
-    same in-memory-only posture `events()` already gives `_line`.
-    `records()` and `sender_join()` never stamp it, so every founder they
-    fold reads back `""` here: empty, never a real slug, which is exactly
-    what `_covered_by_policy` needs — an unstamped context must cover
-    NOTHING, not accidentally match a policy whose sender happens to be the
-    reader's own project.
+    `_origin_slug`, a transient field a row never persists on disk
+    (`append` never writes it, and any value a row's own text carried
+    under that key is overwritten before `fold` ever sees it) — the
+    composer always stamps it (`_stamped`, above), on every row it hands
+    to `fold`, never only the ones it happens to care about. `records()`
+    and `sender_join()` stamp `""` on every row they gather — a per-bucket
+    or sender-side fold has no cross-bucket sender to name — so every
+    founder they fold reads back `""` here: empty, never a real slug,
+    which is exactly what `_covered_by_policy` needs — an unstamped-
+    equivalent context must cover NOTHING, not accidentally match a policy
+    whose sender happens to be the reader's own project. `recipient_join`
+    stamps the real foreign bucket a row came from, or `""` for its own
+    local rows.
 
     `ordered` is `fold`'s own sorted list, passed in rather than re-sorted
     here, so this stays exactly as deterministic under reorder as `fold`
@@ -518,13 +541,13 @@ def _founder_by_id(ordered: list[dict]) -> dict[str, tuple[str, str]]:
     return founders
 
 
-def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
-    """#961 slice 4: whether `row` (an `accepted` event landing on a `work`
-    ask) is authorized by one of the `(sender, kind, verb, by, ruling_id,
-    sha256, active_from, active_until)` INTERVALS in `policies` — the set
-    `refutations.request_policy_history` resolved from THIS project's own
-    ruling ledger and the caller (one of `fold`'s three composers)
-    injected.
+def _covered_by_policy(row: dict, origin_slugs, policies) -> bool:
+    """#961 slice 4, widened by #1083: whether `row` (an `accepted` event
+    landing on a `work` ask) is authorized by one of the `(sender, kind,
+    verb, by, ruling_id, sha256, active_from, active_until)` INTERVALS in
+    `policies` — the set `refutations.request_policy_history` resolved for
+    the RECIPIENT this record is addressed to, injected by the caller (one
+    of `fold`'s composers).
 
     The row's own `under_ruling`/`policy_sha256` are a STAMP a non-human
     channel wrote about itself, never the gate on their own — the same
@@ -538,17 +561,27 @@ def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
     at the end of the ruling ledger's own history, was) still open: any row
     order at or after `active_from` matches.
 
-    An empty `origin_slug` — a self-addressed ask, or one folded through a
-    composer that never resolves cross-bucket origin (`records()`,
-    `sender_join()`) — matches nothing STRUCTURALLY, with no explicit guard
-    needed for it here: no ruling's `sender` is ever the empty string
+    `origin_slugs` (#1083: widened from a single `origin_slug` string to a
+    set) is the identity a policy's `sender` must match — `sender in
+    origin_slugs`, never `==`. For a record whose founder is genuinely
+    FOREIGN (`recipient_join`'s cross-bucket case), the caller passes a
+    single-element set naming that real sender, unchanged in effect from
+    the old string-equality check. For a record whose founder is LOCAL to
+    the reading composer AND addressed to a DIFFERENT project (`listing()`/
+    `sender_join()`'s ordinary "sent abroad" case), the caller widens this
+    to `{own_slug} | buckets.aliases_for(own_slug)` — this project's own
+    identity is genuinely who sent it, and a ruling ratified before a
+    migration may still name the OLD slug. A SELF-addressed record (`to ==
+    own_slug`) never gets this widening, even from a composer that passes
+    `own_slug` — `fold`'s own gate applies the fallback only when
+    `current["to"] != own_slug`; see its docstring for why. An empty set —
+    no widening applies and no real foreign origin either (`records()`,
+    `recipient_join`'s own self-addressed rows, or any local record read by
+    a composer that passes no `own_slug` at all) — matches nothing
+    STRUCTURALLY: no ruling's `sender` is ever the empty string
     (`refutations._policy` refuses one at the write boundary), so the loop
-    below can never find an entry whose `sender == ""`. #961 slice 4 review
-    round 2 (M4): an earlier `if not origin_slug: return False` early exit
-    here was provably dead — its own test passed identically with the line
-    removed, since the loop's own exhaustion already produces the same
-    answer for every input that guard could ever see.
-    """
+    below can never find an entry whose `sender` is `""`, the same
+    non-match `_founder_by_id`'s docstring already relies on."""
     ruling_id = str(row.get("under_ruling") or "")
     sha = str(row.get("policy_sha256") or "")
     if not ruling_id or not sha:
@@ -559,7 +592,7 @@ def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
         return False
     for entry in policies:
         sender, kind, verb, by, entry_ruling, entry_sha, since, until = entry
-        if (sender == origin_slug and kind == "work" and verb == "accept"
+        if (sender in origin_slugs and kind == "work" and verb == "accept"
                 and by == "agent" and entry_ruling == ruling_id
                 and entry_sha == sha and row_order >= since
                 and (until is None or row_order < until)):
@@ -567,7 +600,9 @@ def _covered_by_policy(row: dict, origin_slug: str, policies) -> bool:
     return False
 
 
-def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
+def fold(rows: list[dict], policies=frozenset(), *,
+         policies_by_to: dict[str, frozenset] | None = None,
+         own_slug: str = "") -> dict[str, dict]:
     """Fold this bucket's rows into current records, deterministic under
     reorder.
 
@@ -579,7 +614,27 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
     suppress filter) is the read-time composer PR 2 builds ON TOP of this;
     here a lifecycle row whose `opened` lives in another bucket is an orphan:
     inert in the fold, visible in the raw audit.
-    """
+
+    #1083: `policies_by_to`, when given, resolves the covered-accept gate
+    (`_covered_by_policy`) PER RECORD, keyed by that record's own `to` —
+    never `policies` unioned across every recipient a batch of rows might
+    address, which would let one recipient's ruling validate an accept
+    addressed to an unrelated one (`_covered_by_policy`'s tuples carry no
+    recipient field to guard against that). `None` (every caller before
+    this PR, and `recipient_join`/`pending`, whose rows are always
+    addressed to exactly one recipient — themselves) keeps the old flat
+    `policies` behavior. `own_slug`, when given, is this composer's own
+    bucket identity — used only when a record's founder is LOCAL (`from_
+    slug` is `""`) AND the record is addressed to a DIFFERENT project
+    (`current["to"] != own_slug`), the fallback `_covered_by_policy` widens
+    against `{own_slug} | buckets.aliases_for(own_slug)`; see that
+    function's own docstring. A SELF-addressed record (`to == own_slug`)
+    never gets this fallback, regardless of whether `own_slug` was passed:
+    the fold must never be more permissive than `accept()`'s own write
+    boundary, which already refuses to authorize a self-addressed accept
+    under any ruling (a self-referential grant is the same "agent lowering
+    its own ask's approval bar" pattern `_kind_of` already forbids for
+    `kind == "info"`, generalized here to a `work` ruling)."""
     def _integer(row, key, default=0):
         try:
             return int(row.get(key) or default)
@@ -633,8 +688,8 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
                 # resolution `_covered_by_policy` matches against, so a
                 # composer that reads this off the record (`recipient_join`)
                 # can never disagree with what the fold itself already
-                # decided. "" for `records()`/`sender_join()`, which never
-                # stamp `_origin_slug` on any row — see `_founder_by_id`.
+                # decided. "" for `records()`/`sender_join()`, which always
+                # stamp "" (#1083, `_stamped`) — see `_founder_by_id`.
                 "from_slug": founder_origin,
                 "ask": str(row.get("ask") or ""),
                 "why": str(row.get("why") or ""),
@@ -789,12 +844,56 @@ def fold(rows: list[dict], policies=frozenset()) -> dict[str, dict]:
             # round 2 (C1): one founder resolution, read off the record the
             # SAME pre-pass already wrote it onto, so this cannot drift
             # from what `recipient_join` renders as the record's origin.
-            covered_work = (event == "accepted" and authority == "agent"
-                           and current["kind"] == "work"
-                           and not current["to_human"]
-                           and current["state"] in _SENDER_MOVABLE
-                           and _covered_by_policy(
-                               row, current["from_slug"], policies))
+            covered_work = False
+            if (event == "accepted" and authority == "agent"
+                    and current["kind"] == "work"
+                    and not current["to_human"]
+                    and current["state"] in _SENDER_MOVABLE):
+                # #1083: the sender identity a policy must name. A genuinely
+                # FOREIGN founder (`recipient_join`'s cross-bucket case)
+                # names itself; a LOCAL founder sent to a DIFFERENT project
+                # (`listing()`/`sender_join()`'s ordinary "sent abroad"
+                # case) falls back to this composer's OWN identity, widened
+                # to every alias a pre-migration ruling might still name —
+                # never the reverse (an `own_slug` never substitutes for a
+                # genuinely foreign `from_slug`).
+                #
+                # `current["to"] != own_slug` is required, not incidental:
+                # a SELF-addressed ask (`to == own_slug`) must stay
+                # human-only regardless of any ruling, the same rule
+                # `accept()`'s own write boundary already holds (a
+                # self-addressed `origin_slug == ""` there returns `None`
+                # from `_resolve_covering_ruling` before a dry run ever
+                # runs) — the fold must never be more permissive than the
+                # verb. Without this qualifier, a project that ratified a
+                # ruling naming ITSELF as `sender` (a self-referential
+                # grant, the same "agent lowering its own ask's approval
+                # bar" pattern `_kind_of` rule 3 already forbids for `info`,
+                # generalized here to `work`) could have its own agent
+                # accept its own self-addressed ask — a forged raw row the
+                # write boundary refuses to ever create honored anyway.
+                origin_slug = current["from_slug"]
+                if origin_slug:
+                    origin_slugs = frozenset({origin_slug})
+                elif own_slug and current["to"] != own_slug:
+                    origin_slugs = (frozenset({own_slug})
+                                    | buckets.aliases_for(own_slug))
+                else:
+                    origin_slugs = frozenset()
+                # #1083: resolved PER RECORD from `current["to"]`'s own
+                # ruling ledger when a map was given — never the single flat
+                # `policies` set across a whole batch of records that might
+                # address different recipients (see `fold`'s own docstring
+                # on why unioning would be a cross-recipient authority
+                # leak). `recipient_join`/`pending` pass no map: every
+                # record they fold is already addressed to exactly one
+                # recipient, so the flat set they inject already answers
+                # the per-record question.
+                row_policies = (
+                    policies_by_to.get(current["to"], frozenset())
+                    if policies_by_to is not None else policies)
+                covered_work = _covered_by_policy(
+                    row, origin_slugs, row_policies)
             if not (covered_info or covered_work):
                 continue
         if event in _STATE_BY_EVENT and current["state"] == "rejected":
@@ -1060,9 +1159,63 @@ def _request_policy_history(project_dir):
     return refutations.request_policy_history(project_dir=project_dir)
 
 
+def _policies_by_to(rows: list[dict]) -> dict[str, frozenset]:
+    """#1083: `request_policy_history` resolved PER RECIPIENT — keyed by the
+    literal `to` a founder `opened` row in `rows` carries — never a single
+    project-wide read injected as one flat set across a whole batch of
+    records that might address DIFFERENT recipients. Mirrors `pending.
+    _foreign_request_counts`'s own per-recipient cache (pending.py:355-365)
+    exactly: one read per distinct `to`, and `_covered_by_policy`'s policy
+    tuples carry no recipient field, so mixing two recipients' rulings into
+    one shared set would let recipient A's ruling validate an accept
+    addressed to unrelated recipient B — a real cross-recipient authority
+    leak, not a cosmetic gap. `records()`, `listing()`, and `sender_join()`
+    are the callers: `recipient_join` and `pending` fold rows already
+    addressed to exactly one recipient (themselves), so a single flat
+    `_request_policy_history(project_dir)` already answers the per-record
+    question for them and this map is not needed there.
+
+    A `to` that is itself a pre-migration alias of the bucket the ruling was
+    actually ratified in is resolved FORWARD through `buckets.alias_map()`
+    before the read (the cache is still keyed by the raw `to`, matching
+    what the fold gate looks up with `current["to"]` — the SAME string this
+    function read it from). Any read error or missing ledger reads as
+    `frozenset()` for that recipient — fail toward more scrutiny, never
+    less, the posture `_foreign_request_counts` and `request_policy_
+    history` itself already hold."""
+    cache: dict[str, frozenset] = {}
+    canonical_of = buckets.alias_map()
+    for row in rows:
+        if row.get("event") != "opened":
+            continue
+        to = str(row.get("to") or "")
+        if not to or to in cache:
+            continue
+        try:
+            cache[to] = refutations.request_policy_history(
+                project_dir=canonical_of.get(to, to))
+        except Exception:
+            cache[to] = frozenset()
+    return cache
+
+
 def records(project_dir=None) -> dict[str, dict]:
-    return fold(events(project_dir=project_dir),
-               policies=_request_policy_history(project_dir))
+    # #1083: a local, per-bucket fold — every founder here has no
+    # cross-bucket sender to name, so every row is stamped "" (`_stamped`),
+    # overwriting whatever a planted `_origin_slug` a disk row might
+    # otherwise carry. `policies_by_to` is passed for shape parity with
+    # `listing()`/`sender_join()` (harmless: the only `to` this composer
+    # ever sees is a SELF-addressed one, and no `own_slug` is passed here,
+    # so `_covered_by_policy`'s local-founder fallback never activates — a
+    # self-addressed accept must stay human-only, the same rule `accept()`'s
+    # own write boundary already holds; `fold`'s own `to != own_slug`
+    # comment on the gate has the full reasoning). Never `own_slug`: unlike
+    # `listing()`/`sender_join()`, every accept this composer could ever
+    # fold IS the self-addressed case (a genuinely foreign accept never
+    # lands in this project's own file at all), so there is no legitimate
+    # use for the fallback here at all.
+    rows = _stamped(events(project_dir=project_dir), "")
+    return fold(rows, policies_by_to=_policies_by_to(rows))
 
 
 def get(request_id: str, project_dir=None) -> dict | None:
@@ -1079,10 +1232,27 @@ def listing(project_dir=None) -> list[dict]:
     folding only this bucket reported every ask this project SENT as `open`
     forever after it was decided, while `inbox` and the verdict panel (which do
     join) reported it correctly. The panel's own overflow line points here.
-    Local suppression survives the join; the recipient's never crosses it."""
+    Local suppression survives the join; the recipient's never crosses it.
+
+    #1083: folded with no `policies` at all until this fix, the ONE fold
+    call site of the three `_sender_rows`-fed/cross-bucket composers that
+    injected none. Fixed with `policies_by_to` (PER RECORD, keyed by each
+    record's own recipient — this composer's own rows can address several
+    DIFFERENT recipients at once, so a single flat set would either match
+    nothing or, unioned across recipients, leak one recipient's ruling onto
+    an ask addressed to another) rather than a flat `_request_policy_
+    history(project_dir)` — that call resolves THIS project's own ledger,
+    never the recipient's, where a covering ruling for an ask THIS project
+    SENT actually lives. `own_slug` lets a record SENT ABROAD (`to` names a
+    DIFFERENT project) match its own local founder through `_covered_by_
+    policy`'s fallback — never a self-addressed record (`to == own_slug`),
+    which `fold`'s own gate excludes regardless: that must stay human-only,
+    the same rule `accept()`'s write boundary already holds for it."""
     rows = [row for group in _sender_rows(project_dir).values() for row in group]
+    own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
     return sorted(
-        fold(rows).values(),
+        fold(rows, policies_by_to=_policies_by_to(rows),
+            own_slug=own_slug).values(),
         key=lambda r: (r["state"] not in _SENDER_MOVABLE,
                        r.get("updated_at") or "", r["request_id"]))
 
@@ -1409,7 +1579,19 @@ def accept(request_id: str, *, channel: str, note: str = "",
                     synthetic["policy_sha256"] = sha
                     history = refutations.request_policy_history(
                         project_dir=project_dir)
-                    if _covered_by_policy(synthetic, origin_slug, history):
+                    # #1083: `_covered_by_policy` widened its second
+                    # argument from a single `origin_slug` string to a SET
+                    # of candidate identities (own-slug/alias fallback for a
+                    # local founder) — this call site never needs that
+                    # fallback (a self-addressed `origin_slug == ""` already
+                    # returns `None` from `_resolve_covering_ruling` above,
+                    # before `synthetic`/`covering` are ever set, so this
+                    # line only ever runs for a genuinely foreign sender),
+                    # but it still has to pass the new shape, or `sender in
+                    # origin_slug` would silently do SUBSTRING matching on a
+                    # bare string instead of set membership.
+                    if _covered_by_policy(
+                            synthetic, frozenset({origin_slug}), history):
                         covered = True
                         stamp = {"under_ruling": ruling_id,
                                 "policy_sha256": sha}
@@ -1618,7 +1800,13 @@ def _sender_rows(project_dir) -> dict[str, list]:
     THERE, so every bucket with a ledger is read once and its rows for the
     ids this project sent abroad are joined. A project with nothing sent
     abroad (only self-addressed asks, or only answers to foreign asks) reads
-    its own bucket and nothing else."""
+    its own bucket and nothing else.
+
+    #1083: every row is stamped `_origin_slug` before it is grouped
+    (`_stamped`) — local rows get `""`, a foreign recipient's rows get that
+    recipient's own slug — overwriting whatever a planted value a disk row
+    might otherwise carry. `recipient_join` already stamped its own foreign
+    branch; this composer, and its local branch, did not, until this fix."""
     # #948: one resolution, shared with the CLI. Everything below keys
     # on the project, so a caller standing in a subdir must not answer
     # for a bucket of its own.
@@ -1627,7 +1815,7 @@ def _sender_rows(project_dir) -> dict[str, list]:
         return {}
     by_id: dict[str, list] = {}
     abroad: set[str] = set()
-    for row in events(project_dir=sender_slug):
+    for row in _stamped(events(project_dir=sender_slug), ""):
         rid = str(row.get("request_id") or "")
         by_id.setdefault(rid, []).append(row)
         if row.get("event") == "opened":
@@ -1639,7 +1827,7 @@ def _sender_rows(project_dir) -> dict[str, list]:
     for slug in _bucket_slugs():
         if slug == sender_slug:
             continue  # already covered by this bucket's own rows above
-        foreign = [row for row in events(project_dir=slug)
+        foreign = [row for row in _stamped(events(project_dir=slug), slug)
                    if str(row.get("request_id") or "") in abroad]
         for row in _without_suppression(foreign):
             by_id[str(row.get("request_id") or "")].append(row)
@@ -1651,10 +1839,16 @@ def sender_join(project_dir=None) -> dict[str, dict]:
     decided (D0) — the per-bucket `records()` above only ever sees this
     project's OWN rows, and a verdict lives in the recipient's bucket.
     Suppression is filtered before the fold runs (D5), local rows included:
-    this feeds the verdict PANEL, and suppression is exactly panel attention."""
+    this feeds the verdict PANEL, and suppression is exactly panel attention.
+
+    #1083: `policies_by_to`/`own_slug`, the same per-recipient resolution
+    `listing()` now uses (its own docstring has the full reasoning) — this
+    composer shares `_sender_rows`'s traversal and can fold requests
+    addressed to several different recipients in one call."""
     rows = _without_suppression(
         [row for group in _sender_rows(project_dir).values() for row in group])
-    return fold(rows, policies=_request_policy_history(project_dir))
+    own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
+    return fold(rows, policies_by_to=_policies_by_to(rows), own_slug=own_slug)
 
 
 def _bucket_slugs() -> list[str]:
@@ -1713,8 +1907,13 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
     # alone; the aliases come from the migration receipt, so a project that
     # never migrated pays one absent-file read and gets the set it had.
     mine = {my_slug} | set(buckets.aliases_for(my_slug))
+    # #1083: stamp `_origin_slug` on every local row too, before this
+    # project's own bucket is even filtered into inbox vs. outgoing —
+    # overwrites whatever a planted value a disk row might otherwise carry,
+    # the same invariant `_sender_rows` now holds for the opposite
+    # direction. `""` is the local convention `_founder_by_id` reads.
     own_by_id: dict[str, list] = {}
-    for row in events(project_dir=my_slug):
+    for row in _stamped(events(project_dir=my_slug), ""):
         own_by_id.setdefault(str(row.get("request_id") or ""), []).append(row)
     by_id: dict[str, list] = {}
     for rid, rows in own_by_id.items():
@@ -1730,8 +1929,16 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
         # otherwise come back labeled as asks from a stranger.
         if slug in mine:
             continue
+        # #961 slice 4, widened by #1083: stamp the origin bucket onto every
+        # row read from THIS foreign bucket, at read time — covers both the
+        # `elif` branch below and an orphan row (a verdict recorded in a
+        # THIRD bucket, #895), which used to reach the merged set unstamped.
+        # `fold`'s own `_founder_by_id` pre-pass reads it back off the
+        # founder row. `_origin_slug` is transient, in-memory only (never
+        # part of what `append`/`events` persist or read), the same posture
+        # `events()` already gives `_line`.
         grouped: dict[str, list] = {}
-        for row in events(project_dir=slug):
+        for row in _stamped(events(project_dir=slug), slug):
             grouped.setdefault(str(row.get("request_id") or ""), []).append(row)
         for rid, rows in grouped.items():
             opened = next((r for r in rows if r.get("event") == "opened"),
@@ -1739,14 +1946,6 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
             if opened is None:
                 orphans.append((rid, rows))  # decided elsewhere, maybe ours
             elif str(opened.get("to") or "") in mine:
-                # #961 slice 4: stamp the origin bucket onto every row for
-                # this id BEFORE it joins the merged, multi-bucket row set —
-                # `fold`'s own `_founder_by_id` pre-pass reads it back
-                # off the founder row. `_origin_slug` is transient, in-memory
-                # only (never part of what `append`/`events` persist or
-                # read), the same posture `events()` already gives `_line`.
-                for row in rows:
-                    row["_origin_slug"] = slug
                 by_id.setdefault(rid, []).extend(rows)
                 origin_of[rid] = slug
     for rid, rows in orphans:
@@ -1768,6 +1967,19 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
     # gets included — a stray match there can add at most an inert orphan
     # row to the merged set, never mislabel who a record is from, now that
     # only the founder resolution decides that.
+    #
+    # #1083: no `policies_by_to` map needed here, unlike `listing()`/
+    # `sender_join()` — every record this composer ever folds is already
+    # addressed to exactly one recipient (this project itself, by
+    # construction: the `to in mine` filter above), so the single flat
+    # `_request_policy_history(project_dir)` already answers the
+    # per-record question. No `own_slug` either: the only LOCAL founder
+    # (`from_slug == ""`) this composer can ever fold is a self-addressed
+    # ask (`to == my_slug`), and that must stay human-only regardless of
+    # any ruling, the same rule `accept()`'s own write boundary already
+    # holds for it — `fold`'s own gate comment on `to != own_slug` has the
+    # full reasoning. A genuinely FOREIGN founder already carries its own
+    # non-empty `from_slug`, stamped above, and needs no fallback at all.
     return fold(all_rows, policies=_request_policy_history(project_dir))
 
 
