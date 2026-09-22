@@ -17,7 +17,7 @@ daimon mcp serve   # blocks, serves JSON-RPC on stdio until EOF
 
 | Tool | What it returns |
 |------|-----------------|
-| `daimon_recall` | Search results with full provenance: trust class (`verbatim` = exact quote, `inferred` = model conclusion), author, supersession state, origin project slug |
+| `daimon_recall` | Search results with full provenance: trust class (`verbatim` = exact quote, `inferred` = model conclusion), author, origin project slug, and a `status` field in plain words when a row is resolved, superseded, or contradicted (`null` for a live row) |
 | `daimon_brief` | The latest briefing for the current project — deterministic render, trust-tagged, resolutions withheld |
 | `daimon_projects` | Every project daimon has memory for: slug, session, branch, last topic |
 | `daimon_status` | Capture health: checkpoint freshness, last serialize result, outstanding failures, alarms — same payload as `daimon status --json` |

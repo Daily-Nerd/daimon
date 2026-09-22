@@ -2607,3 +2607,89 @@ def test_extra_read_slugs_with_an_unknown_project_stay_silent(
     monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/x"))
     assert recall.suggest("debugging the litellm gateway cache pinning again",
                           project_dir=None, current_session="S-now") == []
+
+
+# --- #1079: describe_supersession/describe_status, the ONE demotion helper --
+#
+# `_cmd_recall` and the MCP `daimon_recall` tool both need "what does this
+# row's supersession say", worded identically. `_supersession_origin` moved
+# here from the CLI module so both callers (and `_suggest_line`, which wants
+# the vaguer `name_id=False` form) share one implementation.
+
+
+def test_describe_supersession_reads_none_for_a_live_row():
+    assert recall.describe_supersession({}) is None
+    assert recall.describe_supersession({"superseded_by": None}) is None
+
+
+def test_describe_supersession_reads_the_resolved_sentinel():
+    assert recall.describe_supersession({"superseded_by": "resolved"}) == \
+        "resolved"
+
+
+def test_describe_supersession_names_the_id_and_a_model_authored_link():
+    row = {"superseded_by": "S-new", "superseded_source": "link"}
+    assert recall.describe_supersession(row) == \
+        "superseded by S-new, from a model-authored link"
+
+
+def test_describe_supersession_names_the_id_and_a_recorded_resolution():
+    row = {"superseded_by": "o-later22", "superseded_source": "resolution"}
+    assert recall.describe_supersession(row) == \
+        "superseded by o-later22, from a recorded resolution"
+
+
+def test_describe_supersession_unknown_source_reads_as_unrecorded():
+    row = {"superseded_by": "S-new", "superseded_source": None}
+    assert recall.describe_supersession(row) == \
+        "superseded by S-new, origin not recorded"
+
+
+def test_describe_supersession_name_id_false_is_the_vaguer_hook_wording():
+    # #1079: `_suggest_line` never named the id — only the CLI text surface
+    # does. The flag keeps that INTENTIONAL difference alive in one function
+    # rather than in two independent renderers that could drift apart.
+    row = {"superseded_by": "S-new", "superseded_source": "link"}
+    assert recall.describe_supersession(row, name_id=False) == \
+        "superseded by later work"
+    assert recall.describe_supersession(
+        {"superseded_by": "resolved"}, name_id=False) == "resolved"
+
+
+def test_describe_status_is_none_for_a_live_row():
+    assert recall.describe_status({}) is None
+    assert recall.describe_status(
+        {"superseded_by": None, "invalidated_by": None,
+         "cured_by": None}) is None
+
+
+def test_describe_status_reads_a_resolved_row():
+    assert recall.describe_status({"superseded_by": "resolved"}) == "resolved"
+
+
+def test_describe_status_reads_a_superseded_row():
+    row = {"superseded_by": "S-new", "superseded_source": "link"}
+    assert recall.describe_status(row) == \
+        "superseded by S-new, from a model-authored link"
+
+
+def test_describe_status_reads_an_invalidated_row():
+    row = {"invalidated_by": "receipt:receipt-invalid@2026-08-29T10:00:00Z"}
+    assert recall.describe_status(row) == \
+        "contradicted by receipt:receipt-invalid at 2026-08-29T10:00:00Z"
+
+
+def test_describe_status_reads_a_cured_row():
+    row = {"cured_by": "receipt-ok:receipt-valid@2026-08-29T12:00:00Z"}
+    assert recall.describe_status(row) == \
+        "contradiction cleared by receipt-ok:receipt-valid at 2026-08-29T12:00:00Z"
+
+
+def test_describe_status_joins_supersession_and_contradiction_when_both_fire():
+    # #837: the axes are independent and a row can carry both — the combined
+    # field must say both rather than picking one.
+    row = {"superseded_by": "resolved",
+           "invalidated_by": "receipt:receipt-invalid@2026-08-29T10:00:00Z"}
+    assert recall.describe_status(row) == (
+        "resolved; contradicted by receipt:receipt-invalid "
+        "at 2026-08-29T10:00:00Z")

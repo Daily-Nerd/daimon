@@ -18,7 +18,7 @@ daimon mcp serve   # bloquea y sirve JSON-RPC por stdio hasta EOF
 
 | Herramienta | Qué devuelve |
 |-------------|--------------|
-| `daimon_recall` | Resultados de búsqueda con procedencia completa: clase de confianza (`verbatim` = cita exacta, `inferred` = conclusión del modelo), autor, estado de supersesión, slug del proyecto de origen |
+| `daimon_recall` | Resultados de búsqueda con procedencia completa: clase de confianza (`verbatim` = cita exacta, `inferred` = conclusión del modelo), autor, slug del proyecto de origen, y un campo `status` en palabras claras cuando una fila está resuelta, reemplazada o contradicha (`null` para una fila vigente) |
 | `daimon_brief` | El último briefing del proyecto actual — render determinista, etiquetado por confianza, con resoluciones retenidas |
 | `daimon_projects` | Cada proyecto del que daimon tiene memoria: slug, sesión, rama, último tema |
 | `daimon_status` | Salud de captura: frescura del checkpoint, resultado del último serialize, fallas pendientes, alarmas — el mismo payload que `daimon status --json` |
