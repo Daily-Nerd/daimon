@@ -6024,6 +6024,19 @@ def test_a_verb_accept_policy_does_not_cover_an_agent_open(project):
             project_dir=project)
 
 
+def test_resolve_covering_open_policy_with_empty_to_returns_none(project):
+    """The write boundary always validates `to` non-empty before this
+    resolver ever runs (`_SLUG_RE.fullmatch`), so an empty `to` reaching
+    it is unreachable through `open_request` itself — a defensive guard
+    for any other caller, mirrored from `_resolve_covering_ruling`'s
+    identical `if not sender: return None`. Pinned directly: an active
+    open policy exists for a REAL recipient, and an empty `to` still
+    matches nothing."""
+    to_slug = "p-open-empty-to"
+    _cover_open(project, to_slug)
+    assert requests._resolve_covering_open_policy("", project) is None
+
+
 def test_agent_open_refuses_when_the_ratifying_machines_clock_leads_this_ones(
         project, monkeypatch):
     """The H2-review dry run applied to `open_request`: a ruling ratified on

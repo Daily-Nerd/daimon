@@ -2621,6 +2621,143 @@ def test_a_ruling_revised_twice_then_forgotten_tombstones_both_intervals(
         assert set(row.keys()) & set(refutations._PLAINTEXT_FIELDS) == set()
 
 
+def test_write_policy_tombstones_survives_request_policy_history_raising(
+        tmp_checkpoint_dir, monkeypatch):
+    """`_write_policy_tombstones` reads `request_policy_history` BEFORE
+    the caller rewrites the ledger; if that read itself raises (a
+    monkeypatched failure, standing in for a corrupt ledger reached mid
+    fold), the tombstone write must not crash and must simply write no
+    rows — never half a row, never propagate."""
+    from daimon_briefing import normalize
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="history raises subject", verdict="history raises verdict")
+    monkeypatch.setattr(
+        refutations, "request_policy_history",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    removed = refutations.forget_content_key(
+        normalize.content_key("history raises verdict"), project_dir=PROJECT)
+    assert ruling_id in removed  # the ledger rewrite still happened
+    path = refutations._tombstone_path(PROJECT)
+    assert path is None or not path.exists() or not path.read_text(
+        encoding="utf-8").strip()
+
+
+def test_write_policy_tombstones_repairs_a_torn_file_before_appending(
+        tmp_checkpoint_dir):
+    """A pre-existing tombstone file with no trailing newline must not be
+    fused with the new row `forget` appends — the same torn-write guard
+    `append` itself already applies to the main ledger."""
+    from daimon_briefing import normalize
+    path = refutations._tombstone_path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not terminated", encoding="utf-8")  # no trailing \n
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="torn file subject", verdict="torn file verdict text")
+    refutations.forget_content_key(
+        normalize.content_key("torn file verdict text"), project_dir=PROJECT)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "not terminated"
+    new_rows = [json.loads(line) for line in lines[1:] if line.strip()]
+    assert any(row.get("ruling_id") == ruling_id for row in new_rows)
+
+
+def test_write_policy_tombstones_survives_an_oserror_on_write(
+        tmp_checkpoint_dir, monkeypatch):
+    """The tombstone write is best-effort: a write failure must not sink
+    `forget_content_key`, and the ledger rewrite (the deletion promise
+    `forget` actually exists for) still has to happen."""
+    from daimon_briefing import normalize
+    tombstone_path = refutations._tombstone_path(PROJECT)
+    real_open = Path.open
+
+    def _boom_open(self, *args, **kwargs):
+        if self == tombstone_path and args and args[0] == "a":
+            raise OSError("simulated write failure")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _boom_open)
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="write oserror subject", verdict="write oserror verdict text")
+    removed = refutations.forget_content_key(
+        normalize.content_key("write oserror verdict text"),
+        project_dir=PROJECT)
+    assert ruling_id in removed
+    assert refutations.get(ruling_id, project_dir=PROJECT) is None
+
+
+def test_read_policy_tombstones_survives_invalid_utf8_bytes(
+        tmp_checkpoint_dir):
+    """An unreadable-as-utf8 tombstone file must not sink the still-live
+    ledger interval this project's OWN ruling ledger already grants —
+    only the tombstoned (forgotten) half is lost, silently, never an
+    exception."""
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="bad utf8 subject", verdict="bad utf8 verdict text")
+    live = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in live)
+    path = refutations._tombstone_path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe not valid utf-8 at all")
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in out)
+
+
+def test_read_policy_tombstones_survives_an_oserror_on_read(
+        tmp_checkpoint_dir, monkeypatch):
+    """The same fail-open posture, for an OSError instead of a decode
+    error — a permissions fault or a symlink loop on the tombstone file
+    specifically, never the ledger's own read."""
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_open_policy(),
+        subject="read oserror subject", verdict="read oserror verdict text")
+    live = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in live)
+    tombstone_path = refutations._tombstone_path(PROJECT)
+    tombstone_path.parent.mkdir(parents=True, exist_ok=True)
+    tombstone_path.write_text('{"sender": ""}', encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def _boom_read_text(self, *args, **kwargs):
+        if self == tombstone_path:
+            raise OSError("simulated read failure")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _boom_read_text)
+    out = refutations.request_policy_history(project_dir=PROJECT)
+    assert any(e[5] == ruling_id for e in out)
+
+
+def test_active_request_policies_ignores_a_record_with_an_unknown_verb(
+        tmp_checkpoint_dir):
+    """`_policy_tuple`'s `else: return None` branch, for a hand-edited
+    `request_policy` whose `verb` is neither `accept` nor `open` — a
+    shape no writer this codebase ships can produce, only a hand-edited
+    ledger. Both the direct unit call AND the read-boundary resolver that
+    consumes it must treat it as no grant, not raise."""
+    ruling_id = _rule(
+        channel="cli-tty", ratified=True, request_policy=_policy(),
+        subject="bad verb subject", verdict="bad verb verdict text")
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    bad_verb_record = {**record, "request_policy":
+                       {**record["request_policy"], "verb": "reject"}}
+    assert refutations._policy_tuple(bad_verb_record) is None
+    path = refutations._path(PROJECT)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for line in lines:
+        row = json.loads(line)
+        if row.get("refutation_id") == ruling_id and "request_policy" in row:
+            row["request_policy"]["verb"] = "reject"
+        rewritten.append(json.dumps(row))
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    assert refutations.active_request_policies(project_dir=PROJECT) == (
+        frozenset())
+
+
 def test_read_policy_tombstones_skips_malformed_lines(tmp_checkpoint_dir):
     """A non-JSON line, a JSON scalar (not an object), and a row with a
     non-numeric `active_from` must each be skipped rather than raising —
