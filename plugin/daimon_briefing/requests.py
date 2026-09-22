@@ -1249,7 +1249,7 @@ def listing(project_dir=None) -> list[dict]:
     which `fold`'s own gate excludes regardless: that must stay human-only,
     the same rule `accept()`'s write boundary already holds for it."""
     rows = [row for group in _sender_rows(project_dir).values() for row in group]
-    own_slug = store.project_slug(config.resolve_project_dir(project_dir))
+    own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
     return sorted(
         fold(rows, policies_by_to=_policies_by_to(rows),
             own_slug=own_slug).values(),
@@ -1847,7 +1847,7 @@ def sender_join(project_dir=None) -> dict[str, dict]:
     addressed to several different recipients in one call."""
     rows = _without_suppression(
         [row for group in _sender_rows(project_dir).values() for row in group])
-    own_slug = store.project_slug(config.resolve_project_dir(project_dir))
+    own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
     return fold(rows, policies_by_to=_policies_by_to(rows), own_slug=own_slug)
 
 
