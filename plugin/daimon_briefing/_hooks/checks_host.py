@@ -410,14 +410,21 @@ def _failure_line(entry, outcome, *, pointer: bool = False) -> str:
     also exactly when the ruling would render compact (`briefing._check_
     line` gates on the identical `intent == "enforce"` fact); a `warn` or
     `record-only` message keeps its prose full anyway, so it needs no
-    pointer added here."""
+    pointer added here.
+
+    Skipped when `reason` already carries this exact ruling's pointer: a
+    check's own stderr may author one itself (the id is deterministic from
+    subject+scope via `make_id`, so a check body can be written with the
+    real id ahead of ratification), and stacking a second one on top would
+    read as a copy-paste mistake rather than emphasis."""
     ruling_id = str(entry.get("ruling_id") or "")
     reason = outcome.reason or "the check reported a violation and gave no reason"
     if outcome.outcome == "unresolved" and outcome.cause:
         reason = f"{outcome.cause}: {reason}"
     line = f"{ruling_id}: {reason}"
-    if pointer and ruling_id:
-        line += f" (daimon ruling show {ruling_id})"
+    pointer_text = f"daimon ruling show {ruling_id}"
+    if pointer and ruling_id and pointer_text not in reason:
+        line += f" ({pointer_text})"
     return line
 
 

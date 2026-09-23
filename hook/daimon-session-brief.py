@@ -33,8 +33,9 @@ def _run_brief(cli, cwd: str, auto: bool):
     argv = [cli, "brief", "--auto"] if auto else [cli, "brief"]
     # #1089: same host tag `daimon-session-end.py` already forwards for
     # capture (`project_env(cwd, "claude-code")`) — without it `daimon
-    # brief` cannot tell which host is asking, and a code-enforced ruling
-    # (a `request_policy` or an `enforce` check) never renders compact.
+    # brief` cannot tell which host is asking, and an `enforce` check
+    # ruling never renders compact (a `request_policy` ruling is unaffected
+    # either way; it renders compact regardless of host).
     return subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT,
                           env=lib.project_env(cwd, "claude-code"))
 

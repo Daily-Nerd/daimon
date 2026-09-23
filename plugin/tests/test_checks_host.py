@@ -465,6 +465,33 @@ def test_a_violation_under_enforce_denies_and_names_the_ruling(tmp_path):
     assert d.rows[0]["decision_emitted"] == "deny"
 
 
+def test_a_reason_that_already_carries_the_pointer_is_not_doubled(tmp_path):
+    """A check body may bake its own `(daimon ruling show <id>)` pointer
+    into its stderr — the live push/GPG check does exactly this. The
+    ruling id is deterministic from subject+scope (`make_id`), so the body
+    can be authored with the real id ahead of ratification. `_failure_line`
+    must not stack a second pointer on top of one the check already wrote."""
+    subject, scope = "a self-pointing rule", "publishing"
+    ruling_id = refutations.make_id(subject, scope)
+    body = ("#!/bin/sh\n"
+           f"echo 'no em-dash in a public body "
+           f"(daimon ruling show {ruling_id})' >&2\n"
+           "exit 1\n")
+    _arm(tmp_path, body=body, intent="enforce", subject=subject, scope=scope)
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert reason.count(f"(daimon ruling show {ruling_id})") == 1
+
+
+def test_a_reason_without_the_pointer_still_gets_it_appended(tmp_path):
+    ruling_id = _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert reason.count(f"(daimon ruling show {ruling_id})") == 1
+
+
 def test_the_same_violation_under_warn_allows_and_says_so(tmp_path):
     ruling_id = _arm(tmp_path, intent="warn")
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
