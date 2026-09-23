@@ -29,6 +29,7 @@ from . import (capture, carry, config, llm, pending, receipts, refutations,
 # name inside that function.
 from .amendments import CHANGES as _AMEND_CHANGES
 from .amendments import RENDER_STATES as _AMEND_RENDER_STATES
+from .amendments import found_label as _amend_found_label
 
 log = logging.getLogger("daimon.briefing")
 
@@ -286,9 +287,16 @@ def _line(item, degraded: bool = False, briefable: bool = False) -> str:
                     base += f"\n    note: {_truncate_agent_claim(note)}"
             else:
                 role = str(amend.get("role") or "").strip()
+                # #1087: an ADDED line — the pinned prefix above (through
+                # "unconfirmed: ...") never changes. `found` says WHERE the
+                # quote was found, never WHO said it: a plain-text `daimon
+                # serialize <file>` turns any file into one role="user"
+                # message, so a role alone can never honestly claim a human
+                # spoke.
                 base += (f'\n  ⚠ agent-proposed amendment — {change} '
                          f'(quote-verified, role: {role}), unconfirmed: '
                          f'"{quote}"'
+                         f"\n    found: {_amend_found_label(role)}"
                          f"\n    confirm: daimon amend ratify {a_id}"
                          f"\n    reject: daimon amend reject {a_id}")
         overflow = amends.get("overflow")

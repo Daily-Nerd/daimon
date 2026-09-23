@@ -75,6 +75,18 @@ _EVENT_RANK = {
     "rejected": 3,
 }
 _AMEND_ID_RE = re.compile(r"a-[0-9a-f]{12}")
+# #1087: neutral WHERE-found labels, keyed on the `evidence_role` the
+# mechanical byte-check records. Says where a quote was found, never who
+# said it — a plain-text `daimon serialize <file>` turns any file with no
+# recognizable structure into ONE role="user" message (transcript.py), so a
+# role alone can never honestly claim a human spoke. Every branch but the
+# user-turn one carries the flag: only a user turn is genuinely neutral.
+_FOUND_LABELS = {
+    "user": "in a user turn",
+    "tool": "in tool output",
+    "assistant": "agent's own words ⚠",
+}
+_FOUND_UNKNOWN = "source unknown ⚠"
 # Everything policy.stamp_item_ids can mint (relations' target contract):
 # prefix letter per list key, width ladder plus the legacy 6-hex era, and
 # the `-{n}` identical-text twin counter.
@@ -315,6 +327,15 @@ def get(amendment_id: str, project_dir=None) -> dict | None:
     return records(project_dir=project_dir).get(amendment_id)
 
 
+def found_label(role: str | None) -> str:
+    """The neutral `found` line for a decide row or briefing annotation
+    (#1087): WHERE a quote was found, never WHO said it. Maps the
+    mechanical byte-check's `evidence_role`; any value outside the closed
+    set (missing, malformed, a future role token) fails toward the flagged
+    unknown label rather than a false claim of neutrality."""
+    return _FOUND_LABELS.get(str(role or "").strip(), _FOUND_UNKNOWN)
+
+
 def renderable(project_dir=None) -> dict[str, dict]:
     """Render-worthy amendments grouped by target item id.
 
@@ -438,6 +459,58 @@ def reject(amendment_id: str, *, channel: str, note: str = "",
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir):
         raise AmendmentError("rejection not written")
+
+
+def _validate_batch(amendment_ids: list[str], current_records: dict[str, dict],
+                    *, verb: str) -> None:
+    """#1087: every id checked against the SAME fold before anything is
+    written — the shared half of `ratify_many`/`reject_many`'s all-or-
+    nothing contract. Raises naming every bad id at once; never partial."""
+    bad = []
+    for aid in amendment_ids:
+        record = current_records.get(aid)
+        if record is None:
+            bad.append(f"{aid} (unknown)")
+        elif verb == "ratify" and record["state"] not in ("candidate", "verified"):
+            bad.append(f"{aid} ({record['state']})")
+    if bad:
+        raise AmendmentError(
+            f"{verb} refused, nothing written — bad id(s): " + ", ".join(bad))
+
+
+def ratify_many(amendment_ids: list[str], *, channel: str,
+                project_dir=None) -> None:
+    """All-or-nothing multi-id ratify (#1087): a fan-out card's `reject all`
+    line and a human batching several confirms both need one bad id to sink
+    the whole line, never silently ratify the rest. Every id is validated
+    against the CURRENT fold before the first append."""
+    if CHANNEL_AUTHORITY.get(channel) != "human":
+        raise AmendmentError(
+            "ratification requires a human channel; this call arrived "
+            f"through {channel!r}")
+    ids = list(amendment_ids)
+    _validate_batch(ids, records(project_dir=project_dir), verb="ratify")
+    for aid in ids:
+        row = _stamp("ratified", aid, channel)
+        if not append(row, project_dir=project_dir):
+            raise AmendmentError(f"ratification not written for {aid}")
+
+
+def reject_many(amendment_ids: list[str], *, channel: str, note: str = "",
+               project_dir=None) -> None:
+    """All-or-nothing multi-id reject (#1087), the `ratify_many` mirror."""
+    if CHANNEL_AUTHORITY.get(channel) != "human":
+        raise AmendmentError(
+            "rejection requires a human channel; this call arrived "
+            f"through {channel!r}")
+    ids = list(amendment_ids)
+    _validate_batch(ids, records(project_dir=project_dir), verb="reject")
+    note_text = _text("note", note, required=False)
+    for aid in ids:
+        row = _stamp("rejected", aid, channel)
+        row["note"] = note_text
+        if not append(row, project_dir=project_dir):
+            raise AmendmentError(f"rejection not written for {aid}")
 
 
 def plaintext_values(row: dict) -> list[str]:

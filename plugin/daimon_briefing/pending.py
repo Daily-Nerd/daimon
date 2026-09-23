@@ -42,7 +42,13 @@ its outgoing asks to someone else) stays behind the explicit flag.
 
 from __future__ import annotations
 
-from . import amendments, config, refutations, requests, store
+from . import amendments, config, recall, refutations, requests, store
+
+# #1087: per-loop text cap on the decide row — the quote alone is not
+# decidable without knowing what it is claimed to change, but the loop's own
+# text is unbounded checkpoint prose; a backlog row is read in seconds, not
+# paragraphs.
+_LOOP_TEXT_CAP = 120
 
 
 # Requests first: someone else is blocked on them. Then quote-verified
@@ -54,7 +60,7 @@ _KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2}
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
          commands, context="", blocking=False,
-         claimed=False, request_state=None) -> dict:
+         claimed=False, request_state=None, amend=None) -> dict:
     return {
         "kind": kind,
         "id": record_id,
@@ -93,6 +99,10 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         # asking for more) than on a plain open ask. None for every lane
         # but `request`.
         "request_state": request_state,
+        # #1087: the amendment lane's own judgeable-row payload — loop text,
+        # current state, claimed change, and the neutral `found` label. None
+        # for every lane but `amendment`, same guard shape as the two above.
+        "amend": amend,
     }
 
 
@@ -205,6 +215,54 @@ def _ledger_rows(project_dir, slug) -> list:
     return rows
 
 
+def _loop_text(item_id: str, slug: str) -> str:
+    """The target loop's own text, for the decide row (#1087 fact 1/4): a
+    quote is not decidable without knowing what it is claimed to change.
+
+    `slug` is always passed explicit — never the bare `project_dir` scope —
+    because without it `lookup_item` widens to `DAIMON_EXTRA_READ_SLUGS` and
+    takes the newest cross-scope match, which could hand this project's
+    decide row a DIFFERENT project's item text under the same id. Fails
+    toward the unavailable placeholder on any miss or read trouble: the row
+    stays in the queue either way (amendments.py's own fail-open posture),
+    it just cannot show what it is about."""
+    unavailable = "(loop text unavailable)"
+    if not item_id:
+        return unavailable
+    try:
+        row = recall.lookup_item(item_id, slug=slug)
+    except Exception:
+        return unavailable
+    if not row:
+        return unavailable
+    text = str(row.get("text") or "").strip()
+    if not text:
+        return unavailable
+    if len(text) > _LOOP_TEXT_CAP:
+        text = text[:_LOOP_TEXT_CAP - 1].rstrip() + "…"
+    return text
+
+
+def _current_state(records: dict, item_id: str, exclude_id: str) -> str:
+    """The target's state BEFORE this row's own claimed change (#1087): the
+    newest RATIFIED amendment already settled for this item (excluding this
+    row itself), or the literal `"open"` baseline when none exists — an
+    amendment only ever targets an item that is still open (cli/amend.py's
+    own propose-time gate). Fails toward `"?"`: an unreadable current state
+    must never be silently rendered as `"open"`, which would claim more
+    certainty than the read actually has."""
+    try:
+        ratified = [r for aid, r in records.items()
+                    if aid != exclude_id and r.get("item_id") == item_id
+                    and r.get("state") == "ratified"]
+        if not ratified:
+            return "open"
+        ratified.sort(key=lambda r: r.get("updated_at") or "")
+        return str(ratified[-1].get("change") or "open")
+    except Exception:
+        return "?"
+
+
 def _amendment_rows(project_dir, slug) -> list:
     """Quote-verified amendments only.
 
@@ -213,6 +271,13 @@ def _amendment_rows(project_dir, slug) -> list:
     annotation would let an agent assert state with no transcription check.
     `verified` is exactly the set the briefing already renders with a
     confirm/reject pair.
+
+    #1087: each row now carries the loop's own text, its current state, the
+    claimed change, and a neutral `found` label — see `_loop_text`,
+    `_current_state`, and `amendments.found_label`. `headline` stays the raw
+    evidence quote (never truncated here): the fan-out card in
+    `cli/lifecycle.py` groups rows on this exact value, and the CLI render is
+    what truncates for display.
     """
     records = amendments.records(project_dir=project_dir)
     seen = [row.get("amendment_id") for row in amendments.events(
@@ -221,18 +286,25 @@ def _amendment_rows(project_dir, slug) -> list:
     for aid, record in records.items():
         if record.get("state") != "verified":
             continue
+        item_id = str(record.get("item_id") or "")
+        role = str(record.get("evidence_role") or "")
         rows.append((_row(
             kind="amendment", record_id=aid, slug=slug,
             headline=record.get("evidence") or "",
-            # An amendment is a claim ABOUT an item: the quote alone is not
-            # decidable without knowing what it is claimed to change.
-            context=(f"on {record.get('item_id') or '?'} "
-                     f"· claims {record.get('change') or '?'}"),
             waiting_since=record.get("created_at") or "",
             commands=[
                 ("confirm", f"daimon amend ratify {aid}"),
                 ("reject", f"daimon amend reject {aid}"),
-            ]),
+            ],
+            amend={
+                "loop_id": item_id or "?",
+                "loop_text": _loop_text(item_id, slug),
+                "state_from": _current_state(records, item_id, aid),
+                "state_to": record.get("change") or "?",
+                "role": role,
+                "found": amendments.found_label(role),
+                "note": str(record.get("note") or "").strip(),
+            }),
             seen.index(aid) if aid in seen else 0))
     return rows
 
