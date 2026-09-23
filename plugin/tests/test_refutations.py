@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, refutations
+from daimon_briefing import cli, refutations, store
 
 
 PROJECT = "/p/refutations"
@@ -1081,3 +1081,11 @@ def test_receipt_evidence_with_an_empty_payload_is_refused(tmp_checkpoint_dir):
 def test_evidence_refusal_names_the_receipt_kind(tmp_checkpoint_dir):
     with pytest.raises(refutations.RefutationError, match="receipt:<id>"):
         _assert(evidence=["signed by someone"])
+
+
+# ---- #1092: the first refutations write records the bucket root -----------
+
+
+def test_assert_ruling_records_bucket_root_on_first_write(tmp_checkpoint_dir):
+    _assert()
+    assert store.bucket_root(PROJECT) == PROJECT

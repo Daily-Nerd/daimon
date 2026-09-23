@@ -341,9 +341,11 @@ def test_write_project_latest_is_atomic(tmp_checkpoint_dir, sample_checkpoint, m
 
     monkeypatch.setattr(store.os, "replace", spy)
     store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA")
-    # session file + global latest + project latest, all via os.replace
-    assert len(calls) == 3
+    # session file + global latest + project latest + the #1092 bucket-root
+    # record (this is the FIRST write to this bucket), all via os.replace
+    assert len(calls) == 4
     assert any(c.endswith("-Users-x-projA/latest.json") for c in calls)
+    assert any(c.endswith("-Users-x-projA/root") for c in calls)
 
 
 def test_read_latest_prefers_project(tmp_checkpoint_dir, sample_checkpoint):
@@ -2379,4 +2381,105 @@ def test_read_latest_reportable_allows_an_unrouted_checkpoint(tmp_checkpoint_dir
     got = store.read_latest_body(str(mine), route=store.Route.OWN_ELSE_GLOBAL,
                                  admit=store.Admit.OWN_OR_UNROUTED)
     assert (got or {}).get("session_id") == "S-unrouted"
+
+
+# ---- #1092: the bucket root record ----------------------------------------
+
+
+def test_record_bucket_root_writes_the_resolved_root(tmp_checkpoint_dir):
+    proj = "/repo/root-record"
+    store.record_bucket_root(proj)
+    slug = store.project_slug(proj)
+    root_path = tmp_checkpoint_dir / slug / "root"
+    assert root_path.read_text(encoding="utf-8") == proj + "\n"
+
+
+def test_bucket_root_reads_back_the_recorded_value(tmp_checkpoint_dir):
+    proj = "/repo/root-read"
+    store.record_bucket_root(proj)
+    assert store.bucket_root(proj) == proj
+
+
+def test_bucket_root_missing_is_none(tmp_checkpoint_dir):
+    assert store.bucket_root("/repo/never-recorded") is None
+
+
+def test_bucket_root_unknown_project_is_none(tmp_checkpoint_dir):
+    assert store.bucket_root(None) is None
+    assert store.bucket_root("") is None
+
+
+def test_bucket_root_accepts_a_slug_directly(tmp_checkpoint_dir):
+    proj = "/repo/root-by-slug"
+    store.record_bucket_root(proj)
+    slug = store.project_slug(proj)
+    assert store.bucket_root(slug) == proj
+
+
+def test_record_bucket_root_first_writer_wins(tmp_checkpoint_dir):
+    # Two distinct strings that slug to the exact same bucket (space and
+    # hyphen both fold to '-'): the second write must never clobber the first.
+    first = "/a/b c"
+    second = "/a/b-c"
+    assert store.project_slug(first) == store.project_slug(second)
+    store.record_bucket_root(first)
+    store.record_bucket_root(second)
+    assert store.bucket_root(first) == first
+
+
+def test_record_bucket_root_unknown_project_is_a_noop(tmp_checkpoint_dir):
+    store.record_bucket_root(None)
+    store.record_bucket_root("")
+    assert list(tmp_checkpoint_dir.glob("*")) == []
+
+
+def test_record_bucket_root_kill_switch_is_a_noop(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    store.record_bucket_root("/repo/root-disabled")
+    assert list(tmp_checkpoint_dir.glob("*")) == []
+
+
+def test_record_bucket_root_survives_oserror(tmp_checkpoint_dir, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store.Path, "mkdir", boom)
+    store.record_bucket_root("/repo/root-oserr")  # must not raise
+
+
+def test_write_checkpoint_records_root_on_first_write(tmp_checkpoint_dir, sample_checkpoint):
+    proj = "/repo/checkpoint-root"
+    store.write_checkpoint("S-ckpt", sample_checkpoint, project_dir=proj)
+    assert store.bucket_root(proj) == proj
+
+
+def test_append_verification_records_root_on_first_write(tmp_checkpoint_dir):
+    proj = "/repo/verification-root"
+    store.append_verification("item-1", "quote", "quote-not-in-transcript",
+                              project_dir=proj)
+    assert store.bucket_root(proj) == proj
+
+
+def test_record_forget_hits_records_root_on_first_write(tmp_checkpoint_dir):
+    proj = "/repo/forget-hits-root"
+    store.record_forget_hits([{"text": "secret thing"}], project_dir=proj)
+    assert store.bucket_root(proj) == proj
+
+
+def test_append_event_records_root_on_first_write(tmp_checkpoint_dir):
+    proj = "/repo/event-root"
+    store.append_event("item-1", "resolved", project_dir=proj)
+    assert store.bucket_root(proj) == proj
+
+
+def test_first_writer_across_entry_points_wins(tmp_checkpoint_dir, sample_checkpoint):
+    """Two DIFFERENT directories that slug to the same bucket, written through
+    two DIFFERENT public entry points: whichever writes first names the
+    bucket, and no later writer, through any entry point, may rename it."""
+    first = "/repo/shared bucket"
+    second = "/repo/shared-bucket"
+    assert store.project_slug(first) == store.project_slug(second)
+    store.append_event("item-1", "resolved", project_dir=first)
+    store.write_checkpoint("S-shared", sample_checkpoint, project_dir=second)
+    assert store.bucket_root(first) == first
 

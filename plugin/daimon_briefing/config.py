@@ -760,6 +760,205 @@ def resolve_project_dir(raw: str | None, *,
     return resolve_project_root(absolute)
 
 
+class ProjectWriteRefused(Exception):
+    """Raised by `resolve_project_dir_for_write` (#1092) when an explicit
+    write target silently escaped to `Path.home()` because home is itself a
+    git working tree."""
+
+
+@overload
+def resolve_project_dir_for_write(raw: str, *, allow_slug: bool = True) -> str: ...
+@overload
+def resolve_project_dir_for_write(raw: None, *, allow_slug: bool = True) -> None: ...
+def resolve_project_dir_for_write(raw: str | None, *,
+                                  allow_slug: bool = True) -> str | None:
+    """Resolve `raw` exactly like `resolve_project_dir` (same signature, same
+    return value on every path), but additionally refuse
+    (`ProjectWriteRefused`) the one case #948's collapsing rule was never
+    asked to consider: a caller who named a directory BELOW home, that
+    silently routes to the home bucket because a `git init ~` (a dotfiles
+    setup) makes `Path.home()` itself a git repository.
+
+    Why this cannot live inside `resolve_project_dir` itself: that function
+    is read AND write's shared resolver, and reads must never refuse: a
+    `daimon ruling list --project ~/work` has to answer for whatever bucket
+    `~/work` names today, refusal or not. Only a write verb that opts into
+    this wrapper pays for the extra check; every read call site keeps
+    calling `resolve_project_dir` directly, untouched.
+
+    Why the check cannot be "resolved differs from requested": that is ALSO
+    exactly what happens for the #948 contract this must not break.
+    `daimon/plugin` resolving to `daimon` is a subdirectory of an ordinary
+    project repo, structurally identical to `~/work` resolving to `~` (both
+    are a `.git`-free directory sitting under a directory that has one).
+    Git's own upward search cannot tell those two cases apart either, and
+    neither can a stat probe run on the requested path: nothing there
+    differs. The one fact that DOES differ is which directory the escape
+    lands on. So the guard is deliberately narrow: refuse only when the
+    resolved root is `Path.home()` itself and the caller did not ask for
+    home directly. A normal project repo is never home, so `daimon/plugin`
+    keeps resolving to `daimon` exactly as it does for reads, and the escape
+    this exists to catch (a write meant for `~/work` silently landing in
+    the home bucket) is refused with both paths named.
+
+    Tolerates every failure `resolve_project_dir` already tolerates (a slug
+    input, an unresolvable path, a `Path.home()` that raises): those make
+    this behave identically to `resolve_project_dir`, no guard, no raise.
+    """
+    resolved = resolve_project_dir(raw, allow_slug=allow_slug)
+    if not raw or resolved is None:
+        return resolved
+    text = str(raw)
+    if allow_slug:
+        looks_like_path = (os.sep in text
+                           or (os.altsep is not None and os.altsep in text)
+                           or os.path.isdir(text))
+        if not looks_like_path:
+            return resolved
+    try:
+        requested_abs = str(Path(text).expanduser().resolve())
+    except (OSError, RuntimeError, ValueError):
+        return resolved
+    if resolved == requested_abs:
+        return resolved
+    try:
+        home = str(Path.home().resolve())
+    except RuntimeError:
+        return resolved
+    if resolved == home and requested_abs != home:
+        raise ProjectWriteRefused(
+            f"{raw} resolves to {resolved} (home is a git repository); "
+            "refusing to write another directory's bucket")
+    return resolved
+
+
+def _git_shadowed(start: Path) -> bool:
+    """True when `start`, or anything above it up to the filesystem root,
+    carries a `.git` entry (file or directory), so a git WORKTREE (whose
+    `.git` is a file pointing at the main repo's gitdir) counts the same as
+    an ordinary repo (#1092). A stat probe, deliberately no subprocess: this
+    runs once per candidate ancestor in `layer_scopes`, and shelling out to
+    git per ancestor per call would make a directory with a deep home
+    noticeably slower than the module's other resolution.
+
+    This is NOT `resolve_project_root`'s question ("what is the git
+    toplevel") and cannot be answered with it: `layer_scopes` needs to
+    DISQUALIFY every directory a git working tree contains, not fold them
+    to one."""
+    current = start
+    while True:
+        try:
+            if (current / ".git").exists():
+                return True
+        except OSError:
+            return True  # unreadable is not a layer either way
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
+
+
+def layer_scopes(project_dir) -> list[str]:
+    """Ancestors of `project_dir`'s resolved root that are eligible RULING
+    LAYERS (#1092), nearest first, so a rule ratified once at `~/work` can
+    arm in every repo below it, instead of being re-ratified per project.
+
+    This is the ONLY place that knows the layer shape. An ancestor qualifies
+    when it satisfies ALL of:
+
+    1. At or below `Path.home()`, both realpath'd. `/` is excluded
+       EXPLICITLY below (the walk stops the instant it would yield the
+       filesystem root), never merely as a side effect of the home bound:
+       an `HOME=/` misconfiguration must not turn every directory on disk
+       into a layer.
+    2. Not inside any git working tree: neither the ancestor itself nor
+       anything above it, up to the filesystem root, carries a `.git` entry
+       (`_git_shadowed`). This is what keeps a nested repo, a submodule, and
+       a worktree's `.claude/worktrees/<id>` scaffolding from ever being a
+       layer of one another or of the repo containing them: the walk skips
+       a shadowed candidate and keeps going, since a git repo ends and the
+       plain directories above it may still qualify.
+    3. Its bucket directory exists AND that bucket's root record
+       (`store.bucket_root`) names this exact directory. A bucket with NO
+       record is a legacy bucket (it predates this feature, or nothing but
+       a ledger has ever named it) and is accepted only when it holds no
+       active ruling: accepting an unstamped bucket unconditionally would
+       let an unrelated directory that happens to share a lossy slug
+       (`~/code/my/app` and `~/code/my-app`) inherit a ruling meant for the
+       other one, and refusing every unstamped bucket outright would silently
+       orphan every layer that started ratifying before #1092 shipped.
+
+    The ancestor's own bucket lookup deliberately does NOT route through
+    `resolve_project_dir`: that walks the git toplevel, which is exactly
+    what would collapse a plain ancestor OUTSIDE any repo into whatever
+    repo happens to sit below it in the walk, the opposite of the
+    containment #2 exists to enforce. `store.project_slug` is a pure
+    string transform with no git dependency, which is what this needs.
+
+    Empty for: `config.tenant_scoped()`; `project_dir` that is not an
+    absolute, EXISTING directory (a bucket slug never looks like a path and
+    never walks, since `os.path.isdir` on a slug-shaped string is always
+    False); a resolved root that is not at or below home at all (a project
+    outside home has no ancestor that can be); `Path.home()` raising; and
+    any other unexpected exception. NEVER raises: every branch above is
+    defensive, and the whole body is additionally wrapped so a surprise from
+    a dependency (a broken `refutations` fold reading a hand-edited legacy
+    bucket, an unreadable root file) degrades to "no layers" rather than to
+    a crash reaching whatever renders a briefing or arms a check.
+
+    The project's OWN root is resolved through `config.resolve_project_dir`
+    (that one may use git, as it always has); only the ancestor walk above
+    it avoids the resolver, for the reason in #3."""
+    try:
+        return _layer_scopes(project_dir)
+    except Exception:
+        return []
+
+
+def _layer_scopes(project_dir) -> list[str]:
+    if tenant_scoped():
+        return []
+    if not project_dir:
+        return []
+    text = str(project_dir)
+    if not os.path.isabs(text) or not os.path.isdir(text):
+        return []
+    home = Path.home().resolve()
+    # `text` is already confirmed non-empty above, and `resolve_project_dir`
+    # only ever returns falsy for a falsy input, so its result here is
+    # always a non-empty string: no falsy-root branch to guard.
+    root_path = Path(resolve_project_dir(text, allow_slug=False))
+    home_str = str(home)
+    # Deferred import: config is the dependency base (store and refutations
+    # both import config, never the reverse), so this must be resolved at
+    # call time, not at module load, to avoid a cycle (the same trick
+    # `refutations._load_checks` uses for `checks`).
+    from . import briefing, store
+    layers: list[str] = []
+    for candidate in root_path.parents:
+        if candidate == candidate.parent:
+            break  # filesystem root: never a layer, nothing further up either
+        candidate_str = str(candidate)
+        at_or_below_home = (candidate_str == home_str
+                            or home in candidate.parents)
+        if not at_or_below_home:
+            break  # walked past home; nothing further out qualifies
+        if not _git_shadowed(candidate):
+            slug = store.project_slug(candidate_str)
+            if slug:
+                bucket_dir = checkpoint_dir() / slug
+                if bucket_dir.is_dir():
+                    recorded = store.bucket_root(slug)
+                    if recorded is not None:
+                        if recorded == candidate_str:
+                            layers.append(candidate_str)
+                    elif not briefing.rulings_read(candidate_str).rows:
+                        layers.append(candidate_str)
+        if candidate_str == home_str:
+            break
+    return layers
+
+
 def git_branch(project_dir) -> str | None:
     """Current branch name for a project working dir at capture time (#222), or
     None on ANY failure/ambiguity — never raises, never returns an empty string:
