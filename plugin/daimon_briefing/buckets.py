@@ -65,8 +65,16 @@ LEDGERS = (
 # it holds nothing by construction. Every bucket the store has ever written to
 # has one, so treating it as an unrecognized leftover kept the legacy
 # directory alive forever and made a second run merge and receipt again
-# (#963 review). Nothing else is ever removed on this list's word.
-_REMOVABLE = frozenset({store._LOCK_NAME})
+# (#963 review). `root` (#1092) is the bucket-root marker
+# `store.record_bucket_root` stamps on first write: once a legacy bucket
+# merges into its correctly-resolved target, the legacy directory's record
+# (if it has one at all, since most predate #1092 entirely) names a directory
+# this migration is retiring, never the target the merge just moved rows
+# into. The target either already carries its own record or gets one, first
+# writer wins, the next time anything writes to it: this migration is not
+# that writer, so it leaves the target's record alone and simply drops the
+# legacy one. Nothing else is ever removed on this list's word.
+_REMOVABLE = frozenset({store._LOCK_NAME, store._BUCKET_ROOT_NAME})
 
 
 def climbs_out(project_dir) -> bool:

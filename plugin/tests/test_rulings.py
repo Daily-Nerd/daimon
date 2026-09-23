@@ -12,6 +12,7 @@ change what renders.
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -299,6 +300,32 @@ def test_cli_propose_records_a_candidate_without_escalation_hint(
     out = capsys.readouterr().out
     assert "candidate" in out
     assert "ruling ratify" not in out
+
+
+def test_cli_propose_refuses_a_write_that_escapes_to_a_git_repo_home(
+        tmp_path, tmp_checkpoint_dir, monkeypatch, capsys):
+    """#1092: a `--project` naming a plain subdirectory of HOME must not
+    silently write to the home bucket just because someone `git init`ed
+    their dotfiles at `~`."""
+    tmp_home = tmp_path / "home"
+    tmp_home.mkdir()
+    subprocess.run(["git", "init", "-q", str(tmp_home)], check=True)
+    monkeypatch.setenv("HOME", str(tmp_home))
+    work = tmp_home / "work"
+    work.mkdir()
+
+    rc = cli.main([
+        "ruling", "propose", "--subject", "public posts",
+        "--verdict", "internal numbers never appear in public posts",
+        "--scope", "publishing", "--evidence", "issue:693",
+        "--by", "agent", "--project", str(work)])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert str(work) in out
+    assert str(tmp_home) in out
+    assert not refutations.bucket_exists(str(tmp_home))
+    assert not refutations.bucket_exists(str(work))
 
 
 def test_cli_propose_refusal_over_cap_scope_names_the_artifact_destination(

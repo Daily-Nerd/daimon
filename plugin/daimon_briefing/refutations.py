@@ -303,6 +303,7 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        store.record_bucket_root(project_dir)  # #1092: first writer wins
         with path.open("a", encoding="utf-8") as handle:
             if _is_torn(path):
                 handle.write("\n")
@@ -745,6 +746,7 @@ def append(row: dict, project_dir=None) -> bool:
     )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        store.record_bucket_root(project_dir)  # #1092: first writer wins
         with path.open("a", encoding="utf-8") as handle:
             if _is_torn(path):
                 handle.write("\n")

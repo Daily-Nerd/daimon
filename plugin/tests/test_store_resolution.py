@@ -335,6 +335,8 @@ def _public_entry_points(sub: str):
         ("forgotten_content_keys",
          lambda: store.forgotten_content_keys(project_dir=sub)),
         ("project_bucket", lambda: store.project_bucket(sub)),
+        ("record_bucket_root",
+         lambda: store.record_bucket_root(sub)),
     ]
 
 

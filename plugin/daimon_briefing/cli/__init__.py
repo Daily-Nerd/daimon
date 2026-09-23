@@ -99,7 +99,7 @@ def _prompt(question: str) -> str:
     return input(question).strip()
 
 
-def _resolve_project(arg) -> str:
+def _resolve_project(arg, *, for_write: bool = False) -> str:
     """Project dir for routing: explicit --project, else DAIMON_PROJECT_DIR, else cwd.
 
     Only the PRECEDENCE lives here. The resolution itself is
@@ -114,8 +114,16 @@ def _resolve_project(arg) -> str:
     have it, or a slug-shaped `--project` would address that bucket on every
     verb, writes included, bypassing both the ten-verb limit `--slug` is held
     to and the tenant-scope refusal that guards it (#899).
+
+    `for_write=True` (#1092) additionally refuses (`config.ProjectWriteRefused`,
+    left for the caller to catch) a request that only resolved elsewhere
+    because `Path.home()` is itself a git repository. See
+    `config.resolve_project_dir_for_write`'s docstring for why this cannot be
+    the default for every call site: it must never touch a read.
     """
     project = arg or config.project_dir() or os.getcwd()
+    if for_write:
+        return config.resolve_project_dir_for_write(project, allow_slug=False)
     return config.resolve_project_dir(project, allow_slug=False)
 
 

@@ -127,6 +127,66 @@ def project_bucket(project_dir) -> str | None:
     return project_slug(_resolved(project_dir))
 
 
+_BUCKET_ROOT_NAME = "root"
+
+
+def record_bucket_root(project_dir) -> None:
+    """Stamp a bucket with the absolute resolved directory that FIRST wrote
+    to it (#1092), so a later reader can ask "does this bucket really belong
+    to this directory" instead of trusting slug existence alone: two
+    distinct directories (`~/code/my/app` and `~/code/my-app`) can share a
+    slug, and slug existence alone cannot tell them apart.
+
+    FIRST WRITER WINS: an existing `root` file is never overwritten, even by
+    a different resolved directory landing on the same slug. The record
+    names whichever directory actually created the bucket, not whichever
+    directory happened to write to it most recently.
+
+    Called from every write path that can CREATE a bucket directory (the
+    checkpoint pointer write, the events/verification/forget-hits ledger
+    appenders here, and the refutations ledger append), never from a read.
+    Idempotent and silent under the kill switch, the same never-fatal
+    contract `append_event` holds: a bookkeeping record must never fail, or
+    even visibly affect, the write it rides along with."""
+    if config.is_disabled():
+        return
+    try:
+        resolved = _resolved(project_dir)
+        slug = project_slug(resolved)
+        if not slug:
+            return
+        root_path = config.checkpoint_dir() / slug / _BUCKET_ROOT_NAME
+        if root_path.exists():
+            return
+        root_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(root_path, f"{resolved}\n")
+    except OSError:
+        pass
+
+
+def bucket_root(project_dir_or_slug) -> str | None:
+    """The directory `record_bucket_root` stamped onto this bucket, or None
+    when the bucket carries no record (never written to, or a legacy bucket
+    that predates #1092) or the file cannot be read.
+
+    Takes either a project directory OR a bucket slug directly, with no
+    resolution through `config.resolve_project_dir` here, deliberately: a
+    caller (e.g. `config.layer_scopes`) that already holds a raw realpath'd
+    ancestor must be able to ask this question about that EXACT directory
+    without the git-toplevel walk collapsing it into a different bucket.
+    `project_slug` is idempotent on a slug it is handed, the same contract
+    every slug-accepting reader in this module already relies on."""
+    slug = project_slug(project_dir_or_slug)
+    if not slug:
+        return None
+    root_path = config.checkpoint_dir() / slug / _BUCKET_ROOT_NAME
+    try:
+        text = root_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
 def _safe_name(session_id: str) -> str:
     # session_id is host-provided; keep file ops from escaping the dir.
     return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
@@ -1302,6 +1362,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     if slug:
         pdir = d / slug
         pdir.mkdir(parents=True, exist_ok=True)
+        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
         with _pointer_lock(pdir):
             if not _pointer_regresses(pdir, new_epoch):
                 if rotate:
@@ -1972,6 +2033,7 @@ def append_verification(item_ref: str, check: str, reason: str,
              "check": check, "item_ref": item_ref, "reason": reason},
             redact_fields=("check", "reason"))
         path.parent.mkdir(parents=True, exist_ok=True)
+        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         return True
@@ -2166,6 +2228,7 @@ def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
     try:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         path.parent.mkdir(parents=True, exist_ok=True)
+        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
         with path.open("a", encoding="utf-8") as f:
             for item in items:
                 if not isinstance(item, dict):
@@ -2281,6 +2344,7 @@ def append_event(item_ref: str, status: str, note: str = "",
         if not evt["item_text"]:
             del evt["item_text"]
         path.parent.mkdir(parents=True, exist_ok=True)
+        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(evt, ensure_ascii=False) + "\n")
         return True

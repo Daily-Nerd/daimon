@@ -168,6 +168,15 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/forget-hits.jsonl",
             "store.record_forget_hits", False, "exempt-no-plaintext",
             "none", audit_exempt=True),
+    # -- the bucket root record (#1092): one line, the absolute resolved
+    #    directory that FIRST wrote to this bucket. store.record_bucket_root
+    #    stamps it once, on the first ledger/checkpoint write, and never
+    #    overwrites it after. Holds a filesystem path, never item text, quote,
+    #    scene, or note: no field of it is user-authored content, so it
+    #    carries nothing forget is ever asked to reach and no rewrite path
+    #    exists for it. `config.layer_scopes` is the one reader. --
+    Surface("checkpoints/{slug}/root", "store.record_bucket_root",
+            False, "exempt-no-plaintext", "none", audit_exempt=True),
     # -- the relations ledger (#678 fork A): ids and closed-vocabulary codes
     #    only — no field can carry item text (relations.py refuses at the
     #    seam). plaintext=True anyway, deliberately: an edge is an

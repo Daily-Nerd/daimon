@@ -30,7 +30,14 @@ from ._ledger import (
 
 
 def _cmd_ruling_propose(args) -> int:
-    project = _cli._resolve_project(args.project)
+    # #1092: `propose` is a write verb, so it opts into the extra guard that
+    # refuses a `--project` whose target only resolved elsewhere because
+    # home is itself a git repository. See `_resolve_project`'s docstring.
+    try:
+        project = _cli._resolve_project(args.project, for_write=True)
+    except config.ProjectWriteRefused as exc:
+        print(f"ruling not recorded: {exc}")
+        return 1
     try:
         check = _check_args(args)
         request_policy = _policy_args(args)
