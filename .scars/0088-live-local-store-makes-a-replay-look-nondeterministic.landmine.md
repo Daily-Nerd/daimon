@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 88
 type: landmine
 title: A replay that reads ~/.daimon/checkpoints is not reproducible — other sessions append mid-run and it reads as runner nondeterminism
 severity: medium
 confidence: 0.95
 created: 2026-09-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: research/experiments/
+evidence:
+  - note: #976 replay — pass A and pass B were byte-identical, pass C twenty seconds later differed in 485 lines; the cause was four checkpoints written into ~/.daimon/checkpoints by other sessions between the passes, not the runner
 expires:
   condition: "an experiment harness exists that snapshots and fingerprints its substrate by default"
   review_after: 2027-03-01
-evidence:
-  - note: "#976 replay — pass A and pass B were byte-identical, pass C twenty seconds later differed in 485 lines; the cause was four checkpoints written into ~/.daimon/checkpoints by other sessions between the passes, not the runner"
-status: candidate
+status: active
 ---
 
 The bench substrate under `benchmark/.work/` is frozen, so the #754 replay's

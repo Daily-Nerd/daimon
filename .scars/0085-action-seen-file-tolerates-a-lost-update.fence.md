@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 85
 type: fence
 title: The action-recall seen file is atomic but NOT locked, and the lost update is deliberate
 severity: medium
 confidence: 0.85
 created: 2026-09-14
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/cli/__init__.py
   - pattern: "_save_seen_atomic"
 evidence:
-  - note: "#1031, the action-recall surface"
+  - note: #1031, the action-recall surface
 expires:
   condition: "a measured case where one repeated recall line actually cost something, or a surface that writes state a repeat would corrupt rather than duplicate"
   review_after: 2027-03-14
-status: candidate
+status: active
 ---
 
 `_save_seen_atomic` writes the per-session cooldown file temp-then-rename. It

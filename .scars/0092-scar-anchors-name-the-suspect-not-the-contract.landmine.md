@@ -1,21 +1,23 @@
 ---
-id: 0                      # assigned at promotion (next free NNNN)
-type: landmine             # deadend = tried+failed | fence = looks wrong, intentional | landmine = touching A breaks B
+id: 92
+type: landmine
 title: A scar anchored to the module it SUSPECTS never fires on the module that actually breaks the contract
 severity: high
 confidence: 0.9
 created: 2026-09-15
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: .scars/
   - path: plugin/daimon_briefing/briefing.py
 evidence:
   - issue: 1034
-  - note: ".scars/0006-briefing-cap-assumes-chronological-decisions.landmine.md"
+  - note: .scars/0006-briefing-cap-assumes-chronological-decisions.landmine.md
 expires:
   condition: "scar liveness gains a data-contract anchor form (anchor the invariant's consumers AND every producer, not a named file list)"
   review_after: 2027-03-15
-status: candidate
+status: active
 ---
 
 Scar 0006 described a real invariant (the briefing decision cap slices the tail,

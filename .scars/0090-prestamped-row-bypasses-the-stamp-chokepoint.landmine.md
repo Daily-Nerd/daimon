@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 90
 type: landmine
 title: "A gate added to requests._stamp does NOT protect accept's agent path, which writes a pre-stamped row"
 severity: high
 confidence: 0.9
 created: 2026-09-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/requests.py
   - pattern: "_write_verdict_row\("
 evidence:
   - commit: 71890b7
-  - note: "#1026: the accept gate was mutation-tested. Removing it made an agent accept carrying author=\"alice\" land a row with no act_author, exit code 0, no refusal."
+  - note: #1026: the accept gate was mutation-tested. Removing it made an agent accept carrying author=\"alice\" land a row with no act_author, exit code 0, no refusal.
 expires:
   condition: "_write_verdict_row stops accepting a caller-built `row`, or the dry-run in accept is re-expressed so the row it writes is stamped by _stamp"
   review_after: 2027-03-12
-status: candidate
+status: active
 ---
 
 `requests._stamp` looks like the one chokepoint every row on this module's

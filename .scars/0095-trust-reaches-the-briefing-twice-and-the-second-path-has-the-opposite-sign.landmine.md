@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 95
 type: landmine
 title: Trust reaches the rendered briefing through TWO paths, and the truncation exemption pushes the opposite way from the weight lid
 severity: medium
 confidence: 0.9
 created: 2026-09-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/briefing.py
   - path: plugin/daimon_briefing/scoring.py
 evidence:
-  - note: "#976 replay — 320 of 6600 briefing comparisons differ between a gated and an ungated arm; one of them has zero lid-biting flips and is caused entirely by the stage-1 verbatim truncation exemption"
+  - note: #976 replay — 320 of 6600 briefing comparisons differ between a gated and an ungated arm; one of them has zero lid-biting flips and is caused entirely by the stage-1 verbatim truncation exemption
 expires:
   condition: "render_plain stage 1 stops exempting verbatim items, or the exemption stops depending on the trust field"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 Everyone reasons about the #408 trust ceiling as THE way a trust class reaches

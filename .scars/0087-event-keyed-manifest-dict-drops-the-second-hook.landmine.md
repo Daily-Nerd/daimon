@@ -1,25 +1,24 @@
 ---
-id: 0
+id: 87
 type: landmine
 title: A hook manifest keyed by event silently drops the second hook on that event, and every assertion still passes
 severity: high
 confidence: 0.9
 created: 2026-09-14
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: hook/codex-hooks.py
   - path: plugin/daimon_briefing/codex_hooks.py
   - path: hooks/hooks.json
-# The shape is healthy when ABSENT, so it is a violation regex and not an
-# anchor pattern: an anchor that never matches reports as rot (scar #73's
-# lint hint), while a violation fires on reintroduction, which is the point.
-violation: "h..event..: h for h in"
 evidence:
-  - note: "#1031, registering a second PreToolUse hook beside daimon-pre-action.py"
+  - note: #1031, registering a second PreToolUse hook beside daimon-pre-action.py
 expires:
   condition: "the manifests stop being lists of {script, event, entry} rows, or a schema forbids two rows on one event"
   review_after: 2027-03-14
-status: candidate
+violation: "h..event..: h for h in"
+status: active
 ---
 
 Several registration tests reduced a HOOKS manifest to `{h["event"]: h for h

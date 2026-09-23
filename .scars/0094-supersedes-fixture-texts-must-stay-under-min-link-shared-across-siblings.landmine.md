@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 94
 type: landmine
 title: A multi-row suggest/search fixture with a typed supersedes link silently no-ops if sibling texts share >= _MIN_LINK_SHARED terms with the link target
 severity: medium
 confidence: 0.9
 created: 2026-09-18
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/recall.py
   - pattern: "_apply_typed_supersession"
 evidence:
-  - note: "#1063: a tiering fixture with four sibling rows (\"pin the wombat pipeline cache <live|superseded|invalidated|worst> row\") all shared 5 salient terms. Two separate supersedes links against this fixture both silently failed to bind — no error, no exception, just superseded_by staying None on every row. The test's ordering assertions still partially passed by coincidence (weight-only ordering), and only an explicit `superseded_by == \"...\"` assertion caught it."
+  - note: #1063: a tiering fixture with four sibling rows (\"pin the wombat pipeline cache <live|superseded|invalidated|worst> row\") all shared 5 salient terms. Two separate supersedes links against this fixture both silently failed to bind — no error, no exception, just superseded_by staying None on every row. The test's ordering assertions still partially passed by coincidence (weight-only ordering), and only an explicit `superseded_by == \"...\"` assertion caught it.
 expires:
   condition: "_apply_typed_supersession stops requiring an unambiguous single-text match (_MIN_LINK_SHARED) before writing superseded_by"
   review_after: 2027-03-18
-status: candidate
+status: active
 ---
 
 `recall._apply_typed_supersession`'s free-text branch resolves a supersedes
