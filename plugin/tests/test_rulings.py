@@ -2903,3 +2903,311 @@ def test_ruling_list_json_keeps_its_shape_on_an_unresolved_ledger(
     assert rc == 1
     assert json.loads(captured.out) == []
     assert "cannot resolve a ledger path" in captured.err
+
+
+# ---- #1090: ratify accepting a pending revision on an active ruling -------
+
+
+def test_ratify_applies_a_pending_text_only_proposal_and_clears_it(
+        tmp_checkpoint_dir):
+    from daimon_briefing import normalize
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        verdict="a sharper phrasing of the rule", project_dir=PROJECT)
+    refutations.ratify(
+        ruling_id, channel="cli-tty",
+        verdict_key=normalize.content_key("a sharper phrasing of the rule"),
+        project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+    assert record["verdict"] == "a sharper phrasing of the rule"
+    assert "revision_proposed" not in record
+    # #693: human-ratified agent prose renders as exactly that.
+    assert record["text_authored_by"] == "agent"
+
+
+def test_ratify_accepting_a_proposal_arms_its_check(tmp_checkpoint_dir):
+    from daimon_briefing import checks
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        check=_check(), project_dir=PROJECT)
+    proposed_sha = refutations.get(
+        ruling_id, project_dir=PROJECT)["revision_proposed"]["check"]["sha256"]
+    refutations.ratify(ruling_id, channel="cli-tty",
+                       check_sha256=proposed_sha, project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert "revision_proposed" not in record
+    assert record["check"]["sha256"] == proposed_sha
+    assert record["check_lifecycle"] == "armed"
+    audit = checks.audit(project_dir=PROJECT)
+    assert ruling_id in audit.wanted
+    assert ruling_id not in audit.missing
+
+
+def test_a_forged_agent_ratified_row_does_not_apply_the_pending_proposal(
+        tmp_checkpoint_dir):
+    """#1090 review round: `ratify()` refuses a non-human channel, but the
+    FOLD is the authority for a row that reaches the ledger some other way
+    (a hand-edited ledger, a forged append). Without a channel check on
+    `applies_proposal` itself, a `ratified` row wearing an agent channel
+    would apply the pending proposal and arm its check with agent
+    authority — the exact escalation the `revised` gate just above already
+    refuses for a non-human touch on an active ruling."""
+    from daimon_briefing import checks
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        check=_check(), project_dir=PROJECT)
+    before = refutations.get(ruling_id, project_dir=PROJECT)
+    activated_at = before["activated_at"]
+    proposed_sha = before["revision_proposed"]["check"]["sha256"]
+    # Forged WITH the correct pin: a hand-edited row that got the content
+    # binding right is exactly the case that must still fail on channel —
+    # a pin match alone must never stand in for human authority.
+    row = refutations._stamp("ratified", ruling_id, "cli-agent")
+    row["check_sha256"] = proposed_sha
+    assert refutations.append(row, project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record.get("revision_proposed") is not None
+    assert "check" not in record
+    assert record["activated_at"] == activated_at
+    audit = checks.audit(project_dir=PROJECT)
+    assert ruling_id not in audit.wanted
+
+
+def test_ratify_accepting_a_proposal_activates_its_request_policy(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        request_policy=_policy(), project_dir=PROJECT)
+    proposed_sha = refutations.get(
+        ruling_id, project_dir=PROJECT
+    )["revision_proposed"]["request_policy"]["sha256"]
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty",
+                       policy_sha256=proposed_sha, project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert "revision_proposed" not in record
+    assert record["request_policy"]["sender"] == "p-sender"
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    assert after != before
+    grant = ("p-sender", "", "work", "accept", "agent", ruling_id,
+             proposed_sha)
+    assert refutations.active_request_policies(project_dir=PROJECT) == {grant}
+
+
+def test_ratify_with_a_stale_pin_leaves_the_replaced_proposal_pending(
+        tmp_checkpoint_dir):
+    from daimon_briefing import normalize
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        verdict="first proposal text", project_dir=PROJECT)
+    stale_key = normalize.content_key("first proposal text")
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        verdict="second proposal text", project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", verdict_key=stale_key,
+                       project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["verdict"] == "internal numbers never appear in public posts"
+    assert record["revision_proposed"]["verdict"] == "second proposal text"
+
+
+def test_ratify_with_a_stale_policy_pin_leaves_the_proposal_pending(
+        tmp_checkpoint_dir):
+    """The policy half of the mismatch doctrine: a `policy_sha256` pin that
+    does not match the CURRENT proposal's policy (not merely absent) is
+    fully inert, same as the verdict and check pins above."""
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        request_policy=_policy(), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty",
+                       policy_sha256="0" * 64, project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record.get("request_policy") is None
+    assert record["revision_proposed"]["request_policy"]["sender"] == (
+        "p-sender")
+
+
+def test_ratify_applies_a_pending_subject_change(tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        subject="a narrower governs", project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["subject"] == "a narrower governs"
+    assert "revision_proposed" not in record
+
+
+def test_ratify_refuses_an_active_ruling_with_nothing_pending(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    path = refutations._path(PROJECT)
+    before = path.read_text(encoding="utf-8")
+    activated_at = refutations.get(
+        ruling_id, project_dir=PROJECT)["activated_at"]
+    with pytest.raises(refutations.RefutationError,
+                       match="has no pending revision"):
+        refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    after = path.read_text(encoding="utf-8")
+    assert after == before
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["activated_at"] == activated_at
+
+
+def test_a_refused_ratify_leaves_policy_intervals_unchanged(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True,
+                      request_policy=_policy())
+    before = refutations.request_policy_history(project_dir=PROJECT)
+    with pytest.raises(refutations.RefutationError):
+        refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    after = refutations.request_policy_history(project_dir=PROJECT)
+    assert after == before
+
+
+def test_ratify_accepting_a_check_proposal_without_a_pin_is_inert(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        check=_check(), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record.get("revision_proposed") is not None
+    assert "check" not in record
+
+
+def test_ratify_accepting_a_policy_proposal_without_a_pin_is_inert(
+        tmp_checkpoint_dir):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        request_policy=_policy(), project_dir=PROJECT)
+    refutations.ratify(ruling_id, channel="cli-tty", project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record.get("revision_proposed") is not None
+    assert record.get("request_policy") is None
+
+
+def test_cli_ratify_pending_revision_applies_and_clears_it(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        verdict="a sharper phrasing of the rule", project_dir=PROJECT)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "a sharper phrasing of the rule" in out
+    assert "New text:" in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["verdict"] == "a sharper phrasing of the rule"
+    assert "revision_proposed" not in record
+
+
+def test_cli_ratify_pending_revision_check_ceremony_shows_new_check(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        check=_check(), project_dir=PROJECT)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "New check" in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["check_lifecycle"] == "armed"
+
+
+def test_cli_ratify_pending_revision_policy_ceremony_shows_new_policy(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        request_policy=_policy(), project_dir=PROJECT)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "New policy" in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["request_policy"]["sender"] == "p-sender"
+
+
+def test_cli_ratify_pending_revision_shows_new_governs_for_a_subject_change(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        subject="a narrower governs", project_dir=PROJECT)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "New governs: a narrower governs" in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["subject"] == "a narrower governs"
+
+
+def test_cli_ratify_pending_revision_json_ceremony_goes_to_stderr(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        verdict="a sharper phrasing of the rule", project_dir=PROJECT)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT,
+                  "--json"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "a sharper phrasing of the rule" in captured.err
+    assert json.loads(captured.out)["verdict"] == (
+        "a sharper phrasing of the rule")
+
+
+def test_cli_ratify_refuses_an_active_ruling_with_nothing_pending(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+
+    def _boom(prompt=""):
+        raise AssertionError("ratify must refuse before any confirm prompt")
+
+    monkeypatch.setattr("builtins.input", _boom)
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "has no pending revision" in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "active"
+
+
+def test_cli_ratify_pending_revision_loud_when_replaced_mid_confirmation(
+        tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        verdict="first proposal text", project_dir=PROJECT)
+
+    def _inject_second_proposal(prompt=""):
+        refutations.revise(
+            ruling_id, channel="cli-agent", evidence=["issue:1090"],
+            verdict="second proposal text", project_dir=PROJECT)
+        return "y"
+
+    monkeypatch.setattr("builtins.input", _inject_second_proposal)
+    rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "changed during confirmation" in out
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["verdict"] == "internal numbers never appear in public posts"
+    assert record["revision_proposed"]["verdict"] == "second proposal text"

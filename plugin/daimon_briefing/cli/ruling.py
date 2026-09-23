@@ -92,38 +92,75 @@ def _cmd_ruling_ratify(args) -> int:
         print("ruling not ratified: ratification requires a human channel; "
               f"this call arrived through {channel!r}")
         return 1
+    # #1090: an active ruling with no pending agent revision has nothing for
+    # ratify to do. Refuse here, before any ceremony text or confirm prompt,
+    # on the record already in hand — never invoke the writer to harvest its
+    # error string, the same discipline the channel check just above keeps.
+    pending = (record.get("revision_proposed")
+              if record["state"] == "active" else None)
+    if record["state"] == "active" and pending is None:
+        print(f"ruling not ratified: ruling {args.ruling_id} is already "
+              "active and has no pending revision to accept")
+        return 1
     # Ratification is a signature, not an id-typing exercise: print the FULL
     # text, disclose the render consequence, and bind the append to the key
     # of the text DISPLAYED — the fold refuses to activate any other text.
     # Under --json the ceremony goes to stderr so stdout stays parseable.
     ceremony = sys.stderr if args.json else sys.stdout
-    print("About to ratify this ruling:", file=ceremony)
-    if not args.json:
-        _print_ruling(record, detailed=True)
+    if pending is not None:
+        # #1090: accepting a PENDING PROPOSAL — every displayed and pinned
+        # value below comes from the proposal, never from the record's own
+        # (unchanged, still-active) text/check/policy.
+        print("About to accept a pending revision on this ruling:",
+              file=ceremony)
+        if not args.json:
+            _print_ruling(record, detailed=True)
+            if pending.get("verdict"):
+                print(f"  New text: {pending['verdict']}", file=ceremony)
+            if pending.get("subject"):
+                print(f"  New governs: {pending['subject']}", file=ceremony)
+        else:
+            print(f"  {pending.get('verdict') or record.get('verdict', '')}",
+                  file=ceremony)
+        displayed_key = (normalize.content_key(pending["verdict"])
+                         if pending.get("verdict") else "")
+        check = (pending.get("check")
+                if isinstance(pending.get("check"), dict) else None)
+        request_policy = (pending.get("request_policy")
+                          if isinstance(pending.get("request_policy"), dict)
+                          else None)
+        check_label = "New check"
+        policy_label = "New policy"
     else:
-        print(f"  {record.get('verdict', '')}", file=ceremony)
+        print("About to ratify this ruling:", file=ceremony)
+        if not args.json:
+            _print_ruling(record, detailed=True)
+        else:
+            print(f"  {record.get('verdict', '')}", file=ceremony)
+        displayed_key = normalize.content_key(record.get("verdict") or "")
+        check = record.get("check") if isinstance(record.get("check"), dict) else None
+        # #961 slice 4: same pin discipline as `check` just above — the
+        # ceremony discloses the grant it is about to ratify and pins the
+        # append to the hash it displayed.
+        request_policy = (record.get("request_policy")
+                          if isinstance(record.get("request_policy"), dict)
+                          else None)
+        check_label = "Check"
+        policy_label = "Policy"
     print("  This text will render into every future session for this "
           "project.", file=ceremony)
-    check = record.get("check") if isinstance(record.get("check"), dict) else None
     displayed_check_sha = ""
     if check:
         displayed_check_sha = str(check.get("sha256") or "")
-        for line in _check_ceremony_lines(check, label="Check",
+        for line in _check_ceremony_lines(check, label=check_label,
                                           verb="Ratifying"):
             print(line, file=ceremony)
-    # #961 slice 4: same pin discipline as `check` just above — the ceremony
-    # discloses the grant it is about to ratify and pins the append to the
-    # hash it displayed.
-    request_policy = (record.get("request_policy")
-                      if isinstance(record.get("request_policy"), dict)
-                      else None)
     displayed_policy_sha = ""
     if request_policy:
         displayed_policy_sha = str(request_policy.get("sha256") or "")
         for line in _policy_ceremony_lines(request_policy, verb="Ratifying",
-                                           label="Policy"):
+                                           label=policy_label):
             print(line, file=ceremony)
-    displayed_key = normalize.content_key(record.get("verdict") or "")
     answer = input("Ratify? [y/N]: ").strip().casefold()
     if answer not in ("y", "yes"):
         print("not ratified")
@@ -143,7 +180,12 @@ def _cmd_ruling_ratify(args) -> int:
     if record is None:
         _report_vanished_write(args.ruling_id, "ratify", as_json=args.json)
         return 0
-    if record["state"] != "active":
+    if pending is not None:
+        if record.get("revision_proposed"):
+            print("not applied: the proposal changed during confirmation; "
+                  "re-run to review the current one")
+            return 1
+    elif record["state"] != "active":
         print("not activated: the text changed during confirmation; "
               "re-run to review the current text")
         return 1
