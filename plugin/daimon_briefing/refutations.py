@@ -1055,9 +1055,20 @@ def _fold_row(out: dict, row: dict) -> None:
     # checking against `current` here would make a ratify that displays and
     # pins the PROPOSED text fold as a mismatch against the OLD text nearly
     # every time.
+    #
+    # The human-channel requirement is checked HERE, in the fold, and not
+    # only at the `ratify()` writer: `ratify()` refuses a non-human caller,
+    # but the fold is the authority for any row that reaches the ledger by
+    # another route (a hand-edited ledger, a forged `append`), same as the
+    # `revised` gate immediately above this one already enforces for that
+    # exact reason. Without this, a `ratified` row wearing an agent channel
+    # — even one that correctly pins the proposal's own content hashes —
+    # would apply the proposal and arm its check with agent authority: a
+    # content-bound row is still not a human verdict.
     applies_proposal = (
         is_ruling and event == "ratified" and current["state"] == "active"
-        and isinstance(current.get("revision_proposed"), dict))
+        and isinstance(current.get("revision_proposed"), dict)
+        and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human")
     if applies_proposal:
         proposal = current["revision_proposed"]
         proposed_verdict = str(proposal.get("verdict") or "")

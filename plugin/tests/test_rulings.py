@@ -2919,6 +2919,37 @@ def test_ratify_accepting_a_proposal_arms_its_check(tmp_checkpoint_dir):
     assert ruling_id not in audit.missing
 
 
+def test_a_forged_agent_ratified_row_does_not_apply_the_pending_proposal(
+        tmp_checkpoint_dir):
+    """#1090 review round: `ratify()` refuses a non-human channel, but the
+    FOLD is the authority for a row that reaches the ledger some other way
+    (a hand-edited ledger, a forged append). Without a channel check on
+    `applies_proposal` itself, a `ratified` row wearing an agent channel
+    would apply the pending proposal and arm its check with agent
+    authority — the exact escalation the `revised` gate just above already
+    refuses for a non-human touch on an active ruling."""
+    from daimon_briefing import checks
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    refutations.revise(
+        ruling_id, channel="cli-agent", evidence=["issue:1090"],
+        check=_check(), project_dir=PROJECT)
+    before = refutations.get(ruling_id, project_dir=PROJECT)
+    activated_at = before["activated_at"]
+    proposed_sha = before["revision_proposed"]["check"]["sha256"]
+    # Forged WITH the correct pin: a hand-edited row that got the content
+    # binding right is exactly the case that must still fail on channel —
+    # a pin match alone must never stand in for human authority.
+    row = refutations._stamp("ratified", ruling_id, "cli-agent")
+    row["check_sha256"] = proposed_sha
+    assert refutations.append(row, project_dir=PROJECT)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record.get("revision_proposed") is not None
+    assert "check" not in record
+    assert record["activated_at"] == activated_at
+    audit = checks.audit(project_dir=PROJECT)
+    assert ruling_id not in audit.wanted
+
+
 def test_ratify_accepting_a_proposal_activates_its_request_policy(
         tmp_checkpoint_dir):
     ruling_id = _rule(channel="cli-tty", ratified=True)
