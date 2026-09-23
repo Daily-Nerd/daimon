@@ -394,6 +394,45 @@ def test_multi_id_ratify_all_valid_ratifies_every_id(project, monkeypatch):
     assert amendments.get(a2, project_dir=project)["state"] == "ratified"
 
 
+def test_multi_id_ratify_dedupes_a_repeated_id(project, monkeypatch, capsys):
+    """`daimon amend ratify a-1 a-1` is a paste/typo artifact, not two
+    different things to confirm — it must ratify ONCE, not append a second
+    `ratified` event for the same id."""
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    a_id = amendments.propose(item_id=ITEM, change="progressed",
+                              evidence="the PR merged this morning",
+                              channel="cli-agent", project_dir=project)
+    amendments.verify(a_id, role="assistant", project_dir=project)
+
+    rc = cli.main(["amend", "ratify", a_id, a_id, "--project", project])
+
+    assert rc == 0
+    ratified_events = [
+        e for e in amendments.events(project_dir=project)
+        if e.get("amendment_id") == a_id and e.get("event") == "ratified"]
+    assert len(ratified_events) == 1
+    out = capsys.readouterr().out
+    assert out.count(f"{a_id}: ratified") == 1
+
+
+def test_multi_id_reject_dedupes_a_repeated_id(project, monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    a_id = amendments.propose(item_id=ITEM, change="progressed",
+                              evidence="the PR merged this morning",
+                              channel="cli-agent", project_dir=project)
+    amendments.verify(a_id, role="assistant", project_dir=project)
+
+    rc = cli.main(["amend", "reject", a_id, a_id, "--project", project])
+
+    assert rc == 0
+    rejected_events = [
+        e for e in amendments.events(project_dir=project)
+        if e.get("amendment_id") == a_id and e.get("event") == "rejected"]
+    assert len(rejected_events) == 1
+    out = capsys.readouterr().out
+    assert out.count(f"{a_id}: rejected") == 1
+
+
 def test_multi_id_reject_one_unknown_id_writes_nothing(
         project, monkeypatch, capsys):
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)

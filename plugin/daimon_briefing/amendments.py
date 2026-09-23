@@ -461,6 +461,16 @@ def reject(amendment_id: str, *, channel: str, note: str = "",
         raise AmendmentError("rejection not written")
 
 
+def _dedupe_ids(amendment_ids: list[str]) -> list[str]:
+    """Order-preserving de-dupe, shared by `ratify_many`/`reject_many`
+    (#1087 fix): `daimon amend ratify a-1 a-1` is a paste or typo artifact,
+    never two different things to confirm — a repeated positional id must
+    ratify/reject exactly once, not append a second lifecycle event for the
+    same id. `dict.fromkeys` keeps first-occurrence order, which matters for
+    the human-facing report line (`{id}: {state}`) printed per id."""
+    return list(dict.fromkeys(amendment_ids))
+
+
 def _validate_batch(amendment_ids: list[str], current_records: dict[str, dict],
                     *, verb: str) -> None:
     """#1087: every id checked against the SAME fold before anything is
@@ -488,7 +498,7 @@ def ratify_many(amendment_ids: list[str], *, channel: str,
         raise AmendmentError(
             "ratification requires a human channel; this call arrived "
             f"through {channel!r}")
-    ids = list(amendment_ids)
+    ids = _dedupe_ids(list(amendment_ids))
     _validate_batch(ids, records(project_dir=project_dir), verb="ratify")
     for aid in ids:
         row = _stamp("ratified", aid, channel)
@@ -503,7 +513,7 @@ def reject_many(amendment_ids: list[str], *, channel: str, note: str = "",
         raise AmendmentError(
             "rejection requires a human channel; this call arrived "
             f"through {channel!r}")
-    ids = list(amendment_ids)
+    ids = _dedupe_ids(list(amendment_ids))
     _validate_batch(ids, records(project_dir=project_dir), verb="reject")
     note_text = _text("note", note, required=False)
     for aid in ids:

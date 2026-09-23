@@ -119,7 +119,11 @@ def _cmd_amend_verdict(args) -> int:
     if rc:
         return rc
     verb = args.amend_cmd
-    ids = list(args.amendment_id)
+    # #1087 fix: dedupe here too, not just inside ratify_many/reject_many —
+    # otherwise a repeated positional id ratifies/rejects once (the ledger
+    # is correct) but still prints its report line twice, which reads as a
+    # second event that never happened.
+    ids = amendments._dedupe_ids(list(args.amendment_id))
     try:
         channel = _amend_channel(args)
         if verb == "ratify":
