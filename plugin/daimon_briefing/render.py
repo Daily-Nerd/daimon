@@ -12,6 +12,7 @@ import sys
 from contextlib import contextmanager
 
 from . import briefing, config, redact, schema, serializer
+from .amendments import found_label as _amend_found_label
 
 _TRUTHY = ("1", "true", "yes", "on")
 
@@ -544,10 +545,15 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                         body.append(flag, style="cyan")
                     else:
                         role = str(amend.get("role") or "").strip()
+                        # #1087: parity with briefing._line's added `found`
+                        # line, same repeated-here reasoning as every other
+                        # block in this panel. The pinned prefix through
+                        # "unconfirmed: ..." never changes.
                         body.append(
                             f'    ⚠ agent-proposed amendment — {change} '
                             f'(quote-verified, role: {role}), unconfirmed: '
                             f'"{aq}"\n'
+                            f"    found: {_amend_found_label(role)}\n"
                             f"    confirm: daimon amend ratify {a_id}\n"
                             f"    reject: daimon amend reject {a_id}\n",
                             style="yellow")

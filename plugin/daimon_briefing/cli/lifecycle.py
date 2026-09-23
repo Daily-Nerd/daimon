@@ -914,55 +914,132 @@ def _foreign_footer_lines(counts: dict) -> list:
     return lines
 
 
+def _generic_card(row: dict) -> list:
+    """One card for a request/ruling/refutation queue row: header line with
+    the kind, age and id, an optional context line, then the closing
+    commands. The amendment lane builds its own card shape (`_amendment_card`
+    / `_amendment_fanout_card`) — #1087 gave it a judgeable multi-line row
+    instead of the bare `id  quote` header this shape still uses."""
+    age = _decide_age(row.get("waiting_since") or "")
+    tag = row["kind"] + (f" · {age}" if age else "")
+    blocking = " [blocking: the sender says it is waiting]" if row.get(
+        "blocking") else ""
+    # #961 slice 2 gave the request lane's approval-requirement kind
+    # (info/work) its own queue-row field, `approval`, split from
+    # `row["kind"]` (the queue LANE this card's tag already names) for
+    # exactly the reason `pending.py`'s own queue-row builder still
+    # documents: overloading `kind` would make a request-lane row that
+    # happens to be `info` say `[info]` in the tag instead of
+    # `[request]`, silently hiding which lane it is. Slice 3 excluded
+    # `kind == "info"` from `pending._request_rows` before it ever
+    # built a row, which made `approval` unreadable as an `info` value
+    # through the shipped pipeline (review round 1 removed the marker
+    # this card once rendered from it); review round 2 removed the
+    # field itself, since nothing anywhere read it any more.
+    # Two spaces after the id: `render._LEDGER_HEADER_RE` reads that shape
+    # to give the id its own span, because it is what a human copies.
+    card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
+    if row.get("context"):
+        card.append(f"  {row['context']}")
+    # #978: `row["claimed"]` is the request lane's `done_pending`, from
+    # the FOLDED record — same guard shape the LANE split above already
+    # established (a non-request lane never carries this), and a
+    # separate CARD LINE rather than a header addition, so
+    # `render._ledger_header_spans` keeps isolating the id the way it
+    # already does around the `blocking` suffix.
+    if row.get("kind") == "request" and row.get("claimed"):
+        # #978 review round 1 (F4): a claim under a needs-info reads
+        # differently from one under a plain open ask — the person
+        # already asked the sender for more, so the wording says the
+        # claim predates that and that a sender revise (not a decision
+        # here) is what clears it, rather than offering the same
+        # accept/reject framing twice.
+        if row.get("request_state") == "needs-info":
+            card.append(
+                "  completion claimed by the agent before you asked "
+                "for more; a sender revise clears the claim")
+        else:
+            card.append("  completion claimed by the agent; accept "
+                        "lands it as done, reject sends it back")
+    card += [f"    {label}: {command}"
+             for label, command in row.get("commands") or []]
+    return card
+
+
+def _amendment_card(row: dict) -> list:
+    """#1087: a judgeable amendment row — the loop it targets, its current
+    state and the claimed change, the quote, and a neutral `found` line
+    saying WHERE the quote was found (never who said it). Replaces the old
+    bare `id  quote` + `on <item_id> · claims <change>` shape, which the
+    module docstring always said was undecidable by construction."""
+    age = _decide_age(row.get("waiting_since") or "")
+    tag = row["kind"] + (f" · {age}" if age else "")
+    amend = row.get("amend") or {}
+    card = [f"[{tag}] {row['id']}"]
+    card.append(f"  loop   {amend.get('loop_id') or '?'}  "
+               f"\"{amend.get('loop_text') or '(loop text unavailable)'}\"")
+    card.append(f"  state  {amend.get('state_from') or '?'} → "
+               f"{amend.get('state_to') or '?'}")
+    card.append(f'  quote  "{row.get("headline") or ""}"')
+    card.append(f"  found  {amend.get('found') or ''}")
+    if amend.get("note"):
+        card.append(f"  note   {amend['note']}")
+    card += [f"    {label}: {command}"
+             for label, command in row.get("commands") or []]
+    return card
+
+
+def _amendment_fanout_card(group: list) -> list:
+    """#1087: rows sharing identical evidence text render as ONE card — the
+    quote and `found` line shown once, then one line per loop with its own
+    confirm command, and a single pre-assembled `reject all`. Deliberately
+    no pre-assembled `confirm all`: the card exists to force the question
+    "does one quote really close these N things?", so it must never hand
+    over a one-paste yes — if the human decides yes, they type the ids.
+    Display only: the ids stay separate in the store."""
+    first = group[0]
+    age = _decide_age(first.get("waiting_since") or "")
+    tag = f"{first['kind']} · fan-out of {len(group)}"
+    if age:
+        tag += f" · {age}"
+    amend0 = first.get("amend") or {}
+    card = [f"[{tag}]"]
+    card.append(f'  quote  "{first.get("headline") or ""}"')
+    card.append(f"  found  {amend0.get('found') or ''}")
+    for row in group:
+        amend = row.get("amend") or {}
+        confirm = next((cmd for label, cmd in row.get("commands") or []
+                        if label == "confirm"), "")
+        card.append(f"    {row['id']}  {amend.get('state_from') or '?'} "
+                   f"→ {amend.get('state_to') or '?'}  "
+                   f"\"{amend.get('loop_text') or '(loop text unavailable)'}\"")
+        card.append(f"      confirm: {confirm}")
+    reject_ids = " ".join(row["id"] for row in group)
+    card.append(f"    reject all: daimon amend reject {reject_ids}")
+    return card
+
+
 def _decide_cards(rows: list) -> list:
-    """One card per queue row: header line with the kind, age and id, an
-    optional context line, then the closing commands."""
+    """One card per queue row, grouping amendment rows that share identical
+    evidence text into a single fan-out card (#1087). Every other lane keeps
+    its existing one-row-one-card shape (`_generic_card`)."""
+    amend_groups: dict[str, list] = {}
+    for row in rows:
+        if row.get("kind") == "amendment":
+            amend_groups.setdefault(row.get("headline") or "", []).append(row)
+    emitted: set = set()
     cards = []
     for row in rows:
-        age = _decide_age(row.get("waiting_since") or "")
-        tag = row["kind"] + (f" · {age}" if age else "")
-        blocking = " [blocking: the sender says it is waiting]" if row.get(
-            "blocking") else ""
-        # #961 slice 2 gave the request lane's approval-requirement kind
-        # (info/work) its own queue-row field, `approval`, split from
-        # `row["kind"]` (the queue LANE this card's tag already names) for
-        # exactly the reason `pending.py`'s own queue-row builder still
-        # documents: overloading `kind` would make a request-lane row that
-        # happens to be `info` say `[info]` in the tag instead of
-        # `[request]`, silently hiding which lane it is. Slice 3 excluded
-        # `kind == "info"` from `pending._request_rows` before it ever
-        # built a row, which made `approval` unreadable as an `info` value
-        # through the shipped pipeline (review round 1 removed the marker
-        # this card once rendered from it); review round 2 removed the
-        # field itself, since nothing anywhere read it any more.
-        # Two spaces after the id: `render._LEDGER_HEADER_RE` reads that shape
-        # to give the id its own span, because it is what a human copies.
-        card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
-        if row.get("context"):
-            card.append(f"  {row['context']}")
-        # #978: `row["claimed"]` is the request lane's `done_pending`, from
-        # the FOLDED record — same guard shape the LANE split above already
-        # established (a non-request lane never carries this), and a
-        # separate CARD LINE rather than a header addition, so
-        # `render._ledger_header_spans` keeps isolating the id the way it
-        # already does around the `blocking` suffix.
-        if row.get("kind") == "request" and row.get("claimed"):
-            # #978 review round 1 (F4): a claim under a needs-info reads
-            # differently from one under a plain open ask — the person
-            # already asked the sender for more, so the wording says the
-            # claim predates that and that a sender revise (not a decision
-            # here) is what clears it, rather than offering the same
-            # accept/reject framing twice.
-            if row.get("request_state") == "needs-info":
-                card.append(
-                    "  completion claimed by the agent before you asked "
-                    "for more; a sender revise clears the claim")
-            else:
-                card.append("  completion claimed by the agent; accept "
-                            "lands it as done, reject sends it back")
-        card += [f"    {label}: {command}"
-                 for label, command in row.get("commands") or []]
-        cards.append(card)
+        if row.get("kind") != "amendment":
+            cards.append(_generic_card(row))
+            continue
+        key = row.get("headline") or ""
+        if key in emitted:
+            continue  # already emitted as part of this group's card
+        emitted.add(key)
+        group = amend_groups.get(key) or [row]
+        cards.append(_amendment_fanout_card(group) if len(group) > 1
+                     else _amendment_card(row))
     return cards
 
 

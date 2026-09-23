@@ -108,27 +108,40 @@ def _cmd_amend_propose(args) -> int:
 
 
 def _cmd_amend_verdict(args) -> int:
+    """`amend ratify`/`amend reject`, one or more ids (#1087).
+
+    All-or-nothing: `amendments.ratify_many`/`reject_many` validate every id
+    against the current fold before the first write, so one unknown or
+    wrong-state id refuses the whole batch and nothing is written — never a
+    partial ratify that leaves the human unsure which ones actually landed.
+    """
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
     verb = args.amend_cmd
+    # #1087 fix: dedupe here too, not just inside ratify_many/reject_many —
+    # otherwise a repeated positional id ratifies/rejects once (the ledger
+    # is correct) but still prints its report line twice, which reads as a
+    # second event that never happened.
+    ids = amendments._dedupe_ids(list(args.amendment_id))
     try:
         channel = _amend_channel(args)
         if verb == "ratify":
-            amendments.ratify(args.amendment_id, channel=channel,
-                              project_dir=project)
+            amendments.ratify_many(ids, channel=channel, project_dir=project)
         else:
-            amendments.reject(args.amendment_id, channel=channel,
-                              note=getattr(args, "note", None) or "",
-                              project_dir=project)
+            amendments.reject_many(ids, channel=channel,
+                                   note=getattr(args, "note", None) or "",
+                                   project_dir=project)
     except amendments.AmendmentError as exc:
         _cli._note_usage(f"amend:{verb}:refused")
         print(_refusal_message(f"amendment {verb} refused", exc))
         return 1
     _cli._note_usage(f"amend:{verb}")
-    record = amendments.get(args.amendment_id, project_dir=project)
-    render.render_ledger_lines(
-        [f"{args.amendment_id}: {record['state'] if record else 'unknown'}"])
+    lines = []
+    for aid in ids:
+        record = amendments.get(aid, project_dir=project)
+        lines.append(f"{aid}: {record['state'] if record else 'unknown'}")
+    render.render_ledger_lines(lines)
     return 0
 
 
@@ -191,7 +204,9 @@ def register(sub, fmt) -> None:
 
     pa_ratify = amend_sub.add_parser(
         "ratify", help="activate a candidate or verified amendment as a human decision")
-    pa_ratify.add_argument("amendment_id", help="exact a-… id")
+    pa_ratify.add_argument("amendment_id", nargs="+",
+                           help="one or more exact a-… ids; all-or-nothing "
+                                "if any is unknown or in the wrong state")
     pa_ratify.add_argument("--by", choices=["agent"], default=None,
                            help="declare yourself an agent; ratification then "
                                 "refuses, because it requires a human channel")
@@ -201,7 +216,9 @@ def register(sub, fmt) -> None:
 
     pa_reject = amend_sub.add_parser(
         "reject", help="reject an amendment with a reason, as a human decision")
-    pa_reject.add_argument("amendment_id", help="exact a-… id")
+    pa_reject.add_argument("amendment_id", nargs="+",
+                           help="one or more exact a-… ids; all-or-nothing "
+                                "if any is unknown")
     pa_reject.add_argument("--note", help="why it is wrong; kept on the record")
     pa_reject.add_argument("--by", choices=["agent"], default=None,
                            help="declare yourself an agent; rejection then "
