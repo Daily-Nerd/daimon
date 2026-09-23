@@ -590,8 +590,12 @@ def register(sub, fmt) -> None:
     rl_propose.add_argument(
         "--request-policy", action="append", default=None,
         metavar="KEY=VALUE",
-        help="grant this ruling authorizes: sender=<slug> kind=work|info "
-             "verb=accept by=agent; repeatable, all four required (#961)")
+        help="grant this ruling authorizes, one of two shapes: "
+             "sender=<slug> kind=work|info verb=accept by=agent (a sender "
+             "this project trusts to record its own accept), or to=<slug> "
+             "kind=info verb=open by=agent (this project's own agent may "
+             "open an info ask there); repeatable, all four required per "
+             "shape (#961)")
     rl_propose.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_propose.add_argument("--json", action="store_true", help="machine-readable output")
     rl_propose.set_defaults(func=_cli._cmd_ruling_propose)
@@ -647,8 +651,12 @@ def register(sub, fmt) -> None:
     rl_revise.add_argument(
         "--request-policy", action="append", default=None,
         metavar="KEY=VALUE",
-        help="replacement grant: sender=<slug> kind=work|info verb=accept "
-             "by=agent; repeatable, all four required (#961)")
+        help="replacement grant, one of two shapes: sender=<slug> "
+             "kind=work|info verb=accept by=agent (a sender this project "
+             "trusts to record its own accept), or to=<slug> kind=info "
+             "verb=open by=agent (this project's own agent may open an "
+             "info ask there); repeatable, all four required per shape "
+             "(#961)")
     rl_revise.add_argument(
         "--no-request-policy", action="store_true",
         help="clear this ruling's request_policy; mutually exclusive with "

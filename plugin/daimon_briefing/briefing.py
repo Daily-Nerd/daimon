@@ -22,8 +22,8 @@ from typing import NamedTuple
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
 # module-level import (contrast carry.py's own local-import notes, which
 # don't apply here).
-from . import (capture, carry, config, llm, pending, receipts, refutations,
-               requests, schema, scoring, serializer, store)
+from . import (capture, carry, checks_host, config, llm, pending, receipts,
+               refutations, requests, schema, scoring, serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
 # name inside that function.
@@ -1026,11 +1026,133 @@ def active_rulings(project_dir=None) -> list[dict]:
         return []
 
 
+# ---- #1089: code-enforced rulings render as one compact line -------------
+#
+# A ruling whose authority lives in daimon's own code — a `request_policy`
+# the request fold and write boundary enforce (#961 slices 4-5), or an
+# `enforce` check the pre-action hook denies against (#943) — costs the same
+# render bytes as a prose ruling the agent must actually read, for no
+# reason: the agent is bound by it either way. Only these two classes get a
+# compact line, built from their own fields, never the human verdict; every
+# other ruling (and either of these two when its fields cannot be read
+# cleanly) renders its prose exactly as before — the header, the `§ `
+# prefix, the over-cap note and the `[<authority>-written]` suffix are
+# frozen for that path.
+
+_POLICY_LEGEND = ("  info: answerable from existing artifacts, asks for no "
+                  "change or effort; anything else stays work")
+
+
+def _slug_label(slug) -> str:
+    """A short, human-shaped display name for a `request_policy` slug —
+    never the raw slug itself (#1089). Reads the same bucket listing
+    `daimon projects` does: a stamped `project_name` (#672) when this
+    slug's bucket has one. Absent that (a torn bucket, a pre-#672
+    checkpoint, or a policy naming a project with no bucket here yet), a
+    `store.project_slug`-shaped slug is always a flattened absolute path
+    (leading '-', since every real project directory starts with '/'), so
+    its last '-'-joined token is at least bounded and human-shaped even
+    when it doesn't recover the real directory name; anything else (a
+    short mnemonic slug — `_POLICY_SLUG_RE` allows one, and a hand-ratified
+    grant may name one directly) is already a label and passes through."""
+    slug = str(slug or "")
+    for row in store.list_buckets():
+        if row.get("slug") != slug:
+            continue
+        name = (row.get("checkpoint") or {}).get("project_name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        break
+    if not slug.startswith("-"):
+        return slug
+    return slug.rsplit("-", 1)[-1] or slug
+
+
+def _policy_line(policy) -> str | None:
+    """One compact line for a `request_policy`-carrying ruling, or None when
+    its fields don't parse as one of the two ratified shapes (#961) — the
+    caller falls back to prose rather than rendering nothing."""
+    verb = policy.get("verb")
+    kind = policy.get("kind")
+    by = policy.get("by")
+    if by != "agent" or not kind:
+        return None
+    if verb == "open":
+        to = policy.get("to")
+        if not to:
+            return None
+        return f"§ policy: agent may open {kind} asks → {_slug_label(to)}"
+    if verb == "accept":
+        sender = policy.get("sender")
+        if not sender:
+            return None
+        return (f"§ policy: {_slug_label(sender)}'s agent may accept "
+                f"{kind} asks here")
+    return None
+
+
+def _check_line(row, check) -> str | None:
+    """One compact line for an `enforce` check-carrying ruling, but only
+    when THIS briefed host actually delivers `enforce` for it — otherwise
+    None, so the caller falls back to the full prose (#1089).
+
+    The host is read from `config.capture_host()`, the same trusted hint
+    capture already forwards (#594) — a capture-invoking hook now tags the
+    `daimon brief` subprocess with its own host name the identical way it
+    already tags its own session-end capture. `checks_host.PROFILES.get`
+    on an unknown or absent host, and `mode_for` on a missing profile, both
+    resolve to `unsupported` by construction — Windsurf (`unsupported`),
+    Kimi (no profile at all) and an undeterminable host all fall through
+    to prose here with no special-casing."""
+    if check.get("intent") != "enforce":
+        return None
+    profile = checks_host.PROFILES.get(config.capture_host() or "")
+    if checks_host.mode_for(profile, "enforce") != "enforce":
+        return None
+    subject = str(row.get("subject") or "").strip()
+    ruling_id = str(row.get("refutation_id") or "").strip()
+    if not subject or not ruling_id:
+        return None
+    return f"§ enforced: {subject} (daimon ruling show {ruling_id})"
+
+
+def _compact_line(row):
+    """`(line, class)` for a code-enforced ruling that rendered compact, or
+    `(None, None)` to fall back to its prose. Policy first, then an
+    enforced check (a ruling is not expected to carry both, but nothing
+    here assumes it can't); either lookup failing outright — a malformed
+    hand-edited field, a filesystem read inside `_slug_label`, a broken
+    host lookup — is caught here so ONE ruling's bad data degrades to its
+    own prose line rather than dropping the whole section (#940's fail-open
+    posture, held per-row instead of per-section for this one path)."""
+    policy = row.get("request_policy")
+    if isinstance(policy, dict):
+        try:
+            line = _policy_line(policy)
+        except Exception:
+            line = None
+        if line is not None:
+            return line, "policy"
+    check = row.get("check")
+    if isinstance(check, dict):
+        try:
+            line = _check_line(row, check)
+        except Exception:
+            line = None
+        if line is not None:
+            return line, "check"
+    return None, None
+
+
 def ruling_lines(project_dir=None) -> list[str]:
     """The section's rendered lines ([] when no active rulings — the section
     is skeleton furniture, but empty furniture is noise). Verdict, never
-    subject: the verdict IS the rule text (cli._print_ruling's contract, one
-    vocabulary across surfaces).
+    subject, for a PROSE ruling: the verdict IS the rule text
+    (cli._print_ruling's contract, one vocabulary across surfaces). A
+    code-enforced ruling (#1089: a `request_policy` or an `enforce` check
+    this host delivers) renders a compact line from its own fields instead
+    — see `_compact_line` — plus one fixed legend line, once, when at least
+    one policy ruling rendered compact.
 
     Backstops, both LOUD: more actives than DAIMON_RULING_CAP — a
     hand-edited ledger, or simply LOWERING the cap after activations, a
@@ -1042,7 +1164,9 @@ def ruling_lines(project_dir=None) -> list[str]:
     verdict renders nothing. Non-human `text_authored_by` is labeled with
     its own AUTHORITY word (agent / mechanical — CHANNEL_AUTHORITY's
     vocabulary, cli._print_ruling's own label) even after human
-    ratification — who wrote the words survives who approved them."""
+    ratification — who wrote the words survives who approved them. Neither
+    the authority suffix nor the cap counts the code-enforced classes any
+    differently: a compact ruling is still one ruling against the cap."""
     rows = [r for r in active_rulings(project_dir)
             if str(r.get("verdict") or "").strip()]
     if not rows:
@@ -1053,7 +1177,14 @@ def ruling_lines(project_dir=None) -> list[str]:
         return []
     shown, over = rows[:cap], rows[cap:]
     lines = [_RULING_HEADER]
+    policy_rendered = False
     for row in shown:
+        compact, cls = _compact_line(row)
+        if compact is not None:
+            lines.append(compact)
+            if cls == "policy":
+                policy_rendered = True
+            continue
         verdict = str(row.get("verdict") or "")
         if len(verdict) > refutations._MAX_RULING_TEXT:
             verdict = verdict[:refutations._MAX_RULING_TEXT] + "…"
@@ -1061,6 +1192,8 @@ def ruling_lines(project_dir=None) -> list[str]:
         suffix = (f"  [{authored}-written]"
                   if authored and authored != "human" else "")
         lines.append(f"§ {verdict}{suffix}")
+    if policy_rendered:
+        lines.append(_POLICY_LEGEND)
     if over:
         plural = "s" if len(over) != 1 else ""
         lines.append(f"  (+{len(over)} active ruling{plural} over cap — "

@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from daimon_briefing import store
+from daimon_briefing import refutations, store
 
 HOOK_DIR = Path(__file__).parents[2] / "hook"
 START_HOOK = HOOK_DIR / "daimon-codex-session-start.py"
@@ -80,6 +80,31 @@ def test_codex_session_start_emits_additional_context(
     assert "DAIMON BRIEFING" in ctx
     assert "checkpoint: S-codex" in ctx
     assert "global fallback" not in ctx
+
+
+def test_codex_session_start_forwards_its_own_host_so_an_enforce_ruling_renders_compact(
+        tmp_checkpoint_dir, sample_checkpoint, tmp_path):
+    """#1089: same claim as the Claude Code hook — `daimon brief` only
+    renders a code-enforced ruling compact when it knows which host is
+    asking, and `daimon-codex-session-end.py` already tags its own capture
+    subprocess `project_env(cwd, "codex")`; this script's `daimon brief`
+    subprocess must carry the identical tag."""
+    cwd = "/Users/x/projA"
+    store.write_checkpoint("S-codex", {**sample_checkpoint, "session_id": "S-codex"},
+                          project_dir=cwd)
+    ruling_id = refutations.assert_ruling(
+        subject="a public post rule", verdict="the rule for a public post rule",
+        scope="publishing", evidence=["issue:1089"], channel="cli-tty",
+        ratified=True,
+        check={"match": "gh pr create", "body": "#!/bin/sh\nexit 0\n",
+              "intent": "enforce"},
+        project_dir=cwd)
+    proc = _run(START_HOOK, {"cwd": cwd, "session_id": "S-new"}, tmp_path)
+    assert proc.returncode == 0
+    ctx = _additional_context(proc.stdout)
+    assert f"§ enforced: a public post rule (daimon ruling show {ruling_id})" \
+        in ctx
+    assert "the rule for a public post rule" not in ctx
 
 
 def test_codex_session_start_labels_global_fallback(

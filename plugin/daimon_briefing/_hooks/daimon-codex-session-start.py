@@ -72,9 +72,14 @@ def _emit_briefing(cwd: str, cli) -> None:
         return
 
     try:
+        # #1089: same host tag `daimon-codex-session-end.py` already forwards
+        # for capture (`project_env(cwd, "codex")`) — without it `daimon
+        # brief` cannot tell which host is asking, and a code-enforced
+        # ruling (a `request_policy` or an `enforce` check) never renders
+        # compact.
         proc = subprocess.run(
             [cli, "brief"], capture_output=True, text=True, timeout=TIMEOUT,
-            env=lib.project_env(cwd),
+            env=lib.project_env(cwd, "codex"),
         )
     except subprocess.TimeoutExpired:
         _emit_context(f"daimon: `daimon brief` timed out after {TIMEOUT}s")

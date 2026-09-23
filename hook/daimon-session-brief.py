@@ -31,8 +31,12 @@ TIMEOUT = 8  # seconds; hook budget is 10
 
 def _run_brief(cli, cwd: str, auto: bool):
     argv = [cli, "brief", "--auto"] if auto else [cli, "brief"]
+    # #1089: same host tag `daimon-session-end.py` already forwards for
+    # capture (`project_env(cwd, "claude-code")`) — without it `daimon
+    # brief` cannot tell which host is asking, and a code-enforced ruling
+    # (a `request_policy` or an `enforce` check) never renders compact.
     return subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT,
-                          env=lib.project_env(cwd))
+                          env=lib.project_env(cwd, "claude-code"))
 
 
 def _emit_briefing(cwd: str, cli) -> None:

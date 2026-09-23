@@ -397,15 +397,28 @@ def _stamp(now) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _failure_line(entry, outcome) -> str:
+def _failure_line(entry, outcome, *, pointer: bool = False) -> str:
     """`<ruling_id>: <reason>`, with the cause in front when daimon could not
     read what the action sends. The cause is what tells a human whether to
-    fix the command or fix the check."""
+    fix the command or fix the check.
+
+    `pointer` (#1089) appends a `(daimon ruling show <id>)` pointer: under
+    `enforce` this text is often the ONLY thing the denied agent ever sees
+    about the ruling — a compact briefing line omits its verdict prose
+    entirely — so the id alone is not enough to learn more about it. The
+    caller passes it only for entries whose OWN mode is `enforce`, which is
+    also exactly when the ruling would render compact (`briefing._check_
+    line` gates on the identical `intent == "enforce"` fact); a `warn` or
+    `record-only` message keeps its prose full anyway, so it needs no
+    pointer added here."""
     ruling_id = str(entry.get("ruling_id") or "")
     reason = outcome.reason or "the check reported a violation and gave no reason"
     if outcome.outcome == "unresolved" and outcome.cause:
         reason = f"{outcome.cause}: {reason}"
-    return f"{ruling_id}: {reason}"
+    line = f"{ruling_id}: {reason}"
+    if pointer and ruling_id:
+        line += f" (daimon ruling show {ruling_id})"
+    return line
 
 
 def _command_text(raw):
@@ -618,7 +631,8 @@ def _decide(profile, payload, manifest, timeout, now, rows) -> Decision:
         # host never rendered, and a second check the author did not control
         # would otherwise defeat it.
         floor = MODES.index(deciding)
-        text = "\n".join(_failure_line(entry, outcome)
+        text = "\n".join(_failure_line(entry, outcome,
+                                       pointer=(mode == "enforce"))
                          for entry, mode, outcome, _ in failing
                          if MODES.index(mode) >= floor)
         if deciding == "enforce":
