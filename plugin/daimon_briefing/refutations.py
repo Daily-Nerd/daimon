@@ -1047,44 +1047,91 @@ def _fold_row(out: dict, row: dict) -> None:
              and CHANNEL_AUTHORITY.get(_channel_of(row)) != "human")
             or current["state"] == "overturned"):
         return
-    # #693: a content-bound ratify whose displayed text no longer matches
-    # is fully inert — refused BEFORE the bump, consistent with the other
-    # pre-bump gates, so a rejected activation moves nothing rendered.
-    if (event == "ratified"
-            and str(row.get("verdict_key") or "")
-            and str(row.get("verdict_key"))
-            != normalize.content_key(current.get("verdict") or "")):
-        return
-    # #943: check binding: a ratify row carrying check_sha256 activates
-    # only the body it displayed; a mismatch is inert, the same rule
-    # verdict_key already applies to the rule text.
-    if (event == "ratified"
-            and str(row.get("check_sha256") or "")
-            and str(row.get("check_sha256"))
-            != str((current.get("check") or {}).get("sha256") or "")):
-        return
-    # #943: the other half of that binding. A check is an executable, and
-    # an UNBOUND ratify may not arm one: the human who confirmed a row
-    # carrying no pin was shown no check, so a check that arrived during
-    # the confirm window would be armed unseen. No pre-#943 row can carry
-    # a check, so every old unbound ratify still activates.
-    if (event == "ratified"
-            and not str(row.get("check_sha256") or "")
-            and isinstance(current.get("check"), dict)):
-        return
-    # #961 slice 4: request_policy binding, same doctrine as check_sha256
-    # just above — a policy is consumed as an authorization at another
-    # project's write boundary, so an UNBOUND ratify may not arm one the
-    # human never saw pinned.
-    if (event == "ratified"
-            and str(row.get("policy_sha256") or "")
-            and str(row.get("policy_sha256"))
-            != str((current.get("request_policy") or {}).get("sha256") or "")):
-        return
-    if (event == "ratified"
-            and not str(row.get("policy_sha256") or "")
-            and isinstance(current.get("request_policy"), dict)):
-        return
+    # #1090: a `ratified` row on a ruling that is ALREADY active and carries
+    # a pending agent `revision_proposed` is accepting THAT proposal, not
+    # re-stamping activation or activating a candidate. The content binding
+    # below must then check the pins against what the proposal carries, not
+    # against the record's own (unchanged, still-active) text/check/policy —
+    # checking against `current` here would make a ratify that displays and
+    # pins the PROPOSED text fold as a mismatch against the OLD text nearly
+    # every time.
+    applies_proposal = (
+        is_ruling and event == "ratified" and current["state"] == "active"
+        and isinstance(current.get("revision_proposed"), dict))
+    if applies_proposal:
+        proposal = current["revision_proposed"]
+        proposed_verdict = str(proposal.get("verdict") or "")
+        # #693: same doctrine as the candidate path below — a content-bound
+        # ratify whose displayed text no longer matches the CURRENT proposal
+        # is fully inert, refused before the bump.
+        if (proposed_verdict
+                and str(row.get("verdict_key") or "")
+                and str(row.get("verdict_key"))
+                != normalize.content_key(proposed_verdict)):
+            return
+        proposed_check = (proposal.get("check")
+                          if isinstance(proposal.get("check"), dict) else None)
+        # #943: check binding, against the PROPOSED check.
+        if (proposed_check is not None
+                and str(row.get("check_sha256") or "")
+                and str(row.get("check_sha256"))
+                != str(proposed_check.get("sha256") or "")):
+            return
+        # #943: the unbound half — a proposal carrying a check may not be
+        # armed by a ratify that pinned nothing.
+        if proposed_check is not None and not str(row.get("check_sha256") or ""):
+            return
+        proposed_policy = (proposal.get("request_policy")
+                           if isinstance(proposal.get("request_policy"), dict)
+                           else None)
+        # #961 slice 4: request_policy binding, against the PROPOSED policy.
+        if (proposed_policy is not None
+                and str(row.get("policy_sha256") or "")
+                and str(row.get("policy_sha256"))
+                != str(proposed_policy.get("sha256") or "")):
+            return
+        if (proposed_policy is not None
+                and not str(row.get("policy_sha256") or "")):
+            return
+    else:
+        # #693: a content-bound ratify whose displayed text no longer matches
+        # is fully inert — refused BEFORE the bump, consistent with the other
+        # pre-bump gates, so a rejected activation moves nothing rendered.
+        if (event == "ratified"
+                and str(row.get("verdict_key") or "")
+                and str(row.get("verdict_key"))
+                != normalize.content_key(current.get("verdict") or "")):
+            return
+        # #943: check binding: a ratify row carrying check_sha256 activates
+        # only the body it displayed; a mismatch is inert, the same rule
+        # verdict_key already applies to the rule text.
+        if (event == "ratified"
+                and str(row.get("check_sha256") or "")
+                and str(row.get("check_sha256"))
+                != str((current.get("check") or {}).get("sha256") or "")):
+            return
+        # #943: the other half of that binding. A check is an executable, and
+        # an UNBOUND ratify may not arm one: the human who confirmed a row
+        # carrying no pin was shown no check, so a check that arrived during
+        # the confirm window would be armed unseen. No pre-#943 row can carry
+        # a check, so every old unbound ratify still activates.
+        if (event == "ratified"
+                and not str(row.get("check_sha256") or "")
+                and isinstance(current.get("check"), dict)):
+            return
+        # #961 slice 4: request_policy binding, same doctrine as check_sha256
+        # just above — a policy is consumed as an authorization at another
+        # project's write boundary, so an UNBOUND ratify may not arm one the
+        # human never saw pinned.
+        if (event == "ratified"
+                and str(row.get("policy_sha256") or "")
+                and str(row.get("policy_sha256"))
+                != str((current.get("request_policy") or {}).get("sha256") or "")):
+            return
+        if (event == "ratified"
+                and not str(row.get("policy_sha256") or "")
+                and isinstance(current.get("request_policy"), dict)):
+            return
     current["history_count"] += 1
     # #693: an agent proposal must not move a ruling's rendered age or
     # its list/search order. Ruling polarity only — changing the shipped
@@ -1093,11 +1140,46 @@ def _fold_row(out: dict, row: dict) -> None:
                                     "overturn-proposed")):
         current["updated_at"] = row.get("ts") or current["updated_at"]
     if event == "ratified":
+        if applies_proposal:
+            # #1090: accepting a PENDING PROPOSAL on a ruling that never
+            # stopped being active — apply its fields the same way a human
+            # `revised` row would, and clear the proposal it consumed.
+            # `activated_at` is left untouched (the ruling never stopped
+            # being active), the same posture `revised` already holds when
+            # it touches an already-active record.
+            #
+            # #42: read PRESENCE for keys `revision_proposed` always forges
+            # (`subject`/`verdict` default to "" when the proposer never
+            # touched them, same trap #42 already names) would silently
+            # blank a field the proposal never meant to change — truthiness,
+            # not presence, since a ruling's subject/verdict can never
+            # legitimately be proposed as empty text (`_guard_ruling_text`).
+            proposal = current["revision_proposed"]
+            if proposal.get("subject"):
+                current["subject"] = proposal["subject"]
+            if proposal.get("verdict"):
+                current["verdict"] = proposal["verdict"]
+            current["evidence"] = list(proposal.get("evidence") or [])
+            if isinstance(proposal.get("check"), dict):
+                current["check"] = dict(proposal["check"])
+            if isinstance(proposal.get("request_policy"), dict):
+                current["request_policy"] = dict(proposal["request_policy"])
+            # #693: re-stamped ONLY when the proposal carries a text key —
+            # human-ratified agent prose renders as exactly that, the same
+            # rule a direct `revised` row already applies.
+            if proposal.get("verdict") or proposal.get("subject"):
+                current["text_authored_by"] = proposal.get("by")
+            current["activation"] = CHANNEL_LABEL.get(_channel_of(row))
+            current["activation_channel"] = row.get("channel")
+            current["activation_author"] = row.get("author")
+            current["revision"] += 1
+            current.pop("revision_proposed", None)
+            current.pop("overturn_proposed", None)
         # Content binding (#693) is checked pre-bump above: a ratify row
         # carrying a verdict_key activates only the text it displayed; a
         # row with NO key is unbound and activates normally (every
         # pre-existing ledger row is absent-key).
-        if current["state"] != "overturned" and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
+        elif current["state"] != "overturned" and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
             current["state"] = "active"
             current["activation"] = CHANNEL_LABEL.get(_channel_of(row))
             current["activation_channel"] = row.get("channel")
@@ -1736,6 +1818,17 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     if current["state"] == "overturned":
         raise RefutationError(
             "an overturned refutation cannot be ratified; revise it with new evidence first")
+    # #1090: a ruling that never stopped being active, with no pending agent
+    # revision, has nothing for a ratify to do — refuse BEFORE appending
+    # anything, rather than write a `ratified` row the fold would otherwise
+    # treat as a no-op re-stamp of activation (moving `activated_at` on a
+    # record that never left "active"). Refutations are unchanged: this
+    # ledger's `revision_proposed` mechanism is ruling-only (#693).
+    if (current.get("polarity") == "ruling" and current["state"] == "active"
+            and current.get("revision_proposed") is None):
+        raise RefutationError(
+            f"ruling {refutation_id} is already active and has no pending "
+            "revision to accept")
     if (current.get("polarity") == "ruling"
             and current["state"] != "active"):
         _guard_ruling_cap(project_dir=project_dir, exclude=refutation_id)
@@ -1757,7 +1850,15 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
         row["policy_sha256"] = str(policy_sha256)
     if not append(row, project_dir=project_dir):
         raise RefutationError("ratification not written")
-    _sync_checks(project_dir, record=current)
+    # #1090: `current` was fetched BEFORE this row landed, so a proposal
+    # that is ADDING a check for the first time is not yet on `current`
+    # itself — it is on `current["revision_proposed"]`. Passing that dict
+    # too widens `_sync_checks`'s "does this write carry a check" gate to
+    # cover exactly that case; without it, a newly-armed check via an
+    # accepted proposal never reaches `checks.sync` at all (the literal
+    # `armed 0 of 0 wanted` symptom this issue reported).
+    _sync_checks(project_dir, record=current,
+                row=current.get("revision_proposed"))
 
 
 def revise(refutation_id: str, *, channel: str, evidence,
