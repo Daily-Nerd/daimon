@@ -110,6 +110,19 @@ def test_the_briefing_skill_closing_loops_names_the_request_close():
     assert "daimon request inbox" in closing
 
 
+def test_the_briefing_skill_teaches_opening_an_info_ask_under_a_policy_line():
+    """#1089 (widening comment on the issue): the plugin-discovered skill
+    taught `request done`/`request inbox` but never `daimon request open
+    --kind info`, leaving an agent that saw a briefed `policy:` line with no
+    taught command to act on it."""
+    text = (_REPO_ROOT / "skills" / "daimon-briefing" / "SKILL.md").read_text(
+        encoding="utf-8")
+    closing = text.split("## Closing loops")[1].split("\n## ")[0]
+    assert "policy:" in closing
+    assert "daimon request open --kind info" in closing
+    assert "stays work" in closing or "stays `work`" in closing
+
+
 def test_every_sync_pair_is_byte_identical():
     """`scripts/sync_hooks.py` is the one manifest of deliberately duplicated
     files, but only the `_hooks/` slice of it had a guard — a mirror added

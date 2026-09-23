@@ -65,6 +65,10 @@ Request text fields (`ask`, `why`, `evidence`) cap at 2000 characters. Long
 content belongs in an artifact the request points at (a file, an issue, a
 PR), with the request itself carrying the pointer, not the full text.
 
+When the briefing shows an active `policy:` line, you may open an ask of
+that kind to that recipient with `daimon request open --kind info`;
+anything asking for a change or effort still stays `work`.
+
 ## Automatic behavior
 
 You do not need to invoke anything. The plugin wires the host's native session

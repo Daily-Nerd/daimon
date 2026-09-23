@@ -330,3 +330,27 @@ def test_ruling_show_renders_an_active_open_verb_policy_line(
     assert "verb=open" in out
     assert "in force" in out
     assert "sender=" not in out
+
+
+# ---- widened by the #1089 comment: --help lists BOTH request-policy shapes -
+
+
+def test_ruling_propose_help_lists_both_request_policy_shapes(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["ruling", "propose", "--help"])
+    assert exc.value.code == 0
+    # Normalized, not a raw substring check: argparse wraps a long --help
+    # line at the terminal width, and a wrap point landing mid-phrase must
+    # not fail a test that only cares whether both shapes are DOCUMENTED.
+    out = " ".join(capsys.readouterr().out.split())
+    assert "sender=<slug> kind=work|info verb=accept by=agent" in out
+    assert "to=<slug> kind=info verb=open by=agent" in out
+
+
+def test_ruling_revise_help_lists_both_request_policy_shapes(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["ruling", "revise", "--help"])
+    assert exc.value.code == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "sender=<slug> kind=work|info verb=accept by=agent" in out
+    assert "to=<slug> kind=info verb=open by=agent" in out

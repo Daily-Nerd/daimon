@@ -501,6 +501,19 @@ def test_full_names_the_verb_that_shows_what_a_ruling_has_armed():
     assert "daimon ruling checks" in section
 
 
+def test_full_teaches_opening_an_info_ask_under_an_active_policy_line():
+    """#1089 (widening comment on the issue): the skill taught `request
+    done`/`request inbox` but never `daimon request open --kind info`, so an
+    agent that saw a briefed `policy:` line had no command it was taught to
+    reach for. One sentence, in the section that already explains what a
+    ruling's compact render means."""
+    full = skill_content.render_full()
+    section = full.split("`daimon ruling list` shows them")[1].split("## ")[0]
+    assert "policy:" in section
+    assert "daimon request open --kind info" in section
+    assert "stays work" in section or "stays `work`" in section
+
+
 def test_full_warns_that_ruling_list_exits_one_on_a_fresh_project():
     """#948: `ruling list` now exits 1 when the project has no bucket yet, so
     an agent following this skill on a project that has never serialized sees

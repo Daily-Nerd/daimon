@@ -110,7 +110,8 @@ def test_a_violation_under_enforce_denies_on_both_hosts(host, script,
     assert out["hookEventName"] == "PreToolUse"
     assert out["permissionDecision"] == "deny"
     assert out["permissionDecisionReason"] == \
-        f"{ruling_id}: no em-dash in a public body"
+        (f"{ruling_id}: no em-dash in a public body "
+         f"(daimon ruling show {ruling_id})")
 
 
 @pytest.mark.parametrize("host,script", HOOKS, ids=IDS)

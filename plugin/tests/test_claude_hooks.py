@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from daimon_briefing import store
+from daimon_briefing import refutations, store
 from tests.conftest import FIXTURES
 
 HOOK_DIR = Path(__file__).parents[2] / "hook"
@@ -92,6 +92,30 @@ def test_brief_hook_uses_project_checkpoint(tmp_checkpoint_dir, sample_checkpoin
     assert proc.returncode == 0
     assert "checkpoint: S-mine" in proc.stdout
     assert "global fallback" not in proc.stdout
+
+
+def test_brief_hook_forwards_its_own_host_so_an_enforce_ruling_renders_compact(
+        tmp_checkpoint_dir, sample_checkpoint, tmp_path):
+    """#1089: `daimon brief` only renders a code-enforced ruling compact when
+    it knows which host is asking (`config.capture_host()`). This hook is
+    Claude Code's own — same claim `daimon-session-end.py` already makes for
+    capture (`project_env(cwd, "claude-code")`) — so its `daimon brief`
+    subprocess must carry the identical host tag, not just the cwd."""
+    cwd = "/Users/x/projA"
+    store.write_checkpoint("S-mine", {**sample_checkpoint, "session_id": "S-mine"},
+                          project_dir=cwd)
+    ruling_id = refutations.assert_ruling(
+        subject="a public post rule", verdict="the rule for a public post rule",
+        scope="publishing", evidence=["issue:1089"], channel="cli-tty",
+        ratified=True,
+        check={"match": "gh pr create", "body": "#!/bin/sh\nexit 0\n",
+              "intent": "enforce"},
+        project_dir=cwd)
+    proc = _run(BRIEF_HOOK, {"cwd": cwd, "session_id": "S-new"}, tmp_path)
+    assert proc.returncode == 0
+    assert f"§ enforced: a public post rule (daimon ruling show {ruling_id})" \
+        in proc.stdout
+    assert "the rule for a public post rule" not in proc.stdout
 
 
 def test_brief_hook_age_from_created_not_mtime(tmp_checkpoint_dir, sample_checkpoint, tmp_path):

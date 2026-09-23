@@ -453,12 +453,43 @@ def test_a_violation_under_enforce_denies_and_names_the_ruling(tmp_path):
     data = json.loads(d.stdout)
     out = data["hookSpecificOutput"]
     assert out["permissionDecision"] == "deny"
+    # #1089: a deny under `enforce` also carries the `ruling show` pointer —
+    # the agent denied never read this ruling's prose (its briefing line is
+    # compact), so the id alone is not enough to learn more about it.
     assert out["permissionDecisionReason"] == \
-        f"{ruling_id}: no em-dash in a public body"
+        (f"{ruling_id}: no em-dash in a public body "
+         f"(daimon ruling show {ruling_id})")
     assert d.exit_code == 0
     assert d.rows[0]["mode"] == "enforce"
     assert d.rows[0]["outcome"] == "violation"
     assert d.rows[0]["decision_emitted"] == "deny"
+
+
+def test_a_reason_that_already_carries_the_pointer_is_not_doubled(tmp_path):
+    """A check body may bake its own `(daimon ruling show <id>)` pointer
+    into its stderr — the live push/GPG check does exactly this. The
+    ruling id is deterministic from subject+scope (`make_id`), so the body
+    can be authored with the real id ahead of ratification. `_failure_line`
+    must not stack a second pointer on top of one the check already wrote."""
+    subject, scope = "a self-pointing rule", "publishing"
+    ruling_id = refutations.make_id(subject, scope)
+    body = ("#!/bin/sh\n"
+           f"echo 'no em-dash in a public body "
+           f"(daimon ruling show {ruling_id})' >&2\n"
+           "exit 1\n")
+    _arm(tmp_path, body=body, intent="enforce", subject=subject, scope=scope)
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert reason.count(f"(daimon ruling show {ruling_id})") == 1
+
+
+def test_a_reason_without_the_pointer_still_gets_it_appended(tmp_path):
+    ruling_id = _arm(tmp_path, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
+    reason = json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert reason.count(f"(daimon ruling show {ruling_id})") == 1
 
 
 def test_the_same_violation_under_warn_allows_and_says_so(tmp_path):
@@ -521,6 +552,7 @@ def test_an_unresolved_subject_denies_under_enforce_and_names_the_cause(
         "permissionDecisionReason"]
     assert reason.startswith(f"{ruling_id}: file-missing: ")
     assert "missing.md" in reason
+    assert reason.endswith(f"(daimon ruling show {ruling_id})")
     assert d.rows[0]["outcome"] == "unresolved"
     assert d.rows[0]["cause"] == "file-missing"
 
@@ -545,7 +577,8 @@ def test_two_matching_checks_aggregate_to_the_strongest_failing_mode(tmp_path):
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
     reason = json.loads(d.stdout)["hookSpecificOutput"][
         "permissionDecisionReason"]
-    assert reason == f"{hard}: no em-dash in a public body"
+    assert reason == (f"{hard}: no em-dash in a public body "
+                      f"(daimon ruling show {hard})")
     assert soft not in reason
     assert {r["mode"] for r in d.rows} == {"enforce", "warn"}
     # The `warn` check failed below the deciding floor, so it was never
@@ -983,7 +1016,8 @@ def test_a_warn_reason_never_reaches_a_deny_below_it(tmp_path):
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))
     reason = json.loads(d.stdout)["hookSpecificOutput"][
         "permissionDecisionReason"]
-    assert reason == f"{hard}: no em-dash in a public body"
+    assert reason == (f"{hard}: no em-dash in a public body "
+                      f"(daimon ruling show {hard})")
     assert soft not in reason
 
 
@@ -998,7 +1032,8 @@ def test_the_codex_cap_is_not_defeated_by_a_second_check(tmp_path):
                   _payload(MATCH, tmp_path, tool="shell"))
     reason = json.loads(d.stdout)["hookSpecificOutput"][
         "permissionDecisionReason"]
-    assert reason == f"{hard}: no em-dash in a public body"
+    assert reason == (f"{hard}: no em-dash in a public body "
+                      f"(daimon ruling show {hard})")
     assert capped not in reason
     assert {r["mode"] for r in d.rows} == {"record-only", "enforce"}
 
@@ -1013,8 +1048,8 @@ def test_two_failures_at_the_deciding_mode_are_both_named(tmp_path):
     reason = json.loads(d.stdout)["hookSpecificOutput"][
         "permissionDecisionReason"]
     assert sorted(reason.splitlines()) == sorted([
-        f"{first}: no em-dash in a public body",
-        f"{second}: no em-dash in a public body"])
+        f"{first}: no em-dash in a public body (daimon ruling show {first})",
+        f"{second}: no em-dash in a public body (daimon ruling show {second})"])
 
 
 # ---- a row records what that check contributed ----------------------------
