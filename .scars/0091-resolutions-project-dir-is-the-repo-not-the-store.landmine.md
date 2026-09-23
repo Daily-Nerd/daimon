@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 91
 type: landmine
 title: store.resolutions(project_dir=...) takes the REPO path, not the store dir — handed the store dir it returns {} with no error
 severity: medium
 confidence: 0.9
 created: 2026-09-15
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/store.py
   - pattern: "resolutions\(project_dir"
 evidence:
   - issue: 1035
-  - note: "#1035 replay. An ad-hoc script replayed 45 real checkpoint hops through carry.merge at two caps and passed project_dir=~/.daimon/checkpoints/<slug> — the directory events.jsonl actually lives in, 356 KB of it. store.resolutions returned 0 rows. No exception, no warning. _resolved() had re-slugged that path into a slug of its own and looked for events.jsonl under a second, nonexistent directory. Passing the repo working dir instead returned 152 resolved refs. Both runs printed a confident table; the wrong one merged with an empty resolved set, so every closed item stayed carried, and the numbers differed (82,946 vs 83,966 final bytes, 0 vs 3 items past the staleness budget)."
+  - note: #1035 replay. An ad-hoc script replayed 45 real checkpoint hops through carry.merge at two caps and passed project_dir=~/.daimon/checkpoints/<slug> — the directory events.jsonl actually lives in, 356 KB of it. store.resolutions returned 0 rows. No exception, no warning. _resolved() had re-slugged that path into a slug of its own and looked for events.jsonl under a second, nonexistent directory. Passing the repo working dir instead returned 152 resolved refs. Both runs printed a confident table; the wrong one merged with an empty resolved set, so every closed item stayed carried, and the numbers differed (82,946 vs 83,966 final bytes, 0 vs 3 items past the staleness budget).
 expires:
   condition: "store.resolutions rejects or detects a project_dir that is already inside DAIMON_CHECKPOINT_DIR, or _resolved() stops re-slugging an absolute store path"
   review_after: 2027-03-15
-status: candidate
+status: active
 ---
 
 Every `project_dir=` argument on the store API is the PROJECT working

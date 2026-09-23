@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 89
 type: landmine
 title: recall.suggest admits one row per origin session, so a slot-table test seeded from one checkpoint never exercises a non-lead slot
 severity: medium
 confidence: 0.9
 created: 2026-09-14
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/recall.py
   - path: plugin/daimon_briefing/cli/__init__.py
 evidence:
-  - note: "#1030, widening the lead recall slot: the first draft of the slot-table test seeded two long items inside ONE checkpoint and recall-inject emitted a single line."
+  - note: #1030, widening the lead recall slot: the first draft of the slot-table test seeded two long items inside ONE checkpoint and recall-inject emitted a single line.
 expires:
   condition: "suggest() stops deduplicating by session_id in its final ranking pass"
   review_after: 2027-03-14
-status: candidate
+status: active
 ---
 
 `recall.suggest` ends with a per-session filter: the ranked rows are walked and

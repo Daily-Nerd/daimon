@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 93
 type: landmine
 title: Appending a stats --json section breaks a tail assertion in test_checks_surfaces.py, a file about rulings
 severity: medium
 confidence: 0.9
 created: 2026-09-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/cli/__init__.py
   - path: plugin/tests/test_checks_surfaces.py
 evidence:
-  - note: "#974 step 1 — adding the `stitching` section, exactly as the in-code comment instructs, failed test_stats_json_carries_checks_at_the_tail"
+  - note: #974 step 1 — adding the `stitching` section, exactly as the in-code comment instructs, failed test_stats_json_carries_checks_at_the_tail
 expires:
   condition: "the tail assertion is rewritten to pin the appended ORDER of all sections rather than whichever one happens to be last"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 `_cmd_stats` carries a comment saying `stats --json` key order is a contract

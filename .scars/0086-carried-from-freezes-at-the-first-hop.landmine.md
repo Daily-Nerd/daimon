@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 86
 type: landmine
 title: carried_from freezes at the FIRST hop, not the last, because carry copies it under setdefault
 severity: medium
 confidence: 0.9
 created: 2026-09-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/carry.py
   - path: plugin/daimon_briefing/cli/history.py
 evidence:
-  - note: "Measured 2026-09-12 while building `daimon blame` (#975). Three sessions S-1/S-2/S-3, each folding the previous with carry.merge. The item first stated in S-1 renders `carried from S-1` in BOTH prev-1.json (S-2) and latest.json (S-3). If the field named the last hop, latest.json would say S-2."
+  - note: Measured 2026-09-12 while building `daimon blame` (#975). Three sessions S-1/S-2/S-3, each folding the previous with carry.merge. The item first stated in S-1 renders `carried from S-1` in BOTH prev-1.json (S-2) and latest.json (S-3). If the field named the last hop, latest.json would say S-2.
 expires:
   condition: "carry stops copying carried_from under setdefault, or a separate last-hop field is added"
   review_after: 2027-03-12
-status: candidate
+status: active
 ---
 
 Two docstrings say `carried_from` "names the LAST hop": carry.py's
