@@ -10,8 +10,9 @@ import hashlib
 import json
 import os
 import sys
+from pathlib import Path
 
-from .. import refutations, render
+from .. import config, refutations, render, store
 from . import _cap_refusal
 
 # #920: over-cap `subject`/`verdict`/`scope`/`evidence` name where the
@@ -429,3 +430,82 @@ def _refuse_ruling_id(record, verb: str) -> bool:
               f"`daimon ruling {verb}`")
         return True
     return False
+
+
+# --- #1094: layer-aware ceremony helpers, shared by `ratify` and `propose` -
+
+
+def _inherited_ceremony_lines(project_dir) -> list:
+    """#1094: `Inherited rulings in force here:` plus one line per active
+    layer ruling, in the same `§ <verdict> [from ~/work]` register the
+    briefing renders — printed before EVERY activation ceremony's confirm
+    prompt (`ratify`, `propose --ratify`), so a human ratifying INTO a
+    child sees what already binds it from above. [] when no layer holds
+    anything, so nothing extra prints."""
+    rows = refutations.inherited_active(project_dir)
+    if not rows:
+        return []
+    lines = ["Inherited rulings in force here:"]
+    for row in rows:
+        home = config.home_relative(row.get("inherited_from") or "")
+        lines.append(f"  § {row.get('verdict', '')}  [from {home}]")
+    return lines
+
+
+def _is_layer_project(project_dir) -> bool:
+    """#1094: true when `project_dir` is itself a layer-shaped directory —
+    an absolute, existing directory with no `.git` anywhere from it up to
+    the filesystem root. Reuses config's own git-shadow probe; never calls
+    `layer_scopes` on the directory itself (that answers a different
+    question: what is ABOVE it, not what it IS). False for anything that is
+    not an absolute existing directory, which is what a `--slug` route
+    hands this (#1094: slug routing never triggers the layer ceremony)."""
+    try:
+        text = str(project_dir or "")
+        if not text or not os.path.isabs(text) or not os.path.isdir(text):
+            return False
+        return not config._git_shadowed(Path(text))
+    except Exception:  # noqa: BLE001 — a ceremony detail, never a crash
+        return False
+
+
+def _render_consequence_line(project_dir) -> str:
+    """#1094: the ceremony's disclosure of what ratifying/revising here
+    actually renders into. At an ordinary project this is the original,
+    unchanged sentence; at a LAYER it names every project underneath
+    instead of "this project", since that is what actually renders."""
+    if _is_layer_project(project_dir):
+        count = len(store.buckets_under(project_dir))
+        home = config.home_relative(project_dir)
+        return (f"  This text will render into every project under {home} "
+                f"({count} buckets today).")
+    return ("  This text will render into every future session for this "
+            "project.")
+
+
+def _layer_overcap_warning(project_dir, ruling_id: str) -> str:
+    """#1094: at a LAYER, before the confirm, name every descendant bucket
+    this ruling's activation would push over ITS OWN cap. A warning, not a
+    refusal — the human decides, and the guard itself only ever protects
+    the bucket actually being written to. "" when nothing goes over, or
+    when `project_dir` is not a layer at all."""
+    if not _is_layer_project(project_dir):
+        return ""
+    cap = config.ruling_cap()
+    over = []
+    for slug, root in store.buckets_under(project_dir):
+        own_ids = {
+            r["refutation_id"]
+            for r in refutations.records(project_dir=root).values()
+            if r.get("polarity") == "ruling" and r.get("state") == "active"
+            and not isinstance(r.get("request_policy"), dict)}
+        inherited_ids = {r["refutation_id"]
+                        for r in refutations.inherited_active(root)}
+        seen = own_ids | inherited_ids
+        count = len(seen) + (0 if ruling_id in seen else 1)
+        if count > cap:
+            over.append((slug, count))
+    if not over:
+        return ""
+    parts = ", ".join(f"{slug} ({count})" for slug, count in over)
+    return f"ratifying here puts {len(over)} projects over the cap: {parts}"

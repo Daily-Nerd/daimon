@@ -17,8 +17,11 @@ from .. import (briefing, buckets, checks, config, normalize, refutations,
 from ._ledger import (
     _check_args,
     _check_ceremony_lines,
+    _inherited_ceremony_lines,
+    _layer_overcap_warning,
     _policy_args,
     _policy_ceremony_lines,
+    _render_consequence_line,
     _warn_check_sync,
     _print_ruling,
     _refusal_message,
@@ -41,15 +44,60 @@ def _cmd_ruling_propose(args) -> int:
     try:
         check = _check_args(args)
         request_policy = _policy_args(args)
+        channel = _refute_channel(args)
+    except refutations.RefutationError as exc:
+        print(_refusal_message("ruling not recorded", exc))
+        return 1
+    # #1094: `propose --ratify` activates through this same `assert_ruling`
+    # call as ever, but on a human channel it now gets the SAME disclosure
+    # discipline `ratify` already holds — the full text, what already
+    # governs from above, the render consequence, and a confirm — before
+    # anything is written. A declined confirm writes nothing at all, the
+    # same posture `revise`'s own confirm holds for an active ruling's text.
+    if args.ratify and channel == "cli-tty":
+        # Ceremony text goes to stderr under --json, the same split ratify's
+        # own ceremony already holds, so stdout stays parseable.
+        ceremony = sys.stderr if args.json else sys.stdout
+        print("About to found and ratify this ruling:", file=ceremony)
+        if not args.json:
+            render.render_ledger_lines([
+                f"  {args.verdict}",
+                f"  Governs: {args.subject}",
+                f"  Scope: {args.scope}",
+            ])
+        else:
+            print(f"  {args.verdict}", file=ceremony)
+        for line in _inherited_ceremony_lines(project):
+            print(line, file=ceremony)
+        if check:
+            for line in _check_ceremony_lines(check, label="Check",
+                                              verb="Ratifying"):
+                print(line, file=ceremony)
+        if request_policy:
+            try:
+                validated_policy = refutations._policy(request_policy)
+            except refutations.RefutationError:
+                validated_policy = None
+            if validated_policy is not None:
+                for line in _policy_ceremony_lines(validated_policy,
+                                                   verb="Ratifying"):
+                    print(line, file=ceremony)
+        print(_render_consequence_line(project), file=ceremony)
+        answer = input("Ratify? [y/N]: ").strip().casefold()
+        if answer not in ("y", "yes"):
+            print("not recorded")
+            return 1
+    try:
         ruling_id = refutations.assert_ruling(
             subject=args.subject, verdict=args.verdict, scope=args.scope,
-            evidence=args.evidence, channel=_refute_channel(args),
+            evidence=args.evidence, channel=channel,
             anchors=args.anchor,
             revisit_when=args.revisit_when or "", ratified=args.ratify,
             check=check, request_policy=request_policy, project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not recorded", exc))
         return 1
+    _warn_check_sync()
     record = refutations.get(ruling_id, project_dir=project)
     _cli._note_usage("ruling:propose")
     if record is None:
@@ -82,6 +130,13 @@ def _cmd_ruling_ratify(args) -> int:
         return 1
     record = refutations.get(args.ruling_id, project_dir=project)
     if record is None:
+        # #1094: an id the briefing rendered from a layer answers "unknown"
+        # here unless we ask the layer walk first.
+        try:
+            refutations._guard_layer_only_id(args.ruling_id, project)
+        except refutations.RefutationError as exc:
+            print(_refusal_message("ruling not ratified", exc))
+            return 1
         print(f"unknown ruling: {args.ruling_id}")
         return 1
     if record.get("polarity") != "ruling":
@@ -147,8 +202,13 @@ def _cmd_ruling_ratify(args) -> int:
                           else None)
         check_label = "Check"
         policy_label = "Policy"
-    print("  This text will render into every future session for this "
-          "project.", file=ceremony)
+    # #1094: what already governs from above, before the render disclosure.
+    for line in _inherited_ceremony_lines(project):
+        print(line, file=ceremony)
+    print(_render_consequence_line(project), file=ceremony)
+    overcap = _layer_overcap_warning(project, args.ruling_id)
+    if overcap:
+        print(overcap, file=ceremony)
     displayed_check_sha = ""
     if check:
         displayed_check_sha = str(check.get("sha256") or "")
@@ -200,6 +260,13 @@ def _cmd_ruling_revise(args) -> int:
     project = _cli._resolve_project(args.project)
     record = refutations.get(args.ruling_id, project_dir=project)
     if record is None:
+        # #1094: same pointer as `ratify` — covers a `--check` attach too,
+        # since that flag never changes which id is being addressed.
+        try:
+            refutations._guard_layer_only_id(args.ruling_id, project)
+        except refutations.RefutationError as exc:
+            print(_refusal_message("ruling not revised", exc))
+            return 1
         print(f"unknown ruling: {args.ruling_id}")
         return 1
     if record.get("polarity") != "ruling":
@@ -281,8 +348,7 @@ def _cmd_ruling_revise(args) -> int:
         if clear_request_policy:
             print("  Policy will be CLEARED — no ruling will cover an "
                   "agent accept for this project after this change.")
-        print("  This text will render into every future session for this "
-              "project.")
+        print(_render_consequence_line(project))
         answer = input("Apply? [y/N]: ").strip().casefold()
         if answer not in ("y", "yes"):
             print("not revised")
