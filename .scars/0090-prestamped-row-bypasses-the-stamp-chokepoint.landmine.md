@@ -12,8 +12,10 @@ anchors:
   - path: plugin/daimon_briefing/requests.py
   - pattern: "_write_verdict_row\("
 evidence:
-  - commit: 71890b7
+  - commit: d65fbf6
+  - pr: 1028
   - note: #1026: the accept gate was mutation-tested. Removing it made an agent accept carrying author=\"alice\" land a row with no act_author, exit code 0, no refusal.
+  - note: "firing-review 2026-09-24: the old evidence commit 71890b7 was a pre-squash SHA, unreachable from HEAD, and `scar lint` flagged it evidence-unreachable. Replaced with d65fbf6 (PR #1028, 'feat(requests): accept a per-act author on the in-process ui writer path', closes #1026), verified an ancestor of HEAD via `git merge-base --is-ancestor`."
 expires:
   condition: "_write_verdict_row stops accepting a caller-built `row`, or the dry-run in accept is re-expressed so the row it writes is stamped by _stamp"
   review_after: 2027-03-12

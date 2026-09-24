@@ -11,6 +11,7 @@ anchors:
   - pattern: "return \[\]"
 evidence:
   - note: #483 run-04: 38 of 166 diff prompts carried b_only injections that arm A never produced — impossible for a pure prompt gate whose pass-through arm is 'identical to A'. Traced (prompt_idx 214): when arm B suppresses an earlier prompt's injections, it never marks the origin session as seen, so a later pass-through prompt in the same session faces a larger candidate pool than arm A's. Session-cooldown-layer analog of #470's slot-promotion trap.
+  - note: "firing-review 2026-09-24: re-verified, hazard live, anchors on target"
 expires:
   condition: "the replay rig gains a mode that replays arm B against arm A's seen-state (or documents per-arm seen-state as the intended semantics in README)"
   review_after: 2027-02-01

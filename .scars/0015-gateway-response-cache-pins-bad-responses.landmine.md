@@ -13,9 +13,10 @@ anchors:
 evidence:
   - note: H1 attempts 5-6 (2026-06-12): chunk 2 returned empty after 344s once; every later identical request replayed the cached empty in <1s, including the pre-cache-buster retry
   - note: "lab commit 26d6253 (pre-public-history archive)"
+  - note: "firing-review 2026-09-24: re-verified the in-repo mitigations are still present — config.py:1141 DAIMON_LLM_NO_CACHE flag, and the serializer's attempt-numbered + nonce'd cache-buster retry (serializer.py:~1838-1865) — so the scar's stated workaround still holds in code. review_after bumped; the numeric gateway timing itself (cache keyed on exact request body) was not re-probed live against the real gateway, only the mitigation code was checked."
 expires:
   condition: "gateway response caching disabled for the daimon key, or all daimon calls send no-cache"
-  review_after: 2026-09-12
+  review_after: 2027-03-24
 status: active
 ---
 

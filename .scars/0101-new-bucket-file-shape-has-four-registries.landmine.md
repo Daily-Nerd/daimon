@@ -1,22 +1,24 @@
 ---
-id: 0
+id: 101
 type: landmine
 title: A new file shape inside checkpoints/{slug}/ must be registered in FOUR places, not one
 severity: high
 confidence: 0.9
 created: 2026-09-23
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
-  - path: daimon_briefing/surfaces.py
-  - path: daimon_briefing/buckets.py
-  - path: daimon_briefing/privacy.py
-  - path: tests/test_store_resolution.py
+  - path: plugin/daimon_briefing/surfaces.py
+  - path: plugin/daimon_briefing/buckets.py
+  - path: plugin/daimon_briefing/privacy.py
+  - path: plugin/tests/test_store_resolution.py
 evidence:
-  - note: "#1092 store.record_bucket_root() adding checkpoints/{slug}/root broke 23 tests across test_audit_privacy.py, test_write_audit_guard.py, test_bucket_migration.py, and test_store_resolution.py before all four were updated"
+  - note: #1092 store.record_bucket_root() adding checkpoints/{slug}/root broke 23 tests across test_audit_privacy.py, test_write_audit_guard.py, test_bucket_migration.py, and test_store_resolution.py before all four were updated
 expires:
   condition: "the four registries below are merged into one derived view"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 Adding `store.record_bucket_root()`, which drops a new plain file

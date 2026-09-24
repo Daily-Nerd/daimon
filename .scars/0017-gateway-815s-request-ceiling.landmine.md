@@ -13,9 +13,10 @@ anchors:
 evidence:
   - note: H1 attempt 7 (2026-06-12): four consecutive merge calls killed at 815s/815s/814s/816s (HTTP 502 or empty 200). Client DAIMON_TIMEOUT=1800 irrelevant — the cut is server-side.
   - note: H1 attempt 8: K=2 merges completed in 149-484s; 12k-28k completion tokens per merge. K=3 on dense checkpoints needs >815s of generation.
+  - note: "firing-review 2026-09-24: re-verified the in-repo mitigation is still present — config.py:1078-1082 merge_group_size() still defaults DAIMON_MERGE_GROUP_SIZE to 3 (floor of 2), i.e. the K=3-by-default posture this scar warns about is unchanged in code. review_after bumped; the ~815s gateway ceiling itself was not re-probed live against the real gateway this pass, only the config default was checked."
 expires:
   condition: "gateway request timeout raised past 1800s, or merges moved to a faster non-reasoning model (FR #16)"
-  review_after: 2026-09-12
+  review_after: 2027-03-24
 status: active
 ---
 

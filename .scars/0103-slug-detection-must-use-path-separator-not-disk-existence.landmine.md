@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 103
 type: landmine
 title: Detecting a bucket slug by disk existence ("is this an absolute existing directory") misclassifies every non-existent test/production project path as a slug
 severity: medium
 confidence: 0.85
 created: 2026-09-23
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/briefing.py
-  - pattern: os\.path\.isdir
+  - pattern: "os\.path\.isdir"
 evidence:
-  - note: "#1093 implementation, 2026-09-23: an initial `_is_slug_input` predicate ('not (os.path.isabs(text) and os.path.isdir(text)))' broke test_ruling_briefing.py::test_plain_rulings_still_render_byte_identical_to_today, whose PROJECT constant '/p/ruling-brief' is a well-formed absolute path that names no real directory on the test filesystem. Every ruling/briefing test in the suite uses fake absolute paths this way."
+  - note: #1093 implementation, 2026-09-23: an initial `_is_slug_input` predicate ('not (os.path.isabs(text) and os.path.isdir(text)))' broke test_ruling_briefing.py::test_plain_rulings_still_render_byte_identical_to_today, whose PROJECT constant '/p/ruling-brief' is a well-formed absolute path that names no real directory on the test filesystem. Every ruling/briefing test in the suite uses fake absolute paths this way.
 expires:
   condition: "the suite stops using non-existent absolute paths as project_dir stand-ins, or a real store.project_slug-shaped slug starts containing a path separator"
   review_after: 2027-03-23
-status: candidate
+status: active
 ---
 
 `config.resolve_project_dir`'s own slug/path split is `os.sep in text` (or

@@ -12,7 +12,7 @@ anchors:
 evidence:
   - pr: 575
   - note: 2026-08-05 review of #575: `refute revise` without --anchor cleared every anchor, so guard() stopped matching while `refute show` still rendered [active . human-ratified]. Reproduced independently by two reviewers in isolated DAIMON_CHECKPOINT_DIR dirs; the repo's own suite drove the failing sequence and passed.
-  - note: "firing-review 2026-09-08: this id (42) is shared with 0042-coverage-test-walking-the-scrubbers-own-surface-set.landmine.md, a pre-existing duplicate-id defect flagged separately for a human to renumber, which means the firing log cannot attribute counts between the two by id alone; the fires that land on refutations.py match this scar's own anchors and the hazard is still live, so anchors are left unchanged"
+  - note: "renumbered 2026-09-24: the duplicate id noted 2026-09-08 is resolved. The sibling scar (previously also id 42, `0042-coverage-test-walking-the-scrubbers-own-surface-set.landmine.md`) was renumbered to id 96 and renamed to `0096-coverage-test-walking-the-scrubbers-own-surface-set.landmine.md`. This scar keeps id 42 unchanged. Pre-2026-09-24 firing-log rows keyed to id 42 cannot be split between the two after the fact — see scar 96's own evidence for that caveat."
 expires:
   condition: "no ledger fold distinguishes replace-from-unchanged by key presence (e.g. every partial update carries an explicit clear flag)"
   review_after: 2027-02-05

@@ -12,6 +12,7 @@ anchors:
 evidence:
   - note: 2026-08-06, #605. crash_log_path() in hook/_daimon_hook_lib.py was written as os.environ.get(DAIMON_LOG_DIR, '').strip(). Adversarial review found both halves wrong: config._get falls back to ~/.daimon/env, and config.log_dir() never strips. With DAIMON_LOG_DIR set only in the env file, the serialize child wrote tracebacks to ~/.daimon/logs while `daimon forget` purged the configured directory and printed a clean zero — permanent plaintext residue under a surface registry entry that declared the file reachable by forget.
   - note: 2026-08-06, prior bite of the same class: #607, where hook/daimon-windsurf-hooks.py hardcoded ~/.daimon/windsurf while the package honored DAIMON_WINDSURF_DIR, so purge/reap/audit all reported cleanly on an empty directory while the adapter filled another one.
+  - note: "renumbered 2026-09-24: the duplicate id noted 2026-09-08 is resolved. The sibling scar (previously also id 43, `0043-markdown-fixture-cannot-exercise-the-echo-defense.deadend.md`) was renumbered to id 97 and renamed to `0097-markdown-fixture-cannot-exercise-the-echo-defense.deadend.md`. This scar keeps id 43 unchanged. Pre-2026-09-24 firing-log rows keyed to id 43 cannot be split between the two after the fact — see scar 97's own evidence for that caveat."
 expires:
   condition: "hooks can import daimon_briefing.config directly, or both sides call one shared hook-safe resolver instead of two copies"
   review_after: 2027-02-06

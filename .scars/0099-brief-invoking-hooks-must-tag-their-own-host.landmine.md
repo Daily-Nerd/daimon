@@ -1,22 +1,26 @@
 ---
-id: 0
+id: 99
 type: landmine
 title: A host's daimon-brief-invoking hook must pass project_env(cwd, "<host>") itself — the sibling session-end/stop hook doing it is not enough
 severity: medium
 confidence: 0.85
 created: 2026-09-23
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: hook/daimon-session-brief.py
   - path: hook/daimon-codex-session-start.py
+  - path: hook/daimon-kimi-user-prompt-submit.py
   - path: plugin/daimon_briefing/_hooks/daimon-kimi-user-prompt-submit.py
   - pattern: "project_env\(cwd\)"
 evidence:
-  - note: "#1089 discovery, 2026-09-23"
+  - note: #1089 discovery, 2026-09-23
+  - note: 2026-09-24: hook/daimon-kimi-user-prompt-submit.py (source of truth per scar #44) still calls lib.project_env(cwd) with no host argument at lines 104, 125 and 143, as of this commit — a live instance of the gap this scar describes, not yet filed as a fix.
 expires:
   condition: "daimon brief grows a --host flag or another host-identity channel that does not depend on each hook script opting in"
   review_after: 2027-03-23
-status: candidate
+status: active
 ---
 
 `config.capture_host()` reads `DAIMON_CAPTURE_HOST`, and `project_env(cwd, host)`

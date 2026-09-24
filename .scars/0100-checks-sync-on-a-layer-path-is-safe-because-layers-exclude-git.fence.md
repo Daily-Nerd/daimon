@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 100
 type: fence
 title: checks.sync/audit reused directly on a ruling-layer path is safe only because layer_scopes already excludes every git-shadowed candidate
 severity: medium
 confidence: 0.8
 created: 2026-09-23
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/checks.py
   - path: plugin/daimon_briefing/config.py
 evidence:
-  - note: "#1095 (issue Daily-Nerd/daimon#1095): sync_layers/audit_layers call checks.sync(layer)/checks.audit(layer) directly on each config.layer_scopes(project_dir) entry, with no special-casing"
+  - note: #1095 (issue Daily-Nerd/daimon#1095): sync_layers/audit_layers call checks.sync(layer)/checks.audit(layer) directly on each config.layer_scopes(project_dir) entry, with no special-casing
 expires:
   condition: "config.layer_scopes drops or weakens its #2 guard (excluding any candidate that is, or sits above, a git working tree), or config.resolve_project_dir's git-toplevel walk changes direction"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 `checks.sync_layers`/`checks.audit_layers` (#1095) call `checks.sync(layer)`/

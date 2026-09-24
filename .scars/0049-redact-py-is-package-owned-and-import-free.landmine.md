@@ -8,13 +8,14 @@ created: 2026-08-10
 authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/redact.py
+  - path: plugin/daimon_briefing/_hooks/redact.py
   - path: hook/redact.py
-  - pattern: "from \. import|from daimon_briefing"
 evidence:
   - commit: a5f3a64
   - pr: 661
   - note: "2026-08-10, #660/#661 — added `from . import normalize` to redact.py; it is copied verbatim next to the standalone Windsurf hook scripts, which run with a sys.path insert and cannot resolve the package"
   - note: "firing-review 2026-09-08: 39 fires since the last revision, mostly test_cli.py and other test files edited alongside the field_table/mcp_tools/requests work; anchors reviewed and confirmed on-target, hazard still live"
+  - note: "firing-review 2026-09-24: dropped the bare pattern anchor `from \\. import|from daimon_briefing` — it content-matched 210/370 tracked .py files (57%), because it has no path scope and pattern anchors are matched repo-wide against ANY new/edited file regardless of path anchors (match.py:159-178, an OR of independent signals, not an AND with the path anchors). The 'must import stdlib only' guard is prose-level (no reliable regex distinguishes a safe stdlib import from an unsafe relative one), so it stays advisory in the body rather than becoming a violation: tripwire. Added the missing `plugin/daimon_briefing/_hooks/redact.py` path anchor — the second of the three copies this scar's own body already names, previously unanchored."
 expires:
   condition: "redact.py stops being shipped standalone beside the hook scripts, or the hook copies become real imports of the installed package"
   review_after: 2027-02-01
