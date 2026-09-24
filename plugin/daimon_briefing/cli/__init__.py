@@ -2791,12 +2791,10 @@ def _status_checks(project_dir, now: float):
     from .. import checks
 
     counts = {"armed": 0, "proposed": 0}
-    own_ids = set()
     for record in refutations.listing(polarity="ruling",
                                       project_dir=project_dir):
         if not isinstance(record.get("check"), dict):
             continue
-        own_ids.add(record["refutation_id"])
         lifecycle = record.get("check_lifecycle")
         if lifecycle in counts:
             counts[lifecycle] += 1
@@ -2807,8 +2805,14 @@ def _status_checks(project_dir, now: float):
     # "active"`, so a check-carrying row is always lifecycle `armed`, and it
     # never raises on its own (fail-open to `[]`), so this needs no guard of
     # its own.
+    #
+    # #1102: the exclusion set is `own_active_ruling_ids`, not every own id
+    # from the loop above — a ruling promoted to a layer and then retired,
+    # overturned, or left a candidate in this project's own bucket must not
+    # hide the layer's active copy from this count.
+    own_active_ids = refutations.own_active_ruling_ids(project_dir)
     for record in refutations.inherited_active(project_dir):
-        if record["refutation_id"] in own_ids:
+        if record["refutation_id"] in own_active_ids:
             continue
         if isinstance(record.get("check"), dict):
             counts["armed"] += 1
@@ -3754,13 +3758,11 @@ def _stats_checks(project_dir) -> dict:
     from .. import checks  # local, like cli.hooks: not every verb pays for it
 
     counts = {"armed": 0, "proposed": 0}
-    own_ids: set = set()
     try:
         for record in refutations.listing(polarity="ruling",
                                           project_dir=project_dir):
             if not isinstance(record.get("check"), dict):
                 continue
-            own_ids.add(record["refutation_id"])
             lifecycle = record.get("check_lifecycle")
             if lifecycle in counts:
                 counts[lifecycle] += 1
@@ -3769,8 +3771,13 @@ def _stats_checks(project_dir) -> dict:
     # #1095: a layer's active check arms here too — see `_status_checks`'s
     # identical addition for the full reasoning. `inherited_active` never
     # raises on its own, so this needs no guard of its own.
+    #
+    # #1102: excludes only an ACTIVE own copy (`own_active_ruling_ids`,
+    # itself fail-open) — see `_status_checks`'s identical change for why
+    # the unfiltered own-id set above under-counted a promoted ruling.
+    own_active_ids = refutations.own_active_ruling_ids(project_dir)
     for record in refutations.inherited_active(project_dir):
-        if record["refutation_id"] in own_ids:
+        if record["refutation_id"] in own_active_ids:
             continue
         if isinstance(record.get("check"), dict):
             counts["armed"] += 1
