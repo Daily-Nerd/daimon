@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 102
 type: landmine
 title: render_ledger_lines always writes stdout — a --json ceremony must hand-print its lines to route them to stderr
 severity: medium
 confidence: 0.85
 created: 2026-09-23
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/cli/_ledger.py
   - path: plugin/daimon_briefing/cli/ruling.py
   - path: plugin/daimon_briefing/render.py
 evidence:
-  - note: "issue #1094: propose --ratify ceremony first draft used render.render_ledger_lines() unconditionally; tests/test_ruling_policy_cli.py::test_revise_no_request_policy_clears_an_active_grant and test_show_names_a_pending_proposal_that_carries_a_request_policy (both pass --json and json.loads() the captured stdout) failed because the ceremony text landed on stdout ahead of the JSON, corrupting it"
+  - note: issue #1094: propose --ratify ceremony first draft used render.render_ledger_lines() unconditionally; tests/test_ruling_policy_cli.py::test_revise_no_request_policy_clears_an_active_grant and test_show_names_a_pending_proposal_that_carries_a_request_policy (both pass --json and json.loads() the captured stdout) failed because the ceremony text landed on stdout ahead of the JSON, corrupting it
 expires:
   condition: "render_ledger_lines grows a file= parameter that ceremony callers can point at stderr"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 `render.render_ledger_lines` (plugin/daimon_briefing/render.py) has no `file=`

@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 98
 type: fence
 title: "#1087 skipped the design's found-group row order — it fights pending.py's own oldest-first backlog doctrine"
 severity: low
 confidence: 0.7
 created: 2026-09-22
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/pending.py
   - pattern: "_order_key"
 evidence:
-  - note: "vault decisions/2026-09-22-amendment-confirm-fatigue-design.md, Design section 1 (\"Order: user turn, then tool output, then the ⚠ groups. Oldest first within each group.\") vs pending.py:_order_key's own comment (\"a deliberate inversion... this is a backlog, and the oldest undecided item is the one rotting\")"
+  - note: vault decisions/2026-09-22-amendment-confirm-fatigue-design.md, Design section 1 (\"Order: user turn, then tool output, then the ⚠ groups. Oldest first within each group.\") vs pending.py:_order_key's own comment (\"a deliberate inversion... this is a backlog, and the oldest undecided item is the one rotting\")
 expires:
   condition: "a future change explicitly reorders the amendment lane by found-group and adds a test for it"
   review_after: 2027-03-22
-status: candidate
+status: active
 ---
 
 The #1087 design asks the amendment lane's rows to sort by WHERE the quote
