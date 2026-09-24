@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 POINTER_RE = re.compile(r"^(latest|prev-[1-9][0-9]?)$")
@@ -93,6 +94,112 @@ def project_slug(project_dir):
     if not s:
         return None
     return re.sub(r"[^\w-]", "-", s) or None
+
+# #1109 PR 2: `_content_key` below is behaviorally locked to
+# daimon_briefing.normalize.content_key by
+# test_reader_content_key_stays_in_sync_with_normalize — same reason as
+# project_slug above (no daimon import here, file docstring). Copied
+# verbatim rather than approximated: a drifted subset would either leak a
+# quarantined value (a narrower fold than the ledger's own) or over-suppress
+# an unrelated one, and there is no way to tell which from this file alone.
+_INVISIBLE = (
+    "­"                  # SOFT HYPHEN
+    "͏"                  # COMBINING GRAPHEME JOINER
+    "᠋-᠍"           # MONGOLIAN FREE VARIATION SELECTOR ONE..THREE
+    "​-‏"           # ZERO WIDTH SPACE .. RIGHT-TO-LEFT MARK
+    "⁠-⁤"           # WORD JOINER .. INVISIBLE PLUS
+    "⁦-⁩"           # bidi isolates (LRI/RLI/FSI/PDI)
+    "︀-️"           # VARIATION SELECTOR-1..16
+    "﻿"                  # ZERO WIDTH NO-BREAK SPACE / BOM
+    "￼�"            # OBJECT REPLACEMENT / REPLACEMENT CHARACTER
+    "\U000e0000-\U000e007f"   # TAG block (language tag + tag chars + cancel)
+)
+_INVISIBLE_RE = re.compile("[" + _INVISIBLE + "]+")
+_WS_RE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
+_CONFUSABLES = {
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
+    "і": "i", "ј": "j", "һ": "h", "ԁ": "d", "ѕ": "s", "т": "t", "м": "m",
+    "ο": "o", "α": "a", "ι": "i", "ν": "v", "ρ": "p", "χ": "x", "υ": "u",
+    "κ": "k",
+}
+_CONFUSABLE_TABLE = {ord(k): v for k, v in _CONFUSABLES.items()}
+_MAX_KEY_INPUT = 4096
+_KEY_HEX_LEN = 16
+
+def _content_key(text) -> str:
+    """Bounded canonical hash key — see the module comment above; the
+    algorithm is `daimon_briefing.normalize.content_key`'s, unchanged."""
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    text = unicodedata.normalize("NFKC", text)
+    text = _INVISIBLE_RE.sub("", text)
+    text = _WS_RE.sub(" ", text).strip()
+    text = text.casefold()
+    text = text.translate(_CONFUSABLE_TABLE)
+    canon = text[:_MAX_KEY_INPUT]
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:_KEY_HEX_LEN]
+
+# Only the two tiers `trust.py`'s own CHANNEL_AUTHORITY ever assigns
+# (channels.py's shared BASE_CHANNEL_AUTHORITY, which trust.py imports
+# unchanged — trust.py adds no channel of its own): `cli-agent` is the only
+# agent-tier channel, everything else here is human. Locked to that fact by
+# test_reader_content_key_stays_in_sync_with_normalize's sibling assertion.
+_TRUST_HUMAN_CHANNELS = frozenset({"cli-tty", "ui", "signed"})
+
+def _active_quarantine_keys(bucket: Path) -> set:
+    """`(kind, value_key)` pairs under an ACTIVE human quarantine for this
+    project, folded from `trust.jsonl` directly — this module carries no
+    daimon import (file docstring), so `trust.fold`'s state machine is
+    duplicated here rather than shared, the same posture as `resolutions()`
+    above (a simplified re-fold of `events.jsonl`, not a call into
+    `store.resolutions`). Missing/unreadable trust.jsonl, or a file with no
+    active rows, is the empty set — not an error, matching `resolutions()`'s
+    own fail-open posture: a broken ledger withholds nothing here rather
+    than blanking the viewer."""
+    try:
+        text = (bucket / "trust.jsonl").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return set()
+    records: dict = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        tid = row.get("quarantine_id")
+        event = row.get("event")
+        if not isinstance(tid, str) or not tid:
+            continue
+        human = row.get("channel") in _TRUST_HUMAN_CHANNELS
+        if event == "quarantined":
+            current = records.get(tid)
+            # A dismissed/released record may be reopened by a fresh
+            # proposal (trust.fold's own doctrine); anything else already
+            # candidate/active is a duplicate first-writer-wins row.
+            if current is not None and current["state"] not in (
+                    "dismissed", "released"):
+                continue
+            state = "active" if (row.get("ratified") is True and human) \
+                else "candidate"
+            records[tid] = {"state": state, "kind": row.get("kind"),
+                            "value_key": row.get("value_key")}
+            continue
+        current = records.get(tid)
+        if current is None or not human:
+            continue  # orphan event, or no agent channel moves state
+        if event == "confirmed" and current["state"] == "candidate":
+            current["state"] = "active"
+        elif event == "dismissed" and current["state"] == "candidate":
+            current["state"] = "dismissed"
+        elif event == "released" and current["state"] == "active":
+            current["state"] = "released"
+    return {(rec["kind"], rec["value_key"]) for rec in records.values()
+            if rec["state"] == "active" and rec.get("kind") and rec.get("value_key")}
 
 def _pointer_files(bucket: Path):
     if not bucket.is_dir():
@@ -250,10 +357,22 @@ def _norm_item(raw):
         "quote_provenance": _norm_provenance(raw.get("quote_provenance")),
     }
 
-def _normalize(data):
+def _normalize(data, quarantine: set | None = None):
     """Turn raw checkpoint JSON into (meta, sections, partial). Shared by load_checkpoint
     (pointer-based) and diff_checkpoints (arbitrary session files) — the seam that lets
-    diff reuse checkpoint normalization without going through the pointer chain."""
+    diff reuse checkpoint normalization without going through the pointer chain.
+
+    #1109 PR 2: `quarantine` is `_active_quarantine_keys(bucket)`'s shape
+    (`{(kind, value_key), ...}`) — this is the ONE choke point every read
+    surface in this file goes through (load_checkpoint, diff_checkpoints,
+    item_biography via _index_items, and _walk_transitions -> project_ledger/
+    session_events/project_grid), so filtering here withholds a quarantined
+    item's text everywhere at once rather than needing a change per surface.
+    A quarantined item is dropped from its section entirely: it reads exactly
+    like an item that was never in the checkpoint, which is the withhold
+    contract this viewer can offer without a resolutions-shaped drop list of
+    its own. `text` and `quote` are both checked, matching daimon_briefing's
+    own fail-safe posture (recall.py's forgotten-value scrub checks both)."""
     partial = []
     fv = data.get("format_version")
     if fv != KNOWN_FORMAT:
@@ -284,6 +403,18 @@ def _normalize(data):
         else:
             items = items_for(container, cp_key)
         sections.append({"key": ui_key, "label": label, "items": items})
+
+    if quarantine:
+        for sec in sections:
+            kind = _SECTION_KIND.get(str(sec["key"]))
+            keys = {v for k, v in quarantine if k == kind} if kind else set()
+            if not keys:
+                continue
+            sec["items"] = [
+                i for i in sec["items"]
+                if _content_key(i.get("text") or "") not in keys
+                and (not i.get("quote")
+                     or _content_key(i["quote"]) not in keys)]
 
     meta = {
         "created": data.get("created"),
@@ -318,7 +449,7 @@ def load_checkpoint(data_dir: Path, slug: str, ref: str):
             "fix": "Re-run `daimon heal`, or pick another checkpoint from the sidebar.",
         }}
 
-    meta, sections, partial = _normalize(data)
+    meta, sections, partial = _normalize(data, _active_quarantine_keys(bucket))
     if receipts_enabled(bucket):
         meta["receipt"] = receipt_state(data_dir, data)
     return {"ok": True, "partial": partial, "sections": sections, "meta": meta}
@@ -468,8 +599,9 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
     if err:
         return {"ok": False, "error": err}
 
-    meta_a, sections_a, partial_a = _normalize(data_a)
-    meta_b, sections_b, partial_b = _normalize(data_b)
+    quarantine = _active_quarantine_keys(data_dir / slug)
+    meta_a, sections_a, partial_a = _normalize(data_a, quarantine)
+    meta_b, sections_b, partial_b = _normalize(data_b, quarantine)
 
     def index(sections):
         by_id, skipped = {}, 0
@@ -537,13 +669,14 @@ def _walk_transitions(data_dir: Path, slug: str):
     Shared by project_ledger, session_events and project_grid so the
     surfaces can never disagree about what happened."""
     hist = project_history(data_dir, slug)
+    quarantine = _active_quarantine_keys(data_dir / slug)
     events, latest_item, last_sight = [], {}, {}
     prev_ids, gone = None, set()
     for s in reversed(hist["sessions"]):  # oldest -> newest
         data, err = _load_session(data_dir, s["session_id"])
         if err:
             continue  # torn/missing session file: skip, don't abort the whole walk
-        _, sections, _ = _normalize(data)
+        _, sections, _ = _normalize(data, quarantine)
         cur = _index_items(sections)
         for iid, item in cur.items():
             if iid not in latest_item or iid in gone:
@@ -760,6 +893,7 @@ def item_biography(data_dir: Path, slug: str, item_id: str) -> dict:
         return _bad_item_id_error(item_id)
 
     sessions = list(reversed(project_history(data_dir, slug)["sessions"]))  # oldest -> newest
+    quarantine = _active_quarantine_keys(data_dir / slug)
 
     events, chain, last_item, prev_sighting = [], [], None, None
     scanned_count = 0
@@ -769,7 +903,7 @@ def item_biography(data_dir: Path, slug: str, item_id: str) -> dict:
         data, err = _load_session(data_dir, s["session_id"])
         if err:
             continue  # torn/missing session file: skip, don't abort the whole walk
-        _, sections, _ = _normalize(data)
+        _, sections, _ = _normalize(data, quarantine)
         is_first_scanned = scanned_count == 0
         scanned_count += 1
 

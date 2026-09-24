@@ -13,6 +13,21 @@ carry imports recall — this module sits below the whole chain so any of them
 can import it without a cycle. compare_format_versions lives here for the same
 reason: cli's status check and render's brief note (#294) both need it, and
 neither one imports the other.
+
+Admission-state doctrine (#1109): no field on ItemField below carries a
+per-item candidate, verified, stale, or rejected state, by decision, not
+omission. Recall already ranks a stale, superseded, or contradicted item
+down instead of filtering it — an old or contradicted decision is still
+evidence a reader may need, so a machine signal, however confident, only
+ever ranks down (a candidate signal never suppresses an item). A closed
+state machine that can WITHHOLD a checkpoint item's text exists in exactly
+one place: a separate, value-keyed ledger (`trust.py`, mirroring the ruling
+half of `refutations.py`) that a human channel alone may confirm or
+release, keyed on the item's TEXT rather than its id so a carried or
+re-extracted copy of the same value stays withheld. The distinction that
+matters is not "field vs. ledger" but WHO can move the state: a
+human-confirmed verdict may withhold; a machine signal only ever ranks
+down.
 """
 
 import re

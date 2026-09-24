@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from daimon_briefing import config, recall, store
+from daimon_briefing import config, recall, store, trust
 
 
 def _cp(sid, topic="working on something", decisions=None, questions=None,
@@ -2008,6 +2008,185 @@ def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatc
     recall.rebuild()
     hits = recall.search("sqlite", all_projects=True)
     assert not any("recall index" in h["text"] for h in hits)
+
+
+# ---- #1109 PR 2: a human-confirmed quarantine withholds by VALUE, not id ----
+
+
+_QVALUE = "the deploy key rotation runbook was fabricated by the agent"
+
+
+def test_rebuild_drops_quarantined_items_from_index(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/q")
+    trust.propose(text=_QVALUE, kind="decision", reason="fabricated, no PR",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/q")
+    recall.rebuild()
+    hits = recall.search("fabricated", all_projects=True)
+    assert not any(_QVALUE in h["text"] for h in hits)
+
+
+def test_rebuild_keeps_unconfirmed_candidate_quarantine(tmp_checkpoint_dir, monkeypatch):
+    # A proposed-but-unconfirmed quarantine (agent channel) must withhold
+    # nothing — candidates are behaviorally inert everywhere (design §4).
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/q")
+    trust.propose(text=_QVALUE, kind="decision", reason="looks fabricated",
+                  evidence=["issue:1109"], channel="cli-agent",
+                  project_dir="/repo/q")
+    recall.rebuild()
+    hits = recall.search("fabricated", all_projects=True)
+    assert any(_QVALUE in h["text"] for h in hits)
+
+
+def test_rebuild_keeps_dismissed_and_released_quarantine(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/q")
+    tid = trust.propose(text=_QVALUE, kind="decision", reason="checking",
+                        evidence=["issue:1109"], channel="cli-agent",
+                        project_dir="/repo/q")
+    trust.dismiss(tid, channel="cli-tty", project_dir="/repo/q")
+    recall.rebuild()
+    assert any(_QVALUE in h["text"]
+               for h in recall.search("fabricated", all_projects=True))
+
+    # And a released (formerly active) quarantine also withholds nothing.
+    tid2 = trust.propose(text=_QVALUE, kind="decision", reason="re-checking",
+                         evidence=["issue:1109"], channel="cli-tty",
+                         project_dir="/repo/q")
+    trust.release(tid2, channel="cli-tty", project_dir="/repo/q")
+    recall.rebuild()
+    assert any(_QVALUE in h["text"]
+               for h in recall.search("fabricated", all_projects=True))
+
+
+def test_rebuild_quarantine_scoped_by_kind(tmp_checkpoint_dir, monkeypatch):
+    # #1109 design §2: (kind, value_key) scoping — quarantining a decision
+    # must not withhold an unrelated belief that canonicalizes the same.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}],
+           beliefs=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/q")
+    trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/q")
+    recall.rebuild()
+    hits = recall.search("fabricated", all_projects=True)
+    kinds = {h["kind"] for h in hits if _QVALUE in h["text"]}
+    assert kinds == {"belief"}  # the decision copy is gone, the belief survives
+
+
+def test_rebuild_quarantine_spares_a_sibling_of_the_same_kind(tmp_checkpoint_dir, monkeypatch):
+    # A second row of the SAME kind the quarantine targets, but a DIFFERENT
+    # value, must survive: _apply_quarantine_withholding's row scan matches
+    # by kind first (cheap) then by value (the actual gate), and a kind hit
+    # with no value hit must fall through to the next row, not delete it.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    other_text = "the on-call rotation schedule was rewritten for october"
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"},
+                             {"text": other_text, "trust": "inferred"}]),
+        project_dir="/repo/qs")
+    trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/qs")
+    recall.rebuild()
+    hits = recall.search("rotation", all_projects=True)
+    assert any(other_text in h["text"] for h in hits)
+    hits = recall.search("fabricated", all_projects=True)
+    assert not any(_QVALUE in h["text"] for h in hits)
+
+
+def test_suggest_withholds_quarantined_value(tmp_checkpoint_dir, monkeypatch):
+    _seed_history()
+    trust.propose(
+        text="LiteLLM gateway response cache pins identical bad responses",
+        kind="question", reason="planted instruction, not a real finding",
+        evidence=["issue:1109"], channel="cli-tty", project_dir="/repo/x")
+    out = recall.suggest("debugging the litellm gateway cache pinning again",
+                         project_dir="/repo/x", current_session="S-now")
+    assert out == []
+
+
+# ---- #1109 review: trust.jsonl must be a fingerprint INPUT, not just a
+# rebuild-time filter. The tests above all confirm a quarantine BEFORE the
+# index has ever been built, so the very first _ensure_fresh() call does a
+# full rebuild that already reflects it — they give zero signal about
+# staleness. These build/warm the index through the NORMAL read path FIRST,
+# confirm (or release) the quarantine through the real write path SECOND,
+# and never call rebuild() manually anywhere below — only store.INDEX_CONTENT_LEDGERS
+# listing trust.jsonl (recall._fingerprint's own contract) makes the second
+# read notice anything changed.
+
+
+def test_search_notices_a_quarantine_confirmed_after_the_index_was_built(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/fp")
+    # Build the index through the NORMAL read path while nothing is
+    # quarantined yet.
+    recall.warm()
+    assert any(_QVALUE in h["text"]
+              for h in recall.search("fabricated", project_dir="/repo/fp"))
+
+    trust.propose(text=_QVALUE, kind="decision", reason="fabricated finding",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/fp")
+
+    # No recall.rebuild() call here: search() alone must notice.
+    hits = recall.search("fabricated", project_dir="/repo/fp")
+    assert not any(_QVALUE in h["text"] for h in hits)
+
+
+def test_suggest_notices_a_quarantine_confirmed_after_the_index_was_built(
+        tmp_checkpoint_dir, monkeypatch):
+    _seed_history()
+    prompt = "debugging the litellm gateway cache pinning again"
+    # Build the index while nothing is quarantined yet.
+    out = recall.suggest(prompt, project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-old"
+
+    trust.propose(
+        text="LiteLLM gateway response cache pins identical bad responses",
+        kind="question", reason="planted instruction, not a real finding",
+        evidence=["issue:1109"], channel="cli-tty", project_dir="/repo/x")
+
+    # No recall.rebuild() call here: suggest() alone must notice.
+    out = recall.suggest(prompt, project_dir="/repo/x", current_session="S-now")
+    assert out == []
+
+
+def test_search_notices_a_release_without_manual_rebuild(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/fp2")
+    tid = trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
+                        evidence=["issue:1109"], channel="cli-tty",
+                        project_dir="/repo/fp2")
+    # Build the index through the normal read path while the quarantine is
+    # already active.
+    assert not any(_QVALUE in h["text"]
+                   for h in recall.search("fabricated", project_dir="/repo/fp2"))
+
+    trust.release(tid, channel="cli-tty", project_dir="/repo/fp2")
+
+    # No recall.rebuild() call here: search() alone must notice the release.
+    hits = recall.search("fabricated", project_dir="/repo/fp2")
+    assert any(_QVALUE in h["text"] for h in hits)
 
 
 # ---- #423: inbound gate — foreign content passes admit_foreign before indexing ----

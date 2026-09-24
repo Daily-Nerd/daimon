@@ -1085,6 +1085,82 @@ def test_withhold_covers_contradictions_flagged():
     assert candidates == []
 
 
+# ---- #1109 PR 2: withhold's sixth outcome — a human quarantine, value-keyed ----
+
+
+_QVALUE = "the deploy key rotation runbook was fabricated by the agent"
+
+
+def _qkeys(*texts, kind="decision"):
+    from daimon_briefing import normalize
+    return {(kind, normalize.content_key(t)) for t in texts}
+
+
+def test_withhold_drops_quarantined_id_bearing_item():
+    cp = {"working_context": {"recent_decisions": [
+        {"text": _QVALUE, "id": "d-aaa"}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {}, quarantine=_qkeys(_QVALUE))
+    assert filtered["working_context"]["recent_decisions"] == []
+    assert withheld[0][1]["id"] == "d-aaa"
+    assert withheld[0][2]["status"] == "quarantined"
+    assert candidates == []
+
+
+def test_withhold_drops_quarantined_id_less_item():
+    # Unlike the resolved-events pool, quarantine has no id-bearing exemption
+    # — surviving an id change (carry, re-extraction) is the whole point.
+    cp = {"working_context": {"recent_decisions": [{"text": _QVALUE}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {}, quarantine=_qkeys(_QVALUE))
+    assert filtered["working_context"]["recent_decisions"] == []
+    assert len(withheld) == 1
+
+
+def test_withhold_quarantine_matches_quote_field_too():
+    cp = {"working_context": {"recent_decisions": [
+        {"text": "short label", "quote": _QVALUE, "id": "d-bbb"}]}}
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {}, quarantine=_qkeys(_QVALUE))
+    assert filtered["working_context"]["recent_decisions"] == []
+
+
+def test_withhold_quarantine_scoped_by_kind():
+    cp = {"working_context": {"recent_decisions": [{"text": _QVALUE, "id": "d-a"}]},
+         "epistemic_snapshot": {"strong_beliefs": [{"text": _QVALUE, "id": "b-a"}]}}
+    # Quarantined as a DECISION only — the identical-text belief survives.
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {}, quarantine=_qkeys(_QVALUE, kind="decision"))
+    assert filtered["working_context"]["recent_decisions"] == []
+    assert filtered["epistemic_snapshot"]["strong_beliefs"] == \
+        cp["epistemic_snapshot"]["strong_beliefs"]
+
+
+def test_withhold_quarantine_wins_over_supersede_candidate_stamp():
+    # A quarantined item is dropped outright, never stamped as a live
+    # suggestion — design §5: withhold wins over every machine signal.
+    cp = {"working_context": {"open_questions": [
+        {"text": _QVALUE, "id": "o-aaa"}]}}
+    ev = _res_evt("o-aaa", status="supersede-candidate:o-3f2a9c11")
+    filtered, withheld, candidates = briefing.withhold(
+        cp, {"o-aaa": ev}, quarantine=_qkeys(_QVALUE, kind="question"))
+    assert filtered["working_context"]["open_questions"] == []
+    assert candidates == []
+    assert len(withheld) == 1
+
+
+def test_no_quarantine_no_resolutions_returns_input_unchanged():
+    cp = {"working_context": {"open_questions": [{"text": "x", "id": "o-a"}]}}
+    filtered, withheld, candidates = briefing.withhold(cp, {}, quarantine=set())
+    assert filtered is cp and withheld == [] and candidates == []
+
+
+def test_withhold_quarantine_none_is_a_pure_noop():
+    cp = {"working_context": {"open_questions": [{"text": _QVALUE, "id": "o-a"}]}}
+    filtered, withheld, candidates = briefing.withhold(cp, {})
+    assert filtered is cp and withheld == []
+
+
 # ---- #14: withhold's third outcome — supersede-candidate is a live SUGGESTION ----
 
 

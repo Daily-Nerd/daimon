@@ -36,6 +36,11 @@ from pathlib import Path
 from typing import TypedDict
 
 from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+# Aliased: `trust` below (from . import (..., trust)) already binds the
+# `cli.trust` VERB submodule at this scope — this is the LIBRARY ledger
+# module (daimon_briefing.trust), needed here only to read
+# active_value_keys() for withhold's quarantine pool.
+from .. import trust as trust_lib
 from .. import __version__
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
@@ -643,13 +648,20 @@ def _team_briefings(project, withheld: list | None = None) -> list:
         resolutions = store.resolutions(project_dir=project)
     except Exception:
         resolutions = {}
+    try:
+        # #1109: the READER's own quarantine ledger governs here too, same
+        # posture as `resolutions` above — a teammate's checkpoint is folded
+        # through what THIS project's human has quarantined, never theirs.
+        quarantine = trust_lib.active_value_keys(project_dir=project)
+    except Exception:
+        quarantine = set()
     out = []
     for author, checkpoint in store.read_team(project_dir=project):
         if store.project_slug(author) == self_slug:
             continue  # never surface your own state as a teammate
         try:
             checkpoint, dropped, _candidates = briefing.withhold(
-                checkpoint, resolutions)
+                checkpoint, resolutions, quarantine=quarantine)
         except Exception:
             dropped = []
         if withheld is not None:
@@ -692,7 +704,8 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
             # reach the render through this argument. Same fail-open.
             checkpoint, withheld, _candidates = briefing.withhold(
                 checkpoint, events,
-                amendments=amendments.renderable(project_dir=route))
+                amendments=amendments.renderable(project_dir=route),
+                quarantine=trust_lib.active_value_keys(project_dir=route))
         except Exception:
             withheld = []
             events = {}
@@ -2688,7 +2701,9 @@ def _print_suppressed(project) -> int:
     if checkpoint:
         try:
             events = store.resolutions(project_dir=project)
-            _, withheld, candidates = briefing.withhold(checkpoint, events)
+            quarantine = trust_lib.active_value_keys(project_dir=project)
+            _, withheld, candidates = briefing.withhold(
+                checkpoint, events, quarantine=quarantine)
         except Exception:
             withheld = []
             candidates = []

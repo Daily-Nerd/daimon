@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (amendments, briefing, capture, config, harvest, ledger, llm,
-               recall, serializer, store, transcript)
+               recall, serializer, store, transcript, trust)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -239,7 +239,8 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
             # injected context and the human brief must state the same world.
             checkpoint, _withheld, _candidates = briefing.withhold(
                 checkpoint, events,
-                amendments=amendments.renderable(project_dir=project))
+                amendments=amendments.renderable(project_dir=project),
+                quarantine=trust.active_value_keys(project_dir=project))
             # #268: the witness count is a reason to weight a claim, so the
             # injected context states it exactly as the human brief does.
             # Rides the same fail-open try — the badge is advisory, and no

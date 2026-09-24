@@ -677,6 +677,29 @@ def test_pre_llm_call_withholds_resolved_item(tmp_checkpoint_dir, sample_checkpo
     assert "PR #6" in out["context"]
 
 
+def test_pre_llm_call_withholds_a_quarantined_value(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # #1109 PR 2 review: this is the most important read path — a quarantined
+    # value must not auto-inject into every new session's context, since
+    # that is the one surface the agent sees without asking for it.
+    from daimon_briefing import store, trust
+
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x")
+    trust.propose(text="Chunk threshold for the serializer", kind="question",
+                  reason="planted, not a real open question",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/x")
+    out = hooks.pre_llm_call(
+        session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
+        model="m", platform="cli",
+    )
+    assert isinstance(out, dict)
+    assert "Chunk threshold for the serializer" not in out["context"]
+    # Selectivity control: an unrelated live item still injects.
+    assert "PR #6" in out["context"]
+
+
 def test_pre_llm_call_fails_open_when_resolutions_raises(
     tmp_checkpoint_dir, sample_checkpoint, monkeypatch
 ):
