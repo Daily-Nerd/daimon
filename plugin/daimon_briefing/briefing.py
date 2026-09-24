@@ -13,6 +13,7 @@ distinctly from inferred ones.
 
 import copy
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -21,9 +22,12 @@ from typing import NamedTuple
 # store/carry import graph checked (#103): neither store, carry, recall,
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
 # module-level import (contrast carry.py's own local-import notes, which
-# don't apply here).
-from . import (capture, carry, checks_host, config, llm, pending, receipts,
-               refutations, requests, schema, scoring, serializer, store)
+# don't apply here). checks_runtime is the #943 stdlib-only runtime module —
+# it imports nothing from this package, so it carries no cycle risk either
+# (#1093: the manifest-derived enforce lines read it directly).
+from . import (capture, carry, checks_host, checks_runtime, config, llm,
+               pending, receipts, refutations, requests, schema, scoring,
+               serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
 # name inside that function.
@@ -1006,24 +1010,103 @@ def rulings_read(project_dir=None) -> RulingsRead:
     return RulingsRead(rows=rows, state="read", path=path)
 
 
+class LayerRead(NamedTuple):
+    """One layer's ruling read (#1093), in the same four-state vocabulary
+    `rulings_read` documents for a project's own bucket ("unresolved",
+    "no-bucket", "unreadable", "read"). `layer` is the absolute owning
+    directory `config.layer_scopes` named — never a slug, since
+    `layer_scopes` only ever names real ancestor directories."""
+    layer: str
+    rows: list[dict]
+    state: str
+
+
+class LayerRulingsRead(NamedTuple):
+    """Per-layer reads for every eligible ancestor of `project_dir` (#1093),
+    GLOBAL FIRST (farthest from the project), then progressively nearer —
+    the render order `active_rulings` and `ruling_lines` both use.
+    `config.layer_scopes` itself returns nearest-first (the order enforcement
+    reasons about); this reverses it, once, here.
+
+    Empty for a project with no eligible layers: `config.layer_scopes`
+    returned [] (a slug or non-existent path, a tenant-scoped home, a
+    project outside home, or simply no ancestor layer at all). Never raises:
+    `layer_scopes` already never raises, and the guard here means a future
+    change to it cannot reintroduce a crash on this read path either."""
+    layers: list[LayerRead]
+
+
+def layer_rulings_read(project_dir=None) -> LayerRulingsRead:
+    try:
+        scopes = config.layer_scopes(project_dir)
+    except Exception:
+        return LayerRulingsRead(layers=[])
+    layers = []
+    for layer in reversed(scopes):  # nearest-first -> global-first
+        read = rulings_read(layer)
+        layers.append(LayerRead(layer=layer, rows=read.rows, state=read.state))
+    return LayerRulingsRead(layers=layers)
+
+
 def active_rulings(project_dir=None) -> list[dict]:
-    """Every active ruling for the briefing section, newest-activated first
-    (ties break on refutation_id — the fold keeps no finer stamp). This is
-    the SECTION's order, chosen so the cap slice in ruling_lines keeps the
-    newest ratifications; `daimon ruling list` and the viewer lane keep
-    refutations.listing's own presentation order.
+    """Every active ruling for the briefing section: every eligible layer's
+    active rulings (#1093), global first then progressively nearer, followed
+    by the project's OWN active rulings — within each group, newest-
+    activated first (ties break on refutation_id — the fold keeps no finer
+    stamp). This is the SECTION's order, chosen so the cap slice in
+    ruling_lines keeps the newest ratifications within each group;
+    `daimon ruling list` and the viewer lane keep refutations.listing's own
+    presentation order.
+
+    Every row carries `inherited_from` (#1093): the absolute owning layer
+    directory for a layer row, `None` for the project's own row. This is an
+    IN-MEMORY tag only — nothing is ever written back into any ledger. A
+    layer row carrying a `request_policy` is dropped entirely: the request
+    fold and write boundary read only the project's OWN bucket
+    (`requests.active_request_policies`), so rendering an inherited policy
+    would tell the agent it may do something the write boundary refuses. The
+    merged view is deduped by refutation_id, OWN ROW WINS (a ruling promoted
+    from a layer into the project itself renders once, with no inherited
+    tag) — the project's own read runs LAST here specifically so it always
+    overwrites a same-id layer entry already in the merge.
 
     Fail-open: ANY error — path resolution, read, fold, or sort over
-    hand-edited rows, a missing bucket, an unreadable ledger — yields []
-    rather than costing the briefing. `rulings_read` already catches all of
-    these itself, but the guard here is repeated on purpose: this is the
-    pinned fail-open API (#940), and a future change to the strict sibling
-    must not be able to reintroduce a crash here by accident. A host that
-    needs to tell the failures apart reads `rulings_read` instead (#962)."""
+    hand-edited rows, a missing bucket, an unreadable ledger, a layer-walk
+    failure — yields [] rather than costing the briefing. `rulings_read` and
+    `layer_rulings_read` already catch all of these themselves, but the
+    guard here is repeated on purpose: this is the pinned fail-open API
+    (#940), and a future change to either sibling must not be able to
+    reintroduce a crash here by accident. A host that needs to tell the
+    failures apart reads `rulings_read` (own bucket) or `layer_rulings_read`
+    (per layer) instead (#962, #1093)."""
     try:
-        return rulings_read(project_dir).rows
+        return _merged_active_rulings(project_dir)
     except Exception:
         return []
+
+
+def _merged_active_rulings(project_dir=None) -> list[dict]:
+    combined: dict = {}
+    order: list = []
+
+    def _add(row, inherited_from):
+        rid = row.get("refutation_id")
+        if not rid:
+            return
+        tagged = dict(row)
+        tagged["inherited_from"] = inherited_from
+        if rid not in combined:
+            order.append(rid)
+        combined[rid] = tagged  # last write wins; own is added last below
+
+    for layer in layer_rulings_read(project_dir).layers:
+        for row in layer.rows:
+            if isinstance(row.get("request_policy"), dict):
+                continue  # #1093: an inherited policy grants nothing here
+            _add(row, layer.layer)
+    for row in rulings_read(project_dir).rows:
+        _add(row, None)
+    return [combined[rid] for rid in order]
 
 
 # ---- #1089: code-enforced rulings render as one compact line -------------
@@ -1144,44 +1227,200 @@ def _compact_line(row):
     return None, None
 
 
+def _layer_suffix(row) -> str:
+    """The `[from ~/work]` render tag for an inherited row (#1093), in the
+    style of the existing `[<authority>-written]` suffix — "" for a project's
+    own row (`inherited_from` is `None`). When both suffixes apply they
+    render in a PINNED order, authority first: `§ verdict  [agent-written]
+    [from ~/work]` — a future change to this order must update both this
+    function and the echo filter's key-building in store.py, which mirrors
+    it exactly."""
+    inherited_from = row.get("inherited_from")
+    if not inherited_from:
+        return ""
+    return f"  [from {config.home_relative(inherited_from)}]"
+
+
+def _is_slug_input(project_dir) -> bool:
+    """True when `project_dir` names a bucket SLUG rather than a directory
+    path (#1093) — `brief --slug` and MCP `daimon_brief(slug=...)` pass a
+    bare slug straight through as `project_dir`.
+
+    Mirrors `config.resolve_project_dir`'s own `looks_like_path` test (a
+    path SEPARATOR, not disk existence): a real `store.project_slug`-shaped
+    slug never contains one (it is a flattened absolute path, `os.sep`
+    replaced throughout), while every directory path does, whether or not it
+    exists on THIS filesystem. Existence cannot be the test — the suite (and
+    production callers routing by an as-yet-uncreated project path) pass
+    plenty of well-formed absolute paths that name no real directory, and
+    `layer_scopes` already answers [] for those on its own terms without
+    this function calling them a slug. Never raises (an `os` failure reads
+    as "not a slug", the same silence every other layer-read failure gets
+    here)."""
+    if not project_dir:
+        return False
+    try:
+        text = str(project_dir)
+        looks_like_path = (os.sep in text
+                           or (os.altsep is not None and os.altsep in text))
+        return not looks_like_path
+    except Exception:
+        return False
+
+
+def _inherited_notes(project_dir) -> list[str]:
+    """The loud, but never section-costing, notes about the layer walk
+    (#1093): a slug can never resolve one (`layer_scopes` always answers []
+    for a slug, and a silent [] would read as "no layers exist" rather than
+    "layers were never even asked"); an unreadable layer ledger costs that
+    layer's rows but is never silent either. Both render ONLY when the
+    caller already decided the section renders at all — an empty section
+    stays empty furniture-free, per #940."""
+    if _is_slug_input(project_dir):
+        return ["  (inherited rulings not resolved for a slug)"]
+    try:
+        layers = layer_rulings_read(project_dir).layers
+    except Exception:
+        return []
+    notes = []
+    for layer in layers:
+        if layer.state not in ("read", "no-bucket"):
+            notes.append(f"  (inherited rulings from "
+                        f"{config.home_relative(layer.layer)} unreadable)")
+    return notes
+
+
+def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
+    """One compact line per `checks_runtime.armed_for(project_dir)` manifest
+    entry whose ruling id is not already in `rendered_ids` (#1093).
+
+    Returns EVERY matching entry, uncapped — the caller (`ruling_lines`)
+    gives these lines only the room left under `DAIMON_RULING_CAP` after the
+    ledger rows and folds the rest into the same over-cap count: a manifest
+    line is still one ruling in force against the cap, not a bonus outside
+    it.
+
+    This is the worktree case: `config.layer_scopes` never treats anything
+    inside a git working tree as a layer, so a worktree's ledger walk never
+    sees the parent repo's rulings at all — but the pre-action hook still
+    enforces them there, because `armed_for` matches by directory PREFIX,
+    with no git awareness. Reading the manifest directly is how this section
+    stays honest about what actually fires in a worktree, without re-walking
+    layers (`refutations.listing` — and therefore `checks._wanted` — must
+    keep its own un-widened default, or a child sync would arm the same
+    check a second time under its own root).
+
+    Gated on the SAME host check `_check_line` uses (`config.capture_host()`
+    delivering `enforce` per `checks_host`): a manifest entry carries no
+    verdict prose to fall back to, only structural fields (`match`,
+    `project_dir`, `ruling_id`) that were always meant for a hook to read,
+    so a host that does not deliver `enforce` sees no line here at all,
+    never a fallback. Filtered to `intent == "enforce"` — a `warn` or
+    `record-only` check blocks nothing, so a worktree missing one is lower
+    stakes than the enforce case this exists for. Fail-open throughout: `[]`
+    on any failure, and one bad entry is skipped rather than dropping the
+    rest."""
+    try:
+        if not isinstance(project_dir, str) or not project_dir:
+            return []
+        if not (os.path.isabs(project_dir) and os.path.isdir(project_dir)):
+            return []
+        profile = checks_host.PROFILES.get(config.capture_host() or "")
+        if checks_host.mode_for(profile, "enforce") != "enforce":
+            return []
+        manifest = checks_runtime.load_manifest()
+        entries = checks_runtime.armed_for(project_dir, manifest)
+    except Exception:
+        return []
+    lines = []
+    for entry in entries:
+        try:
+            if not isinstance(entry, dict) or entry.get("intent") != "enforce":
+                continue
+            ruling_id = str(entry.get("ruling_id") or "")
+            if not ruling_id or ruling_id in rendered_ids:
+                continue
+            match = str(entry.get("match") or "")
+            root = str(entry.get("project_dir") or "")
+            if not match or not root:
+                continue
+            lines.append(f"§ enforced from {config.home_relative(root)}: "
+                        f"{match}  [{ruling_id}]")
+            rendered_ids.add(ruling_id)
+        except Exception:
+            continue
+    return lines
+
+
 def ruling_lines(project_dir=None) -> list[str]:
-    """The section's rendered lines ([] when no active rulings — the section
-    is skeleton furniture, but empty furniture is noise). Verdict, never
-    subject, for a PROSE ruling: the verdict IS the rule text
+    """The section's rendered lines ([] when there is nothing at all to show
+    — the section is skeleton furniture, but empty furniture is noise).
+    Verdict, never subject, for a PROSE ruling: the verdict IS the rule text
     (cli._print_ruling's contract, one vocabulary across surfaces). A
     code-enforced ruling (#1089: a `request_policy` or an `enforce` check
     this host delivers) renders a compact line from its own fields instead
     — see `_compact_line` — plus one fixed legend line, once, when at least
     one policy ruling rendered compact.
 
+    #1093: layer rulings (`active_rulings` — global first, then
+    progressively nearer, then the project's own) render before the
+    project's own, each layer row suffixed `[from ~/work]` (`_layer_suffix`)
+    — an inherited `request_policy` row never reaches here at all
+    (`active_rulings` drops it). After the ledger rows, one compact line per
+    manifest entry `checks_runtime.armed_for` finds for this directory whose
+    id was not already rendered (`_manifest_enforce_lines`) — this is what
+    keeps a WORKTREE (never a layer) honest about a parent repo's enforce
+    checks even though its ledger walk cannot see them. A manifest line is
+    still one ruling against DAIMON_RULING_CAP: it gets only the room left
+    after the ledger rows, and whatever does not fit folds into the same
+    over-cap count as a withheld ledger row, never rendered as a free bonus
+    outside the cap. The section renders when EITHER the ledger rows or the
+    manifest lines are non-empty — a worktree with an empty ledger but an
+    armed parent check is not "nothing to show" — and only then do the
+    loud-but-non-costing notes (`_inherited_notes`: an unreadable layer, or
+    a slug that resolves no layers at all) get a line.
+
     Backstops, both LOUD: more actives than DAIMON_RULING_CAP — a
     hand-edited ledger, or simply LOWERING the cap after activations, a
     supported move the cap guard's own error text invites — renders the
-    cap's worth PLUS a note naming how many were withheld (a silent
-    truncation of human-ratified constraints is the one failure this
-    section must never have); a hand-edited verdict longer
-    than the write-time bound is clipped with a visible marker; an empty
-    verdict renders nothing. Non-human `text_authored_by` is labeled with
-    its own AUTHORITY word (agent / mechanical — CHANNEL_AUTHORITY's
-    vocabulary, cli._print_ruling's own label) even after human
-    ratification — who wrote the words survives who approved them. Neither
-    the authority suffix nor the cap counts the code-enforced classes any
-    differently: a compact ruling is still one ruling against the cap."""
+    cap's worth PLUS a note naming how many were withheld, ledger rows and
+    manifest lines combined (a silent truncation of human-ratified
+    constraints, or of what actually fires in a worktree, is the one
+    failure this section must never have; the note points at `daimon ruling
+    list --inherited`, the flag #1095 ships, since the withheld count can
+    include inherited rows too); a hand-edited verdict longer than the
+    write-time bound is clipped with a visible marker; an empty verdict
+    renders nothing. Non-human `text_authored_by` is labeled with its own
+    AUTHORITY word (agent / mechanical — CHANNEL_AUTHORITY's vocabulary,
+    cli._print_ruling's own label) even after human ratification — who
+    wrote the words survives who approved them. Neither the authority
+    suffix, the layer suffix, nor the cap counts the code-enforced classes
+    any differently: a compact ruling is still one ruling against the cap."""
     rows = [r for r in active_rulings(project_dir)
             if str(r.get("verdict") or "").strip()]
-    if not rows:
-        return []
     try:
         cap = config.ruling_cap()
     except Exception:
         return []
     shown, over = rows[:cap], rows[cap:]
+    rendered_ids = {str(row.get("refutation_id")) for row in shown}
+    manifest_all = _manifest_enforce_lines(project_dir, rendered_ids)
+    if not shown and not manifest_all:
+        return []
+    # The manifest lines share the SAME cap as the ledger rows: they get
+    # whatever room the ledger rows left, and anything past that room folds
+    # into the over-cap count below rather than rendering uncapped.
+    room = max(0, cap - len(shown))
+    manifest_lines, manifest_over = manifest_all[:room], manifest_all[room:]
+    total_over = len(over) + len(manifest_over)
     lines = [_RULING_HEADER]
+    lines.extend(_inherited_notes(project_dir))
     policy_rendered = False
     for row in shown:
+        suffix = _layer_suffix(row)
         compact, cls = _compact_line(row)
         if compact is not None:
-            lines.append(compact)
+            lines.append(compact + suffix)
             if cls == "policy":
                 policy_rendered = True
             continue
@@ -1189,15 +1428,16 @@ def ruling_lines(project_dir=None) -> list[str]:
         if len(verdict) > refutations._MAX_RULING_TEXT:
             verdict = verdict[:refutations._MAX_RULING_TEXT] + "…"
         authored = row.get("text_authored_by")
-        suffix = (f"  [{authored}-written]"
-                  if authored and authored != "human" else "")
-        lines.append(f"§ {verdict}{suffix}")
+        authored_suffix = (f"  [{authored}-written]"
+                          if authored and authored != "human" else "")
+        lines.append(f"§ {verdict}{authored_suffix}{suffix}")
     if policy_rendered:
         lines.append(_POLICY_LEGEND)
-    if over:
-        plural = "s" if len(over) != 1 else ""
-        lines.append(f"  (+{len(over)} active ruling{plural} over cap — "
-                     "daimon ruling list shows all)")
+    lines.extend(manifest_lines)
+    if total_over:
+        plural = "s" if total_over != 1 else ""
+        lines.append(f"  (+{total_over} active ruling{plural} over cap — "
+                     "daimon ruling list --inherited shows all)")
     return lines
 
 
