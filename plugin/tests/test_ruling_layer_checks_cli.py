@@ -340,6 +340,87 @@ def test_ruling_checks_inherited_wins_when_own_copy_retired(
     assert all(r["inherited_from"] == str(work) for r in inherited_rows)
 
 
+def test_ruling_checks_text_headers_own_and_layer_copy_separately(
+        tmp_path, monkeypatch, capsys):
+    """A retired own copy and its layer's active copy of the same id must
+    each get their own header line in the plain-text table: the layer copy's
+    `armed` label and `[from ...]` tag must not be swallowed by the own
+    copy's `disarmed` header, and its host rows must not appear to belong to
+    that own copy (the #1103-era bug this pins)."""
+    from daimon_briefing import render
+
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    ruling_id = _promote_with_own_state(
+        work, repo, "retired own copy for the text table", "overturned")
+
+    assert cli.main(["ruling", "checks", "--project", str(repo),
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    lines = render.checks_table_lines(payload)
+    layer_tag = f"[from {config.home_relative(str(work))}]"
+
+    assert lines == [
+        "armed 0 of 0 wanted",
+        f"{ruling_id}  disarmed · intent enforce",
+        "  claude-code   enforce",
+        "  codex         enforce",
+        "  windsurf      unsupported",
+        f"{ruling_id}  armed · intent enforce  {layer_tag}",
+        "  claude-code   enforce       never fired",
+        "  codex         enforce       never fired",
+        "  windsurf      unsupported",
+    ]
+
+
+def test_ruling_checks_text_layer_only_ruling_gets_one_header(
+        tmp_path, monkeypatch, capsys):
+    """A layer-only ruling (no own copy at all) still gets exactly one
+    header, `armed` with the `[from ...]` tag, unchanged by the
+    (ruling_id, inherited_from) grouping key."""
+    from daimon_briefing import render
+
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    ruling_id = _enforce_at(work, "a layer-only rule for the text table")
+
+    assert cli.main(["ruling", "checks", "--project", str(repo),
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    lines = render.checks_table_lines(payload)
+    layer_tag = f"[from {config.home_relative(str(work))}]"
+
+    assert lines == [
+        "armed 0 of 0 wanted",
+        f"{ruling_id}  armed · intent enforce  {layer_tag}",
+        "  claude-code   enforce       never fired",
+        "  codex         enforce       never fired",
+        "  windsurf      unsupported",
+    ]
+
+
+def test_ruling_checks_text_own_only_ruling_gets_one_header(
+        tmp_path, monkeypatch, capsys):
+    """An own-only ruling (no layer copy) still gets exactly one header,
+    with no `[from ...]` tag, unchanged by the (ruling_id, inherited_from)
+    grouping key."""
+    from daimon_briefing import render
+
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    ruling_id = _enforce_at(repo, "an own-only rule for the text table")
+
+    assert cli.main(["ruling", "checks", "--project", str(repo),
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    lines = render.checks_table_lines(payload)
+
+    assert lines == [
+        "armed 1 of 1 wanted",
+        f"{ruling_id}  armed · intent enforce",
+        "  claude-code   enforce       never fired",
+        "  codex         enforce       never fired",
+        "  windsurf      unsupported",
+    ]
+
+
 def test_ruling_checks_inherited_wins_when_own_copy_is_a_candidate(
         tmp_path, monkeypatch, capsys):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
