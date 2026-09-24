@@ -494,11 +494,16 @@ def _layer_overcap_warning(project_dir, ruling_id: str) -> str:
     cap = config.ruling_cap()
     over = []
     for slug, root in store.buckets_under(project_dir):
+        # Mirrors `_guard_ruling_cap` exactly: a project's OWN active
+        # rulings count regardless of whether they carry a request_policy
+        # (only the INHERITED set drops policy rows, since a policy never
+        # renders into a CHILD and never counts against ITS cap). Dropping
+        # policy rows from the OWN count here would under-warn a descendant
+        # whose own guard counts them.
         own_ids = {
             r["refutation_id"]
             for r in refutations.records(project_dir=root).values()
-            if r.get("polarity") == "ruling" and r.get("state") == "active"
-            and not isinstance(r.get("request_policy"), dict)}
+            if r.get("polarity") == "ruling" and r.get("state") == "active"}
         inherited_ids = {r["refutation_id"]
                         for r in refutations.inherited_active(root)}
         seen = own_ids | inherited_ids

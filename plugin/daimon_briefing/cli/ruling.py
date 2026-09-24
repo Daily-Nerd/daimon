@@ -83,6 +83,20 @@ def _cmd_ruling_propose(args) -> int:
                                                    verb="Ratifying"):
                     print(line, file=ceremony)
         print(_render_consequence_line(project), file=ceremony)
+        # #1094 review: `propose --ratify` is the other activation path, and
+        # the design gives both the SAME ceremony — including the
+        # descendant over-cap warning `ratify` already prints at a layer.
+        # The id is prospective (nothing has been founded yet), so a
+        # malformed subject/scope degrades to no warning rather than a
+        # crash; `assert_ruling` below is the real validator.
+        try:
+            prospective_id = refutations.make_id(args.subject, args.scope)
+        except refutations.RefutationError:
+            prospective_id = ""
+        if prospective_id:
+            overcap = _layer_overcap_warning(project, prospective_id)
+            if overcap:
+                print(overcap, file=ceremony)
         answer = input("Ratify? [y/N]: ").strip().casefold()
         if answer not in ("y", "yes"):
             print("not recorded")

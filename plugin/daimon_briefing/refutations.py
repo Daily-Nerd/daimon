@@ -1675,9 +1675,19 @@ def _guard_ruling_cap(project_dir=None, exclude: str = "") -> None:
         r["refutation_id"] for r in records(project_dir=project_dir).values()
         if r.get("polarity") == "ruling" and r["state"] == "active"
         and r["refutation_id"] != exclude)
+    active_set = set(active)
+    # #1094 review: the promotion window — the SAME id can be active in
+    # BOTH this bucket's own ledger and a layer above it (this bucket
+    # ratifies it, then the layer independently founds and ratifies the
+    # identical subject+scope; nothing checks descendants when a layer
+    # founds its own ruling, only the reverse direction is guarded). An id
+    # already counted in `active` must not ALSO be counted as inherited, or
+    # the same slot is spent twice and the guard refuses one activation
+    # early.
     inherited_ids = sorted({
         r["refutation_id"] for r in inherited_active(project_dir)
-        if r.get("refutation_id") and r["refutation_id"] != exclude})
+        if r.get("refutation_id") and r["refutation_id"] != exclude
+        and r["refutation_id"] not in active_set})
     if len(active) + len(inherited_ids) >= cap:
         inherited_note = (f", {len(inherited_ids)} inherited: "
                           f"{', '.join(inherited_ids)}") if inherited_ids else ""

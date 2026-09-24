@@ -361,6 +361,48 @@ def test_module_cap_refuses_sixth_own_ratification_naming_inherited(
         sixth, project_dir=str(repo))["state"] == "candidate"
 
 
+def test_module_cap_does_not_double_count_an_id_active_in_both_places(
+        tmp_path, monkeypatch):
+    """#1094 review: the same id can end up active in BOTH the child's own
+    bucket and a layer above it (the child ratifies it first, then the
+    layer independently founds and ratifies the identical subject+scope —
+    nothing checks descendants when a layer founds its own ruling). The
+    guard must not count that id twice: `inherited_ids` must exclude
+    anything already in `active`."""
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    # X: ratified in the child FIRST (own), then independently founded and
+    # ratified at the layer with the identical subject+scope (same id) —
+    # the collision guard only checks a child against layers ABOVE it, so
+    # the layer founding its own copy is untouched by it.
+    shared_id = _rule_at(repo, subject="shared subject", scope="shared-scope",
+                         verdict="shared verdict", channel="cli-tty",
+                         ratified=True)
+    _rule_at(work, subject="shared subject", scope="shared-scope",
+             verdict="shared verdict", channel="cli-tty", ratified=True)
+    own_ids = {shared_id}
+    for i in range(5):
+        own_ids.add(_rule_at(repo, subject=f"own subj {i}",
+                             verdict=f"own verdict {i}",
+                             scope=f"own-scope-{i}", channel="cli-tty",
+                             ratified=True))
+    assert len(own_ids) == 6  # 5 distinct + the shared id, all own-active
+    seventh = _rule_at(repo, subject="own subj 6", verdict="own verdict 6",
+                       scope="own-scope-6")
+    # Before the fix this raised: `active` (6, including the shared id) +
+    # `inherited_ids` (1, the same shared id counted again) >= cap(7).
+    refutations.ratify(seventh, channel="cli-tty", project_dir=str(repo))
+    assert refutations.get(
+        seventh, project_dir=str(repo))["state"] == "active"
+
+    eighth = _rule_at(repo, subject="own subj 7", verdict="own verdict 7",
+                      scope="own-scope-7")
+    with pytest.raises(refutations.RefutationError) as exc_info:
+        refutations.ratify(eighth, channel="cli-tty", project_dir=str(repo))
+    message = str(exc_info.value)
+    assert "inherited" not in message
+    assert message.count(shared_id) == 1
+
+
 def test_module_cap_still_refuses_on_own_alone_at_default_cap(
         tmp_path, monkeypatch):
     """Regression pin: with no layers at all, the guard's own-only message
@@ -406,6 +448,68 @@ def test_layer_ceremony_warns_about_multiple_descendants_over_cap(
     assert "ratifying here puts 2 projects over the cap" in out
     assert f"{slug1} (8)" in out
     assert f"{slug2} (8)" in out
+
+
+def test_propose_ratify_at_layer_ceremony_warns_about_descendants_over_cap(
+        tmp_path, monkeypatch, capsys, _tty):
+    """#1094 review: `propose --ratify` is the other activation path, and
+    the design gives both the same ceremony — including the descendant
+    over-cap warning, not just `ratify`'s own."""
+    tmp_home, work, _repo = _setup(tmp_path, monkeypatch)
+    repo1 = work / "repo1"
+    repo1.mkdir()
+    _init_git_repo(repo1)
+    repo2 = work / "repo2"
+    repo2.mkdir()
+    _init_git_repo(repo2)
+    for repo in (repo1, repo2):
+        for i in range(7):
+            _rule_at(repo, subject=f"{repo.name} subj {i}",
+                    verdict=f"{repo.name} verdict {i}",
+                    scope=f"{repo.name}-scope-{i}", channel="cli-tty",
+                    ratified=True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "propose", "--subject", "layer subject",
+                   "--verdict", "layer verdict", "--scope", "layer-scope",
+                   "--evidence", "issue:1094", "--ratify",
+                   "--project", str(work)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    slug1 = store.project_slug(str(repo1))
+    slug2 = store.project_slug(str(repo2))
+    assert "ratifying here puts 2 projects over the cap" in out
+    assert f"{slug1} (8)" in out
+    assert f"{slug2} (8)" in out
+
+
+def test_layer_overcap_warning_own_count_includes_policy_carrying_rulings(
+        tmp_path, monkeypatch, capsys, _tty):
+    """#1094 review: `_guard_ruling_cap` counts a project's own active
+    rulings regardless of whether they carry a request_policy — only the
+    INHERITED set drops policy rows. The warning's own-count must mirror
+    that, or a descendant whose own guard would refuse gets no warning."""
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    _rule_at(repo, subject="policy subject", verdict="policy verdict",
+             scope="policy-scope", channel="cli-tty", ratified=True,
+             request_policy={"sender": "p-sender", "kind": "work",
+                             "verb": "accept", "by": "agent"})
+    for i in range(6):
+        _rule_at(repo, subject=f"plain subj {i}", verdict=f"plain verdict {i}",
+                 scope=f"plain-scope-{i}", channel="cli-tty", ratified=True)
+    # repo now has 7 own active rulings, one of them carrying a policy —
+    # without counting the policy row, that reads as only 6 own, which is
+    # exactly at the cap boundary and would not warn once the layer's new
+    # ruling is added; counting it correctly pushes the would-be count to 8.
+    layer_id = _rule_at(work, subject="layer subject",
+                        verdict="layer verdict", scope="layer-scope",
+                        channel="cli-agent")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main(["ruling", "ratify", layer_id, "--project", str(work)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    slug = store.project_slug(str(repo))
+    assert "ratifying here puts 1 projects over the cap" in out
+    assert f"{slug} (8)" in out
 
 
 def test_layer_ceremony_prints_nothing_when_no_descendant_goes_over(
