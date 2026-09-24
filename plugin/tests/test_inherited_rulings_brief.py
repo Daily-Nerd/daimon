@@ -483,3 +483,106 @@ def test_tenant_scoped_render_is_own_only_no_extra_line(tmp_path, monkeypatch):
     assert "layer rule invisible under tenant scope" not in joined
     assert "unreadable" not in joined
     assert "not resolved for a slug" not in joined
+
+
+# ---- coverage completeness: fail-open branches no real fixture reaches ----
+#
+# These call the private helpers directly with a monkeypatched collaborator,
+# the same technique test_ruling_briefing.py already uses for
+# briefing._slug_label and briefing.config.ruling_cap: the branch under test
+# is a defensive fail-open guard against a collaborator's own failure, not a
+# ledger shape any writer can produce, so there is no real fixture that
+# reaches it.
+
+
+def test_layer_rulings_read_fails_open_when_layer_scopes_raises(monkeypatch):
+    def boom(project_dir):
+        raise RuntimeError("layer_scopes exploded")
+
+    monkeypatch.setattr(briefing.config, "layer_scopes", boom)
+    assert briefing.layer_rulings_read("/some/project").layers == []
+
+
+def test_merged_active_rulings_skips_a_row_with_no_refutation_id(monkeypatch):
+    # `_add`'s defensive early return: every real writer stamps
+    # refutation_id as the fold's own dict key, so this can only be
+    # exercised by a collaborator handing back a malformed row.
+    fake = briefing.RulingsRead(rows=[{"verdict": "no id here"}],
+                                state="read", path=None)
+    monkeypatch.setattr(briefing, "rulings_read",
+                        lambda project_dir=None: fake)
+    assert briefing.active_rulings("/fake/project") == []
+
+
+def test_is_slug_input_is_false_for_falsy_input():
+    assert briefing._is_slug_input(None) is False
+    assert briefing._is_slug_input("") is False
+
+
+class _Unstringable:
+    """Truthy, but raises on str() — the one way to reach
+    `_is_slug_input`'s and `_manifest_enforce_lines`'s per-value except
+    branches without a real object ever behaving this way."""
+
+    def __bool__(self):
+        return True
+
+    def __str__(self):
+        raise RuntimeError("cannot stringify")
+
+
+def test_is_slug_input_fails_open_to_false_on_a_str_error():
+    assert briefing._is_slug_input(_Unstringable()) is False
+
+
+def test_inherited_notes_fails_open_when_layer_rulings_read_raises(
+        monkeypatch, tmp_path):
+    def boom(project_dir=None):
+        raise RuntimeError("layer read exploded")
+
+    monkeypatch.setattr(briefing, "layer_rulings_read", boom)
+    assert briefing._inherited_notes(str(tmp_path)) == []
+
+
+def test_manifest_enforce_lines_fails_open_when_load_manifest_raises(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
+
+    def boom():
+        raise RuntimeError("manifest unreadable")
+
+    monkeypatch.setattr(briefing.checks_runtime, "load_manifest", boom)
+    assert briefing._manifest_enforce_lines(str(tmp_path), set()) == []
+
+
+def test_manifest_enforce_lines_skips_bad_entries_and_renders_the_good_one(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
+    monkeypatch.setattr(briefing.checks_runtime, "load_manifest",
+                        lambda: object())
+    entries = [
+        "not-a-dict",                                              # isinstance
+        {"intent": "warn", "ruling_id": "r-warn", "match": "x",
+         "project_dir": "/x"},                                      # not enforce
+        {"intent": "enforce", "ruling_id": "", "match": "x",
+         "project_dir": "/x"},                                      # no id
+        {"intent": "enforce", "ruling_id": "r-already", "match": "x",
+         "project_dir": "/x"},                                      # already rendered
+        {"intent": "enforce", "ruling_id": "r-nomatch", "match": "",
+         "project_dir": "/x"},                                      # empty match
+        {"intent": "enforce", "ruling_id": "r-noroot", "match": "x",
+         "project_dir": ""},                                        # empty root
+        {"intent": "enforce", "ruling_id": "r-boom", "match": _Unstringable(),
+         "project_dir": "/x"},                                      # per-entry except
+        {"intent": "enforce", "ruling_id": "r-good", "match": "gh pr create",
+         "project_dir": str(tmp_path)},                             # renders
+    ]
+    monkeypatch.setattr(briefing.checks_runtime, "armed_for",
+                        lambda cwd, manifest: entries)
+    rendered_ids = {"r-already"}
+
+    lines = briefing._manifest_enforce_lines(str(tmp_path), rendered_ids)
+
+    tag = config.home_relative(str(tmp_path))
+    assert lines == [f"§ enforced from {tag}: gh pr create  [r-good]"]
+    assert rendered_ids == {"r-already", "r-good"}

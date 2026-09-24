@@ -232,6 +232,24 @@ def test_filter_fails_open_on_ledger_read_error(tmp_checkpoint_dir,
     assert calls, "the failure simulation never fired"
 
 
+def test_filter_fails_open_on_a_non_ledger_error(tmp_checkpoint_dir,
+                                                 monkeypatch):
+    # #1093 moved the ledger read behind briefing.active_rulings's OWN
+    # fail-open, so a ledger read failure no longer reaches THIS function's
+    # outer except at all (the test above proves the read failure still
+    # fails open, just one level down now). This function's own except is
+    # still live for every failure AFTER the read — here, the drop itself.
+    _active_ruling()
+    from daimon_briefing import policy
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("drop_matching_items blew up")
+
+    monkeypatch.setattr(policy, "drop_matching_items", boom)
+    dropped = store._drop_ruling_echoes(_checkpoint(), PROJECT)
+    assert dropped == []
+
+
 def test_capture_path_admits(tmp_checkpoint_dir, monkeypatch):
     # capture.run is the hook-side admission caller; its write must carry the
     # filter. Spy on the seam and assert the kwarg the store actually
