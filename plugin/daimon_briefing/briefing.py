@@ -26,8 +26,8 @@ from typing import NamedTuple
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
 from . import (capture, carry, checks_host, checks_runtime, config, llm,
-               pending, receipts, refutations, requests, schema, scoring,
-               serializer, store)
+               normalize, pending, receipts, refutations, requests, schema,
+               scoring, serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
 # name inside that function.
@@ -436,8 +436,31 @@ def injection_read_route(project) -> "store.Route":
     return store.Route.OWN
 
 
+# (section, key) -> recall-index kind, for the same store._ITEM_LISTS pairs
+# withhold() iterates — #1109's quarantine pool is scoped by kind (design §2),
+# and this loop only ever has section/key in hand, never the kind word.
+_KIND_BY_LIST: dict[tuple[str, str], str] = {
+    (f.section, f.key): f.kind for f in schema.ITEM_FIELDS if not f.singleton}
+
+
+def _quarantine_hit(by_kind: dict, kind: str | None, *texts) -> bool:
+    """True if any of `texts` canonicalizes to a value this `kind` has an
+    ACTIVE human quarantine on. Same value-keyed check store.forgotten_content_keys'
+    readers already use (recall.py), reused rather than reinvented (#1109
+    design §2) — `quote` rides along with `text` for the same fail-safe
+    reason recall's own forgotten-value scrub checks both."""
+    keys = by_kind.get(kind) if kind else None
+    if not keys:
+        return False
+    for text in texts:
+        text = str(text or "").strip()
+        if text and normalize.content_key(text) in keys:
+            return True
+    return False
+
+
 def withhold(checkpoint: dict, resolutions: dict,
-             amendments=None) -> tuple[dict, list, list]:
+             amendments=None, quarantine=None) -> tuple[dict, list, list]:
     """Drop items the world has already resolved, at RENDER time only — the
     checkpoint on disk (and carry's copy of it) is never touched. `resolutions`
     is `{item_ref: latest_event}`, exactly store.resolutions()'s shape; pure,
@@ -485,12 +508,33 @@ def withhold(checkpoint: dict, resolutions: dict,
     An item being withheld keeps its drop — amendments annotate live items
     and die with resolved ones.
 
-    No resolved/candidate/pending-claim events, or a non-dict checkpoint ->
-    (checkpoint, [], []) UNCHANGED, same no-op idiom as carry.merge: no copy
-    is made unless something actually withholds or is stamped, so the common
-    case (nothing resolved yet) costs nothing."""
-    if not isinstance(checkpoint, dict) or (not resolutions and not amendments):
+    #1109 PR 2: a SIXTH outcome — `quarantine` is `trust.active_value_keys()`'s
+    shape (`{(kind, value_key), ...}`), pure like `resolutions`/`amendments` —
+    the caller reads the ledger, this function only matches against it. Checked
+    FIRST, ahead of the resolution/candidate/amendment branches, because a
+    human quarantine wins over every machine signal (design §5: "the render
+    layer checks quarantine first since a withheld item shows nothing to
+    rank") — a quarantined item is dropped outright, never stamped as a
+    candidate or amended. Value-keyed, not id-keyed (design §2): the SAME
+    `normalize.content_key` algorithm `store.forgotten_content_keys`'s readers
+    use, so a carried or re-extracted copy of a quarantined value stays
+    withheld regardless of which id currently holds it — unlike the id-exact
+    `resolved_refs` pool above, there is no id-bearing exemption here, because
+    surviving an id change is the whole point of this pool. Landed in the
+    `withheld` list with a synthetic `{"status": "quarantined"}` event so
+    `status --suppressed` can still report it, just with no ts/note to show.
+
+    No resolved/candidate/pending-claim/quarantined events, or a non-dict
+    checkpoint -> (checkpoint, [], []) UNCHANGED, same no-op idiom as
+    carry.merge: no copy is made unless something actually withholds or is
+    stamped, so the common case (nothing resolved yet) costs nothing."""
+    if not isinstance(checkpoint, dict) or (
+            not resolutions and not amendments and not quarantine):
         return checkpoint, [], []
+
+    quarantine_by_kind: dict[str, set] = {}
+    for kind, key in (quarantine or ()):
+        quarantine_by_kind.setdefault(kind, set()).add(key)
 
     resolved_refs = {ref for ref, evt in resolutions.items() if store.is_resolved(evt)}
     candidate_refs: dict[str, str] = {}
@@ -514,7 +558,7 @@ def withhold(checkpoint: dict, resolutions: dict,
     amend_refs = amendments if isinstance(amendments, dict) else {}
 
     if (not resolved_refs and not candidate_refs and not agent_claim_refs
-            and not amend_refs):
+            and not amend_refs and not quarantine_by_kind):
         return checkpoint, [], []
     # #145: the fuzzy pool holds ONLY resolutions whose own ref is not
     # id-shaped (legacy, pre-id-stamping events). An id-bearing resolution is
@@ -541,8 +585,16 @@ def withhold(checkpoint: dict, resolutions: dict,
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
+        kind = _KIND_BY_LIST.get((section, key))
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
+                continue
+            if quarantine_by_kind and _quarantine_hit(
+                    quarantine_by_kind, kind, item.get("text"), item.get("quote")):
+                # Checked before id/candidate/amendment routing: a quarantine
+                # wins over every machine signal (design §5), and it is never
+                # combined with a stamp — the item is gone either way.
+                to_drop.append((section, key, idx, item, {"status": "quarantined"}))
                 continue
             item_id = item.get("id")
             if item_id:

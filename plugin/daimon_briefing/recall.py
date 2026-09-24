@@ -61,7 +61,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (buckets, config, normalize, policy, redact, schema, scoring,
-               store, teamproject)
+               store, teamproject, trust)
 
 log = logging.getLogger("daimon.recall")
 
@@ -596,6 +596,51 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
 
 
+def _apply_quarantine_withholding(conn: sqlite3.Connection) -> None:
+    """#1109 PR 2: drop every row a human-confirmed quarantine (`trust.py`)
+    covers, scoped by (kind, value). Same shape as the forgotten-value scrub
+    above and the same reason: `trust.active_value_keys` is value-keyed, not
+    id-keyed (design §2), so a carried or re-extracted copy of a quarantined
+    value under a different item id is still caught here. Unlike forget, this
+    reads a SEPARATE ledger that never rewrites the source checkpoint — only
+    this derived index drops the row; the checkpoint on disk (and carry's copy
+    of it) is untouched, same "withhold, don't drop" posture briefing.withhold
+    uses. `trust.active_value_keys` already fails open (an unreadable or
+    missing trust.jsonl is the empty set), so a broken ledger withholds
+    nothing here either, rather than blanking a whole project's index."""
+    try:
+        buckets_ = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
+    except OSError:
+        return
+    for bucket in buckets_:
+        quarantined = trust.active_value_keys(project_dir=bucket.name)
+        if not quarantined:
+            continue
+        by_kind: dict[str, set] = {}
+        for kind, key in quarantined:
+            by_kind.setdefault(kind, set()).add(key)
+        rows = conn.execute(
+            "SELECT id, text, quote, scene, kind FROM items"
+            " WHERE project_slug IS ?", (bucket.name,)).fetchall()
+        for rowid, text, quote, scene, kind in rows:
+            keys = by_kind.get(kind)
+            if not keys:
+                continue
+            if not (
+                    (text and normalize.content_key(text) in keys)
+                    or (quote and normalize.content_key(quote) in keys)
+                    or (scene and normalize.content_key(scene) in keys)):
+                continue
+            # contentless fts5: deletion is the special 'delete' INSERT and
+            # must repeat the original column values (same idiom as the
+            # forgotten-value scrub above).
+            conn.execute(
+                "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
+                " VALUES('delete', ?, ?, ?, ?)",
+                (rowid, text, quote, scene))
+            conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
+
+
 # A dead snapshot is unambiguous after this long: a live rebuild holds its
 # tmp for seconds, and store._TMP_REAP_SECONDS set the same one-hour
 # precedent for checkpoint staging twins.
@@ -963,6 +1008,7 @@ def rebuild() -> int:
             )
         _apply_typed_supersession(conn, links)
         _apply_event_resolutions(conn)
+        _apply_quarantine_withholding(conn)
         _apply_verification_invalidations(conn)
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
                      (_SCHEMA_VERSION,))

@@ -333,6 +333,26 @@ def test_recall_tool_marks_a_resolved_row(tmp_checkpoint_dir, monkeypatch):
     assert rows and rows[0]["status"] == "resolved"
 
 
+def test_recall_tool_withholds_a_quarantined_value(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import store, trust
+    from tests.test_recall import _cp
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    value = "meerkat burrow mapping plan colony was fabricated by the agent"
+    store.write_checkpoint(
+        "S-q", _cp("S-q", questions=[{"text": value, "trust": "inferred"}]),
+        project_dir="/p/A")
+    trust.propose(text=value, kind="question", reason="fabricated finding",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/p/A")
+
+    _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert json.loads(text) == []
+
+
 def test_recall_tool_marks_a_superseded_row(tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import store
     from tests.test_recall import _cp
@@ -495,6 +515,23 @@ def test_brief_tool_renders_checkpoint_text(tmp_checkpoint_dir,
     text, is_err = _result(out)
     assert is_err is False
     assert "S-a" in text or "left off" in text or len(text) > 40
+
+
+def test_brief_tool_withholds_a_quarantined_value(tmp_checkpoint_dir,
+                                                   sample_checkpoint, monkeypatch):
+    from daimon_briefing import store, trust
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    trust.propose(text="Chunk threshold for the serializer", kind="question",
+                  reason="planted, not a real open question",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/p/A")
+    _, out = rpc(_init(), _call("daimon_brief", {}))
+    text, is_err = _result(out)
+    assert is_err is False
+    assert "Chunk threshold for the serializer" not in text
+    # Selectivity control: an unrelated live item still renders.
+    assert "Adopt the D-007 prompt for the serializer" in text
 
 
 def test_brief_tool_no_checkpoint_gives_orientation_never_foreign_content(

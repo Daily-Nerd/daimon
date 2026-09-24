@@ -24,6 +24,7 @@ from .. import (
     requests,
     serializer,
     store,
+    trust,
 )
 from ._ledger import _check_sync_warning
 
@@ -842,7 +843,8 @@ def _cmd_loops(args) -> int:
         # proposal.
         checkpoint, _, _ = briefing.withhold(
             checkpoint, events,
-            amendments=amendments.renderable(project_dir=project))
+            amendments=amendments.renderable(project_dir=project),
+            quarantine=trust.active_value_keys(project_dir=project))
     except Exception:
         pass  # fail-open, same stance as _print_suppressed
     rows = []

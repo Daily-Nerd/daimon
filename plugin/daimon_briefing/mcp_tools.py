@@ -12,7 +12,8 @@ distinguishably or the gate they measure goes blind.
 """
 import json
 
-from . import amendments, briefing, config, recall, recall_telemetry, requests, store
+from . import (amendments, briefing, config, recall, recall_telemetry,
+               requests, store, trust)
 
 
 class ToolError(Exception):
@@ -111,7 +112,8 @@ def _brief(arguments: dict) -> str:
         return f"{ruling_text}no checkpoint for this project. {hint}"
     filtered, _withheld, _candidates = briefing.withhold(
         checkpoint, store.resolutions(project_dir=target),
-        amendments=amendments.renderable(project_dir=target))
+        amendments=amendments.renderable(project_dir=target),
+        quarantine=trust.active_value_keys(project_dir=target))
     # #268: the witness count rides the same strictly-scoped target as the
     # withhold fold — an agent consumer reads the corroboration axis the human
     # brief shows, from this project's ledger and no other.

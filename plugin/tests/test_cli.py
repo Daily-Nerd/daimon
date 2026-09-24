@@ -4239,6 +4239,43 @@ def test_team_briefings_fail_open_when_the_ledger_or_the_fold_raises(
         assert withheld == [], name
 
 
+def test_team_briefings_fail_open_when_the_quarantine_ledger_raises(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch, tmp_path):
+    """#1109: the READER's own trust.jsonl read is a separate try/except from
+    the resolutions one above — an unreadable quarantine ledger must fail
+    open the same way, withholding nothing rather than dropping the whole
+    teammate section. Uses a QUARANTINED (not resolved) item, so the failure
+    is provably what keeps it visible, not the resolutions pool."""
+    from daimon_briefing import cli as cli_lib, store, trust
+
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    trust.propose(text="Adopt the D-007 prompt for the serializer",
+                  kind="decision", reason="fabricated finding",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir=proj)
+
+    def _boom(*a, **kw):
+        raise RuntimeError("hand-edited ledger")
+
+    with monkeypatch.context() as m:
+        m.setattr(cli_lib.trust_lib, "active_value_keys", _boom)
+        withheld: list = []
+        sections = cli_lib._team_briefings(proj, withheld)
+    assert [a for a, _ in sections] == ["grace"]
+    texts = [d["text"] for d in sections[0][1]["decisions"]]
+    assert "Adopt the D-007 prompt for the serializer" in texts
+    assert withheld == []
+
+    # Liveness control: with the ledger readable, the same item IS withheld.
+    sections = cli_lib._team_briefings(proj, [])
+    texts = [d["text"] for d in sections[0][1]["decisions"]]
+    assert "Adopt the D-007 prompt for the serializer" not in texts
+
+
 def test_cli_brief_team_withheld_note_counts_the_teammates_item(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch, tmp_path):
     """Full path: the reader has a checkpoint too. The note that already
