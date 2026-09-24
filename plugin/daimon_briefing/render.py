@@ -1812,11 +1812,18 @@ def checks_table_lines(payload: dict) -> list:
         return lines
     current = None
     for row in rows:
-        if row["ruling_id"] != current:
-            current = row["ruling_id"]
+        # #1103: keyed on (ruling_id, inherited_from), not ruling_id alone.
+        # `_checks_payload` can emit two groups for the same id (a
+        # project's own retired/candidate copy, then a layer's active
+        # copy), and a key of ruling_id alone would fold the second group's
+        # header into the first's, hiding its own lifecycle and `[from
+        # ...]` tag and stranding its host rows under the wrong header.
+        key = (row["ruling_id"], row.get("inherited_from"))
+        if key != current:
+            current = key
             shown = ("proposed, not armed" if row["lifecycle"] == "proposed"
                      else row["lifecycle"])
-            header = f"{current}  {shown} · intent {row['intent']}"
+            header = f"{row['ruling_id']}  {shown} · intent {row['intent']}"
             # #1095: a row `_checks_payload` built from a layer's active
             # check carries `inherited_from` (absolute path); named here in
             # the briefing's own `[from ~/work]` convention so `ruling
