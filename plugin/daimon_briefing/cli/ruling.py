@@ -597,7 +597,14 @@ def _checks_payload(project) -> dict:
     copy of (own wins, same rule `inherited_active` itself applies). Each of
     those rows carries `inherited_from` (the absolute owning layer
     directory); an own row carries `None`, so `--json` never needs a caller
-    to guess which rows are whose."""
+    to guess which rows are whose.
+
+    #1102: "own wins" is scoped to an ACTIVE own copy, via
+    `refutations.own_active_ruling_ids` — a ruling promoted to a layer and
+    then retired, overturned, or left a candidate in this project's own
+    bucket must not shadow the layer's active copy. The own row still
+    renders (disarmed/proposed, same as before); the exclusion set alone is
+    narrowed."""
     from .. import checks_host
 
     def _rows_for(record, *, inherited_from: str) -> list:
@@ -644,16 +651,15 @@ def _checks_payload(project) -> dict:
     summary = checks.firing_summary(project)
     audit = checks.audit(project)
     rows = []
-    own_ids = set()
     for record in refutations.listing(polarity="ruling", project_dir=project):
         check = record.get("check")
         lifecycle = record.get("check_lifecycle")
         if not isinstance(check, dict) or not lifecycle:
             continue
-        own_ids.add(record["refutation_id"])
         rows.extend(_rows_for(record, inherited_from=""))
+    own_active_ids = refutations.own_active_ruling_ids(project)
     for record in refutations.inherited_active(project):
-        if record["refutation_id"] in own_ids:
+        if record["refutation_id"] in own_active_ids:
             continue
         if not isinstance(record.get("check"), dict):
             continue

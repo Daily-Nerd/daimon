@@ -1623,6 +1623,38 @@ def _inherited_active(project_dir) -> list[dict]:
     return out
 
 
+def own_active_ruling_ids(project_dir=None) -> set:
+    """#1102: the set of this project's OWN ACTIVE ruling ids — the exact
+    "own wins" test `briefing._merged_active_rulings` already applies (via
+    `rulings_read`'s `state == "active"` filter), shared here so a
+    check-liveness surface (`ruling checks`, `status`, `stats`) cannot drift
+    from the briefing's own answer.
+
+    Before this helper existed, each of those three surfaces built its
+    own-id exclusion set from EVERY own state — `refutations.listing()`'s
+    default is every state, not just "active" — so a ruling promoted to a
+    layer and then retired, overturned, or left a candidate in this
+    project's own bucket still shadowed the layer's active copy: the own
+    row (correctly shown as disarmed/proposed) hid the inherited row from
+    ever being counted or rendered, while the briefing rendered it fine.
+    Building this set from `listing(states={"active"}, ...)` closes that
+    gap; the row-building loops in those three surfaces still iterate over
+    every own state unchanged, so a disarmed or proposed own copy stays
+    visible on purpose.
+
+    Fail-open: [] on any failure (an unresolvable project, an unreadable
+    ledger, ...), the same posture `inherited_active` already holds for the
+    other half of this comparison — a broken own bucket must not crash a
+    check-liveness surface, and failing toward "exclude nothing" is the
+    safe direction (an inherited copy renders rather than one vanishing)."""
+    try:
+        return {row["refutation_id"] for row in
+                listing(states={"active"}, polarity="ruling",
+                       project_dir=project_dir)}
+    except Exception:
+        return set()
+
+
 def resolve_ruling(ruling_id: str, project_dir=None) -> tuple:
     """#1095: resolve `ruling_id` across the MERGED view a check-liveness
     surface (`ruling show`, `ruling checks`, `check dry-run`, `status`,

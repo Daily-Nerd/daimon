@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, config, refutations
+from daimon_briefing import briefing, cli, config, refutations
 
 MATCH = "gh pr create"
 BODY = "#!/bin/sh\nexit 0\n"
@@ -284,3 +284,137 @@ def test_stats_counts_a_promoted_same_id_ruling_only_once(
     assert cli.main(["stats", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["checks"]["armed"] == 1
+
+
+# ---- #1102: a retired/candidate own copy must not shadow an active layer
+# copy of the same id --------------------------------------------------
+
+
+def _promote_with_own_state(work, repo, subject, own_state):
+    """Found the same (subject, scope) pair at `repo` in `own_state`
+    ("active", "candidate" or "overturned"), then found+ratify the
+    identical pair at `work` — the promotion shape #1102 fixes: whichever
+    own state is left behind, the layer holds the active copy under the
+    same id."""
+    scope = "publishing"
+    if own_state == "candidate":
+        child_id = refutations.assert_ruling(
+            subject=subject, verdict=f"the rule for {subject}", scope=scope,
+            evidence=["issue:1102"], channel="cli-agent", ratified=False,
+            check={"match": MATCH, "body": BODY, "intent": "enforce"},
+            project_dir=str(repo))
+    else:
+        child_id = refutations.assert_ruling(
+            subject=subject, verdict=f"the rule for {subject}", scope=scope,
+            evidence=["issue:1102"], channel="cli-tty", ratified=True,
+            check={"match": MATCH, "body": BODY, "intent": "enforce"},
+            project_dir=str(repo))
+        if own_state == "overturned":
+            refutations.retire(child_id, channel="cli-tty",
+                               evidence=["issue:1102"],
+                               project_dir=str(repo))
+    layer_id = refutations.assert_ruling(
+        subject=subject, verdict=f"the rule for {subject}", scope=scope,
+        evidence=["issue:1102"], channel="cli-tty", ratified=True,
+        check={"match": MATCH, "body": BODY, "intent": "enforce"},
+        project_dir=str(work))
+    assert child_id == layer_id
+    return child_id
+
+
+def test_ruling_checks_inherited_wins_when_own_copy_retired(
+        tmp_path, monkeypatch, capsys):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    ruling_id = _promote_with_own_state(
+        work, repo, "retired own copy for checks", "overturned")
+
+    assert cli.main(["ruling", "checks", "--project", str(repo),
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    matching = [r for r in payload["rows"] if r["ruling_id"] == ruling_id]
+    own_rows = [r for r in matching if r["inherited_from"] is None]
+    inherited_rows = [r for r in matching if r["inherited_from"] is not None]
+    assert own_rows and all(r["lifecycle"] == "disarmed" for r in own_rows)
+    assert inherited_rows and all(
+        r["lifecycle"] == "armed" for r in inherited_rows)
+    assert all(r["inherited_from"] == str(work) for r in inherited_rows)
+
+
+def test_ruling_checks_inherited_wins_when_own_copy_is_a_candidate(
+        tmp_path, monkeypatch, capsys):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    ruling_id = _promote_with_own_state(
+        work, repo, "candidate own copy for checks", "candidate")
+
+    assert cli.main(["ruling", "checks", "--project", str(repo),
+                     "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    matching = [r for r in payload["rows"] if r["ruling_id"] == ruling_id]
+    own_rows = [r for r in matching if r["inherited_from"] is None]
+    inherited_rows = [r for r in matching if r["inherited_from"] is not None]
+    assert own_rows and all(r["lifecycle"] == "proposed" for r in own_rows)
+    assert inherited_rows and all(
+        r["lifecycle"] == "armed" for r in inherited_rows)
+
+
+def test_status_counts_inherited_armed_check_when_own_copy_retired(
+        tmp_path, monkeypatch, capsys):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    _promote_with_own_state(
+        work, repo, "retired own copy counted by status", "overturned")
+
+    cli.main(["status", "--project", str(repo), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checks"]["armed"] == 1
+
+
+def test_stats_counts_inherited_armed_check_when_own_copy_retired(
+        tmp_path, monkeypatch, capsys):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    _promote_with_own_state(
+        work, repo, "retired own copy counted by stats", "overturned")
+
+    monkeypatch.chdir(repo)
+    assert cli.main(["stats", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checks"]["armed"] == 1
+
+
+@pytest.mark.parametrize("own_state, own_wins", [
+    ("active", True),
+    ("candidate", False),
+    ("overturned", False),
+])
+def test_own_wins_agreement_between_briefing_and_check_surfaces(
+        tmp_path, monkeypatch, capsys, own_state, own_wins):
+    """#1102: `briefing.active_rulings` and the three check-liveness
+    surfaces (`ruling checks`, `status`, `stats`) must agree on which copy
+    of a promoted ruling wins, for every own state — not just the "own
+    active" case the pre-#1102 own-id sets happened to get right."""
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    subject = f"same-id promotion, own state {own_state}"
+    ruling_id = _promote_with_own_state(work, repo, subject, own_state)
+
+    active_rows = briefing.active_rulings(str(repo))
+    matching_brief = [r for r in active_rows
+                      if r["refutation_id"] == ruling_id]
+    assert len(matching_brief) == 1
+    assert (matching_brief[0].get("inherited_from") is None) == own_wins
+
+    assert cli.main(["ruling", "checks", "--project", str(repo),
+                     "--json"]) == 0
+    checks_payload = json.loads(capsys.readouterr().out)
+    check_rows = [r for r in checks_payload["rows"]
+                  if r["ruling_id"] == ruling_id]
+    armed_rows = [r for r in check_rows if r["lifecycle"] == "armed"]
+    assert armed_rows
+    assert {r["inherited_from"] is None for r in armed_rows} == {own_wins}
+
+    cli.main(["status", "--project", str(repo), "--json"])
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["checks"]["armed"] == 1
+
+    monkeypatch.chdir(repo)
+    assert cli.main(["stats", "--json"]) == 0
+    stats_payload = json.loads(capsys.readouterr().out)
+    assert stats_payload["checks"]["armed"] == 1

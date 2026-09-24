@@ -793,3 +793,46 @@ def test_propose_ratify_ceremony_skips_overcap_check_on_invalid_identity(
     out = capsys.readouterr().out
     assert "ratifying here puts" not in out
     assert "is too long" in out
+
+
+# ---- #1102: the shared "own wins" set ------------------------------------
+
+
+def test_own_active_ruling_ids_includes_only_active_own_rows(
+        tmp_path, monkeypatch):
+    """`own_active_ruling_ids` is the shared "own wins" test `ruling
+    checks`, `status` and `stats` build their inherited-check exclusion set
+    from — a candidate or overturned own row must not appear in it, only
+    an active one, the same filter `briefing.rulings_read` already applies
+    for the briefing's own answer."""
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    active_id = refutations.assert_ruling(
+        subject="an active own ruling", verdict="v", scope="s1",
+        evidence=["issue:1102"], channel="cli-tty", ratified=True,
+        project_dir=str(repo))
+    candidate_id = refutations.assert_ruling(
+        subject="a candidate own ruling", verdict="v", scope="s2",
+        evidence=["issue:1102"], channel="cli-agent", ratified=False,
+        project_dir=str(repo))
+    overturned_id = refutations.assert_ruling(
+        subject="an overturned own ruling", verdict="v", scope="s3",
+        evidence=["issue:1102"], channel="cli-tty", ratified=True,
+        project_dir=str(repo))
+    refutations.retire(overturned_id, channel="cli-tty",
+                       evidence=["issue:1102"], project_dir=str(repo))
+
+    ids = refutations.own_active_ruling_ids(str(repo))
+    assert ids == {active_id}
+    assert candidate_id not in ids
+    assert overturned_id not in ids
+
+
+def test_own_active_ruling_ids_fails_open_on_unexpected_error(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+
+    def _boom(project_dir=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(refutations, "records", _boom)
+    assert refutations.own_active_ruling_ids(str(repo)) == set()
