@@ -112,3 +112,15 @@ proyecto de verdad probó y rechazó, y existe exista o no un `.scars/` en ese
 proyecto. Las dos cosas son complementarias, no compiten: un scar documenta
 una trampa en el código; una refutación documenta una conclusión a la que
 alguien llegó mientras trabajaba en él.
+
+Anclar un scar al código que protege, guardar candidatas y promover una a
+estado activo es trabajo de su propia herramienta:
+[Scar](https://github.com/Daily-Nerd/Scar) es donde vive esa revisión y esa
+promoción, no daimon.
+
+daimon trae un solo puente entre las dos capas. Con `DAIMON_SCAR_HARVEST=1`,
+redacta candidatas de conocimiento negativo de cada sesión hacia
+`.scars/candidates/` para que una persona las revise: cero LLM, ancladas a
+una ruta, y activo solo en repos que ya tienen un directorio `.scars/`.
+Escribe candidatas para que alguien las revise con Scar; nunca promueve
+ninguna por sí solo.

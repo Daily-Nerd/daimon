@@ -107,3 +107,13 @@ tried and rejected, and it exists whether or not the project keeps scars at
 all. The two are complementary, not competing: a scar documents a trap in
 the code; a refutation documents a conclusion someone reached while working
 on it.
+
+Anchoring a scar to the code it protects, holding candidates, and promoting
+one to active status is its own tool's job: [Scar](https://github.com/Daily-Nerd/Scar)
+is where that review and promotion tooling lives, not daimon.
+
+daimon ships one bridge between the two layers. With `DAIMON_SCAR_HARVEST=1`,
+it drafts negative-knowledge candidates from each session into
+`.scars/candidates/` for human review: zero-LLM, path-anchored, and active
+only in repos that already have a `.scars/` directory. It writes candidates
+for a person to review with Scar; it never promotes one itself.
