@@ -1580,20 +1580,121 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     return ref_id
 
 
+def inherited_active(project_dir) -> list[dict]:
+    """#1094: every ACTIVE ruling a layer above `project_dir` holds, nearest
+    layer first, deduped by id (nearest wins), tagged with `inherited_from`
+    (the absolute owning layer directory).
+
+    Read-only, and deliberately NOT what `checks._wanted` or `listing()`
+    read: this must never widen what a host arms, only what a child's
+    ceremony discloses and its cap guard counts. `request_policy` rows are
+    DROPPED — they never render into a child (the briefing's own ruling-
+    echo filter drops them at that boundary) and must not count against a
+    child's render-budget cap either, since a row that never renders here
+    has no budget to spend.
+
+    Never raises; [] on any failure (an unresolvable `layer_scopes`, a
+    corrupt layer ledger, ...) — the same fail-open posture
+    `active_request_policies` already holds for this ledger."""
+    try:
+        return _inherited_active(project_dir)
+    except Exception:
+        return []
+
+
+def _inherited_active(project_dir) -> list[dict]:
+    seen: set = set()
+    out: list[dict] = []
+    for layer in config.layer_scopes(project_dir):
+        for record in records(project_dir=layer).values():
+            if record.get("polarity") != "ruling":
+                continue
+            if record.get("state") != "active":
+                continue
+            if isinstance(record.get("request_policy"), dict):
+                continue
+            ref_id = record.get("refutation_id")
+            if not ref_id or ref_id in seen:
+                continue
+            seen.add(ref_id)
+            tagged = dict(record)
+            tagged["inherited_from"] = layer
+            out.append(tagged)
+    return out
+
+
+def _guard_layer_only_id(ruling_id: str, project_dir) -> None:
+    """#1094: refuse when `ruling_id` names nothing in THIS bucket but a
+    layer above `project_dir` holds it as a ruling — `retire`, `ratify` and
+    `revise` would otherwise answer "unknown" for a ruling the briefing
+    just rendered (or will render, once ratified) as in force here. No
+    write ever lands in the layer's bucket from here; the pointer sends the
+    human there instead."""
+    if not ruling_id:
+        return
+    for layer in config.layer_scopes(project_dir):
+        holder = get(ruling_id, project_dir=layer)
+        if holder is not None and holder.get("polarity") == "ruling":
+            home = config.home_relative(layer)
+            raise RefutationError(
+                f"{ruling_id} inherited from {home}; run with --project {home}")
+
+
+def _guard_layer_active_collision(ref_id: str, project_dir) -> None:
+    """#1094: a child may not FOUND (propose), ACTIVATE (ratify), or RENAME
+    INTO (revise) an id that a layer above it already holds ACTIVE. A
+    same-id collision is the only conflict code can detect — a prose
+    contradiction between a child's own ruling and a layer's is a human
+    judgement the ceremony discloses but does not adjudicate."""
+    if not ref_id:
+        return
+    for layer in config.layer_scopes(project_dir):
+        holder = get(ref_id, project_dir=layer)
+        if (holder is not None and holder.get("polarity") == "ruling"
+                and holder.get("state") == "active"):
+            home = config.home_relative(layer)
+            raise RefutationError(
+                f"{ref_id} is already active, inherited from {home}; a "
+                "child ruling cannot take over a layer's identity")
+
+
 def _guard_ruling_cap(project_dir=None, exclude: str = "") -> None:
     """#693: one chokepoint for every path that activates a ruling.
 
     Enforced at activation, never at render, so the always-present briefing
-    section can never silently truncate. Candidates are never counted."""
+    section can never silently truncate. Candidates are never counted.
+
+    #1094: at a child, the cap also counts inherited rulings (layers above
+    it, active, non-policy, deduped) — a project with 7 own rulings today
+    gains inherited rows tomorrow, and the render would truncate routinely,
+    which the cap exists to make impossible. The own-id list in the
+    refusal is unchanged; a second clause names which inherited ids fill
+    the remaining slots."""
     cap = config.ruling_cap()
     active = sorted(
         r["refutation_id"] for r in records(project_dir=project_dir).values()
         if r.get("polarity") == "ruling" and r["state"] == "active"
         and r["refutation_id"] != exclude)
-    if len(active) >= cap:
+    active_set = set(active)
+    # #1094 review: the promotion window — the SAME id can be active in
+    # BOTH this bucket's own ledger and a layer above it (this bucket
+    # ratifies it, then the layer independently founds and ratifies the
+    # identical subject+scope; nothing checks descendants when a layer
+    # founds its own ruling, only the reverse direction is guarded). An id
+    # already counted in `active` must not ALSO be counted as inherited, or
+    # the same slot is spent twice and the guard refuses one activation
+    # early.
+    inherited_ids = sorted({
+        r["refutation_id"] for r in inherited_active(project_dir)
+        if r.get("refutation_id") and r["refutation_id"] != exclude
+        and r["refutation_id"] not in active_set})
+    if len(active) + len(inherited_ids) >= cap:
+        inherited_note = (f", {len(inherited_ids)} inherited: "
+                          f"{', '.join(inherited_ids)}") if inherited_ids else ""
         raise RefutationError(
-            f"ruling cap reached ({cap} active): {', '.join(active)} — "
-            "retire one first, or raise DAIMON_RULING_CAP deliberately")
+            f"ruling cap reached ({cap} active{inherited_note}): "
+            f"{', '.join(active)} — retire one first, or raise "
+            "DAIMON_RULING_CAP deliberately")
 
 
 def _guard_open_proposals(refutation_id: str, event: str,
@@ -1709,6 +1810,10 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
         raise RefutationError(
             f"{held} already exists for this subject and scope; use "
             f"`daimon {verb} revise {held}`")
+    # #1094: a child may not FOUND an id a layer above it already holds
+    # ACTIVE — the only conflict code can detect (see the guard's own
+    # docstring for why a prose contradiction is not this check's job).
+    _guard_layer_active_collision(ref_id, project_dir)
     row = _stamp("ruled", ref_id, channel)
     row.update({
         "subject": subject,
@@ -1728,6 +1833,14 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
         raise RefutationError(
             "ruling not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
+    if ratified:
+        # #1094: `propose --ratify` activates through this exact call, and
+        # before this it never reached `_sync_checks` at all — a check
+        # given here stayed "armed" in the ledger's own view but absent
+        # from the manifest until someone ran `check sync` by hand. `ratify`
+        # and `revise` already sync after every write that could carry one;
+        # this closes the one activation path that did not.
+        _sync_checks(project_dir, row=row)
     return ref_id
 
 
@@ -1795,6 +1908,7 @@ def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
     manufactures fake evidence."""
     current = get(ruling_id, project_dir=project_dir)
     if current is None:
+        _guard_layer_only_id(ruling_id, project_dir)  # #1094
         raise RefutationError(f"unknown ruling: {ruling_id}")
     if current.get("polarity") != "ruling":
         raise RefutationError(
@@ -1827,6 +1941,7 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
             f"through {channel!r}")
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
+        _guard_layer_only_id(refutation_id, project_dir)  # #1094
         raise RefutationError(f"unknown refutation: {refutation_id}")
     if current["state"] == "overturned":
         raise RefutationError(
@@ -1844,6 +1959,10 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
             "revision to accept")
     if (current.get("polarity") == "ruling"
             and current["state"] != "active"):
+        # #1094: activating this CANDIDATE must not take over an id a layer
+        # above it already holds active — checked before the cap, on the
+        # same terms `assert_ruling` checks it at founding time.
+        _guard_layer_active_collision(refutation_id, project_dir)
         _guard_ruling_cap(project_dir=project_dir, exclude=refutation_id)
     row = _stamp("ratified", refutation_id, channel)
     row["note"] = _text("note", note, required=False)
@@ -1906,6 +2025,7 @@ def revise(refutation_id: str, *, channel: str, evidence,
             "revise cannot both set and clear request_policy in the same call")
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
+        _guard_layer_only_id(refutation_id, project_dir)  # #1094
         raise RefutationError(f"unknown refutation: {refutation_id}")
     if ratified and CHANNEL_AUTHORITY.get(channel) != "human":
         raise RefutationError(
@@ -1992,6 +2112,14 @@ def revise(refutation_id: str, *, channel: str, evidence,
             raise RefutationError(
                 f"{held} already exists for that subject and scope; a "
                 "revision cannot take over another record's identity")
+        if current.get("polarity") == "ruling":
+            # #1094: the identical mint refusal, one ledger further out — a
+            # revision cannot rename its way into an id a layer above it
+            # already holds active, unconditionally (an agent's PROPOSAL
+            # never touches the active text, but it still names an
+            # identity, and that identity still cannot be a layer's).
+            _guard_layer_active_collision(
+                make_id(new_subject, new_scope), project_dir)
     if ratified:
         row["ratified"] = True
     if not append(row, project_dir=project_dir):

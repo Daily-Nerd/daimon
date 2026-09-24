@@ -122,10 +122,16 @@ def test_cap_three_inherited_five_own_shows_seven_hides_oldest_own(
         tmp_path, monkeypatch):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
     _tick_seconds(monkeypatch)
-    for n in range(3):
-        _rule_at(work, f"layer rule {n}", subject=f"layer subject {n}")
+    # Own rulings FIRST, then the layer's: #1094's child cap guard counts
+    # inherited rulings against the child, so ratifying the 5th own AFTER
+    # the layer already holds 3 active (3 inherited + 4 own = 7) would be
+    # refused. A layer founding its own rulings never checks descendants,
+    # so this order is the one that can actually happen and still lands
+    # the over-cap render this test pins.
     for n in range(5):
         _rule_at(repo, f"own rule {n}", subject=f"own subject {n}")
+    for n in range(3):
+        _rule_at(work, f"layer rule {n}", subject=f"layer subject {n}")
 
     lines = briefing.ruling_lines(str(repo))
     joined = "\n".join(lines)
@@ -163,9 +169,13 @@ def test_layer_ruling_renders_even_when_own_bucket_is_completely_empty(
 def test_duplicate_id_across_layer_and_project_renders_once_own_wins(
         tmp_path, monkeypatch):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
-    _rule_at(work, "promoted rule text", subject="promoted subject",
-            scope="promoted scope")
+    # repo FIRST, then the layer: #1094 refuses a child that founds an id a
+    # layer already holds active, but a layer founding its own ruling never
+    # checks descendants — this order is the real promotion window the
+    # design names, and the only one that reaches this state at all.
     _rule_at(repo, "promoted rule text", subject="promoted subject",
+            scope="promoted scope")
+    _rule_at(work, "promoted rule text", subject="promoted subject",
             scope="promoted scope")
 
     lines = briefing.ruling_lines(str(repo))

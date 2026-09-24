@@ -187,6 +187,47 @@ def bucket_root(project_dir_or_slug) -> str | None:
     return text or None
 
 
+def buckets_under(layer_dir) -> list:
+    """Every bucket under `config.checkpoint_dir()` whose stamped root
+    (`bucket_root`) is strictly below `layer_dir`, realpath'd, separator-
+    bounded (#1094) — the read a layer's own write-time ceremony needs to
+    enumerate the projects it would render into.
+
+    A bucket with NO root record is a legacy bucket and is never a
+    descendant here: `layer_scopes` accepts an unstamped bucket as a LAYER
+    on its own separate terms (an empty one, never an active ruling), but
+    this read cannot trust an unstamped bucket to belong to any particular
+    directory, so it is excluded rather than guessed at.
+
+    Returns `(slug, root)` pairs, in no particular order. Never raises: an
+    unreadable checkpoint dir, or a `layer_dir` that cannot be resolved,
+    comes back as []."""
+    try:
+        if not layer_dir:
+            return []
+        base = config.checkpoint_dir()
+        if not base.is_dir():
+            return []
+        layer_root = os.path.realpath(str(layer_dir))
+        bounded = layer_root if layer_root.endswith(os.sep) else layer_root + os.sep
+        out = []
+        for entry in base.iterdir():
+            if not entry.is_dir():
+                continue
+            recorded = bucket_root(entry.name)
+            if recorded is None:
+                continue
+            try:
+                recorded_real = os.path.realpath(recorded)
+            except (OSError, ValueError):
+                continue
+            if recorded_real.startswith(bounded):
+                out.append((entry.name, recorded_real))
+        return out
+    except OSError:
+        return []
+
+
 def _safe_name(session_id: str) -> str:
     # session_id is host-provided; keep file ops from escaping the dir.
     return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")

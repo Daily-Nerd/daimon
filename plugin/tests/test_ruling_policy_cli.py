@@ -163,6 +163,9 @@ def test_revise_with_request_policy_and_no_request_policy_together_is_refused(
 
 def test_revise_no_request_policy_clears_an_active_grant(
         tmp_checkpoint_dir, _tty, monkeypatch, capsys):
+    # #1094: `propose --ratify` on a human channel now ceremonies-and-
+    # confirms before writing, the same discipline `ratify` already held.
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     rc = cli.main(["ruling", "propose", "--subject", "requests from p-sender",
                    "--verdict", "agent may accept work asks from p-sender",
                    "--scope", "cross-project requests",
@@ -248,6 +251,9 @@ def test_show_names_a_pending_proposal_that_carries_a_request_policy(
     ruling is a proposal, and one that would change the grant says so in
     the proposal line, since that is the fact the human ratifying it has to
     weigh."""
+    # #1094: `propose --ratify` on a human channel now ceremonies-and-
+    # confirms before writing, the same discipline `ratify` already held.
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     rc = cli.main(["ruling", "propose", "--subject", "requests from p-sender",
                    "--verdict", "agent may accept work asks from p-sender",
                    "--scope", "cross-project requests",
