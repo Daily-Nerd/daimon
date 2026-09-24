@@ -571,3 +571,225 @@ def test_slug_routed_ratify_does_not_walk_layers(
     assert rc == 0
     assert refutations.get(
         candidate_id, project_dir=str(repo))["state"] == "active"
+
+
+# --- Coverage: fail-open branches, guard edge cases, and the two module-  --
+# --- level activation paths the CLI's own pre-checks never reach ----------
+
+
+def test_home_relative_empty_string_returns_unchanged(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    assert config.home_relative("") == ""
+
+
+def test_home_relative_returns_tilde_for_home_itself(tmp_path, monkeypatch):
+    tmp_home, _work, _repo = _setup(tmp_path, monkeypatch)
+    assert config.home_relative(str(tmp_home)) == "~"
+
+
+def test_home_relative_outside_home_returns_unchanged(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    assert config.home_relative(str(outside)) == str(outside)
+
+
+def test_home_relative_fails_open_on_unexpected_error(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+
+    def _boom():
+        raise RuntimeError("could not determine home directory")
+
+    monkeypatch.setattr(config.Path, "home", staticmethod(_boom))
+    assert config.home_relative("/anything") == "/anything"
+
+
+def test_buckets_under_falsy_layer_dir_returns_empty(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    assert store.buckets_under("") == []
+    assert store.buckets_under(None) == []
+
+
+def test_buckets_under_skips_a_non_directory_entry(tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    _rule_at(repo, channel="cli-tty", ratified=True)
+    stray = config.checkpoint_dir() / "not-a-bucket.txt"
+    stray.write_text("stray file", encoding="utf-8")
+    result = store.buckets_under(str(work))
+    slugs = [slug for slug, _root in result]
+    assert store.project_slug(str(repo)) in slugs
+    assert "not-a-bucket.txt" not in slugs
+
+
+def test_buckets_under_skips_a_bucket_with_no_root_record(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    slug = store.project_slug(str(repo))
+    bucket_dir = config.checkpoint_dir() / slug
+    bucket_dir.mkdir(parents=True)
+    # A legacy bucket: exists, but no `root` file was ever stamped, so it
+    # cannot be trusted to belong to any particular directory.
+    assert store.buckets_under(str(work)) == []
+
+
+def test_buckets_under_skips_a_root_whose_realpath_raises(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    slug = store.project_slug(str(repo))
+    bucket_dir = config.checkpoint_dir() / slug
+    bucket_dir.mkdir(parents=True)
+    (bucket_dir / "root").write_text("bad\x00path\n", encoding="utf-8")
+    assert store.buckets_under(str(work)) == []
+
+
+class _FakeUnreadableCheckpointDir:
+    def is_dir(self):
+        return True
+
+    def iterdir(self):
+        raise OSError("permission denied")
+
+
+def test_buckets_under_fails_open_on_an_unreadable_checkpoint_dir(
+        tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        store.config, "checkpoint_dir", lambda: _FakeUnreadableCheckpointDir())
+    assert store.buckets_under("/some/layer") == []
+
+
+def test_inherited_active_skips_non_ruling_records(tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    refutations.assert_refutation(
+        subject="a refutation", verdict="it failed", scope="a scope",
+        evidence=["issue:1094"], channel="cli-tty", ratified=True,
+        project_dir=str(work))
+    assert refutations.inherited_active(str(repo)) == []
+
+
+def test_inherited_active_skips_policy_carrying_rulings(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    _rule_at(work, subject="policy subject", verdict="policy verdict",
+             scope="policy-scope", channel="cli-tty", ratified=True,
+             request_policy={"sender": "p-sender", "kind": "work",
+                             "verb": "accept", "by": "agent"})
+    assert refutations.inherited_active(str(repo)) == []
+
+
+def test_inherited_active_dedups_nearest_layer_wins(tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    # `work` first, THEN the identical subject+scope at `tmp_home` — the
+    # reverse order would collide (a child founding a layer's active id is
+    # refused; a layer founding what a DESCENDANT already holds is not
+    # checked at all, so this order is the only one that can exist).
+    _rule_at(work, subject="shared subject", scope="shared-scope",
+             verdict="near verdict", channel="cli-tty", ratified=True)
+    _rule_at(tmp_home, subject="shared subject", scope="shared-scope",
+             verdict="far verdict", channel="cli-tty", ratified=True)
+    rows = refutations.inherited_active(str(repo))
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "near verdict"
+    assert rows[0]["inherited_from"] == str(work)
+
+
+def test_inherited_active_fails_open_on_unexpected_error(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+
+    def _boom(_project_dir):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(refutations.config, "layer_scopes", _boom)
+    assert refutations.inherited_active(str(repo)) == []
+
+
+def test_guard_layer_only_id_returns_on_empty_id(tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    refutations._guard_layer_only_id("", str(repo))
+    refutations._guard_layer_only_id(None, str(repo))
+
+
+def test_guard_layer_active_collision_returns_on_empty_id(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    refutations._guard_layer_active_collision("", str(repo))
+    refutations._guard_layer_active_collision(None, str(repo))
+
+
+def test_module_ratify_direct_call_on_layer_only_id_pins_message(
+        tmp_path, monkeypatch):
+    """The CLI's own pre-check for `ratify` never reaches `refutations.
+    ratify`'s `current is None` branch when the id is layer-only (it
+    refuses first, see test_cli_ratify_on_layer_only_id_refuses_with_
+    pointer); an in-process caller reaching `ratify` directly still needs
+    the same guard."""
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    layer_id = _rule_at(work, channel="cli-tty", ratified=True)
+    with pytest.raises(refutations.RefutationError) as exc_info:
+        refutations.ratify(layer_id, channel="cli-tty", project_dir=str(repo))
+    assert str(exc_info.value) == (
+        f"{layer_id} inherited from ~/work; run with --project ~/work")
+
+
+def test_module_revise_direct_call_on_layer_only_id_pins_message(
+        tmp_path, monkeypatch):
+    """Same as above, for `refutations.revise`'s own `current is None`
+    branch — the CLI's own pre-check never reaches it either."""
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    layer_id = _rule_at(work, channel="cli-tty", ratified=True)
+    with pytest.raises(refutations.RefutationError) as exc_info:
+        refutations.revise(layer_id, channel="cli-tty",
+                           evidence=["issue:1094"], verdict="new text",
+                           project_dir=str(repo))
+    assert str(exc_info.value) == (
+        f"{layer_id} inherited from ~/work; run with --project ~/work")
+
+
+def test_is_layer_project_fails_closed_on_unexpected_error(
+        tmp_path, monkeypatch):
+    from daimon_briefing.cli import _ledger
+    real_dir = tmp_path / "somedir"
+    real_dir.mkdir()
+
+    def _boom(_path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(_ledger.config, "_git_shadowed", _boom)
+    assert _ledger._is_layer_project(str(real_dir)) is False
+
+
+def test_propose_ratify_ceremony_falls_back_when_policy_validation_fails(
+        tmp_path, monkeypatch, capsys, _tty):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    rc = cli.main([
+        "ruling", "propose", "--subject", "policy subject",
+        "--verdict", "policy verdict", "--scope", "policy-scope",
+        "--evidence", "issue:1094", "--ratify",
+        "--request-policy", "sender=p-sender",
+        "--request-policy", "kind=totally-invalid",
+        "--request-policy", "verb=accept",
+        "--request-policy", "by=agent",
+        "--project", str(repo)])
+    # The ceremony must not crash on an unvalidated shape; the real
+    # refusal comes from assert_ruling's own validation at write time.
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "ruling not recorded" in out
+
+
+def test_propose_ratify_ceremony_skips_overcap_check_on_invalid_identity(
+        tmp_path, monkeypatch, capsys, _tty):
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    long_scope = "x" * (refutations._MAX_TEXT + 1)
+    rc = cli.main([
+        "ruling", "propose", "--subject", "subject",
+        "--verdict", "verdict", "--scope", long_scope,
+        "--evidence", "issue:1094", "--ratify",
+        "--project", str(repo)])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "ratifying here puts" not in out
+    assert "is too long" in out
