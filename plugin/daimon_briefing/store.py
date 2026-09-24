@@ -1199,13 +1199,28 @@ def _drop_ruling_echoes(checkpoint: dict, project_dir=None) -> list:
     ledger (`ruling-echo`, its own counter and its own timestamp — the echo
     rate stays an endogenous measurement) and logged as a content hash,
     never the text. The WHOLE body fails open: no echo-filter failure of
-    any kind may cost the capture it observes."""
+    any kind may cost the capture it observes.
+
+    #1093: the key set is built from `briefing.active_rulings` — the SAME
+    merged view (own bucket plus every eligible layer, deduped, own wins)
+    the briefing itself renders from — not `refutations.listing`'s own-only
+    read. An inherited ruling's verdict renders into a child project's
+    context exactly like an own ruling's does (`ruling_lines`'s
+    `_layer_suffix`), so its rendered forms — including the `[from ~/work]`
+    suffix `_layer_suffix` appends — must echo-drop here on the identical
+    terms, or a copy of the layer's own verdict text would decay into the
+    child's beliefs and never be reachable from where it was actually
+    ratified. `active_rulings` already drops an inherited row carrying a
+    `request_policy`, so this never builds a key for verdict text that was
+    never rendered anywhere to begin with."""
     try:
-        # Function-local import: refutations imports store at module level,
-        # so the reverse edge must be deferred to call time.
-        from . import refutations
-        rows = refutations.listing(states={"active"}, polarity="ruling",
-                                   project_dir=project_dir)
+        # Function-local imports: both refutations and briefing import store
+        # at module level (briefing directly; refutations transitively via
+        # checks), so the reverse edge must be deferred to call time —
+        # config._layer_scopes already establishes this exact pattern for
+        # the identical reason.
+        from . import briefing, refutations
+        rows = briefing.active_rulings(project_dir)
         keys = set()
         for row in rows:
             verdict = str(row.get("verdict") or "")
@@ -1216,6 +1231,12 @@ def _drop_ruling_echoes(checkpoint: dict, project_dir=None) -> list:
             authored = row.get("text_authored_by")
             if authored and authored != "human":
                 bases.update({f"{b}  [{authored}-written]" for b in set(bases)})
+            inherited_from = row.get("inherited_from")
+            if inherited_from:
+                # Mirrors briefing._layer_suffix exactly: authority suffix
+                # first, layer suffix second, when both apply.
+                suffix = f"  [from {config.home_relative(inherited_from)}]"
+                bases.update({f"{b}{suffix}" for b in set(bases)})
             for base in bases:
                 keys.add(normalize.content_key(base))
                 keys.add(normalize.content_key(f"§ {base}"))

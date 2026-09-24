@@ -210,14 +210,21 @@ def test_status_surfaces_echo_drops_when_nonzero(tmp_checkpoint_dir,
 
 def test_filter_fails_open_on_ledger_read_error(tmp_checkpoint_dir,
                                                 monkeypatch):
+    # #1093: the filter now reads through briefing.active_rulings (the
+    # merged own+layer view), which itself reads refutations.events() rather
+    # than refutations.listing() (#962's rewiring, landmine 0074's exact
+    # shape: a patch aimed at the OLD call site goes inert when the call
+    # graph moves). Patching events() here exercises the same "ledger
+    # unreadable" failure one level down, through active_rulings's OWN
+    # fail-open (-> []) and then _drop_ruling_echoes's fail-open on top.
     _active_ruling()
     calls = []
 
-    def boom(**kwargs):
+    def boom(*args, **kwargs):
         calls.append(1)
         raise OSError("ledger unreadable")
 
-    monkeypatch.setattr(refutations, "listing", boom)
+    monkeypatch.setattr(refutations, "events", boom)
     out = store.write_checkpoint("S-echo", _checkpoint(),
                                  project_dir=PROJECT, admit=True)
     assert out is not None

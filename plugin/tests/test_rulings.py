@@ -1150,7 +1150,11 @@ def test_rulings_read_state_read_matches_active_rulings(tmp_checkpoint_dir):
     read = briefing.rulings_read(PROJECT)
     assert read.state == "read"
     assert [r["refutation_id"] for r in read.rows] == [ruling_id]
-    assert read.rows == briefing.active_rulings(PROJECT)
+    # #1093: active_rulings additionally tags every row with `inherited_from`
+    # (None for the project's OWN rows, which is all `rulings_read` ever
+    # returns) — the two stay in lockstep on every other field.
+    merged = briefing.active_rulings(PROJECT)
+    assert [dict(r, inherited_from=None) for r in read.rows] == merged
 
 
 def test_rulings_read_skips_malformed_lines_and_keeps_the_good_rows(

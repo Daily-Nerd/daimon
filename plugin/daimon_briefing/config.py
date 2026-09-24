@@ -915,6 +915,35 @@ def layer_scopes(project_dir) -> list[str]:
         return []
 
 
+def home_relative(path) -> str:
+    """The `~`-prefixed display form of an absolute path at or below
+    `Path.home()` (#1093), used to name the owning layer in an inherited
+    ruling's render suffix (`[from ~/work]`) without ever printing the
+    developer's full home path. Both sides are realpath'd (`Path.resolve()`),
+    the same normalization `layer_scopes` applies, so a symlinked project and
+    its real path render identically.
+
+    `path` unchanged (as a string) when it is not at or below home, when
+    `path` is falsy (returns "" for `None`/"" rather than "None"), or on ANY
+    failure — a raised `Path.home()` (mirroring `layer_scopes`'s own guard),
+    an unresolvable path, anything. This sits next to `layer_scopes`
+    deliberately: the #1094 implementer adds the identical function at the
+    identical place, so the two branches merge without conflict."""
+    text = str(path) if path else ""
+    if not text:
+        return text
+    try:
+        home = Path.home().resolve()
+        resolved = Path(text).resolve()
+        if resolved != home and home not in resolved.parents:
+            return text
+        rel = resolved.relative_to(home)
+        rel_str = rel.as_posix()
+        return "~" if rel_str == "." else f"~/{rel_str}"
+    except Exception:
+        return text
+
+
 def _layer_scopes(project_dir) -> list[str]:
     if tenant_scoped():
         return []
