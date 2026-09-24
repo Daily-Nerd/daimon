@@ -247,6 +247,20 @@ Verbatim contiguous span only, byte-checked at session end; renders as an
 unconfirmed agent claim until a human settles it. `amend ratify`/`reject`
 are human-only: print the command, never run it.
 
+## Quarantining a fabricated or unsafe value
+
+If you find a checkpoint value that looks fabricated, planted, or otherwise
+unsafe for anyone to act on, propose a quarantine with `daimon trust` — it
+never renders anywhere until a human confirms it:
+
+```
+daimon trust propose --text "<value>" --kind decision --reason "<why>" --evidence issue:1 --by agent
+```
+
+`--kind` is the field kind the value came from (decision, belief, question,
+topic, uncertainty, contradiction). `confirm`, `dismiss`, and `release` are
+human-only: print the command, never run it.
+
 ## Handing off
 
 A checkpoint holds what HAPPENED, not what you INTENDED. Before ending with

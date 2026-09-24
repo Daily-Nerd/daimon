@@ -30,7 +30,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import config, policy, provenance, schema, store
+from . import channels, config, policy, provenance, schema, store
 
 
 VERSION = 1
@@ -55,14 +55,12 @@ NOTE_CODES = frozenset({""})
 # No `mechanical` channel, deliberately: adding machine confirmation later
 # requires the held-out gate (zero identity-confirmations on arc specimens)
 # and a version bump, not a vocabulary entry.
-CHANNEL_AUTHORITY = {
-    "serializer": "agent",
-    "lab-import": "agent",
-    "cli-agent": "agent",
-    "cli-tty": "human",
-    "ui": "human",
-    "signed": "human",
-}
+#
+# #1109 Slice 0: the shared four channels now live in `channels.py`,
+# imported unchanged; `serializer`/`lab-import` are this module's own two
+# importer channels, layered on top exactly as before.
+CHANNEL_AUTHORITY = channels.merged_authority(
+    {"serializer": "agent", "lab-import": "agent"})
 CHANNELS = frozenset(CHANNEL_AUTHORITY)
 _EVENT_RANK = {
     # Same-order ambiguity fails toward refusal: a confirm/reject tie lands

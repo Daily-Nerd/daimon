@@ -119,8 +119,16 @@ def test_full_fits_size_budget():
     # item's sequence — and an agent that reaches for the wrong one gets a
     # correct answer to a question it did not ask. New deliberate-review size
     # is 12,950 (2026-09-12). Nothing was added to the compact body.
+    #
+    # RAISED 13,400 -> 13,900 on 2026-09-24 (#1109 Slice 1). The addition is
+    # ~560 chars, a new "Quarantining a fabricated or unsafe value" section:
+    # an agent that spots a planted or fabricated checkpoint value now has a
+    # command to propose withholding it, and the section says plainly that
+    # `confirm`/`dismiss`/`release` are human-only, the same posture every
+    # other human-only verb in this file already gets. New deliberate-review
+    # size is 13,873 (2026-09-24). Nothing was added to the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 13400, f"full body is {len(full)} chars (cap 13400)"
+    assert len(full) <= 13900, f"full body is {len(full)} chars (cap 13900)"
 
 
 def test_full_has_trigger_only_frontmatter():

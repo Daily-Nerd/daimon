@@ -192,6 +192,22 @@ SURFACES: tuple[Surface, ...] = (
     #    growth is measured, never silent. --
     Surface("checkpoints/{slug}/relations.jsonl", "relations._append",
             True, "rewrite", "forget"),
+    # -- the trust ledger (#1109 Slice 1): a human-only quarantine verdict on
+    #    a checkpoint value, append-only like refutations.jsonl, and in the
+    #    same category — it carries item PLAINTEXT by design (`reason`,
+    #    `evidence`), so `rewrite`/`forget` must be able to reach it exactly
+    #    the way they reach refutations.jsonl today. `value_key` is a hash,
+    #    never plaintext, and is not in the deletion contract (it names no
+    #    item text on its own). `rewrite` is trust.forget_content_key,
+    #    matching the same whole-value canonical key refutations.py uses.
+    #    Never audit_exempt: growth must be measured, never silent, the same
+    #    posture every other plaintext ledger here holds. Nothing reads this
+    #    ledger yet (PR 2 wires the briefing/recall/MCP/carry/daimon_ui
+    #    withholding read paths); this slice is write-only and registered
+    #    here so it can never repeat #645's unknown->unscannable->exit-3 arc
+    #    the moment the first `daimon trust propose` runs. --
+    Surface("checkpoints/{slug}/trust.jsonl", "trust.append",
+            True, "rewrite", "forget"),
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,

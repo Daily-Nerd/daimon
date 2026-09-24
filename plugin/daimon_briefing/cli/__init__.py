@@ -1415,6 +1415,13 @@ from .amend import (  # noqa: E402
     _cmd_amend_propose,  # noqa: F401 — re-exported for compat
     _cmd_amend_verdict,  # noqa: F401 — re-exported for compat
 )
+from .trust import (  # noqa: E402
+    _cmd_trust_list,  # noqa: F401 — re-exported for compat
+    _cmd_trust_propose,  # noqa: F401 — re-exported for compat
+    _cmd_trust_show,  # noqa: F401 — re-exported for compat
+    _cmd_trust_verdict,  # noqa: F401 — re-exported for compat
+    _trust_channel,  # noqa: F401 — re-exported for compat
+)
 from .request import (  # noqa: E402
     _cmd_request_done,  # noqa: F401 — re-exported for compat
     _cmd_request_inbox,  # noqa: F401 — re-exported for compat
@@ -1478,6 +1485,7 @@ from . import (  # noqa: E402
     ruling,
     skill,
     team,
+    trust,
 )
 
 
@@ -4514,6 +4522,8 @@ def build_parser() -> argparse.ArgumentParser:
     ruling.register(sub, fmt)
 
     amend.register(sub, fmt)
+
+    trust.register(sub, fmt)
 
     request.register(sub, fmt)
 

@@ -34,7 +34,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from . import config, normalize, policy, redact, store
+from . import channels, config, normalize, policy, redact, store
 
 
 VERSION = 1
@@ -65,23 +65,16 @@ AUTHORITIES = frozenset({"agent", "human", "mechanical"})
 # or drive a UI. The claim this earns is not proof but provenance: forgery costs
 # deliberate impersonation instead of one word, and the channel stays auditable
 # afterwards. That is strictly more than the zero bits recorded before.
-CHANNEL_AUTHORITY = {
-    "cli-agent": "agent",
-    "cli-tty": "human",
-    "ui": "human",
-    "signed": "human",
-    "mechanical": "mechanical",
-}
+#
+# #1109 Slice 0: the shared four channels (`cli-agent`/`cli-tty`/`ui`/
+# `signed`) and `CHANNEL_LABEL` now live in `channels.py`, imported
+# unchanged — this module's effective mapping is identical to before, plus
+# the `mechanical` tier `channels.py` itself does not carry (#581's future
+# automatic activation; `relations.py` never needed it and does not gain it
+# for free by importing the same base).
+CHANNEL_AUTHORITY = channels.merged_authority({"mechanical": "mechanical"})
 CHANNELS = frozenset(CHANNEL_AUTHORITY)
-# What each channel is allowed to say about itself when rendered. Never
-# "human-ratified" unqualified: the tier is the honest part.
-CHANNEL_LABEL = {
-    "cli-agent": "agent-proposed",
-    "cli-tty": "ratified (interactive)",
-    "ui": "ratified (ui)",
-    "signed": "ratified (signed)",
-    "mechanical": "mechanically-activated",
-}
+CHANNEL_LABEL = channels.CHANNEL_LABEL
 
 
 def _channel_of(row: dict) -> str:

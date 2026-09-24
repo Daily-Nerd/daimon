@@ -56,6 +56,7 @@ LEDGERS = (
     "verification.jsonl",
     "forget-hits.jsonl",
     "relations.jsonl",
+    "trust.jsonl",
 )
 
 
