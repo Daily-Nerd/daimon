@@ -1816,7 +1816,15 @@ def checks_table_lines(payload: dict) -> list:
             current = row["ruling_id"]
             shown = ("proposed, not armed" if row["lifecycle"] == "proposed"
                      else row["lifecycle"])
-            lines.append(f"{current}  {shown} · intent {row['intent']}")
+            header = f"{current}  {shown} · intent {row['intent']}"
+            # #1095: a row `_checks_payload` built from a layer's active
+            # check carries `inherited_from` (absolute path); named here in
+            # the briefing's own `[from ~/work]` convention so `ruling
+            # checks` on an inherited id reads the same as everywhere else.
+            inherited_from = row.get("inherited_from")
+            if inherited_from:
+                header += f"  [from {config.home_relative(inherited_from)}]"
+            lines.append(header)
         line = f"  {row['host']:<14}{row['mode']}"
         if row["fired"] is not None:
             live = f"last fired {row['last_fired']}" if row["fired"] \

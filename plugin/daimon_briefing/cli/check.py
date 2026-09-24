@@ -13,7 +13,7 @@ import json
 
 import daimon_briefing.cli as _cli
 
-from .. import checks, render
+from .. import checks, config, render
 
 
 def audit_lines(audit, scope: str = "") -> list:
@@ -58,15 +58,34 @@ def _cmd_check_audit(args) -> int:
     a manifest daimon cannot parse is a state where the audit has no
     opinion about what is armed at all, and a script has to be able to tell
     those apart. `scripts/sync_hooks.py --check` uses the same 0/1 split for
-    the same reason."""
-    audit = checks.audit(_cli._resolve_project(args.project))
+    the same reason.
+
+    #1095: every ruling layer above this project is graded the same way,
+    labeled with its home-relative path, so a layer's drift (a hand-edited
+    body, or a layer entry that never reached this machine) is visible from
+    the child too — the only place a descendant can see it, since a layer's
+    own bucket may not even have a checkout on this machine."""
+    project = _cli._resolve_project(args.project)
+    audit = checks.audit(project)
+    layer_audits = checks.audit_layers(project)
     if getattr(args, "json", False):
-        print(json.dumps(audit._asdict(), indent=2))
+        payload = audit._asdict()
+        if layer_audits:
+            payload["layers"] = [
+                {"project_dir": layer, "home": config.home_relative(layer),
+                 **layer_audit._asdict()}
+                for layer, layer_audit in layer_audits]
+        print(json.dumps(payload, indent=2))
     else:
-        render.render_ledger_lines(audit_lines(audit))
-    if audit.state == "unreadable":
+        lines = audit_lines(audit)
+        for layer, layer_audit in layer_audits:
+            lines += audit_lines(layer_audit,
+                                 f" (layer {config.home_relative(layer)})")
+        render.render_ledger_lines(lines)
+    states = [audit.state] + [la.state for _, la in layer_audits]
+    if "unreadable" in states:
         return 3
-    return 1 if audit.drift else 0
+    return 1 if (audit.drift or any(la.drift for _, la in layer_audits)) else 0
 
 
 def _cmd_check_sync(args) -> int:
@@ -74,9 +93,21 @@ def _cmd_check_sync(args) -> int:
         return _cmd_check_audit(args)
     project = _cli._resolve_project(args.project)
     report = checks.sync(project)
+    # #1095: every ruling layer above this project is re-armed the same
+    # way, so an inherited enforce or warn check does not depend on a human
+    # having run `check sync`/`hooks install` from inside the layer's own
+    # project on THIS machine.
+    layer_reports = checks.sync_layers(project)
+    ok = report.ok and all(lr.ok for _, lr in layer_reports)
     if getattr(args, "json", False):
-        print(json.dumps(report._asdict(), indent=2))
-        return 0 if report.ok else 1
+        payload = report._asdict()
+        if layer_reports:
+            payload["layers"] = [
+                {"project_dir": layer, "home": config.home_relative(layer),
+                 **layer_report._asdict()}
+                for layer, layer_report in layer_reports]
+        print(json.dumps(payload, indent=2))
+        return 0 if ok else 1
     if not report.ok:
         # stdout, like every other refusal in the ledger families: #194
         # moved diagnostics off stderr, and the warning the ruling verbs
@@ -85,9 +116,16 @@ def _cmd_check_sync(args) -> int:
         return 1
     # Reported even at zero. A silent success is how a project that armed
     # nothing and a project whose sync never ran come to look identical.
-    render.render_ledger_lines(
-        [f"checks: {report.armed} armed for {report.slug}"])
-    return 0
+    lines = [f"checks: {report.armed} armed for {report.slug}"]
+    for layer, layer_report in layer_reports:
+        home = config.home_relative(layer)
+        if not layer_report.ok:
+            lines.append(f"checks: {layer_report.reason} (layer {home})")
+        elif layer_report.armed:
+            lines.append(f"checks: {layer_report.armed} armed for "
+                         f"{layer_report.slug} (layer {home})")
+    render.render_ledger_lines(lines)
+    return 0 if ok else 1
 
 
 def register(sub, fmt) -> None:

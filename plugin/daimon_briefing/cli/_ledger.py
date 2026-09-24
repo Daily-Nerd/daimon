@@ -337,6 +337,15 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     lifecycle = record.get("check_lifecycle")
     if lifecycle and not detailed:
         lines[0] += f" [check: {lifecycle}]"
+    # #1095: `ruling list --inherited` and `ruling show` on an inherited id
+    # both hand this a record `refutations.resolve_ruling`/`inherited_active`
+    # tagged with `inherited_from`; an own record never carries the key. The
+    # briefing's `[from ~/work]` convention (`briefing._layer_suffix`, #1093)
+    # is reused verbatim rather than reinvented, so the two surfaces name a
+    # layer identically.
+    inherited_from = record.get("inherited_from")
+    if inherited_from:
+        lines[0] += f"  [from {config.home_relative(inherited_from)}]"
     if not detailed:
         return lines
     lines.append(f"  Governs: {record.get('subject', '')}")

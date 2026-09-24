@@ -20,8 +20,11 @@ def _cmd_hooks_list(args) -> int:
     render.render_hooks_list(lines)
     return 0
 
-def _checks_line() -> str:
-    """What this project has armed, after materializing it (#943).
+def _checks_lines() -> list:
+    """What this project has armed, after materializing it (#943), plus
+    every ruling layer above it (#1092), synced the same way (#1095): an
+    inherited enforce or warn check must arm on every machine, not only the
+    one where a human last ratified it directly.
 
     Installing the hook and writing what the hook reads are one step. Left
     apart, the supported install ends with a gate in place and an empty
@@ -34,16 +37,31 @@ def _checks_line() -> str:
     out unrewritten, because the reason a sync refused is more specific than
     anything this line could say for it.
 
+    One line per root that armed something, or that failed to sync at all;
+    a layer that armed nothing (a candidates-only bucket) stays silent, the
+    same way it renders no ruling line in the briefing. This is what keeps
+    `hooks install` output on a project with no layers byte-identical to
+    before #1095 — `config.layer_scopes` returns `[]` there, so the loop
+    below contributes nothing.
+
     No `--slug`: that flag reaches ten human-only decision verbs and is
     refused outright on a tenant-scoped home, and widening it to a verb that
     materializes executables would hand bucket-choosing power past the check
     that gates it (#899, #948)."""
-    from .. import checks
+    from .. import checks, config
 
-    report = checks.sync(_cli._resolve_project(None))
-    if report.ok:
-        return f"checks: {report.armed} armed for {report.slug}"
-    return f"checks: {report.reason}"
+    project = _cli._resolve_project(None)
+    report = checks.sync(project)
+    lines = ([f"checks: {report.armed} armed for {report.slug}"] if report.ok
+             else [f"checks: {report.reason}"])
+    for layer, layer_report in checks.sync_layers(project):
+        home = config.home_relative(layer)
+        if not layer_report.ok:
+            lines.append(f"checks: {layer_report.reason} (layer {home})")
+        elif layer_report.armed:
+            lines.append(f"checks: {layer_report.armed} armed for "
+                         f"{layer_report.slug} (layer {home})")
+    return lines
 
 
 def _install_one(host: str) -> int:
@@ -65,7 +83,7 @@ def _install_one(host: str) -> int:
         from .. import codex_hooks
 
         lines = codex_hooks.install(pkg, Path.home())
-        render.render_install_summary(lines + ["", _checks_line()],
+        render.render_install_summary(lines + ["", *_checks_lines()],
                                       title=f"daimon hooks install {host}")
         return 0
     if spec.get("register") == "kimi":
@@ -81,7 +99,7 @@ def _install_one(host: str) -> int:
             print(f"error: {kimi_hooks.config_path(Path.home())} could not be "
                   f"read safely, so nothing was written: {exc}", file=sys.stderr)
             return 1
-        render.render_install_summary(lines + ["", _checks_line()],
+        render.render_install_summary(lines + ["", *_checks_lines()],
                                       title=f"daimon hooks install {host}")
         return 0
     target = _cli._hooks_target_dir()
@@ -127,7 +145,7 @@ def _install_one(host: str) -> int:
             "    }",
             "  }",
         ]
-    lines += ["", _checks_line()]
+    lines += ["", *_checks_lines()]
     render.render_install_summary(lines, title=f"daimon hooks install {host}")
     return 0
 

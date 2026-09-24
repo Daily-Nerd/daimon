@@ -823,9 +823,12 @@ def test_ruling_checks_json_has_a_fixed_shape(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert list(payload) == ["rows", "manifest", "hosts", "log", "window_since"]
     row = payload["rows"][0]
+    # #1095: `inherited_from` joined the row shape (null for an own ruling,
+    # the absolute owning layer directory for one inherited from a layer).
     assert list(row) == ["ruling_id", "lifecycle", "intent", "host", "mode",
                          "fired", "last_fired", "clean", "violation",
-                         "unresolved"]
+                         "unresolved", "inherited_from"]
+    assert row["inherited_from"] is None
     assert len(payload["rows"]) == 3  # one per host profile
     assert payload["manifest"]["drift"] is False
 
