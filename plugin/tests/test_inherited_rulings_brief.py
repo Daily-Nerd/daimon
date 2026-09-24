@@ -294,6 +294,70 @@ def test_manifest_enforce_line_for_worktree_not_in_the_ledger_walk(
     assert "the rule for a public post rule" not in joined
 
 
+def _arm_enforce(directory, subject, *, match="gh pr create",
+                 body="#!/bin/sh\nexit 0\n"):
+    ruling_id = refutations.assert_ruling(
+        subject=subject, verdict=f"the rule for {subject} in publishing",
+        scope="publishing", evidence=["issue:1093"], channel="cli-agent",
+        check={"match": match, "body": body, "intent": "enforce"},
+        project_dir=str(directory))
+    refutations.ratify(ruling_id, channel="ui",
+                       check_sha256=hashlib.sha256(body.encode()).hexdigest(),
+                       project_dir=str(directory))
+    return ruling_id
+
+
+def _worktree(repo):
+    subprocess.run(["git", "-c", "user.email=t@t.com", "-c", "user.name=t",
+                    "commit", "--allow-empty", "-q", "-m", "init"],
+                   cwd=str(repo), check=True)
+    worktrees_dir = repo / ".claude" / "worktrees"
+    worktrees_dir.mkdir(parents=True)
+    wt = worktrees_dir / "x"
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(wt)],
+                   cwd=str(repo), check=True)
+    return wt
+
+
+def test_manifest_enforce_lines_are_capped_and_count_toward_overflow(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    wt = _worktree(repo)
+    for n in range(3):
+        _arm_enforce(repo, f"cap post rule {n}")
+    checks.sync(str(repo))
+    monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
+    monkeypatch.setenv("DAIMON_RULING_CAP", "2")
+
+    lines = briefing.ruling_lines(str(wt))
+    joined = "\n".join(lines)
+    body_lines = [ln for ln in lines if ln.startswith("§ enforced from")]
+    assert len(body_lines) == 2
+    assert "+1 active ruling over cap" in joined
+    assert "daimon ruling list --inherited shows all" in joined
+
+
+def test_manifest_enforce_lines_share_the_cap_with_own_rows(
+        tmp_path, monkeypatch):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    wt = _worktree(repo)
+    _rule_at(wt, "own prose rule in the worktree bucket",
+            subject="wt own subject")
+    for n in range(2):
+        _arm_enforce(repo, f"mixed cap rule {n}")
+    checks.sync(str(repo))
+    monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
+    monkeypatch.setenv("DAIMON_RULING_CAP", "2")
+
+    lines = briefing.ruling_lines(str(wt))
+    joined = "\n".join(lines)
+    assert "§ own prose rule in the worktree bucket" in joined
+    body_lines = [ln for ln in lines if ln.startswith("§ enforced from")]
+    assert len(body_lines) == 1
+    assert "+1 active ruling over cap" in joined
+    assert "daimon ruling list --inherited shows all" in joined
+
+
 def test_layered_enforce_lines_budget_is_measured(tmp_path, monkeypatch):
     """Pre-change baseline, measured directly on the unmodified code before
     #1093: 7 rulings, ALL in one bucket, all rendering as `enforce` compact

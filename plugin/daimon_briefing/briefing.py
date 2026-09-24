@@ -1294,6 +1294,12 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
     """One compact line per `checks_runtime.armed_for(project_dir)` manifest
     entry whose ruling id is not already in `rendered_ids` (#1093).
 
+    Returns EVERY matching entry, uncapped — the caller (`ruling_lines`)
+    gives these lines only the room left under `DAIMON_RULING_CAP` after the
+    ledger rows and folds the rest into the same over-cap count: a manifest
+    line is still one ruling in force against the cap, not a bonus outside
+    it.
+
     This is the worktree case: `config.layer_scopes` never treats anything
     inside a git working tree as a layer, so a worktree's ledger walk never
     sees the parent repo's rulings at all — but the pre-action hook still
@@ -1364,24 +1370,28 @@ def ruling_lines(project_dir=None) -> list[str]:
     manifest entry `checks_runtime.armed_for` finds for this directory whose
     id was not already rendered (`_manifest_enforce_lines`) — this is what
     keeps a WORKTREE (never a layer) honest about a parent repo's enforce
-    checks even though its ledger walk cannot see them. The section renders
-    when EITHER the ledger rows or the manifest lines are non-empty — a
-    worktree with an empty ledger but an armed parent check is not "nothing
-    to show" — and only then do the loud-but-non-costing notes
-    (`_inherited_notes`: an unreadable layer, or a slug that resolves no
-    layers at all) get a line.
+    checks even though its ledger walk cannot see them. A manifest line is
+    still one ruling against DAIMON_RULING_CAP: it gets only the room left
+    after the ledger rows, and whatever does not fit folds into the same
+    over-cap count as a withheld ledger row, never rendered as a free bonus
+    outside the cap. The section renders when EITHER the ledger rows or the
+    manifest lines are non-empty — a worktree with an empty ledger but an
+    armed parent check is not "nothing to show" — and only then do the
+    loud-but-non-costing notes (`_inherited_notes`: an unreadable layer, or
+    a slug that resolves no layers at all) get a line.
 
     Backstops, both LOUD: more actives than DAIMON_RULING_CAP — a
     hand-edited ledger, or simply LOWERING the cap after activations, a
     supported move the cap guard's own error text invites — renders the
-    cap's worth PLUS a note naming how many were withheld (a silent
-    truncation of human-ratified constraints is the one failure this
-    section must never have; the note points at `daimon ruling list
-    --inherited`, #1093's new flag, since the withheld count can include
-    inherited rows too); a hand-edited verdict longer than the write-time
-    bound is clipped with a visible marker; an empty verdict renders
-    nothing. Non-human `text_authored_by` is labeled with its own AUTHORITY
-    word (agent / mechanical — CHANNEL_AUTHORITY's vocabulary,
+    cap's worth PLUS a note naming how many were withheld, ledger rows and
+    manifest lines combined (a silent truncation of human-ratified
+    constraints, or of what actually fires in a worktree, is the one
+    failure this section must never have; the note points at `daimon ruling
+    list --inherited`, the flag #1095 ships, since the withheld count can
+    include inherited rows too); a hand-edited verdict longer than the
+    write-time bound is clipped with a visible marker; an empty verdict
+    renders nothing. Non-human `text_authored_by` is labeled with its own
+    AUTHORITY word (agent / mechanical — CHANNEL_AUTHORITY's vocabulary,
     cli._print_ruling's own label) even after human ratification — who
     wrote the words survives who approved them. Neither the authority
     suffix, the layer suffix, nor the cap counts the code-enforced classes
@@ -1394,9 +1404,15 @@ def ruling_lines(project_dir=None) -> list[str]:
         return []
     shown, over = rows[:cap], rows[cap:]
     rendered_ids = {str(row.get("refutation_id")) for row in shown}
-    manifest_lines = _manifest_enforce_lines(project_dir, rendered_ids)
-    if not shown and not manifest_lines:
+    manifest_all = _manifest_enforce_lines(project_dir, rendered_ids)
+    if not shown and not manifest_all:
         return []
+    # The manifest lines share the SAME cap as the ledger rows: they get
+    # whatever room the ledger rows left, and anything past that room folds
+    # into the over-cap count below rather than rendering uncapped.
+    room = max(0, cap - len(shown))
+    manifest_lines, manifest_over = manifest_all[:room], manifest_all[room:]
+    total_over = len(over) + len(manifest_over)
     lines = [_RULING_HEADER]
     lines.extend(_inherited_notes(project_dir))
     policy_rendered = False
@@ -1417,11 +1433,11 @@ def ruling_lines(project_dir=None) -> list[str]:
         lines.append(f"§ {verdict}{authored_suffix}{suffix}")
     if policy_rendered:
         lines.append(_POLICY_LEGEND)
-    if over:
-        plural = "s" if len(over) != 1 else ""
-        lines.append(f"  (+{len(over)} active ruling{plural} over cap — "
-                     "daimon ruling list --inherited shows all)")
     lines.extend(manifest_lines)
+    if total_over:
+        plural = "s" if total_over != 1 else ""
+        lines.append(f"  (+{total_over} active ruling{plural} over cap — "
+                     "daimon ruling list --inherited shows all)")
     return lines
 
 
