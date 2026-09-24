@@ -23,6 +23,7 @@ from daimon_briefing import (
     refutations,
     requests,
     store,
+    trust,
 )
 
 
@@ -83,6 +84,37 @@ def test_candidate_refutation_waits_and_carries_its_own_verb(project):
     # A refutation is not retired, and a ruling is not overturned.
     assert any("refute ratify" in c for c in _commands(row))
     assert not any("ruling ratify" in c for c in _commands(row))
+
+
+# --- trust quarantines (#1109 Slice 1) ----------------------------------------
+
+
+def test_candidate_quarantine_waits_on_a_human(project):
+    tid = trust.propose(
+        text="the deploy runbook step was fabricated by the agent",
+        kind="decision", reason="no matching PR anywhere",
+        evidence=["issue:1109"], channel="cli-agent", project_dir=project)
+
+    result = pending.queue(project_dir=project)
+
+    assert _ids(result) == [tid]
+    row = result["rows"][0]
+    assert row["kind"] == "trust"
+    assert row["headline"] == "no matching PR anywhere"
+    assert "kind=decision" in row["context"]
+    assert any(f"trust confirm {tid}" in c for c in _commands(row))
+    assert any(f"trust dismiss {tid}" in c for c in _commands(row))
+
+
+def test_an_active_quarantine_owes_nothing(project):
+    trust.propose(
+        text="the deploy runbook step was fabricated by the agent",
+        kind="decision", reason="no matching PR anywhere",
+        evidence=["issue:1109"], channel="cli-tty", project_dir=project)
+
+    result = pending.queue(project_dir=project)
+
+    assert result["rows"] == []
 
 
 # --- amendments --------------------------------------------------------------

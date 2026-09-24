@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from . import (amendments, config, normalize, refutations, relations, requests,
-               store, surfaces, teamproject)
+               store, surfaces, teamproject, trust)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -52,6 +52,7 @@ _REFUTATIONS_NAME = "refutations.jsonl"
 _RELATIONS_NAME = "relations.jsonl"
 _AMENDMENTS_NAME = "amendments.jsonl"
 _REQUESTS_NAME = "requests.jsonl"
+_TRUST_NAME = "trust.jsonl"
 
 # Files that live in the checkpoint store and hold NO item plaintext BY
 # CONSTRUCTION. Since #601 both sets are VIEWS of the declared surface
@@ -124,7 +125,7 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                         known.append(p)
                     elif p.name not in (_EVENTS_NAME, _REFUTATIONS_NAME,
                                         _RELATIONS_NAME, _AMENDMENTS_NAME,
-                                        _REQUESTS_NAME) \
+                                        _REQUESTS_NAME, _TRUST_NAME) \
                             and not _is_plaintext_free(p):
                         unknown.append((p, entry.name))
         except OSError:
@@ -379,6 +380,7 @@ def audit_project(project_dir=None) -> dict:
                                "by_state": {}}
         result["amendments"] = {"records": 0, "rows": 0, "bytes": 0}
         result["requests"] = {"records": 0, "rows": 0, "bytes": 0}
+        result["trust"] = {"records": 0, "rows": 0, "bytes": 0}
         return result
     known, unknown = _checkpoint_candidates()
     # Only this project's blind spots: an unknown file in ANOTHER bucket is
@@ -648,6 +650,49 @@ def audit_project(project_dir=None) -> dict:
     result["requests"] = {"records": len(req_records),
                           "rows": req_rows,
                           "bytes": req_bytes}
+    # Trust ledger (#1109 Slice 1): the sixth bucket ledger, declared at
+    # birth like relations/amendments/requests so it can never repeat #645's
+    # unknown->unscannable->exit-3 arc. One residue check: the hash
+    # intersection over trust's own plaintext declaration (`reason`,
+    # `evidence`) — the deleter (trust.forget_content_key) reads the same
+    # set, so a value the audit reports is a value forget can reach.
+    # `value_key` is a hash, never scanned as plaintext, and never
+    # compared against `tombstoned` — that item-id comparison is a
+    # read-path concern (PR 2), not a residue-of-this-ledger's-own-prose
+    # concern, which is all this block answers.
+    trust_path = config.checkpoint_dir() / slug / _TRUST_NAME
+    try:
+        lines = trust_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []                  # no quarantine recorded yet
+    except (OSError, ValueError):
+        lines = []
+        result["unscannable"].append(str(trust_path))
+    trust_records: set[str] = set()
+    trust_rows = 0
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        trust_rows += 1
+        tid = str(row.get("quarantine_id") or "")
+        if tid:
+            trust_records.add(tid)
+        for h in trust.row_content_keys(row) & keys:
+            result["findings"].append({
+                "path": str(trust_path),
+                "item_id": row.get("quarantine_id"),
+                "content_hash": h, "surface": "trust-ledger"})
+    try:
+        trust_bytes = trust_path.stat().st_size
+    except OSError:
+        trust_bytes = 0
+    result["trust"] = {"records": len(trust_records),
+                       "rows": trust_rows,
+                       "bytes": trust_bytes}
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.

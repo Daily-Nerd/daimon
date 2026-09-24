@@ -75,7 +75,7 @@ import pytest
 
 from daimon_briefing import (amendments, buckets, cli, config, policy,
                              refutations, relations, requests, store,
-                             teamsync)
+                             teamsync, trust)
 
 from tests.conftest import FIXTURES, FakeChat
 import pytest as _pytest
@@ -610,6 +610,41 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_amend_list():
         run(["amend", "list"], 0)
 
+    def r_trust_propose():
+        text = "the deploy runbook step was quietly fabricated by the agent"
+        run(["trust", "propose", "--text", text, "--kind", "decision",
+             "--reason", "no matching PR anywhere",
+             "--evidence", "issue:1109", "--by", "agent"], 0)
+        ctx["trust_id"] = trust.make_id(
+            "decision", store.project_slug(str(proj)), trust.value_key(text))
+
+    def r_trust_show():
+        run(["trust", "show", ctx["trust_id"]], 0)
+
+    def r_trust_list():
+        run(["trust", "list"], 0)
+
+    def r_trust_confirm():
+        # No `--by agent`: isatty is patched True for this whole drive
+        # (line ~89), so the human path is exercised here — the same
+        # posture `r_ruling_ratify` already holds.
+        run(["trust", "confirm", ctx["trust_id"]], 0)
+
+    def r_trust_dismiss():
+        # confirm (above) already moved ctx["trust_id"] to active, and
+        # dismiss only accepts a CANDIDATE — a fresh, distinct value.
+        text = "a second fabricated claim nobody actually reviewed"
+        run(["trust", "propose", "--text", text, "--kind", "belief",
+             "--reason", "no supporting evidence",
+             "--evidence", "issue:1109", "--by", "agent"], 0)
+        dismiss_id = trust.make_id(
+            "belief", store.project_slug(str(proj)), trust.value_key(text))
+        run(["trust", "dismiss", dismiss_id], 0)
+
+    def r_trust_release():
+        # ctx["trust_id"] is active after r_trust_confirm; release lifts it.
+        run(["trust", "release", ctx["trust_id"]], 0)
+
     def _open_request(ask):
         # Self-addressed: the drive's own project is the one bucket that
         # exists, and `--to` takes the project DIRECTORY (a real slug starts
@@ -886,6 +921,12 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("amend", "ratify"): r_amend_ratify,
         ("amend", "reject"): r_amend_reject,
         ("amend", "list"): r_amend_list,
+        ("trust", "propose"): r_trust_propose,
+        ("trust", "show"): r_trust_show,
+        ("trust", "list"): r_trust_list,
+        ("trust", "confirm"): r_trust_confirm,
+        ("trust", "dismiss"): r_trust_dismiss,
+        ("trust", "release"): r_trust_release,
         ("request", "open"): r_request_open,
         ("request", "revise"): r_request_revise,
         ("request", "needs-info"): r_request_needs_info,

@@ -42,7 +42,7 @@ its outgoing asks to someone else) stays behind the explicit flag.
 
 from __future__ import annotations
 
-from . import amendments, config, recall, refutations, requests, store
+from . import amendments, config, recall, refutations, requests, store, trust
 
 # #1087: per-loop text cap on the decide row — the quote alone is not
 # decidable without knowing what it is claimed to change, but the loop's own
@@ -54,8 +54,10 @@ _LOOP_TEXT_CAP = 120
 # Requests first: someone else is blocked on them. Then quote-verified
 # amendments, which are already rendering in briefings as unconfirmed claims.
 # Ledger candidates last: nothing renders them yet, so nothing is misleading
-# while they wait.
-_KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2}
+# while they wait. `trust` ranks WITH ruling/refutation for the identical
+# reason (#1109 Slice 1: nothing reads the quarantine ledger yet either).
+_KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2,
+             "trust": 2}
 
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
@@ -215,6 +217,30 @@ def _ledger_rows(project_dir, slug) -> list:
     return rows
 
 
+def _trust_rows(project_dir, slug) -> list:
+    """Agent-proposed quarantines awaiting a human confirm/dismiss (#1109
+    Slice 1). The one place a human sees a proposed quarantine at all in
+    this slice — nothing else reads this ledger yet."""
+    records = trust.records(project_dir=project_dir)
+    seen = [row.get("quarantine_id") for row in trust.events(
+        project_dir=project_dir)]
+    rows = []
+    for tid, record in records.items():
+        if record.get("state") != "candidate":
+            continue
+        rows.append((_row(
+            kind="trust", record_id=tid, slug=slug,
+            headline=record.get("reason") or "",
+            context=f"kind={record.get('kind')}",
+            waiting_since=record.get("created_at") or "",
+            commands=[
+                ("confirm", f"daimon trust confirm {tid}"),
+                ("dismiss", f"daimon trust dismiss {tid}"),
+            ]),
+            seen.index(tid) if tid in seen else 0))
+    return rows
+
+
 def _loop_text(item_id: str, slug: str) -> str:
     """The target loop's own text, for the decide row (#1087 fact 1/4): a
     quote is not decidable without knowing what it is claimed to change.
@@ -327,7 +353,7 @@ def queue(*, project_dir=None) -> dict:
         pairs += request_pairs
     except Exception:
         pass
-    for source in (_ledger_rows, _amendment_rows):
+    for source in (_ledger_rows, _amendment_rows, _trust_rows):
         try:
             pairs += source(project_dir, slug)
         except Exception:

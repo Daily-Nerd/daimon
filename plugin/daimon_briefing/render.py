@@ -2580,6 +2580,15 @@ def render_privacy_audit(results: list[dict]) -> None:
                   " forget reaches it by value (whole-value match); asks"
                   " merely CONTAINING a forgotten value are beyond the hash"
                   " scan")
+        trs = r.get("trust") or {}
+        if trs.get("rows"):
+            # #1109 Slice 1: same measured-not-silent promise as the ledgers
+            # above. Nothing reads this ledger yet; the audit still proves
+            # forget reaches its own prose.
+            print(f"  trust ledger: {trs['records']} record(s) in"
+                  f" {trs['rows']} row(s), {trs['bytes'] / 1024:.0f} KB —"
+                  " forget reaches it by value (whole-value match); nothing"
+                  " reads this ledger yet")
         ws = r.get("windsurf") or {}
         if ws.get("entries"):
             age = (f", oldest {ws['oldest_days']:.1f}d"
