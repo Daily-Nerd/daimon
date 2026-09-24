@@ -1623,6 +1623,34 @@ def _inherited_active(project_dir) -> list[dict]:
     return out
 
 
+def resolve_ruling(ruling_id: str, project_dir=None) -> tuple:
+    """#1095: resolve `ruling_id` across the MERGED view a check-liveness
+    surface (`ruling show`, `ruling checks`, `check dry-run`, `status`,
+    `stats`) is allowed to name: this project's own bucket first, then
+    layers above it, nearest first (`inherited_active` already gives that
+    order and already drops `request_policy` rows).
+
+    Returns `(record, inherited_from)`: `inherited_from` is `""` for an own
+    ruling (even one that is not currently active — `get` answers for any
+    state, same as every other reader of it) and the absolute owning layer
+    directory for one found only through a layer, where it can only be an
+    ACTIVE ruling (`inherited_active`'s own contract). `record` is `None`
+    when no bucket in the chain holds the id at all.
+
+    Read-only, same posture as `get` (every other caller of it, `ruling
+    show` included, trusts it not to raise for an ordinary lookup) and
+    `inherited_active` (fail-open to `[]` on its own): an id this cannot
+    resolve reads as unknown, never as a crash reaching a reporting
+    surface."""
+    own = get(ruling_id, project_dir=project_dir)
+    if own is not None:
+        return own, ""
+    for record in inherited_active(project_dir):
+        if record.get("refutation_id") == ruling_id:
+            return record, str(record.get("inherited_from") or "")
+    return None, ""
+
+
 def _guard_layer_only_id(ruling_id: str, project_dir) -> None:
     """#1094: refuse when `ruling_id` names nothing in THIS bucket but a
     layer above `project_dir` holds it as a ruling — `retire`, `ratify` and

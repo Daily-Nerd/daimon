@@ -97,6 +97,31 @@ def sync(project_dir=None) -> SyncReport:
         return SyncReport(False, 0, "", f"{type(exc).__name__}: {exc}")
 
 
+def sync_layers(project_dir=None) -> list:
+    """Sync every ruling layer above `project_dir` (#1092) through this SAME
+    `sync` entry point (#1095), so `hooks install` and `check sync` re-arm an
+    inherited check on a machine that has never synced the layer's own
+    project directly.
+
+    Returns `[(layer_dir, SyncReport), ...]`, nearest layer first (the order
+    `config.layer_scopes` already gives). Each layer is keyed on its OWN
+    resolved root, which `sync` never collapses into the caller's root — a
+    layer directory qualifies only when it is outside every git working
+    tree (`config.layer_scopes`'s own #2 guard), so it can never resolve to
+    the child's repo the way a plain subdirectory would. `_sync` already
+    keys manifest entries on `project_dir`, so a repeat run — the layer's own
+    ratify-triggered sync, or this same loop run again from a grandchild
+    below it — cannot double-arm the same id: it lands once per root, never
+    once per (root, descendant) pair.
+
+    Never raises: `config.layer_scopes` itself never raises (its own
+    contract) and `sync` swallows its own exceptions, surfacing a failure as
+    `SyncReport(ok=False, ...)` rather than aborting the loop — so this
+    needs no guard of its own, the same trust `_inherited_active` extends to
+    it."""
+    return [(layer, sync(layer)) for layer in config.layer_scopes(project_dir)]
+
+
 def _sync(project_dir) -> SyncReport:
     resolved = config.resolve_project_dir(project_dir)
     slug = store.project_slug(resolved)
@@ -196,6 +221,19 @@ def audit(project_dir=None) -> Audit:
         return _audit(project_dir)
     except Exception:  # noqa: BLE001 — a report, never a raise
         return Audit("unreadable", [], [], [], [], [], [], False)
+
+
+def audit_layers(project_dir=None) -> list:
+    """Grade every ruling layer above `project_dir` (#1092) the same way
+    `audit` grades the project's own root (#1095), so `check sync --check`
+    reports drift in an inherited check too: a layer's body edited by hand,
+    or a layer whose manifest entry never reached this machine at all.
+
+    Returns `[(layer_dir, Audit), ...]`, nearest layer first. Read-only,
+    same posture as `audit`; never raises (`config.layer_scopes` never
+    raises on its own, and `audit` swallows its own exceptions), so this
+    needs no guard of its own."""
+    return [(layer, audit(layer)) for layer in config.layer_scopes(project_dir)]
 
 
 def _audit(project_dir) -> Audit:
@@ -358,6 +396,15 @@ def _firing_summary(project_dir) -> FiringSummary:
                                                   project_dir=project_dir)}
     except Exception:  # noqa: BLE001
         mine = set()
+    # #1095: a layer's active check arms here too (`sync_layers`, and
+    # `armed_for` matches this project by path prefix), so a firing it logs
+    # has to fold into THIS project's counts or `status`/`stats` read a
+    # gate that fires on every action as one that has never fired.
+    # `inherited_active` never raises on its own (fail-open to `[]`), so
+    # this needs no guard of its own.
+    mine |= {str(record.get("refutation_id") or "")
+            for record in refutations.inherited_active(project_dir)
+            if isinstance(record.get("check"), dict)}
 
     rulings: dict = {}
     hook_seen: dict = {}
@@ -433,7 +480,11 @@ def try_run(ruling_id: str, command: str, *, channel: str, cwd=None,
         raise refutations.RefutationError(
             "a dry run executes the check body, so it requires a human "
             f"channel; this call arrived through {channel!r}")
-    record = refutations.get(ruling_id, project_dir=project_dir)
+    # #1095: resolved across the merged view, own bucket first, so a dry
+    # run against a check inherited from a layer above this project does
+    # not read "unknown ruling" the way a bare `refutations.get` would.
+    record, _inherited_from = refutations.resolve_ruling(
+        ruling_id, project_dir=project_dir)
     if record is None:
         raise refutations.RefutationError(f"unknown ruling: {ruling_id}")
     if record.get("polarity") != "ruling":

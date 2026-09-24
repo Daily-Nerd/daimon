@@ -2791,13 +2791,27 @@ def _status_checks(project_dir, now: float):
     from .. import checks
 
     counts = {"armed": 0, "proposed": 0}
+    own_ids = set()
     for record in refutations.listing(polarity="ruling",
                                       project_dir=project_dir):
         if not isinstance(record.get("check"), dict):
             continue
+        own_ids.add(record["refutation_id"])
         lifecycle = record.get("check_lifecycle")
         if lifecycle in counts:
             counts[lifecycle] += 1
+    # #1095: a layer's active check arms here too (`checks.sync_layers`, and
+    # `armed_for` matches this project by path prefix), so `status` must
+    # count it or a fresh machine reads "0 armed" under a check that is, in
+    # fact, gating every action. `inherited_active` is always `state ==
+    # "active"`, so a check-carrying row is always lifecycle `armed`, and it
+    # never raises on its own (fail-open to `[]`), so this needs no guard of
+    # its own.
+    for record in refutations.inherited_active(project_dir):
+        if record["refutation_id"] in own_ids:
+            continue
+        if isinstance(record.get("check"), dict):
+            counts["armed"] += 1
     if not counts["armed"] and not counts["proposed"]:
         return None
     summary = checks.firing_summary(project_dir)
@@ -3740,16 +3754,26 @@ def _stats_checks(project_dir) -> dict:
     from .. import checks  # local, like cli.hooks: not every verb pays for it
 
     counts = {"armed": 0, "proposed": 0}
+    own_ids: set = set()
     try:
         for record in refutations.listing(polarity="ruling",
                                           project_dir=project_dir):
             if not isinstance(record.get("check"), dict):
                 continue
+            own_ids.add(record["refutation_id"])
             lifecycle = record.get("check_lifecycle")
             if lifecycle in counts:
                 counts[lifecycle] += 1
     except Exception:  # noqa: BLE001
         pass
+    # #1095: a layer's active check arms here too — see `_status_checks`'s
+    # identical addition for the full reasoning. `inherited_active` never
+    # raises on its own, so this needs no guard of its own.
+    for record in refutations.inherited_active(project_dir):
+        if record["refutation_id"] in own_ids:
+            continue
+        if isinstance(record.get("check"), dict):
+            counts["armed"] += 1
     summary = checks.firing_summary(project_dir)
     totals = summary.totals
     # `log_state` travels with the counts. Without it an unreadable log is

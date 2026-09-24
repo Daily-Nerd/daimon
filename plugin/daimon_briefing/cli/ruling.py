@@ -431,6 +431,16 @@ def _cmd_ruling_retire(args) -> int:
 
 def _cmd_ruling_list(args) -> int:
     project = _cli._resolve_project(args.project)
+    # #1095: `--inherited` is a caller-chosen widening of the read scope —
+    # this project's own bucket plus whatever layers sit above it — on the
+    # same terms `--slug`/`--all-projects` already refuse under
+    # DAIMON_TENANT_SCOPED (#899): a host running one tenant per project
+    # directory never wants a read here to cross into another tenant's
+    # layer, and staying silent about the refusal would let the flag look
+    # honored while quietly returning only this project's own rows.
+    if getattr(args, "inherited", False) and config.tenant_scoped():
+        print(f"error: {config.TENANT_SCOPE_REFUSAL}", file=sys.stderr)
+        return 2
     # #969: ask the shared reader for its STATE before asking `listing` for
     # rows. `listing` reaches `_path` through `records` and `fold` with no
     # guard of its own, so on a config fault (a bad byte in ~/.daimon/env,
@@ -495,8 +505,19 @@ def _cmd_ruling_list(args) -> int:
                   f"{project}): nothing has been written from this project{hint}",
                   file=sys.stderr)
             rc = 1
+    # #1095: added AFTER the own-bucket diagnostics above, which are about
+    # THIS project's ledger and must not fire on account of a layer. Own
+    # rows first, layer rows after (`inherited_active` already gives
+    # nearest-layer-first order and drops `request_policy` rows); the
+    # `--state` filter applies to both, same as it does to `rows`.
+    inherited_rows = []
+    if getattr(args, "inherited", False):
+        wanted_states = set(args.state or refutations.STATES)
+        inherited_rows = [row for row in refutations.inherited_active(project)
+                          if row.get("state") in wanted_states]
+    rows_out = rows + inherited_rows
     if args.json:
-        print(_refutation_json(rows))
+        print(_refutation_json(rows_out))
         active_j = sum(1 for r in rows if r.get("state") == "active")
         cap_j = config.ruling_cap()
         if active_j > cap_j:
@@ -504,10 +525,10 @@ def _cmd_ruling_list(args) -> int:
             print(f"over cap: {active_j} active vs cap {cap_j}",
                   file=sys.stderr)
         return rc
-    if not rows:
+    if not rows_out:
         render.render_ledger_lines(["no rulings for this project"])
         return rc
-    render.render_ledger_records([_ruling_lines(row) for row in rows])
+    render.render_ledger_records([_ruling_lines(row) for row in rows_out])
     # The cap binds ACTIVATION; a lowered DAIMON_RULING_CAP leaves the
     # excess active, so the over-cap state must be visible somewhere.
     active = sum(1 for r in rows if r.get("state") == "active")
@@ -521,7 +542,15 @@ def _cmd_ruling_list(args) -> int:
 
 def _cmd_ruling_show(args) -> int:
     project = _cli._resolve_project(args.project)
-    record = refutations.get(args.ruling_id, project_dir=project)
+    # #1095: resolved across the merged view — own bucket first, then a
+    # layer above this project — so `ruling show` on an inherited id prints
+    # the ruling instead of "unknown". The record itself already carries
+    # `inherited_from` when it came from a layer (`resolve_ruling`/
+    # `inherited_active`'s own tagging); `_ruling_lines` renders it and
+    # `--json` passes it straight through, so no second field is threaded
+    # through here.
+    record, _inherited_from = refutations.resolve_ruling(
+        args.ruling_id, project_dir=project)
     if record is None:
         print(f"unknown ruling: {args.ruling_id}")
         return 1
@@ -560,19 +589,23 @@ def _checks_payload(project) -> dict:
     (scar 0053). The other three are `_ruling_lines`, `checks._sync` and the
     viewer payload; none of them changes behavior for this one, and this
     reader adds no new derivation — it renders the value the fold already
-    computed."""
+    computed.
+
+    #1095: after this project's own rows, a second pass over
+    `refutations.inherited_active` contributes one more ruling — a layer's
+    active check, deduped against an id this project already owns its own
+    copy of (own wins, same rule `inherited_active` itself applies). Each of
+    those rows carries `inherited_from` (the absolute owning layer
+    directory); an own row carries `None`, so `--json` never needs a caller
+    to guess which rows are whose."""
     from .. import checks_host
 
-    summary = checks.firing_summary(project)
-    audit = checks.audit(project)
-    rows = []
-    for record in refutations.listing(polarity="ruling", project_dir=project):
-        check = record.get("check")
-        lifecycle = record.get("check_lifecycle")
-        if not isinstance(check, dict) or not lifecycle:
-            continue
+    def _rows_for(record, *, inherited_from: str) -> list:
+        check = record["check"]
+        lifecycle = record["check_lifecycle"]
         ruling_id = record["refutation_id"]
         intent = str(check.get("intent") or "warn")
+        built = []
         for host, profile in checks_host.PROFILES.items():
             mode = checks_host.mode_for(profile, intent)
             # No liveness cell where nothing could have fired. A `never
@@ -593,7 +626,7 @@ def _checks_payload(project) -> dict:
             # Bound once, so the "has it fired" test and the four values
             # that depend on it cannot answer differently.
             seen = fold if fold and fold["last_ts"] else None
-            rows.append({
+            built.append({
                 "ruling_id": ruling_id, "lifecycle": lifecycle,
                 "intent": intent, "host": host, "mode": mode,
                 # Tri-state, and the renderer's only input: None means the
@@ -604,7 +637,28 @@ def _checks_payload(project) -> dict:
                 "clean": seen["clean"] if seen else None,
                 "violation": seen["violation"] if seen else None,
                 "unresolved": seen["unresolved"] if seen else None,
+                "inherited_from": inherited_from or None,
             })
+        return built
+
+    summary = checks.firing_summary(project)
+    audit = checks.audit(project)
+    rows = []
+    own_ids = set()
+    for record in refutations.listing(polarity="ruling", project_dir=project):
+        check = record.get("check")
+        lifecycle = record.get("check_lifecycle")
+        if not isinstance(check, dict) or not lifecycle:
+            continue
+        own_ids.add(record["refutation_id"])
+        rows.extend(_rows_for(record, inherited_from=""))
+    for record in refutations.inherited_active(project):
+        if record["refutation_id"] in own_ids:
+            continue
+        if not isinstance(record.get("check"), dict):
+            continue
+        rows.extend(_rows_for(
+            record, inherited_from=str(record.get("inherited_from") or "")))
     return {"rows": rows, "manifest": audit._asdict(),
             "hosts": summary.hook_seen,
             "log": {"state": summary.log_state, "path": summary.path},
@@ -661,6 +715,15 @@ def _cmd_ruling_check_try(args) -> int:
     lines.append(f"  duration: {outcome.duration_ms} ms")
     lines.append("  Nothing was armed and nothing was logged; this was a "
                  "rehearsal.")
+    # #1095: a second, cheap, read-only resolution purely to name the layer
+    # when `ruling_id` is inherited — `checks.try_run` already resolved it
+    # once to find the body to run, but that call reports through
+    # `checks_runtime.Outcome`, a shape shared with the standalone hook and
+    # not a place to add a CLI-only field.
+    _record, inherited_from = refutations.resolve_ruling(
+        args.ruling_id, project_dir=project)
+    if inherited_from:
+        lines.append(f"  inherited from {config.home_relative(inherited_from)}")
     render.render_ledger_lines(lines)
     _cli._note_usage("ruling:check-try")
     return {"clean": 0, "violation": 1}.get(outcome.outcome, 3)
@@ -851,6 +914,12 @@ def register(sub, fmt) -> None:
                          help="filter by state; repeatable")
     rl_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     rl_list.add_argument("--json", action="store_true", help="machine-readable output")
+    rl_list.add_argument(
+        "--inherited", action="store_true",
+        help="also list active rulings inherited from a ruling layer above "
+             "this project (#1092); each row (each `--json` row too) carries "
+             "`inherited_from`; refused on a tenant-scoped home, the same "
+             "as every caller-chosen cross-project scope (#899)")
     rl_list.set_defaults(func=_cli._cmd_ruling_list)
 
     rl_show = ruling_sub.add_parser("show", help="show one ruling, including "
