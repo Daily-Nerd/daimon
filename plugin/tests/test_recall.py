@@ -2085,6 +2085,28 @@ def test_rebuild_quarantine_scoped_by_kind(tmp_checkpoint_dir, monkeypatch):
     assert kinds == {"belief"}  # the decision copy is gone, the belief survives
 
 
+def test_rebuild_quarantine_spares_a_sibling_of_the_same_kind(tmp_checkpoint_dir, monkeypatch):
+    # A second row of the SAME kind the quarantine targets, but a DIFFERENT
+    # value, must survive: _apply_quarantine_withholding's row scan matches
+    # by kind first (cheap) then by value (the actual gate), and a kind hit
+    # with no value hit must fall through to the next row, not delete it.
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    other_text = "the on-call rotation schedule was rewritten for october"
+    store.write_checkpoint(
+        "S1",
+        _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"},
+                             {"text": other_text, "trust": "inferred"}]),
+        project_dir="/repo/qs")
+    trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/qs")
+    recall.rebuild()
+    hits = recall.search("rotation", all_projects=True)
+    assert any(other_text in h["text"] for h in hits)
+    hits = recall.search("fabricated", all_projects=True)
+    assert not any(_QVALUE in h["text"] for h in hits)
+
+
 def test_suggest_withholds_quarantined_value(tmp_checkpoint_dir, monkeypatch):
     _seed_history()
     trust.propose(
