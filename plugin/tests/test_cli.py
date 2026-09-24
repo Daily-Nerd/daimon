@@ -6402,6 +6402,25 @@ def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkp
     assert "PR #6 state" not in out
 
 
+def test_status_suppressed_lists_a_quarantined_item(tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #1109 PR 2 review: a confirmed quarantine must show up in the
+    # suppressed listing too, the same way a resolution does.
+    from daimon_briefing import store, trust
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    trust.propose(text="Chunk threshold for the serializer", kind="question",
+                  reason="planted, not a real open question",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/x")
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "suppressed items (1):" in out
+    assert "Chunk threshold for the serializer" in out
+    assert "quarantined" in out
+    # the live item must never show up in the suppressed listing
+    assert "PR #6 state" not in out
+
+
 def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, sample_checkpoint, capsys):
     # #103 I2: `daimon resolve` accepts all five item kinds (store._ITEM_LISTS),
     # but withhold used to iterate only carry._CARRIED_KINDS (3 of 5) — a
@@ -9400,6 +9419,25 @@ def test_loops_excludes_item_withheld_by_resolution(tmp_checkpoint_dir, capsys, 
     assert cli.main(["loops"]) == 0
     out = capsys.readouterr().out
     assert resolved_id not in out
+    assert live_id in out
+
+
+def test_loops_excludes_item_withheld_by_quarantine(tmp_checkpoint_dir, capsys, monkeypatch):
+    # #1109 PR 2 review: a quarantined item must not surface as a
+    # `daimon resolve` target either.
+    from daimon_briefing import store, trust
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    cp = _write_cp_with_ids(store)
+    quarantined_id = cp["working_context"]["open_questions"][0]["id"]
+    live_id = cp["working_context"]["open_questions"][1]["id"]
+    trust.propose(text="release pipeline awaiting manual approval step",
+                  kind="question", reason="planted, not a real open question",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/p/A")
+    assert cli.main(["loops"]) == 0
+    out = capsys.readouterr().out
+    assert quarantined_id not in out
+    assert "release pipeline awaiting manual approval step" not in out
     assert live_id in out
 
 

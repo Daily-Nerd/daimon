@@ -2096,6 +2096,77 @@ def test_suggest_withholds_quarantined_value(tmp_checkpoint_dir, monkeypatch):
     assert out == []
 
 
+# ---- #1109 review: trust.jsonl must be a fingerprint INPUT, not just a
+# rebuild-time filter. The tests above all confirm a quarantine BEFORE the
+# index has ever been built, so the very first _ensure_fresh() call does a
+# full rebuild that already reflects it — they give zero signal about
+# staleness. These build/warm the index through the NORMAL read path FIRST,
+# confirm (or release) the quarantine through the real write path SECOND,
+# and never call rebuild() manually anywhere below — only store.INDEX_CONTENT_LEDGERS
+# listing trust.jsonl (recall._fingerprint's own contract) makes the second
+# read notice anything changed.
+
+
+def test_search_notices_a_quarantine_confirmed_after_the_index_was_built(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/fp")
+    # Build the index through the NORMAL read path while nothing is
+    # quarantined yet.
+    recall.warm()
+    assert any(_QVALUE in h["text"]
+              for h in recall.search("fabricated", project_dir="/repo/fp"))
+
+    trust.propose(text=_QVALUE, kind="decision", reason="fabricated finding",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/fp")
+
+    # No recall.rebuild() call here: search() alone must notice.
+    hits = recall.search("fabricated", project_dir="/repo/fp")
+    assert not any(_QVALUE in h["text"] for h in hits)
+
+
+def test_suggest_notices_a_quarantine_confirmed_after_the_index_was_built(
+        tmp_checkpoint_dir, monkeypatch):
+    _seed_history()
+    prompt = "debugging the litellm gateway cache pinning again"
+    # Build the index while nothing is quarantined yet.
+    out = recall.suggest(prompt, project_dir="/repo/x", current_session="S-now")
+    assert out and out[0]["session_id"] == "S-old"
+
+    trust.propose(
+        text="LiteLLM gateway response cache pins identical bad responses",
+        kind="question", reason="planted instruction, not a real finding",
+        evidence=["issue:1109"], channel="cli-tty", project_dir="/repo/x")
+
+    # No recall.rebuild() call here: suggest() alone must notice.
+    out = recall.suggest(prompt, project_dir="/repo/x", current_session="S-now")
+    assert out == []
+
+
+def test_search_notices_a_release_without_manual_rebuild(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/fp2")
+    tid = trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
+                        evidence=["issue:1109"], channel="cli-tty",
+                        project_dir="/repo/fp2")
+    # Build the index through the normal read path while the quarantine is
+    # already active.
+    assert not any(_QVALUE in h["text"]
+                   for h in recall.search("fabricated", project_dir="/repo/fp2"))
+
+    trust.release(tid, channel="cli-tty", project_dir="/repo/fp2")
+
+    # No recall.rebuild() call here: search() alone must notice the release.
+    hits = recall.search("fabricated", project_dir="/repo/fp2")
+    assert any(_QVALUE in h["text"] for h in hits)
+
+
 # ---- #423: inbound gate — foreign content passes admit_foreign before indexing ----
 # The index is machine-global (no project dir in hand), so remote membership is
 # judged by what the sidecar's own daimon-team.toml vouches for: content under
