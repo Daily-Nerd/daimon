@@ -38,7 +38,9 @@ unique salient-term resolution — and by events.jsonl resolutions. Whole-
 checkpoint recency (the v1 flag, measured at coin-flip precision) now only
 populates `frontier`, a silent rank input: newest-checkpoint items tiebreak
 above older ones, no label. Flagged items rank down but are never hidden
-(an old decision is still evidence).
+(an old decision is still evidence: see schema.py's module docstring for
+why plain items carry no admission-state field to filter on in the first
+place).
 
 Project attribution: team copies carry a stamped `project_slug` (#111), and
 write_checkpoint stamps local flat files the same way — pointer rotation

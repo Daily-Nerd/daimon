@@ -13,6 +13,18 @@ carry imports recall — this module sits below the whole chain so any of them
 can import it without a cycle. compare_format_versions lives here for the same
 reason: cli's status check and render's brief note (#294) both need it, and
 neither one imports the other.
+
+Admission-state doctrine: no field below carries a per-item candidate,
+verified, stale, or rejected state, by decision, not omission. Recall
+already ranks a stale, superseded, or contradicted item down instead of
+filtering it (recall.py's header, #835 and #837: `superseded_by` and
+`invalidated_by` rank an item down but never hide it, because an old or
+contradicted decision is still evidence a reader may need). Closed state
+machines exist only where a human ratifies a verdict: rulings
+(refutations.py STATES) and typed edges (relations.py STATES), never plain
+checkpoint items (same rule as #112: a candidate signal never suppresses
+an item). Reopen only with a measured case: a ranked-down item that misled
+an agent, where withholding it outright would have prevented that.
 """
 
 import re
