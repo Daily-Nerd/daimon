@@ -14,6 +14,7 @@ evidence:
   - note: recall.py:760-766 already implements the safe pattern and states the doctrine: counts by project, never content, because crossing projects stays user-invoked (#94/#95)
   - note: daimon#766 design review 2026-08-27 — caught before any code was written
   - note: "firing-review 2026-09-08: 64 fires since the last revision, 92% on the anchored cli/ files (cli/__init__.py, request.py, ruling.py, refute.py, amend.py, lifecycle.py) during active rulings and request work; anchors reviewed and confirmed on-target, hazard still live"
+  - note: "firing-review 2026-09-24: re-verified, hazard live, anchors on target"
 expires:
   condition: "capture excludes daimon's own CLI output from serialization, OR surfaces.py can map a deletion into checkpoint item text that originated as captured tool output"
   review_after: 2027-02-27

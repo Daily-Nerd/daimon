@@ -9,10 +9,12 @@ authors: ["claude-code"]
 anchors:
   - path: hook/daimon-session-brief.py
   - path: hook/daimon-codex-session-start.py
+  - path: hook/daimon-kimi-user-prompt-submit.py
   - path: plugin/daimon_briefing/_hooks/daimon-kimi-user-prompt-submit.py
   - pattern: "project_env\(cwd\)"
 evidence:
   - note: "#1089 discovery, 2026-09-23"
+  - note: "2026-09-24: hook/daimon-kimi-user-prompt-submit.py (source of truth per scar #44) still calls lib.project_env(cwd) with no host argument at lines 104, 125 and 143, as of this commit — a live instance of the gap this scar describes, not yet filed as a fix."
 expires:
   condition: "daimon brief grows a --host flag or another host-identity channel that does not depend on each hook script opting in"
   review_after: 2027-03-23

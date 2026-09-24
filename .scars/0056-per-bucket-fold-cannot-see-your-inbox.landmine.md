@@ -13,6 +13,7 @@ evidence:
   - commit: 8cdbede
   - note: daimon decide shipped listing 4 outgoing asks and omitting 2 asks addressed to this project, verified against real ledgers 2026-08-28
   - note: requests.py:472 records() == fold(events(project_dir)) reads ONE file; requests.py:845 recipient_join() is the cross-bucket join and drops outgoing at :872-874
+  - note: "firing-review 2026-09-24: re-verified, hazard live, anchors on target"
 expires:
   condition: "requests grow a recipient-side index, or open_request dual-writes an addressed-to row into the recipient's bucket, so a per-bucket fold can see an inbox"
   review_after: 2027-02-28

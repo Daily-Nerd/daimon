@@ -1,5 +1,5 @@
 ---
-id: 42
+id: 96
 type: landmine
 title: A residue test that enumerates surfaces via the scrubber's own walk cannot fail for a missed surface class
 severity: high
@@ -14,6 +14,7 @@ evidence:
   - note: test_opt_in_scrubs_local_copies asserted no residue by iterating store.project_surfaces(PROJECT) — the exact set scrub_content_key walks. apply_foreign_tombstones reaches only that set, so the chunk cache, crash log, adapter transcripts, events.jsonl and own team-mirror copies all kept the plaintext while the test passed and the CLI printed success. Found in the #600 slice B design review, 2026-08-07; filed as #620.
   - note: Second instance of the class. The first shipped a forget bug to main because a passing test asserted the residue it was meant to catch (see forget-plaintext-surfaces).
   - note: "firing-review 2026-09-08: this id (42) is shared with 0042-append-forged-key-reads-as-fold-intent.landmine.md, a pre-existing duplicate-id defect flagged separately for a human to renumber, which means the firing log cannot attribute counts between the two by id alone; the fires that land on store.py match this scar's own anchors and the hazard is still live, so anchors are left unchanged"
+  - note: "renumbered 2026-09-24: this scar's id changed from 42 to 96 to resolve the duplicate-id collision with 0042-append-forged-key-reads-as-fold-intent.landmine.md (which keeps id 42). The firing log keys firings by numeric scar id (review.py firing_timestamps reads scar_ids as ints), not filename, and never distinguished the two scars while both held id 42 — so no past firing-log row can be reattributed to this scar specifically after the split; its firing-count review restarts at zero under id 96, and any pre-2026-09-24 fires logged under id 42 stay attributed to whichever of the two scars fired, indistinguishably, which after this rename is effectively the surviving id-42 scar."
 expires:
   condition: "residue assertions enumerate surfaces from surfaces.SURFACES (plaintext=True) rather than from the walk under test"
   review_after: 2027-02-07

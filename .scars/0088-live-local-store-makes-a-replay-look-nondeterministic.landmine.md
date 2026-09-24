@@ -9,9 +9,16 @@ authors: ["claude-code"]
 promoted_by: Kibukx
 promoted_by_source: explicit
 anchors:
-  - path: research/experiments/
+  - path: research/experiments/trust-gate-cost-976/
+  - path: research/experiments/refutation-guard-precision/
+  - path: research/experiments/recall-replay-ab/
+  - path: research/experiments/ungated-arm/
+  - path: research/experiments/merge-fidelity-536/
+  - path: research/experiments/multicycle/conftest.py
+  - path: research/experiments/multicycle/run_multicycle.py
 evidence:
   - note: #976 replay — pass A and pass B were byte-identical, pass C twenty seconds later differed in 485 lines; the cause was four checkpoints written into ~/.daimon/checkpoints by other sessions between the passes, not the runner
+  - note: "firing-review 2026-09-24: the bare `research/experiments/` path matched 325/948 tracked files (34%), most of them one-off analysis scripts and result dumps that never touch the live checkpoint store. Replaced it with the specific harness directories confirmed to read `~/.daimon/checkpoints` or honor `DAIMON_CHECKPOINT_DIR` (grepped repo-wide, then narrowed to research/experiments/): trust-gate-cost-976 (the #976 replay itself), refutation-guard-precision, recall-replay-ab, ungated-arm, merge-fidelity-536, and two individual files inside multicycle/ (conftest.py, run_multicycle.py) rather than the whole multicycle/ prefix, which would have pulled in its 242-file results/ dump for zero extra coverage. New total: 24/948 files (2.5%). A repo-wide content pattern was considered and rejected: `\\.daimon/checkpoints|DAIMON_CHECKPOINT_DIR` alone hits 64/948 files, and most of those are tests deliberately overriding DAIMON_CHECKPOINT_DIR to a tmp dir, the project's standard way to keep manual/CLI runs off the real store — the SAFE pattern, not the hazard — so a bare content anchor would have fired backwards."
 expires:
   condition: "an experiment harness exists that snapshots and fingerprints its substrate by default"
   review_after: 2027-03-01

@@ -1,5 +1,5 @@
 ---
-id: 43
+id: 97
 type: deadend
 title: A markdown or uuid-less transcript fixture silently measures the echo defense as ABSENT — it reports a false verbatim, it does not fail
 severity: medium
@@ -11,6 +11,7 @@ anchors:
   - path: plugin/daimon_briefing/transcript.py
 evidence:
   - note: 2026-08-05, #577 extraction probe. A .md fixture holding `daimon refute guard` output serialized to items tagged `verbatim`, the strongest trust class, because markdown has no tool_use/tool_result blocks for `_daimon_tool_use_ids` to pair. Rebuilt as .jsonl with a correct pair, still 0 rows flagged, because `transcript.py` only surfaces a tool_result row when it also carries a row-level `uuid`. Adding uuids gave `daimon_output_ids: {'u0009'}` on the third attempt.
+  - note: "renumbered 2026-09-24: this scar's id changed from 43 to 97 to resolve the duplicate-id collision with 0043-hook-config-mirror-must-copy-quirks-not-intent.landmine.md (which keeps id 43); filename changed to match. Same caveat as scar 96's renumbering note: the firing log keys by numeric id, so no pre-2026-09-24 firing-log row can be split between the two former id-43 scars after the fact."
 expires:
   condition: "from_file tags daimon output on any transcript shape, or refuses a fixture whose daimon invocations cannot be paired"
   review_after: 2027-02-05

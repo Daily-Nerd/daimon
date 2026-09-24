@@ -7,10 +7,10 @@ confidence: 0.9
 created: 2026-09-23
 authors: ["claude-code"]
 anchors:
-  - path: daimon_briefing/surfaces.py
-  - path: daimon_briefing/buckets.py
-  - path: daimon_briefing/privacy.py
-  - path: tests/test_store_resolution.py
+  - path: plugin/daimon_briefing/surfaces.py
+  - path: plugin/daimon_briefing/buckets.py
+  - path: plugin/daimon_briefing/privacy.py
+  - path: plugin/tests/test_store_resolution.py
 evidence:
   - note: "#1092 store.record_bucket_root() adding checkpoints/{slug}/root broke 23 tests across test_audit_privacy.py, test_write_audit_guard.py, test_bucket_migration.py, and test_store_resolution.py before all four were updated"
 expires:

@@ -7,13 +7,12 @@ confidence: 0.95
 created: 2026-07-02
 authors: [claude, Kibukx]
 anchors:
-  - path: README.md
-  - path: docs/
-  - command: "uv run daimon"
+  - command: "uv run (?!--project\b)daimon\b"
 violation: "uv run daimon"
 evidence:
   - note: "2026-07-02: live verification of D-011 importance emission ran a 320s chunked serialize that silently produced a D-010 checkpoint — `uv run daimon serialize` from repo root had executed ~/.local/share/uv/tools/daimon-briefing (last `uv tool install` snapshot), not the branch code"
   - note: "2026-07-02, same day, second bite: bare `uv run pytest` resolved a leaked foreign VIRTUAL_ENV (fabcap/.venv), so the hook-subprocess e2e tests exercised the stale global tool via PATH — the new recall-inject hook test failed until rerun as `uv run --project plugin pytest`"
+  - note: "firing-review 2026-09-24: dropped the README.md and docs/ path anchors — this scar is about RUNNING the stale global tool, not about editing prose that mentions it, and the two paths matched 1 + 27 = 28/948 tracked files for no act-proof signal. Narrowed the command anchor from a bare substring to `uv run (?!--project\\b)daimon\\b` so it fires only on the dangerous bare invocation and stops matching the already-fixed `uv run --project plugin daimon ...` form. Note: with no path/pattern anchor left, `violation:` can no longer arm — armed_candidates (match.py:387) only evaluates path/pattern anchors against edited files, never command anchors, so this scar's violation regex is now dead code; flagged for the maintainer, not fixed here since the instruction was anchor-only."
 expires:
   condition: "pyproject.toml moves to the repo root, or the global `daimon` uv tool is installed --editable"
   review_after: 2027-01-01
