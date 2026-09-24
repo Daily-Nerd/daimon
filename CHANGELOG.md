@@ -5,6 +5,31 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.50.0](https://github.com/Daily-Nerd/daimon/compare/v0.49.0...v0.50.0) (2026-09-24)
+
+
+### Features
+
+* **briefing:** render inherited layer rulings before the project's own ([#1098](https://github.com/Daily-Nerd/daimon/issues/1098)) ([946b025](https://github.com/Daily-Nerd/daimon/commit/946b025af85b49b5ff2fccfbffb1180e0c4ba83f))
+* **checks:** arm layer checks on every machine and let every command name them ([#1101](https://github.com/Daily-Nerd/daimon/issues/1101)) ([dde07f2](https://github.com/Daily-Nerd/daimon/commit/dde07f20c4e364e1bcbd9ed8cf548e450f4458c1))
+* **decide:** make amendment rows judgeable before confirm ([#1088](https://github.com/Daily-Nerd/daimon/issues/1088)) ([de21d2f](https://github.com/Daily-Nerd/daimon/commit/de21d2fe4f8c7c8bb608d462cfb02d24dec089b1))
+* **requests:** let a human-ratified sender-side ruling open an ask as kind info ([#1085](https://github.com/Daily-Nerd/daimon/issues/1085)) ([4b7d592](https://github.com/Daily-Nerd/daimon/commit/4b7d592f97ad49842eaadf2a796cbaa8e17570b7))
+* **rulings:** name the directories above a project as ruling layers ([#1096](https://github.com/Daily-Nerd/daimon/issues/1096)) ([0d8fdcc](https://github.com/Daily-Nerd/daimon/commit/0d8fdccbd496965457b1c7c0e483ec732501ca48))
+* **rulings:** render code-enforced rulings as one compact line in the briefing ([#1091](https://github.com/Daily-Nerd/daimon/issues/1091)) ([30c2132](https://github.com/Daily-Nerd/daimon/commit/30c2132264f8b9ef8d4cae5fa9dfe863fb01b8d2))
+* **rulings:** write verbs, ceremony and cap guard learn about layers ([#1099](https://github.com/Daily-Nerd/daimon/issues/1099)) ([709885b](https://github.com/Daily-Nerd/daimon/commit/709885bf713baae1aa3f0ce5f71dfda2b0566c53))
+
+
+### Bug Fixes
+
+* **requests:** stamp row origin in every composer and fold request list with its policies ([#1084](https://github.com/Daily-Nerd/daimon/issues/1084)) ([3ab2433](https://github.com/Daily-Nerd/daimon/commit/3ab2433a8e8dc1ccee8d4eabfe3f0b88d9568173))
+* **rulings:** ratify on an active ruling applies its pending agent revision ([#1097](https://github.com/Daily-Nerd/daimon/issues/1097)) ([dbb563c](https://github.com/Daily-Nerd/daimon/commit/dbb563c4cdb26b8a9e92e6b23efb1123ece6975d))
+
+
+### Documentation
+
+* **concepts:** document rulings, negative knowledge and requests ([#1100](https://github.com/Daily-Nerd/daimon/issues/1100)) ([8e2508d](https://github.com/Daily-Nerd/daimon/commit/8e2508d4fce6781a2587d0fbaed8ffd57bbd4e89))
+* **gemini:** say the upstream transcript_path stub was fixed in v0.21.0 and capture is unverified ([#1081](https://github.com/Daily-Nerd/daimon/issues/1081)) ([3847576](https://github.com/Daily-Nerd/daimon/commit/384757613de13a11875f011ced8991c339c1441c))
+
 ## [0.49.0](https://github.com/Daily-Nerd/daimon/compare/v0.48.1...v0.49.0) (2026-09-22)
 
 
