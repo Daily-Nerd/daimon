@@ -175,6 +175,36 @@ def test_confirmation_gate_is_claim_specific(tmp_checkpoint_dir):
     assert len(store.verification_rows("/repo/x")) == 1
 
 
+def test_append_verification_rejects_malformed_claim_key(tmp_checkpoint_dir):
+    slug = store.project_slug("/repo/x")
+    assert not store.append_verification(
+        "o-111aaa", "file-exists", "claim-contradicted",
+        project_dir="/repo/x", claim_key="not-64-hex")
+    assert store.verification_rows("/repo/x") == []
+    assert not (config.checkpoint_dir() / slug / "verification.jsonl").exists()
+
+
+def test_verification_epoch_rejects_non_string():
+    # _created_epoch already returns None for non-strings; this is the guard
+    # standing between that and strptime raising on int/None/list input for
+    # the subsecond world-verdict format.
+    assert store._verification_epoch(None) is None
+    assert store._verification_epoch(12345) is None
+    assert store._verification_epoch(["2026-08-29T10:00:00.000000Z"]) is None
+
+
+def test_append_world_cure_rejects_bad_check_or_claim_key(tmp_checkpoint_dir):
+    slug = store.project_slug("/repo/x")
+    _write_ledger(slug, [_world_row("file-exists")])
+    # Bad check, valid-shaped claim key.
+    assert not store.append_world_cure(
+        "o-111aaa", "dependency-version-ok", "a" * 64, project_dir="/repo/x")
+    # Valid cure check, malformed claim key.
+    assert not store.append_world_cure(
+        "o-111aaa", "file-exists-ok", "not-hex", project_dir="/repo/x")
+    assert store.verification_rows("/repo/x") == [_world_row("file-exists")]
+
+
 def test_same_target_different_assertion_has_different_identity(tmp_path):
     present = worldcheck.check(_carried_cp(["branch feat/probe is unmerged"]),
                                _git_repo(tmp_path / "project"))
