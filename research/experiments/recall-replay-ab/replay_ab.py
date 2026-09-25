@@ -365,13 +365,21 @@ def run(dataset_path, daimon_home, sweep_tokens, out_dir,
                             state["origins"][sid] = (
                                 state["origins"].get(sid, 0) + 1)
                         state["keys"] |= chosen_keys
+                    # Same per-slot table cli._cmd_recall_inject uses: the
+                    # lead slot renders at _LEAD_WIDTH, every later slot at
+                    # _SLOT_WIDTH. `width` is keyword-only with no default
+                    # on the shipped emitter, so the replica passes it too.
+                    own_slug = store.project_slug(row["project"])
                     arms[label] = [{
                         "session_id": str(m["session_id"]),
                         "content_key": normalize.content_key(
                             m.get("text") or ""),
                         "kind": m.get("kind"),
-                        "line": cli._suggest_line(m, terms, row["ts"]),
-                    } for m in chosen]
+                        "line": cli._suggest_line(
+                            m, terms, row["ts"], own_slug=own_slug,
+                            width=cli._LEAD_WIDTH if slot == 0
+                            else cli._SLOT_WIDTH),
+                    } for slot, m in enumerate(chosen)]
                     flags[label] = {"dedup": suppressed, "age_gate": age_gated}
                 prompts.append({**row, "machine": False,
                                 "stratum": _stratum(len(terms)),
