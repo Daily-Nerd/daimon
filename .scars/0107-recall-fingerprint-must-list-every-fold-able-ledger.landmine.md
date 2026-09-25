@@ -1,29 +1,23 @@
 ---
-id: 0
+id: 107
 type: landmine
 title: A new bucket ledger that recall's rebuild folds into the index must also be added to store.INDEX_CONTENT_LEDGERS, or confirming/writing it after the index exists serves stale rows until an unrelated file changes
 severity: critical
 confidence: 0.95
 created: 2026-09-24
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/recall.py
   - pattern: "INDEX_CONTENT_LEDGERS"
 evidence:
   - note: "#1109 PR 2 (Daily-Nerd/daimon), commit 8062bf3 review: trust.jsonl
-      shipped a full read-path withholding pass (recall, briefing, MCP,
-      daimon_ui) with every unit test passing, but recall._fingerprint's
-      staleness key never listed trust.jsonl. Every test that proved
-      withholding confirmed the quarantine BEFORE the index existed, so the
-      very first rebuild already reflected it and gave zero signal about
-      staleness — the bug shipped green."
 expires:
-  condition: "recall._fingerprint is refactored to derive its walked ledger
-    set from a single registry that both the fold code and the fingerprint
-    code read (removing the possibility of updating one without the other)"
+  condition: ""recall._fingerprint is refactored to derive its walked ledger"
   review_after: 2027-03-24
-status: candidate
+status: active
 ---
 
 `recall._fingerprint()` hashes `(path, mtime_ns, size)` for a fixed set of

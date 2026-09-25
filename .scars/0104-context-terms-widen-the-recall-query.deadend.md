@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 104
 type: deadend
 title: Appending session-context terms to the recall query adds coincidence, not precision, four arms refuted
 severity: medium
 confidence: 0.85
 created: 2026-09-24
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: research/experiments/recall-replay-ab/variants.py
   - path: plugin/daimon_briefing/recall.py
-  - pattern: 'salient_terms\(.*prev_assistant|active_topic.*salient_terms'
+violation: "salient_terms\(.*prev_assistant|active_topic.*salient_terms"
 evidence:
-  - note: "pre-registered replay A/B on the maintainer's prompt corpus, 2026-09-24: arms prev, topic, both and placebo_prev all refuted on the holdout split, two blind judges in consensus; per-slot precision of the new rows fell below the rows they displaced in every arm, and prev matched the placebo"
+  - note: pre-registered replay A/B on the maintainer's prompt corpus, 2026-09-24: arms prev, topic, both and placebo_prev all refuted on the holdout split, two blind judges in consensus; per-slot precision of the new rows fell below the rows they displaced in every arm, and prev matched the placebo
 expires:
   condition: "a conjunctive context variant (prompt-term hit AND context-term hit) is measured and passes the pre-registered rule"
   review_after: 2027-03-01
-status: candidate
+status: active
 ---
 
 Do not widen the recall query by appending salient terms pulled from session

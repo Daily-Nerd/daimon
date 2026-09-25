@@ -1,22 +1,22 @@
 ---
-id: 0
+id: 108
 type: landmine
 title: briefing.withhold() has TWO early-return no-op guards a new suppression pool must both list, or it silently does nothing
 severity: medium
 confidence: 0.85
 created: 2026-09-24
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/briefing.py
   - pattern: "not resolved_refs and not candidate_refs and not agent_claim_refs"
 evidence:
   - note: "#1109 PR 2 (Daily-Nerd/daimon) — implementing quarantine's read-path
-      withholding in briefing.withhold()"
 expires:
-  condition: "withhold() is refactored to a single dispatch table over named
-    outcome pools instead of two hand-listed boolean guards"
+  condition: ""withhold() is refactored to a single dispatch table over named"
   review_after: 2027-03-24
-status: candidate
+status: active
 ---
 
 `withhold(checkpoint, resolutions, amendments=None, quarantine=None)` has two
