@@ -1,24 +1,22 @@
 ---
-id: 0
+id: 106
 type: fence
 title: daimon_ui/reader.py's trust.jsonl fold (_active_quarantine_keys) is a hand-duplicated copy of trust.fold — a future event/channel added to trust.py does not reach it automatically
 severity: high
 confidence: 0.85
 created: 2026-09-24
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_ui/reader.py
   - pattern: "_active_quarantine_keys"
 evidence:
   - note: "#1109 PR 2 (Daily-Nerd/daimon) — daimon_ui/reader.py module
-      docstring: 'No daimon imports — files are the seam', so trust.py's
-      quarantine state machine could not be imported and was re-implemented"
 expires:
-  condition: "daimon_ui gains a supported way to call into daimon_briefing
-    (a stable read-only API boundary, not a raw-file duplicate), or trust.py's
-    event/channel vocabulary is frozen by its own test contract"
+  condition: ""daimon_ui gains a supported way to call into daimon_briefing"
   review_after: 2027-03-24
-status: candidate
+status: active
 ---
 
 `daimon_ui/reader.py` carries no import of `daimon_briefing` by design (file
