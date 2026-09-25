@@ -65,6 +65,7 @@ do itself: nothing here writes to disk, so `check()` RETURNS the failures and
 the CLI appends them.
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -131,10 +132,10 @@ _TAMPERED = "TAMPERED"      # bytes no longer match the signed outputs_hash
 
 # `check()`'s return is a counter dict the CLI turns into usage counters. This
 # reserved key (underscore, same convention as the transient `_worldcheck`
-# stamp) carries the receipt FAILURES out to a caller that may write them to
+# stamp) carries verdicts out to a caller that may write them to
 # the #376 rejection ledger — worldcheck itself writes nothing to disk, which
-# is the whole reason the rows travel rather than land here. Present only when
-# something actually failed, so the happy-path dict stays all-ints.
+# is the whole reason the rows travel rather than land here. Confirmation
+# candidates travel too; the caller persists only cures of known contradictions.
 LEDGER_KEY = "_ledger"
 _LEDGER_CHECK = "receipt"
 _LEDGER_REASONS = {_TAMPERED: "receipt-tampered", _INVALID: "receipt-invalid"}
@@ -147,6 +148,17 @@ _LEDGER_REASONS = {_TAMPERED: "receipt-tampered", _INVALID: "receipt-invalid"}
 # worldcheck's write-nothing-to-disk contract stays intact.
 LEDGER_CONFIRM_CHECK = "receipt-ok"
 _LEDGER_CONFIRM_REASON = "receipt-valid"
+
+# Explicitly scoped: dependency-version keeps its existing flag-only behavior.
+_WORLD_LEDGER_CLASSES = frozenset({PR_STATE, BRANCH_STATE, FILE_EXISTS})
+
+
+def _claim_key(cls, claim):
+    """Bind a verdict to its target AND assertion without logging raw targets."""
+    fields = claim._asdict()
+    fields["expected"] = sorted(fields["expected"])
+    payload = json.dumps([cls, fields], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 # A probe: how to spawn it, what to feed its stdin, and how to read its answer.
 # The parser rides PER PROBE because the classes speak different dialects
@@ -800,12 +812,10 @@ def check(checkpoint, project_dir) -> dict:
     occurred (#397), counted per CLAIM, so the caller's usage counters
     measure the fires-true rate per claim class. Zero-claim checkpoints
     return all-zeros and cost one iteration, no probe of any kind.
-    Confirmed items are untouched: only a contradiction earns any surface
-    at all.
-
-    #439 adds ONE non-counter key, `LEDGER_KEY`, present only when a receipt
-    verification actually failed: [(item_ref, check, reason)] rows for the
-    caller to append to the rejection ledger. A caller that ignores it loses
+    `LEDGER_KEY` carries receipt triples (item_ref, check, reason) and world
+    claim quadruples (item_ref, check, reason, claim_key), including candidate
+    confirmations. The CLI gates confirmations on a matching contradiction
+    before writing. Skipped probes emit no evidence. A caller that ignores it loses
     the ledger row and nothing else — the counters and the flags are whole on
     their own. A caller that iterates the dict blindly must pop it first."""
     # dict, not dict[str, int]: LEDGER_KEY carries list rows (#439).
@@ -858,7 +868,7 @@ def check(checkpoint, project_dir) -> dict:
     probes = _receipt_probes(plan, results)  # phase (a) answers into results
     probes.update(_gh_probes(plan, project_dir))
     results.update(_run_probes(probes, cwd=project_dir, deadline=deadline))
-    ledger = []
+    ledger: list[tuple] = []
     # #830/#833: the aggregate three count once per ITEM (the docstring's
     # promise, and what cli emits usage events under), under the precedence
     # rollup — a starved claim's "skipped" must never swallow a real answer
@@ -898,6 +908,12 @@ def check(checkpoint, project_dir) -> dict:
                 # An id-less item yields no row: a ledger entry nobody can
                 # trace back is noise (serializer.verification_rejections).
                 ledger.append((ref, _LEDGER_CHECK, _LEDGER_REASONS[value]))
+        ref = item.get("id")
+        if (cls in _WORLD_LEDGER_CLASSES and outcome != "skipped"
+                and isinstance(ref, str) and ref):
+            check_name = cls + ("-ok" if outcome == "confirmed" else "")
+            ledger.append((ref, check_name, "claim-" + outcome,
+                           _claim_key(cls, claim)))
         prev = rollup.get(id(item))
         if prev is None or _OUTCOME_RANK[outcome] > _OUTCOME_RANK[prev]:
             rollup[id(item)] = outcome

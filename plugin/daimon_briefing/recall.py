@@ -15,19 +15,18 @@ Schema: `items` carries one row per cognitive item (text/trust/kind/author/
 project_slug/session_id/created), plus two Graphiti-inspired interval slots:
 `superseded_by` (populated — see below) and `invalidated_by` (#835: populated
 from DERIVED contradiction evidence only — the per-bucket verification
-ledger's worldcheck receipt-contradiction rows fold in at rebuild as
-"<check>:<reason>@<ts>", latest by ts, author-scoped to this install. The
+ledger's receipt, file, branch, and PR/issue contradiction rows fold in at
+rebuild as "<check>:<reason>@<ts>", author-scoped to this install. The
 value is EVIDENCE, not a verdict: "was contradicted by <evidence> at <ts>"
-— no confirmation rows or cure path exist yet, so it never means "is
-currently false". Replacement and contradiction are independent axes:
+and never means "is currently false". Replacement and contradiction are independent axes:
 neither write ever touches the other. Authority precedent: model-flagged
 contradictions never mint the link — derived world evidence writes it, or
 nothing does. #837 made the read surfaces honor it: search sorts a
 contradicted row below a merely-replaced one, suggest demotes it harder than
 supersession does, and both CLI renderers mark it. None of them filters —
 the evidence is machine-local, so burial stays visible and reversible
-rather than silent. #839 gave it a cure: a later confirmation clears the
-slot. #866 gave the cure a record of its own in `cured_by`, because
+rather than silent. A later confirmation clears only its matching claim;
+the slot clears once no claim remains contradicted. #866 gave the cure a record of its own in `cured_by`, because
 clearing the mark had made "challenged and survived" indistinguishable
 from "never questioned", which is the same collapse inverted). A contentless FTS5 table indexes text +
 quote for MATCH; rows join back to `items` by rowid.
@@ -697,42 +696,28 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     return reaped
 
 
-# #835: the ledger checks that may write invalidated_by — worldcheck's
-# receipt-validity contradiction evidence (worldcheck._LEDGER_CHECK; pinned
-# equal by test rather than imported, so recall's import graph stays free of
-# worldcheck's probe machinery). Capture-time rejection rows ("quote",
+# Derived verification checks eligible for invalidated_by. Keep recall's
+# import graph free of worldcheck's probe machinery. Capture-time rows ("quote",
 # "outcome", #376) describe the CAPTURE, not later disproof, and never
 # write; model-flagged contradictions have no path here at all — authority
 # precedent: derived world evidence writes the slot, or nothing does.
-_INVALIDATION_CHECKS = ("receipt",)
+_INVALIDATION_CHECKS = ("receipt", *sorted(store.WORLD_CHECKS))
 # #839: the cure half. Derived evidence clears derived evidence, which needs
 # no widening of #836's authority model: the same probe that contradicted the
 # claim is the one now saying it holds. A HUMAN ruling channel is the other
 # half and stays deliberately unbuilt, because that WOULD widen the model.
-_CONFIRMATION_CHECKS = ("receipt-ok",)
+_CONFIRMATION_CHECKS = ("receipt-ok", *sorted(store.WORLD_CURE_CHECKS))
 
 
 def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
     """Fold each project bucket's verification ledger into invalidated_by
-    (#835): the LATEST worldcheck receipt-contradiction row per item marks
-    that item's rows with "<check>:<reason>@<ts>" — a scalar evidence
-    reference, the same convention superseded_by keeps (a bare TEXT value,
-    never a JSON blob).
+    using "<check>:<reason>@<ts>" as the scalar evidence reference.
 
-    SEMANTICS (#836 review): the field records the latest contradiction
-    EVIDENCE — "was contradicted by <evidence> at <ts>" — never a
-    present-tense verdict. worldcheck appends no confirmation rows and no
-    cure path exists yet (human resolve / confirmation rows are the named
-    follow-up), so a populated value means "a probe once contradicted
-    this", not "this is currently false".
-
-    Latest by TS, NEVER line order — store.resolutions' documented contract,
-    mirrored: the ledger interleaves concurrent writers and clock-skewed
-    appends (the cli re-appends rows every briefing), so rows validate,
-    dedup to one per item_ref by parsed-ts maximum (an unstamped row never
-    displaces a stamped one; equal stamps fall to canonical-JSON order,
-    deterministic under any line order), then ONE UPDATE per item through
-    the (item_id, project_slug) identity index.
+    Store folds the latest verdict per claim by timestamp, not append order.
+    Any outstanding contradiction wins across an item's claims; only when
+    all are cleared does the latest confirmation become its cure witness.
+    The scalar names evidence, never a present-tense truth verdict. Full
+    claim-specific history remains in verification.jsonl.
 
     Binding, each choice deliberate (#836 review):
     - the SAME bucket directory is read and bound (bucket=): bucket names
@@ -761,10 +746,9 @@ def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
         # would drift, and the write side deciding "currently contradicted"
         # differently from the read side is the recorder-and-verifier
         # mismatch this codebase keeps paying for.
-        for ref, row in store.latest_receipt_verdicts(bucket=bucket).items():
-            # A confirmation CLEARS rather than stamping: the slot holds the
-            # latest contradiction evidence, and once the latest evidence is
-            # a confirmation there is no contradiction evidence to hold.
+        for ref, row in store.latest_invalidation_verdicts(bucket=bucket).items():
+            # The aggregate returns a confirmation only when no claim still
+            # stands contradicted. A receipt cure alone cannot clear a file.
             evidence = f"{row['check']}:{row['reason']}@{row['ts']}"
             contradicted = row["verdict"] == "contradicted"
             # The ratchet still releases: a cure clears invalidated_by. What

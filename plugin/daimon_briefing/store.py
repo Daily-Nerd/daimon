@@ -2061,7 +2061,7 @@ def _ledger_path(project_dir=None):
 
 
 def append_verification(item_ref: str, check: str, reason: str,
-                        project_dir=None) -> bool:
+                        project_dir=None, *, claim_key: str | None = None) -> bool:
     """One appended line per REJECTION the checker made (#376): a verbatim
     quote that missed the transcript, an outcome claim with no signal cited.
 
@@ -2082,6 +2082,8 @@ def append_verification(item_ref: str, check: str, reason: str,
     never fail a capture."""
     if config.is_disabled():
         return False
+    if claim_key is not None and not _valid_claim_key(claim_key):
+        return False
     project_dir = _resolved(project_dir)
     path = _ledger_path(project_dir)
     if path is None:
@@ -2090,10 +2092,14 @@ def append_verification(item_ref: str, check: str, reason: str,
         # #431: the scrub runs through policy.admit_row — same redaction as
         # before, but mounted on the policy seam so the write-audit guard can
         # correlate the row on disk with its admission.
-        row = policy.admit_row(
-            {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-             "check": check, "item_ref": item_ref, "reason": reason},
-            redact_fields=("check", "reason"))
+        # World verdicts can contradict, cure, and contradict again within
+        # one second. Keep the existing receipt encoding compatible.
+        stamp = "%Y-%m-%dT%H:%M:%S.%fZ" if claim_key else "%Y-%m-%dT%H:%M:%SZ"
+        row = {"ts": datetime.now(timezone.utc).strftime(stamp),
+               "check": check, "item_ref": item_ref, "reason": reason}
+        if claim_key is not None:
+            row["claim_key"] = claim_key
+        row = policy.admit_row(row, redact_fields=("check", "reason"))
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
         with path.open("a", encoding="utf-8") as f:
@@ -2159,6 +2165,27 @@ def verification_rows(project_dir=None, *, bucket=None) -> list:
 # Pinned equal to worldcheck's names by test rather than imported.
 RECEIPT_CHECK = "receipt"        # a contradiction: this receipt did not hold
 RECEIPT_CURE_CHECK = "receipt-ok"  # the same probe, later, saying it does
+WORLD_CHECKS = frozenset({"file-exists", "branch-state", "pr-state"})
+WORLD_CURE_CHECKS = frozenset(check + "-ok" for check in WORLD_CHECKS)
+
+
+def _valid_claim_key(value) -> bool:
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def _verification_epoch(value) -> float | None:
+    """Ledger timestamps support subsecond world verdicts and legacy seconds."""
+    epoch = _created_epoch(value)
+    if epoch is not None:
+        return epoch
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
 
 
 def latest_receipt_verdicts(*, bucket=None, project_dir=None) -> dict:
@@ -2180,10 +2207,37 @@ def latest_receipt_verdicts(*, bucket=None, project_dir=None) -> dict:
     cure fabricates trust, so a row this module could not have written decides
     neither. Each returned row carries a `verdict` of "contradicted" or
     "confirmed"; callers never re-derive it from the check name."""
+    return _latest_verification_verdicts(bucket=bucket, project_dir=project_dir)
+
+
+def latest_world_verdicts(*, bucket=None, project_dir=None) -> dict:
+    """Latest verdict per (item, probe class, claim hash), never across claims."""
+    return _latest_verification_verdicts(bucket=bucket, project_dir=project_dir,
+                                         world=True)
+
+
+def _latest_verification_verdicts(*, bucket=None, project_dir=None,
+                                  world=False) -> dict:
+    # Shared timestamp/tie ordering for both writer gates and the index fold.
     latest: dict = {}
     for row in verification_rows(bucket=bucket, project_dir=project_dir):
         check = row.get("check")
-        if check == RECEIPT_CHECK:
+        if world:
+            if not isinstance(check, str):
+                continue
+            if check in WORLD_CHECKS:
+                verdict = "contradicted"
+                cls = check
+            elif check in WORLD_CURE_CHECKS:
+                verdict = "confirmed"
+                cls = check.removesuffix("-ok")
+            else:
+                continue
+            if (not _valid_claim_key(row.get("claim_key"))
+                    or row.get("reason") != "claim-" + verdict
+                    or _verification_epoch(row.get("ts")) is None):
+                continue
+        elif check == RECEIPT_CHECK:
             verdict = "contradicted"
         elif check == RECEIPT_CURE_CHECK:
             verdict = "confirmed"
@@ -2195,22 +2249,51 @@ def latest_receipt_verdicts(*, bucket=None, project_dir=None) -> dict:
                 and isinstance(reason, str) and reason
                 and isinstance(ts, str) and ts):
             continue
-        cur = latest.get(ref)
+        key = (ref, cls, row["claim_key"]) if world else ref
+        cur = latest.get(key)
         if cur is None:
-            latest[ref] = {**row, "verdict": verdict}
+            latest[key] = {**row, "verdict": verdict}
             continue
-        new_e = _created_epoch(ts)
+        new_e = _verification_epoch(ts)
         if new_e is None:
             continue  # an unstamped row never displaces a stamped one
-        cur_e = _created_epoch(cur.get("ts"))
+        cur_e = _verification_epoch(cur.get("ts"))
         if (cur_e is None or new_e > cur_e
                 or (new_e == cur_e
                     and json.dumps(row, sort_keys=True, ensure_ascii=False)
                     > json.dumps({k: v for k, v in cur.items()
                                   if k != "verdict"},
                                  sort_keys=True, ensure_ascii=False))):
-            latest[ref] = {**row, "verdict": verdict}
+            latest[key] = {**row, "verdict": verdict}
     return latest
+
+
+def latest_invalidation_verdicts(*, bucket=None, project_dir=None) -> dict:
+    """One display witness per item; ANY outstanding contradiction wins.
+
+    Confirmations release only their own claim. When all claims are cleared,
+    retain the latest cure as the display witness. Full evidence stays in the
+    ledger; the index's scalar is only a summary.
+    """
+    rows = [*latest_receipt_verdicts(bucket=bucket, project_dir=project_dir).values(),
+            *latest_world_verdicts(bucket=bucket, project_dir=project_dir).values()]
+    rows.sort(key=lambda row: (row["verdict"] == "contradicted",
+                              _verification_epoch(row["ts"]) or float("-inf"),
+                              json.dumps(row, sort_keys=True, ensure_ascii=False)))
+    return {row["item_ref"]: row for row in rows}
+
+
+def append_world_cure(item_ref: str, check: str, claim_key: str,
+                      project_dir=None) -> bool:
+    """Persist a confirmation only for the exact claim currently contradicted."""
+    if check not in WORLD_CURE_CHECKS or not _valid_claim_key(claim_key):
+        return False
+    key = (item_ref, check.removesuffix("-ok"), claim_key)
+    if latest_world_verdicts(project_dir=project_dir).get(
+            key, {}).get("verdict") != "contradicted":
+        return False
+    return append_verification(item_ref, check, "claim-confirmed",
+                               project_dir=project_dir, claim_key=claim_key)
 
 
 def append_receipt_cure(item_ref: str, project_dir=None) -> bool:
@@ -2245,7 +2328,7 @@ def verification_counts(project_dir=None) -> dict:
         # #839: a cure is not a catch. This counter and the `total` the CLI
         # sums from it answer "has verification ever caught anything here",
         # so a row recording that a check PASSED must not inflate it.
-        if check and check != RECEIPT_CURE_CHECK:
+        if check and check != RECEIPT_CURE_CHECK and check not in WORLD_CURE_CHECKS:
             out[check] = out.get(check, 0) + 1
     return out
 

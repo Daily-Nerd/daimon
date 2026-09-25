@@ -162,6 +162,22 @@ worldcheck — la salida queda byte-idéntica a una build sin él.
 |---|---|---|
 | `DAIMON_WORLDCHECK` | off | Cuando es verdadero, chequea las afirmaciones de estado de PR/issue arrastradas contra la realidad vía probes de solo-lectura con `gh` al momento del briefing. |
 
+Con worldcheck habilitado, las contradicciones detectadas sobre la existencia
+de archivos y ramas o el estado de PR/issues también bajan la prioridad del
+ítem en las búsquedas y sugerencias de recall. El ítem sigue visible. Una
+confirmación posterior solo levanta la contradicción de esa misma afirmación;
+un recibo válido no levanta una contradicción por un archivo ausente. Los
+chequeos omitidos o no disponibles no invalidan ni levantan contradicciones.
+Los chequeos de versiones de dependencias siguen anotando solo el briefing.
+La CLI compartida registra la evidencia; el renderizador no escribe estos datos.
+
+| Superficie | Recolección de evidencia con `DAIMON_WORLDCHECK=1` |
+|---|---|
+| Claude Code, Codex, Gemini CLI, Kimi Code | Soportada mediante el hook existente de `daimon brief` de cada host. |
+| Windsurf | Soportada cuando el agente ejecuta `daimon brief --team`; sin inyección automática al iniciar sesión. |
+| MCP `daimon_brief`, hook de briefing en proceso de Hermes | No soportada: estas rutas de renderizado no ejecutan worldcheck. Usá la CLI para recolectar evidencia. |
+| Recall por CLI y MCP, sugerencias proactivas | Consumen la evidencia registrada mediante el índice compartido de recall. |
+
 ## Recall
 
 | Variable | Default | Qué hace |

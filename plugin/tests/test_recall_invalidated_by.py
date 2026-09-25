@@ -294,7 +294,8 @@ def test_invalidation_check_names_match_worldchecks_ledger():
     """Divergence guard: recall's filter constant and worldcheck's ledger
     check name are pinned equal rather than imported (recall's import graph
     stays free of worldcheck's probe machinery)."""
-    assert recall._INVALIDATION_CHECKS == (worldcheck._LEDGER_CHECK,)
+    assert recall._INVALIDATION_CHECKS == (
+        worldcheck._LEDGER_CHECK, "branch-state", "file-exists", "pr-state")
 
 
 # --- #837: the READ surfaces ------------------------------------------------
@@ -566,7 +567,8 @@ def test_an_unknown_check_neither_marks_nor_cures(tmp_checkpoint_dir,
 def test_the_cure_check_names_match_worldchecks(monkeypatch):
     """Divergence guard, mirroring the contradiction one: the three modules
     pin equal names rather than importing each other."""
-    assert recall._CONFIRMATION_CHECKS == (worldcheck.LEDGER_CONFIRM_CHECK,)
+    assert recall._CONFIRMATION_CHECKS == (
+        worldcheck.LEDGER_CONFIRM_CHECK, "branch-state-ok", "file-exists-ok", "pr-state-ok")
     assert store.RECEIPT_CURE_CHECK == worldcheck.LEDGER_CONFIRM_CHECK
 
 
