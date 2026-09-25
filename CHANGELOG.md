@@ -5,6 +5,22 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.51.0](https://github.com/Daily-Nerd/daimon/compare/v0.50.0...v0.51.0) (2026-09-25)
+
+
+### Features
+
+* **trust:** add a human quarantine ledger, write-only ([#1110](https://github.com/Daily-Nerd/daimon/issues/1110)) ([92ca0af](https://github.com/Daily-Nerd/daimon/commit/92ca0af358117b42f2cbea7ac5928d8fcd30061b))
+* **trust:** withhold confirmed quarantines on every read path ([#1111](https://github.com/Daily-Nerd/daimon/issues/1111)) ([17af8fa](https://github.com/Daily-Nerd/daimon/commit/17af8fadb1b70c50f6257e336b1d6fb11096c662))
+
+
+### Bug Fixes
+
+* **recall:** persist worldcheck claim evidence ([#1116](https://github.com/Daily-Nerd/daimon/issues/1116)) ([e663e97](https://github.com/Daily-Nerd/daimon/commit/e663e976456bdd6a13b5637067483d5fae281ac3))
+* **render:** group checks table headers by layer, not just ruling id ([#1106](https://github.com/Daily-Nerd/daimon/issues/1106)) ([5ac584b](https://github.com/Daily-Nerd/daimon/commit/5ac584bd0ce86e95f60f829410987422a14ebbb5)), closes [#1105](https://github.com/Daily-Nerd/daimon/issues/1105)
+* **research:** pass width and own_slug to _suggest_line so the replay harness runs again ([#1113](https://github.com/Daily-Nerd/daimon/issues/1113)) ([283ae5a](https://github.com/Daily-Nerd/daimon/commit/283ae5ae7f9cc97adc64c26f992c2c593d00b051))
+* **rulings:** stop a retired own copy from shadowing an active layer ruling ([#1103](https://github.com/Daily-Nerd/daimon/issues/1103)) ([6a9b58f](https://github.com/Daily-Nerd/daimon/commit/6a9b58fce8862fea82fc467072fb4dfbf92eb6e2)), closes [#1102](https://github.com/Daily-Nerd/daimon/issues/1102)
+
 ## [0.50.0](https://github.com/Daily-Nerd/daimon/compare/v0.49.0...v0.50.0) (2026-09-24)
 
 
