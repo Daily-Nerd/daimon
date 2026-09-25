@@ -745,8 +745,8 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     if checkpoint and worldcheck_project and config.worldcheck_enabled():
         try:
             wc_stats = dict(worldcheck.check(checkpoint, worldcheck_project))
-            # #439: the receipt-validity class returns its FAILURES alongside
-            # the counters, under a reserved key. worldcheck writes nothing to
+            # Claim probes return evidence alongside counters under a
+            # reserved key. worldcheck writes nothing to
             # disk by contract, so the rejection-ledger append happens HERE,
             # where the project route is already resolved. Popped first: the
             # counter loop below must see an all-ints dict.
@@ -2457,13 +2457,20 @@ def _write_worldcheck_ledger(rows, route) -> None:
     the first place that knows where the item currently stands. A cure for an
     item nothing contradicted changes nothing, and writing it anyway would
     turn a ledger of problems found into a ledger of work done."""
+    # World rows additionally carry a hash binding target and assertion.
     # `check_name`, not `check`: the #943 `daimon check` verb family is
     # imported into this module under that name, and a loop variable shadowing
     # it is the kind of collision that is silent until the shadowed name is
     # needed in the same scope.
-    for item_ref, check_name, reason in rows:
+    for row in rows:
+        item_ref, check_name, reason = row[:3]
         if check_name == worldcheck.LEDGER_CONFIRM_CHECK:
             store.append_receipt_cure(item_ref, project_dir=route)
+        elif check_name in store.WORLD_CURE_CHECKS:
+            store.append_world_cure(item_ref, check_name, row[3], project_dir=route)
+        elif check_name in store.WORLD_CHECKS:
+            store.append_verification(item_ref, check_name, reason,
+                                      project_dir=route, claim_key=row[3])
         else:
             store.append_verification(item_ref, check_name, reason,
                                       project_dir=route)

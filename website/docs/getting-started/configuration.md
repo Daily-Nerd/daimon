@@ -149,6 +149,21 @@ worldcheck module at all — output stays byte-identical to a build without it.
 |---|---|---|
 | `DAIMON_WORLDCHECK` | off | When truthy, spot-check carried PR/issue-state claims against reality via read-only `gh` probes at brief time. |
 
+With worldcheck enabled, contradictions from file-existence, branch-existence,
+and PR/issue-state probes also demote the item in recall search and suggestions.
+The item stays visible. A later confirmation clears only the same claim's
+contradiction; a valid receipt cannot clear a missing-file finding. Skipped or
+unavailable probes neither invalidate nor clear anything. Dependency-version
+checks still annotate the briefing only. Evidence is recorded by the shared
+briefing CLI used by host integrations, not by the renderer.
+
+| Surface | World-evidence collection with `DAIMON_WORLDCHECK=1` |
+|---|---|
+| Claude Code, Codex, Gemini CLI, Kimi Code | Supported through each host's existing `daimon brief` hook. |
+| Windsurf | Supported when the agent runs `daimon brief --team`; no automatic session-start injection. |
+| MCP `daimon_brief`, Hermes in-process briefing hook | Unsupported: these render paths do not run worldcheck. Use the CLI to collect evidence. |
+| CLI and MCP recall, proactive suggestions | Consume recorded evidence through the shared recall index. |
+
 ## Recall
 
 | Variable | Default | What it does |

@@ -192,6 +192,8 @@ def test_check_confirmed_stamps_ground_not_contradiction(monkeypatch, fake_gh, p
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review"])
     stats = worldcheck.check(cp, proj)
+    assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (
+        "o-000001", "pr-state-ok", "claim-confirmed")
     assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0,
                      "pr-state:confirmed": 1}
     item = cp["working_context"]["open_questions"][0]
@@ -214,6 +216,8 @@ def test_check_contradicted_stamps_item(monkeypatch, fake_gh, proj):
     _enable_probes(monkeypatch, gh)
     cp = _cp(["PR #60 awaiting review"])
     stats = worldcheck.check(cp, proj)
+    assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (
+        "o-000001", "pr-state", "claim-contradicted")
     assert stats == {"confirmed": 0, "contradicted": 1, "skipped": 0,
                      "pr-state:contradicted": 1}
     item = cp["working_context"]["open_questions"][0]
@@ -418,6 +422,8 @@ def test_check_file_exists_confirmed(monkeypatch, tmp_path):
     monkeypatch.setattr(worldcheck, "_github_repo", lambda project: False)
     cp = _cp(["the fix lives in src/fix.py"])
     stats = worldcheck.check(cp, str(project))
+    assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (
+        "o-000001", "file-exists-ok", "claim-confirmed")
     assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0,
                      "file-exists:confirmed": 1}
     assert "_worldcheck" not in cp["working_context"]["open_questions"][0]
@@ -429,6 +435,8 @@ def test_check_file_exists_contradicted_stamps_item(monkeypatch, tmp_path):
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
     cp = _cp(["the fix lives in src/fix.py"])
     stats = worldcheck.check(cp, str(project))
+    assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (
+        "o-000001", "file-exists", "claim-contradicted")
     assert stats == {"confirmed": 0, "contradicted": 1, "skipped": 0,
                      "file-exists:contradicted": 1}
     assert cp["working_context"]["open_questions"][0]["_worldcheck"] == {
@@ -538,6 +546,8 @@ def test_check_branch_present_confirmed(monkeypatch, tmp_path):
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
     cp = _cp(["work continues on branch feat/397-slice-2, unmerged"])
     stats = worldcheck.check(cp, str(project))
+    assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (
+        "o-000001", "branch-state-ok", "claim-confirmed")
     assert stats == {"confirmed": 1, "contradicted": 0, "skipped": 0,
                      "branch-state:confirmed": 1}
 
@@ -547,6 +557,8 @@ def test_check_branch_gone_contradicted(monkeypatch, tmp_path):
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
     cp = _cp(["work continues on branch feat/397-slice-2, unmerged"])
     stats = worldcheck.check(cp, str(project))
+    assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (
+        "o-000001", "branch-state", "claim-contradicted")
     assert stats == {"confirmed": 0, "contradicted": 1, "skipped": 0,
                      "branch-state:contradicted": 1}
     assert cp["working_context"]["open_questions"][0]["_worldcheck"] == {
@@ -1407,7 +1419,9 @@ def test_receipt_never_overwrites_a_text_class_stamp(receipts_on, proj,
     assert item["_worldcheck"] == {"note": "#60 merged", "status": "merged"}
     assert stats["pr-state:contradicted"] == 1
     assert stats["receipt-validity:contradicted"] == 1
-    assert stats[worldcheck.LEDGER_KEY] == [("o-000001", "receipt", "receipt-invalid")]
+    assert stats[worldcheck.LEDGER_KEY][0][:3] == (
+        "o-000001", "pr-state", "claim-contradicted")
+    assert stats[worldcheck.LEDGER_KEY][1:] == [("o-000001", "receipt", "receipt-invalid")]
 
 
 def test_two_axis_item_counts_once_in_the_aggregates(receipts_on, proj,
@@ -1439,7 +1453,9 @@ def test_two_axis_rollup_contradiction_takes_precedence(receipts_on, proj,
     assert stats["confirmed"] == 0
     assert stats["pr-state:confirmed"] == 1
     assert stats["receipt-validity:contradicted"] == 1
-    assert stats[worldcheck.LEDGER_KEY] == [
+    assert stats[worldcheck.LEDGER_KEY][0][:3] == (
+        "o-000001", "pr-state-ok", "claim-confirmed")
+    assert stats[worldcheck.LEDGER_KEY][1:] == [
         ("o-000001", "receipt", "receipt-invalid")]
     item = cp["working_context"]["open_questions"][0]
     assert item["_worldcheck_confirmed"] is True
