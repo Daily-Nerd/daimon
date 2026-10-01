@@ -1887,6 +1887,49 @@ def done(request_id: str, *, channel: str, evidence: str,
         raise RequestError("completion not written")
 
 
+def _reply_refusal(request_id: str, state: str) -> str:
+    """#1117: why a reply was refused, naming the verb that carries text there."""
+    hints = {
+        "open": (f"accept it first with `daimon request accept {request_id} "
+                 f"--note ...`, or report it satisfied with `daimon request "
+                 f"done {request_id} --evidence ...`"),
+        "needs-info": (f"the sender is waiting on you; `daimon request "
+                       f"needs-info {request_id} --note ...` carries more "
+                       "text, and `accept --note` takes it on"),
+        "rejected": ("a rejected request takes no more text; the sender "
+                     "opens a new one"),
+        "done": "it is already closed; `done --evidence` carried the answer",
+    }
+    return (f"{request_id} is {state}, and a reply only attaches to an "
+            f"accepted request: {hints.get(state, 'wait for the accept')}")
+
+
+def reply(request_id: str, note: str, evidence: str | None = None, *,
+          channel: str, author: str | None = None, project_dir=None) -> None:
+    """#1117: send the sender a progress note on a request this project has
+    ACCEPTED, without moving its state. Either channel. The state check goes
+    through `recipient_join`, never `_answering` (bucket-local, scar 0056);
+    the fold re-checks every rule because `append` is public. Fresh stamp
+    (scar 0090), records the epoch it answers. Note first, so an empty note
+    is the refusal a caller sees."""
+    text = _scrub("note", note)
+    proof = _scrub("evidence", evidence, required=False)
+    if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
+        raise RequestError(f"invalid request id: {request_id!r}")
+    record = recipient_join(project_dir=project_dir).get(request_id)
+    if record is None:
+        raise RequestError(f"unknown request: {request_id}")
+    if record["state"] != "accepted":
+        raise RequestError(_reply_refusal(request_id, record["state"]))
+    row = _stamp("replied", request_id, channel, author=author)
+    row["note"] = text
+    if proof:
+        row["evidence"] = proof
+    row["revision"] = record["revision"]
+    if not append(row, project_dir=project_dir):
+        raise RequestError("reply not written")
+
+
 def verify_done(request_id: str, *, role: str, project_dir=None) -> bool:
     """Record the session-end byte-check outcome for an agent's `done`
     evidence quote (channel `mechanical`), written to THIS bucket — where

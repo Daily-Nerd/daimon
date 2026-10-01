@@ -6441,3 +6441,62 @@ def test_a_self_addressed_ask_may_be_replied_to_from_its_own_bucket(project):
     # Passes before the guard too: it pins the self-addressed exception.
     assert [r["note"] for r in requests.sender_join(
         project_dir=project)[q_id]["replies"]] == [REPLY_NOTE]
+
+
+def _replied_rows(rdir):
+    return [r for r in requests.events(project_dir=rdir)
+            if r["event"] == "replied"]
+
+
+def test_reply_lands_with_the_epoch_it_answers(project):
+    rdir = "/p/reply-lib-epoch"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.needs_info(q_id, channel="cli-tty", note="?", project_dir=rdir)
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    requests.reply(q_id, "line one\nline two", "PR 12", channel="cli-tty",
+                   project_dir=rdir)
+    requests.reply(q_id, "progress token=abcdefghijkl", channel="cli-agent",
+                   project_dir=rdir)
+    first, second = _joined(rdir, q_id)["replies"]
+    assert first["note"] == "line one line two"  # one line for the panel
+    assert first["evidence"] == "PR 12" and first["revision"] == 1
+    assert first["authority"] == "human" and second["authority"] == "agent"
+    assert "evidence" not in _replied_rows(rdir)[1]
+    assert "abcdefghijkl" not in requests._path(rdir).read_text(
+        encoding="utf-8")
+
+
+@pytest.mark.parametrize("state,verb", [
+    ("open", "accept"), ("needs-info", "needs-info"),
+    ("rejected", "rejected"), ("done", "done")])
+def test_reply_refuses_every_state_but_accepted_and_names_the_verb(
+        project, state, verb):
+    q_id, rdir = _in_state(project, state)
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests.reply(q_id, REPLY_NOTE, channel="cli-agent",
+                       project_dir=rdir)
+    assert f"is {state}" in str(exc_info.value) and verb in str(exc_info.value)
+    assert _replied_rows(rdir) == []
+
+
+def test_reply_refusals_write_nothing(project, monkeypatch):
+    q_id, rdir = _in_state(project, "accepted")
+    other = "/p/reply-lib-stranger"
+    _seed_bucket(other)
+    bad = [
+        (q_id, "   ", rdir, requests.RequestError, "note is required"),
+        (q_id, "x" * (requests._MAX_TEXT + 1), rdir,
+         requests.RequestTooLong, "too long"),
+        ("q-0123456789ab", "ok", rdir, requests.RequestError, "unknown request"),
+        ("nonsense", "ok", rdir, requests.RequestError, "invalid request id"),
+        (q_id, "ok", other, requests.RequestError, "unknown request"),
+    ]
+    for rid, note, where, exc, match in bad:
+        with pytest.raises(exc, match=match):
+            requests.reply(rid, note, channel="cli-agent", project_dir=where)
+    assert _replied_rows(rdir) == []
+    monkeypatch.setattr(requests, "append", lambda *a, **k: False)
+    with pytest.raises(requests.RequestError, match="reply not written"):
+        requests.reply(q_id, "ok", channel="cli-agent", project_dir=rdir)
