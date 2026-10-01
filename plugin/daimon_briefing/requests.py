@@ -686,6 +686,17 @@ def _epoch_of(row: dict, fallback: int) -> int:
     return fallback
 
 
+def _reply_from_sender(current: dict, row: dict, own_slug: str) -> bool:
+    """#1117: whether the request's SENDER wrote this `replied` row, by the
+    transient `_origin_slug`. A FOREIGN founder is the sender; a LOCAL one is
+    the composer's own bucket (origin ""), unless self-addressed. `records()`
+    has no `own_slug`, so it skips the local half."""
+    origin = str(row.get("_origin_slug") or "")
+    if current["from_slug"]:
+        return origin == current["from_slug"]
+    return bool(own_slug) and current["to"] != own_slug and origin == ""
+
+
 def fold(rows: list[dict], policies=frozenset(), *,
          policies_by_to: dict[str, frozenset] | None = None,
          own_slug: str = "",
@@ -1031,7 +1042,8 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # neither `updated_at` (drives every sort) nor `history_count`.
             note = str(row.get("note") or "").strip()
             if (not note or authority not in ("human", "agent")
-                    or current["state"] != "accepted"):
+                    or current["state"] != "accepted"
+                    or _reply_from_sender(current, row, own_slug)):
                 continue
             entry = {
                 "ts": row.get("ts"),

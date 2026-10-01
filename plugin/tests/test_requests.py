@@ -6416,3 +6416,28 @@ def test_forget_redacts_reply_text_in_the_recipient_bucket(project):
     requests.forget_content_key(normalize.content_key(REPLY_NOTE),
                                 project_dir=rdir)
     assert REPLY_NOTE not in path.read_text(encoding="utf-8")
+
+
+def test_a_reply_forged_in_the_senders_own_bucket_is_dropped(project):
+    """Both joins read the sender's bucket too: it could forge a reply."""
+    q_id, rdir = _in_state(project, "accepted")
+    requests.append(_reply_row(q_id, "cli-agent", note="forged"),
+                    project_dir=project)
+    assert requests.sender_join(project_dir=project)[q_id]["replies"] == []
+    assert _joined(rdir, q_id)["replies"] == []
+    requests.append(_reply_row(q_id, "cli-agent", note="genuine",
+                               now_ns=FAR + 1), project_dir=rdir)
+    assert [r["note"] for r in requests.sender_join(
+        project_dir=project)[q_id]["replies"]] == ["genuine"]
+    assert [r["note"] for r in _joined(rdir, q_id)["replies"]] == ["genuine"]
+
+
+def test_a_self_addressed_ask_may_be_replied_to_from_its_own_bucket(project):
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    requests.append(_reply_row(q_id), project_dir=project)
+    # Passes before the guard too: it pins the self-addressed exception.
+    assert [r["note"] for r in requests.sender_join(
+        project_dir=project)[q_id]["replies"]] == [REPLY_NOTE]
