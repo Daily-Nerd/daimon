@@ -416,10 +416,37 @@ def _resolve_to(raw) -> str:
     return store.project_slug(str(raw or "").strip()) or ""
 
 
+def _is_bare_word(raw) -> bool:
+    """A value that could be the short name `daimon projects` prints: no path
+    separator and no leading dash (a leading dash is a slug's signature)."""
+    text = str(raw or "").strip()
+    return bool(text) and not text.startswith("-") and not any(
+        sep in text for sep in ("/", "\\"))
+
+
 def _cmd_request_open(args) -> int:
     project = _cli._resolve_project(args.project)
     to = _resolve_to(args.to)
     known = {b["slug"] for b in store.list_buckets()}
+    names: set = set()
+    if to not in known and _is_bare_word(args.to):
+        # #1118: the short name is what `daimon projects` shows. The lookup
+        # goes through projects_rows so a tenant-scoped home sees only its own
+        # bucket, and it feeds `--to` on `open` ONLY, never write routing
+        # (scar 0071). Only names and slugs are printed (scar 0055).
+        value = str(args.to).strip()
+        rows = [r for r in _cli.projects_rows(args.project) if r["name"]]
+        hits = sorted(r["slug"] for r in rows if r["name"] == value)
+        if len(hits) > 1:
+            _cli._note_usage("request:open:ambiguous-to")
+            print(f"{value!r} names {len(hits)} buckets: "
+                  f"{', '.join(hits)}; pass the full slug")
+            return 1
+        if hits:
+            to = hits[0]
+            print(f"resolved {value!r} -> {to}", file=sys.stderr)
+        else:
+            names = {r["name"] for r in rows}
     if to not in known and not args.anyway:
         # D4: an unknown slug is not a typo the ledger can absorb silently —
         # such a record renders "never surfaced" forever and never decays,
@@ -427,7 +454,8 @@ def _cmd_request_open(args) -> int:
         _cli._note_usage("request:open:unknown-to")
         print(f"no daimon bucket named {to!r} — that project has never "
               "serialized a session on this machine")
-        near = difflib.get_close_matches(to, sorted(known), n=_SUGGESTIONS)
+        near = difflib.get_close_matches(
+            to, sorted(known | names), n=_SUGGESTIONS)
         if near:
             print(f"  did you mean: {', '.join(near)}")
         print("  or re-run with --anyway to record the ask regardless")

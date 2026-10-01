@@ -11,6 +11,8 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 
+import re
+
 import pytest
 
 from daimon_briefing import (config, normalize, pending, redact, refutations,
@@ -2881,6 +2883,89 @@ def test_cli_open_anyway_records_it_with_a_loud_warning(project, recipient,
     assert len(requests.records(project_dir=project)) == 1
     out = capsys.readouterr().out
     assert "warning:" in out and "never surfaced" in out
+
+
+def _cli_open_to(project, to, *extra):
+    from daimon_briefing import cli
+    return cli.main(["request", "open", f"--to={to}", "--ask", ASK,
+                     "--why", WHY, "--by", "agent", "--project", project,
+                     *extra])
+
+
+def _bucket_named(path, session):
+    store.write_checkpoint(session, {
+        "session_id": session, "created": "2026-08-16T00:00:00Z",
+    }, project_dir=path)
+    return store.project_slug(path)
+
+
+def test_cli_open_resolves_a_unique_short_name(project, recipient, capsys):
+    """#1118: `daimon projects` prints the short name, so that is the
+    spelling people type. A unique one lands on its bucket and says so."""
+    assert _cli_open_to(project, "recipient") == 0
+    assert next(iter(requests.records(
+        project_dir=project).values()))["to"] == recipient
+    assert f"resolved 'recipient' -> {recipient}" in capsys.readouterr().err
+
+
+def test_cli_open_refuses_a_short_name_shared_by_two_buckets(
+        project, recipient, capsys):
+    other = _bucket_named("/q/recipient", "S-q")
+    assert _cli_open_to(project, "recipient") == 1
+    assert not requests.records(project_dir=project)
+    out = capsys.readouterr().out
+    both = ", ".join(sorted([recipient, other]))
+    assert f"'recipient' names 2 buckets: {both}; pass the full slug" in out
+
+
+def test_cli_open_unknown_bare_name_suggests_short_names(
+        project, recipient, capsys):
+    assert _cli_open_to(project, "recipent") == 1
+    assert not requests.records(project_dir=project)
+    out = capsys.readouterr().out
+    assert "no daimon bucket named 'recipent'" in out
+    near = out.split("did you mean:")[1].splitlines()[0]
+    # the bare short name, not merely the slug that contains it
+    assert re.search(r"(?<![-\w])recipient\b", near)
+    assert "--anyway" in out
+
+
+def test_cli_open_short_name_skips_buckets_without_a_name(
+        project, recipient, monkeypatch, capsys):
+    """A pre-#672 bucket has no project_name; it can only be a slug."""
+    real = store.list_buckets
+
+    def nameless():
+        return [dict(b, checkpoint={k: v for k, v in b["checkpoint"].items()
+                                    if k != "project_name"})
+                for b in real()]
+
+    monkeypatch.setattr(store, "list_buckets", nameless)
+    assert _cli_open_to(project, "recipient") == 1
+    assert not requests.records(project_dir=project)
+
+
+def test_cli_open_short_name_honors_tenant_scope(
+        project, recipient, monkeypatch, capsys):
+    """#899: a tenant-scoped home must not learn a foreign bucket's name by
+    having it resolve."""
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    assert _cli_open_to(project, "recipient") == 1
+    assert not requests.records(project_dir=project)
+    captured = capsys.readouterr()
+    assert "resolved" not in captured.err
+    assert "no daimon bucket named 'recipient'" in captured.out
+
+
+@pytest.mark.parametrize("spelling", ["path", "slug"])
+def test_cli_open_path_and_slug_spellings_never_try_the_name_lookup(
+        project, recipient, monkeypatch, capsys, spelling):
+    def boom(*a, **k):
+        raise AssertionError("name lookup ran")
+    monkeypatch.setattr("daimon_briefing.cli.projects_rows", boom)
+    assert _cli_open_to(project, OTHER if spelling == "path"
+                        else recipient) == 0
+    assert capsys.readouterr().err == ""
 
 
 def test_cli_open_defaults_kind_to_work(project, recipient, capsys):
