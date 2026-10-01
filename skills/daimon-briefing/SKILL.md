@@ -60,6 +60,9 @@ An accepted request another project sent, satisfied by this session's work
 (a shipped fix, a merged PR), takes `daimon request done <id> --evidence
 "<quote>" --by agent`; `daimon request inbox` lists every one still owed.
 Same quote discipline, same byte-check at session end.
+An accepted request still in progress takes `daimon request reply <id> --note
+"<what moved>" --by agent`. It moves no state, so the request stays owed until
+`request done`. The sender sees it labeled as an unverified agent claim.
 
 Request text fields (`ask`, `why`, `evidence`) cap at 2000 characters. Long
 content belongs in an artifact the request points at (a file, an issue, a

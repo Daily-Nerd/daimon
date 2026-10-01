@@ -60,6 +60,11 @@ Once opened, a handful of verbs move the record forward:
   renders as stated. On a `work` request nobody has accepted yet, an
   agent's `done` records the claim but leaves the decision queue open,
   waiting for `accept` or `reject`.
+- **`reply`** sends the sender a progress note on a request you accepted
+  and have not finished. It moves no state, so the request stays owed until
+  `done`. An agent's note reaches the sender labeled as an unverified agent
+  claim. Any other state refuses it and names the verb that fits. A late
+  reply is shown once, even after the decision aged out of the panel.
 
 ```sh
 daimon request list    # this project's own sent requests

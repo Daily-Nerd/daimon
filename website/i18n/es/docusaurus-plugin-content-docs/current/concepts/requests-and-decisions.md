@@ -65,6 +65,12 @@ Una vez abierta, un puñado de verbos la hacen avanzar:
   como está. En una solicitud `work` que nadie aceptó todavía, el `done` de
   un agente registra el reclamo pero deja abierta la cola de decisión, a la
   espera de `accept` o `reject`.
+- **`reply`** le manda al remitente una nota de avance sobre una solicitud
+  que aceptaste y no terminaste. No mueve ningún estado, así que la
+  solicitud sigue pendiente hasta el `done`. La nota de un agente llega
+  marcada como un reclamo de agente sin verificar. Cualquier otro estado la
+  rechaza y nombra el verbo que corresponde. Una respuesta tardía se
+  muestra una vez, aunque la decisión ya haya salido del panel.
 
 ```sh
 daimon request list    # las solicitudes que este proyecto envió

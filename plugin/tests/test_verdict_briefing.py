@@ -152,3 +152,16 @@ def test_full_cap_worst_case_stays_within_budget_share(tmp_checkpoint_dir):
     section = "\n".join(lines)
     assert briefing.estimate_tokens(section) <= 300
     assert briefing.estimate_tokens(section) >= 100
+
+
+def test_panel_shows_one_reply_line_per_record(tmp_checkpoint_dir):
+    q_id = _ask()
+    requests.accept(q_id, channel="cli-tty", project_dir=RECIPIENT)
+    assert not any("Reply" in ln for ln in briefing.verdict_panel_lines(SENDER))
+    requests.reply(q_id, "first note", channel="cli-tty",
+                   project_dir=RECIPIENT)
+    requests.reply(q_id, "second note", channel="cli-agent",
+                   project_dir=RECIPIENT)
+    lines = briefing.verdict_panel_lines(SENDER)
+    assert "  Reply (agent, unverified): second note (+1 earlier)" in lines
+    assert not any("first note" in ln for ln in lines)

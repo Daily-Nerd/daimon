@@ -197,3 +197,37 @@ def test_verdict_panel_never_shows_a_kind_marker(tmp_checkpoint_dir):
     requests.accept(q_id, channel="cli-tty", project_dir=recipient_dir)
     lines = briefing.verdict_panel_lines(sender)
     assert not any("[info]" in ln for ln in lines)
+
+
+def _later_session(project_dir, session, minutes):
+    from datetime import datetime, timedelta, timezone
+    created = (datetime.now(timezone.utc)
+               + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    store.write_checkpoint(session, {
+        "session_id": session, "created": created,
+        "working_context": {"recent_decisions": [
+            {"text": "x", "trust": "inferred"}]},
+    }, project_dir=project_dir)
+
+
+def test_cli_brief_shows_and_stamps_a_late_reply_once(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    sender, recipient_dir = "/p/cbv-sender-reply", "/p/cbv-recipient-reply"
+    q_id = _accepted_ask(sender, recipient_dir=recipient_dir)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", sender)
+    assert cli.main(["brief"]) == 0          # stamps the epoch's decision
+    for n in range(requests.VERDICT_PANEL_SESSIONS + 1):
+        _later_session(sender, f"S-cbv-later-{n}", 10 * (n + 1))
+    capsys.readouterr()
+    assert cli.main(["brief"]) == 0          # expired: nothing to show
+    assert "Reply" not in capsys.readouterr().out
+    requests.reply(q_id, "halfway, schema merged", channel="cli-tty",
+                   project_dir=recipient_dir)
+    assert cli.main(["brief"]) == 0          # the late reply re-enters
+    assert "Reply: halfway, schema merged" in capsys.readouterr().out
+    assert cli.main(["brief"]) == 0          # seen once, never again
+    assert "halfway, schema merged" not in capsys.readouterr().out
+    stamps = [r for r in requests.events(project_dir=sender)
+              if r.get("event") == "verdict_surfaced"
+              and r.get("request_id") == q_id]
+    assert [bool(r.get("reply_event_id")) for r in stamps] == [False, True]

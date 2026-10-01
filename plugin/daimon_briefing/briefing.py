@@ -1728,6 +1728,10 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
         done_evidence = str(row.get("done_evidence") or "").strip()
         if done_evidence:
             lines.append(f"  Done: {_truncate_request_ask(done_evidence)}")
+        # #1117: ONE capped line (skeleton the trimmer keeps).
+        reply_line = requests.latest_reply_line(row)
+        if reply_line:
+            lines.append(f"  {reply_line}")
     overflow = entry.get("overflow") or 0
     if overflow:
         plural = "s" if overflow != 1 else ""

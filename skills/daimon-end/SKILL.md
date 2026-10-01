@@ -29,6 +29,8 @@ a `prev` pointer. So it does not need to be perfect to be useful.
    daimon amend <id> --change progressed|blocked|changed --evidence "<quote>" --by agent
    # an accepted inbound request this session satisfied (a shipped fix, a merged PR)
    daimon request done <id> --evidence "<quote>" --by agent
+   # an accepted inbound request still in progress: tell the sender, without closing it
+   daimon request reply <id> --note "<what moved>" --by agent
    # a carried item this session re-checked against the world and found still true
    daimon reverify <id> --evidence "<what you checked>"
    ```
@@ -143,6 +145,7 @@ never reads it, so a fact placed there is lost to every other host.
 | The ONE thing the next session should do first | `daimon handoff "<do X first, beware Y>"` (2000 chars max) | the top of the next briefing |
 | A briefed loop this session closed | `daimon resolve <id> --by agent --evidence "<quote>"` | the briefing withholds it once byte-checked |
 | An accepted inbound request this session satisfied | `daimon request done <id> --evidence "<quote>" --by agent` | the sender's brief and `daimon request inbox`, as a claim until byte-checked |
+| An accepted inbound request still in progress | `daimon request reply <id> --note "<what moved>" --by agent` | the sender's brief and live nudge, as an unverified agent claim |
 | A rule that must never decay (a threshold, a boundary, a standing constraint) | `daimon ruling propose --subject ... --verdict ... --scope ... --evidence ... --by agent` | every briefing, once a human ratifies; 7 active per project by default |
 | An approach that was tried and failed | `daimon refute add ... --by agent` | `daimon refute guard` before anyone revives it |
 | A briefed item that moved but did not close | `daimon amend <id> --change progressed|blocked|changed --evidence "<quote>" --by agent` | the briefing, as an unconfirmed claim until a human settles it |

@@ -306,6 +306,11 @@ the ask.
 an artifact the request points at (a file, an issue, a PR), with the
 request carrying the pointer, not the full text.
 
+While an accepted request is still in progress, `daimon request reply <id>
+--note "<text>" --by agent` sends the sender an update without closing it.
+It works only while the request is accepted, and the sender sees it labeled
+as an unverified agent claim.
+
 Requests OTHER projects addressed to this one surface automatically at the
 top of `daimon brief` (capped at 3, with an overflow count). `daimon request
 inbox` lists every one, including any the panel dropped for attention —

@@ -87,12 +87,14 @@ DEFAULT_KIND = "work"
 # Same safe direction on an older reader — the row drops, the record reads as
 # undelivered, and the worst case is a repeated nudge rather than a swallowed
 # verdict. An attention row like `surfaced`, never a state.
+# #1117 widens it a fifth time with `replied` (progress note): an older
+# reader drops the row and nothing else changes. Its guards live in the fold.
 EVENTS = frozenset({
     "opened", "revised",
     "surfaced", "verdict_surfaced", "delivered", "verdict_delivered",
     "owed_delivered",
     "needs_info", "accepted", "rejected", "done",
-    "suppressed", "done_verified",
+    "suppressed", "done_verified", "replied",
 })
 # What a folded record may render as. `stale` is derived from consumption
 # (PR 3's baton count), never appended — an expiry that writes a row would
@@ -156,9 +158,11 @@ _EVENT_RANK = {
     "needs_info": 5,
     "accepted": 6,
     "rejected": 7,
+    # #1117: after every verdict, so a same-`order` verdict folds FIRST.
+    "replied": 8,
     # Verification always answers a `done` row that already landed; ranked
     # last so a same-`order` tie (test clocks) can never process it first.
-    "done_verified": 8,
+    "done_verified": 9,
 }
 _REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
 # store.project_slug's output: every non-word char munged to '-'. Validated
@@ -673,6 +677,26 @@ def _covered_by_policy(row: dict, origin_slugs, policies) -> bool:
     return False
 
 
+def _epoch_of(row: dict, fallback: int) -> int:
+    """#1117: the epoch a reply row names, else `fallback`; a bool, negative
+    or string read off disk never becomes an epoch."""
+    value = row.get("revision")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return fallback
+
+
+def _reply_from_sender(current: dict, row: dict, own_slug: str) -> bool:
+    """#1117: whether the request's SENDER wrote this `replied` row, by the
+    transient `_origin_slug`. A FOREIGN founder is the sender; a LOCAL one is
+    the composer's own bucket (origin ""), unless self-addressed. `records()`
+    has no `own_slug`, so it skips the local half."""
+    origin = str(row.get("_origin_slug") or "")
+    if current["from_slug"]:
+        return origin == current["from_slug"]
+    return bool(own_slug) and current["to"] != own_slug and origin == ""
+
+
 def fold(rows: list[dict], policies=frozenset(), *,
          policies_by_to: dict[str, frozenset] | None = None,
          own_slug: str = "",
@@ -837,6 +861,8 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 # on a currently-claimed completion — never on disk, the
                 # session-end byte-check's own timestamp.
                 "done_verified_at": None,
+                # #1117: progress notes, oldest first; never moves state.
+                "replies": [],
                 "suppressed": False,
                 # {revision epoch: earliest surfaced ts} — D1's write-once
                 # dedup key, consulted by the stamp PR 2 adds.
@@ -870,6 +896,11 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 # `delivered` stamp for this very epoch. Reusing that key
                 # would drop the accepted card with no error and no log line.
                 "owed_delivered": {},
+                # #1117: replies the sender's surfaces showed, from the
+                # optional `reply_event_id` on the stamp rows. Mappings used
+                # as sets: `request list --json` and MCP `json.dumps` the fold.
+                "replies_surfaced": {},
+                "replies_delivered": {},
                 "revision": 0,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
@@ -1009,6 +1040,33 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # not make a settled record sort as freshly updated.
             current["history_count"] += 1
             continue
+        if event == "replied":
+            # #1117: no state moves, so `continue` BEFORE the generic
+            # `_STATE_BY_EVENT` indexing (KeyError on every read otherwise).
+            # `append` is public: the reader decides. A dropped row bumps
+            # neither `updated_at` (drives every sort) nor `history_count`.
+            note = str(row.get("note") or "").strip()
+            if (not note or authority not in ("human", "agent")
+                    or current["state"] != "accepted"
+                    or _reply_from_sender(current, row, own_slug)):
+                continue
+            entry = {
+                "ts": row.get("ts"),
+                "note": note,
+                "channel": row.get("channel"),
+                "authority": authority,
+                "author": row.get("author"),
+                "act_author": row.get("act_author"),
+                "event_id": str(row.get("event_id") or ""),
+                "revision": _epoch_of(row, current["revision"]),
+            }
+            evidence = str(row.get("evidence") or "").strip()
+            if evidence:  # scar 0042: the ABSENCE of a key is data
+                entry["evidence"] = evidence
+            current["replies"].append(entry)
+            current["history_count"] += 1
+            current["updated_at"] = row.get("ts") or current["updated_at"]
+            continue
         if event == "surfaced":
             # Attention rows never move the record's rendered age: a brief
             # that merely showed the card must not make an untouched ask
@@ -1024,6 +1082,11 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # rows therefore replay into their own epoch with no migration.
             current["verdict_surfaced"].setdefault(current["revision"],
                                                    row.get("ts"))
+            # #1117: the row may name the reply it showed; the epoch anchor
+            # above keeps the FIRST stamp, so expiry never restarts.
+            reply_id = str(row.get("reply_event_id") or "").strip()
+            if reply_id:
+                current["replies_surfaced"].setdefault(reply_id, row.get("ts"))
             continue
         if event == "verdict_delivered":
             # Same posture as `delivered`, sender side. A row that lost its
@@ -1034,6 +1097,10 @@ def fold(rows: list[dict], policies=frozenset(), *,
             if session:
                 current["verdict_delivered"].setdefault(current["revision"], {}) \
                     .setdefault(session, row.get("ts"))
+                reply_id = str(row.get("reply_event_id") or "").strip()
+                if reply_id:  # #1117: per session, like the epoch stamp
+                    current["replies_delivered"].setdefault(session, {}) \
+                        .setdefault(reply_id, row.get("ts"))
             continue
         if event == "owed_delivered":
             # #885, same posture as `delivered` and `verdict_delivered`: an
@@ -1834,6 +1901,49 @@ def done(request_id: str, *, channel: str, evidence: str,
         raise RequestError("completion not written")
 
 
+def _reply_refusal(request_id: str, state: str) -> str:
+    """#1117: why a reply was refused, naming the verb that carries text there."""
+    hints = {
+        "open": (f"accept it first with `daimon request accept {request_id} "
+                 f"--note ...`, or report it satisfied with `daimon request "
+                 f"done {request_id} --evidence ...`"),
+        "needs-info": (f"the sender is waiting on you; `daimon request "
+                       f"needs-info {request_id} --note ...` carries more "
+                       "text, and `accept --note` takes it on"),
+        "rejected": ("a rejected request takes no more text; the sender "
+                     "opens a new one"),
+        "done": "it is already closed; `done --evidence` carried the answer",
+    }
+    return (f"{request_id} is {state}, and a reply only attaches to an "
+            f"accepted request: {hints.get(state, 'wait for the accept')}")
+
+
+def reply(request_id: str, note: str, evidence: str | None = None, *,
+          channel: str, author: str | None = None, project_dir=None) -> None:
+    """#1117: send the sender a progress note on a request this project has
+    ACCEPTED, without moving its state. Either channel. The state check goes
+    through `recipient_join`, never `_answering` (bucket-local, scar 0056);
+    the fold re-checks every rule because `append` is public. Fresh stamp
+    (scar 0090), records the epoch it answers. Note first, so an empty note
+    is the refusal a caller sees."""
+    text = _scrub("note", note)
+    proof = _scrub("evidence", evidence, required=False)
+    if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
+        raise RequestError(f"invalid request id: {request_id!r}")
+    record = recipient_join(project_dir=project_dir).get(request_id)
+    if record is None:
+        raise RequestError(f"unknown request: {request_id}")
+    if record["state"] != "accepted":
+        raise RequestError(_reply_refusal(request_id, record["state"]))
+    row = _stamp("replied", request_id, channel, author=author)
+    row["note"] = text
+    if proof:
+        row["evidence"] = proof
+    row["revision"] = record["revision"]
+    if not append(row, project_dir=project_dir):
+        raise RequestError("reply not written")
+
+
 def verify_done(request_id: str, *, role: str, project_dir=None) -> bool:
     """Record the session-end byte-check outcome for an agent's `done`
     evidence quote (channel `mechanical`), written to THIS bucket — where
@@ -2409,6 +2519,32 @@ def render_state(record: dict, project_dir=None) -> str:
         else str(record.get("state") or "open")
 
 
+# #1117: the panel is skeleton the trimmer cannot drop: one capped line.
+_REPLY_LINE_MAX = 160
+
+
+def latest_reply_line(record: dict) -> str:
+    """#1117: the one line the panel and the live nudge spend on a record's
+    replies ("" when none). Label keyed on AUTHORITY, never the channel string
+    (the `done (claimed, unverified)` convention); a reply older than the
+    record's revision says so; earlier replies are counted, not printed."""
+    replies = record.get("replies") or []
+    if not replies:
+        return ""
+    latest = replies[-1]
+    note = str(latest.get("note") or "").strip()
+    if len(note) > _REPLY_LINE_MAX:
+        note = note[:_REPLY_LINE_MAX].rstrip() + "…"
+    label = ("Reply (agent, unverified)" if latest.get("authority") == "agent"
+             else "Reply")
+    line = f"{label}: {note}"
+    if latest.get("revision", 0) < record.get("revision", 0):
+        line += f" (on revision {latest.get('revision', 0)})"
+    if len(replies) > 1:
+        line += f" (+{len(replies) - 1} earlier)"
+    return line
+
+
 def needs_verdict_surfaced_stamp(record: dict) -> bool:
     """D1, sender side: whether a `verdict_surfaced` row already exists for
     this record's CURRENT revision epoch — the same key the recipient's
@@ -2421,14 +2557,34 @@ def needs_verdict_surfaced_stamp(record: dict) -> bool:
     return record.get("revision") not in (record.get("verdict_surfaced") or {})
 
 
-def stamp_verdict_surfaced(request_id: str, project_dir=None) -> bool:
+def stamp_verdict_surfaced(request_id: str, project_dir=None, *,
+                           reply_event_id: str | None = None) -> bool:
     """Write a `verdict_surfaced` row to THIS project's own bucket (the
     SENDER's) — its brief observed and rendered the verdict card. Channel
     `mechanical`, same posture as `stamp_surfaced`. Write-once is the
     caller's job (`needs_verdict_surfaced_stamp` first) — the fold's
     earliest-wins tie-break absorbs a concurrent-brief duplicate for free."""
     row = _stamp("verdict_surfaced", request_id, "mechanical")
+    if reply_event_id:  # #1117: rides on the same event, only when set
+        row["reply_event_id"] = str(reply_event_id)
     return append(row, project_dir=project_dir)
+
+
+def unseen_reply_id(record: dict, session: str | None = None) -> str | None:
+    """#1117: the event id of the record's LATEST reply when the asking
+    surface has not shown it yet, else None (`session=None` asks the brief, a
+    session id asks live delivery). The OR clause that lets a late reply back
+    into a panel its record expired out of: expiry measures the decision."""
+    replies = record.get("replies") or []
+    if not replies:
+        return None
+    latest = str(replies[-1].get("event_id") or "")
+    if session is None:
+        seen = record.get("replies_surfaced") or {}
+    else:
+        seen = (record.get("replies_delivered") or {}).get(
+            str(session).strip()) or {}
+    return None if latest in seen else latest
 
 
 def verdict_panel_expired(record: dict, project_dir=None) -> bool:
@@ -2457,7 +2613,8 @@ def needs_verdict_delivered_stamp(record: dict, session: str) -> bool:
 
 
 def stamp_verdict_delivered(request_id: str, session: str,
-                            project_dir=None) -> bool:
+                            project_dir=None, *,
+                            reply_event_id: str | None = None) -> bool:
     """Write a `verdict_delivered` row to THIS project's own bucket (the
     SENDER's), recording that the live surface nudged this verdict into
     `session`. Channel `mechanical`, same posture as `stamp_delivered`.
@@ -2470,6 +2627,8 @@ def stamp_verdict_delivered(request_id: str, session: str,
         raise RequestError("verdict_delivered stamp requires a session id")
     row = _stamp("verdict_delivered", request_id, "mechanical")
     row["session"] = session
+    if reply_event_id:  # #1117: rides on the same event, only when set
+        row["reply_event_id"] = str(reply_event_id)
     return append(row, project_dir=project_dir)
 
 
@@ -2492,8 +2651,9 @@ def verdict_deliverable(session: str, project_dir=None) -> dict:
         return {"rows": [], "overflow": 0}
     rows = [r for r in sender_join(project_dir=project_dir).values()
             if r["state"] in _VERDICT_STATES
-            and not verdict_panel_expired(r, project_dir=project_dir)
-            and needs_verdict_delivered_stamp(r, session)]
+            and ((not verdict_panel_expired(r, project_dir=project_dir)
+                  and needs_verdict_delivered_stamp(r, session))
+                 or unseen_reply_id(r, session))]  # #1117
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
@@ -2508,7 +2668,8 @@ def verdict_renderable(project_dir=None) -> dict:
     readable through `sender_join`, only ambient panel attention decays."""
     rows = [r for r in sender_join(project_dir=project_dir).values()
             if r["state"] in _VERDICT_STATES
-            and not verdict_panel_expired(r, project_dir=project_dir)]
+            and (not verdict_panel_expired(r, project_dir=project_dir)
+                 or unseen_reply_id(r))]  # #1117: expiry measures the decision
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}

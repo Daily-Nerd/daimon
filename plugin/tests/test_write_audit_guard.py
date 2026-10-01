@@ -675,6 +675,13 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
     def r_request_accept():
         run(["request", "accept", ctx["request_id"]], 0)
 
+    def r_request_reply():
+        # #1117: between accept and done on purpose: recipes run in insertion
+        # order and a reply only lands on an ACCEPTED record.
+        run(["request", "reply", ctx["request_id"],
+             "--note", "schema merged, client regen next",
+             "--evidence", "PR 12", "--by", "agent"], 0)
+
     def r_request_done():
         run(["request", "done", ctx["request_id"],
              "--evidence", "the schema shipped in 0.32.0", "--by", "agent"], 0)
@@ -932,6 +939,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("request", "needs-info"): r_request_needs_info,
         ("request", "suppress"): r_request_suppress,
         ("request", "accept"): r_request_accept,
+        ("request", "reply"): r_request_reply,
         ("request", "done"): r_request_done,
         ("request", "reject"): r_request_reject,
         ("request", "list"): r_request_list,
@@ -1017,6 +1025,7 @@ def test_every_command_write_carries_an_admit_frame(
     assert saw("forget", "events.jsonl")            # tombstone append
     assert saw("refute add", "refutations.jsonl")  # negative ledger append
     assert saw("request open", "requests.jsonl")   # cross-project ledger
+    assert saw("request reply", "requests.jsonl")  # #1117
     # #599: the ledger REWRITE (scrub_event_fields) must have run and been
     # governed — not merely the tombstone append hitting the same file.
     assert any(cmd == "forget" and rel.name == "events.jsonl" and governed

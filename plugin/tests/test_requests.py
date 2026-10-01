@@ -3794,12 +3794,13 @@ def test_the_event_vocabulary_is_frozen():
     for this epoch is already spent; an older reader drops the row, reads the
     owed ask as undelivered, and at worst repeats a nudge. Every widening so
     far fails the same safe way, which is the property this test exists to
-    keep true."""
+    keep true. #1117 widens it a fifth time with `replied`; an older reader
+    drops the row and the sender sees no reply."""
     assert set(requests.EVENTS) == {
         "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
         "verdict_delivered", "owed_delivered",
         "needs_info", "accepted", "rejected", "done", "suppressed",
-        "done_verified"}
+        "done_verified", "replied"}
 
 
 def test_the_fold_reaches_every_render_state_but_never_stale(project):
@@ -6368,3 +6369,364 @@ def test_open_coverage_check_treats_a_non_numeric_row_order_as_uncovered(
     assert requests._covered_by_open_policy(row, policies) is True
     row["order"] = "not a number"
     assert requests._covered_by_open_policy(row, policies) is False
+
+
+# ---- #1117: reply, a recipient's progress note on an accepted request -------
+
+REPLY_NOTE = "schema merged, the client regen is next"
+FAR = 9 * 10**18  # a ts years past any real row, so a wrong bump shows
+
+
+def _reply_row(q_id, channel="cli-tty", note=REPLY_NOTE, now_ns=FAR, **extra):
+    row = requests._stamp("replied", q_id, channel, now_ns=now_ns)
+    row["note"] = note
+    row.update(extra)
+    return row
+
+
+def _in_state(project, state):
+    """A sent ask the recipient moved to `state` (rows in ITS bucket)."""
+    rdir = f"/p/reply-in-{state}"
+    # ASK varies by state: two asks opened in one second must not share an id.
+    q_id = _open(project, to=_seed_bucket(rdir), ask=f"{ASK} [{state}]")
+    if state == "needs-info":
+        requests.needs_info(q_id, channel="cli-tty", note="which?",
+                            project_dir=rdir)
+    elif state == "accepted":
+        requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    elif state == "rejected":
+        requests.reject(q_id, channel="cli-tty", note="no", project_dir=rdir)
+    elif state == "done":
+        requests.done(q_id, channel="cli-tty", evidence="shipped",
+                      project_dir=rdir)
+    return q_id, rdir
+
+
+def _joined(rdir, q_id):
+    return requests.recipient_join(project_dir=rdir)[q_id]
+
+
+def test_a_replied_row_lands_on_an_accepted_record(project):
+    q_id, rdir = _in_state(project, "accepted")
+    before = _joined(rdir, q_id)
+    requests.append(_reply_row(q_id, "cli-agent", evidence="PR 12",
+                               revision=0), project_dir=rdir)
+    requests.append(_reply_row(q_id, now_ns=FAR + 1), project_dir=rdir)
+    after = _joined(rdir, q_id)
+    first, second = after["replies"]
+    assert first["note"] == REPLY_NOTE and first["evidence"] == "PR 12"
+    assert first["authority"] == "agent" and first["channel"] == "cli-agent"
+    assert first["revision"] == 0 and first["event_id"]
+    assert "evidence" not in second  # scar 0042: absent, never ""
+    assert after["state"] == "accepted"
+    assert after["history_count"] == before["history_count"] + 2
+    assert after["updated_at"] != before["updated_at"]
+    assert after["note"] == before["note"]  # a reply moves nothing else
+    assert after["suppressed"] is before["suppressed"]
+
+
+@pytest.mark.parametrize("state", ["open", "needs-info", "rejected", "done"])
+def test_a_replied_row_is_dropped_unless_the_record_is_accepted(project, state):
+    q_id, rdir = _in_state(project, state)
+    before = _joined(rdir, q_id)
+    assert before["state"] == state
+    requests.append(_reply_row(q_id), project_dir=rdir)
+    after = _joined(rdir, q_id)
+    assert after["replies"] == []
+    assert after["updated_at"] == before["updated_at"]
+    assert after["history_count"] == before["history_count"]
+
+
+@pytest.mark.parametrize("flaw", ["empty", "mechanical", "unknown"])
+def test_a_malformed_replied_row_is_dropped(project, flaw):
+    q_id, rdir = _in_state(project, "accepted")
+    before = _joined(rdir, q_id)
+    if flaw == "mechanical":
+        row = _reply_row(q_id, "mechanical")
+    else:
+        row = _reply_row(q_id, note="" if flaw == "empty" else REPLY_NOTE)
+        if flaw == "unknown":
+            row["channel"] = "bogus"
+    requests.append(row, project_dir=rdir)
+    after = _joined(rdir, q_id)
+    assert after["replies"] == []
+    assert (after["updated_at"], after["history_count"]) == (
+        before["updated_at"], before["history_count"])
+
+
+@pytest.mark.parametrize("bad", [None, True])
+def test_a_reply_without_a_usable_revision_lands_on_the_current_epoch(
+        project, bad):
+    rdir = "/p/reply-epoch"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.needs_info(q_id, channel="cli-tty", note="?", project_dir=rdir)
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    row = _reply_row(q_id)
+    if bad is not None:
+        row["revision"] = bad
+    requests.append(row, project_dir=rdir)
+    assert _joined(rdir, q_id)["replies"][0]["revision"] == 1
+
+
+def test_replied_ranks_above_accepted_and_folds_after_a_same_order_accept():
+    assert (requests._EVENT_RANK["replied"] > requests._EVENT_RANK["rejected"]
+            > requests._EVENT_RANK["accepted"])
+    q_id, base = "q-0000000000a1", 5 * 10**18
+    opened = requests._stamp("opened", q_id, "cli-agent", now_ns=base)
+    opened.update(to=RECIPIENT, ask=ASK, why=WHY)
+    accepted = requests._stamp("accepted", q_id, "cli-tty", now_ns=base + 1,
+                               event_id="f" * 32)
+    replied = _reply_row(q_id, now_ns=base + 1, event_id="0" * 32)
+    # Scar 0064: reply listed and id-sorted first; also passes unranked (99),
+    # so the pin above holds the contract.
+    record = requests.fold([opened, replied, accepted])[q_id]
+    assert record["state"] == "accepted" and len(record["replies"]) == 1
+
+
+def test_replies_survive_a_later_done(project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.append(_reply_row(q_id, now_ns=time.time_ns()), project_dir=rdir)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                  project_dir=rdir)
+    record = _joined(rdir, q_id)
+    assert record["state"] == "done" and len(record["replies"]) == 1
+
+
+def test_forget_redacts_reply_text_in_the_recipient_bucket(project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.append(_reply_row(q_id), project_dir=rdir)
+    path = requests._path(rdir)
+    assert REPLY_NOTE in path.read_text(encoding="utf-8")
+    requests.forget_content_key(normalize.content_key(REPLY_NOTE),
+                                project_dir=rdir)
+    assert REPLY_NOTE not in path.read_text(encoding="utf-8")
+
+
+def test_a_reply_forged_in_the_senders_own_bucket_is_dropped(project):
+    """Both joins read the sender's bucket too: it could forge a reply."""
+    q_id, rdir = _in_state(project, "accepted")
+    requests.append(_reply_row(q_id, "cli-agent", note="forged"),
+                    project_dir=project)
+    assert requests.sender_join(project_dir=project)[q_id]["replies"] == []
+    assert _joined(rdir, q_id)["replies"] == []
+    requests.append(_reply_row(q_id, "cli-agent", note="genuine",
+                               now_ns=FAR + 1), project_dir=rdir)
+    assert [r["note"] for r in requests.sender_join(
+        project_dir=project)[q_id]["replies"]] == ["genuine"]
+    assert [r["note"] for r in _joined(rdir, q_id)["replies"]] == ["genuine"]
+
+
+def test_a_self_addressed_ask_may_be_replied_to_from_its_own_bucket(project):
+    q_id = requests.open_request(to=store.project_slug(project), ask=ASK,
+                                 why=WHY, channel="cli-agent",
+                                 project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=project)
+    requests.append(_reply_row(q_id), project_dir=project)
+    # Passes before the guard too: it pins the self-addressed exception.
+    assert [r["note"] for r in requests.sender_join(
+        project_dir=project)[q_id]["replies"]] == [REPLY_NOTE]
+
+
+def _replied_rows(rdir):
+    return [r for r in requests.events(project_dir=rdir)
+            if r["event"] == "replied"]
+
+
+def test_reply_lands_with_the_epoch_it_answers(project):
+    rdir = "/p/reply-lib-epoch"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.needs_info(q_id, channel="cli-tty", note="?", project_dir=rdir)
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    requests.reply(q_id, "line one\nline two", "PR 12", channel="cli-tty",
+                   project_dir=rdir)
+    requests.reply(q_id, "progress token=abcdefghijkl", channel="cli-agent",
+                   project_dir=rdir)
+    first, second = _joined(rdir, q_id)["replies"]
+    assert first["note"] == "line one line two"  # one line for the panel
+    assert first["evidence"] == "PR 12" and first["revision"] == 1
+    assert first["authority"] == "human" and second["authority"] == "agent"
+    assert "evidence" not in _replied_rows(rdir)[1]
+    assert "abcdefghijkl" not in requests._path(rdir).read_text(
+        encoding="utf-8")
+
+
+@pytest.mark.parametrize("state,verb", [
+    ("open", "accept"), ("needs-info", "needs-info"),
+    ("rejected", "rejected"), ("done", "done")])
+def test_reply_refuses_every_state_but_accepted_and_names_the_verb(
+        project, state, verb):
+    q_id, rdir = _in_state(project, state)
+    with pytest.raises(requests.RequestError) as exc_info:
+        requests.reply(q_id, REPLY_NOTE, channel="cli-agent",
+                       project_dir=rdir)
+    assert f"is {state}" in str(exc_info.value) and verb in str(exc_info.value)
+    assert _replied_rows(rdir) == []
+
+
+def test_reply_refusals_write_nothing(project, monkeypatch):
+    q_id, rdir = _in_state(project, "accepted")
+    other = "/p/reply-lib-stranger"
+    _seed_bucket(other)
+    bad = [
+        (q_id, "   ", rdir, requests.RequestError, "note is required"),
+        (q_id, "x" * (requests._MAX_TEXT + 1), rdir,
+         requests.RequestTooLong, "too long"),
+        ("q-0123456789ab", "ok", rdir, requests.RequestError, "unknown request"),
+        ("nonsense", "ok", rdir, requests.RequestError, "invalid request id"),
+        (q_id, "ok", other, requests.RequestError, "unknown request"),
+    ]
+    for rid, note, where, exc, match in bad:
+        with pytest.raises(exc, match=match):
+            requests.reply(rid, note, channel="cli-agent", project_dir=where)
+    assert _replied_rows(rdir) == []
+    monkeypatch.setattr(requests, "append", lambda *a, **k: False)
+    with pytest.raises(requests.RequestError, match="reply not written"):
+        requests.reply(q_id, "ok", channel="cli-agent", project_dir=rdir)
+
+
+
+def _cli_reply(rdir, q_id, *argv):
+    from daimon_briefing import cli
+    return cli.main(["request", "reply", q_id, "--project", rdir, *argv])
+
+
+def test_cli_reply_records_agent_and_human_replies(project, monkeypatch,
+                                                   capsys):
+    from daimon_briefing import cli
+    q_id, rdir = _in_state(project, "accepted")
+    capsys.readouterr()
+    assert _cli_reply(rdir, q_id, "--note", REPLY_NOTE, "--evidence", "PR 12",
+                      "--by", "agent") == 0
+    assert q_id in capsys.readouterr().out
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    assert _cli_reply(rdir, q_id, "--note", "from a person") == 0
+    agent, human = _joined(rdir, q_id)["replies"]
+    assert (agent["authority"], agent["evidence"]) == ("agent", "PR 12")
+    assert (human["authority"], human["channel"]) == ("human", "cli-tty")
+
+
+def test_cli_reply_refuses_wrong_state_empty_unknown_and_over_cap(
+        project, capsys):
+    q_id, rdir = _in_state(project, "accepted")
+    open_id, open_dir = _in_state(project, "open")
+    capsys.readouterr()
+    for where, rid, note, text in (
+            (open_dir, open_id, "ok", "is open"),
+            (rdir, q_id, "", "note is required"),
+            (open_dir, open_id, "ok", "is open"),
+            (rdir, q_id, "", "note is required"),
+            (rdir, "q-0123456789ab", "x", "unknown request"),
+            (rdir, q_id, "x" * 2001, "note is too long")):
+        assert _cli_reply(where, rid, "--note", note, "--by", "agent") == 1
+        out = capsys.readouterr().out
+        assert "request reply refused" in out and text in out
+    assert _joined(rdir, q_id)["replies"] == []
+
+
+def test_reply_line_labels_caps_counts_and_marks_stale(project, monkeypatch):
+    monkeypatch.setitem(requests.CHANNEL_AUTHORITY, "relay", "agent")
+    q_id, rdir = _in_state(project, "accepted")
+
+    def line():
+        return requests.latest_reply_line(
+            requests.sender_join(project_dir=project)[q_id])
+
+    assert line() == ""
+    requests.reply(q_id, REPLY_NOTE, channel="cli-tty", project_dir=rdir)
+    assert line() == f"Reply: {REPLY_NOTE}"
+    requests.reply(q_id, REPLY_NOTE, channel="cli-agent", project_dir=rdir)
+    assert line() == f"Reply (agent, unverified): {REPLY_NOTE} (+1 earlier)"
+    # Keyed on authority, not the channel string.
+    requests.reply(q_id, "y" * 400, channel="relay", project_dir=rdir)
+    assert line() == ("Reply (agent, unverified): " + "y" * 160
+                      + "\u2026 (+2 earlier)")
+    # Same-instant replies: the larger event id wins, whatever the file order.
+    for tag in ("b", "a"):
+        requests.append(_reply_row(q_id, note=f"note {tag}", now_ns=FAR,
+                                   event_id=tag * 32, revision=0),
+                        project_dir=rdir)
+    assert line() == "Reply: note b (+4 earlier)"
+    # A sharpened ask makes the old reply stale.
+    requests.needs_info(q_id, channel="cli-tty", note="which?",
+                        project_dir=rdir)
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    assert line().endswith("(on revision 0) (+4 earlier)")
+    from daimon_briefing.cli import request as cli_request
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert f"  {line()}" in cli_request._verdict_inject_lines(record)
+
+
+def _expire_the_panel(project, tag):
+    """Enough later sender sessions for the epoch stamp to expire."""
+    _sender_session(project, f"S-{tag}-before", _fut(-60))
+    for n in range(requests.VERDICT_PANEL_SESSIONS + 1):
+        _sender_session(project, f"S-{tag}-after-{n}", _fut(10 * (n + 1)))
+
+
+def test_a_late_reply_re_enters_the_panel_after_expiry_and_is_stamped_once(
+        project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.stamp_verdict_surfaced(q_id, project_dir=project)
+    assert "reply_event_id" not in requests.events(project_dir=project)[-1]
+    _expire_the_panel(project, "late-a")
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.verdict_panel_expired(record, project_dir=project)
+    assert requests.verdict_renderable(project_dir=project)["rows"] == []
+
+    requests.reply(q_id, REPLY_NOTE, channel="cli-tty", project_dir=rdir)
+    rows = requests.verdict_renderable(project_dir=project)["rows"]
+    assert [r["request_id"] for r in rows] == [q_id]
+    reply_id = requests.unseen_reply_id(rows[0])
+    assert reply_id == rows[0]["replies"][-1]["event_id"]
+    requests.stamp_verdict_surfaced(q_id, project_dir=project,
+                                    reply_event_id=reply_id)
+    assert requests.verdict_renderable(project_dir=project)["rows"] == []
+
+
+def test_the_fold_with_reply_stamps_stays_json_serializable(project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.reply(q_id, REPLY_NOTE, channel="cli-tty", project_dir=rdir)
+    reply_id = requests.unseen_reply_id(
+        requests.sender_join(project_dir=project)[q_id])
+    requests.stamp_verdict_surfaced(q_id, project_dir=project,
+                                    reply_event_id=reply_id)
+    requests.stamp_verdict_delivered(q_id, "S-alpha", project_dir=project,
+                                     reply_event_id=reply_id)
+    dumped = json.loads(json.dumps(requests.listing(project_dir=project)))
+    assert reply_id in dumped[0]["replies_surfaced"]
+    assert reply_id in dumped[0]["replies_delivered"]["S-alpha"]
+
+
+def test_inject_delivers_a_late_reply_once_per_session(
+        project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    q_id, rdir = _in_state(project, "accepted")
+    capsys.readouterr()
+    assert _inject(project) == 0
+    assert q_id in capsys.readouterr().out
+    requests.reply(q_id, "halfway, schema merged", channel="cli-agent",
+                   project_dir=rdir)
+    assert _inject(project) == 0
+    assert ("Reply (agent, unverified): halfway, schema merged"
+            in capsys.readouterr().out)
+    assert _inject(project) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_inbox_shows_the_recipients_own_replies(project):
+    from daimon_briefing.cli import request as cli_request
+    q_id, rdir = _in_state(project, "accepted")
+    assert not any("Repl" in ln for ln in cli_request._inbox_lines(
+        _joined(rdir, q_id), project_dir=rdir))
+    requests.reply(q_id, "first", channel="cli-agent", project_dir=rdir)
+    requests.reply(q_id, REPLY_NOTE, "PR 12", channel="cli-agent",
+                   project_dir=rdir)
+    lines = cli_request._inbox_lines(_joined(rdir, q_id), project_dir=rdir)
+    assert f"  Replies: 2, latest: {REPLY_NOTE}" in lines
+    assert "  Reply evidence: PR 12" in lines
