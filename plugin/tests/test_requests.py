@@ -3709,12 +3709,13 @@ def test_the_event_vocabulary_is_frozen():
     for this epoch is already spent; an older reader drops the row, reads the
     owed ask as undelivered, and at worst repeats a nudge. Every widening so
     far fails the same safe way, which is the property this test exists to
-    keep true."""
+    keep true. #1117 widens it a fifth time with `replied`; an older reader
+    drops the row and the sender sees no reply."""
     assert set(requests.EVENTS) == {
         "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
         "verdict_delivered", "owed_delivered",
         "needs_info", "accepted", "rejected", "done", "suppressed",
-        "done_verified"}
+        "done_verified", "replied"}
 
 
 def test_the_fold_reaches_every_render_state_but_never_stale(project):
@@ -6283,3 +6284,135 @@ def test_open_coverage_check_treats_a_non_numeric_row_order_as_uncovered(
     assert requests._covered_by_open_policy(row, policies) is True
     row["order"] = "not a number"
     assert requests._covered_by_open_policy(row, policies) is False
+
+
+# ---- #1117: reply, a recipient's progress note on an accepted request -------
+
+REPLY_NOTE = "schema merged, the client regen is next"
+FAR = 9 * 10**18  # a ts years past any real row, so a wrong bump shows
+
+
+def _reply_row(q_id, channel="cli-tty", note=REPLY_NOTE, now_ns=FAR, **extra):
+    row = requests._stamp("replied", q_id, channel, now_ns=now_ns)
+    row["note"] = note
+    row.update(extra)
+    return row
+
+
+def _in_state(project, state):
+    """A sent ask the recipient moved to `state` (rows in ITS bucket)."""
+    rdir = f"/p/reply-in-{state}"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    if state == "needs-info":
+        requests.needs_info(q_id, channel="cli-tty", note="which?",
+                            project_dir=rdir)
+    elif state == "accepted":
+        requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    elif state == "rejected":
+        requests.reject(q_id, channel="cli-tty", note="no", project_dir=rdir)
+    elif state == "done":
+        requests.done(q_id, channel="cli-tty", evidence="shipped",
+                      project_dir=rdir)
+    return q_id, rdir
+
+
+def _joined(rdir, q_id):
+    return requests.recipient_join(project_dir=rdir)[q_id]
+
+
+def test_a_replied_row_lands_on_an_accepted_record(project):
+    q_id, rdir = _in_state(project, "accepted")
+    before = _joined(rdir, q_id)
+    requests.append(_reply_row(q_id, "cli-agent", evidence="PR 12",
+                               revision=0), project_dir=rdir)
+    requests.append(_reply_row(q_id, now_ns=FAR + 1), project_dir=rdir)
+    after = _joined(rdir, q_id)
+    first, second = after["replies"]
+    assert first["note"] == REPLY_NOTE and first["evidence"] == "PR 12"
+    assert first["authority"] == "agent" and first["channel"] == "cli-agent"
+    assert first["revision"] == 0 and first["event_id"]
+    assert "evidence" not in second  # scar 0042: absent, never ""
+    assert after["state"] == "accepted"
+    assert after["history_count"] == before["history_count"] + 2
+    assert after["updated_at"] != before["updated_at"]
+    assert after["note"] == before["note"]  # a reply moves nothing else
+    assert after["suppressed"] is before["suppressed"]
+
+
+@pytest.mark.parametrize("state", ["open", "needs-info", "rejected", "done"])
+def test_a_replied_row_is_dropped_unless_the_record_is_accepted(project, state):
+    q_id, rdir = _in_state(project, state)
+    before = _joined(rdir, q_id)
+    assert before["state"] == state
+    requests.append(_reply_row(q_id), project_dir=rdir)
+    after = _joined(rdir, q_id)
+    assert after["replies"] == []
+    assert after["updated_at"] == before["updated_at"]
+    assert after["history_count"] == before["history_count"]
+
+
+@pytest.mark.parametrize("flaw", ["empty", "mechanical", "unknown"])
+def test_a_malformed_replied_row_is_dropped(project, flaw):
+    q_id, rdir = _in_state(project, "accepted")
+    before = _joined(rdir, q_id)
+    if flaw == "mechanical":
+        row = _reply_row(q_id, "mechanical")
+    else:
+        row = _reply_row(q_id, note="" if flaw == "empty" else REPLY_NOTE)
+        if flaw == "unknown":
+            row["channel"] = "bogus"
+    requests.append(row, project_dir=rdir)
+    after = _joined(rdir, q_id)
+    assert after["replies"] == []
+    assert (after["updated_at"], after["history_count"]) == (
+        before["updated_at"], before["history_count"])
+
+
+@pytest.mark.parametrize("bad", [None, True])
+def test_a_reply_without_a_usable_revision_lands_on_the_current_epoch(
+        project, bad):
+    rdir = "/p/reply-epoch"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.needs_info(q_id, channel="cli-tty", note="?", project_dir=rdir)
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    row = _reply_row(q_id)
+    if bad is not None:
+        row["revision"] = bad
+    requests.append(row, project_dir=rdir)
+    assert _joined(rdir, q_id)["replies"][0]["revision"] == 1
+
+
+def test_replied_ranks_above_accepted_and_folds_after_a_same_order_accept():
+    assert (requests._EVENT_RANK["replied"] > requests._EVENT_RANK["rejected"]
+            > requests._EVENT_RANK["accepted"])
+    q_id, base = "q-0000000000a1", 5 * 10**18
+    opened = requests._stamp("opened", q_id, "cli-agent", now_ns=base)
+    opened.update(to=RECIPIENT, ask=ASK, why=WHY)
+    accepted = requests._stamp("accepted", q_id, "cli-tty", now_ns=base + 1,
+                               event_id="f" * 32)
+    replied = _reply_row(q_id, now_ns=base + 1, event_id="0" * 32)
+    # Scar 0064: reply listed and id-sorted first; also passes unranked (99),
+    # so the pin above holds the contract.
+    record = requests.fold([opened, replied, accepted])[q_id]
+    assert record["state"] == "accepted" and len(record["replies"]) == 1
+
+
+def test_replies_survive_a_later_done(project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.append(_reply_row(q_id, now_ns=time.time_ns()), project_dir=rdir)
+    requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
+                  project_dir=rdir)
+    record = _joined(rdir, q_id)
+    assert record["state"] == "done" and len(record["replies"]) == 1
+
+
+def test_forget_redacts_reply_text_in_the_recipient_bucket(project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.append(_reply_row(q_id), project_dir=rdir)
+    path = requests._path(rdir)
+    assert REPLY_NOTE in path.read_text(encoding="utf-8")
+    requests.forget_content_key(normalize.content_key(REPLY_NOTE),
+                                project_dir=rdir)
+    assert REPLY_NOTE not in path.read_text(encoding="utf-8")

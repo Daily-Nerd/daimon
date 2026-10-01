@@ -87,12 +87,14 @@ DEFAULT_KIND = "work"
 # Same safe direction on an older reader — the row drops, the record reads as
 # undelivered, and the worst case is a repeated nudge rather than a swallowed
 # verdict. An attention row like `surfaced`, never a state.
+# #1117 widens it a fifth time with `replied` (progress note): an older
+# reader drops the row and nothing else changes. Its guards live in the fold.
 EVENTS = frozenset({
     "opened", "revised",
     "surfaced", "verdict_surfaced", "delivered", "verdict_delivered",
     "owed_delivered",
     "needs_info", "accepted", "rejected", "done",
-    "suppressed", "done_verified",
+    "suppressed", "done_verified", "replied",
 })
 # What a folded record may render as. `stale` is derived from consumption
 # (PR 3's baton count), never appended — an expiry that writes a row would
@@ -156,9 +158,11 @@ _EVENT_RANK = {
     "needs_info": 5,
     "accepted": 6,
     "rejected": 7,
+    # #1117: after every verdict, so a same-`order` verdict folds FIRST.
+    "replied": 8,
     # Verification always answers a `done` row that already landed; ranked
     # last so a same-`order` tie (test clocks) can never process it first.
-    "done_verified": 8,
+    "done_verified": 9,
 }
 _REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
 # store.project_slug's output: every non-word char munged to '-'. Validated
@@ -673,6 +677,15 @@ def _covered_by_policy(row: dict, origin_slugs, policies) -> bool:
     return False
 
 
+def _epoch_of(row: dict, fallback: int) -> int:
+    """#1117: the epoch a reply row names, else `fallback`; a bool, negative
+    or string read off disk never becomes an epoch."""
+    value = row.get("revision")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return fallback
+
+
 def fold(rows: list[dict], policies=frozenset(), *,
          policies_by_to: dict[str, frozenset] | None = None,
          own_slug: str = "",
@@ -837,6 +850,8 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 # on a currently-claimed completion — never on disk, the
                 # session-end byte-check's own timestamp.
                 "done_verified_at": None,
+                # #1117: progress notes, oldest first; never moves state.
+                "replies": [],
                 "suppressed": False,
                 # {revision epoch: earliest surfaced ts} — D1's write-once
                 # dedup key, consulted by the stamp PR 2 adds.
@@ -1008,6 +1023,32 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # the same reason `surfaced` leaves it alone: a duplicate must
             # not make a settled record sort as freshly updated.
             current["history_count"] += 1
+            continue
+        if event == "replied":
+            # #1117: no state moves, so `continue` BEFORE the generic
+            # `_STATE_BY_EVENT` indexing (KeyError on every read otherwise).
+            # `append` is public: the reader decides. A dropped row bumps
+            # neither `updated_at` (drives every sort) nor `history_count`.
+            note = str(row.get("note") or "").strip()
+            if (not note or authority not in ("human", "agent")
+                    or current["state"] != "accepted"):
+                continue
+            entry = {
+                "ts": row.get("ts"),
+                "note": note,
+                "channel": row.get("channel"),
+                "authority": authority,
+                "author": row.get("author"),
+                "act_author": row.get("act_author"),
+                "event_id": str(row.get("event_id") or ""),
+                "revision": _epoch_of(row, current["revision"]),
+            }
+            evidence = str(row.get("evidence") or "").strip()
+            if evidence:  # scar 0042: the ABSENCE of a key is data
+                entry["evidence"] = evidence
+            current["replies"].append(entry)
+            current["history_count"] += 1
+            current["updated_at"] = row.get("ts") or current["updated_at"]
             continue
         if event == "surfaced":
             # Attention rows never move the record's rendered age: a brief
