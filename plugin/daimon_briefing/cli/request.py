@@ -230,6 +230,14 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
                      f"{record.get('done_evidence', '')}")
     elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
+    replies = record.get("replies") or []
+    if replies:
+        # #1117: count plus the latest in full (the author's own text).
+        latest = replies[-1]
+        lines.append(f"  Replies: {len(replies)}, latest: "
+                     f"{latest.get('note', '')}")
+        if latest.get("evidence"):
+            lines.append(f"  Reply evidence: {latest['evidence']}")
     if record.get("revision"):
         lines.append(f"  Revisions: {record['revision']} of "
                      f"{requests.MAX_REVISIONS}")

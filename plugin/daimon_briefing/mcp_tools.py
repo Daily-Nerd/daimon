@@ -145,7 +145,7 @@ def _requests_inbox(arguments: dict) -> str:
     """Read-only pull (#694 PR 2): requests other projects have addressed to
     this one. Deliberate — daimon_brief does NOT carry this content (D2's
     CLI-only gate); an MCP client that wants it calls this tool explicitly.
-    Every write verb (open/revise/accept/reject/needs-info/suppress/done)
+    Every write verb (open/revise/accept/reject/needs-info/suppress/reply/done)
     stays CLI-only — no tool here mutates the ledger."""
     _note("requests_inbox")
     from . import cli

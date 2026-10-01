@@ -6632,3 +6632,16 @@ def test_inject_delivers_a_late_reply_once_per_session(
             in capsys.readouterr().out)
     assert _inject(project) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_inbox_shows_the_recipients_own_replies(project):
+    from daimon_briefing.cli import request as cli_request
+    q_id, rdir = _in_state(project, "accepted")
+    assert not any("Repl" in ln for ln in cli_request._inbox_lines(
+        _joined(rdir, q_id), project_dir=rdir))
+    requests.reply(q_id, "first", channel="cli-agent", project_dir=rdir)
+    requests.reply(q_id, REPLY_NOTE, "PR 12", channel="cli-agent",
+                   project_dir=rdir)
+    lines = cli_request._inbox_lines(_joined(rdir, q_id), project_dir=rdir)
+    assert f"  Replies: 2, latest: {REPLY_NOTE}" in lines
+    assert "  Reply evidence: PR 12" in lines
