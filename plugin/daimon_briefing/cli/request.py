@@ -572,6 +572,22 @@ def _cmd_request_done(args) -> int:
     return 0
 
 
+def _cmd_request_reply(args) -> int:
+    # #1117: routed like `done` (`_resolve_project`), NOT the human-only
+    # verdict verbs' `_slug_route`. No `--slug`.
+    project = _cli._resolve_project(args.project)
+    try:
+        requests.reply(args.request_id, args.note, args.evidence,
+                       channel=_request_channel(args), project_dir=project)
+    except requests.RequestError as exc:
+        _cli._note_usage("request:reply:refused")
+        print(_refusal_message("request reply refused", exc))
+        return 1
+    _cli._note_usage("request:reply")
+    _report(args.request_id, project, "reply")
+    return 0
+
+
 def _cmd_request_list(args) -> int:
     project = _cli._resolve_project(args.project)
     rows = requests.listing(project_dir=project)
@@ -705,6 +721,22 @@ def register(sub, fmt) -> None:
                               "an interactive terminal")
     _common(rq_done)
     rq_done.set_defaults(func=_cli._cmd_request_done)
+
+    rq_reply = request_sub.add_parser(
+        "reply", help="send the sender a progress note on a request you "
+                      "accepted; it moves no state, and the request stays "
+                      "owed until `done`")
+    rq_reply.add_argument("request_id", help="exact q-… id")
+    rq_reply.add_argument("--note", required=True,
+                          help="the update the sender reads; 2000 characters")
+    rq_reply.add_argument("--evidence",
+                          help="optional pointer to what backs the update")
+    rq_reply.add_argument("--by", choices=["agent"], default=None,
+                          help="declare yourself an agent; omit it only from "
+                               "an interactive terminal. An agent reply "
+                               "reaches the sender labeled unverified")
+    _common(rq_reply)
+    rq_reply.set_defaults(func=_cli._cmd_request_reply)
 
     rq_list = request_sub.add_parser(
         "list", help="list this project's requests, undecided first")

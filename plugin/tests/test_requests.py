@@ -6302,7 +6302,8 @@ def _reply_row(q_id, channel="cli-tty", note=REPLY_NOTE, now_ns=FAR, **extra):
 def _in_state(project, state):
     """A sent ask the recipient moved to `state` (rows in ITS bucket)."""
     rdir = f"/p/reply-in-{state}"
-    q_id = _open(project, to=_seed_bucket(rdir))
+    # ASK varies by state: two asks opened in one second must not share an id.
+    q_id = _open(project, to=_seed_bucket(rdir), ask=f"{ASK} [{state}]")
     if state == "needs-info":
         requests.needs_info(q_id, channel="cli-tty", note="which?",
                             project_dir=rdir)
@@ -6500,3 +6501,42 @@ def test_reply_refusals_write_nothing(project, monkeypatch):
     monkeypatch.setattr(requests, "append", lambda *a, **k: False)
     with pytest.raises(requests.RequestError, match="reply not written"):
         requests.reply(q_id, "ok", channel="cli-agent", project_dir=rdir)
+
+
+
+def _cli_reply(rdir, q_id, *argv):
+    from daimon_briefing import cli
+    return cli.main(["request", "reply", q_id, "--project", rdir, *argv])
+
+
+def test_cli_reply_records_agent_and_human_replies(project, monkeypatch,
+                                                   capsys):
+    from daimon_briefing import cli
+    q_id, rdir = _in_state(project, "accepted")
+    capsys.readouterr()
+    assert _cli_reply(rdir, q_id, "--note", REPLY_NOTE, "--evidence", "PR 12",
+                      "--by", "agent") == 0
+    assert q_id in capsys.readouterr().out
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    assert _cli_reply(rdir, q_id, "--note", "from a person") == 0
+    agent, human = _joined(rdir, q_id)["replies"]
+    assert (agent["authority"], agent["evidence"]) == ("agent", "PR 12")
+    assert (human["authority"], human["channel"]) == ("human", "cli-tty")
+
+
+def test_cli_reply_refuses_wrong_state_empty_unknown_and_over_cap(
+        project, capsys):
+    q_id, rdir = _in_state(project, "accepted")
+    open_id, open_dir = _in_state(project, "open")
+    capsys.readouterr()
+    for where, rid, note, text in (
+            (open_dir, open_id, "ok", "is open"),
+            (rdir, q_id, "", "note is required"),
+            (open_dir, open_id, "ok", "is open"),
+            (rdir, q_id, "", "note is required"),
+            (rdir, "q-0123456789ab", "x", "unknown request"),
+            (rdir, q_id, "x" * 2001, "note is too long")):
+        assert _cli_reply(where, rid, "--note", note, "--by", "agent") == 1
+        out = capsys.readouterr().out
+        assert "request reply refused" in out and text in out
+    assert _joined(rdir, q_id)["replies"] == []
