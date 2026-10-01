@@ -127,8 +127,10 @@ def test_full_fits_size_budget():
     # `confirm`/`dismiss`/`release` are human-only, the same posture every
     # other human-only verb in this file already gets. New deliberate-review
     # size is 13,873 (2026-09-24). Nothing was added to the compact body.
+    # RAISED 13,900 -> 14,200 (#1117): a new agent-facing verb, and the skill
+    # content IS the subject. One 257-char paragraph, new size 14,130.
     full = skill_content.render_full()
-    assert len(full) <= 13900, f"full body is {len(full)} chars (cap 13900)"
+    assert len(full) <= 14200, f"full body is {len(full)} chars (cap 14200)"
 
 
 def test_full_has_trigger_only_frontmatter():
@@ -564,3 +566,19 @@ def test_full_closing_loops_names_the_request_close():
     assert "daimon request done" in closing
     assert "daimon request inbox" in closing
     assert "daimon amend" in closing
+
+
+def test_reply_is_taught_in_the_skill_and_documented_in_both_languages():
+    from pathlib import Path
+    full = skill_content.render_full()
+    section = full.split("## Asking another project for something")[1]
+    assert "daimon request reply" in section.split("\n## ")[0]
+    repo = Path(__file__).resolve().parents[2]
+    es = "website/i18n/es/docusaurus-plugin-content-docs/current/"
+    for rel in ("skills/daimon-briefing/SKILL.md", "skills/daimon-end/SKILL.md",
+                "website/docs/reference/cli.md",
+                "website/docs/concepts/requests-and-decisions.md",
+                es + "reference/cli.md",
+                es + "concepts/requests-and-decisions.md"):
+        text = (repo / rel).read_text(encoding="utf-8")
+        assert "request reply" in text or "**`reply`**" in text, rel
