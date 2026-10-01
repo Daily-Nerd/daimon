@@ -309,6 +309,9 @@ def _verdict_inject_lines(record: dict) -> list[str]:
     evidence = str(record.get("done_evidence") or "").strip()
     if evidence:
         lines.append(f"  Done: {evidence}")
+    reply_line = requests.latest_reply_line(record)
+    if reply_line:
+        lines.append(f"  {reply_line}")
     return lines
 
 

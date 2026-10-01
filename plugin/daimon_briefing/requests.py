@@ -2505,6 +2505,32 @@ def render_state(record: dict, project_dir=None) -> str:
         else str(record.get("state") or "open")
 
 
+# #1117: the panel is skeleton the trimmer cannot drop: one capped line.
+_REPLY_LINE_MAX = 160
+
+
+def latest_reply_line(record: dict) -> str:
+    """#1117: the one line the panel and the live nudge spend on a record's
+    replies ("" when none). Label keyed on AUTHORITY, never the channel string
+    (the `done (claimed, unverified)` convention); a reply older than the
+    record's revision says so; earlier replies are counted, not printed."""
+    replies = record.get("replies") or []
+    if not replies:
+        return ""
+    latest = replies[-1]
+    note = str(latest.get("note") or "").strip()
+    if len(note) > _REPLY_LINE_MAX:
+        note = note[:_REPLY_LINE_MAX].rstrip() + "…"
+    label = ("Reply (agent, unverified)" if latest.get("authority") == "agent"
+             else "Reply")
+    line = f"{label}: {note}"
+    if latest.get("revision", 0) < record.get("revision", 0):
+        line += f" (on revision {latest.get('revision', 0)})"
+    if len(replies) > 1:
+        line += f" (+{len(replies) - 1} earlier)"
+    return line
+
+
 def needs_verdict_surfaced_stamp(record: dict) -> bool:
     """D1, sender side: whether a `verdict_surfaced` row already exists for
     this record's CURRENT revision epoch — the same key the recipient's

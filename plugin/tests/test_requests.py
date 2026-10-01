@@ -6540,3 +6540,38 @@ def test_cli_reply_refuses_wrong_state_empty_unknown_and_over_cap(
         out = capsys.readouterr().out
         assert "request reply refused" in out and text in out
     assert _joined(rdir, q_id)["replies"] == []
+
+
+def test_reply_line_labels_caps_counts_and_marks_stale(project, monkeypatch):
+    monkeypatch.setitem(requests.CHANNEL_AUTHORITY, "relay", "agent")
+    q_id, rdir = _in_state(project, "accepted")
+
+    def line():
+        return requests.latest_reply_line(
+            requests.sender_join(project_dir=project)[q_id])
+
+    assert line() == ""
+    requests.reply(q_id, REPLY_NOTE, channel="cli-tty", project_dir=rdir)
+    assert line() == f"Reply: {REPLY_NOTE}"
+    requests.reply(q_id, REPLY_NOTE, channel="cli-agent", project_dir=rdir)
+    assert line() == f"Reply (agent, unverified): {REPLY_NOTE} (+1 earlier)"
+    # Keyed on authority, not the channel string.
+    requests.reply(q_id, "y" * 400, channel="relay", project_dir=rdir)
+    assert line() == ("Reply (agent, unverified): " + "y" * 160
+                      + "\u2026 (+2 earlier)")
+    # Same-instant replies: the larger event id wins, whatever the file order.
+    for tag in ("b", "a"):
+        requests.append(_reply_row(q_id, note=f"note {tag}", now_ns=FAR,
+                                   event_id=tag * 32, revision=0),
+                        project_dir=rdir)
+    assert line() == "Reply: note b (+4 earlier)"
+    # A sharpened ask makes the old reply stale.
+    requests.needs_info(q_id, channel="cli-tty", note="which?",
+                        project_dir=rdir)
+    requests.revise(q_id, channel="cli-agent", why="clarified",
+                    project_dir=project)
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    assert line().endswith("(on revision 0) (+4 earlier)")
+    from daimon_briefing.cli import request as cli_request
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert f"  {line()}" in cli_request._verdict_inject_lines(record)
