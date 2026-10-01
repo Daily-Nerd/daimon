@@ -11263,6 +11263,10 @@ def test_write_checkpoint_carries_prev_open_question(tmp_checkpoint_dir, monkeyp
     project = "/p/intro-carry"
     _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
 
+    # #1120: carry ages the item against the clock; a fixed first_seen needs a fixed now
+    monkeypatch.setattr(
+        time, "time",
+        lambda: datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc).timestamp())
     _stdin(monkeypatch, _valid_json("S-intro"))
     rc = cli.main(["write-checkpoint", "--project", project])
     assert rc == 0
@@ -11288,6 +11292,10 @@ def test_write_checkpoint_carry_survives_a_concurrent_session(
     project = "/p/two-sessions"
     _prev_with_open_question(project, "2026-06-25T08:00:00Z", "2026-06-28T00:00:00Z")
 
+    # #1120: carry ages the item against the clock; a fixed first_seen needs a fixed now
+    monkeypatch.setattr(
+        time, "time",
+        lambda: datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc).timestamp())
     _stdin(monkeypatch, _valid_json("S-session-B"))
     assert cli.main(["write-checkpoint", "--project", project]) == 0
 
