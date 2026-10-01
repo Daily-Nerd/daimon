@@ -5,6 +5,19 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.0](https://github.com/Daily-Nerd/daimon/compare/v0.51.0...v0.52.0) (2026-10-01)
+
+
+### Features
+
+* **request:** reply verb for accepted requests ([#1123](https://github.com/Daily-Nerd/daimon/issues/1123)) ([6ea0e5c](https://github.com/Daily-Nerd/daimon/commit/6ea0e5cb4886a64c617249d14e7fd72d33484d35))
+
+
+### Bug Fixes
+
+* **request:** resolve --to by the short project name ([#1119](https://github.com/Daily-Nerd/daimon/issues/1119)) ([e0406eb](https://github.com/Daily-Nerd/daimon/commit/e0406eb1ef4ce55ea504886a3c70265248c757ae))
+* **tests:** freeze the clock in the write-checkpoint carry tests ([#1121](https://github.com/Daily-Nerd/daimon/issues/1121)) ([7b8668e](https://github.com/Daily-Nerd/daimon/commit/7b8668e0329a1c19cb31ff252bc32830effe7a26))
+
 ## [0.51.0](https://github.com/Daily-Nerd/daimon/compare/v0.50.0...v0.51.0) (2026-09-25)
 
 
