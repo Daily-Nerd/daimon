@@ -392,8 +392,9 @@ def _cmd_request_inject(args) -> int:
                        "`daimon request done <id> --evidence …`")
         print("\n".join(out))
         for record in verdicts["rows"]:
-            requests.stamp_verdict_delivered(record["request_id"], session,
-                                             project_dir=project)
+            requests.stamp_verdict_delivered(
+                record["request_id"], session, project_dir=project,
+                reply_event_id=requests.unseen_reply_id(record, session))
         for record in rows:
             requests.stamp_delivered(record["request_id"], session,
                                      project_dir=project)

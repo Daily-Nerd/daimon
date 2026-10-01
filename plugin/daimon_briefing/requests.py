@@ -896,6 +896,11 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 # `delivered` stamp for this very epoch. Reusing that key
                 # would drop the accepted card with no error and no log line.
                 "owed_delivered": {},
+                # #1117: replies the sender's surfaces showed, from the
+                # optional `reply_event_id` on the stamp rows. Mappings used
+                # as sets: `request list --json` and MCP `json.dumps` the fold.
+                "replies_surfaced": {},
+                "replies_delivered": {},
                 "revision": 0,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
@@ -1077,6 +1082,11 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # rows therefore replay into their own epoch with no migration.
             current["verdict_surfaced"].setdefault(current["revision"],
                                                    row.get("ts"))
+            # #1117: the row may name the reply it showed; the epoch anchor
+            # above keeps the FIRST stamp, so expiry never restarts.
+            reply_id = str(row.get("reply_event_id") or "").strip()
+            if reply_id:
+                current["replies_surfaced"].setdefault(reply_id, row.get("ts"))
             continue
         if event == "verdict_delivered":
             # Same posture as `delivered`, sender side. A row that lost its
@@ -1087,6 +1097,10 @@ def fold(rows: list[dict], policies=frozenset(), *,
             if session:
                 current["verdict_delivered"].setdefault(current["revision"], {}) \
                     .setdefault(session, row.get("ts"))
+                reply_id = str(row.get("reply_event_id") or "").strip()
+                if reply_id:  # #1117: per session, like the epoch stamp
+                    current["replies_delivered"].setdefault(session, {}) \
+                        .setdefault(reply_id, row.get("ts"))
             continue
         if event == "owed_delivered":
             # #885, same posture as `delivered` and `verdict_delivered`: an
@@ -2543,14 +2557,34 @@ def needs_verdict_surfaced_stamp(record: dict) -> bool:
     return record.get("revision") not in (record.get("verdict_surfaced") or {})
 
 
-def stamp_verdict_surfaced(request_id: str, project_dir=None) -> bool:
+def stamp_verdict_surfaced(request_id: str, project_dir=None, *,
+                           reply_event_id: str | None = None) -> bool:
     """Write a `verdict_surfaced` row to THIS project's own bucket (the
     SENDER's) — its brief observed and rendered the verdict card. Channel
     `mechanical`, same posture as `stamp_surfaced`. Write-once is the
     caller's job (`needs_verdict_surfaced_stamp` first) — the fold's
     earliest-wins tie-break absorbs a concurrent-brief duplicate for free."""
     row = _stamp("verdict_surfaced", request_id, "mechanical")
+    if reply_event_id:  # #1117: rides on the same event, only when set
+        row["reply_event_id"] = str(reply_event_id)
     return append(row, project_dir=project_dir)
+
+
+def unseen_reply_id(record: dict, session: str | None = None) -> str | None:
+    """#1117: the event id of the record's LATEST reply when the asking
+    surface has not shown it yet, else None (`session=None` asks the brief, a
+    session id asks live delivery). The OR clause that lets a late reply back
+    into a panel its record expired out of: expiry measures the decision."""
+    replies = record.get("replies") or []
+    if not replies:
+        return None
+    latest = str(replies[-1].get("event_id") or "")
+    if session is None:
+        seen = record.get("replies_surfaced") or {}
+    else:
+        seen = (record.get("replies_delivered") or {}).get(
+            str(session).strip()) or {}
+    return None if latest in seen else latest
 
 
 def verdict_panel_expired(record: dict, project_dir=None) -> bool:
@@ -2579,7 +2613,8 @@ def needs_verdict_delivered_stamp(record: dict, session: str) -> bool:
 
 
 def stamp_verdict_delivered(request_id: str, session: str,
-                            project_dir=None) -> bool:
+                            project_dir=None, *,
+                            reply_event_id: str | None = None) -> bool:
     """Write a `verdict_delivered` row to THIS project's own bucket (the
     SENDER's), recording that the live surface nudged this verdict into
     `session`. Channel `mechanical`, same posture as `stamp_delivered`.
@@ -2592,6 +2627,8 @@ def stamp_verdict_delivered(request_id: str, session: str,
         raise RequestError("verdict_delivered stamp requires a session id")
     row = _stamp("verdict_delivered", request_id, "mechanical")
     row["session"] = session
+    if reply_event_id:  # #1117: rides on the same event, only when set
+        row["reply_event_id"] = str(reply_event_id)
     return append(row, project_dir=project_dir)
 
 
@@ -2614,8 +2651,9 @@ def verdict_deliverable(session: str, project_dir=None) -> dict:
         return {"rows": [], "overflow": 0}
     rows = [r for r in sender_join(project_dir=project_dir).values()
             if r["state"] in _VERDICT_STATES
-            and not verdict_panel_expired(r, project_dir=project_dir)
-            and needs_verdict_delivered_stamp(r, session)]
+            and ((not verdict_panel_expired(r, project_dir=project_dir)
+                  and needs_verdict_delivered_stamp(r, session))
+                 or unseen_reply_id(r, session))]  # #1117
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
@@ -2630,7 +2668,8 @@ def verdict_renderable(project_dir=None) -> dict:
     readable through `sender_join`, only ambient panel attention decays."""
     rows = [r for r in sender_join(project_dir=project_dir).values()
             if r["state"] in _VERDICT_STATES
-            and not verdict_panel_expired(r, project_dir=project_dir)]
+            and (not verdict_panel_expired(r, project_dir=project_dir)
+                 or unseen_reply_id(r))]  # #1117: expiry measures the decision
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}

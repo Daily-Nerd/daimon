@@ -6575,3 +6575,60 @@ def test_reply_line_labels_caps_counts_and_marks_stale(project, monkeypatch):
     from daimon_briefing.cli import request as cli_request
     record = requests.sender_join(project_dir=project)[q_id]
     assert f"  {line()}" in cli_request._verdict_inject_lines(record)
+
+
+def _expire_the_panel(project, tag):
+    """Enough later sender sessions for the epoch stamp to expire."""
+    _sender_session(project, f"S-{tag}-before", _fut(-60))
+    for n in range(requests.VERDICT_PANEL_SESSIONS + 1):
+        _sender_session(project, f"S-{tag}-after-{n}", _fut(10 * (n + 1)))
+
+
+def test_a_late_reply_re_enters_the_panel_after_expiry_and_is_stamped_once(
+        project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.stamp_verdict_surfaced(q_id, project_dir=project)
+    assert "reply_event_id" not in requests.events(project_dir=project)[-1]
+    _expire_the_panel(project, "late-a")
+    record = requests.sender_join(project_dir=project)[q_id]
+    assert requests.verdict_panel_expired(record, project_dir=project)
+    assert requests.verdict_renderable(project_dir=project)["rows"] == []
+
+    requests.reply(q_id, REPLY_NOTE, channel="cli-tty", project_dir=rdir)
+    rows = requests.verdict_renderable(project_dir=project)["rows"]
+    assert [r["request_id"] for r in rows] == [q_id]
+    reply_id = requests.unseen_reply_id(rows[0])
+    assert reply_id == rows[0]["replies"][-1]["event_id"]
+    requests.stamp_verdict_surfaced(q_id, project_dir=project,
+                                    reply_event_id=reply_id)
+    assert requests.verdict_renderable(project_dir=project)["rows"] == []
+
+
+def test_the_fold_with_reply_stamps_stays_json_serializable(project):
+    q_id, rdir = _in_state(project, "accepted")
+    requests.reply(q_id, REPLY_NOTE, channel="cli-tty", project_dir=rdir)
+    reply_id = requests.unseen_reply_id(
+        requests.sender_join(project_dir=project)[q_id])
+    requests.stamp_verdict_surfaced(q_id, project_dir=project,
+                                    reply_event_id=reply_id)
+    requests.stamp_verdict_delivered(q_id, "S-alpha", project_dir=project,
+                                     reply_event_id=reply_id)
+    dumped = json.loads(json.dumps(requests.listing(project_dir=project)))
+    assert reply_id in dumped[0]["replies_surfaced"]
+    assert reply_id in dumped[0]["replies_delivered"]["S-alpha"]
+
+
+def test_inject_delivers_a_late_reply_once_per_session(
+        project, capsys, monkeypatch):
+    monkeypatch.setenv("DAIMON_LIVE_DELIVERY", "1")
+    q_id, rdir = _in_state(project, "accepted")
+    capsys.readouterr()
+    assert _inject(project) == 0
+    assert q_id in capsys.readouterr().out
+    requests.reply(q_id, "halfway, schema merged", channel="cli-agent",
+                   project_dir=rdir)
+    assert _inject(project) == 0
+    assert ("Reply (agent, unverified): halfway, schema merged"
+            in capsys.readouterr().out)
+    assert _inject(project) == 0
+    assert capsys.readouterr().out == ""

@@ -815,9 +815,13 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         try:
             for row in requests.verdict_renderable(
                     project_dir=worldcheck_project).get("rows") or []:
-                if requests.needs_verdict_surfaced_stamp(row):
+                # #1117: one stamp row carries whichever of the epoch and the
+                # late reply the brief just showed.
+                reply_id = requests.unseen_reply_id(row)
+                if requests.needs_verdict_surfaced_stamp(row) or reply_id:
                     requests.stamp_verdict_surfaced(
-                        row["request_id"], project_dir=worldcheck_project)
+                        row["request_id"], project_dir=worldcheck_project,
+                        reply_event_id=reply_id)
         except Exception:
             pass
     if withheld or team_withheld:
